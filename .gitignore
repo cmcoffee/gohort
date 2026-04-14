@@ -1,0 +1,13 @@
+# Compiled binary
+gohort
+
+# Data directory
+data/
+
+# Private apps (not tracked in public repo)
+private/
+private.go
+
+# Claude Code local settings
+.claude/
+fuzz
