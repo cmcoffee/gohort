@@ -415,7 +415,7 @@ func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, 
 
 func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var allow_signup bool
-	a.db.Get("web_config", "allow_signup", &allow_signup)
+	a.db.Get(WebTable, "allow_signup", &allow_signup)
 	status := map[string]interface{}{
 		"tls_enabled":     TLSEnabled(),
 		"tls_self_signed": TLSSelfSigned,
@@ -432,13 +432,13 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	var allow_signup bool
 	var session_days, max_attempts, lockout_minutes int
 	var service_name, external_url, notify_from string
-	a.db.Get("web_config", "allow_signup", &allow_signup)
-	a.db.Get("web_config", "session_days", &session_days)
-	a.db.Get("web_config", "max_login_attempts", &max_attempts)
-	a.db.Get("web_config", "lockout_minutes", &lockout_minutes)
-	a.db.Get("web_config", "service_name", &service_name)
-	a.db.Get("web_config", "external_url", &external_url)
-	a.db.Get("web_config", "notify_from", &notify_from)
+	a.db.Get(WebTable, "allow_signup", &allow_signup)
+	a.db.Get(WebTable, "session_days", &session_days)
+	a.db.Get(WebTable, "max_login_attempts", &max_attempts)
+	a.db.Get(WebTable, "lockout_minutes", &lockout_minutes)
+	a.db.Get(WebTable, "service_name", &service_name)
+	a.db.Get(WebTable, "external_url", &external_url)
+	a.db.Get(WebTable, "notify_from", &notify_from)
 	if session_days == 0 {
 		session_days = 7
 	}
@@ -478,31 +478,31 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	}
 	current := AuthCurrentUser(r)
 	if req.AllowSignup != nil {
-		a.db.Set("web_config", "allow_signup", *req.AllowSignup)
+		a.db.Set(WebTable, "allow_signup", *req.AllowSignup)
 		Log("[admin] user %q set allow_signup=%v", current, *req.AllowSignup)
 	}
 	if req.SessionDays != nil && *req.SessionDays >= 1 && *req.SessionDays <= 90 {
-		a.db.Set("web_config", "session_days", *req.SessionDays)
+		a.db.Set(WebTable, "session_days", *req.SessionDays)
 		Log("[admin] user %q set session_days=%d", current, *req.SessionDays)
 	}
 	if req.MaxLoginAttempts != nil && *req.MaxLoginAttempts >= 1 && *req.MaxLoginAttempts <= 100 {
-		a.db.Set("web_config", "max_login_attempts", *req.MaxLoginAttempts)
+		a.db.Set(WebTable, "max_login_attempts", *req.MaxLoginAttempts)
 		Log("[admin] user %q set max_login_attempts=%d", current, *req.MaxLoginAttempts)
 	}
 	if req.LockoutMinutes != nil && *req.LockoutMinutes >= 1 && *req.LockoutMinutes <= 1440 {
-		a.db.Set("web_config", "lockout_minutes", *req.LockoutMinutes)
+		a.db.Set(WebTable, "lockout_minutes", *req.LockoutMinutes)
 		Log("[admin] user %q set lockout_minutes=%d", current, *req.LockoutMinutes)
 	}
 	if req.ServiceName != nil {
-		a.db.Set("web_config", "service_name", *req.ServiceName)
+		a.db.Set(WebTable, "service_name", *req.ServiceName)
 		Log("[admin] user %q set service_name=%q", current, *req.ServiceName)
 	}
 	if req.ExternalURL != nil {
-		a.db.Set("web_config", "external_url", *req.ExternalURL)
+		a.db.Set(WebTable, "external_url", *req.ExternalURL)
 		Log("[admin] user %q set external_url=%q", current, *req.ExternalURL)
 	}
 	if req.NotifyFrom != nil {
-		a.db.Set("web_config", "notify_from", *req.NotifyFrom)
+		a.db.Set(WebTable, "notify_from", *req.NotifyFrom)
 		Log("[admin] user %q set notify_from=%q", current, *req.NotifyFrom)
 	}
 	if req.DefaultApps != nil {

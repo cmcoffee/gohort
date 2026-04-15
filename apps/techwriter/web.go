@@ -1,7 +1,6 @@
 package techwriter
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -204,7 +203,7 @@ These rules prevent the output from reading as AI-generated. They should be part
 		{Role: "user", Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context)},
 	}
 	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(context.Background(), messages,
+	resp, err := session.Chat(r.Context(), messages,
 		WithSystemPrompt(system_prompt),
 		WithMaxTokens(4096),
 		WithThink(false))
@@ -460,7 +459,7 @@ The merged article must preserve all important facts, data, and claims from both
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
 	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(context.Background(), []Message{
+	resp, err := session.Chat(r.Context(), []Message{
 		{Role: "user", Content: merge_prompt},
 	}, WithSystemPrompt(system_prompt),
 		WithMaxTokens(8192),

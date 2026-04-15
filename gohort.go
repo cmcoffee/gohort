@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"os"
@@ -54,6 +55,12 @@ func main() {
 	nfo.HideTS()
 	defer Exit(0)
 
+	// Install the process-lifetime app context. SIGINT handlers below
+	// call ShutdownApp() to cancel it so in-flight LLM streams,
+	// persistent pipelines, and the interactive REPL all wind down
+	// cleanly instead of being killed mid-call on daemon close.
+	InitAppContext(context.Background())
+
 	get_runtime_info()
 
 	// Initial modifier flags.
@@ -106,7 +113,7 @@ func main() {
 	// Wire up LLM routing lookup. Reads per-stage setting from db.
 	LookupRouteFunc = func(key string) string {
 		var val string
-		global.db.Get(routing_table, key, &val)
+		global.db.Get(RoutingTable, key, &val)
 		return val
 	}
 
@@ -164,10 +171,10 @@ func main() {
 		var saved_max int
 		var saved_cert, saved_key string
 		var saved_self_signed bool
-		global.db.Get(web_table, "max_concurrent", &saved_max)
-		global.db.Get(web_table, "tls_cert", &saved_cert)
-		global.db.Get(web_table, "tls_key", &saved_key)
-		global.db.Get(web_table, "tls_self_signed", &saved_self_signed)
+		global.db.Get(WebTable, "max_concurrent", &saved_max)
+		global.db.Get(WebTable, "tls_cert", &saved_cert)
+		global.db.Get(WebTable, "tls_key", &saved_key)
+		global.db.Get(WebTable, "tls_self_signed", &saved_self_signed)
 
 		if *max_concurrent != 1 {
 			MaxConcurrentTasks = *max_concurrent
@@ -195,12 +202,12 @@ func main() {
 		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
 		AuthSignupAllowed = func() bool {
 			var allowed bool
-			global.db.Get(web_table, "allow_signup", &allowed)
+			global.db.Get(WebTable, "allow_signup", &allowed)
 			return allowed
 		}
 		AuthSessionDays = func() int {
 			var days int
-			global.db.Get(web_table, "session_days", &days)
+			global.db.Get(WebTable, "session_days", &days)
 			if days == 0 {
 				days = 7
 			}
@@ -208,23 +215,23 @@ func main() {
 		}
 		AuthAPIKey = func() string {
 			var key string
-			global.db.Get(web_table, "api_key", &key)
+			global.db.Get(WebTable, "api_key", &key)
 			return key
 		}
 
 		WebBaseURL = func() string {
 			var url string
-			global.db.Get(web_table, "external_url", &url)
+			global.db.Get(WebTable, "external_url", &url)
 			return url
 		}
 		ServiceNameFunc = func() string {
 			var name string
-			global.db.Get(web_table, "service_name", &name)
+			global.db.Get(WebTable, "service_name", &name)
 			return name
 		}
 		AuthMaxAttempts = func() int {
 			var n int
-			global.db.Get(web_table, "max_login_attempts", &n)
+			global.db.Get(WebTable, "max_login_attempts", &n)
 			if n == 0 {
 				n = 5
 			}
@@ -232,7 +239,7 @@ func main() {
 		}
 		AuthLockoutMinutes = func() int {
 			var n int
-			global.db.Get(web_table, "lockout_minutes", &n)
+			global.db.Get(WebTable, "lockout_minutes", &n)
 			if n == 0 {
 				n = 15
 			}
@@ -240,7 +247,7 @@ func main() {
 		}
 		NotifyFromFunc = func() string {
 			var from string
-			global.db.Get(web_table, "notify_from", &from)
+			global.db.Get(WebTable, "notify_from", &from)
 			return from
 		}
 
@@ -258,7 +265,7 @@ func main() {
 		// Wire admin IP allowlist.
 		LoadAdminAllowedIPsFunc = func() string {
 			var val string
-			global.db.Get(web_table, "admin_allowed_ips", &val)
+			global.db.Get(WebTable, "admin_allowed_ips", &val)
 			return val
 		}
 
@@ -280,11 +287,13 @@ func main() {
 	if global.sysmode {
 		nfo.Animations = false
 		nfo.SignalCallback(syscall.SIGINT, func() bool {
+			ShutdownApp()
 			return true
 		})
 	} else {
 		nfo.SignalCallback(syscall.SIGINT, func() bool {
 			Log("Application interrupt received. (shutting down)")
+			ShutdownApp()
 			return true
 		})
 	}

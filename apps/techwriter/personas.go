@@ -1,7 +1,6 @@
 package techwriter
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,7 +95,7 @@ func (T *TechWriterAgent) handleUploadPersona(w http.ResponseWriter, r *http.Req
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
 	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(context.Background(), []Message{
+	resp, err := session.Chat(r.Context(), []Message{
 		{
 			Role: "user",
 			Content: `Analyze the WRITING STYLE of this document. Your job is to produce a set of rules that a writer can follow to write NEW documents in the SAME style.
@@ -174,7 +173,7 @@ func (T *TechWriterAgent) handleSavePersona(w http.ResponseWriter, r *http.Reque
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
 	session := agent.CreateSession(WORKER)
-	desc_resp, _ := session.Chat(context.Background(), []Message{
+	desc_resp, _ := session.Chat(r.Context(), []Message{
 		{Role: "user", Content: fmt.Sprintf("Summarize this writing style in one sentence (under 15 words):\n\n%s", req.Style)},
 	}, WithMaxTokens(64), WithThink(false))
 

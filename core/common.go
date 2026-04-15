@@ -99,14 +99,23 @@ func (T *FuzzAgent) RequireLLM() error {
 // Use this at the start of long-running pipelines to fail fast instead of
 // burning through every step with the same connection error.
 //
-// The internal timeout is intentionally generous (5 minutes) because
-// the ping is queued by the Ollama fair-queueing scheduler and may
-// have to wait behind an in-flight long-running call. A "fast fail"
-// timeout shorter than realistic queue waits would produce false
-// negatives whenever any real work is in progress.
+// If the LLM implements Pinger (Ollama does, via GET /api/ps), a short
+// 10-second probe is used — it bypasses the fair-queue scheduler and
+// returns immediately regardless of in-flight generation. Otherwise we
+// fall back to a real chat call with a generous 5-minute timeout, since
+// that call may have to wait behind an in-flight long-running request
+// and a short timeout would produce false negatives under load.
 func (T *FuzzAgent) PingLLM(ctx context.Context) error {
 	if T.LLM == nil {
 		return fmt.Errorf("LLM not configured")
+	}
+	if p, ok := T.LLM.(Pinger); ok {
+		ping_ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := p.Ping(ping_ctx); err != nil {
+			return fmt.Errorf("worker LLM unavailable: %w", err)
+		}
+		return nil
 	}
 	ping_ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -121,8 +130,18 @@ func (T *FuzzAgent) PingLLM(ctx context.Context) error {
 
 // PingLeadLLM performs a quick connectivity check against the lead LLM.
 // If no lead LLM is configured, returns nil (the primary handles fallback).
+// Prefers the Pinger fast path when available (e.g. Ollama /api/ps) so
+// the probe isn't queued behind an in-flight long-running call.
 func (T *FuzzAgent) PingLeadLLM(ctx context.Context) error {
 	if T.LeadLLM == nil {
+		return nil
+	}
+	if p, ok := T.LeadLLM.(Pinger); ok {
+		ping_ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := p.Ping(ping_ctx); err != nil {
+			return fmt.Errorf("lead LLM unavailable: %w", err)
+		}
 		return nil
 	}
 	ping_ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

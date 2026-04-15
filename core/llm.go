@@ -31,6 +31,15 @@ type LLM interface {
 	ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error)
 }
 
+// Pinger is an optional LLM-side liveness probe. Implementations should
+// return promptly (a few seconds) whether or not the backend is currently
+// handling a request, so a caller can distinguish "server unreachable"
+// from "server alive but queued behind a long-running call" without
+// having to wait out a full chat timeout.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 // StreamHandler is called for each chunk of streamed content.
 type StreamHandler func(chunk string)
 

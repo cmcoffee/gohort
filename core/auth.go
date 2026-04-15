@@ -13,8 +13,6 @@ import (
 )
 
 const (
-	auth_table       = "auth_config"
-	auth_session_tbl = "auth_sessions"
 	auth_cookie_name = "gohort_session"
 )
 
@@ -177,8 +175,7 @@ func clearLockout(ip string) {
 // --- Password reset tokens ---
 
 const (
-	auth_reset_tbl    = "auth_reset_tokens"
-	resetTokenExpiry  = 1 * time.Hour
+	resetTokenExpiry = 1 * time.Hour
 )
 
 type resetToken struct {
@@ -190,7 +187,7 @@ type resetToken struct {
 // stores it in the database. Returns the token string.
 func createResetToken(db Database, username string) string {
 	token := generateToken()
-	db.Set(auth_reset_tbl, token, resetToken{
+	db.Set(AuthResetTable, token, resetToken{
 		Username: username,
 		Expires:  time.Now().Add(resetTokenExpiry).Unix(),
 	})
@@ -200,11 +197,11 @@ func createResetToken(db Database, username string) string {
 // validateResetToken checks a reset token and returns the username if valid.
 func validateResetToken(db Database, token string) (string, bool) {
 	var rt resetToken
-	if !db.Get(auth_reset_tbl, token, &rt) {
+	if !db.Get(AuthResetTable, token, &rt) {
 		return "", false
 	}
 	if time.Now().Unix() >= rt.Expires {
-		db.Unset(auth_reset_tbl, token)
+		db.Unset(AuthResetTable, token)
 		return "", false
 	}
 	return rt.Username, true
@@ -214,7 +211,7 @@ func validateResetToken(db Database, token string) (string, bool) {
 func consumeResetToken(db Database, token string) (string, bool) {
 	username, ok := validateResetToken(db, token)
 	if ok {
-		db.Unset(auth_reset_tbl, token)
+		db.Unset(AuthResetTable, token)
 	}
 	return username, ok
 }
@@ -232,17 +229,17 @@ type AuthUser struct {
 // AuthSetNotifyDefault updates the user's persistent notify preference.
 func AuthSetNotifyDefault(db Database, username string, enabled bool) {
 	var user AuthUser
-	if !db.Get(auth_table, "user:"+username, &user) {
+	if !db.Get(AuthTable, "user:"+username, &user) {
 		return
 	}
 	user.NotifyDefault = enabled
-	db.Set(auth_table, "user:"+username, user)
+	db.Set(AuthTable, "user:"+username, user)
 }
 
 // AuthGetNotifyDefault returns the user's persistent notify preference.
 func AuthGetNotifyDefault(db Database, username string) bool {
 	var user AuthUser
-	if !db.Get(auth_table, "user:"+username, &user) {
+	if !db.Get(AuthTable, "user:"+username, &user) {
 		return false
 	}
 	return user.NotifyDefault
@@ -296,12 +293,12 @@ func hashPassword(password string) string {
 // AuthListUsers returns all configured auth users.
 func AuthListUsers(db Database) []AuthUser {
 	var users []AuthUser
-	for _, key := range db.Keys(auth_table) {
+	for _, key := range db.Keys(AuthTable) {
 		if !strings.HasPrefix(key, "user:") {
 			continue
 		}
 		var user AuthUser
-		if db.Get(auth_table, key, &user) {
+		if db.Get(AuthTable, key, &user) {
 			users = append(users, user)
 		}
 	}
@@ -311,7 +308,7 @@ func AuthListUsers(db Database) []AuthUser {
 // AuthGetUser retrieves a user by username.
 func AuthGetUser(db Database, username string) (AuthUser, bool) {
 	var user AuthUser
-	ok := db.Get(auth_table, "user:"+username, &user)
+	ok := db.Get(AuthTable, "user:"+username, &user)
 	return user, ok
 }
 
@@ -319,7 +316,7 @@ func AuthGetUser(db Database, username string) (AuthUser, bool) {
 // is hashed and stored; otherwise the existing hash is preserved.
 func AuthSetUser(db Database, username, password string, admin bool) {
 	var existing AuthUser
-	db.Get(auth_table, "user:"+username, &existing)
+	db.Get(AuthTable, "user:"+username, &existing)
 
 	user := AuthUser{
 		Username: username,
@@ -332,29 +329,29 @@ func AuthSetUser(db Database, username, password string, admin bool) {
 	} else {
 		user.PassHash = existing.PassHash
 	}
-	db.Set(auth_table, "user:"+username, user)
+	db.Set(AuthTable, "user:"+username, user)
 }
 
 // AuthSetUserApps updates the allowed app list for a user.
 func AuthSetUserApps(db Database, username string, apps []string) {
 	var user AuthUser
-	if !db.Get(auth_table, "user:"+username, &user) {
+	if !db.Get(AuthTable, "user:"+username, &user) {
 		return
 	}
 	user.Apps = apps
-	db.Set(auth_table, "user:"+username, user)
+	db.Set(AuthTable, "user:"+username, user)
 }
 
 // AuthGetDefaultApps returns the default app paths assigned to new users.
 func AuthGetDefaultApps(db Database) []string {
 	var apps []string
-	db.Get("web_config", "default_apps", &apps)
+	db.Get(WebTable, "default_apps", &apps)
 	return apps
 }
 
 // AuthSetDefaultApps stores the default app paths for new users.
 func AuthSetDefaultApps(db Database, apps []string) {
-	db.Set("web_config", "default_apps", apps)
+	db.Set(WebTable, "default_apps", apps)
 }
 
 // UserHasAppAccess checks whether the current request's user is allowed
@@ -397,11 +394,11 @@ func UserHasAppAccess(r *http.Request, app_path string) bool {
 // AuthApproveUser approves a pending user and sends them a notification.
 func AuthApproveUser(db Database, username string) {
 	var user AuthUser
-	if !db.Get(auth_table, "user:"+username, &user) {
+	if !db.Get(AuthTable, "user:"+username, &user) {
 		return
 	}
 	user.Pending = false
-	db.Set(auth_table, "user:"+username, user)
+	db.Set(AuthTable, "user:"+username, user)
 
 	if isValidEmail(username) {
 		go SendNotification(username,
@@ -417,12 +414,12 @@ func AuthRejectUser(db Database, username string) {
 			"[" + ServiceName() + "] Your account request",
 			fmt.Sprintf("Your account request on %s was not approved at this time.\n", DashboardURL()))
 	}
-	db.Unset(auth_table, "user:"+username)
+	db.Unset(AuthTable, "user:"+username)
 }
 
 // AuthDeleteUser removes a user account.
 func AuthDeleteUser(db Database, username string) {
-	db.Unset(auth_table, "user:"+username)
+	db.Unset(AuthTable, "user:"+username)
 }
 
 // AuthCheckPassword verifies a username/password combination.
@@ -436,7 +433,7 @@ func AuthCheckPassword(db Database, username, password string) bool {
 
 // AuthHasUsers reports whether any user accounts exist.
 func AuthHasUsers(db Database) bool {
-	for _, key := range db.Keys(auth_table) {
+	for _, key := range db.Keys(AuthTable) {
 		if strings.HasPrefix(key, "user:") {
 			return true
 		}
@@ -462,7 +459,7 @@ func AuthCreateSession(db Database, username string) string {
 		Created: now.Unix(),
 		Expires: now.Add(sessionDuration()).Unix(),
 	}
-	db.Set(auth_session_tbl, token, sess)
+	db.Set(AuthSessionTable, token, sess)
 
 	sessionMu.Lock()
 	sessionCache[token] = &sess
@@ -490,17 +487,17 @@ func AuthValidateSession(db Database, token string) (string, bool) {
 		sessionMu.Lock()
 		delete(sessionCache, token)
 		sessionMu.Unlock()
-		db.Unset(auth_session_tbl, token)
+		db.Unset(AuthSessionTable, token)
 		return "", false
 	}
 
 	// Fall back to database.
 	var sess authSession
-	if !db.Get(auth_session_tbl, token, &sess) {
+	if !db.Get(AuthSessionTable, token, &sess) {
 		return "", false
 	}
 	if time.Now().Unix() >= sess.Expires {
-		db.Unset(auth_session_tbl, token)
+		db.Unset(AuthSessionTable, token)
 		return "", false
 	}
 
@@ -516,7 +513,7 @@ func AuthDestroySession(db Database, token string) {
 	sessionMu.Lock()
 	delete(sessionCache, token)
 	sessionMu.Unlock()
-	db.Unset(auth_session_tbl, token)
+	db.Unset(AuthSessionTable, token)
 }
 
 // AuthIsAdmin checks whether the currently authenticated user is an admin.
@@ -777,9 +774,9 @@ func SignupHandler(db Database) http.HandlerFunc {
 			AuthSetUser(db, email, password, false)
 			// Mark as pending approval.
 			var user AuthUser
-			db.Get(auth_table, "user:"+email, &user)
+			db.Get(AuthTable, "user:"+email, &user)
 			user.Pending = true
-			db.Set(auth_table, "user:"+email, user)
+			db.Set(AuthTable, "user:"+email, user)
 
 			Log("[auth] new signup (pending): %q from %s", email, clientIP(r))
 

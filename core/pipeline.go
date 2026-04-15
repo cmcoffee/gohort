@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"time"
 )
 
@@ -20,6 +21,30 @@ type PipelineConfig struct {
 	OnRegister func(id string, cancel context.CancelFunc) // register the live session
 	OnEvent    func(id string, status string, done bool)  // update session status
 	OnCleanup  func(id string)                            // schedule session cleanup
+	// OnStarted fires exactly once, after the queue slot has been
+	// acquired and immediately before the work function is invoked.
+	// Restore paths use it to clear LiveSessionMap.ClearRestoring so
+	// a stale browser cancel racing with the restore cannot kill the
+	// pipeline before it gets a chance to run. Safe to leave nil for
+	// fresh RunPipeline / RunPipelineAsync paths.
+	OnStarted func(id string)
+	// ParentCtx roots the pipeline's context at a parent pipeline's
+	// ctx instead of AppContext(). Set this when one pipeline spawns
+	// another (e.g. autoblog → debate/research) so cancelling the
+	// parent propagates into the child's LLM calls through normal
+	// ctx derivation rather than requiring manual cancel-tree
+	// bookkeeping. Leave nil for top-level pipelines.
+	ParentCtx context.Context
+}
+
+// pipelineRoot returns the parent context the pipeline should derive
+// its own WithCancel from. Falls back to the process-lifetime
+// AppContext when cfg.ParentCtx is not set.
+func pipelineRoot(cfg PipelineConfig) context.Context {
+	if cfg.ParentCtx != nil {
+		return cfg.ParentCtx
+	}
+	return AppContext()
 }
 
 // PipelineResult is returned to the app after the pipeline completes.
@@ -61,7 +86,7 @@ type PipelineWork func(ctx context.Context, pc *PipelineCtx) error
 // execution, notification, and cleanup. Returns the pipeline ID.
 func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 	id := UUIDv4()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
 	// 1. Register live session.
 	if cfg.OnRegister != nil {
@@ -90,8 +115,23 @@ func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 	pc := &PipelineCtx{id: id, cfg: cfg}
 
 	defer func() {
+		p := recover()
 		cancel()
 		GlobalQueue().Release()
+		if p != nil {
+			// Panic: log the stack and leave the queue entry in place
+			// so a restart rehydrates and retries the pipeline. Do NOT
+			// re-panic -- we've handled it cleanly and don't want to
+			// tear down the caller's goroutine.
+			Err("[%s] pipeline %s panicked: %v\n%s", cfg.App, id[:8], p, debug.Stack())
+			if cfg.OnEvent != nil {
+				cfg.OnEvent(id, fmt.Sprintf("Internal error: %v (will retry on restart)", p), true)
+			}
+			if cfg.OnCleanup != nil {
+				cfg.OnCleanup(id)
+			}
+			return
+		}
 		// 5. Notify on completion.
 		if pc.record_id != "" && cfg.LinkPath != "" {
 			link := DashboardURL() + cfg.LinkPath + pc.record_id
@@ -109,6 +149,10 @@ func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 			cfg.OnCleanup(id)
 		}
 	}()
+
+	if cfg.OnStarted != nil {
+		cfg.OnStarted(id)
+	}
 
 	if err := work(ctx, pc); err != nil {
 		Log("[%s] pipeline %s error: %v", cfg.App, id[:8], err)
@@ -128,7 +172,7 @@ func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 // returns the pipeline ID immediately.
 func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) string {
 	id := UUIDv4()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
 	if cfg.OnRegister != nil {
 		cfg.OnRegister(id, cancel)
@@ -152,8 +196,19 @@ func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) stri
 		pc := &PipelineCtx{id: id, cfg: cfg}
 
 		defer func() {
+			p := recover()
 			cancel()
 			GlobalQueue().Release()
+			if p != nil {
+				Err("[%s] pipeline %s panicked: %v\n%s", cfg.App, id[:8], p, debug.Stack())
+				if cfg.OnEvent != nil {
+					cfg.OnEvent(id, fmt.Sprintf("Internal error: %v (will retry on restart)", p), true)
+				}
+				if cfg.OnCleanup != nil {
+					cfg.OnCleanup(id)
+				}
+				return
+			}
 			if pc.record_id != "" && cfg.LinkPath != "" {
 				link := DashboardURL() + cfg.LinkPath + pc.record_id
 				users := QueueGetNotifyUsers(id)
@@ -169,6 +224,10 @@ func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) stri
 				cfg.OnCleanup(id)
 			}
 		}()
+
+		if cfg.OnStarted != nil {
+			cfg.OnStarted(id)
+		}
 
 		if err := work(ctx, pc); err != nil {
 			Log("[%s] pipeline %s error: %v", cfg.App, id[:8], err)
@@ -189,7 +248,7 @@ func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) stri
 // Called by QueueHandler implementations registered via RegisterQueueHandler.
 func (T *FuzzAgent) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work PipelineWork) {
 	id := entry.ID
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
 	if cfg.OnRegister != nil {
 		cfg.OnRegister(id, cancel)
@@ -217,8 +276,19 @@ func (T *FuzzAgent) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work P
 	pc := &PipelineCtx{id: id, cfg: cfg}
 
 	defer func() {
+		p := recover()
 		cancel()
 		GlobalQueue().Release()
+		if p != nil {
+			Err("[%s] restored pipeline %s panicked: %v\n%s", cfg.App, id[:8], p, debug.Stack())
+			if cfg.OnEvent != nil {
+				cfg.OnEvent(id, fmt.Sprintf("Internal error: %v (will retry on restart)", p), true)
+			}
+			if cfg.OnCleanup != nil {
+				cfg.OnCleanup(id)
+			}
+			return
+		}
 		if pc.record_id != "" && cfg.LinkPath != "" {
 			link := DashboardURL() + cfg.LinkPath + pc.record_id
 			users := QueueGetNotifyUsers(id)
@@ -236,6 +306,10 @@ func (T *FuzzAgent) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work P
 	}()
 
 	Log("[queue] restored %s/%s: %s", cfg.App, id[:8], truncLabel(cfg.Label))
+
+	if cfg.OnStarted != nil {
+		cfg.OnStarted(id)
+	}
 
 	if err := work(ctx, pc); err != nil {
 		Log("[%s] restored pipeline %s error: %v", cfg.App, id[:8], err)

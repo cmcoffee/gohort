@@ -742,6 +742,14 @@ type LiveSession[T any] struct {
 	Done    bool
 	Status  string              // Last status message for live view
 	Spawned bool                // True if spawned by a parent session. Cannot be cancelled directly -- cancel the parent instead.
+	// Restoring is true for a session that was rehydrated from the
+	// persistent queue on startup but whose work goroutine has not yet
+	// begun. A race between restore and a stale browser cancel (e.g. a
+	// reload-after-restart firing its auto-cancel) will otherwise kill
+	// the pipeline the instant it resumes. HandleCancel rejects cancels
+	// in this window with 409 Conflict; set the flag in OnRegister on
+	// the restore path and clear it from PipelineConfig.OnStarted.
+	Restoring bool
 }
 
 // LiveSessionMap manages concurrent live sessions with mutex protection,
@@ -773,6 +781,28 @@ func (m *LiveSessionMap[T]) UpdateCancel(id string, cancel context.CancelFunc) {
 	defer m.mu.Unlock()
 	if s, ok := m.sessions[id]; ok {
 		s.Cancel = cancel
+	}
+}
+
+// MarkRestoring flags the session as still being restored from the
+// persistent queue; HandleCancel will reject cancels with 409 until
+// ClearRestoring runs. Call this from the restore path's OnRegister
+// right after registering the session.
+func (m *LiveSessionMap[T]) MarkRestoring(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[id]; ok {
+		s.Restoring = true
+	}
+}
+
+// ClearRestoring drops the restoring flag once the work goroutine is
+// actually running. Wire it to PipelineConfig.OnStarted.
+func (m *LiveSessionMap[T]) ClearRestoring(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if s, ok := m.sessions[id]; ok {
+		s.Restoring = false
 	}
 }
 
@@ -846,6 +876,12 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 				m.mu.Unlock()
 				Log("[web] %s %s cancel rejected — spawned by parent session, cancel the parent instead", logPrefix, id)
 				http.Error(w, "this session was spawned by a parent pipeline -- cancel the parent instead", http.StatusConflict)
+				return
+			}
+			if s.Restoring {
+				m.mu.Unlock()
+				Log("[web] %s %s cancel rejected — session still restoring from queue", logPrefix, id)
+				http.Error(w, "session is still being restored from the queue -- retry in a moment", http.StatusConflict)
 				return
 			}
 			s.Cancel()

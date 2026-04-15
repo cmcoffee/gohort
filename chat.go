@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -377,7 +376,7 @@ func (cs *chatSession) sendAndHandle() error {
 
 	waiting := true
 
-	resp, history, err := fa.RunAgentLoop(context.Background(), cs.history, AgentLoopConfig{
+	resp, history, err := fa.RunAgentLoop(AppContext(), cs.history, AgentLoopConfig{
 		SystemPrompt: cs.system,
 		Tools:        agentTools,
 		MaxRounds:    maxToolRounds,

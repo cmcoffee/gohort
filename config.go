@@ -16,16 +16,6 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
-const (
-	llm_table      = "llm_config"
-	lead_llm_table = "lead_llm_config"
-	mail_table     = "mail_config"
-	search_table   = "search_config"
-	image_table    = "image_config"
-	routing_table  = "llm_routing"
-	web_table      = "web_config"
-)
-
 // browseModels queries the provider's API for available models and presents
 // a selection menu. Sets *target to the chosen model name.
 func browseModels(provider, apiKey, endpoint string, target *string) bool {
@@ -80,20 +70,20 @@ func browseModels(provider, apiKey, endpoint string, target *string) bool {
 // load_mail_config reads the stored mail configuration from the database.
 func load_mail_config() MailConfig {
 	var cfg MailConfig
-	global.db.Get(mail_table, "server", &cfg.Server)
-	global.db.Get(mail_table, "from", &cfg.From)
-	global.db.Get(mail_table, "username", &cfg.Username)
-	global.db.Get(mail_table, "password", &cfg.Password)
-	global.db.Get(mail_table, "recipient", &cfg.Recipient)
+	global.db.Get(MailTable, "server", &cfg.Server)
+	global.db.Get(MailTable, "from", &cfg.From)
+	global.db.Get(MailTable, "username", &cfg.Username)
+	global.db.Get(MailTable, "password", &cfg.Password)
+	global.db.Get(MailTable, "recipient", &cfg.Recipient)
 	return cfg
 }
 
 // load_search_config reads the stored web search configuration from the database.
 func load_search_config() WebSearchConfig {
 	var cfg WebSearchConfig
-	global.db.Get(search_table, "provider", &cfg.Provider)
-	global.db.Get(search_table, "api_key", &cfg.APIKey)
-	global.db.Get(search_table, "endpoint", &cfg.Endpoint)
+	global.db.Get(SearchTable, "provider", &cfg.Provider)
+	global.db.Get(SearchTable, "api_key", &cfg.APIKey)
+	global.db.Get(SearchTable, "endpoint", &cfg.Endpoint)
 	return cfg
 }
 
@@ -108,15 +98,15 @@ func setup_fuzz() {
 	var disableThinking bool
 	var nativeTools bool
 	var ollamaMaxParallel int
-	global.db.Get(llm_table, "provider", &provider)
-	global.db.Get(llm_table, "model", &model)
-	global.db.Get(llm_table, "api_key", &apiKey)
-	global.db.Get(llm_table, "endpoint", &endpoint)
-	global.db.Get(llm_table, "context_size", &contextSize)
-	global.db.Get(llm_table, "request_timeout_seconds", &requestTimeoutSec)
-	global.db.Get(llm_table, "disable_thinking", &disableThinking)
-	global.db.Get(llm_table, "native_tools", &nativeTools)
-	global.db.Get(llm_table, "ollama_max_parallel", &ollamaMaxParallel)
+	global.db.Get(LLMTable, "provider", &provider)
+	global.db.Get(LLMTable, "model", &model)
+	global.db.Get(LLMTable, "api_key", &apiKey)
+	global.db.Get(LLMTable, "endpoint", &endpoint)
+	global.db.Get(LLMTable, "context_size", &contextSize)
+	global.db.Get(LLMTable, "request_timeout_seconds", &requestTimeoutSec)
+	global.db.Get(LLMTable, "disable_thinking", &disableThinking)
+	global.db.Get(LLMTable, "native_tools", &nativeTools)
+	global.db.Get(LLMTable, "ollama_max_parallel", &ollamaMaxParallel)
 	if ollamaMaxParallel < 1 {
 		ollamaMaxParallel = 1 // default: strict serial execution through Ollama
 	}
@@ -125,23 +115,23 @@ func setup_fuzz() {
 	var leadProvider, leadModel, leadAPIKey, leadEndpoint string
 	var leadDisableThinking bool
 	var leadNativeTools bool
-	global.db.Get(lead_llm_table, "provider", &leadProvider)
-	global.db.Get(lead_llm_table, "model", &leadModel)
-	global.db.Get(lead_llm_table, "api_key", &leadAPIKey)
-	global.db.Get(lead_llm_table, "endpoint", &leadEndpoint)
-	global.db.Get(lead_llm_table, "disable_thinking", &leadDisableThinking)
-	global.db.Get(lead_llm_table, "native_tools", &leadNativeTools)
+	global.db.Get(LeadLLMTable, "provider", &leadProvider)
+	global.db.Get(LeadLLMTable, "model", &leadModel)
+	global.db.Get(LeadLLMTable, "api_key", &leadAPIKey)
+	global.db.Get(LeadLLMTable, "endpoint", &leadEndpoint)
+	global.db.Get(LeadLLMTable, "disable_thinking", &leadDisableThinking)
+	global.db.Get(LeadLLMTable, "native_tools", &leadNativeTools)
 	if leadProvider == "" {
 		leadProvider = "(use primary)"
 	}
 
 	// Load current mail values.
 	var mailServer, mailFrom, mailUser, mailPass, mailRecipient string
-	global.db.Get(mail_table, "server", &mailServer)
-	global.db.Get(mail_table, "from", &mailFrom)
-	global.db.Get(mail_table, "username", &mailUser)
-	global.db.Get(mail_table, "password", &mailPass)
-	global.db.Get(mail_table, "recipient", &mailRecipient)
+	global.db.Get(MailTable, "server", &mailServer)
+	global.db.Get(MailTable, "from", &mailFrom)
+	global.db.Get(MailTable, "username", &mailUser)
+	global.db.Get(MailTable, "password", &mailPass)
+	global.db.Get(MailTable, "recipient", &mailRecipient)
 
 	setup := NewOptions("--- Gohort Configuration ---", "(selection or 'q' to save & exit)", 'q')
 
@@ -191,7 +181,7 @@ func setup_fuzz() {
 	stages := ListRouteStages()
 	routeVals := make([]string, len(stages))
 	for i, s := range stages {
-		global.db.Get(routing_table, s.Key, &routeVals[i])
+		global.db.Get(RoutingTable, s.Key, &routeVals[i])
 		if routeVals[i] == "" {
 			routeVals[i] = "lead"
 		}
@@ -199,8 +189,8 @@ func setup_fuzz() {
 
 	// Image Generation settings.
 	var imageProvider, imageAPIKey string
-	global.db.Get(image_table, "provider", &imageProvider)
-	global.db.Get(image_table, "api_key", &imageAPIKey)
+	global.db.Get(ImageTable, "provider", &imageProvider)
+	global.db.Get(ImageTable, "api_key", &imageAPIKey)
 	if imageProvider == "" {
 		imageProvider = "gemini"
 	}
@@ -236,9 +226,9 @@ func setup_fuzz() {
 
 	// --- External Sources ---
 	var searchProvider, searchAPIKey, searchEndpoint string
-	global.db.Get(search_table, "provider", &searchProvider)
-	global.db.Get(search_table, "api_key", &searchAPIKey)
-	global.db.Get(search_table, "endpoint", &searchEndpoint)
+	global.db.Get(SearchTable, "provider", &searchProvider)
+	global.db.Get(SearchTable, "api_key", &searchAPIKey)
+	global.db.Get(SearchTable, "endpoint", &searchEndpoint)
 
 	search := NewOptions(" [Web Search] ", "(selection or 'q' to return to previous)", 'q')
 	search.StringSelectVar(&searchProvider, "Search Provider", searchProvider, "duckduckgo", "brave", "google", "serper", "searxng")
@@ -325,19 +315,19 @@ func setup_fuzz() {
 	var webServiceName string
 	var webMaxLoginAttempts int
 	var webLockoutMinutes int
-	global.db.Get(web_table, "addr", &webAddr)
-	global.db.Get(web_table, "tls_cert", &webTLSCert)
-	global.db.Get(web_table, "tls_key", &webTLSKey)
-	global.db.Get(web_table, "tls_self_signed", &webTLSSelfSigned)
-	global.db.Get(web_table, "max_concurrent", &webMaxConcurrent)
-	global.db.Get(web_table, "admin_allowed_ips", &webAdminIPs)
-	global.db.Get(web_table, "allow_signup", &webAllowSignup)
-	global.db.Get(web_table, "session_days", &webSessionDays)
-	global.db.Get(web_table, "api_key", &webAPIKey)
-	global.db.Get(web_table, "external_url", &webExternalURL)
-	global.db.Get(web_table, "service_name", &webServiceName)
-	global.db.Get(web_table, "max_login_attempts", &webMaxLoginAttempts)
-	global.db.Get(web_table, "lockout_minutes", &webLockoutMinutes)
+	global.db.Get(WebTable, "addr", &webAddr)
+	global.db.Get(WebTable, "tls_cert", &webTLSCert)
+	global.db.Get(WebTable, "tls_key", &webTLSKey)
+	global.db.Get(WebTable, "tls_self_signed", &webTLSSelfSigned)
+	global.db.Get(WebTable, "max_concurrent", &webMaxConcurrent)
+	global.db.Get(WebTable, "admin_allowed_ips", &webAdminIPs)
+	global.db.Get(WebTable, "allow_signup", &webAllowSignup)
+	global.db.Get(WebTable, "session_days", &webSessionDays)
+	global.db.Get(WebTable, "api_key", &webAPIKey)
+	global.db.Get(WebTable, "external_url", &webExternalURL)
+	global.db.Get(WebTable, "service_name", &webServiceName)
+	global.db.Get(WebTable, "max_login_attempts", &webMaxLoginAttempts)
+	global.db.Get(WebTable, "lockout_minutes", &webLockoutMinutes)
 	if webMaxLoginAttempts == 0 {
 		webMaxLoginAttempts = 5
 	}
@@ -345,7 +335,7 @@ func setup_fuzz() {
 		webLockoutMinutes = 15
 	}
 	var webNotifyFrom string
-	global.db.Get(web_table, "notify_from", &webNotifyFrom)
+	global.db.Get(WebTable, "notify_from", &webNotifyFrom)
 	if webSessionDays == 0 {
 		webSessionDays = 7
 	}
@@ -408,72 +398,72 @@ func setup_fuzz() {
 	}
 
 	// Save LLM configuration.
-	global.db.Set(llm_table, "provider", provider)
-	global.db.Set(llm_table, "model", model)
-	global.db.Set(llm_table, "endpoint", endpoint)
-	global.db.Set(llm_table, "context_size", contextSize)
-	global.db.Set(llm_table, "request_timeout_seconds", requestTimeoutSec)
-	global.db.Set(llm_table, "disable_thinking", disableThinking)
-	global.db.Set(llm_table, "native_tools", nativeTools)
-	global.db.Set(llm_table, "ollama_max_parallel", ollamaMaxParallel)
+	global.db.Set(LLMTable, "provider", provider)
+	global.db.Set(LLMTable, "model", model)
+	global.db.Set(LLMTable, "endpoint", endpoint)
+	global.db.Set(LLMTable, "context_size", contextSize)
+	global.db.Set(LLMTable, "request_timeout_seconds", requestTimeoutSec)
+	global.db.Set(LLMTable, "disable_thinking", disableThinking)
+	global.db.Set(LLMTable, "native_tools", nativeTools)
+	global.db.Set(LLMTable, "ollama_max_parallel", ollamaMaxParallel)
 	if apiKey != "" {
-		global.db.CryptSet(llm_table, "api_key", apiKey)
+		global.db.CryptSet(LLMTable, "api_key", apiKey)
 	}
 
 	// Save Lead LLM configuration.
 	if leadProvider == "(use primary)" {
 		leadProvider = ""
 	}
-	global.db.Set(lead_llm_table, "provider", leadProvider)
-	global.db.Set(lead_llm_table, "model", leadModel)
-	global.db.Set(lead_llm_table, "endpoint", leadEndpoint)
-	global.db.Set(lead_llm_table, "disable_thinking", leadDisableThinking)
-	global.db.Set(lead_llm_table, "native_tools", leadNativeTools)
+	global.db.Set(LeadLLMTable, "provider", leadProvider)
+	global.db.Set(LeadLLMTable, "model", leadModel)
+	global.db.Set(LeadLLMTable, "endpoint", leadEndpoint)
+	global.db.Set(LeadLLMTable, "disable_thinking", leadDisableThinking)
+	global.db.Set(LeadLLMTable, "native_tools", leadNativeTools)
 	if leadAPIKey != "" {
-		global.db.CryptSet(lead_llm_table, "api_key", leadAPIKey)
+		global.db.CryptSet(LeadLLMTable, "api_key", leadAPIKey)
 	}
 
 	// Save mail configuration.
-	global.db.Set(mail_table, "server", mailServer)
-	global.db.Set(mail_table, "from", mailFrom)
-	global.db.Set(mail_table, "recipient", mailRecipient)
-	global.db.Set(mail_table, "username", mailUser)
+	global.db.Set(MailTable, "server", mailServer)
+	global.db.Set(MailTable, "from", mailFrom)
+	global.db.Set(MailTable, "recipient", mailRecipient)
+	global.db.Set(MailTable, "username", mailUser)
 	if mailPass != "" {
-		global.db.CryptSet(mail_table, "password", mailPass)
+		global.db.CryptSet(MailTable, "password", mailPass)
 	}
 
 	// Save search configuration.
-	global.db.Set(search_table, "provider", searchProvider)
-	global.db.Set(search_table, "endpoint", searchEndpoint)
+	global.db.Set(SearchTable, "provider", searchProvider)
+	global.db.Set(SearchTable, "endpoint", searchEndpoint)
 	if searchAPIKey != "" {
-		global.db.CryptSet(search_table, "api_key", searchAPIKey)
+		global.db.CryptSet(SearchTable, "api_key", searchAPIKey)
 	}
 
 	// Save Image Generation configuration.
-	global.db.Set(image_table, "provider", imageProvider)
+	global.db.Set(ImageTable, "provider", imageProvider)
 	if imageAPIKey != "" {
-		global.db.CryptSet(image_table, "api_key", imageAPIKey)
+		global.db.CryptSet(ImageTable, "api_key", imageAPIKey)
 	} else {
-		global.db.Unset(image_table, "api_key")
+		global.db.Unset(ImageTable, "api_key")
 	}
 
 	// Save Web Server configuration.
-	global.db.Set(web_table, "addr", webAddr)
-	global.db.Set(web_table, "tls_cert", webTLSCert)
-	global.db.Set(web_table, "tls_key", webTLSKey)
-	global.db.Set(web_table, "tls_self_signed", webTLSSelfSigned)
-	global.db.Set(web_table, "max_concurrent", webMaxConcurrent)
-	global.db.Set(web_table, "admin_allowed_ips", strings.TrimSpace(webAdminIPs))
-	global.db.Set(web_table, "allow_signup", webAllowSignup)
-	global.db.Set(web_table, "session_days", webSessionDays)
+	global.db.Set(WebTable, "addr", webAddr)
+	global.db.Set(WebTable, "tls_cert", webTLSCert)
+	global.db.Set(WebTable, "tls_key", webTLSKey)
+	global.db.Set(WebTable, "tls_self_signed", webTLSSelfSigned)
+	global.db.Set(WebTable, "max_concurrent", webMaxConcurrent)
+	global.db.Set(WebTable, "admin_allowed_ips", strings.TrimSpace(webAdminIPs))
+	global.db.Set(WebTable, "allow_signup", webAllowSignup)
+	global.db.Set(WebTable, "session_days", webSessionDays)
 	if webAPIKey != "" {
-		global.db.CryptSet(web_table, "api_key", webAPIKey)
+		global.db.CryptSet(WebTable, "api_key", webAPIKey)
 	}
-	global.db.Set(web_table, "external_url", webExternalURL)
-	global.db.Set(web_table, "service_name", webServiceName)
-	global.db.Set(web_table, "max_login_attempts", webMaxLoginAttempts)
-	global.db.Set(web_table, "lockout_minutes", webLockoutMinutes)
-	global.db.Set(web_table, "notify_from", webNotifyFrom)
+	global.db.Set(WebTable, "external_url", webExternalURL)
+	global.db.Set(WebTable, "service_name", webServiceName)
+	global.db.Set(WebTable, "max_login_attempts", webMaxLoginAttempts)
+	global.db.Set(WebTable, "lockout_minutes", webLockoutMinutes)
+	global.db.Set(WebTable, "notify_from", webNotifyFrom)
 
 	// Create or update the administrator account.
 	// Skip password update if unchanged from the placeholder.
@@ -492,7 +482,7 @@ func setup_fuzz() {
 		if val == "lead" {
 			val = ""
 		}
-		global.db.Set(routing_table, s.Key, val)
+		global.db.Set(RoutingTable, s.Key, val)
 	}
 
 	Stdout(NONE)
@@ -777,16 +767,16 @@ func add_template_hook() {
 // load_llm_config reads the stored LLM configuration from the database.
 func load_llm_config() LLMProviderConfig {
 	var cfg LLMProviderConfig
-	global.db.Get(llm_table, "provider", &cfg.Provider)
-	global.db.Get(llm_table, "model", &cfg.Model)
-	global.db.Get(llm_table, "api_key", &cfg.APIKey)
-	global.db.Get(llm_table, "endpoint", &cfg.Endpoint)
-	global.db.Get(llm_table, "context_size", &cfg.ContextSize)
-	global.db.Get(llm_table, "disable_thinking", &cfg.DisableThinking)
-	global.db.Get(llm_table, "native_tools", &cfg.NativeTools)
-	global.db.Get(llm_table, "ollama_max_parallel", &cfg.OllamaMaxParallel)
+	global.db.Get(LLMTable, "provider", &cfg.Provider)
+	global.db.Get(LLMTable, "model", &cfg.Model)
+	global.db.Get(LLMTable, "api_key", &cfg.APIKey)
+	global.db.Get(LLMTable, "endpoint", &cfg.Endpoint)
+	global.db.Get(LLMTable, "context_size", &cfg.ContextSize)
+	global.db.Get(LLMTable, "disable_thinking", &cfg.DisableThinking)
+	global.db.Get(LLMTable, "native_tools", &cfg.NativeTools)
+	global.db.Get(LLMTable, "ollama_max_parallel", &cfg.OllamaMaxParallel)
 	var timeout_seconds int
-	global.db.Get(llm_table, "request_timeout_seconds", &timeout_seconds)
+	global.db.Get(LLMTable, "request_timeout_seconds", &timeout_seconds)
 	if timeout_seconds > 0 {
 		cfg.RequestTimeout = time.Duration(timeout_seconds) * time.Second
 	}
@@ -796,22 +786,22 @@ func load_llm_config() LLMProviderConfig {
 // load_lead_llm_config reads the stored Lead LLM configuration from the database.
 func load_lead_llm_config() LLMProviderConfig {
 	var cfg LLMProviderConfig
-	global.db.Get(lead_llm_table, "provider", &cfg.Provider)
-	global.db.Get(lead_llm_table, "model", &cfg.Model)
-	global.db.Get(lead_llm_table, "api_key", &cfg.APIKey)
-	global.db.Get(lead_llm_table, "endpoint", &cfg.Endpoint)
-	global.db.Get(lead_llm_table, "disable_thinking", &cfg.DisableThinking)
-	global.db.Get(lead_llm_table, "native_tools", &cfg.NativeTools)
+	global.db.Get(LeadLLMTable, "provider", &cfg.Provider)
+	global.db.Get(LeadLLMTable, "model", &cfg.Model)
+	global.db.Get(LeadLLMTable, "api_key", &cfg.APIKey)
+	global.db.Get(LeadLLMTable, "endpoint", &cfg.Endpoint)
+	global.db.Get(LeadLLMTable, "disable_thinking", &cfg.DisableThinking)
+	global.db.Get(LeadLLMTable, "native_tools", &cfg.NativeTools)
 	// Lead uses the same scheduler cap as primary when both point at
 	// Ollama (global process-level limiter).
-	global.db.Get(llm_table, "ollama_max_parallel", &cfg.OllamaMaxParallel)
+	global.db.Get(LLMTable, "ollama_max_parallel", &cfg.OllamaMaxParallel)
 	return cfg
 }
 
 // ImageProvider returns the configured image generation provider.
 func ImageProvider() string {
 	var provider string
-	global.db.Get(image_table, "provider", &provider)
+	global.db.Get(ImageTable, "provider", &provider)
 	if provider == "" {
 		return "gemini"
 	}
@@ -822,7 +812,7 @@ func ImageProvider() string {
 // Checks the dedicated image key first, then LLM configs.
 func GeminiAPIKey() string {
 	var imageKey string
-	global.db.Get(image_table, "api_key", &imageKey)
+	global.db.Get(ImageTable, "api_key", &imageKey)
 	if imageKey != "" {
 		return imageKey
 	}
@@ -843,7 +833,7 @@ func GeminiAPIKey() string {
 func OpenAIAPIKey() string {
 	// Dedicated image generation key (set in --setup → Image Generation).
 	var imageKey string
-	global.db.Get(image_table, "api_key", &imageKey)
+	global.db.Get(ImageTable, "api_key", &imageKey)
 	if imageKey != "" {
 		return imageKey
 	}

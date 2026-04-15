@@ -58,6 +58,32 @@ func (c *openAIClient) isOllama() bool {
 	return c.ollama
 }
 
+// Ping implements the Pinger interface. For Ollama it issues a bounded
+// GET /api/ps which returns immediately regardless of whether a
+// generation is currently in flight — so the caller can distinguish
+// "server down" from "server busy" without waiting on the chat queue.
+// For non-Ollama backends it currently returns nil (no queue-wait
+// problem to work around); real reachability is still validated by the
+// subsequent chat call.
+func (c *openAIClient) Ping(ctx context.Context) error {
+	if !c.ollama {
+		return nil
+	}
+	req, err := c.api.NewRequestWithContext(ctx, "GET", "/api/ps")
+	if err != nil {
+		return err
+	}
+	resp, err := c.api.SendRawRequest("", req)
+	if err != nil {
+		return fmt.Errorf("ollama unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("ollama /api/ps returned %s", resp.Status)
+	}
+	return nil
+}
+
 // NewOpenAILLM creates an LLM client for OpenAI (ChatGPT) using the default HTTP client.
 func NewOpenAILLM(apiKey string, model string) LLM {
 	return newOpenAILLM(apiKey, model, openAIEndpoint, nil)
