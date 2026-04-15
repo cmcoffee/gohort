@@ -47,7 +47,8 @@ func (T *HelloAgent) Main() (err error) {
 		return
 	}
 
-	resp, err := T.WorkerChat(
+	session := T.CreateSession(WORKER)
+	resp, err := session.Chat(
 		context.Background(),
 		[]Message{{Role: "user", Content: fmt.Sprintf("Write a short, creative greeting for someone named %s. Keep it to 1-2 sentences.", T.input.name)}},
 		WithSystemPrompt("You are a friendly greeter. Respond with just the greeting, nothing else."),

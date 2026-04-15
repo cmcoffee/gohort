@@ -9,12 +9,14 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/editor"
 	"github.com/cmcoffee/gohort/core/webui"
 )
 
 const (
-	snippetTable  = "codewriter_snippets"
-	valueTable = "codewriter_values"
+	snippetTable = "codewriter_snippets"
+	valueTable   = "codewriter_values"
+	contextTable = "codewriter_contexts"
 )
 
 // SnippetRecord stores a saved code snippet with optional variables.
@@ -25,6 +27,14 @@ type SnippetRecord struct {
 	Code string            `json:"code"`
 	Vars map[string]string `json:"vars"` // variable_name -> substitution text
 	Date string            `json:"date"`
+}
+
+// ContextRecord stores a saved context block (reference schemas/docs/notes).
+type ContextRecord struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Body string `json:"body"`
+	Date string `json:"date"`
 }
 
 // SavedValue is a named snippet of text the user can paste into scripts.
@@ -56,8 +66,8 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			AppName:  "CodeWriter",
 			Prefix:   prefix,
 			BodyHTML: cwBody,
-			AppCSS:   cwCSS,
-			AppJS:    cwJS,
+			AppCSS:   editor.DiffCSS() + cwCSS,
+			AppJS:    editor.UtilsJS() + editor.DiffJS() + cwJS,
 		}))
 	})
 	sub.HandleFunc("/api/chat", T.handleChat)
@@ -65,7 +75,10 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/snippet/", T.handleSnippet)
 	sub.HandleFunc("/api/values", T.handleValues)
 	sub.HandleFunc("/api/value/", T.handleValue)
+	sub.HandleFunc("/api/contexts", T.handleContexts)
+	sub.HandleFunc("/api/context/", T.handleContext)
 	MountSubMux(mux, prefix, sub)
+	RegisterUserDataHandler(&codeWriterUserData{agent: T})
 }
 
 // handleChat receives the current editor code + a chat message, sends to the
@@ -84,17 +97,27 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	is_regex := req.Lang == "regex"
+
 	var code_context string
 	if req.Context != "" {
-		code_context = fmt.Sprintf("\n\nReference context (table schemas, docs, notes):\n```\n%s\n```", req.Context)
+		label := "Reference context (table schemas, docs, notes)"
+		if is_regex {
+			label = "Target description (what the pattern should match)"
+		}
+		code_context = fmt.Sprintf("\n\n%s:\n```\n%s\n```", label, req.Context)
 	}
 	if req.Code != "" {
 		lang := req.Lang
 		if lang == "" {
 			lang = "code"
 		}
-		code_context += fmt.Sprintf("\n\nCurrent script (%s):\n```%s\n%s\n```", req.Name, lang, req.Code)
-	} else if req.Name != "" {
+		if is_regex {
+			code_context += fmt.Sprintf("\n\nTest samples (one per line; lines prefixed `+` should match, `-` should not match, unprefixed are ambiguous):\n```\n%s\n```", req.Code)
+		} else {
+			code_context += fmt.Sprintf("\n\nCurrent script (%s):\n```%s\n%s\n```", req.Name, lang, req.Code)
+		}
+	} else if req.Name != "" && !is_regex {
 		code_context += fmt.Sprintf("\n\nScript name: %s\n(Editor is empty -- this is a new script.)", req.Name)
 	}
 
@@ -102,21 +125,16 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Build system prompt with selected language hint and available value sets.
 	system_prompt := T.SystemPrompt()
-	if req.Lang != "" {
+	if is_regex {
+		system_prompt += "\n\nThe user is building a regular expression. The editor holds test samples (one per line; `+` prefix = should match, `-` prefix = should not match). The context holds a plain-English description of what the pattern should match. Return a single regex in a fenced ```regex block, then a short explanation naming each capture group and why each sample matches or doesn't. Default to PCRE-compatible syntax unless the user specifies a flavor (ERE, Go re2, JavaScript, etc.). Do not wrap the regex in delimiters like /.../ unless the user asked for a specific language's literal syntax."
+	} else if req.Lang != "" {
 		system_prompt += fmt.Sprintf("\n\nThe user is currently working in %s. Default to %s for code output unless they specify otherwise.", req.Lang, req.Lang)
 	}
 	system_prompt += T.buildValuePrompt()
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
-
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer pingCancel()
-	if err := agent.PingLLM(pingCtx); err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
-	resp, err := agent.WorkerChat(context.Background(), []Message{
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(context.Background(), []Message{
 		{Role: "user", Content: prompt},
 	}, WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithThink(false))
 
@@ -182,15 +200,19 @@ func (T *CodeWriterAgent) handleSnippets(w http.ResponseWriter, r *http.Request)
 }
 
 func (T *CodeWriterAgent) handleListSnippets(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, "[]")
 		return
 	}
 	var items []SnippetRecord
-	for _, key := range T.DB.Keys(snippetTable) {
+	for _, key := range udb.Keys(snippetTable) {
 		var rec SnippetRecord
-		if T.DB.Get(snippetTable, key, &rec) {
+		if udb.Get(snippetTable, key, &rec) {
 			items = append(items, rec)
 		}
 	}
@@ -202,7 +224,11 @@ func (T *CodeWriterAgent) handleListSnippets(w http.ResponseWriter, r *http.Requ
 }
 
 func (T *CodeWriterAgent) handleSaveSnippet(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
@@ -219,29 +245,33 @@ func (T *CodeWriterAgent) handleSaveSnippet(w http.ResponseWriter, r *http.Reque
 		req.ID = UUIDv4()
 	}
 	req.Date = time.Now().Format(time.RFC3339)
-	T.DB.Set(snippetTable, req.ID, req)
+	udb.Set(snippetTable, req.ID, req)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(req)
 }
 
 // handleSnippet handles GET (load) and DELETE for /api/snippet/{id}.
 func (T *CodeWriterAgent) handleSnippet(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/snippet/")
-	if id == "" || T.DB == nil {
+	if id == "" || udb == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		var rec SnippetRecord
-		if !T.DB.Get(snippetTable, id, &rec) {
+		if !udb.Get(snippetTable, id, &rec) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rec)
 	case http.MethodDelete:
-		T.DB.Unset(snippetTable, id)
+		udb.Unset(snippetTable, id)
 		w.WriteHeader(http.StatusOK)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -253,17 +283,21 @@ func (T *CodeWriterAgent) handleSnippet(w http.ResponseWriter, r *http.Request) 
 // --- Saved Values ---
 
 func (T *CodeWriterAgent) handleValues(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
-		if T.DB == nil {
+		if udb == nil {
 			w.Header().Set("Content-Type", "application/json")
 			fmt.Fprint(w, "[]")
 			return
 		}
 		var items []SavedValue
-		for _, key := range T.DB.Keys(valueTable) {
+		for _, key := range udb.Keys(valueTable) {
 			var rec SavedValue
-			if T.DB.Get(valueTable, key, &rec) {
+			if udb.Get(valueTable, key, &rec) {
 				items = append(items, rec)
 			}
 		}
@@ -274,7 +308,7 @@ func (T *CodeWriterAgent) handleValues(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(items)
 
 	case http.MethodPost:
-		if T.DB == nil {
+		if udb == nil {
 			http.Error(w, "no database", http.StatusInternalServerError)
 			return
 		}
@@ -291,7 +325,7 @@ func (T *CodeWriterAgent) handleValues(w http.ResponseWriter, r *http.Request) {
 			req.ID = UUIDv4()
 		}
 		req.Date = time.Now().Format(time.RFC3339)
-		T.DB.Set(valueTable, req.ID, req)
+		udb.Set(valueTable, req.ID, req)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(req)
 
@@ -301,28 +335,112 @@ func (T *CodeWriterAgent) handleValues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *CodeWriterAgent) handleValue(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/value/")
-	if id == "" || T.DB == nil {
+	if id == "" || udb == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		var rec SavedValue
-		if !T.DB.Get(valueTable, id, &rec) {
+		if !udb.Get(valueTable, id, &rec) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rec)
 	case http.MethodDelete:
-		T.DB.Unset(valueTable, id)
+		udb.Unset(valueTable, id)
 		w.WriteHeader(http.StatusOK)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
+// --- Saved Contexts ---
+
+func (T *CodeWriterAgent) handleContexts(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if udb == nil {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, "[]")
+			return
+		}
+		var items []ContextRecord
+		for _, key := range udb.Keys(contextTable) {
+			var rec ContextRecord
+			if udb.Get(contextTable, key, &rec) {
+				items = append(items, rec)
+			}
+		}
+		if items == nil {
+			items = []ContextRecord{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(items)
+
+	case http.MethodPost:
+		if udb == nil {
+			http.Error(w, "no database", http.StatusInternalServerError)
+			return
+		}
+		var req ContextRecord
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if req.ID == "" {
+			req.ID = UUIDv4()
+		}
+		req.Date = time.Now().Format(time.RFC3339)
+		udb.Set(contextTable, req.ID, req)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (T *CodeWriterAgent) handleContext(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/context/")
+	if id == "" || udb == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		var rec ContextRecord
+		if !udb.Get(contextTable, id, &rec) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rec)
+	case http.MethodDelete:
+		udb.Unset(contextTable, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
 
 const cwCSS = `
 body { height: 100vh; display: flex; flex-direction: column; }
@@ -349,6 +467,7 @@ body { height: 100vh; display: flex; flex-direction: column; }
 
 #editor-pane {
   flex: 1; display: flex; flex-direction: column; border-right: 1px solid var(--border);
+  min-width: 0; /* allow flex shrinkage when diff content is wide */
 }
 #editor {
   flex: 1; background: var(--bg-0); color: var(--text); border: none; resize: none;
@@ -366,15 +485,30 @@ body { height: 100vh; display: flex; flex-direction: column; }
 #context-pane {
   display: none; border-top: 1px solid var(--border);
 }
-#context-pane.open { display: flex; flex-direction: column; min-height: 120px; max-height: 40%; }
+#context-pane.open { display: flex; flex-direction: column; height: 180px; min-height: 60px; max-height: 85%; }
+#context-resizer {
+  height: 5px; background: var(--border); cursor: row-resize; flex-shrink: 0;
+}
+#context-resizer:hover, #context-resizer.dragging { background: var(--accent); }
+#context-toggle .ctx-actions { margin-left: auto; display: flex; align-items: center; gap: 0.3rem; }
+#context-toggle .ctx-btn {
+  background: transparent; border: 1px solid var(--border); color: var(--text-mute);
+  border-radius: 3px; padding: 0.1rem 0.5rem; cursor: pointer; font-size: 0.7rem;
+}
+#context-toggle .ctx-btn:hover { color: var(--text-hi); border-color: var(--text-mute); }
+#context-toggle #context-current { color: var(--accent); font-size: 0.75rem; margin-left: 0.4rem; }
 #context-pane textarea {
   flex: 1; background: var(--bg-0); color: var(--text); border: none; resize: none;
   padding: 0.75rem 1rem; font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 0.8rem; line-height: 1.5; outline: none;
 }
 
+#chat-resizer {
+  width: 5px; background: var(--border); cursor: col-resize; flex-shrink: 0;
+}
+#chat-resizer:hover, #chat-resizer.dragging { background: var(--accent); }
 #chat-pane {
-  width: 520px; display: flex; flex-direction: column; background: var(--bg-1);
+  width: 520px; display: flex; flex-direction: column; background: var(--bg-1); flex-shrink: 0;
 }
 #chat-header {
   padding: 0.5rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.85rem;
@@ -404,10 +538,12 @@ body { height: 100vh; display: flex; flex-direction: column; }
 
 #chat-input-area {
   display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border);
+  align-items: flex-end;
 }
 #chat-input {
   flex: 1; background: var(--bg-0); border: 1px solid var(--border); color: var(--text);
   padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem;
+  font-family: inherit; resize: vertical; min-height: 38px; max-height: 200px;
 }
 #chat-input:focus { border-color: var(--accent); outline: none; }
 #chat-send {
@@ -490,6 +626,29 @@ body { height: 100vh; display: flex; flex-direction: column; }
 #val-modal .btns { display: flex; gap: 0.5rem; margin-top: 1rem; justify-content: flex-end; }
 #val-modal .btns button { padding: 0.35rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
 
+/* Contexts modal */
+#ctx-modal {
+  display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+  padding: 1.25rem; width: 90%; max-width: 550px; z-index: 101; max-height: 85vh; overflow-y: auto;
+}
+#ctx-modal h3 { margin: 0 0 0.75rem; font-size: 1rem; color: var(--text-hi); }
+#ctx-modal .ctx-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: 0.4rem; cursor: pointer; background: var(--bg-0);
+}
+#ctx-modal .ctx-item:hover { border-color: var(--accent); }
+#ctx-modal .ctx-item .info { flex: 1; }
+#ctx-modal .ctx-item .title { color: var(--text-hi); font-weight: 600; font-size: 0.85rem; }
+#ctx-modal .ctx-item .meta { color: var(--text-mute); font-size: 0.75rem; }
+#ctx-modal .ctx-item .del-btn {
+  background: none; border: none; color: var(--text-mute); cursor: pointer; font-size: 0.85rem;
+}
+#ctx-modal .ctx-item .del-btn:hover { color: var(--danger); }
+#ctx-modal .btns { display: flex; gap: 0.5rem; margin-top: 1rem; justify-content: flex-end; }
+#ctx-modal .btns button { padding: 0.35rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+
 /* Value editor modal */
 #val-edit-modal {
   display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -512,13 +671,15 @@ body { height: 100vh; display: flex; flex-direction: column; }
 @media (max-width: 700px) {
   #main { flex-direction: column; }
   #editor-pane { border-right: none; border-bottom: 1px solid var(--border); min-height: 40%; }
-  #chat-pane { width: 100%; }
+  #chat-pane { width: 100% !important; }
+  #chat-resizer { display: none; }
   #snippets-panel { width: 90%; }
 }
 `
 
 const cwBody = `
 <div id="toolbar">
+  <span class="app-title">CodeWriter</span>
   <button class="secondary" onclick="showSnippets()">Snippets</button>
   <input id="script-name" type="text" placeholder="Script name...">
   <select id="lang-select">
@@ -527,12 +688,17 @@ const cwBody = `
     <option value="python">python</option>
     <option value="powershell">powershell</option>
     <option value="go">go</option>
+    <option value="regex">regex</option>
     <option value="">other</option>
   </select>
   <button onclick="saveSnippet()">Save</button>
+  <button class="secondary" onclick="copyEditor(this)">Copy</button>
+  <button class="secondary" onclick="importEditor()">Import</button>
   <button class="secondary" onclick="setVariables()">Variables</button>
   <button class="secondary" onclick="showValues()">Values</button>
   <button class="secondary" onclick="newScript()">New</button>
+  <input id="editor-file" type="file" style="display:none" onchange="handleImport(event, 'editor')">
+  <input id="context-file" type="file" style="display:none" onchange="handleImport(event, 'context-editor')">
 </div>
 <div id="main">
   <div id="editor-pane">
@@ -544,9 +710,16 @@ Edit it directly, ask for changes, save it for later.
 Use {{VARIABLE_NAME}} placeholders for reusable values.
 Example: SELECT * FROM {{TABLE}} WHERE {{COLUMN}} = '{{VALUE}}'"></textarea>
     <div id="context-toggle" onclick="toggleContext()">
-      <span class="arrow" id="context-arrow">&#9654;</span> Context (table schemas, reference docs, notes)
+      <span class="arrow open" id="context-arrow">&#9654;</span> Context (table schemas, reference docs, notes)
+      <span class="ctx-actions">
+        <button class="ctx-btn" onclick="event.stopPropagation(); saveContext()">Save</button>
+        <button class="ctx-btn" onclick="event.stopPropagation(); showContexts()">Load</button>
+        <button class="ctx-btn" onclick="event.stopPropagation(); importContext()">Import</button>
+        <span id="context-current"></span>
+      </span>
     </div>
-    <div id="context-pane">
+    <div id="context-pane" class="open">
+      <div id="context-resizer" onmousedown="startContextResize(event)"></div>
       <textarea id="context-editor" placeholder="Paste table schemas, DDL, column descriptions, API docs, or any reference material here.
 
 The LLM reads this alongside the editor when you chat.
@@ -556,6 +729,7 @@ Example:
   orders (id INT PK, user_id INT FK->users.id, total DECIMAL, status ENUM('pending','paid','shipped'))"></textarea>
     </div>
   </div>
+  <div id="chat-resizer" onmousedown="startChatResize(event)"></div>
   <div id="chat-pane">
     <div id="chat-header">
       <span>Chat</span>
@@ -563,7 +737,7 @@ Example:
     </div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <input id="chat-input" type="text" placeholder="Ask the LLM to write or modify code..." onkeydown="if(event.key==='Enter')sendChat()">
+      <textarea id="chat-input" rows="1" placeholder="Ask the LLM to write or modify code... (Enter to send, Shift+Enter for newline)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
       <button id="chat-send" onclick="sendChat()">Send</button>
     </div>
   </div>
@@ -577,7 +751,7 @@ Example:
   <div id="var-preview" class="preview"></div>
   <div class="btns">
     <button class="secondary" onclick="hideVarModal()">Cancel</button>
-    <button onclick="applyVars()">Apply</button>
+    <button id="var-modal-submit" onclick="applyVars()">Apply</button>
   </div>
 </div>
 
@@ -601,6 +775,14 @@ Example:
   <div class="btns">
     <button class="secondary" onclick="hideValEditModal()">Cancel</button>
     <button onclick="saveValue()">Save</button>
+  </div>
+</div>
+
+<div id="ctx-modal">
+  <h3>Saved Contexts</h3>
+  <div id="ctx-list"></div>
+  <div class="btns">
+    <button class="secondary" onclick="hideCtxModal()">Close</button>
   </div>
 </div>
 `
@@ -667,11 +849,106 @@ function sendChat() {
   chatAPI(msg);
 }
 
+var currentContextId = null;
+var currentContextName = null;
+
+function setCurrentContext(id, name) {
+  currentContextId = id;
+  currentContextName = name;
+  var el = document.getElementById('context-current');
+  el.textContent = name ? '[' + name + ']' : '';
+}
+
+function saveContext() {
+  var body = document.getElementById('context-editor').value;
+  if (!body.trim()) { alert('Context is empty.'); return; }
+  var name = prompt('Name this context:', currentContextName || '');
+  if (!name) return;
+  name = name.trim();
+  if (!name) return;
+  fetch('api/contexts', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: currentContextId, name: name, body: body})
+  }).then(function(r) { return r.json(); }).then(function(rec) {
+    setCurrentContext(rec.id, rec.name);
+  }).catch(function() { alert('Save failed.'); });
+}
+
+function showContexts() {
+  fetch('api/contexts').then(function(r) { return r.json(); }).then(function(items) {
+    var list = document.getElementById('ctx-list');
+    if (!items.length) {
+      list.innerHTML = '<div style="color:var(--text-mute);font-size:0.85rem;">No saved contexts.</div>';
+    } else {
+      items.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+      list.innerHTML = items.map(function(it) {
+        var date = it.date ? new Date(it.date).toLocaleDateString() : '';
+        return '<div class="ctx-item" data-id="' + escapeHtml(it.id) + '" data-name="' + escapeHtml(it.name) + '">' +
+          '<div class="info"><div class="title">' + escapeHtml(it.name) + '</div>' +
+          '<div class="meta">' + escapeHtml(date) + '</div></div>' +
+          '<button class="del-btn" onclick="event.stopPropagation(); deleteContext(\'' + escapeHtml(it.id) + '\')">&times;</button></div>';
+      }).join('');
+      Array.prototype.forEach.call(list.querySelectorAll('.ctx-item'), function(el) {
+        el.addEventListener('click', function() { loadContext(el.dataset.id); });
+      });
+    }
+    document.getElementById('ctx-modal').style.display = 'block';
+    document.getElementById('overlay').style.display = 'block';
+  });
+}
+
+function hideCtxModal() {
+  document.getElementById('ctx-modal').style.display = 'none';
+  document.getElementById('overlay').style.display = 'none';
+}
+
+function loadContext(id) {
+  fetch('api/context/' + encodeURIComponent(id))
+    .then(function(r) { if (!r.ok) throw new Error('load'); return r.json(); })
+    .then(function(rec) {
+      document.getElementById('context-editor').value = rec.body || '';
+      setCurrentContext(rec.id, rec.name);
+      var pane = document.getElementById('context-pane');
+      if (!pane.classList.contains('open')) toggleContext();
+      hideCtxModal();
+    }).catch(function() { alert('Load failed.'); });
+}
+
+function deleteContext(id) {
+  if (!confirm('Delete this saved context?')) return;
+  fetch('api/context/' + encodeURIComponent(id), {method: 'DELETE'})
+    .then(function() {
+      if (currentContextId === id) setCurrentContext(null, null);
+      showContexts();
+    });
+}
+
 function toggleContext() {
   var pane = document.getElementById('context-pane');
   var arrow = document.getElementById('context-arrow');
   pane.classList.toggle('open');
   arrow.classList.toggle('open');
+}
+
+function startChatResize(e) {
+  editorStartResize(e, 'col', {
+    target:    document.getElementById('chat-pane'),
+    container: document.getElementById('main'),
+    resizer:   document.getElementById('chat-resizer'),
+    min:       240,
+    pad:       200
+  });
+}
+
+function startContextResize(e) {
+  editorStartResize(e, 'row', {
+    target:    document.getElementById('context-pane'),
+    container: document.getElementById('editor-pane'),
+    resizer:   document.getElementById('context-resizer'),
+    min:       60,
+    pad:       80
+  });
 }
 
 function chatAPI(message) {
@@ -693,13 +970,24 @@ function chatAPI(message) {
   }).then(function(data) {
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
-    if (data.type === 'code' && data.code) {
-      var html = formatChat(data.content);
-      html += ' <button class="apply-btn" onclick="applyCode(this)">Apply to Editor</button>';
-      addChatMsg('assistant', html, data.code);
-    } else {
-      addChatMsg('assistant', formatChat(data.content));
+    var html = formatChat(data.content);
+    var copyPayload = (data.code && data.code.length) ? data.code : data.content;
+    if (data.type === 'code' && data.code && lang !== 'regex') {
+      var currentEditor = document.getElementById('editor').value || '';
+      var stats = editorDiffStats(currentEditor, data.code);
+      html += '<div class="editor-diff-actions">' +
+        '<span class="editor-diff-summary">Proposed changes ready in editor (+' +
+        stats.add + ' -' + stats.remove + ')</span>' +
+        '</div>';
+      editorShowDiff({
+        newText: data.code,
+        onApply: function(text) {
+          document.getElementById('editor').value = text;
+        }
+      });
     }
+    html += ' <button class="apply-btn" onclick="copyCode(this)">Copy</button>';
+    addChatMsg('assistant', html, copyPayload);
   }).catch(function(err) {
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
@@ -707,15 +995,73 @@ function chatAPI(message) {
   });
 }
 
-function applyCode(btn) {
-  var msg = btn.closest('.chat-msg');
-  var code = msg.dataset.code;
-  if (code) {
-    document.getElementById('editor').value = code;
-    btn.textContent = 'Applied!';
-    btn.disabled = true;
-    setTimeout(function() { btn.textContent = 'Apply to Editor'; btn.disabled = false; }, 1500);
+
+function copyEditor(btn) {
+  var code = document.getElementById('editor').value || '';
+  if (!code) { alert('Editor is empty.'); return; }
+  var vars = extractVars(code);
+  if (vars.length > 0) {
+    copyEditorBtn = btn;
+    document.getElementById('var-modal-title').textContent = 'Fill Variables for Copy';
+    var submit = document.getElementById('var-modal-submit');
+    submit.textContent = 'Copy';
+    submit.setAttribute('onclick', 'copyWithVars()');
+    fetch('api/values').then(function(r) { return r.json(); }).then(function(items) {
+      showVarModal(vars, items || []);
+    }).catch(function() { showVarModal(vars, []); });
+    return;
   }
+  doClipboardCopy(code, btn);
+}
+
+var copyEditorBtn = null;
+
+function copyWithVars() {
+  var code = document.getElementById('editor').value;
+  var inputs = document.querySelectorAll('#var-inputs input[data-var]');
+  for (var i = 0; i < inputs.length; i++) {
+    var v = inputs[i].getAttribute('data-var');
+    var val = inputs[i].value;
+    if (val) {
+      savedVarValues[v] = val;
+      code = code.split('{{' + v + '}}').join(val);
+    }
+  }
+  hideVarModal();
+  if (copyEditorBtn) doClipboardCopy(code, copyEditorBtn);
+  copyEditorBtn = null;
+}
+
+function doClipboardCopy(text, btn) {
+  editorClipboardButton(btn, text);
+}
+
+function copyCode(btn) {
+  var msg = btn.closest('.chat-msg');
+  editorClipboardButton(btn, msg.dataset.code || '');
+}
+
+function importEditor() {
+  document.getElementById('editor-file').click();
+}
+
+function importContext() {
+  var pane = document.getElementById('context-pane');
+  if (!pane.classList.contains('open')) toggleContext();
+  document.getElementById('context-file').click();
+}
+
+function handleImport(event, targetId) {
+  editorImportTextFile(event, {
+    onLoad: function(text, file) {
+      var target = document.getElementById(targetId);
+      if (!editorApplyImportedText(target, text, file.name)) return;
+      if (targetId === 'editor') {
+        var nameEl = document.getElementById('script-name');
+        if (!nameEl.value.trim()) nameEl.value = file.name.replace(/\.[^.]+$/, '');
+      }
+    }
+  });
 }
 
 // --- Save / Load ---
@@ -843,6 +1189,11 @@ function setVariables() {
     addChatMsg('assistant', 'No <code>{{VARIABLE}}</code> placeholders found in the editor. Add placeholders like <code>{{TABLE_NAME}}</code> or <code>{{HOST}}</code> to use variables.');
     return;
   }
+  document.getElementById('var-modal-title').textContent = 'Set Variables';
+  var submit = document.getElementById('var-modal-submit');
+  submit.textContent = 'Apply';
+  submit.setAttribute('onclick', 'applyVars()');
+  copyEditorBtn = null;
   // Fetch saved values so we can offer them as options.
   fetch('api/values').then(function(r) { return r.json(); }).then(function(items) {
     showVarModal(vars, items || []);

@@ -1,0 +1,146 @@
+/* editor-diff — shared line-diff widget used in chat messages that
+ * preview an "apply" operation. Designed to sit inline in a chat
+ * message bubble: max-height + scroll prevents very large diffs from
+ * overtaking the chat pane. Uses the existing gohort color palette. */
+
+.editor-diff {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 0.4rem 0.1rem;
+  margin: 0.5rem 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.editor-diff > div {
+  display: flex;
+  gap: 0.4rem;
+  padding: 0 0.5rem;
+}
+
+.editor-diff-marker {
+  display: inline-block;
+  width: 1ch;
+  color: #6e7681;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.editor-diff-text {
+  flex: 1;
+  white-space: pre;
+  min-width: 0;
+}
+
+.editor-diff-equal {
+  color: #8b949e;
+}
+
+.editor-diff-add {
+  background: rgba(46, 160, 67, 0.15);
+  color: #3fb950;
+}
+.editor-diff-add .editor-diff-marker { color: #3fb950; }
+
+.editor-diff-remove {
+  background: rgba(248, 81, 73, 0.15);
+  color: #f85149;
+}
+.editor-diff-remove .editor-diff-marker { color: #f85149; }
+
+/* Buttons that sit below a diff (Apply, Dismiss). Inherits base
+ * button styles from the app; this just provides spacing + alignment
+ * so the author-facing actions are obvious below the diff. */
+.editor-diff-actions {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.3rem 0 0;
+  align-items: center;
+}
+.editor-diff-actions .editor-diff-summary {
+  font-size: 0.75rem;
+  color: #8b949e;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  margin-right: auto;
+}
+
+/* #editor-diff-pane — the in-editor review surface that temporarily
+ * replaces the textarea when editorShowDiff opens. Fills the editor
+ * pane's flex slot so the page layout doesn't reflow.
+ *
+ * min-width:0 + overflow:hidden are critical: without them, long
+ * unwrapped diff lines (white-space: pre) push the parent editor-pane
+ * past its flex share and the chat-pane gets clipped off the right
+ * side by #main's overflow:hidden. These two rules let the diff pane
+ * honor its flex basis and keep its overflow contained to its
+ * internal scroll body instead of bleeding into the page layout. */
+#editor-diff-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #0d1117;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+#editor-diff-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  flex-shrink: 0;
+}
+.editor-diff-pane-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #c9d1d9;
+}
+.editor-diff-pane-stats {
+  font-size: 0.75rem;
+  color: #8b949e;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  margin-right: auto;
+}
+.editor-diff-pane-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.editor-diff-pane-btn.primary {
+  background: #238636;
+  color: #fff;
+}
+.editor-diff-pane-btn.primary:hover { background: #2ea043; }
+.editor-diff-pane-btn.secondary {
+  background: transparent;
+  border: 1px solid #30363d;
+  color: #8b949e;
+}
+.editor-diff-pane-btn.secondary:hover {
+  color: #c9d1d9;
+  border-color: #484f58;
+}
+#editor-diff-pane-body {
+  flex: 1;
+  overflow: auto;
+  padding: 0.5rem 0;
+  min-width: 0;
+  min-height: 0;
+}
+#editor-diff-pane-body .editor-diff {
+  max-height: none;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  padding: 0.25rem 0;
+}

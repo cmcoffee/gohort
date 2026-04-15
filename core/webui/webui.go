@@ -12,10 +12,12 @@ package webui
 
 import (
 	"embed"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"net/http"
 	"strings"
+	"sync"
 )
 
 //go:embed static
@@ -33,7 +35,47 @@ func asset(name string) string {
 
 // BaseCSS returns the shared dark theme CSS used by all apps. Apps may
 // append their own styles via PageOpts.AppCSS for app-specific tweaks.
-func BaseCSS() string { return asset("base.css") }
+// Includes self-hosted font @font-face declarations so app headers can
+// reference 'Space Grotesk' without loading anything external.
+func BaseCSS() string { return fontFaceCSS() + asset("base.css") }
+
+var (
+	fontFaceOnce sync.Once
+	fontFaceStr  string
+)
+
+// FontFaceCSS returns the @font-face declaration for Orbitron Bold
+// (700), with the font binary inlined as a base64 data URL. No
+// external HTTP request and no dependency on ServeAssets being wired.
+// Size: ~9KB of base64 text. Loaded once and memoized.
+//
+// Exposed for apps that render their own HTML templates (without
+// going through RenderPage) — they can inject this into their own
+// <style> block or <head> to pick up the shared header font.
+func FontFaceCSS() string { return fontFaceCSS() }
+
+func fontFaceCSS() string {
+	fontFaceOnce.Do(func() {
+		raw, err := staticFS.ReadFile("static/fonts/orbitron-700-latin.woff2")
+		if err != nil {
+			// Missing font asset is non-fatal — pages render with
+			// system font fallback. Log via panic-on-asset is too
+			// strong for a stylistic enhancement.
+			fontFaceStr = ""
+			return
+		}
+		encoded := base64.StdEncoding.EncodeToString(raw)
+		fontFaceStr = "@font-face{" +
+			"font-family:'Orbitron';" +
+			"font-style:normal;" +
+			"font-weight:700;" +
+			"font-display:swap;" +
+			"src:url(data:font/woff2;base64," + encoded + ") format('woff2');" +
+			"unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;" +
+			"}\n"
+	})
+	return fontFaceStr
+}
 
 // BaseJS returns the shared utility JS — access-control check that
 // hides Push-to-TechWriter buttons, live session ribbon polling, and

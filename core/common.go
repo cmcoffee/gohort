@@ -94,15 +94,21 @@ func (T *FuzzAgent) RequireLLM() error {
 	return nil
 }
 
-// PingLLM performs a quick connectivity check against the worker LLM.
+// PingLLM performs a connectivity check against the worker LLM.
 // Returns an error if the LLM is unreachable or the call fails.
 // Use this at the start of long-running pipelines to fail fast instead of
 // burning through every step with the same connection error.
+//
+// The internal timeout is intentionally generous (5 minutes) because
+// the ping is queued by the Ollama fair-queueing scheduler and may
+// have to wait behind an in-flight long-running call. A "fast fail"
+// timeout shorter than realistic queue waits would produce false
+// negatives whenever any real work is in progress.
 func (T *FuzzAgent) PingLLM(ctx context.Context) error {
 	if T.LLM == nil {
 		return fmt.Errorf("LLM not configured")
 	}
-	ping_ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ping_ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	_, err := T.LLM.Chat(ping_ctx, []Message{
 		{Role: "user", Content: "ping"},
@@ -136,6 +142,76 @@ func (T *FuzzAgent) GetLeadLLM() LLM {
 		return T.LeadLLM
 	}
 	return T.LLM
+}
+
+// LLMTier selects which LLM tier a Session routes to. Worker is the
+// primary/local tier; Lead is the precision/judge tier (which may
+// fall back to Worker if not configured separately).
+type LLMTier int
+
+const (
+	WORKER LLMTier = iota
+	LEAD
+)
+
+// Session is a logical unit of LLM work tagged with a unique caller
+// ID. Every call through the session carries the same UUID, so the
+// Ollama fair-queueing scheduler treats them as one caller competing
+// fairly against other concurrent sessions.
+//
+// Create a session per logical unit of work (pipeline run, user chat,
+// batch job). Two users chatting at once → two sessions → round-robin
+// fairness. A pipeline fanning out 10 worker calls → one session →
+// all share a queue, other sessions still get turns between them.
+//
+// Pick the tier at creation via CreateSession(WORKER) or
+// CreateSession(LEAD). If both tiers point at the same Ollama
+// endpoint, create one session per tier so each gets its own queue
+// identity (competing as separate callers for the same GPU).
+type Session struct {
+	CallerID string
+	Tier     LLMTier
+	agent    *FuzzAgent
+}
+
+// CreateSession returns a new LLM session for the given tier with a
+// fresh UUID as the caller ID.
+func (T *FuzzAgent) CreateSession(tier LLMTier) *Session {
+	return &Session{CallerID: UUIDv4(), Tier: tier, agent: T}
+}
+
+// Chat dispatches to WorkerChat or LeadChat based on the session's
+// tier, with the session's caller ID prepended. Any explicit
+// WithCaller later in opts overrides it.
+func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	opts = prependCaller(s.CallerID, opts)
+	if s.Tier == LEAD {
+		return s.agent.LeadChat(ctx, messages, opts...)
+	}
+	return s.agent.WorkerChat(ctx, messages, opts...)
+}
+
+// ChatStream dispatches to the tier's LLM ChatStream with the
+// session's caller ID attached. For LEAD, falls back to the worker
+// LLM if GetLeadLLM returns nil.
+func (s *Session) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	opts = prependCaller(s.CallerID, opts)
+	var llm LLM
+	if s.Tier == LEAD {
+		llm = s.agent.GetLeadLLM()
+	} else {
+		llm = s.agent.LLM
+	}
+	return llm.ChatStream(ctx, messages, handler, opts...)
+}
+
+// prependCaller inserts WithCaller(id) at the start of opts so later
+// opts can still override via their own WithCaller.
+func prependCaller(id string, opts []ChatOption) []ChatOption {
+	out := make([]ChatOption, 0, len(opts)+1)
+	out = append(out, WithCaller(id))
+	out = append(out, opts...)
+	return out
 }
 
 // LeadChat calls the lead LLM and tallies token usage.

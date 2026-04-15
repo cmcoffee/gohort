@@ -15,9 +15,12 @@ A modular agent framework in Go for building LLM-powered applications with web d
 - **Self-registering apps** -- add a blank import, get a CLI command and web dashboard
 - **Multi-provider LLM support** -- Anthropic, OpenAI, Google Gemini, Ollama (local models)
 - **Hybrid LLM architecture** -- worker model for volume, precision model for critical decisions, with transparent fallback
+- **Ollama fair-queueing** -- configurable global parallelism cap with round-robin dispatch across caller sessions, so one app can't monopolize the local model
+- **Session API** -- `CreateSession(WORKER|LEAD)` tags each unit of LLM work with a UUID for scheduler fairness
 - **Web dashboard** -- unified UI with SSE streaming, live session tracking, task queue, and shareable links
 - **Authentication** -- cookie-based login, signup with admin approval, forgot/reset password, per-user app access, auto-lockout
-- **Administrator panel** -- user management, app permissions, default apps, system settings
+- **Per-user data isolation** -- each authenticated user gets a namespaced sub-store; admin can reassign or purge an account's data before deletion via registered `UserDataHandler`s
+- **Administrator panel** -- user management, app permissions, default apps, system settings, per-app data footprint
 - **TLS support** -- self-signed certificate generation or explicit cert/key paths
 - **Notifications** -- email alerts for signups, approvals, task completion with configurable service name and links
 - **Persistent queue** -- tasks survive server restarts with notification preferences preserved
@@ -158,6 +161,7 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 | `admin` | Administrator panel (web only) -- user management, app permissions, system settings |
 | `chat` | Interactive LLM chat with tool access and SSE streaming |
 | `techwriter` | Technical documentation co-editor |
+| `codewriter` | Script/query co-author with saved snippets, reusable values, and saved context blocks |
 
 ## Adding Private Apps
 
@@ -215,10 +219,14 @@ gohort/
 │   ├── search.go            # Search cache and source classification
 │   ├── pdf.go               # Markdown to PDF rendering
 │   ├── sse.go               # Server-Sent Events helpers
-│   └── webui/               # Shared web UI theme
+│   ├── ollama_scheduler.go  # Fair-queueing scheduler for local Ollama calls
+│   ├── userdata.go          # Per-user data namespacing + admin reassign/purge registry
+│   ├── editor/              # Shared editor primitives (clipboard, resize, import, diff widget)
+│   └── webui/               # Shared web UI theme + embedded Orbitron wordmark font
 ├── apps/                # Built-in apps
 │   ├── admin/               # Administrator panel (users, settings, status)
 │   ├── chat/                # Tool-tester chat UI
+│   ├── codewriter/          # Script/query co-author with snippets, values, and saved contexts
 │   └── techwriter/          # Technical documentation editor
 ├── tools/               # Chat tools
 │   ├── calculate/           # Arithmetic

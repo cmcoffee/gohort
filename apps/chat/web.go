@@ -497,7 +497,8 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 
 const chatBody = `
 <div id="chat-header">
-  <h1>Chat — Tool Tester</h1>
+  <span class="app-title">Chat</span>
+  <h1 style="display:none">Chat — Tool Tester</h1>
   <span id="tools-summary" onclick="toggleTools()">Loading tools…</span>
 </div>
 <div id="tools-list"></div>

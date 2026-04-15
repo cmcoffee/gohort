@@ -111,6 +111,18 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				} else {
 					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				}
+			case "data":
+				if r.Method == http.MethodGet {
+					a.handleUserDataSummary(w, r, username)
+				} else {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				}
+			case "data-action":
+				if r.Method == http.MethodPost {
+					a.handleUserDataAction(w, r, username)
+				} else {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				}
 			default:
 				http.NotFound(w, r)
 			}
@@ -315,9 +327,89 @@ func (a *AdminApp) handleDeleteUser(w http.ResponseWriter, r *http.Request, user
 		http.Error(w, "user not found", http.StatusNotFound)
 		return
 	}
+
+	// Refuse to delete if any registered app still has data for this user
+	// unless the caller confirms. The admin UI pre-runs reassign/purge
+	// via /data-action before this call.
+	if r.URL.Query().Get("force") != "1" {
+		for _, h := range RegisteredUserDataHandlers() {
+			sum := h.Describe(username)
+			for _, n := range sum.Counts {
+				if n > 0 {
+					http.Error(w, "user still has app data; resolve via data-action or pass ?force=1", http.StatusConflict)
+					return
+				}
+			}
+		}
+	}
+
 	AuthDeleteUser(a.db, username)
 	Log("[admin] user %q deleted user %q", current, username)
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleUserDataSummary returns the per-app data footprint for a user so
+// the admin UI can offer reassign/purge before deletion.
+func (a *AdminApp) handleUserDataSummary(w http.ResponseWriter, r *http.Request, username string) {
+	handlers := RegisteredUserDataHandlers()
+	out := make([]UserDataSummary, 0, len(handlers))
+	for _, h := range handlers {
+		out = append(out, h.Describe(username))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// handleUserDataAction runs reassign/anonymize/purge on a single app's
+// data for a single user. Body: {"app":"codewriter","action":"reassign","target":"other@example.com"}.
+func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, username string) {
+	var req struct {
+		App    string `json:"app"`
+		Action string `json:"action"`
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.App == "" || req.Action == "" {
+		http.Error(w, "app and action required", http.StatusBadRequest)
+		return
+	}
+	var handler UserDataHandler
+	for _, h := range RegisteredUserDataHandlers() {
+		if h.AppName() == req.App {
+			handler = h
+			break
+		}
+	}
+	if handler == nil {
+		http.Error(w, "unknown app", http.StatusNotFound)
+		return
+	}
+	var err error
+	switch req.Action {
+	case "reassign":
+		if req.Target == "" {
+			http.Error(w, "target required for reassign", http.StatusBadRequest)
+			return
+		}
+		if _, ok := AuthGetUser(a.db, req.Target); !ok {
+			http.Error(w, "target user not found", http.StatusNotFound)
+			return
+		}
+		err = handler.Reassign(username, req.Target)
+	case "anonymize":
+		err = handler.Anonymize(username)
+	case "purge":
+		err = handler.Purge(username)
+	default:
+		http.Error(w, "unknown action", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	current := AuthCurrentUser(r)
+	Log("[admin] user %q ran %s/%s on %q", current, req.App, req.Action, username)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -597,6 +689,9 @@ const adminCSS = `
 
 const adminBody = `
 <div class="admin-container">
+  <div class="section" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem">
+    <span class="app-title" style="font-size:1.4rem">Administrator</span>
+  </div>
   <div class="section">
     <h2>System Status</h2>
     <div id="status-grid" class="status-grid"></div>
@@ -980,8 +1075,77 @@ function rejectUser(username) {
 }
 
 function deleteUser(username) {
-  if (!confirm('Delete user ' + username + '?')) return;
-  fetch('api/users/' + encodeURIComponent(username), {
+  fetch('api/users/' + encodeURIComponent(username) + '/data').then(function(r) {
+    return r.ok ? r.json() : [];
+  }).then(function(summary) {
+    var hasData = summary.some(function(s) {
+      return Object.values(s.counts || {}).some(function(n) { return n > 0; });
+    });
+    if (!hasData) {
+      if (!confirm('Delete user ' + username + '? They have no app data.')) return;
+      return doDeleteUser(username);
+    }
+    showUserDataModal(username, summary);
+  });
+}
+
+function showUserDataModal(username, summary) {
+  var lines = summary.filter(function(s) {
+    return Object.values(s.counts || {}).some(function(n) { return n > 0; });
+  }).map(function(s) {
+    var parts = [];
+    for (var k in s.counts) { if (s.counts[k] > 0) parts.push(s.counts[k] + ' ' + k); }
+    return s.app + ': ' + parts.join(', ') + ' (' + (s.actions || []).join('/') + ')';
+  }).join('\n');
+
+  var msg = 'User ' + username + ' has app data:\n\n' + lines + '\n\n' +
+    'Handle each app before deleting. For each app, enter one of:\n' +
+    '  reassign:target@example.com\n' +
+    '  purge\n' +
+    '  skip (leaves data in place; delete will be blocked)\n\n' +
+    'Type "cancel" at any prompt to abort.';
+  if (!confirm(msg)) return;
+
+  var actions = [];
+  for (var i = 0; i < summary.length; i++) {
+    var s = summary[i];
+    var total = 0;
+    for (var k in s.counts) total += s.counts[k];
+    if (total === 0) continue;
+    var ans = prompt(s.app + ' (' + total + ' items, actions: ' + (s.actions || []).join('/') + '):', 'reassign:');
+    if (ans === null || ans === 'cancel') return;
+    ans = ans.trim();
+    if (ans === '' || ans === 'skip') continue;
+    if (ans.indexOf('reassign:') === 0) {
+      actions.push({app: s.app, action: 'reassign', target: ans.substring(9).trim()});
+    } else if (ans === 'purge' || ans === 'anonymize') {
+      actions.push({app: s.app, action: ans});
+    } else {
+      alert('Unrecognized: ' + ans);
+      return;
+    }
+  }
+
+  runUserDataActions(username, actions, 0);
+}
+
+function runUserDataActions(username, actions, idx) {
+  if (idx >= actions.length) {
+    if (!confirm('All actions complete. Delete user ' + username + ' now?')) return;
+    return doDeleteUser(username);
+  }
+  fetch('api/users/' + encodeURIComponent(username) + '/data-action', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(actions[idx])
+  }).then(function(r) {
+    if (!r.ok) return r.text().then(function(t) { alert('Failed on ' + actions[idx].app + ': ' + t); });
+    runUserDataActions(username, actions, idx + 1);
+  });
+}
+
+function doDeleteUser(username) {
+  return fetch('api/users/' + encodeURIComponent(username), {
     method: 'DELETE'
   }).then(function(r) {
     if (!r.ok) return r.text().then(function(t) { alert(t); });

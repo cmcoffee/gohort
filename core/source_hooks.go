@@ -335,6 +335,147 @@ func sanitizeEDGARQuery(query string) string {
 }
 
 // queryEDGAR searches the SEC EDGAR full-text search API for filings.
+// queryOpenAlex searches the OpenAlex API for academic papers.
+// OpenAlex returns abstracts as inverted indexes (word -> positions map)
+// which must be reconstructed into plain text.
+func queryOpenAlex(hook SourceHook, query string) (string, error) {
+	// Strip site: filters and quotes for API search.
+	if idx := strings.Index(query, "site:"); idx >= 0 {
+		before := query[:idx]
+		after := ""
+		rest := query[idx+5:]
+		if sp := strings.IndexByte(rest, ' '); sp >= 0 {
+			after = rest[sp:]
+		}
+		query = strings.TrimSpace(before + after)
+	}
+	query = strings.NewReplacer("\"", "", "'", "").Replace(query)
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return "", nil
+	}
+
+	endpoint := hook.Endpoint
+	if endpoint == "" {
+		endpoint = "https://api.openalex.org/works?per_page=10"
+	}
+	// OpenAlex requests a mailto parameter for polite pool access.
+	mailCfg := LoadMailConfig()
+	if mailCfg.From != "" && !strings.Contains(endpoint, "mailto=") {
+		endpoint += "&mailto=" + url.QueryEscape(mailCfg.From)
+	}
+
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parsing OpenAlex endpoint: %w", err)
+	}
+
+	client := &apiclient.APIClient{
+		Server:         parsed.Host,
+		URLScheme:      parsed.Scheme,
+		VerifySSL:      true,
+		RequestTimeout: 15 * time.Second,
+	}
+
+	req_path := parsed.Path
+	if parsed.RawQuery != "" {
+		req_path += "?" + parsed.RawQuery + "&search=" + url.QueryEscape(query)
+	} else {
+		req_path += "?search=" + url.QueryEscape(query)
+	}
+
+	req, err := client.NewRequest("GET", req_path)
+	if err != nil {
+		return "", fmt.Errorf("creating OpenAlex request: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", fmt.Errorf("querying OpenAlex: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("OpenAlex returned HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading OpenAlex response: %w", err)
+	}
+
+	var data struct {
+		Results []struct {
+			Title              string                     `json:"title"`
+			DOI                string                     `json:"doi"`
+			PublicationYear    int                        `json:"publication_year"`
+			CitedByCount       int                        `json:"cited_by_count"`
+			AbstractInvertedIndex map[string][]int         `json:"abstract_inverted_index"`
+			OpenAccess         struct {
+				OAURL string `json:"oa_url"`
+			} `json:"open_access"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return "", fmt.Errorf("parsing OpenAlex response: %w", err)
+	}
+
+	var sb strings.Builder
+	for i, work := range data.Results {
+		if work.Title == "" {
+			continue
+		}
+
+		// Prefer open access URL, fall back to DOI.
+		link := work.OpenAccess.OAURL
+		if link == "" {
+			link = work.DOI
+		}
+		if link == "" {
+			continue
+		}
+
+		// Reconstruct abstract from inverted index.
+		var abstract string
+		if len(work.AbstractInvertedIndex) > 0 {
+			words := make(map[int]string)
+			maxPos := 0
+			for word, positions := range work.AbstractInvertedIndex {
+				for _, pos := range positions {
+					words[pos] = word
+					if pos > maxPos {
+						maxPos = pos
+					}
+				}
+			}
+			parts := make([]string, 0, maxPos+1)
+			for j := 0; j <= maxPos; j++ {
+				if w, ok := words[j]; ok {
+					parts = append(parts, w)
+				}
+			}
+			abstract = strings.Join(parts, " ")
+			if len(abstract) > 300 {
+				abstract = abstract[:300] + "..."
+			}
+		}
+
+		fmt.Fprintf(&sb, "%d. %s", i+1, work.Title)
+		if work.PublicationYear > 0 {
+			fmt.Fprintf(&sb, " (%d)", work.PublicationYear)
+		}
+		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "   %s\n", link)
+		if abstract != "" {
+			fmt.Fprintf(&sb, "   %s\n", abstract)
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String(), nil
+}
+
 func queryEDGAR(hook SourceHook, query string) (string, error) {
 	// Sanitize the query first — LLM-generated EDGAR queries often use
 	// field-tag syntax (company:"X", form type:"10-K", keyword:"AI")
@@ -683,6 +824,8 @@ func queryHookLive(hook SourceHook, query string) (string, error) {
 		return queryPubMed(hook, query)
 	case "sec edgar", "edgar", "sec":
 		return queryEDGAR(hook, query)
+	case "openalex":
+		return queryOpenAlex(hook, query)
 	}
 
 	if hook.Endpoint == "" {
@@ -738,7 +881,7 @@ func queryHookLive(hook SourceHook, query string) (string, error) {
 		URLScheme:      scheme,
 		VerifySSL:      true,
 		RequestTimeout: 15 * time.Second,
-		AgentString:    "FuzzBot/1.0",
+		AgentString:    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 		AuthFunc:       auth_func,
 	}
 
@@ -1037,6 +1180,22 @@ func SourceHookTemplates() []SourceHookTemplate {
 				URLField:       "doi",
 				SnippetField:   "abstractText",
 				TriggerDomains: []string{"medical", "scientific"},
+			},
+		},
+		{
+			Description: "Academic papers across all disciplines — free, no API key",
+			NeedsAPIKey: false,
+			Hook: SourceHook{
+				Name:           "OpenAlex",
+				Type:           HookTypeAPI,
+				Endpoint:       "https://api.openalex.org/works?per_page=10",
+				AuthType:       HookAuthNone,
+				QueryParam:     "search",
+				ResultsPath:    "results",
+				TitleField:     "title",
+				URLField:       "doi",
+				SnippetField:   "",
+				TriggerDomains: []string{},
 			},
 		},
 		{

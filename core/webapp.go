@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/webui"
 )
 
 // WebApp is implemented by agents that can serve a web UI.
@@ -228,6 +230,14 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 	// already has a favicon link (e.g., pages rendered via webui.RenderPage).
 	if !strings.Contains(html, `rel="icon"`) {
 		html = strings.Replace(html, "<head>", "<head>"+faviconLinkTag, 1)
+	}
+
+	// Inject the shared @font-face declaration (Orbitron) right after
+	// <head>, so apps that render their own HTML templates (debate,
+	// research, investigate, etc.) pick up the header font without
+	// wiring it per-app.
+	if ff := webui.FontFaceCSS(); ff != "" && !strings.Contains(html, "@font-face") {
+		html = strings.Replace(html, "<head>", "<head><style>"+ff+"</style>", 1)
 	}
 
 	if prefix != "" {
@@ -530,10 +540,10 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     padding: 80px 20px;
   }
   .ascii-logo {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 1rem; line-height: 1.15; white-space: pre;
+    font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    font-size: 1rem; line-height: 1.15; white-space: pre; letter-spacing: 0.02em;
     margin-bottom: 0.5rem; text-align: center;
-    background: linear-gradient(135deg, #58a6ff 0%, #a371f7 50%, #f778ba 100%);
+    background: linear-gradient(180deg, #f0f6fc 0%, #30363d 100%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text;
   }

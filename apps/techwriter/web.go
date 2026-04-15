@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/editor"
 	"github.com/cmcoffee/gohort/core/webui"
 )
 
@@ -117,8 +118,8 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			AppName:  "TechWriter",
 			Prefix:   prefix,
 			BodyHTML: techwriterBody,
-			AppCSS:   techwriterCSS,
-			AppJS:    techwriterJS,
+			AppCSS:   editor.DiffCSS() + techwriterCSS,
+			AppJS:    editor.DiffJS() + techwriterJS,
 		}))
 	})
 	sub.HandleFunc("/api/chat", T.handleChat)
@@ -135,6 +136,8 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/save-persona", T.handleSavePersona)
 	sub.HandleFunc("/api/personas", T.handleListPersonas)
 	sub.HandleFunc("/api/persona/", T.handlePersona)
+
+	RegisterUserDataHandler(&techWriterUserData{agent: T})
 
 	// Gate the entire sub-mux behind the IP allowlist. Unauthorized
 	// requests get 404 to conceal the app's existence.
@@ -153,6 +156,10 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 }
 
 func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	var req struct {
 		Subject  string `json:"subject"`
 		Body     string `json:"body"`
@@ -177,7 +184,7 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		article_context = fmt.Sprintf("\n\nArticle subject: %s\n(Article body is empty — this is a new article.)", req.Subject)
 	}
 
-	system_prompt := T.activeDefaultPrompt() + personaPromptSection(T.loadPersonaStyle(req.Persona))
+	system_prompt := T.activeDefaultPrompt() + personaPromptSection(T.loadPersonaStyle(udb, req.Persona))
 	if req.PersonaEdit {
 		system_prompt = `You are helping the user edit a writing style persona (a set of rules for how to write). The content in the editor is a persona definition, not an article. When the user asks you to modify it (add rules, remove sections, change tone), apply the change and return the COMPLETE updated persona. Always prefix your output with ARTICLE: followed by the full updated persona text. Do not discuss the change — just make it and return the result.
 
@@ -193,16 +200,11 @@ These rules prevent the output from reading as AI-generated. They should be part
 	// TechWriter always uses the local worker LLM.
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
 
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer pingCancel()
-	if err := agent.PingLLM(pingCtx); err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
-	}
 	messages := []Message{
 		{Role: "user", Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context)},
 	}
-	resp, err := agent.WorkerChat(context.Background(), messages,
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(context.Background(), messages,
 		WithSystemPrompt(system_prompt),
 		WithMaxTokens(4096),
 		WithThink(false))
@@ -230,7 +232,11 @@ These rules prevent the output from reading as AI-generated. They should be part
 }
 
 func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
@@ -246,7 +252,7 @@ func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
 	if req.ID == "" {
 		req.ID = UUIDv4()
 	}
-	T.DB.Set(HistoryTable, req.ID, ArticleRecord{
+	udb.Set(HistoryTable, req.ID, ArticleRecord{
 		ID:      req.ID,
 		Subject: req.Subject,
 		Body:    req.Body,
@@ -257,7 +263,11 @@ func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleList(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, "[]")
 		return
@@ -268,9 +278,9 @@ func (T *TechWriterAgent) handleList(w http.ResponseWriter, r *http.Request) {
 		Date    string `json:"Date"`
 	}
 	var items []summary
-	for _, key := range T.DB.Keys(HistoryTable) {
+	for _, key := range udb.Keys(HistoryTable) {
 		var rec ArticleRecord
-		if T.DB.Get(HistoryTable, key, &rec) {
+		if udb.Get(HistoryTable, key, &rec) {
 			items = append(items, summary{ID: rec.ID, Subject: rec.Subject, Date: rec.Date})
 		}
 	}
@@ -279,13 +289,17 @@ func (T *TechWriterAgent) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleLoad(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/load/")
-	if id == "" || T.DB == nil {
+	if id == "" || udb == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	var rec ArticleRecord
-	if !T.DB.Get(HistoryTable, id, &rec) {
+	if !udb.Get(HistoryTable, id, &rec) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -294,23 +308,31 @@ func (T *TechWriterAgent) handleLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleDelete(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/delete/")
-	if id == "" || T.DB == nil {
+	if id == "" || udb == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	T.DB.Unset(HistoryTable, id)
+	udb.Unset(HistoryTable, id)
 	w.WriteHeader(http.StatusOK)
 }
 
 func (T *TechWriterAgent) handleExport(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	id := strings.TrimPrefix(r.URL.Path, "/api/export/")
-	if id == "" || T.DB == nil {
+	if id == "" || udb == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	var rec ArticleRecord
-	if !T.DB.Get(HistoryTable, id, &rec) {
+	if !udb.Get(HistoryTable, id, &rec) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -320,7 +342,11 @@ func (T *TechWriterAgent) handleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleImport(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
@@ -364,7 +390,7 @@ func (T *TechWriterAgent) handleImport(w http.ResponseWriter, r *http.Request) {
 	_ = header // unused but required by FormFile
 
 	id := UUIDv4()
-	T.DB.Set(HistoryTable, id, ArticleRecord{
+	udb.Set(HistoryTable, id, ArticleRecord{
 		ID:      id,
 		Subject: subject,
 		Body:    body,
@@ -433,7 +459,8 @@ The merged article must preserve all important facts, data, and claims from both
 		}())
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
-	resp, err := agent.WorkerChat(context.Background(), []Message{
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(context.Background(), []Message{
 		{Role: "user", Content: merge_prompt},
 	}, WithSystemPrompt(system_prompt),
 		WithMaxTokens(8192),
@@ -692,6 +719,7 @@ const techwriterCSS = `
   }
   #editor-pane {
     flex: 1; display: flex; flex-direction: column; border-right: 1px solid #21262d;
+    min-width: 0; /* allow flex shrinkage when diff content is wide */
   }
   #editor {
     flex: 1; background: #0d1117; color: #c9d1d9; border: none; resize: none;
@@ -729,10 +757,12 @@ const techwriterCSS = `
   #chat-input-area {
     display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem;
     border-top: 1px solid #21262d;
+    align-items: flex-end;
   }
   #chat-input {
     flex: 1; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
     padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem;
+    font-family: inherit; resize: vertical; min-height: 38px; max-height: 200px;
   }
   #chat-input:focus { border-color: #58a6ff; outline: none; }
   #chat-send {
@@ -769,6 +799,7 @@ const techwriterCSS = `
 // shared scaffolding by webui.RenderPage.
 const techwriterBody = `
 <div id="toolbar">
+  <span class="app-title">TechWriter</span>
   <button class="secondary" onclick="showArticles()">Articles</button>
   <input id="subject" type="text" placeholder="Article subject..." style="flex:1">
   <select id="persona-select" style="padding:0.4rem;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:0.85rem;max-width:150px" onchange="onPersonaChange()">
@@ -813,7 +844,7 @@ Click 'Process' or use the chat to expand your content."></textarea>
     <div id="chat-header">Chat <button onclick="document.getElementById('chat-messages').innerHTML=''" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.75rem;padding:0 0.3rem" title="Clear chat">Clear</button></div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <input id="chat-input" type="text" placeholder="Ask the LLM to help..." onkeydown="if(event.key==='Enter')sendChat()">
+      <textarea id="chat-input" rows="1" placeholder="Ask the LLM to help... (Enter to send, Shift+Enter for newline)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
       <button id="chat-send" onclick="sendChat()">Send</button>
     </div>
   </div>
@@ -1138,7 +1169,22 @@ function runMerge() {
     btn.disabled = false;
     btn.textContent = 'Merge';
     var titleNote = data.title ? ' New title: <strong>' + escapeHtml(data.title) + '</strong>' : '';
-    addChatMsg('assistant', 'Merged.' + titleNote + ' <button class="apply-btn" onclick="applyArticle(this)">Apply to Editor</button>', data.content, data.title || '');
+    var mergeCurrent = document.getElementById('editor').value || '';
+    var mergeStats = editorDiffStats(mergeCurrent, data.content);
+    var mergeHtml = 'Merged.' + titleNote +
+      '<div class="editor-diff-actions">' +
+      '<span class="editor-diff-summary">Proposed changes ready in editor (+' +
+      mergeStats.add + ' -' + mergeStats.remove + ')</span>' +
+      '</div>';
+    var mergeTitle = data.title || '';
+    editorShowDiff({
+      newText: data.content,
+      onApply: function(text) {
+        document.getElementById('editor').value = text;
+        if (mergeTitle) document.getElementById('subject').value = mergeTitle;
+      }
+    });
+    addChatMsg('assistant', mergeHtml, data.content, mergeTitle);
     closeMerge();
   }).catch(function(err) {
     btn.disabled = false;
@@ -1235,8 +1281,21 @@ function chatAPI(message) {
         document.getElementById('subject').placeholder = 'Persona name...';
         addChatMsg('assistant', 'Persona updated in editor. Click <strong>Save Persona</strong> when ready.');
       } else {
-        html += ' <button class="apply-btn" onclick="applyArticle(this)" style="margin-top:0.5rem">Apply to Editor</button>';
-        addChatMsg('assistant', html, data.content, (data.titles && data.titles[0]) || data.title || '');
+        var chatCurrent = document.getElementById('editor').value || '';
+        var chatStats = editorDiffStats(chatCurrent, data.content);
+        html += '<div class="editor-diff-actions">' +
+          '<span class="editor-diff-summary">Proposed changes ready in editor (+' +
+          chatStats.add + ' -' + chatStats.remove + ')</span>' +
+          '</div>';
+        var chatTitle = (data.titles && data.titles[0]) || data.title || '';
+        editorShowDiff({
+          newText: data.content,
+          onApply: function(text) {
+            document.getElementById('editor').value = text;
+            if (chatTitle) document.getElementById('subject').value = chatTitle;
+          }
+        });
+        addChatMsg('assistant', html, data.content, chatTitle);
       }
     } else {
       addChatMsg('assistant', formatChat(data.content));
@@ -1280,18 +1339,6 @@ function pickImage(img) {
   });
   img.style.border = '2px solid #238636';
   window._blogImageURL = img.dataset.url;
-}
-
-function applyArticle(btn) {
-  var msg = btn.closest('.chat-msg');
-  var article = msg.dataset.article;
-  var title = msg.dataset.title;
-  if (article) {
-    document.getElementById('editor').value = article;
-  }
-  if (title) {
-    document.getElementById('subject').value = title;
-  }
 }
 
 function formatChat(text) {

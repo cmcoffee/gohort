@@ -819,11 +819,13 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
     background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 2rem; width: 100%%; max-width: 360px;
   }
+  /* Wordmark: "GOHORT" in Orbitron (all-caps) with steel gradient. */
   .ascii-logo {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 0.8rem; line-height: 1.15; white-space: pre;
+    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+    font-size: 2.4rem; font-weight: 700; line-height: 1; letter-spacing: 0.15em;
+    text-transform: uppercase;
     margin-bottom: 1.5rem; text-align: center;
-    background: linear-gradient(135deg, #58a6ff 0%%, #a371f7 50%%, #f778ba 100%%);
+    background: linear-gradient(180deg, #f0f6fc 0%%, #30363d 100%%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text;
   }
@@ -860,12 +862,7 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
 </head>
 <body>
   <div class="login-box">
-    <div class="ascii-logo">
-  ____       _                _
- / ___| ___ | |__   ___  _ __| |_
-| |  _ / _ \| '_ \ / _ \| '__| __|
-| |_| | (_) | | | | (_) | |  | |_
- \____|\___/|_| |_|\___/|_|   \__|</div>
+    <div class="ascii-logo">Gohort</div>
     %s
     <form method="POST" action="/signup">
       <div class="form-group">
@@ -1174,11 +1171,13 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
     background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 2rem; width: 100%%; max-width: 360px;
   }
+  /* Wordmark: "GOHORT" in Orbitron (all-caps) with steel gradient. */
   .ascii-logo {
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 0.8rem; line-height: 1.15; white-space: pre;
+    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+    font-size: 2.4rem; font-weight: 700; line-height: 1; letter-spacing: 0.15em;
+    text-transform: uppercase;
     margin-bottom: 1.5rem; text-align: center;
-    background: linear-gradient(135deg, #58a6ff 0%%, #a371f7 50%%, #f778ba 100%%);
+    background: linear-gradient(180deg, #f0f6fc 0%%, #30363d 100%%);
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
     background-clip: text;
   }
@@ -1215,12 +1214,7 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
 </head>
 <body>
   <div class="login-box">
-    <div class="ascii-logo">
-  ____       _                _
- / ___| ___ | |__   ___  _ __| |_
-| |  _ / _ \| '_ \ / _ \| '__| __|
-| |_| | (_) | | | | (_) | |  | |_
- \____|\___/|_| |_|\___/|_|   \__|</div>
+    <div class="ascii-logo">Gohort</div>
     %s
     <form method="POST" action="/login">
       <div class="form-group">

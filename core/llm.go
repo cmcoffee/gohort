@@ -277,6 +277,7 @@ type ChatConfig struct {
 	MaxRetries   *int
 	Think        *bool // Enable/disable thinking for thinking models (nil = model default)
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
+	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
 }
 
 // ChatOption is a functional option for configuring an LLM call.
@@ -331,6 +332,15 @@ func WithRouteKey(key string) ChatOption {
 	return func(c *ChatConfig) { c.RouteKey = key }
 }
 
+// WithCaller identifies the app or pipeline stage making this LLM call.
+// Used by the Ollama fair-queueing scheduler to enforce per-caller
+// round-robin dispatch when multiple apps compete for a single local
+// model. If unset, the caller defaults to the agent's Name() at the
+// WorkerChat/LeadChat layer, falling back to "unknown".
+func WithCaller(id string) ChatOption {
+	return func(c *ChatConfig) { c.Caller = id }
+}
+
 // applyOpts applies functional options to a ChatConfig with defaults.
 // Automatically prepends today's date to any system prompt so the LLM
 // always knows the current date without each caller having to include it.
@@ -359,6 +369,7 @@ type LLMProviderConfig struct {
 	RequestTimeout  time.Duration // Response header timeout; defaults to 120s if zero.
 	DisableThinking bool          // Ollama only: master override forcing think=false on every call regardless of per-call WithThink(true). Escape hatch for thinking hangs on local models.
 	NativeTools     bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
+	OllamaMaxParallel int         // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -519,6 +530,14 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc.disableThinking = cfg.DisableThinking
 		oc.nativeTools = cfg.NativeTools
 		inner = client
+		// Start (or adjust) the global Ollama scheduler so concurrent
+		// sessions get fair-queued. Safe to call multiple times; the
+		// second call adjusts MaxParallel on the running dispatcher.
+		maxParallel := cfg.OllamaMaxParallel
+		if maxParallel < 1 {
+			maxParallel = 1
+		}
+		StartOllamaScheduler(maxParallel)
 	default:
 		return nil, Error("unknown LLM provider, run --setup to configure")
 	}

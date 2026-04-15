@@ -107,6 +107,7 @@ func setup_fuzz() {
 	var requestTimeoutSec int
 	var disableThinking bool
 	var nativeTools bool
+	var ollamaMaxParallel int
 	global.db.Get(llm_table, "provider", &provider)
 	global.db.Get(llm_table, "model", &model)
 	global.db.Get(llm_table, "api_key", &apiKey)
@@ -115,6 +116,10 @@ func setup_fuzz() {
 	global.db.Get(llm_table, "request_timeout_seconds", &requestTimeoutSec)
 	global.db.Get(llm_table, "disable_thinking", &disableThinking)
 	global.db.Get(llm_table, "native_tools", &nativeTools)
+	global.db.Get(llm_table, "ollama_max_parallel", &ollamaMaxParallel)
+	if ollamaMaxParallel < 1 {
+		ollamaMaxParallel = 1 // default: strict serial execution through Ollama
+	}
 
 	// Load current Lead LLM values.
 	var leadProvider, leadModel, leadAPIKey, leadEndpoint string
@@ -157,6 +162,8 @@ func setup_fuzz() {
 	llm.ToggleVar(&disableThinking, "Disable Thinking (force think=false on every call)", disableThinking)
 	llm.ShowWhen(func() bool { return provider == "ollama" })
 	llm.ToggleVar(&nativeTools, "Native Tool Calling (disable for models without tool support)", nativeTools)
+	llm.ShowWhen(func() bool { return provider == "ollama" })
+	llm.IntVar(&ollamaMaxParallel, "Max Parallel Ollama Requests", ollamaMaxParallel, "How many concurrent requests Ollama will process. Default 1 (strict serial). Raise only if the host GPU can truly run more in parallel. Requests are fair-queued across caller sessions.", 1, 16)
 	llm.ShowWhen(func() bool { return provider == "ollama" })
 	// Precision LLM settings (judge/fact-checker — falls back to primary if not set).
 	lead := NewOptions(" [Precision LLM (Secondary)] ", "(selection or 'q' to return to previous)", 'q')
@@ -408,6 +415,7 @@ func setup_fuzz() {
 	global.db.Set(llm_table, "request_timeout_seconds", requestTimeoutSec)
 	global.db.Set(llm_table, "disable_thinking", disableThinking)
 	global.db.Set(llm_table, "native_tools", nativeTools)
+	global.db.Set(llm_table, "ollama_max_parallel", ollamaMaxParallel)
 	if apiKey != "" {
 		global.db.CryptSet(llm_table, "api_key", apiKey)
 	}
@@ -776,6 +784,7 @@ func load_llm_config() LLMProviderConfig {
 	global.db.Get(llm_table, "context_size", &cfg.ContextSize)
 	global.db.Get(llm_table, "disable_thinking", &cfg.DisableThinking)
 	global.db.Get(llm_table, "native_tools", &cfg.NativeTools)
+	global.db.Get(llm_table, "ollama_max_parallel", &cfg.OllamaMaxParallel)
 	var timeout_seconds int
 	global.db.Get(llm_table, "request_timeout_seconds", &timeout_seconds)
 	if timeout_seconds > 0 {
@@ -793,6 +802,9 @@ func load_lead_llm_config() LLMProviderConfig {
 	global.db.Get(lead_llm_table, "endpoint", &cfg.Endpoint)
 	global.db.Get(lead_llm_table, "disable_thinking", &cfg.DisableThinking)
 	global.db.Get(lead_llm_table, "native_tools", &cfg.NativeTools)
+	// Lead uses the same scheduler cap as primary when both point at
+	// Ollama (global process-level limiter).
+	global.db.Get(llm_table, "ollama_max_parallel", &cfg.OllamaMaxParallel)
 	return cfg
 }
 

@@ -578,6 +578,16 @@ func truncateForDebug(s string, max int) string {
 // needed for gemma4 because the v1 endpoint silently drops the `think` and
 // `options` fields, leaving thinking enabled by default.
 func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, messages []Message) (*Response, error) {
+	// Acquire a slot from the global Ollama fair-queueing scheduler.
+	// The scheduler enforces a global parallelism cap plus per-caller
+	// round-robin so one app can't monopolize the local model.
+	// Unconfigured → passes through immediately.
+	caller := cfg.Caller
+	if err := AcquireOllamaSlot(ctx, caller); err != nil {
+		return nil, err
+	}
+	defer ReleaseOllamaSlot(caller)
+
 	// Master override: if DisableThinking is set in the provider config,
 	// force think=false regardless of what the caller passed. This is the
 	// escape hatch for thinking hangs on local models.
@@ -696,6 +706,14 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 // /api/chat endpoint. The native endpoint emits newline-delimited JSON objects
 // rather than SSE, with each chunk containing a `message.content` delta.
 func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatConfig, messages []Message, handler StreamHandler) (*Response, error) {
+	// Acquire a slot from the global Ollama fair-queueing scheduler.
+	// See chatViaOllamaNative for details.
+	caller := cfg.Caller
+	if err := AcquireOllamaSlot(ctx, caller); err != nil {
+		return nil, err
+	}
+	defer ReleaseOllamaSlot(caller)
+
 	// Master overrides: see chatViaOllamaNative for rationale.
 	if c.disableThinking {
 		f := false

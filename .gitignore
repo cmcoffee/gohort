@@ -4,8 +4,12 @@ gohort
 # Data directory
 data/
 
-# Private apps (not tracked in public repo)
+# Private apps (not tracked in public repo).
+# Both entries needed: "private/" matches a real directory; bare
+# "private" also matches a symlink named private pointing at a
+# private tree elsewhere on disk (dev setup).
 private/
+private
 private.go
 
 # Claude Code local settings

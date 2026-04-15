@@ -27,6 +27,9 @@ type Persona struct {
 // to Gemma vision to analyze the writing style, and returns the analysis
 // for user review before saving.
 func (T *TechWriterAgent) handleUploadPersona(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
 	if T.DB == nil {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
@@ -92,7 +95,8 @@ func (T *TechWriterAgent) handleUploadPersona(w http.ResponseWriter, r *http.Req
 	Debug("[personas] extracted %d page images from PDF", len(images))
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
-	resp, err := agent.WorkerChat(context.Background(), []Message{
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(context.Background(), []Message{
 		{
 			Role: "user",
 			Content: `Analyze the WRITING STYLE of this document. Your job is to produce a set of rules that a writer can follow to write NEW documents in the SAME style.
@@ -151,7 +155,11 @@ Start IMMEDIATELY with the rules. No preamble, no introduction.`,
 
 // handleSavePersona saves a persona to the database.
 func (T *TechWriterAgent) handleSavePersona(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
@@ -165,7 +173,8 @@ func (T *TechWriterAgent) handleSavePersona(w http.ResponseWriter, r *http.Reque
 	}
 
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
-	desc_resp, _ := agent.WorkerChat(context.Background(), []Message{
+	session := agent.CreateSession(WORKER)
+	desc_resp, _ := session.Chat(context.Background(), []Message{
 		{Role: "user", Content: fmt.Sprintf("Summarize this writing style in one sentence (under 15 words):\n\n%s", req.Style)},
 	}, WithMaxTokens(64), WithThink(false))
 
@@ -174,7 +183,7 @@ func (T *TechWriterAgent) handleSavePersona(w http.ResponseWriter, r *http.Reque
 		desc = strings.TrimSpace(ResponseText(desc_resp))
 	}
 
-	T.DB.Set(personaTable, req.Name, Persona{
+	udb.Set(personaTable, req.Name, Persona{
 		Name:        req.Name,
 		Description: desc,
 		Style:       req.Style,
@@ -186,7 +195,11 @@ func (T *TechWriterAgent) handleSavePersona(w http.ResponseWriter, r *http.Reque
 
 // handleListPersonas returns all saved personas.
 func (T *TechWriterAgent) handleListPersonas(w http.ResponseWriter, r *http.Request) {
-	if T.DB == nil {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if udb == nil {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, "[]")
 		return
@@ -196,9 +209,9 @@ func (T *TechWriterAgent) handleListPersonas(w http.ResponseWriter, r *http.Requ
 		Description string `json:"description"`
 	}
 	var items []summary
-	for _, key := range T.DB.Keys(personaTable) {
+	for _, key := range udb.Keys(personaTable) {
 		var p Persona
-		if T.DB.Get(personaTable, key, &p) {
+		if udb.Get(personaTable, key, &p) {
 			items = append(items, summary{Name: p.Name, Description: p.Description})
 		}
 	}
@@ -208,35 +221,40 @@ func (T *TechWriterAgent) handleListPersonas(w http.ResponseWriter, r *http.Requ
 
 // handlePersona handles GET (load) and DELETE (remove) for a single persona.
 func (T *TechWriterAgent) handlePersona(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/persona/")
-	if name == "" || T.DB == nil {
+	if name == "" || udb == nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
 		var p Persona
-		if !T.DB.Get(personaTable, name, &p) {
+		if !udb.Get(personaTable, name, &p) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(p)
 	case http.MethodDelete:
-		T.DB.Unset(personaTable, name)
+		udb.Unset(personaTable, name)
 		w.WriteHeader(http.StatusOK)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
-// loadPersonaStyle returns the style text for a named persona, or "".
-func (T *TechWriterAgent) loadPersonaStyle(name string) string {
-	if T.DB == nil || name == "" {
+// loadPersonaStyle returns the style text for a named persona from the
+// given user's sub-store, or "" if not found.
+func (T *TechWriterAgent) loadPersonaStyle(udb Database, name string) string {
+	if udb == nil || name == "" {
 		return ""
 	}
 	var p Persona
-	if T.DB.Get(personaTable, name, &p) {
+	if udb.Get(personaTable, name, &p) {
 		return p.Style
 	}
 	return ""
