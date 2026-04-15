@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
 )
@@ -21,8 +22,10 @@ const (
 // Only returns models that support generateContent (chat-capable).
 func GeminiModels(apiKey string) ([]string, error) {
 	client := &apiclient.APIClient{
-		Server:    "generativelanguage.googleapis.com",
-		VerifySSL: true,
+		Server:         "generativelanguage.googleapis.com",
+		VerifySSL:      true,
+		ConnectTimeout: llmConnectTimeout,
+		RequestTimeout: 15 * time.Second,
 		AuthFunc: func(req *http.Request) {
 			q := req.URL.Query()
 			q.Set("key", apiKey)
@@ -75,7 +78,11 @@ func NewGeminiLLM(apiKey string, model string) LLM {
 // newGeminiLLM creates a Gemini LLM client with optional APIClient.
 func newGeminiLLM(apiKey string, model string, api *apiclient.APIClient) LLM {
 	if api == nil {
-		api = &apiclient.APIClient{VerifySSL: true}
+		api = &apiclient.APIClient{
+			VerifySSL:      true,
+			ConnectTimeout: llmConnectTimeout,
+			RequestTimeout: llmRequestTimeout,
+		}
 	}
 	api.Server = "generativelanguage.googleapis.com"
 	// Gemini uses API key in query params, not headers.

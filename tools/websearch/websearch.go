@@ -595,6 +595,7 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 		Server:         parsed.Host,
 		URLScheme:      parsed.Scheme,
 		AgentString:    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		ConnectTimeout: 5 * time.Second,
 		RequestTimeout: 10 * time.Second,
 	}
 

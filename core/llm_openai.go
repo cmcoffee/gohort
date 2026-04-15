@@ -12,8 +12,22 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
+)
+
+// LLM API clients route through apiclient, which wraps response
+// bodies with iotimeout.NewReadCloser using RequestTimeout as the
+// inter-read idle timeout. These defaults give:
+//   - llmConnectTimeout:  dial + TLS handshake cap
+//   - llmRequestTimeout:  response header deadline AND inter-read
+//                         idle timeout on body reads. Must be long
+//                         enough to tolerate Ollama cold-load silence
+//                         between the request and the first token.
+const (
+	llmConnectTimeout = 10 * time.Second
+	llmRequestTimeout = 2 * time.Minute
 )
 
 const (
@@ -92,8 +106,10 @@ func NewOpenAILLM(apiKey string, model string) LLM {
 // OpenAIModels queries the OpenAI API and returns available model IDs.
 func OpenAIModels(apiKey string) ([]string, error) {
 	client := &apiclient.APIClient{
-		Server:    "api.openai.com",
-		VerifySSL: true,
+		Server:         "api.openai.com",
+		VerifySSL:      true,
+		ConnectTimeout: llmConnectTimeout,
+		RequestTimeout: 15 * time.Second, // small, fast models listing
 		AuthFunc: func(req *http.Request) {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
 		},
@@ -130,9 +146,11 @@ func OllamaModels(baseURL string) ([]string, error) {
 		return nil, err
 	}
 	client := &apiclient.APIClient{
-		Server:    u.Host,
-		URLScheme: u.Scheme,
-		AuthFunc:  func(req *http.Request) {},
+		Server:         u.Host,
+		URLScheme:      u.Scheme,
+		ConnectTimeout: llmConnectTimeout,
+		RequestTimeout: 15 * time.Second,
+		AuthFunc:       func(req *http.Request) {},
 	}
 	req, err := client.NewRequest("GET", "/api/tags")
 	if err != nil {
@@ -174,7 +192,11 @@ func NewOllamaLLM(model string, endpoint ...string) LLM {
 func newOpenAILLM(apiKey string, model string, endpoint string, api *apiclient.APIClient) LLM {
 	endpoint = strings.TrimSuffix(endpoint, "/")
 	if api == nil {
-		api = &apiclient.APIClient{VerifySSL: true}
+		api = &apiclient.APIClient{
+			VerifySSL:      true,
+			ConnectTimeout: llmConnectTimeout,
+			RequestTimeout: llmRequestTimeout,
+		}
 	}
 	// Parse the endpoint to set the server and scheme on the APIClient.
 	if u, err := url.Parse(endpoint); err == nil {

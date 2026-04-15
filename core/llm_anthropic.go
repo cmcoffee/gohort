@@ -33,7 +33,11 @@ func NewAnthropicLLM(apiKey string, model string) LLM {
 // newAnthropicLLM creates an LLM client with optional APIClient.
 func newAnthropicLLM(apiKey string, model string, api *apiclient.APIClient) LLM {
 	if api == nil {
-		api = &apiclient.APIClient{VerifySSL: true}
+		api = &apiclient.APIClient{
+			VerifySSL:      true,
+			ConnectTimeout: llmConnectTimeout,
+			RequestTimeout: llmRequestTimeout,
+		}
 	}
 	api.Server = "api.anthropic.com"
 	api.AuthFunc = func(req *http.Request) {
