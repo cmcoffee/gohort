@@ -213,7 +213,7 @@ func (q *TaskQueue) Release() {
 // for pages that don't use the webui framework (debate, research, etc.).
 const liveRibbonCSS = `
 #webui-live-ribbon {
-  position: fixed; top: 0; right: 0; max-width: 360px; margin: 0.5rem;
+  position: fixed; top: 0; right: 20px; max-width: 360px; margin: 0.5rem;
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
   padding: 0.3rem 0.6rem; font-size: 0.8rem; color: var(--text-mute);
   box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 9999; display: none;
