@@ -268,7 +268,7 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 			`<span id="gohort-live-count"></span></div>` +
 			`<div id="gohort-live-list" style="display:none;margin-top:0.3rem;max-height:250px;overflow-y:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.4rem"></div></div>` +
 			`<script>` +
-			`function gohortRefreshLive(){fetch('/api/live').then(function(r){return r.json()}).then(function(items){` +
+			`function gohortRefreshLive(){fetch(window.location.origin+'/api/live').then(function(r){return r.json()}).then(function(items){` +
 			`var c=document.getElementById('gohort-live-count');var l=document.getElementById('gohort-live-list');` +
 			`if(!items||items.length===0){c.textContent='Live (0)';l.innerHTML='<div style="color:#484f58;padding:0.3rem">No active sessions.</div>';return}` +
 			`c.innerHTML='Live (<span style="color:#3fb950">'+items.length+'</span>)';` +
