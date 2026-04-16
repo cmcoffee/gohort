@@ -9,8 +9,8 @@ import (
 // Precompiled regex patterns for URL/citation extraction.
 var (
 	BareURLPattern  = regexp.MustCompile(`https?://[^\s\)\]>"]+`)
-	MDLinkPattern   = regexp.MustCompile(`\[([^\]]*)\]\((https?://[^\s\)]+)\)`)
-	TaggedSrcPattern = regexp.MustCompile(`^\[(\d+)\]\s*\[([^\]]*)\]\((https?://[^\)]+)\)`)
+	MDLinkPattern   = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://[^\s\)]+)\)`)
+	TaggedSrcPattern = regexp.MustCompile(`^\[(\d+)\]\s*\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://[^\)]+)\)`)
 	CiteRefPattern  = regexp.MustCompile(`\[(\d+)\]`)
 	DomainPattern   = regexp.MustCompile(`https?://([^\s/\)\]>"]+)`)
 )
