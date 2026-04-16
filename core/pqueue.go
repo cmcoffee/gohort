@@ -182,10 +182,6 @@ func HandleQueueNotify() http.HandlerFunc {
 		db.Set(pqueueTable, id, entry)
 
 		enabled := !found
-		// Persist the user's preference so future jobs auto-subscribe.
-		if AuthDB != nil {
-			AuthSetNotifyDefault(AuthDB(), username, enabled)
-		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"notify": enabled})
