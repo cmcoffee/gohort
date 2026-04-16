@@ -248,7 +248,14 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 			pendingNewlines += trailingCount
 		}
 
-		resp, err := agent.LLM.ChatStream(ctx, streamMessages, func(chunk string) {
+		// Route to lead or worker based on routing config. Apply thinking override.
+		chatLLM := agent.LLM
+		if RouteToLead("chat.respond") {
+			chatLLM = agent.GetLeadLLM()
+		} else if think := RouteThink("chat.respond"); think != nil {
+			opts = append(opts, WithThink(*think))
+		}
+		resp, err := chatLLM.ChatStream(ctx, streamMessages, func(chunk string) {
 			if chunk == "" {
 				return
 			}

@@ -10,6 +10,7 @@ import (
 
 func init() {
 	RegisterApp(new(ChatAgent))
+	RegisterRouteStage(RouteStage{Key: "chat.respond", Label: "Chat: Respond"})
 }
 
 // ChatAgent is the task definition. Currently no CLI flags — the only
