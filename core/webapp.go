@@ -262,9 +262,28 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 			`<path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/>` +
 			`</svg></a>`
 		dashboard_style := `<style>#dashboard-back~*{} body{padding-top:3.5rem!important;}</style>`
+		// Collapsible live sessions widget — shows active/queued jobs across all apps.
+		live_widget := `<div id="gohort-live" style="position:fixed;bottom:12px;right:12px;z-index:9998;width:300px;font-family:-apple-system,sans-serif;font-size:0.8rem">` +
+			`<div id="gohort-live-header" onclick="document.getElementById('gohort-live-list').style.display=document.getElementById('gohort-live-list').style.display==='none'?'block':'none';if(document.getElementById('gohort-live-list').style.display==='block')gohortRefreshLive()" style="cursor:pointer;padding:0.4rem 0.7rem;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#8b949e;text-align:center;user-select:none">` +
+			`<span id="gohort-live-count"></span></div>` +
+			`<div id="gohort-live-list" style="display:none;margin-top:0.3rem;max-height:250px;overflow-y:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.4rem"></div></div>` +
+			`<script>` +
+			`function gohortRefreshLive(){fetch('/api/live').then(function(r){return r.json()}).then(function(items){` +
+			`var c=document.getElementById('gohort-live-count');var l=document.getElementById('gohort-live-list');` +
+			`if(!items||items.length===0){c.textContent='Live (0)';l.innerHTML='<div style="color:#484f58;padding:0.3rem">No active sessions.</div>';return}` +
+			`c.innerHTML='Live (<span style="color:#3fb950">'+items.length+'</span>)';` +
+			`items.sort(function(a,b){return a.spawned!==b.spawned?a.spawned?1:-1:(a.app||'').localeCompare(b.app||'')});` +
+			`var h='';for(var i=0;i<items.length;i++){var it=items[i];` +
+			`var badge=it.queued?'<span style="font-size:0.65rem;padding:0.1rem 0.3rem;border-radius:3px;background:#d29922;color:#fff;font-weight:600">Q</span>':'<span style="font-size:0.65rem;padding:0.1rem 0.3rem;border-radius:3px;background:#238636;color:#fff;font-weight:600">R</span>';` +
+			`var url=it.url||(it.path||'')+'/?id='+encodeURIComponent(it.id);` +
+			`h+='<a href="'+url+'" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem;color:#c9d1d9;text-decoration:none;border-bottom:1px solid #21262d">';` +
+			`h+=badge+'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.topic||it.label||'Untitled')+'</span>';` +
+			`if(it.status)h+='<span style="color:#484f58;font-size:0.7rem">'+it.status+'</span>';` +
+			`h+='</a>'}l.innerHTML=h}).catch(function(){})}` +
+			`gohortRefreshLive();setInterval(gohortRefreshLive,10000);</script>`
 		// Replace the LAST </body> tag — earlier occurrences may be inside JS strings.
 		if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
-			html = html[:idx] + dashboard_style + back_btn + html[idx:]
+			html = html[:idx] + dashboard_style + back_btn + live_widget + html[idx:]
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
