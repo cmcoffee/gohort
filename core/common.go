@@ -244,7 +244,13 @@ func (T *FuzzAgent) LeadChat(ctx context.Context, messages []Message, opts ...Ch
 		opt(&probe)
 	}
 	if probe.RouteKey != "" && !RouteToLead(probe.RouteKey) {
-		Debug("[llm] %s routed to worker LLM (routing config)", probe.RouteKey)
+		if think := RouteThink(probe.RouteKey); think != nil {
+			opts = append(opts, WithThink(*think))
+			Debug("[llm] %s routed to worker LLM with thinking (routing config)", probe.RouteKey)
+		} else {
+			opts = append(opts, WithThink(false))
+			Debug("[llm] %s routed to worker LLM (routing config)", probe.RouteKey)
+		}
 		return T.WorkerChat(ctx, messages, opts...)
 	}
 	lead := T.GetLeadLLM()
@@ -391,7 +397,24 @@ func RouteToLead(key string) bool {
 	if LookupRouteFunc == nil {
 		return true
 	}
-	return LookupRouteFunc(key) != "worker"
+	val := LookupRouteFunc(key)
+	return val != "worker" && val != "worker (thinking)"
+}
+
+// RouteThink returns a thinking override for the named route stage, or
+// nil if the stage should use its hardcoded default. When a stage is
+// configured as "worker (thinking)" in the routing menu, this forces
+// thinking on regardless of what the code passes to WithThink.
+func RouteThink(key string) *bool {
+	if LookupRouteFunc == nil {
+		return nil
+	}
+	val := LookupRouteFunc(key)
+	if val == "worker (thinking)" {
+		t := true
+		return &t
+	}
+	return nil
 }
 
 // RunAgentFunc is set by the application to enable agent-to-agent delegation.

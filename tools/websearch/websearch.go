@@ -219,7 +219,11 @@ func CrossProviderSearch(query string) (string, error) {
 
 // searchDuckDuckGo scrapes DuckDuckGo's lite HTML interface (no API key needed).
 func searchDuckDuckGo(query string) (string, error) {
-	client := &apiclient.APIClient{Server: "lite.duckduckgo.com"}
+	client := &apiclient.APIClient{
+		Server:         "lite.duckduckgo.com",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
 
 	form_data := url.Values{"q": {query}}.Encode()
 
@@ -336,7 +340,11 @@ func searchBrave(query string, apiKey string) (string, error) {
 		return "", fmt.Errorf("brave search requires an API key (configure with --setup)")
 	}
 
-	client := &apiclient.APIClient{Server: "api.search.brave.com"}
+	client := &apiclient.APIClient{
+		Server:         "api.search.brave.com",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
 
 	req, err := client.NewRequest("GET", "/res/v1/web/search?q="+url.QueryEscape(query)+"&count=20")
 	if err != nil {
@@ -392,7 +400,11 @@ func searchSerper(query string, apiKey string) (string, error) {
 		"num": 20,
 	})
 
-	client := &apiclient.APIClient{Server: "google.serper.dev"}
+	client := &apiclient.APIClient{
+		Server:         "google.serper.dev",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
 
 	req, err := client.NewRequest("POST", "/search")
 	if err != nil {
@@ -452,7 +464,11 @@ func searchGoogle(query string, apiKey string) (string, error) {
 	}
 	key, cx := parts[0], parts[1]
 
-	client := &apiclient.APIClient{Server: "www.googleapis.com"}
+	client := &apiclient.APIClient{
+		Server:         "www.googleapis.com",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
 
 	path := fmt.Sprintf("/customsearch/v1?key=%s&cx=%s&q=%s&num=10",
 		url.QueryEscape(key), url.QueryEscape(cx), url.QueryEscape(query))
@@ -512,8 +528,10 @@ func searchSearXNG(query string, endpoint string) (string, error) {
 	}
 
 	client := &apiclient.APIClient{
-		Server:    parsed.Host,
-		URLScheme: parsed.Scheme,
+		Server:         parsed.Host,
+		URLScheme:      parsed.Scheme,
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
 	}
 
 	path := fmt.Sprintf("%s/search?q=%s&format=json&categories=general", parsed.Path, url.QueryEscape(query))

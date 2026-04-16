@@ -93,6 +93,14 @@ Examples of WEAK matches:
 - General pharmacology overviews for a specific drug question
 - Vendor product pages, software help, glossary entries
 
+SCOPE MISMATCH — a source that matches the topic's vocabulary but addresses a DIFFERENT scope is WEAK, not MODERATE. Scope means country/region, named entity, and time period. Check the title and snippet for scope signals before bucketing. Common anti-patterns:
+- Wrong country: a Pakistani election-watchdog article ("FAFEN: Villages Record Higher Voter Turnout Than Urban Centers") for a US-elections question. Wrong country — bucket WEAK even though the vocabulary "voter turnout rural urban" matches.
+- Wrong entity: a "Blue Moon Metals" mining-company filing for a question about Blue Origin's "Blue Moon" lunar lander. Name collision, different entity — WEAK.
+- Wrong time period: a 2012 study about a policy regime that ended in 2018, cited for a 2026 policy question. Stale scope — WEAK unless the snippet says it's still current.
+- Wrong subtopic: an environmental-science journal article matched by a political-science question because both mention "climate change." Different research community — WEAK.
+
+If the context description above names a specific country (US, UK, etc.), specific entity, or specific time period, treat scope mismatch as WEAK even if the subject vocabulary matches perfectly.
+
 Every source must be in exactly ONE bucket. Place all source numbers somewhere — do not omit any.
 
 Reply with ONLY a JSON object (no markdown fencing):

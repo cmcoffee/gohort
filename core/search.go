@@ -789,5 +789,39 @@ func IsLowQualitySource(url, title string) bool {
 		}
 	}
 
+	// High-school and student newspaper sites. Common URL patterns include
+	// ".highschool." (rare but present), school-district subdomains that
+	// embed "hs" or "highschool", and title phrases that signal a student
+	// publication. We match conservatively on title phrases tied to a .com
+	// or .org host; .edu is left alone because edu covers university
+	// research sources we do want to keep.
+	highSchoolTitlePhrases := []string{
+		"student newspaper", "high school newspaper", "school newspaper",
+		"student publication", "student journalist",
+	}
+	if !strings.Contains(u, ".edu") {
+		for _, phrase := range highSchoolTitlePhrases {
+			if strings.Contains(t, phrase) {
+				return true
+			}
+		}
+	}
+	// Known high-school / student-paper hosts. These show up in web search
+	// for any US-politics topic because student papers cover elections.
+	// Heuristic: subdomain or path fragments like "periscope" (common
+	// student-paper name), "thelion", "theoracle", "gazette" attached to
+	// a generic .com are weak signals on their own, but specific known
+	// hosts are safe to block.
+	for _, domain := range []string{
+		"chsperiscope.com",        // Chagrin Falls HS
+		"wsspaper.com",            // West Springfield HS
+		"thepeaksunset.com",       // Mt. Si HS
+		"thepowelltribune.com/category/student",
+	} {
+		if strings.Contains(u, domain) {
+			return true
+		}
+	}
+
 	return false
 }

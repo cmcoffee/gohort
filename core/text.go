@@ -335,7 +335,7 @@ func StripUncitedSources(report string) string {
 func StripInternalLabels(report string) string {
 	// Match [anything that contains letters] but not [N] or [N, N, N].
 	labelPattern := regexp.MustCompile(`\[[^\]]*[a-zA-Z][^\]]*\]`)
-	return labelPattern.ReplaceAllStringFunc(report, func(match string) string {
+	report = labelPattern.ReplaceAllStringFunc(report, func(match string) string {
 		inner := match[1 : len(match)-1]
 		// Keep if it's just numbers and commas/spaces (source citations).
 		onlyNumeric := true
@@ -350,6 +350,16 @@ func StripInternalLabels(report string) string {
 		}
 		return ""
 	})
+	// Clean up residue from stripped tier tags like "[blog], [social], [gov]"
+	// that appeared inline. Without this, strips leave patterns like "(, , )"
+	// or ", , or evidence" visible in the final prose.
+	emptyParens := regexp.MustCompile(`\(\s*(?:,\s*)+\)`)
+	report = emptyParens.ReplaceAllString(report, "")
+	commaRuns := regexp.MustCompile(`(?:,\s*){2,}`)
+	report = commaRuns.ReplaceAllString(report, ", ")
+	orphanLeading := regexp.MustCompile(`(?m)(\s),\s*(and|or)\s`)
+	report = orphanLeading.ReplaceAllString(report, "$1$2 ")
+	return report
 }
 
 // MarkdownToConfluence converts markdown to Confluence storage format (XHTML).

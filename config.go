@@ -217,7 +217,7 @@ func setup_fuzz() {
 	if len(stages) > 0 {
 		routing := NewOptions(" [LLM Routing] ", "(selection or 'q' to return to previous)", 'q')
 		for i, s := range stages {
-			routing.StringSelectVar(&routeVals[i], s.Label, routeVals[i], "lead", "worker")
+			routing.StringSelectVar(&routeVals[i], s.Label, routeVals[i], "lead", "worker", "worker (thinking)")
 		}
 		llmSettings.Options("Routing (worker = local, lead = remote)", routing, false)
 	}

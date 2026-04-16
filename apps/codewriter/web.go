@@ -131,11 +131,10 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	system_prompt += T.buildValuePrompt()
 
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
-	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(r.Context(), []Message{
+	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM, LeadLLM: T.FuzzAgent.LeadLLM}
+	resp, err := agent.LeadChat(r.Context(), []Message{
 		{Role: "user", Content: prompt},
-	}, WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithThink(false))
+	}, WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithThink(false), WithRouteKey("codewriter.generate"))
 
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
