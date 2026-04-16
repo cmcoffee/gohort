@@ -163,6 +163,15 @@ func (T *FuzzAgent) GetLeadLLM() LLM {
 	return T.LLM
 }
 
+// WorkerContextSize returns the worker LLM's context window size, or 0
+// if the LLM doesn't implement ContextSizer.
+func (T *FuzzAgent) WorkerContextSize() int {
+	if cs, ok := T.LLM.(ContextSizer); ok {
+		return cs.ContextSize()
+	}
+	return 0
+}
+
 // LLMTier selects which LLM tier a Session routes to. Worker is the
 // primary/local tier; Lead is the precision/judge tier (which may
 // fall back to Worker if not configured separately).

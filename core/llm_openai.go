@@ -247,6 +247,11 @@ func (c *openAIClient) ollamaNumCtx() int {
 	return ollamaDefaultCtx
 }
 
+// ContextSize implements the ContextSizer interface.
+func (c *openAIClient) ContextSize() int {
+	return c.ollamaNumCtx()
+}
+
 // warmupContext sends a minimal request to Ollama's native /api/chat endpoint
 // to force the model to load with the desired num_ctx. The OpenAI-compatible
 // /v1/chat/completions endpoint ignores the options field, so this is needed

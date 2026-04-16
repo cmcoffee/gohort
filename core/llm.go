@@ -40,6 +40,14 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// ContextSizer is an optional interface for LLMs that expose their
+// configured context window size. Used by the debate pipeline to
+// decide whether to share all evidence (large context) or use
+// per-side research (small context).
+type ContextSizer interface {
+	ContextSize() int
+}
+
 // StreamHandler is called for each chunk of streamed content.
 type StreamHandler func(chunk string)
 
