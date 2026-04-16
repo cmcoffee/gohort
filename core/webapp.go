@@ -209,6 +209,76 @@ func (q *TaskQueue) Release() {
 	}
 }
 
+// liveRibbonCSS is the CSS for the webui live session ribbon, inlined
+// for pages that don't use the webui framework (debate, research, etc.).
+const liveRibbonCSS = `
+#webui-live-ribbon {
+  position: fixed; top: 0; right: 0; max-width: 360px; margin: 0.5rem;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.3rem 0.6rem; font-size: 0.8rem; color: var(--text-mute);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 9999; display: none;
+}
+#webui-live-ribbon h4 {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-mute); margin: 0; cursor: pointer;
+  display: flex; align-items: center; gap: 0.4rem;
+}
+#webui-live-ribbon h4 .live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--good);
+  display: inline-block; animation: pulse 2s infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+#webui-live-ribbon .item {
+  display: flex; gap: 0.4rem; align-items: center;
+  padding: 0.3rem 0; color: var(--text); text-decoration: none;
+}
+#webui-live-ribbon .item:hover { color: var(--text-hi); }
+#webui-live-ribbon .badge {
+  font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px;
+  background: var(--bg-2); color: var(--text-mute);
+}
+#webui-live-ribbon .badge.run { background: var(--good); color: #fff; }
+#webui-live-ribbon .badge.q   { background: var(--warn); color: #fff; }
+`
+
+// liveRibbonJS is the JS for the webui live session ribbon, inlined
+// for pages that don't use the webui framework.
+const liveRibbonJS = `(function(){
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+  function ensureRibbon(){
+    var el=document.getElementById('webui-live-ribbon');
+    if(el)return el;
+    el=document.createElement('div');
+    el.id='webui-live-ribbon';
+    el.innerHTML='<h4><span class="live-dot"></span>Live</h4><div class="items" style="display:none"></div>';
+    document.body.appendChild(el);
+    el.querySelector('h4').addEventListener('click',function(){
+      var items=el.querySelector('.items');
+      items.style.display=items.style.display==='none'?'':'none';
+    });
+    return el;
+  }
+  function refresh(){
+    fetch(location.origin+'/api/live').then(function(r){return r.json()}).then(function(items){
+      var el=ensureRibbon(),box=el.querySelector('.items');
+      if(!items||items.length===0){el.style.display='none';box.innerHTML='';return}
+      var order={'Auto Blog':1,'Blogger':2,'Deep Research':3,'Debate':4};
+      items.sort(function(a,b){return(order[a.app]||99)-(order[b.app]||99)});
+      var h='';
+      for(var i=0;i<items.length;i++){
+        var it=items[i];
+        var badge=it.queued?'<span class="badge q">Queued</span>':'<span class="badge run">Running</span>';
+        var app=it.app?'<span class="badge">'+esc(it.app)+'</span>':'';
+        var url=it.url||'';
+        if(!url){var p=it.path||'';url=p+'/';if(it.id){var k=it.app==='Debate'?'debate':it.app==='Deep Research'?'research':'';if(k)url=p+'/?'+k+'='+encodeURIComponent(it.id)}}
+        h+='<a class="item" href="'+url+'">'+app+badge+'<span class="label">'+esc(it.topic||it.label||'Untitled')+'</span></a>';
+      }
+      box.innerHTML=h;el.style.display='block';
+    }).catch(function(){});
+  }
+  refresh();setInterval(refresh,10000);
+})();`
+
 // faviconLinkTag is the inline-SVG favicon link injected into every page
 // served via ServeHTMLWithBase. Mirrors the favicon used by webui.RenderPage
 // so legacy and migrated pages share the same browser-tab icon.
@@ -262,25 +332,14 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 			`<path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/>` +
 			`</svg></a>`
 		dashboard_style := `<style>#dashboard-back~*{} body{padding-top:3.5rem!important;}</style>`
-		// Collapsible live sessions widget — shows active/queued jobs across all apps.
-		live_widget := `<div id="gohort-live" style="position:fixed;top:12px;right:12px;z-index:9998;width:300px;font-family:-apple-system,sans-serif;font-size:0.8rem">` +
-			`<div id="gohort-live-header" onclick="document.getElementById('gohort-live-list').style.display=document.getElementById('gohort-live-list').style.display==='none'?'block':'none';if(document.getElementById('gohort-live-list').style.display==='block')gohortRefreshLive()" style="cursor:pointer;padding:0.4rem 0.7rem;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#8b949e;text-align:center;user-select:none">` +
-			`<span id="gohort-live-count">Live</span></div>` +
-			`<div id="gohort-live-list" style="display:none;margin-top:0.3rem;max-height:250px;overflow-y:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.4rem"></div></div>` +
-			`<script>` +
-			`function gohortRefreshLive(){fetch(window.location.origin+'/api/live').then(function(r){return r.json()}).then(function(items){` +
-			`var c=document.getElementById('gohort-live-count');var l=document.getElementById('gohort-live-list');` +
-			`if(!items||items.length===0){c.textContent='Live (0)';l.innerHTML='<div style="color:#484f58;padding:0.3rem">No active sessions.</div>';return}` +
-			`c.innerHTML='Live (<span style="color:#3fb950">'+items.length+'</span>)';` +
-			`items.sort(function(a,b){return a.spawned!==b.spawned?a.spawned?1:-1:(a.app||'').localeCompare(b.app||'')});` +
-			`var h='';for(var i=0;i<items.length;i++){var it=items[i];` +
-			`var badge=it.queued?'<span style="font-size:0.65rem;padding:0.1rem 0.3rem;border-radius:3px;background:#d29922;color:#fff;font-weight:600">Q</span>':'<span style="font-size:0.65rem;padding:0.1rem 0.3rem;border-radius:3px;background:#238636;color:#fff;font-weight:600">R</span>';` +
-			`var url=it.url||(it.path||'')+'/?id='+encodeURIComponent(it.id);` +
-			`h+='<a href="'+url+'" style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem;color:#c9d1d9;text-decoration:none;border-bottom:1px solid #21262d">';` +
-			`h+=badge+'<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(it.topic||it.label||'Untitled')+'</span>';` +
-			`if(it.status)h+='<span style="color:#484f58;font-size:0.7rem">'+it.status+'</span>';` +
-			`h+='</a>'}l.innerHTML=h}).catch(function(e){document.getElementById('gohort-live-count').textContent='Live (err)';console.error('live widget:',e)})}` +
-			`gohortRefreshLive();setInterval(gohortRefreshLive,10000);</script>`
+		// Inject the webui live ribbon for pages that don't use the webui
+		// framework. Pages that DO use webui already have it via BaseCSS/BaseJS.
+		live_widget := ""
+		if !strings.Contains(html, "webui-live-ribbon") && !strings.Contains(html, "refreshRibbon") {
+			live_widget = `<style>` +
+				`:root{--bg-1:#161b22;--bg-2:#21262d;--border:#30363d;--text:#c9d1d9;--text-hi:#f0f6fc;--text-mute:#8b949e;--good:#238636;--warn:#d29922}` +
+				liveRibbonCSS + `</style><script>` + liveRibbonJS + `</script>`
+		}
 		// Replace the LAST </body> tag — earlier occurrences may be inside JS strings.
 		if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
 			html = html[:idx] + dashboard_style + back_btn + live_widget + html[idx:]
