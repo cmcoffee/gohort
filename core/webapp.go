@@ -16,7 +16,7 @@ import (
 // WebApp is implemented by agents that can serve a web UI.
 // The central web server discovers these and mounts them under their prefix.
 type WebApp interface {
-	WebPath() string // URL prefix, e.g. "/investigate"
+	WebPath() string // URL prefix, e.g. "/myapp"
 	WebName() string // Display name for dashboard
 	WebDesc() string // Short description
 	RegisterRoutes(mux *http.ServeMux, prefix string)
@@ -88,16 +88,18 @@ type TaskQueue struct {
 }
 
 type queueWaiter struct {
-	id    string
-	label string
-	ready chan struct{}
-	ctx   context.Context
+	id       string
+	label    string
+	app      string // app name for live view
+	linkPath string // URL path for linking (e.g. "/myapp/?session=")
+	ready    chan struct{}
+	ctx      context.Context
 }
 
 // Acquire blocks until a slot is available or ctx is cancelled.
 // onQueue is called with the queue position whenever it changes.
 // Returns false if ctx was cancelled.
-func (q *TaskQueue) Acquire(ctx context.Context, id string, label string, onQueue func(position int)) bool {
+func (q *TaskQueue) Acquire(ctx context.Context, id, label, app, linkPath string, onQueue func(position int)) bool {
 	q.mu.Lock()
 	if q.active < MaxConcurrentTasks {
 		q.active++
@@ -107,10 +109,12 @@ func (q *TaskQueue) Acquire(ctx context.Context, id string, label string, onQueu
 
 	// Queue this request.
 	w := queueWaiter{
-		id:    id,
-		label: label,
-		ready: make(chan struct{}, 1),
-		ctx:   ctx,
+		id:       id,
+		label:    label,
+		app:      app,
+		linkPath: linkPath,
+		ready:    make(chan struct{}, 1),
+		ctx:      ctx,
 	}
 	q.queue = append(q.queue, w)
 	pos := len(q.queue)
@@ -178,7 +182,11 @@ func (q *TaskQueue) QueuedEntries() []LiveEntry {
 	defer q.mu.Unlock()
 	var entries []LiveEntry
 	for _, w := range q.queue {
-		entries = append(entries, LiveEntry{ID: w.id, Label: w.label, Queued: true})
+		entry := LiveEntry{ID: w.id, Label: w.label, Queued: true, App: w.app}
+		if w.linkPath != "" {
+			entry.URL = w.linkPath + w.id
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }
@@ -210,13 +218,25 @@ func (q *TaskQueue) Release() {
 }
 
 // liveRibbonCSS is the CSS for the webui live session ribbon, inlined
-// for pages that don't use the webui framework (debate, research, etc.).
+// for pages that render raw HTML via ServeHTMLWithBase rather than
+// going through webui.RenderPage (which inlines base.css itself).
 const liveRibbonCSS = `
 #webui-live-ribbon {
   position: fixed; top: 0; right: 5px; max-width: 360px; margin: 0.5rem;
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
   padding: 0.3rem 0.6rem; font-size: 0.8rem; color: var(--text-mute);
   box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 9999; display: none;
+}
+@media (max-width: 640px) {
+  #webui-live-ribbon {
+    /* Keep on the same top row as the back arrow — sub-app pages
+       don't have an auth-bar so there's nothing to clear. The
+       back arrow sits at top:12 left:12 (32x32) and the ribbon
+       at top:0 right:5; they're on opposite sides and don't
+       collide even when the ribbon has items. */
+    max-width: calc(100vw - 60px);
+    font-size: 0.75rem;
+  }
 }
 #webui-live-ribbon h4 {
   font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
@@ -261,16 +281,16 @@ const liveRibbonJS = `(function(){
   function refresh(){
     fetch(location.origin+'/api/live').then(function(r){return r.json()}).then(function(items){
       var el=ensureRibbon(),box=el.querySelector('.items');
-      if(!items||items.length===0){el.style.display='none';box.innerHTML='';return}
-      var order={'Auto Blog':1,'Blogger':2,'Deep Research':3,'Debate':4};
-      items.sort(function(a,b){return(order[a.app]||99)-(order[b.app]||99)});
+      items=(items||[]).filter(function(it){return !it.spawned});
+      if(items.length===0){el.style.display='none';box.innerHTML='';return}
+      items.sort(function(a,b){var oa=a.order||0,ob=b.order||0;if(oa!==ob)return oa-ob;return(a.app||'').localeCompare(b.app||'')});
       var h='';
       for(var i=0;i<items.length;i++){
         var it=items[i];
         var badge=it.queued?'<span class="badge q">Queued</span>':'<span class="badge run">Running</span>';
         var app=it.app?'<span class="badge">'+esc(it.app)+'</span>':'';
         var url=it.url||'';
-        if(!url){var p=it.path||'';url=p+'/';if(it.id){var k=it.app==='Debate'?'debate':it.app==='Deep Research'?'research':'';if(k)url=p+'/?'+k+'='+encodeURIComponent(it.id)}}
+        if(url&&url.charAt(0)==='/')url=location.origin+url;
         h+='<a class="item" href="'+url+'">'+app+badge+'<span class="label">'+esc(it.topic||it.label||'Untitled')+'</span></a>';
       }
       box.innerHTML=h;el.style.display='block';
@@ -303,8 +323,8 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 	}
 
 	// Inject the shared @font-face declaration (Orbitron) right after
-	// <head>, so apps that render their own HTML templates (debate,
-	// research, investigate, etc.) pick up the header font without
+	// <head>, so apps that render raw HTML templates (rather than
+	// going through webui.RenderPage) pick up the header font without
 	// wiring it per-app.
 	if ff := webui.FontFaceCSS(); ff != "" && !strings.Contains(html, "@font-face") {
 		html = strings.Replace(html, "<head>", "<head><style>"+ff+"</style>", 1)
@@ -317,15 +337,23 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 		// Convert absolute API paths to relative so <base> resolves them.
 		html = strings.ReplaceAll(html, "'/api/", "'api/")
 		html = strings.ReplaceAll(html, "\"/api/", "\"api/")
-		// Inject a floating back-to-dashboard icon.
-		back_btn := `<a id="dashboard-back" href="/" title="Dashboard" style="` +
+		// Inject a floating back-arrow icon. Default behavior navigates
+		// to the dashboard (/). Apps that have drilled-in views (e.g.,
+		// viewing a single record from a list) can override this by
+		// setting window.drillBackHandler to a function — when set,
+		// clicking the arrow calls that function instead of navigating,
+		// letting the app return to its own list view. Apps clear the
+		// handler when they leave the drilled state so the arrow
+		// reverts to dashboard-navigation.
+		back_btn := `<a id="dashboard-back" href="/" title="Back" style="` +
 			`position:fixed;top:12px;left:12px;z-index:9999;` +
 			`display:inline-flex;align-items:center;justify-content:center;` +
 			`width:32px;height:32px;border-radius:6px;` +
 			`background:#161b22;border:1px solid #30363d;` +
 			`color:#8b949e;text-decoration:none;font-size:1rem;` +
 			`transition:border-color 0.2s,color 0.2s,background 0.2s;` +
-			`" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#f0f6fc';this.style.background='#1c2128'"` +
+			`" onclick="if(typeof window.drillBackHandler==='function'){window.drillBackHandler();return false;}return true;"` +
+			` onmouseover="this.style.borderColor='#58a6ff';this.style.color='#f0f6fc';this.style.background='#1c2128'"` +
 			` onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e';this.style.background='#161b22'"` +
 			`>` +
 			`<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">` +
@@ -340,9 +368,18 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 				`:root{--bg-1:#161b22;--bg-2:#21262d;--border:#30363d;--text:#c9d1d9;--text-hi:#f0f6fc;--text-mute:#8b949e;--good:#238636;--warn:#d29922}` +
 				liveRibbonCSS + `</style><script>` + liveRibbonJS + `</script>`
 		}
+		// Inject webui.BaseJS for pages that don't go through
+		// webui.RenderPage. This exposes shared helpers (escapeHtml,
+		// renderMarkdown, etc.) as window globals so app-specific JS
+		// can call them. Keyed on an arbitrary symbol from the bundle
+		// so it only fires once per page.
+		shared_js := ""
+		if !strings.Contains(html, "window.renderMarkdown") {
+			shared_js = `<script>` + webui.BaseJS() + `</script>`
+		}
 		// Replace the LAST </body> tag — earlier occurrences may be inside JS strings.
 		if idx := strings.LastIndex(html, "</body>"); idx >= 0 {
-			html = html[:idx] + dashboard_style + back_btn + live_widget + html[idx:]
+			html = html[:idx] + dashboard_style + back_btn + live_widget + shared_js + html[idx:]
 		}
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -350,12 +387,63 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 }
 
 // MountSubMux registers a sub-mux under a prefix using StripPrefix.
-// When prefix is empty (standalone mode), mounts at root.
+// When prefix is empty (standalone mode), mounts at root. The sub-mux
+// is wrapped with UsageReportMiddleware so every handler registered on
+// it emits a per-request cost summary automatically — no handler-side
+// code required. The middleware skips streaming paths (SSE event
+// streams) where a held-open connection would mis-attribute work.
 func MountSubMux(mux *http.ServeMux, prefix string, sub *http.ServeMux) {
+	label := strings.TrimPrefix(prefix, "/")
+	if label == "" {
+		label = "web"
+	}
+	wrapped := UsageReportMiddleware(label)(sub)
 	if prefix != "" {
-		mux.Handle(prefix+"/", http.StripPrefix(prefix, sub))
+		mux.Handle(prefix+"/", http.StripPrefix(prefix, wrapped))
 	} else {
-		mux.Handle("/", sub)
+		mux.Handle("/", wrapped)
+	}
+}
+
+// streamingPaths holds URL suffixes whose handlers hold the connection
+// open for extended periods (SSE event streams, live/reconnect loops).
+// Snapshotting ProcessUsage over a long-lived stream would roll every
+// unrelated LLM call that happened during the hold into this request's
+// report, so we skip reporting entirely for these.
+var streamingPaths = map[string]bool{
+	"/api/events":    true,
+	"/api/live":      true,
+	"/api/reconnect": true,
+}
+
+// UsageReportMiddleware wraps an http.Handler so per-request usage is
+// snapshotted at entry and reported at exit via FormatUsageReport.
+// Skips when no counters moved (static GETs, HTML pages) so the log
+// doesn't fill with zero-delta noise. Skips streaming paths outright.
+//
+// Wired into MountSubMux so every registered WebApp gets cost reporting
+// for free; handlers don't need to import or call anything. Adding a
+// new API endpoint automatically inherits the report.
+func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if streamingPaths[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			start := ProcessUsage().Snapshot()
+			// Defer so the report fires even if the handler panics. The
+			// Go server's own panic recovery lets the middleware's defer
+			// run before the connection is torn down.
+			defer func() {
+				d := ProcessUsage().Diff(start)
+				if d == (UsageDiff{}) {
+					return
+				}
+				Log("%s", FormatUsageReport(label+" "+r.URL.Path, d))
+			}()
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
@@ -662,14 +750,29 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     position: fixed; top: 12px; right: 12px; z-index: 9999;
     display: flex; align-items: center; gap: 0.6rem;
     font-size: 0.8rem;
+    max-width: calc(100vw - 64px); /* leave room for the dashboard-back icon at top-left */
   }
-  .auth-user { color: #8b949e; }
+  .auth-user {
+    color: #8b949e;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40vw;
+  }
   .auth-link {
     color: #8b949e; text-decoration: none;
     padding: 0.3rem 0.7rem; border: 1px solid #30363d; border-radius: 6px;
     background: #161b22; transition: border-color 0.2s, color 0.2s;
+    white-space: nowrap;
   }
   .auth-link:hover { border-color: #58a6ff; color: #f0f6fc; }
+  @media (max-width: 640px) {
+    body { padding: 60px 12px 20px; }
+    .auth-bar { top: 8px; right: 8px; gap: 0.4rem; }
+    .auth-user { display: none; } /* keep just the Logout button visible on narrow screens */
+    .grid { grid-template-columns: 1fr; gap: 0.75rem; }
+    .card { padding: 1rem; }
+  }
 </style>
 </head>
 <body>
@@ -694,12 +797,16 @@ function refreshLive() {
   if (liveHidden) return;
   var list = document.getElementById('live-list');
   fetch('/api/live').then(function(r){return r.json()}).then(function(items){
-    if (!items || items.length === 0) {
+    // Drop spawned child sessions. The parent session's status
+    // already reflects its current stage, so showing both the parent
+    // and every child turns one logical operation into several noisy
+    // rows on the dashboard.
+    items = (items || []).filter(function(it) { return !it.spawned; });
+    if (items.length === 0) {
       list.innerHTML = '<div style="color:#484f58;padding:0.5rem;font-size:0.85rem">No active sessions.</div>';
       return;
     }
     items.sort(function(a, b) {
-      if (a.spawned !== b.spawned) return a.spawned ? 1 : -1;
       return (a.app || '').localeCompare(b.app || '');
     });
     var html = '';
@@ -707,7 +814,7 @@ function refreshLive() {
       var it = items[i];
       var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
       var app = it.app ? '<span class="live-badge" style="background:#30363d;color:#8b949e">' + it.app + '</span>' : '';
-      var url = it.url || (it.path || '') + '/?id=' + encodeURIComponent(it.id);
+      var url = it.url || '';
       html += '<a class="live-item" href="' + url + '">';
       html += app + badge;
       html += '<span class="live-label">' + (it.topic || it.label || 'Untitled') + '</span>';
@@ -979,13 +1086,14 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 // LiveEntry is a JSON-serializable summary of an active or queued session.
 type LiveEntry struct {
 	ID      string `json:"id"`
-	Label   string `json:"topic"`   // "topic" for backwards compat with JS
+	Label   string `json:"topic"`             // "topic" for backwards compat with JS
 	Queued  bool   `json:"queued,omitempty"`
 	Spawned bool   `json:"spawned,omitempty"` // spawned by a parent app
 	Status  string `json:"status,omitempty"`  // last status message
 	App     string `json:"app,omitempty"`     // which app owns this session
 	Path    string `json:"path,omitempty"`    // web path prefix
 	URL     string `json:"url,omitempty"`     // full reconnect URL (if set, used instead of path+id)
+	Order   int    `json:"order,omitempty"`   // display order for the live ribbon (lower = earlier); ties break by App name
 }
 
 // LiveProvider returns active sessions for a specific app.
