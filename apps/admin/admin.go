@@ -5,6 +5,7 @@ package admin
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -182,6 +183,73 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// API: cost rates — dollar pricing for per-run LLM + search usage
+	// telemetry. Shared between --setup (writes to the same kvlite
+	// bucket via core.SaveCostRatesToDB) and this admin page; either
+	// path writes the same record and updates live via SetCostRates.
+	sub.HandleFunc("/api/cost-rates", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			a.handleGetCostRates(w, r)
+		case http.MethodPut:
+			a.handleUpdateCostRates(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Per-day cost history for the admin chart. Aggregates across every
+	// spend-bearing record type whose package registered a scanner at
+	// init time via core.RegisterCostRecordScanner. Apps plug in their
+	// own record sources — admin stays generic.
+	sub.HandleFunc("/api/cost-history", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleCostHistory(w, r)
+	})
+
+	// Labels of registered cost-record scanners. Lets the admin UI
+	// show which apps are feeding the chart without hardcoding any
+	// private-app names into the public admin code.
+	sub.HandleFunc("/api/cost-sources", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(RegisteredCostSources())
+	})
+
+	// Run all registered embedding backfills. Intended as a one-shot
+	// after enabling embeddings for the first time or swapping models.
+	// Returns label → records-newly-ingested so the UI can report scope.
+	sub.HandleFunc("/api/embedding-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		counts := RunAllEmbeddingBackfills(r.Context())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(counts)
+	})
+
+	// Snapshot of the vector index for the admin UI: total chunks,
+	// embedded vs empty, breakdown by source. One-pass scan; cheap
+	// enough to call on page load.
+	sub.HandleFunc("/api/vector-stats", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(VectorStats(a.db))
 	})
 
 	// Gate the entire sub-mux behind IP allowlist + admin check.
@@ -513,6 +581,101 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
+// handleGetCostRates returns the currently configured dollar-rate values
+// for LLM + search usage telemetry. Rates are stored in the kvlite DB
+// under the "cost_rates" bucket by both --setup and this page; the
+// per-run log line formats "est. $X.XXXX" using these values. The
+// `configured` flag distinguishes "all zeros because never set" from
+// "operator explicitly set everything to zero" so the client can
+// render blank inputs in the first case and "0" in the second.
+func (a *AdminApp) handleGetCostRates(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	rates := GetCostRates()
+	json.NewEncoder(w).Encode(struct {
+		CostRates
+		Configured bool `json:"configured"`
+	}{rates, RatesConfigured()})
+}
+
+// handleUpdateCostRates accepts a partial or full CostRates JSON body
+// and merges it with the current rates, persisting the result and
+// installing it live via SetCostRates. Partial update semantics (each
+// field is a pointer) so the form can PUT a single field without
+// re-sending the rest.
+func (a *AdminApp) handleUpdateCostRates(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WorkerInputPer1K  *float64 `json:"worker_input_per_1k,omitempty"`
+		WorkerOutputPer1K *float64 `json:"worker_output_per_1k,omitempty"`
+		LeadInputPer1K    *float64 `json:"lead_input_per_1k,omitempty"`
+		LeadOutputPer1K   *float64 `json:"lead_output_per_1k,omitempty"`
+		SearchPerCall     *float64 `json:"search_per_call,omitempty"`
+		ImagePerCall      *float64 `json:"image_per_call,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	rates := GetCostRates()
+	current := AuthCurrentUser(r)
+	if req.WorkerInputPer1K != nil {
+		rates.WorkerInputPer1K = *req.WorkerInputPer1K
+		Log("[admin] user %q set worker_input_per_1k=%g", current, *req.WorkerInputPer1K)
+	}
+	if req.WorkerOutputPer1K != nil {
+		rates.WorkerOutputPer1K = *req.WorkerOutputPer1K
+		Log("[admin] user %q set worker_output_per_1k=%g", current, *req.WorkerOutputPer1K)
+	}
+	if req.LeadInputPer1K != nil {
+		rates.LeadInputPer1K = *req.LeadInputPer1K
+		Log("[admin] user %q set lead_input_per_1k=%g", current, *req.LeadInputPer1K)
+	}
+	if req.LeadOutputPer1K != nil {
+		rates.LeadOutputPer1K = *req.LeadOutputPer1K
+		Log("[admin] user %q set lead_output_per_1k=%g", current, *req.LeadOutputPer1K)
+	}
+	if req.SearchPerCall != nil {
+		rates.SearchPerCall = *req.SearchPerCall
+		Log("[admin] user %q set search_per_call=%g", current, *req.SearchPerCall)
+	}
+	if req.ImagePerCall != nil {
+		rates.ImagePerCall = *req.ImagePerCall
+		Log("[admin] user %q set image_per_call=%g", current, *req.ImagePerCall)
+	}
+	if err := SaveCostRatesToDB(a.db, rates); err != nil {
+		http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	SetCostRates(rates)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rates)
+}
+
+// handleCostHistory returns per-day cost aggregation across every
+// spend-bearing record type whose package registered a scanner via
+// core.RegisterCostRecordScanner. Scanner authors are responsible for
+// avoiding double-counting (e.g., skipping records whose Usage is
+// already included in a parent record's totals).
+//
+// Query params:
+//
+//	days=<n>  trailing window ending today (default 30; 0 = all data)
+//
+// The chart consumes this directly: each DailyCost row prices the
+// day's usage at current CostRates, so rate changes propagate
+// immediately without re-scanning.
+func (a *AdminApp) handleCostHistory(w http.ResponseWriter, r *http.Request) {
+	days := 30
+	if s := r.URL.Query().Get("days"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			days = n
+		}
+	}
+	records := CollectAllUsage()
+	daily := AggregateDailyCost(records, days)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(daily)
+}
+
 // handleListApps returns all registered web apps (excluding admin) for the
 // app assignment UI.
 func (a *AdminApp) handleListApps(w http.ResponseWriter, r *http.Request) {
@@ -584,6 +747,14 @@ const adminCSS = `
   font-size: 1.1rem; color: #f0f6fc; margin-bottom: 1rem;
   padding-bottom: 0.5rem; border-bottom: 1px solid #21262d;
 }
+/* user-table-wrap gives the table a horizontal scroll container
+   instead of forcing the whole admin page to overflow when a username
+   + chips + buttons push past the viewport width on mobile. At narrow
+   widths (≤640px) the table switches to a stacked card layout where
+   each row becomes a labeled vertical block. */
+.user-table-wrap {
+  width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
 .user-table {
   width: 100%; border-collapse: collapse;
 }
@@ -594,9 +765,26 @@ const adminCSS = `
 }
 .user-table td {
   padding: 0.6rem 0.75rem; border-bottom: 1px solid #21262d;
-  font-size: 0.9rem;
+  font-size: 0.9rem; word-break: break-word;
 }
 .user-table tr:last-child td { border-bottom: none; }
+@media (max-width: 640px) {
+  /* Stack the table: each row becomes a card, each cell a labeled
+     block. Keeps all data readable on narrow screens without
+     horizontal scroll. */
+  .user-table thead { display: none; }
+  .user-table, .user-table tbody, .user-table tr, .user-table td {
+    display: block; width: 100%;
+  }
+  .user-table tr {
+    border: 1px solid #21262d; border-radius: 6px;
+    margin-bottom: 0.5rem; padding: 0.25rem 0.5rem;
+  }
+  .user-table td {
+    border: none; padding: 0.35rem 0.25rem;
+  }
+  .user-table td:first-child { font-weight: 600; color: #f0f6fc; }
+}
 .badge {
   font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 10px;
   font-weight: 600;
@@ -645,7 +833,7 @@ const adminCSS = `
 }
 .status-card .value { font-size: 1.5rem; font-weight: 700; color: #f0f6fc; }
 .status-card .label { font-size: 0.75rem; color: #8b949e; margin-top: 0.3rem; }
-.actions { display: flex; gap: 0.4rem; }
+.actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 .current-user { color: #8b949e; font-size: 0.75rem; font-style: italic; }
 .setting-row { padding: 0.4rem 0; }
 .toggle-label {
@@ -756,13 +944,96 @@ const adminBody = `
     </div>
   </div>
   <div class="section">
+    <h2>Cost Rates</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Dollar pricing for LLM tokens and search-API calls. Used to compute the per-run cost estimate shown in log lines and on history pages. Rates are per-1,000 tokens for LLMs, per-call for search. Leave blank (or zero) to disable cost estimates — runs will log "rates not configured" instead of a dollar figure.</span>
+    </div>
+    <div class="setting-row" style="display:flex;gap:1.5rem;flex-wrap:wrap">
+      <div>
+        <label style="font-size:0.9rem;color:#c9d1d9">Worker Input $/1K</label>
+        <span class="setting-desc">Primary LLM input tokens (e.g. Gemini Flash: 0.075).</span>
+        <input type="number" id="cost-worker-in" step="0.0001" min="0" placeholder="0"
+          style="margin-top:0.3rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="updateCostRate('worker_input_per_1k', parseFloat(this.value)||0)">
+      </div>
+      <div>
+        <label style="font-size:0.9rem;color:#c9d1d9">Worker Output $/1K</label>
+        <span class="setting-desc">Primary LLM output tokens (e.g. Gemini Flash: 0.30).</span>
+        <input type="number" id="cost-worker-out" step="0.0001" min="0" placeholder="0"
+          style="margin-top:0.3rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="updateCostRate('worker_output_per_1k', parseFloat(this.value)||0)">
+      </div>
+    </div>
+    <div class="setting-row" style="display:flex;gap:1.5rem;flex-wrap:wrap">
+      <div>
+        <label style="font-size:0.9rem;color:#c9d1d9">Lead Input $/1K</label>
+        <span class="setting-desc">Precision LLM input tokens (e.g. Claude Sonnet: 3.00).</span>
+        <input type="number" id="cost-lead-in" step="0.0001" min="0" placeholder="0"
+          style="margin-top:0.3rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="updateCostRate('lead_input_per_1k', parseFloat(this.value)||0)">
+      </div>
+      <div>
+        <label style="font-size:0.9rem;color:#c9d1d9">Lead Output $/1K</label>
+        <span class="setting-desc">Precision LLM output tokens (e.g. Claude Sonnet: 15.00).</span>
+        <input type="number" id="cost-lead-out" step="0.0001" min="0" placeholder="0"
+          style="margin-top:0.3rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="updateCostRate('lead_output_per_1k', parseFloat(this.value)||0)">
+      </div>
+    </div>
+    <div class="setting-row" style="display:flex;gap:1.5rem;flex-wrap:wrap">
+      <div>
+        <label style="font-size:0.9rem;color:#c9d1d9">Search $/call</label>
+        <span class="setting-desc">Per-query cost of the search API in use (e.g. Serper: 0.0003).</span>
+        <input type="number" id="cost-search" step="0.00001" min="0" placeholder="0"
+          style="margin-top:0.3rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="updateCostRate('search_per_call', parseFloat(this.value)||0)">
+      </div>
+      <div>
+        <label style="font-size:0.9rem;color:#c9d1d9">Image $/call</label>
+        <span class="setting-desc">Per-image generation cost (e.g. Gemini Imagen: 0.04; DALL-E 3 1792x1024 standard: 0.08).</span>
+        <input type="number" id="cost-image" step="0.001" min="0" placeholder="0"
+          style="margin-top:0.3rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="updateCostRate('image_per_call', parseFloat(this.value)||0)">
+      </div>
+    </div>
+  </div>
+  <div class="section">
+    <h2>Cost History (Last 30 Days)</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Per-day dollar spend across every app that records usage, for the trailing 30-day window ending today. Days with no activity render as empty bars. Priced at the current Cost Rates above — changing rates updates the chart on next load.</span>
+    </div>
+    <div class="setting-row" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0">
+      <span style="font-size:0.8rem;color:#8b949e">Contributing apps:</span>
+      <span id="cost-sources" style="font-size:0.8rem;color:#c9d1d9"></span>
+    </div>
+    <div id="cost-history-container" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:1rem;margin-top:0.5rem;position:relative">
+      <svg id="cost-chart" width="100%" height="220" viewBox="0 0 600 220" preserveAspectRatio="none" style="display:block"></svg>
+      <div id="cost-chart-empty" style="display:none;color:#8b949e;text-align:center;padding:60px 20px;font-size:0.9rem">No cost data in the last 30 days.</div>
+      <div id="cost-tooltip" style="display:none;position:absolute;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:0.55rem 0.75rem;font-size:0.8rem;color:#c9d1d9;pointer-events:none;z-index:10;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,0.4);min-width:180px"></div>
+    </div>
+    <div id="cost-chart-summary" style="margin-top:0.5rem;font-size:0.85rem;color:#c9d1d9"></div>
+  </div>
+  <div class="section">
+    <h2>Vector Index</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Rebuild the semantic-search index from stored records. Run once after enabling embeddings for the first time or after switching embedding models. Safe to re-run — records already ingested are skipped. Ingestion runs synchronously here and may take a while on large deployments (one embedding call per chunk, typically one per section per record).</span>
+    </div>
+    <div class="setting-row" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem">
+      <button id="embed-backfill-btn" onclick="runEmbeddingBackfill(this)" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Run backfill</button>
+      <span id="embed-backfill-status" style="font-size:0.85rem;color:#8b949e"></span>
+    </div>
+    <div id="vector-stats" style="font-size:0.8rem;color:#8b949e;margin-top:0.25rem;font-family:monospace;line-height:1.6"></div>
+  </div>
+  <div class="section">
     <h2>User Management</h2>
-    <table class="user-table">
-      <thead><tr>
-        <th>Email</th><th>Role</th><th>Apps</th><th>Actions</th>
-      </tr></thead>
-      <tbody id="user-list"></tbody>
-    </table>
+    <div class="user-table-wrap">
+      <table class="user-table">
+        <thead><tr>
+          <th>Email</th><th>Role</th><th>Apps</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="user-list"></tbody>
+      </table>
+    </div>
     <div class="add-form">
       <div class="field">
         <label>Email</label>
@@ -910,6 +1181,43 @@ function updateSetting(key, val) {
   var payload = {};
   payload[key] = val;
   fetch('api/settings', {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+}
+
+function loadCostRates() {
+  fetch('api/cost-rates').then(function(r){
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(rates){
+    if (!rates) return;
+    // When rates.configured is true, render every value including zero —
+    // $0.00 is a legitimate rate (free local worker). When false, leave
+    // inputs blank so "never configured" isn't confused with "set to 0."
+    var byId = {
+      'cost-worker-in':  rates.worker_input_per_1k,
+      'cost-worker-out': rates.worker_output_per_1k,
+      'cost-lead-in':    rates.lead_input_per_1k,
+      'cost-lead-out':   rates.lead_output_per_1k,
+      'cost-search':     rates.search_per_call,
+      'cost-image':      rates.image_per_call
+    };
+    Object.keys(byId).forEach(function(id){
+      var el = document.getElementById(id);
+      if (!el) return;
+      if (rates.configured) {
+        el.value = byId[id];
+      }
+    });
+  });
+}
+
+function updateCostRate(key, val) {
+  var payload = {};
+  payload[key] = val;
+  fetch('api/cost-rates', {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload)
@@ -1154,6 +1462,309 @@ function doDeleteUser(username) {
   });
 }
 
+function loadCostSources() {
+  fetch('api/cost-sources').then(function(r){
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(sources){
+    var el = document.getElementById('cost-sources');
+    if (!el) return;
+    if (!sources || sources.length === 0) {
+      el.innerHTML = '<span style="color:#8b949e;font-style:italic">none registered</span>';
+      return;
+    }
+    // Render as pill-style badges so the list of contributing apps is
+    // visually distinct from the prose above.
+    el.innerHTML = sources.map(function(s){
+      return '<span style="display:inline-block;padding:0.15rem 0.55rem;background:#21262d;border:1px solid #30363d;border-radius:999px;font-family:monospace;font-size:0.75rem;color:#c9d1d9">' + s + '</span>';
+    }).join(' ');
+  });
+}
+
+function loadVectorStats() {
+  fetch('api/vector-stats').then(function(r){
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(s){
+    var el = document.getElementById('vector-stats');
+    if (!el || !s) return;
+    if (s.total === 0) {
+      el.innerHTML = '<span style="color:#8b949e;font-style:italic">Index empty — run backfill to ingest existing records.</span>';
+      return;
+    }
+    var parts = [];
+    parts.push('Total chunks: ' + s.total);
+    parts.push('Embedded: ' + s.embedded);
+    if (s.empty > 0) {
+      parts.push('<span style="color:#f0883e">Empty (embed failed): ' + s.empty + '</span>');
+    }
+    var bySrc = [];
+    if (s.by_source) {
+      Object.keys(s.by_source).sort().forEach(function(k){
+        bySrc.push(k + '=' + s.by_source[k]);
+      });
+    }
+    var line1 = parts.join('  |  ');
+    var line2 = bySrc.length ? 'By source: ' + bySrc.join(', ') : '';
+    el.innerHTML = line1 + (line2 ? '<br>' + line2 : '');
+  });
+}
+
+function runEmbeddingBackfill(btn) {
+  var status = document.getElementById('embed-backfill-status');
+  if (btn) {
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    btn.textContent = 'Running...';
+  }
+  if (status) {
+    status.textContent = 'Ingesting records — this may take a while.';
+    status.style.color = '#8b949e';
+  }
+  fetch('api/embedding-backfill', {method: 'POST'}).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(counts){
+    if (btn) {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.textContent = 'Run backfill';
+    }
+    if (status) {
+      var parts = [];
+      var total = 0;
+      Object.keys(counts).forEach(function(k){
+        parts.push(k + ': ' + counts[k]);
+        total += counts[k];
+      });
+      if (total === 0) {
+        status.textContent = 'No new records to ingest — everything already in the index.';
+        status.style.color = '#8b949e';
+      } else {
+        status.textContent = 'Ingested ' + total + ' record' + (total === 1 ? '' : 's') + ' (' + parts.join(', ') + ').';
+        status.style.color = '#2ea043';
+      }
+    }
+    // Refresh stats so the user sees the new counts immediately.
+    loadVectorStats();
+  }).catch(function(err){
+    if (btn) {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.textContent = 'Run backfill';
+    }
+    if (status) {
+      status.textContent = 'Backfill failed: ' + err.message;
+      status.style.color = '#f85149';
+    }
+  });
+}
+
+function loadCostHistory() {
+  fetch('api/cost-history?days=30').then(function(r){
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(days){
+    var svg = document.getElementById('cost-chart');
+    var empty = document.getElementById('cost-chart-empty');
+    if (!days || days.length === 0) {
+      if (svg) svg.style.display = 'none';
+      if (empty) empty.style.display = 'block';
+      return;
+    }
+    // Check if every day is zero — no runs in the window even though
+    // records might exist further back. Show empty state instead of a
+    // flat chart that reads as broken.
+    var anyNonZero = false;
+    for (var i = 0; i < days.length; i++) {
+      if (days[i].run_count > 0) { anyNonZero = true; break; }
+    }
+    if (!anyNonZero) {
+      if (svg) svg.style.display = 'none';
+      if (empty) empty.style.display = 'block';
+      if (empty) empty.textContent = 'No cost data in the last 30 days.';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    if (svg) svg.style.display = 'block';
+    renderCostChart(days);
+  });
+}
+
+function formatNum(n) {
+  // Thousands-separator for readability in the tooltip.
+  return (n || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function showCostTooltip(e) {
+  var tip = document.getElementById('cost-tooltip');
+  if (!tip) return;
+  var d = JSON.parse(e.currentTarget.getAttribute('data-day'));
+  var runLabel = d.run_count === 1 ? '1 run' : d.run_count + ' runs';
+  tip.innerHTML =
+    '<div style="font-weight:600;color:#f0f6fc;margin-bottom:0.35rem">' + d.date + '</div>' +
+    '<div style="color:#58a6ff;font-size:1rem;margin-bottom:0.35rem">$' + d.cost.toFixed(4) + '</div>' +
+    '<div style="color:#8b949e;margin-bottom:0.35rem">' + runLabel + '</div>' +
+    '<div style="border-top:1px solid #30363d;padding-top:0.35rem;font-family:monospace;font-size:0.75rem">' +
+    'Worker in: ' + formatNum(d.worker_input) + '<br>' +
+    'Worker out: ' + formatNum(d.worker_output) + '<br>' +
+    'Lead in:  ' + formatNum(d.lead_input) + '<br>' +
+    'Lead out: ' + formatNum(d.lead_output) + '<br>' +
+    'Searches: ' + formatNum(d.search_calls) + '<br>' +
+    'Images:   ' + formatNum(d.image_calls) +
+    '</div>';
+  tip.style.display = 'block';
+  moveCostTooltip(e);
+}
+
+function moveCostTooltip(e) {
+  var tip = document.getElementById('cost-tooltip');
+  var container = document.getElementById('cost-history-container');
+  if (!tip || !container) return;
+  var box = container.getBoundingClientRect();
+  var tw = tip.offsetWidth;
+  var th = tip.offsetHeight;
+  // Prefer right-of-cursor; flip to left if it would overflow the
+  // container's right edge. Vertical: prefer below-cursor, flip up
+  // near the bottom edge.
+  var x = e.clientX - box.left + 12;
+  var y = e.clientY - box.top + 12;
+  if (x + tw + 8 > box.width) x = e.clientX - box.left - tw - 12;
+  if (y + th + 8 > box.height) y = e.clientY - box.top - th - 12;
+  tip.style.left = Math.max(4, x) + 'px';
+  tip.style.top = Math.max(4, y) + 'px';
+}
+
+function hideCostTooltip() {
+  var tip = document.getElementById('cost-tooltip');
+  if (tip) tip.style.display = 'none';
+}
+
+function renderCostChart(days) {
+  var svg = document.getElementById('cost-chart');
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  var W = 600, H = 220;
+  var padL = 55, padR = 10, padT = 15, padB = 30;
+  var plotW = W - padL - padR;
+  var plotH = H - padT - padB;
+  var ns = 'http://www.w3.org/2000/svg';
+
+  // Determine max for y-axis scaling. Treat a flat-zero dataset as $0.01
+  // so the bars aren't invisible when rates haven't been configured.
+  var maxCost = 0;
+  for (var i = 0; i < days.length; i++) {
+    if (days[i].cost > maxCost) maxCost = days[i].cost;
+  }
+  if (maxCost === 0) maxCost = 0.01;
+
+  // Gridlines + y-axis labels (5 ticks 0..max).
+  for (var t = 0; t <= 4; t++) {
+    var y = padT + (plotH * t / 4);
+    var val = maxCost * (1 - t / 4);
+    var line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', padL);
+    line.setAttribute('x2', W - padR);
+    line.setAttribute('y1', y);
+    line.setAttribute('y2', y);
+    line.setAttribute('stroke', '#30363d');
+    line.setAttribute('stroke-dasharray', '2,3');
+    svg.appendChild(line);
+    var label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', padL - 6);
+    label.setAttribute('y', y + 4);
+    label.setAttribute('text-anchor', 'end');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('fill', '#8b949e');
+    label.textContent = '$' + val.toFixed(val < 0.1 ? 4 : 2);
+    svg.appendChild(label);
+  }
+
+  // Bars + per-bar tooltip (native SVG <title>).
+  var barW = plotW / days.length;
+  var gap = Math.min(4, barW * 0.2);
+  // Target ~6 x-axis labels across the window so MM-DD ticks don't
+  // collide. labelStep spaces them; a minimum 2-bar gap before the
+  // final "today" label avoids the previous modulo tick bumping into
+  // it (the 30-bar case put labels at indices 28 and 29 otherwise).
+  var labelStep = Math.max(1, Math.floor(days.length / 6));
+  var minGapBars = 2;
+  var lastLabeledIdx = -minGapBars;
+  for (var i = 0; i < days.length; i++) {
+    var d = days[i];
+    var h = (d.cost / maxCost) * plotH;
+    var x = padL + i * barW + gap / 2;
+    var y = padT + plotH - h;
+    var w = barW - gap;
+    var rect = document.createElementNS(ns, 'rect');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', w);
+    rect.setAttribute('height', h);
+    rect.setAttribute('fill', '#58a6ff');
+    rect.setAttribute('rx', '1');
+    // Widen the hit target for short/zero bars so there's always
+    // something clickable under the mouse even on empty days.
+    rect.setAttribute('data-day', JSON.stringify(d));
+    rect.style.cursor = 'pointer';
+    rect.addEventListener('mouseenter', showCostTooltip);
+    rect.addEventListener('mousemove', moveCostTooltip);
+    rect.addEventListener('mouseleave', hideCostTooltip);
+    svg.appendChild(rect);
+    // Invisible full-height capture rect — even zero-cost days have a
+    // hover target spanning the plot area. Placed on top of the bar so
+    // it catches the mouse regardless of bar height.
+    var hover = document.createElementNS(ns, 'rect');
+    hover.setAttribute('x', x);
+    hover.setAttribute('y', padT);
+    hover.setAttribute('width', w);
+    hover.setAttribute('height', plotH);
+    hover.setAttribute('fill', 'transparent');
+    hover.setAttribute('data-day', JSON.stringify(d));
+    hover.style.cursor = 'pointer';
+    hover.addEventListener('mouseenter', showCostTooltip);
+    hover.addEventListener('mousemove', moveCostTooltip);
+    hover.addEventListener('mouseleave', hideCostTooltip);
+    svg.appendChild(hover);
+
+    var isModuloTick = (i % labelStep === 0);
+    var isLast = (i === days.length - 1);
+    var shouldLabel = false;
+    if (isLast) {
+      // Always show today's date; if the previous modulo tick is too
+      // close, that one gets dropped below instead.
+      shouldLabel = true;
+    } else if (isModuloTick && (days.length - 1 - i) >= minGapBars) {
+      shouldLabel = true;
+    }
+    if (shouldLabel && i - lastLabeledIdx >= minGapBars) {
+      var text = document.createElementNS(ns, 'text');
+      text.setAttribute('x', x + w / 2);
+      text.setAttribute('y', H - 10);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-size', '10');
+      text.setAttribute('fill', '#8b949e');
+      text.textContent = d.date.slice(5);
+      svg.appendChild(text);
+      lastLabeledIdx = i;
+    }
+  }
+
+  // Summary line below the chart.
+  var total = 0, runs = 0;
+  for (var k = 0; k < days.length; k++) {
+    total += days[k].cost;
+    runs += days[k].run_count;
+  }
+  var summary = document.getElementById('cost-chart-summary');
+  if (summary) {
+    var todayCost = days[days.length - 1].cost;
+    summary.textContent = 'Last ' + days.length + ' days: $' + total.toFixed(4) +
+      ' across ' + runs + ' run' + (runs === 1 ? '' : 's') +
+      '  ·  Today: $' + todayCost.toFixed(4) + '.';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   loadApps().then(function(){
     fetch('api/whoami').then(function(r){ return r.json(); }).then(function(d){
@@ -1162,6 +1773,14 @@ document.addEventListener('DOMContentLoaded', function() {
     }).catch(function() { loadUsers(); });
     loadStatus();
     loadSettings();
+    loadCostRates();
+    loadCostSources();
+    loadCostHistory();
+    loadVectorStats();
+    // Refresh the cost chart every minute so runs that finish while
+    // the admin page is open show up without a manual reload. One
+    // small JSON fetch per tick — cheap.
+    setInterval(loadCostHistory, 60000);
   });
 });
 `
