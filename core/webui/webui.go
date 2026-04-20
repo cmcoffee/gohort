@@ -86,7 +86,7 @@ func BaseJS() string { return asset("base.js") }
 // AppName, BodyHTML. Everything else is optional.
 type PageOpts struct {
 	Title    string // <title> contents
-	AppName  string // app label (e.g. "Research") shown in headers/ribbons
+	AppName  string // app label (e.g. "MyApp") shown in headers/ribbons
 	BodyHTML string // app-specific HTML body (main panel)
 	AppCSS   string // app-specific CSS appended after BaseCSS
 	AppJS    string // app-specific JS appended after BaseJS
@@ -200,7 +200,15 @@ const backChromeCSS = `
 body { padding-top: 3.5rem; }
 `
 
-const backChromeHTML = `<a id="dashboard-back" href="/" title="Dashboard">
+// Back arrow: default navigates to the dashboard (href="/"). Apps
+// with drilled-in views can set window.drillBackHandler to a function;
+// when set, clicking calls that function instead of navigating so the
+// arrow returns to the app's list view (equivalent to clicking the
+// app's in-arena "Back to Reports" / "Back to Debates" button). Apps
+// clear the handler on drill-out so the arrow reverts to
+// dashboard-navigation. Same onclick as ServeHTMLWithBase's back
+// button so all apps (webui-framework + raw-HTML) behave identically.
+const backChromeHTML = `<a id="dashboard-back" href="/" title="Back" onclick="if(typeof window.drillBackHandler==='function'){window.drillBackHandler();return false;}return true;">
 <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M7.78 12.53a.75.75 0 01-1.06 0L2.47 8.28a.75.75 0 010-1.06l4.25-4.25a.75.75 0 011.06 1.06L4.81 7h7.44a.75.75 0 010 1.5H4.81l2.97 2.97a.75.75 0 010 1.06z"/></svg>
 </a>
 `

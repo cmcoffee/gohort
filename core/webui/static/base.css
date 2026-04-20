@@ -171,6 +171,52 @@ input:focus, textarea:focus, select:focus {
 }
 #webui-live-ribbon .badge.run { background: var(--good); color: #fff; }
 #webui-live-ribbon .badge.q   { background: var(--warn); color: #fff; }
+@media (max-width: 640px) {
+  #webui-live-ribbon {
+    /* Stay on the same top row as the back arrow. Sub-app pages
+       don't have an auth-bar to clear, so no top offset needed;
+       back arrow is top-left, ribbon is top-right — no collision. */
+    max-width: calc(100vw - 60px);
+    font-size: 0.75rem;
+  }
+}
+
+/* --- shared history list (webui.historyList) ---
+   The shell HTML (header row, search input, bulk bar) is emitted with
+   inline styles from base.js, so per-app `.history-btn` and
+   `.history-item` rules keep controlling appearance. The `select-mode`
+   class is applied to the outer container (#history-view) so each
+   app's existing `#history-view.select-mode .history-item ...` rules
+   fire without modification.
+
+   Archived items render with an amber border + "ARCHIVED" pill in the
+   top-right corner — enough of a visual marker that the user knows
+   they're in the archive view (Show Archived mode hides active items
+   entirely, so the marker also serves as a mode indicator on every
+   row). No opacity dimming: when archive-only mode is on, every
+   visible item is archived, and dimming the whole list would hurt
+   readability. The !important on border-color wins against per-app
+   `.history-item` border rules.
+*/
+.history-item[data-archived="true"] {
+  border-color: #d29922 !important;
+  position: relative;
+}
+.history-item[data-archived="true"]::after {
+  content: "ARCHIVED";
+  position: absolute;
+  top: 0.5rem;
+  right: 0.75rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #d29922;
+  background: #d2992222;
+  border: 1px solid #d2992266;
+  border-radius: 3px;
+  padding: 0.05rem 0.35rem;
+  pointer-events: none;
+}
 
 /* --- modal --- */
 .webui-modal-backdrop {
