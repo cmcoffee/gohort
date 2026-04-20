@@ -9,8 +9,10 @@ import (
 
 	_ "github.com/cmcoffee/gohort/tools/calculate"
 	_ "github.com/cmcoffee/gohort/tools/command"
+	_ "github.com/cmcoffee/gohort/tools/datemath"
 	_ "github.com/cmcoffee/gohort/tools/email"
 	_ "github.com/cmcoffee/gohort/tools/localtime"
+	_ "github.com/cmcoffee/gohort/tools/mockshell"
 	_ "github.com/cmcoffee/gohort/tools/websearch"
 )
 

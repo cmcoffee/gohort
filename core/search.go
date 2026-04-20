@@ -66,8 +66,10 @@ func ParseLabel(line, prefix string) (string, bool) {
 }
 
 // DecodeJSON extracts and unmarshals JSON from LLM output into dest.
-// It strips markdown code fences and locates the outermost JSON object
-// or array before decoding. Returns an error if no valid JSON is found.
+// It strips markdown code fences, locates the outermost JSON object
+// or array, then removes common LLM-induced invalid-JSON artifacts
+// (comment lines, trailing commas) before decoding. Returns an error
+// if no valid JSON is found.
 func DecodeJSON(text string, dest interface{}) error {
 	raw := StripCodeFence(strings.TrimSpace(text))
 
@@ -87,7 +89,63 @@ func DecodeJSON(text string, dest interface{}) error {
 		raw = raw[start:end]
 	}
 
+	raw = sanitizeLLMJSON(raw)
 	return json.Unmarshal([]byte(raw), dest)
+}
+
+// sanitizeLLMJSON removes three common invalid-JSON patterns that LLMs
+// produce despite being asked for strict JSON: (1) whole-line comments
+// that start with # or // (often markdown-style "## Note: ..." inserted
+// between array elements), (2) trailing commas before } or ], and (3)
+// stray "/*...*/" block comments. Each is a regex-free pass so the
+// function stays cheap and predictable.
+func sanitizeLLMJSON(raw string) string {
+	// Strip inline /* ... */ block comments.
+	for {
+		i := strings.Index(raw, "/*")
+		if i < 0 {
+			break
+		}
+		j := strings.Index(raw[i:], "*/")
+		if j < 0 {
+			break
+		}
+		raw = raw[:i] + raw[i+j+2:]
+	}
+
+	// Strip whole-line comments. A "comment line" is any line whose
+	// first non-whitespace character is # or //. Keeps lines that
+	// happen to contain # inside string values unchanged.
+	var b strings.Builder
+	b.Grow(len(raw))
+	for _, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "//") {
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	raw = b.String()
+
+	// Remove trailing commas before closing ] or } — Python/JS-style
+	// that invalid-JSON writers sometimes emit.
+	fix := func(s, pattern string) string {
+		for {
+			i := strings.Index(s, pattern)
+			if i < 0 {
+				return s
+			}
+			// pattern is ",<ws>]" or ",<ws>}" — collapse to "]"/"}".
+			s = s[:i] + s[i+len(pattern)-1:]
+		}
+	}
+	for _, suffix := range []string{"]", "}"} {
+		for _, ws := range []string{"", " ", "\n", "\t", " \n", "\n "} {
+			raw = fix(raw, ","+ws+suffix)
+		}
+	}
+	return raw
 }
 
 // DecodeJSONList tries to decode a JSON string array from LLM output.
@@ -303,6 +361,35 @@ func ClassifySource(rawURL string) string {
 		}
 	}
 
+	// Commentary tier — ideologically-charged outlets, policy think
+	// tanks, and industry legal commentary that produce substantive
+	// work but shouldn't stand alone as evidence for load-bearing
+	// claims. Synthesis rules require at least one primary-tier source
+	// (peer-reviewed / gov / edu / preprint) to co-support any claim
+	// that cites a commentary-tier source. Kept bipartisan on purpose
+	// so the filter is epistemic, not ideological.
+	commentaryHosts := []string{
+		// Cable news opinion / partisan outlets.
+		"foxnews.com", "breitbart.com", "dailywire.com",
+		// Ideologically-charged magazines (left and right).
+		"jacobin.com", "nationalreview.com", "reason.com",
+		// Policy think tanks (left and right for parity).
+		"rooseveltinstitute.org", "heritage.org",
+		"cato.org", "mercatus.org", "epi.org",
+		"americanprogress.org", "aei.org", "urban.org",
+		"manhattan-institute.org",
+		// (brookings.edu intentionally omitted — the .edu check above
+		// catches it first as an academic institution; leaving it at
+		// edu-tier reflects its mixed research-and-policy profile.)
+		// Industry-legal / patent commentary.
+		"ipwatchdog.com",
+	}
+	for _, h := range commentaryHosts {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return "commentary"
+		}
+	}
+
 	// Wikipedia and reference works.
 	if host == "wikipedia.org" || strings.HasSuffix(host, ".wikipedia.org") {
 		return "wiki"
@@ -316,6 +403,9 @@ func ClassifySource(rawURL string) string {
 
 	return "web"
 }
+
+// (IsWeakSource moved to core/filters.go — distinct concern from
+// search dispatch and classification.)
 
 // CleanSourceTitle strips bracket prefixes like [PDF] from source titles.
 // If the title is empty, a URL, or a hash/ID, generates a readable title from the URL.
@@ -543,9 +633,15 @@ func (c *SearchCache) Set(key string, result string) {
 // incAPI increments the API call counter and returns the new count.
 func (c *SearchCache) incAPI() int {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.apiCalls++
-	return c.apiCalls
+	n := c.apiCalls
+	c.mu.Unlock()
+	// Also bump the process-wide tracker. incAPI only fires on real
+	// external hits — cache hits and in-flight dedupe never reach
+	// here — so this reflects genuine search-API consumption for
+	// cost attribution.
+	ProcessUsage().AddSearchCall()
+	return n
 }
 
 // APICalls returns the total number of search API calls made through this cache.

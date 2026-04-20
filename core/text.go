@@ -7,12 +7,18 @@ import (
 )
 
 // Precompiled regex patterns for URL/citation extraction.
+//
+// URL bodies allow one level of balanced parens so real-world links like
+// Lancet DOIs `PIIS2542-5196(25)00054-X`, Wikipedia titles `Foo_(disambiguation)`,
+// and MSDN paths don't truncate at the first inner `)`. Go's RE2 can't do
+// recursive balance, so we only handle one nested pair — deeper nesting is
+// rare enough to accept as a known limit.
 var (
-	BareURLPattern  = regexp.MustCompile(`https?://[^\s\)\]>"]+`)
-	MDLinkPattern   = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://[^\s\)]+)\)`)
-	TaggedSrcPattern = regexp.MustCompile(`^\[(\d+)\]\s*\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://[^\)]+)\)`)
-	CiteRefPattern  = regexp.MustCompile(`\[(\d+)\]`)
-	DomainPattern   = regexp.MustCompile(`https?://([^\s/\)\]>"]+)`)
+	BareURLPattern   = regexp.MustCompile(`https?://(?:[^\s\(\)\]>"]|\([^\s\)\]>"]*\))+`)
+	MDLinkPattern    = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://(?:[^\s\(\)]|\([^\s\)]*\))+)\)`)
+	TaggedSrcPattern = regexp.MustCompile(`^\[(\d+)\]\s*\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://(?:[^\(\)\n]|\([^\)\n]*\))+)\)`)
+	CiteRefPattern   = regexp.MustCompile(`\[(\d+)\]`)
+	DomainPattern    = regexp.MustCompile(`https?://([^\s/\)\]>"]+)`)
 )
 
 // HTMLEscape escapes special HTML characters.

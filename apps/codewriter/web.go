@@ -90,12 +90,32 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		Code    string `json:"code"`
 		Context string `json:"context"`
 		Message string `json:"message"`
+		// Mode controls whether the LLM is allowed to propose code
+		// changes. "edit" (default) is the legacy behavior — the LLM
+		// can emit a fenced code block which the UI offers to apply
+		// to the editor. "chat" tells the LLM to discuss and explain
+		// only, never emit code — used for "talk me through this"
+		// / "what would you do" conversations before committing to
+		// a change. Absent / blank is treated as "edit" for back-compat
+		// with older clients.
+		Mode string `json:"mode"`
+		// History is the prior conversation, client-maintained.
+		// Allows Chat → Edit to carry discussion context so Edit can
+		// act on what was just discussed. File state (code/context)
+		// attaches to the CURRENT message only — never embedded into
+		// past turns — so the LLM always sees the file as it is now
+		// rather than stale snapshots from earlier turns.
+		History []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "message required", http.StatusBadRequest)
 		return
 	}
 
+	chatOnly := req.Mode == "chat"
 	is_regex := req.Lang == "regex"
 
 	var code_context string
@@ -131,10 +151,40 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	system_prompt += T.buildValuePrompt()
 
+	if chatOnly {
+		// Discussion-only mode. The user wants to talk through an
+		// approach before touching the editor, so the LLM must not
+		// emit a fenced code block (the UI would offer to apply it,
+		// defeating the whole point of the mode). Explanation via
+		// prose, short inline snippets as backticks if unavoidable.
+		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the code, not asking for it to be changed. Do NOT write out a revised full script or propose an applyable change. Do NOT emit a fenced code block (```). Explain your thinking, ask clarifying questions, or describe the approach you'd take. Short inline snippets using single backticks are fine. If the user asks for the actual edit, tell them to click Edit instead of Chat."
+	}
+
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM, LeadLLM: T.FuzzAgent.LeadLLM}
-	resp, err := agent.LeadChat(r.Context(), []Message{
-		{Role: "user", Content: prompt},
-	}, WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithThink(false), WithRouteKey("codewriter.generate"))
+
+	// Build messages: prior turns (capped) + current message with file
+	// context. File state rides on the last user message only so the
+	// LLM sees the current editor, not stale copies.
+	const maxHistoryTurns = 20
+	hist := req.History
+	if len(hist) > maxHistoryTurns {
+		hist = hist[len(hist)-maxHistoryTurns:]
+	}
+	messages := make([]Message, 0, len(hist)+1)
+	for _, h := range hist {
+		role := h.Role
+		if role != "user" && role != "assistant" {
+			continue // drop malformed turns
+		}
+		if strings.TrimSpace(h.Content) == "" {
+			continue
+		}
+		messages = append(messages, Message{Role: role, Content: h.Content})
+	}
+	messages = append(messages, Message{Role: "user", Content: prompt})
+
+	resp, err := agent.LeadChat(r.Context(), messages,
+		WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithThink(false), WithRouteKey("codewriter.generate"))
 
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -170,7 +220,11 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := map[string]any{"content": text}
-	if code_content != "" {
+	// In chat-only mode, never offer an apply — even if the LLM ignored
+	// the system-prompt rule and emitted a fenced block anyway. The
+	// client also guards for this, but double-guarding here keeps the
+	// mode clean at the API level.
+	if !chatOnly && code_content != "" {
 		result["code"] = code_content
 		result["type"] = "code"
 	} else {
@@ -533,6 +587,12 @@ body { height: 100vh; display: flex; flex-direction: column; }
   border: none; border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem;
 }
 .apply-btn:hover { opacity: 0.9; }
+.mode-tag {
+  display: inline-block; font-size: 0.65rem; text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 0.05rem 0.35rem; border-radius: 3px;
+  background: rgba(255,255,255,0.15); color: #fff; margin-right: 0.4rem;
+  vertical-align: middle;
+}
 
 #chat-input-area {
   display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border);
@@ -544,10 +604,17 @@ body { height: 100vh; display: flex; flex-direction: column; }
   font-family: inherit; resize: vertical; min-height: 38px; max-height: 200px;
 }
 #chat-input:focus { border-color: var(--accent); outline: none; }
-#chat-send {
-  background: var(--accent); color: #fff; border: none; border-radius: 6px;
+#chat-send, #chat-talk {
+  border: none; border-radius: 6px;
   padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.8rem;
 }
+#chat-send {
+  background: var(--accent); color: #fff;
+}
+#chat-talk {
+  background: var(--bg-0); color: var(--text); border: 1px solid var(--border);
+}
+#chat-talk:hover { border-color: var(--accent); color: var(--text-hi); }
 
 /* Snippets panel (modal overlay) */
 #overlay {
@@ -731,12 +798,13 @@ Example:
   <div id="chat-pane">
     <div id="chat-header">
       <span>Chat</span>
-      <button onclick="document.getElementById('chat-messages').innerHTML=''">Clear</button>
+      <button onclick="document.getElementById('chat-messages').innerHTML='';clearChatHistory();">Clear</button>
     </div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <textarea id="chat-input" rows="1" placeholder="Ask the LLM to write or modify code... (Enter to send, Shift+Enter for newline)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-      <button id="chat-send" onclick="sendChat()">Send</button>
+      <textarea id="chat-input" rows="1" placeholder="Discuss with Chat, or click Edit to apply changes. Enter = Edit, Alt+Enter = Chat, Shift+Enter = newline." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event.altKey?'chat':'edit');}"></textarea>
+      <button id="chat-talk" onclick="sendChat('chat')" title="Discuss without changing the editor">Chat</button>
+      <button id="chat-send" onclick="sendChat('edit')" title="Propose a change to apply to the editor">Edit</button>
     </div>
   </div>
 </div>
@@ -838,13 +906,40 @@ function addChatMsg(role, html, codeData) {
 
 // --- Chat ---
 
-function sendChat() {
+// chatHistory keeps the running conversation across turns and across
+// Chat/Edit mode switches. File state is NOT stored here — only the
+// discussion. Cleared when the user loads a different snippet (so the
+// conversation can't leak from one script's context into another's)
+// and when the user hits the Clear button.
+var chatHistory = [];
+
+function appendHistory(role, content) {
+  if (!content) return;
+  chatHistory.push({role: role, content: content});
+  // Cap client-side to match the server cap and keep request payload small.
+  if (chatHistory.length > 40) {
+    chatHistory = chatHistory.slice(-40);
+  }
+}
+
+function clearChatHistory() {
+  chatHistory = [];
+}
+
+function sendChat(mode) {
+  // mode: 'chat' (discuss only, never apply code) or 'edit' (propose changes).
+  // Defaults to 'edit' for back-compat with any caller that doesn't pass a mode.
+  mode = mode === 'chat' ? 'chat' : 'edit';
   var input = document.getElementById('chat-input');
   var msg = input.value.trim();
   if (!msg) return;
   input.value = '';
-  addChatMsg('user', escapeHtml(msg));
-  chatAPI(msg);
+  var prefix = mode === 'chat' ? '<span class="mode-tag">chat</span> ' : '';
+  addChatMsg('user', prefix + escapeHtml(msg));
+  // Push the user message to history BEFORE the LLM call so if the
+  // request fails the user message still counts as part of the thread.
+  appendHistory('user', msg);
+  chatAPI(msg, mode);
 }
 
 var currentContextId = null;
@@ -949,28 +1044,40 @@ function startContextResize(e) {
   });
 }
 
-function chatAPI(message) {
+function chatAPI(message, mode) {
+  mode = mode === 'chat' ? 'chat' : 'edit';
   var name = document.getElementById('script-name').value.trim();
   var lang = document.getElementById('lang-select').value;
   var code = document.getElementById('editor').value;
   var ctx = document.getElementById('context-editor').value;
   document.getElementById('chat-send').disabled = true;
+  document.getElementById('chat-talk').disabled = true;
   addChatMsg('assistant', '<span class="spinner"></span> Thinking...');
   var thinkingMsg = document.getElementById('chat-messages').lastChild;
 
   fetch('api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: name, lang: lang, code: code, context: ctx, message: message})
+    body: JSON.stringify({
+      name: name, lang: lang, code: code, context: ctx,
+      message: message, mode: mode,
+      // Send all prior turns except the current user message (which
+      // was already pushed to history by sendChat — exclude the last
+      // entry so the server doesn't see a duplicate).
+      history: chatHistory.slice(0, -1)
+    })
   }).then(function(r) {
     if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
     return r.json();
   }).then(function(data) {
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
+    document.getElementById('chat-talk').disabled = false;
     var html = formatChat(data.content);
     var copyPayload = (data.code && data.code.length) ? data.code : data.content;
-    if (data.type === 'code' && data.code && lang !== 'regex') {
+    // Client-side guard: in chat mode, suppress the diff/apply UI even
+    // if the server (or an ignored system-prompt rule) returned code.
+    if (mode !== 'chat' && data.type === 'code' && data.code && lang !== 'regex') {
       var currentEditor = document.getElementById('editor').value || '';
       var stats = editorDiffStats(currentEditor, data.code);
       html += '<div class="editor-diff-actions">' +
@@ -986,9 +1093,15 @@ function chatAPI(message) {
     }
     html += ' <button class="apply-btn" onclick="copyCode(this)">Copy</button>';
     addChatMsg('assistant', html, copyPayload);
+    // Record the assistant's reply for subsequent turns. Use the raw
+    // text rather than the formatted HTML so the LLM sees prose, not
+    // the HTML tags that formatChat inserts. If the LLM emitted code,
+    // the full content (commentary + fenced block) is what gets stored.
+    appendHistory('assistant', data.content || '');
   }).catch(function(err) {
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
+    document.getElementById('chat-talk').disabled = false;
     addChatMsg('assistant', 'Error: ' + escapeHtml(err.message));
   });
 }
@@ -1132,6 +1245,14 @@ function loadSnippets() {
 
 function loadSnippet(id) {
   fetch('api/snippet/' + id).then(function(r) { return r.json(); }).then(function(s) {
+    // Loading a different script invalidates the prior discussion —
+    // the conversation was about the old file. Clear the history and
+    // the visible transcript so the new script gets a clean context.
+    if (s.id !== currentId) {
+      clearChatHistory();
+      var msgs = document.getElementById('chat-messages');
+      if (msgs) msgs.innerHTML = '';
+    }
     currentId = s.id;
     currentName = s.name;
     document.getElementById('script-name').value = s.name;

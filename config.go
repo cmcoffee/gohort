@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -380,6 +381,58 @@ func setup_fuzz() {
 
 	setup.Options("Web Server Settings", webmenu, false)
 
+	// --- Cost Rates (per-run usage telemetry) ---
+	// Cost rates are entered as decimal dollar amounts. Stored via
+	// SaveCostRatesToDB below. A record's presence in the DB means the
+	// operator has been through setup at least once; absence means
+	// "never configured." $0.00 is a legitimate rate (free local worker)
+	// distinct from "unconfigured."
+	var stored_rates CostRates
+	rates_exist := global.db.Get("cost_rates", "current", &stored_rates)
+	render_rate := func(v float64) string {
+		if !rates_exist {
+			return ""
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	cost_worker_in := render_rate(stored_rates.WorkerInputPer1K)
+	cost_worker_out := render_rate(stored_rates.WorkerOutputPer1K)
+	cost_lead_in := render_rate(stored_rates.LeadInputPer1K)
+	cost_lead_out := render_rate(stored_rates.LeadOutputPer1K)
+	cost_search := render_rate(stored_rates.SearchPerCall)
+	cost_image := render_rate(stored_rates.ImagePerCall)
+
+	costs := NewOptions(" [Cost Rates] ", "(selection or 'q' to return to previous)", 'q')
+	costs.StringVar(&cost_worker_in, "Worker Input $/1K tokens", cost_worker_in, "Dollar cost per 1,000 input tokens for the worker (primary) LLM. Example Gemini Flash 2.5: 0.075")
+	costs.StringVar(&cost_worker_out, "Worker Output $/1K tokens", cost_worker_out, "Dollar cost per 1,000 output tokens for the worker LLM. Example Gemini Flash 2.5: 0.30")
+	costs.StringVar(&cost_lead_in, "Lead Input $/1K tokens", cost_lead_in, "Dollar cost per 1,000 input tokens for the lead (precision) LLM. Example Claude Sonnet 4.6: 3.00")
+	costs.StringVar(&cost_lead_out, "Lead Output $/1K tokens", cost_lead_out, "Dollar cost per 1,000 output tokens for the lead LLM. Example Claude Sonnet 4.6: 15.00")
+	costs.StringVar(&cost_search, "Search $/call", cost_search, "Dollar cost per external search-API call. Example Serper: 0.0003")
+	costs.StringVar(&cost_image, "Image $/call", cost_image, "Dollar cost per image generation call. Example DALL-E 3 1792x1024 standard: 0.08; Gemini Imagen 16:9: 0.03")
+	setup.Options("Cost Rates (per-run telemetry)", costs, false)
+
+	// --- Embeddings (vector-DB ingestion + semantic chat search) ---
+	var storedEmbed EmbeddingConfig
+	global.db.Get(EmbeddingTable, "current", &storedEmbed)
+	embedEnabled := "no"
+	if storedEmbed.Enabled {
+		embedEnabled = "yes"
+	}
+	embedEndpoint := storedEmbed.Endpoint
+	if embedEndpoint == "" {
+		embedEndpoint = endpoint // default to worker LLM's endpoint
+	}
+	embedModel := storedEmbed.Model
+	if embedModel == "" {
+		embedModel = "nomic-embed-text"
+	}
+
+	embedOpts := NewOptions(" [Embeddings] ", "(selection or 'q' to return to previous)", 'q')
+	embedOpts.StringSelectVar(&embedEnabled, "Enable embeddings", embedEnabled, "yes", "no")
+	embedOpts.StringVar(&embedEndpoint, "Embedding endpoint", embedEndpoint, "Base URL of the ollama-compatible /api/embed server. Typically the same host as the worker LLM (e.g. http://localhost:11434).")
+	embedOpts.StringVar(&embedModel, "Embedding model", embedModel, "Model name the endpoint should load. Default nomic-embed-text (run `ollama pull nomic-embed-text` on the server first). Alternatives: mxbai-embed-large, all-minilm.")
+	setup.Options("Embeddings (vector-DB semantic search)", embedOpts, false)
+
 	// App-contributed setup sections.
 	app_sections := RegisteredSetupSections()
 	if len(app_sections) > 0 {
@@ -445,6 +498,36 @@ func setup_fuzz() {
 		global.db.CryptSet(ImageTable, "api_key", imageAPIKey)
 	} else {
 		global.db.Unset(ImageTable, "api_key")
+	}
+
+	// Save cost rates. Parsed from the string inputs; invalid or blank
+	// values default to zero. SetCostRates also updates the process's
+	// in-memory rates so the change takes effect on any further runs
+	// started from this setup session (no restart required).
+	new_rates := CostRates{
+		WorkerInputPer1K:  parseDollarRate(cost_worker_in),
+		WorkerOutputPer1K: parseDollarRate(cost_worker_out),
+		LeadInputPer1K:    parseDollarRate(cost_lead_in),
+		LeadOutputPer1K:   parseDollarRate(cost_lead_out),
+		SearchPerCall:     parseDollarRate(cost_search),
+		ImagePerCall:      parseDollarRate(cost_image),
+	}
+	if err := SaveCostRatesToDB(global.db, new_rates); err != nil {
+		Err("Failed to save cost rates: %s", err)
+	} else {
+		SetCostRates(new_rates)
+	}
+
+	// Save embedding configuration. SaveEmbeddingConfigToDB also
+	// updates the in-memory config so the change takes effect without
+	// a restart.
+	newEmbedCfg := EmbeddingConfig{
+		Endpoint: strings.TrimSpace(embedEndpoint),
+		Model:    strings.TrimSpace(embedModel),
+		Enabled:  embedEnabled == "yes",
+	}
+	if err := SaveEmbeddingConfigToDB(global.db, newEmbedCfg); err != nil {
+		Err("Failed to save embedding config: %s", err)
 	}
 
 	// Save Web Server configuration.
@@ -869,6 +952,17 @@ func init_database() {
 
 	// Load global source hooks — available to all agents regardless of entry point.
 	LoadSourceHooks(global.db)
+
+	// Load persisted cost rates so per-run usage telemetry shows dollar
+	// estimates instead of "rates not configured." Must happen after the
+	// DB handle is live; called from here so every entry point that opens
+	// the DB (web, chat, CLI, setup) picks up saved rates automatically.
+	InitCostRates(global.db)
+
+	// Load persisted embedding config so the vector-DB ingestion and
+	// semantic_search tool have their endpoint + model. Silent no-op
+	// when the record doesn't exist (embeddings default to disabled).
+	LoadEmbeddingConfigFromDB(global.db)
 }
 
 // init_logging initializes the logging system.
@@ -1016,4 +1110,21 @@ func _unlock_db() (padlock []byte) {
 func enable_debug() {
 	nfo.SetOutput(nfo.DEBUG, os.Stdout)
 	nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
+}
+
+// parseDollarRate converts a setup-menu string back into a float. Blank,
+// whitespace-only, or unparseable input all return 0 — the same value as
+// "not configured" so the operator can clear a rate by emptying the field.
+func parseDollarRate(s string) float64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	// Accept leading "$" in case the operator types it instinctively.
+	s = strings.TrimPrefix(s, "$")
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }

@@ -49,7 +49,17 @@ type ImageGenResult struct {
 }
 
 // GenerateImage generates an image from a prompt using the configured provider.
-func GenerateImage(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
+// On success, bumps ProcessUsage's image counter so per-run telemetry and cost
+// estimates reflect the call. Counter fires once per returned image regardless
+// of provider — Gemini/Imagen and DALL-E are priced at the per-call ImagePerCall
+// rate in CostRates (not per-resolution; see AddImageCall comment).
+func GenerateImage(ctx context.Context, apiKey, prompt string) (result *ImageGenResult, err error) {
+	defer func() {
+		if err == nil && result != nil {
+			ProcessUsage().AddImageCall()
+		}
+	}()
+
 	provider := "gemini"
 	if ImageProviderFunc != nil {
 		if p := ImageProviderFunc(); p != "" {
@@ -75,7 +85,7 @@ func GenerateImage(ctx context.Context, apiKey, prompt string) (*ImageGenResult,
 		if apiKey == "" {
 			return nil, fmt.Errorf("OpenAI API key not configured for image generation")
 		}
-		result, err := doOpenAIRequest(ctx, apiKey, prompt)
+		result, err = doOpenAIRequest(ctx, apiKey, prompt)
 		if err != nil && isServerError(err) {
 			Debug("[image_gen] DALL-E first attempt failed, retrying: %s", err)
 			time.Sleep(2 * time.Second)

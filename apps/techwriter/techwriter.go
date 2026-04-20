@@ -2,31 +2,12 @@ package techwriter
 
 import (
 	"net/http"
-	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
 
-const access_table = "access_control"
-
-var twAllowedIPs string
-
 func init() {
 	RegisterApp(new(TechWriterAgent))
-
-	RegisterSetupSection(SetupSection{
-		Name:  "Access Control (TechWriter IP allowlist)",
-		Order: 110,
-		Build: func(db Database) *Options {
-			db.Get(access_table, "techwriter_allowed_ips", &twAllowedIPs)
-			access := NewOptions(" [Access Control] ", "(selection or 'q' to return to previous)", 'q')
-			access.StringVar(&twAllowedIPs, "TechWriter Allowed IPs", twAllowedIPs, "Comma-separated CIDR/IP allowlist for TechWriter and Push-to-TechWriter (empty = open to all).")
-			return access
-		},
-		Save: func(db Database) {
-			db.Set(access_table, "techwriter_allowed_ips", strings.TrimSpace(twAllowedIPs))
-		},
-	})
 }
 
 // ArticleRecord stores a saved article.

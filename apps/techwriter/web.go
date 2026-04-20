@@ -89,23 +89,25 @@ func (T *TechWriterAgent) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (T *TechWriterAgent) WebPath() string                    { return "/techwriter" }
-func (T *TechWriterAgent) WebName() string                    { return "TechWriter" }
-func (T *TechWriterAgent) WebRestricted(r *http.Request) bool { return !IsTechwriterAllowed(r) }
-func (T *TechWriterAgent) WebAccessKey() string               { return "techwriter" }
-func (T *TechWriterAgent) WebAccessCheck(r *http.Request) bool { return IsTechwriterAllowed(r) }
+func (T *TechWriterAgent) WebPath() string { return "/techwriter" }
+func (T *TechWriterAgent) WebName() string { return "TechWriter" }
+
+// WebRestricted gates the app behind per-user app permission. A user
+// who isn't granted /techwriter in the admin panel gets a 404.
+func (T *TechWriterAgent) WebRestricted(r *http.Request) bool {
+	return !UserHasAppAccess(r, "/techwriter")
+}
+
+// WebAccessKey + WebAccessCheck expose a boolean at /api/access so
+// other apps (research UI) can hide their "Push to TechWriter"
+// controls from users without access. Mirrors WebRestricted.
+func (T *TechWriterAgent) WebAccessKey() string                 { return "techwriter" }
+func (T *TechWriterAgent) WebAccessCheck(r *http.Request) bool  { return UserHasAppAccess(r, "/techwriter") }
 func (T *TechWriterAgent) WebDesc() string {
 	return "Technical article co-writer for documentation and instructions"
 }
 
 func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	// Wire access control loader so core.IsTechwriterAllowed() works at runtime.
-	LoadTechwriterAllowedIPsFunc = func() string {
-		var val string
-		T.DB.Get(access_table, "techwriter_allowed_ips", &val)
-		return val
-	}
-
 	sub := http.NewServeMux()
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -138,10 +140,12 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	RegisterUserDataHandler(&techWriterUserData{agent: T})
 
-	// Gate the entire sub-mux behind the IP allowlist. Unauthorized
+	// Gate the entire sub-mux behind per-user app permission.
+	// Loopback requests bypass the check so internal inter-app RPCs
+	// aren't blocked by the server's own gate. Unauthorized external
 	// requests get 404 to conceal the app's existence.
 	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !IsTechwriterAllowed(r) {
+		if !IsLoopbackRequest(r) && !UserHasAppAccess(r, "/techwriter") {
 			http.NotFound(w, r)
 			return
 		}
@@ -163,14 +167,31 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		Subject  string `json:"subject"`
 		Body     string `json:"body"`
 		Message  string `json:"message"`
+		// Mode controls whether the LLM may propose an article rewrite.
+		// "edit" (default) = legacy behavior; the LLM may emit an
+		// ARTICLE:-prefixed response and the UI offers to apply it.
+		// "chat" = discuss / explain / ask questions only; never emit
+		// a full article body. Used for "talk about the draft before
+		// touching it" conversations. Blank defaults to edit.
 		Mode        string `json:"mode"`
 		Persona     string `json:"persona"`      // selected persona name
 		PersonaEdit bool   `json:"persona_edit"` // true when editing a persona in the editor
+		// History is the prior conversation, client-maintained. Lets
+		// Chat → Edit flow carry discussion context so Edit can act on
+		// what was just discussed. Article state (body/subject)
+		// attaches to the CURRENT message only, never embedded into
+		// past turns — so the LLM always sees the current article,
+		// not stale snapshots.
+		History []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"history"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "message required", http.StatusBadRequest)
 		return
 	}
+	chatOnly := req.Mode == "chat"
 
 	// Strip ## Sources section — LLM should never rewrite it.
 	// We'll reattach it to the article output after the LLM responds.
@@ -194,14 +215,43 @@ When creating or editing a persona, ALWAYS ensure these anti-LLM rules are inclu
 - Use active voice. Short paragraphs. Name people and numbers, never "experts say".
 These rules prevent the output from reading as AI-generated. They should be part of every persona.`
 	}
+
+	if chatOnly {
+		// Discussion-only mode overrides any mode-specific rule above
+		// (including the PersonaEdit ARTICLE: rule). The user is
+		// talking about the draft, not asking for a rewrite, so the
+		// LLM must not emit an article body under any label. Applied
+		// last so it wins when multiple rule blocks conflict.
+		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the article, not asking for it to be rewritten. Do NOT emit an ARTICLE: prefix. Do NOT return a revised or complete article body. Answer questions, explain your thinking, suggest approaches, or describe the change you'd make — all in conversational prose. If the user says \"make the change\" or similar, tell them to click Edit instead of Chat."
+	}
 	today := time.Now().Format("January 2, 2006")
 
 	// TechWriter always uses the local worker LLM.
 	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
 
-	messages := []Message{
-		{Role: "user", Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context)},
+	// Build message list: prior turns (capped) then the current message
+	// with article context. Article body rides on the current message
+	// only — past turns stay pure conversation, no stale body snapshots.
+	const maxHistoryTurns = 20
+	hist := req.History
+	if len(hist) > maxHistoryTurns {
+		hist = hist[len(hist)-maxHistoryTurns:]
 	}
+	messages := make([]Message, 0, len(hist)+1)
+	for _, h := range hist {
+		role := h.Role
+		if role != "user" && role != "assistant" {
+			continue
+		}
+		if strings.TrimSpace(h.Content) == "" {
+			continue
+		}
+		messages = append(messages, Message{Role: role, Content: h.Content})
+	}
+	messages = append(messages, Message{
+		Role:    "user",
+		Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context),
+	})
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), messages,
 		WithSystemPrompt(system_prompt),
@@ -216,8 +266,10 @@ These rules prevent the output from reading as AI-generated. They should be part
 	text := strings.TrimSpace(ResponseText(resp))
 	w.Header().Set("Content-Type", "application/json")
 
-	// Parse ARTICLE: prefix.
-	if strings.HasPrefix(text, "ARTICLE:") {
+	// Parse ARTICLE: prefix. In chat mode, force type=chat even if the
+	// LLM ignored the system-prompt rule and emitted an ARTICLE: body —
+	// the whole point of the mode is that the editor stays untouched.
+	if !chatOnly && strings.HasPrefix(text, "ARTICLE:") {
 		article := strings.TrimSpace(strings.TrimPrefix(text, "ARTICLE:"))
 		article = StripCodeFence(article)
 		article = StripSourcesSection(article)
@@ -226,6 +278,13 @@ These rules prevent the output from reading as AI-generated. They should be part
 		}
 		json.NewEncoder(w).Encode(map[string]string{"type": "article", "content": article})
 	} else {
+		// If chatOnly and the LLM ignored the rule and prefixed ARTICLE:
+		// anyway, strip that prefix from the conversational text so the
+		// reader doesn't see the sentinel label.
+		if chatOnly {
+			text = strings.TrimPrefix(text, "ARTICLE:")
+			text = strings.TrimSpace(text)
+		}
 		json.NewEncoder(w).Encode(map[string]string{"type": "chat", "content": text})
 	}
 }
@@ -764,9 +823,22 @@ const techwriterCSS = `
     font-family: inherit; resize: vertical; min-height: 38px; max-height: 200px;
   }
   #chat-input:focus { border-color: #58a6ff; outline: none; }
-  #chat-send {
-    background: #238636; color: #fff; border: none; border-radius: 6px;
+  #chat-send, #chat-talk {
+    border: none; border-radius: 6px;
     padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.8rem;
+  }
+  #chat-send {
+    background: #238636; color: #fff;
+  }
+  #chat-talk {
+    background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+  }
+  #chat-talk:hover { border-color: #58a6ff; color: #fff; }
+  .mode-tag {
+    display: inline-block; font-size: 0.65rem; text-transform: uppercase;
+    letter-spacing: 0.05em; padding: 0.05rem 0.35rem; border-radius: 3px;
+    background: rgba(255,255,255,0.15); color: #fff; margin-right: 0.4rem;
+    vertical-align: middle;
   }
   #articles-panel {
     display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
@@ -840,11 +912,12 @@ Click 'Process' or use the chat to expand your content."></textarea>
     <textarea id="merge-input" placeholder="Paste the second article or content here..." style="flex:1;background:#0d1117;border:none;color:#c9d1d9;padding:1rem;font-family:inherit;font-size:0.9rem;resize:none;outline:none"></textarea>
   </div>
   <div id="chat-pane">
-    <div id="chat-header">Chat <button onclick="document.getElementById('chat-messages').innerHTML=''" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.75rem;padding:0 0.3rem" title="Clear chat">Clear</button></div>
+    <div id="chat-header">Chat <button onclick="document.getElementById('chat-messages').innerHTML='';clearChatHistory();" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.75rem;padding:0 0.3rem" title="Clear chat">Clear</button></div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <textarea id="chat-input" rows="1" placeholder="Ask the LLM to help... (Enter to send, Shift+Enter for newline)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
-      <button id="chat-send" onclick="sendChat()">Send</button>
+      <textarea id="chat-input" rows="1" placeholder="Discuss with Chat, or click Edit to apply changes. Enter = Edit, Alt+Enter = Chat, Shift+Enter = newline." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event.altKey?'chat':'edit');}"></textarea>
+      <button id="chat-talk" onclick="sendChat('chat')" title="Discuss without changing the article">Chat</button>
+      <button id="chat-send" onclick="sendChat('edit')" title="Propose a rewrite to apply to the article">Edit</button>
     </div>
   </div>
 </div>
@@ -1192,13 +1265,36 @@ function runMerge() {
   });
 }
 
-function sendChat() {
+// chatHistory keeps the running conversation across turns and across
+// Chat/Edit mode switches. Article state (body, subject) is NOT stored
+// here — only the discussion. Cleared on article load and when the
+// Clear button is pressed.
+var chatHistory = [];
+
+function appendHistory(role, content) {
+  if (!content) return;
+  chatHistory.push({role: role, content: content});
+  if (chatHistory.length > 40) {
+    chatHistory = chatHistory.slice(-40);
+  }
+}
+
+function clearChatHistory() {
+  chatHistory = [];
+}
+
+function sendChat(mode) {
+  // mode: 'chat' (discuss only, never rewrite the article) or 'edit'
+  // (propose a rewrite). Defaults to 'edit' for back-compat.
+  mode = mode === 'chat' ? 'chat' : 'edit';
   var input = document.getElementById('chat-input');
   var msg = input.value.trim();
   if (!msg) return;
   input.value = '';
-  addChatMsg('user', msg);
-  chatAPI(msg);
+  var prefix = mode === 'chat' ? '<span class="mode-tag">chat</span> ' : '';
+  addChatMsg('user', prefix + msg);
+  appendHistory('user', msg);
+  chatAPI(msg, mode);
 }
 
 var fillGapsRunning = false;
@@ -1230,26 +1326,41 @@ function fillGapsDone() {
   }
 }
 
-function chatAPI(message) {
+function chatAPI(message, mode) {
+  // Default to 'edit' so non-sendChat callers (e.g. fillGaps) keep the
+  // legacy rewrite-proposing behavior. Only sendChat ever passes 'chat'.
+  mode = mode === 'chat' ? 'chat' : 'edit';
   var subject = document.getElementById('subject').value.trim();
   var body = document.getElementById('editor').value;
   var persona = getSelectedPersona();
   document.getElementById('chat-send').disabled = true;
+  var talkBtn = document.getElementById('chat-talk');
+  if (talkBtn) talkBtn.disabled = true;
   addChatMsg('assistant', '<span class="spinner"></span> Thinking...');
   var thinkingMsg = document.getElementById('chat-messages').lastChild;
 
   fetch('/api/chat', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({subject: subject, body: body, message: message, mode: 'docs', persona: persona, persona_edit: personaEditMode})
+    body: JSON.stringify({
+      subject: subject, body: body, message: message, mode: mode,
+      persona: persona, persona_edit: personaEditMode,
+      // Exclude the just-pushed user message so the server sees it
+      // only once (as the current request), not also as history.
+      history: chatHistory.slice(0, -1)
+    })
   }).then(function(r) {
     if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
     return r.json();
   }).then(function(data) {
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
+    if (talkBtn) talkBtn.disabled = false;
     fillGapsDone();
-    if (data.type === 'article') {
+    // Client-side guard: in chat mode, never process an article response
+    // even if one sneaks through. The server already re-stamps to type=chat,
+    // but this keeps the UI honest.
+    if (mode !== 'chat' && data.type === 'article') {
       if (data.image_url) window._blogImageURL = data.image_url;
       var html = 'Article updated.';
 
@@ -1299,9 +1410,15 @@ function chatAPI(message) {
     } else {
       addChatMsg('assistant', formatChat(data.content));
     }
+    // Record the assistant's reply for subsequent turns so Edit can
+    // reference what was just said in Chat. For article-type replies,
+    // store the content too — the LLM will then have the full text it
+    // proposed if the user follows up with "tweak the intro."
+    appendHistory('assistant', data.content || '');
   }).catch(function(err) {
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
+    if (talkBtn) talkBtn.disabled = false;
     fillGapsDone();
     addChatMsg('assistant', 'Error: ' + err.message);
   });
@@ -1371,6 +1488,7 @@ function newArticle() {
   document.getElementById('subject').value = '';
   document.getElementById('editor').value = '';
   document.getElementById('chat-messages').innerHTML = '';
+  clearChatHistory();
 }
 
 function resetPage() {
@@ -1419,7 +1537,11 @@ function loadArticle(id) {
     currentId = rec.ID;
     document.getElementById('subject').value = rec.Subject || '';
     document.getElementById('editor').value = rec.Body || '';
+    // Loading a different article invalidates the prior discussion —
+    // keep conversation scoped to a single article so Edit can't act
+    // on notes from a different file.
     document.getElementById('chat-messages').innerHTML = '';
+    clearChatHistory();
   });
 }
 

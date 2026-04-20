@@ -329,7 +329,7 @@ type inlineSpan struct {
 var (
 	pdfBoldRE   = regexp.MustCompile(`\*\*(.+?)\*\*`)
 	pdfItalicRE = regexp.MustCompile(`\*(.+?)\*`)
-	pdfLinkRE   = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^\)]+)\)`)
+	pdfLinkRE   = regexp.MustCompile(`\[((?:[^\[\]]|\[[^\]]*\])*)\]\(((?:[^\(\)]|\([^\)]*\))+)\)`)
 )
 
 // parseInline splits a markdown line into styled spans.

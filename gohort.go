@@ -126,6 +126,10 @@ func main() {
 			set_agent_llm(agent)
 			shared_llm = agent.Get().LLM
 			shared_lead_llm = agent.Get().LeadLLM
+			// Expose to stateless tools that need an inline LLM call
+			// (e.g., the mock-shell tool). Only runs once because the
+			// first-agent branch is gated on shared_llm being nil.
+			SetSharedLLMs(shared_llm, shared_lead_llm)
 		} else {
 			T := agent.Get()
 			T.LLM = shared_llm

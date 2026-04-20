@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -19,6 +20,7 @@ import (
 
 func init() {
 	RegisterChatTool(new(WebSearchTool))
+	RegisterChatTool(new(FetchURLTool))
 	CrossSearchFunc = CrossProviderSearch
 }
 
@@ -176,6 +178,62 @@ func (t *WebSearchTool) Run(args map[string]any) (string, error) {
 		Debug("[web_search] results:\n%s", result)
 	}
 	return result, err
+}
+
+// FetchURLTool is the chat tool for reading the full text of a specific
+// URL. Used as the natural follow-up to web_search — the LLM gets
+// snippets from a search, identifies a promising URL, then fetches
+// that page's readable text to answer in detail. Also useful when the
+// user pastes a URL directly and asks for a summary.
+//
+// HTML is stripped; only readable text is returned, capped at 8000
+// characters to keep the chat context manageable. Loopback and private
+// addresses are rejected to prevent SSRF — this tool reaches the live
+// web, not internal infrastructure.
+type FetchURLTool struct{}
+
+func (t *FetchURLTool) Name() string { return "fetch_url" }
+func (t *FetchURLTool) Desc() string {
+	return "Fetch the readable text content of a specific URL from the live web. Use after web_search returns a URL whose content you want to read in full, or when the user pastes a URL and asks you to read or summarize it. Returns up to 8000 characters of extracted text. Strips HTML, scripts, ads."
+}
+
+func (t *FetchURLTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"url": {Type: "string", Description: "The URL to fetch. Must be http:// or https://."},
+	}
+}
+
+func (t *FetchURLTool) Run(args map[string]any) (string, error) {
+	target := StringArg(args, "url")
+	if target == "" {
+		return "", fmt.Errorf("'url' is required")
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("'url' must be an http:// or https:// URL")
+	}
+	// SSRF guard: refuse loopback + private-network hosts so the tool
+	// can't be used to probe the server's own internal services.
+	if host := parsed.Hostname(); host != "" {
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
+			}
+		}
+		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
+		}
+	}
+	text, err := FetchArticle(target, 8000)
+	if err != nil {
+		return "", fmt.Errorf("fetch failed: %w", err)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty).", nil
+	}
+	Debug("[fetch_url] %s → %d chars", target, len(text))
+	return fmt.Sprintf("Fetched %s (%d chars):\n\n%s", target, len(text), text), nil
 }
 
 // SearchWithProvider runs a search query using a specific provider.
