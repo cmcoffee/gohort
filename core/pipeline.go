@@ -97,7 +97,7 @@ func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 	QueueAdd(id, cfg.App, cfg.Label, cfg.Params, cfg.NotifyUser)
 
 	// 3. Acquire slot from global queue.
-	if !GlobalQueue().Acquire(ctx, id, cfg.Label, func(position int) {
+	if !GlobalQueue().Acquire(ctx, id, cfg.Label, cfg.App, cfg.LinkPath, func(position int) {
 		if cfg.OnEvent != nil {
 			cfg.OnEvent(id, fmt.Sprintf("Position in queue: %d", position), false)
 		}
@@ -181,7 +181,7 @@ func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) stri
 	QueueAdd(id, cfg.App, cfg.Label, cfg.Params, cfg.NotifyUser)
 
 	go func() {
-		if !GlobalQueue().Acquire(ctx, id, cfg.Label, func(position int) {
+		if !GlobalQueue().Acquire(ctx, id, cfg.Label, cfg.App, cfg.LinkPath, func(position int) {
 			if cfg.OnEvent != nil {
 				cfg.OnEvent(id, fmt.Sprintf("Position in queue: %d", position), false)
 			}
@@ -260,7 +260,7 @@ func (T *FuzzAgent) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work P
 	// Brief delay to let the server finish starting.
 	time.Sleep(2 * time.Second)
 
-	if !GlobalQueue().Acquire(ctx, id, cfg.Label, func(position int) {
+	if !GlobalQueue().Acquire(ctx, id, cfg.Label, cfg.App, cfg.LinkPath, func(position int) {
 		if cfg.OnEvent != nil {
 			cfg.OnEvent(id, fmt.Sprintf("Position in queue: %d", position), false)
 		}

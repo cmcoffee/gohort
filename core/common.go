@@ -177,8 +177,14 @@ func (T *FuzzAgent) WorkerContextSize() int {
 // fall back to Worker if not configured separately).
 type LLMTier int
 
+// TierUnset is the zero-value sentinel used on Response.Tier when no
+// explicit tier has been recorded (older call paths, custom transports).
+// Keeping it at 0 lets plain Response{} literals mean "not set" so
+// downstream code can fall back to a contextual tier (e.g., a Session's
+// Tier). WORKER/LEAD start at 1 so they never alias the zero-value.
 const (
-	WORKER LLMTier = iota
+	TierUnset LLMTier = iota
+	WORKER
 	LEAD
 )
 
@@ -200,10 +206,34 @@ type Session struct {
 	CallerID string
 	Tier     LLMTier
 	agent    *FuzzAgent
+
+	// Per-session usage counters. Bumped after each Chat/ChatStream
+	// response using Response.Tier so counters reflect which tier
+	// *actually served* each call — not the session's nominal tier.
+	// This matters because a LEAD session can execute on the worker
+	// via (1) routing config delegating the call, (2) lead-LLM
+	// fallback-to-primary on error, (3) fallback on empty output.
+	// In all three cases, cost should price at worker rates.
+	//
+	// Search and image call counts stay on the global ProcessUsage()
+	// tracker (they don't flow through Session.Chat).
+	mu       sync.Mutex
+	counters UsageDiff
+}
+
+// SessionUsage is the flat {Input, Output} summary view returned by
+// Session.Report(). Collapses worker + lead counts into single numbers
+// for readers that don't care about tier breakdown. Use AsDiff() for
+// the tier-split UsageDiff suitable for CostRates.Estimate.
+type SessionUsage struct {
+	Input  int64
+	Output int64
 }
 
 // CreateSession returns a new LLM session for the given tier with a
-// fresh UUID as the caller ID.
+// fresh UUID as the caller ID. Each session carries its own token
+// counters; call Report() at the end of the logical operation to read
+// back what this session consumed.
 func (T *FuzzAgent) CreateSession(tier LLMTier) *Session {
 	return &Session{CallerID: UUIDv4(), Tier: tier, agent: T}
 }
@@ -213,15 +243,23 @@ func (T *FuzzAgent) CreateSession(tier LLMTier) *Session {
 // WithCaller later in opts overrides it.
 func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	opts = prependCaller(s.CallerID, opts)
+	var resp *Response
+	var err error
 	if s.Tier == LEAD {
-		return s.agent.LeadChat(ctx, messages, opts...)
+		resp, err = s.agent.LeadChat(ctx, messages, opts...)
+	} else {
+		resp, err = s.agent.WorkerChat(ctx, messages, opts...)
 	}
-	return s.agent.WorkerChat(ctx, messages, opts...)
+	s.recordTokens(resp)
+	return resp, err
 }
 
 // ChatStream dispatches to the tier's LLM ChatStream with the
 // session's caller ID attached. For LEAD, falls back to the worker
-// LLM if GetLeadLLM returns nil.
+// LLM if GetLeadLLM returns nil. Bumps both the session's own
+// counters and the process-wide tracker so per-op scopes and
+// middleware reports stay in sync (the direct llm.ChatStream path
+// skips the trackTokens call that WorkerChat/LeadChat do for us).
 func (s *Session) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	opts = prependCaller(s.CallerID, opts)
 	var llm LLM
@@ -230,7 +268,94 @@ func (s *Session) ChatStream(ctx context.Context, messages []Message, handler St
 	} else {
 		llm = s.agent.LLM
 	}
-	return llm.ChatStream(ctx, messages, handler, opts...)
+	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
+	// Streaming has no fallback path — whatever tier we dispatched to
+	// is what served. Tag the response so downstream attribution
+	// (recordTokens, callers inspecting resp.Tier) doesn't need to
+	// re-derive it from s.Tier.
+	if resp != nil {
+		resp.Tier = s.Tier
+	}
+	s.recordTokens(resp)
+	if s.Tier == LEAD {
+		s.agent.trackLeadTokens(resp)
+	} else {
+		s.agent.trackTokens(resp)
+	}
+	return resp, err
+}
+
+// recordTokens attributes token counts from a completed Chat/ChatStream
+// response into the session's own counters. Uses resp.Tier (populated
+// by WorkerChat/LeadChat including fallback attribution) to split the
+// count between worker and lead. Falls back to s.Tier when resp.Tier
+// is unset — older/custom code paths that don't populate it.
+// Safe to call with nil.
+func (s *Session) recordTokens(resp *Response) {
+	if resp == nil || (resp.InputTokens == 0 && resp.OutputTokens == 0) {
+		return
+	}
+	tier := resp.Tier
+	if tier == TierUnset {
+		tier = s.Tier
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if tier == LEAD {
+		s.counters.LeadInput += int64(resp.InputTokens)
+		s.counters.LeadOutput += int64(resp.OutputTokens)
+	} else {
+		s.counters.WorkerInput += int64(resp.InputTokens)
+		s.counters.WorkerOutput += int64(resp.OutputTokens)
+	}
+}
+
+// Report returns a flat {Input, Output} summary of tokens consumed
+// through this session so far — worker and lead rolled up. Use AsDiff
+// for the tier-split view needed by cost estimation.
+func (s *Session) Report() SessionUsage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return SessionUsage{
+		Input:  s.counters.WorkerInput + s.counters.LeadInput,
+		Output: s.counters.WorkerOutput + s.counters.LeadOutput,
+	}
+}
+
+// SnapshotDiff captures the session's current full UsageDiff counters.
+// Used by UsageScope to baseline a sub-operation against a session
+// shared with a parent — Diff(snapshot) later returns only the delta.
+func (s *Session) SnapshotDiff() UsageDiff {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counters
+}
+
+// Snapshot is an alias for Report, provided for symmetry with
+// ProcessUsage().Snapshot() / Diff(). Returns the flat summary; use
+// SnapshotDiff when the caller needs the tier-split view.
+func (s *Session) Snapshot() SessionUsage { return s.Report() }
+
+// Diff returns tokens consumed between the given flat-summary start
+// snapshot and current counters. Returns the simple {Input, Output}
+// delta — most callers should prefer UsageScope for sub-op attribution
+// since it tracks tier-split counters correctly.
+func (s *Session) Diff(start SessionUsage) SessionUsage {
+	now := s.Report()
+	return SessionUsage{
+		Input:  now.Input - start.Input,
+		Output: now.Output - start.Output,
+	}
+}
+
+// AsDiff returns the session's tier-split counters as a UsageDiff
+// suitable for CostRates.Estimate / FormatUsage. Tier comes from what
+// actually served each call (via Response.Tier), so a LEAD session
+// whose calls were routed/fell-back to worker prices at worker rates.
+func (s *Session) AsDiff() UsageDiff {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.counters
 }
 
 // prependCaller inserts WithCaller(id) at the start of opts so later
@@ -266,9 +391,14 @@ func (T *FuzzAgent) LeadChat(ctx context.Context, messages []Message, opts ...Ch
 	start := time.Now()
 	resp, err := lead.Chat(ctx, messages, opts...)
 	elapsed := time.Since(start)
+	// fellBackToWorker tracks whether the tokens on resp actually
+	// came from the worker LLM (fallback path). Matters for the
+	// UsageTracker tier attribution — worker pricing, not lead.
+	fellBackToWorker := false
 	if err != nil && T.LeadLLM != nil && T.LLM != nil && T.LeadLLM != T.LLM {
 		Debug("[llm] lead chat failed after %s: %s — falling back to primary", elapsed.Round(time.Millisecond), err)
 		T.LeadFallback = true
+		fellBackToWorker = true
 		start = time.Now()
 		resp, err = T.LLM.Chat(ctx, messages, opts...)
 		elapsed = time.Since(start)
@@ -284,6 +414,7 @@ func (T *FuzzAgent) LeadChat(ctx context.Context, messages []Message, opts ...Ch
 		// Lead returned empty output (possible safety filter) — fall back to primary.
 		Debug("[llm] lead chat returned empty after %s (input: %d, thinking: %d) — falling back to primary", elapsed.Round(time.Millisecond), resp.InputTokens, len(resp.Reasoning))
 		T.LeadFallback = true
+		fellBackToWorker = true
 		start = time.Now()
 		resp, err = T.LLM.Chat(ctx, messages, opts...)
 		elapsed = time.Since(start)
@@ -295,9 +426,18 @@ func (T *FuzzAgent) LeadChat(ctx context.Context, messages []Message, opts ...Ch
 	} else {
 		Debug("[llm] lead chat completed in %s (input: %d, output: %d tokens)", elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
 	}
-	if T.Report != nil {
-		T.Report.Tally("Input Tokens").Add(resp.InputTokens)
-		T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
+	// Track the response against the tier that actually served it.
+	// Fallback path → worker tokens. Non-fallback → lead tokens.
+	if fellBackToWorker {
+		if resp != nil {
+			resp.Tier = WORKER
+		}
+		T.trackTokens(resp)
+	} else {
+		if resp != nil {
+			resp.Tier = LEAD
+		}
+		T.trackLeadTokens(resp)
 	}
 	return resp, nil
 }
@@ -446,6 +586,9 @@ func (T *FuzzAgent) WorkerChat(ctx context.Context, messages []Message, opts ...
 		Debug("[llm] chat failed after %s: %s", elapsed.Round(time.Millisecond), err)
 		return resp, err
 	}
+	if resp != nil {
+		resp.Tier = WORKER
+	}
 	Debug("[llm] chat completed in %s (input: %d, output: %d tokens)", elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
 	T.trackTokens(resp)
 	return resp, nil
@@ -484,6 +627,11 @@ func (T *FuzzAgent) WorkerChatWithCalc(ctx context.Context, messages []Message, 
 	history := make([]Message, len(messages))
 	copy(history, messages)
 
+	// Accumulate token counts across all inner WorkerChat calls so the
+	// returned Response reflects total consumption — callers (and
+	// Session.ChatWithCalc) that attribute tokens to a session see the
+	// full tool-loop cost, not just the final turn.
+	var cumInput, cumOutput int
 	for round := 0; round < 3; round++ {
 		callOpts := nativeOpts
 		// Inject prompt-based tool description into system prompt.
@@ -496,6 +644,8 @@ func (T *FuzzAgent) WorkerChatWithCalc(ctx context.Context, messages []Message, 
 		if err != nil {
 			return resp, err
 		}
+		cumInput += resp.InputTokens
+		cumOutput += resp.OutputTokens
 
 		// Check for native tool calls first.
 		if len(resp.ToolCalls) > 0 {
@@ -517,6 +667,8 @@ func (T *FuzzAgent) WorkerChatWithCalc(ctx context.Context, messages []Message, 
 		// Check for prompt-based <tool_call> tags.
 		tc, preamble := ParsePromptToolCall(resp.Content, handlers)
 		if tc == nil {
+			resp.InputTokens = cumInput
+			resp.OutputTokens = cumOutput
 			return resp, nil
 		}
 		result, runErr := calc.Run(tc.Args)
@@ -535,7 +687,24 @@ func (T *FuzzAgent) WorkerChatWithCalc(ctx context.Context, messages []Message, 
 	}
 
 	// Max rounds hit, do a final call without tools to force a text response.
-	return T.WorkerChat(ctx, history, opts...)
+	finalResp, finalErr := T.WorkerChat(ctx, history, opts...)
+	if finalResp != nil {
+		finalResp.InputTokens += cumInput
+		finalResp.OutputTokens += cumOutput
+	}
+	return finalResp, finalErr
+}
+
+// ChatWithCalc is a session-scoped wrapper around WorkerChatWithCalc:
+// tool-calling loop lives in the agent method (handles the calculate
+// tool), and this wrapper adds the session's CallerID + attributes the
+// cumulative token count to the session's counters. Use when a caller
+// wants the calculate tool available *and* per-session attribution.
+func (s *Session) ChatWithCalc(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	opts = prependCaller(s.CallerID, opts)
+	resp, err := s.agent.WorkerChatWithCalc(ctx, messages, opts...)
+	s.recordTokens(resp)
+	return resp, err
 }
 
 // appendSystemPrompt returns a ChatOption that appends text to the existing
@@ -555,22 +724,54 @@ func (T *FuzzAgent) ChatStreamWithReport(ctx context.Context, messages []Message
 		Debug("[llm] stream failed after %s: %s", elapsed.Round(time.Millisecond), err)
 		return resp, err
 	}
+	if resp != nil {
+		resp.Tier = WORKER
+	}
 	Debug("[llm] stream completed in %s (input: %d, output: %d tokens)", elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
 	T.trackTokens(resp)
 	return resp, nil
 }
 
 // trackTokens adds the response's token counts to the report tallies.
+// This is the WORKER-tier tracker — WorkerChat and similar primary-LLM
+// paths call it. For lead-tier calls, use trackLeadTokens. The split
+// matters for cost estimation since worker and lead models typically
+// price very differently.
 func (T *FuzzAgent) trackTokens(resp *Response) {
-	if T.Report == nil || resp == nil {
+	if resp == nil {
 		return
 	}
-	if resp.InputTokens > 0 {
-		T.Report.Tally("Input Tokens").Add(resp.InputTokens)
+	if T.Report != nil {
+		if resp.InputTokens > 0 {
+			T.Report.Tally("Input Tokens").Add(resp.InputTokens)
+		}
+		if resp.OutputTokens > 0 {
+			T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
+		}
 	}
-	if resp.OutputTokens > 0 {
-		T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
+	// Also feed the process-wide UsageTracker so per-run Scope()
+	// callers see the worker portion of consumption.
+	ProcessUsage().AddWorker(resp.InputTokens, resp.OutputTokens)
+}
+
+// trackLeadTokens is the lead-tier counterpart to trackTokens. Called
+// from LeadChat when the response came from the lead LLM. When
+// LeadChat falls back to the primary LLM (LeadFallback path), callers
+// should use trackTokens instead so the tokens get attributed to the
+// worker tier that actually served them.
+func (T *FuzzAgent) trackLeadTokens(resp *Response) {
+	if resp == nil {
+		return
 	}
+	if T.Report != nil {
+		if resp.InputTokens > 0 {
+			T.Report.Tally("Input Tokens").Add(resp.InputTokens)
+		}
+		if resp.OutputTokens > 0 {
+			T.Report.Tally("Output Tokens").Add(resp.OutputTokens)
+		}
+	}
+	ProcessUsage().AddLead(resp.InputTokens, resp.OutputTokens)
 }
 
 // SetLimiter sets the limiter with the given limit.

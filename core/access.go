@@ -6,48 +6,11 @@ import (
 	"strings"
 )
 
-// LoadTechwriterAllowedIPsFunc returns a comma-separated list of CIDR
-// blocks (or bare IPs) permitted to access TechWriter and "Push to
-// TechWriter" actions in other apps. Empty string means open (default).
-// Set by the application from stored config.
-var LoadTechwriterAllowedIPsFunc func() string
-
 // LoadAdminAllowedIPsFunc returns a comma-separated list of CIDR
 // blocks (or bare IPs) permitted to access the Administrator panel.
 // Empty string means no IP restriction (auth-only). Set by the
 // application from stored config.
 var LoadAdminAllowedIPsFunc func() string
-
-// IsTechwriterAllowed reports whether the request originates from an IP
-// in the configured TechWriter allowlist. An empty or unconfigured
-// allowlist allows everyone (backwards-compatible default).
-func IsTechwriterAllowed(r *http.Request) bool {
-	if LoadTechwriterAllowedIPsFunc == nil {
-		return true
-	}
-	list := strings.TrimSpace(LoadTechwriterAllowedIPsFunc())
-	if list == "" {
-		return true
-	}
-	nets := parseCIDRList(list)
-	if len(nets) == 0 {
-		return true
-	}
-	ip := clientIP(r)
-	if ip == nil {
-		return false
-	}
-	// Always allow localhost — internal API calls between apps.
-	if ip.IsLoopback() {
-		return true
-	}
-	for _, n := range nets {
-		if n.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
 
 // IsAdminAllowed reports whether the request originates from an IP
 // in the configured Admin allowlist. An empty or unconfigured
@@ -77,6 +40,17 @@ func IsAdminAllowed(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+// IsLoopbackRequest reports whether a request originates from the
+// local machine (127.0.0.0/8, ::1). Internal inter-app HTTP calls
+// loop back to localhost, so gates that protect against external
+// abuse should whitelist loopback — otherwise the server blocks its
+// own RPCs. Uses the same clientIP extraction as IsAdminAllowed so
+// X-Forwarded-For + X-Real-IP are honored in proxied deployments.
+func IsLoopbackRequest(r *http.Request) bool {
+	ip := clientIP(r)
+	return ip != nil && ip.IsLoopback()
 }
 
 // parseCIDRList parses a comma-separated list of CIDRs or bare IPs into

@@ -68,6 +68,17 @@ type Response struct {
 	Model        string
 	InputTokens  int
 	OutputTokens int
+	// Tier reports which LLM tier actually served this response.
+	// Populated by WorkerChat (always WORKER), LeadChat (LEAD on
+	// native success, WORKER when the routing config or fallback
+	// paths delegate to the primary). Session.recordTokens keys off
+	// Tier so per-session cost attribution reflects what was
+	// *served*, not what was *asked for* — important because routing-
+	// to-worker or fallback-to-worker means the call is priced at
+	// worker rates, not lead rates. Zero value (TierUnset) means an
+	// older code path didn't set it; callers fall back to their own
+	// tier context (e.g., Session.Tier).
+	Tier LLMTier
 }
 
 // Tool describes a function the LLM can call.
