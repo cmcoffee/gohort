@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/webui"
@@ -41,13 +42,13 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 // blockedTools is the set of tool names the chat app refuses to expose,
 // regardless of what the client requests. Tools that perform real-world
-// side effects (sending email, executing shell commands) or that need a
-// configured API key (web search) are blocked from the testing UI to keep
-// it sandboxed.
+// side effects (sending email, executing shell commands) are blocked
+// from the testing UI to keep it sandboxed. web_search is intentionally
+// allowed — the system prompt steers the LLM toward it for current-
+// event questions where training-era knowledge is stale.
 var blockedTools = map[string]bool{
 	"run_command": true, // shell execution — risky in a web UI
 	"send_email":  true, // sends real email
-	"web_search":  true, // can burn API quotas / rate limits
 }
 
 // allowedTools returns the registered tool list filtered by the blocklist.
@@ -182,7 +183,12 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	copy(streamMessages, messages)
 
 	maxRounds := 8
-	systemPrompt := T.SystemPrompt() + buildProcedurePrompt(T.DB)
+	// Prefix with today's date so the model can reason about current
+	// events without defaulting to its training-cutoff knowledge.
+	// Without this, a question like "who is the current president?"
+	// returns whoever was president when the model was last trained.
+	today := time.Now().Format("Monday, January 2, 2006")
+	systemPrompt := fmt.Sprintf("Today is %s.\n\n", today) + T.SystemPrompt() + buildProcedurePrompt(T.DB)
 	promptTools := agent.PromptTools
 
 	toolDefs := make([]Tool, 0, len(tools))
@@ -459,12 +465,83 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 #tools-list { display: none; padding: 0.5rem 1rem; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--text-mute); max-height: 200px; overflow-y: auto; }
 #tools-list .tool { padding: 0.2rem 0; }
 #tools-list .tool b { color: var(--text); margin-right: 0.5rem; }
-#chat-history { flex: 1; overflow-y: auto; padding: 1rem; }
-.chat-msg { max-width: 80%; margin-bottom: 0.75rem; padding: 0.6rem 0.85rem; border-radius: 8px; line-height: 1.5; }
-.chat-msg.user { background: var(--accent); color: #fff; margin-left: auto; padding: 0.15rem 0.45rem; border-radius: 3px; max-width: fit-content; line-height: 1.35; }
-.chat-msg.assistant { background: var(--bg-1); border: 1px solid var(--border); }
-.chat-msg.error { background: #2d1a1a; border: 1px solid var(--danger); color: #ffb4b4; }
+#chat-history {
+  flex: 1; overflow-y: auto;
+  padding: 0.75rem 1rem;
+  max-width: 780px; margin: 0 auto; width: 100%;
+}
+.chat-msg {
+  margin-bottom: 0.5rem; line-height: 1.5;
+}
+.chat-msg.user {
+  background: var(--accent); color: #fff; margin-left: auto;
+  padding: 0.25rem 0.55rem; border-radius: 10px;
+  max-width: fit-content; line-height: 1.35;
+  font-size: 0.9rem;
+}
+/* Assistant messages flow the full column width with no bubble or
+   border — open-webui style. A small muted "Gohort" label sits above
+   each assistant turn so whose-turn-is-whose reads at a glance. */
+.chat-msg.assistant {
+  background: transparent; border: none; padding: 0.1rem 0;
+  position: relative;
+}
+.chat-msg.assistant::before {
+  content: "Gohort";
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--text-mute, #8b949e);
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+.chat-msg.error {
+  background: transparent; border-left: 2px solid var(--danger);
+  padding: 0.2rem 0.6rem; color: #ffb4b4;
+}
 .chat-msg pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: inherit; }
+/* Thinking indicator: three pulsing dots shown in the assistant
+   bubble between the user hitting send and the first chunk (or
+   tool_call event) arriving. Removed on first content so the dots
+   don't overlap streamed text. */
+.chat-msg .thinking-dots {
+  display: inline-flex; gap: 0.3rem; padding: 0.15rem 0;
+}
+.chat-msg .thinking-dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--text-mute, #8b949e);
+  animation: chat-thinking 1.4s infinite ease-in-out both;
+}
+.chat-msg .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.chat-msg .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes chat-thinking {
+  0%, 80%, 100% { opacity: 0.3; transform: scale(0.75); }
+  40% { opacity: 1; transform: scale(1); }
+}
+/* Rendered-markdown variant: replaces the streaming <pre> once the
+   assistant's response completes. Sized to read as flowing prose, not
+   the oversized defaults h1/h2 would otherwise inherit. */
+.chat-msg .content.md { line-height: 1.55; }
+.chat-msg .content.md p { margin: 0 0 0.5rem; }
+.chat-msg .content.md p:last-child { margin-bottom: 0; }
+.chat-msg .content.md h1,
+.chat-msg .content.md h2,
+.chat-msg .content.md h3,
+.chat-msg .content.md h4,
+.chat-msg .content.md h5 { margin: 0.7rem 0 0.3rem; font-weight: 600; line-height: 1.3; }
+.chat-msg .content.md h1 { font-size: 1.1rem; }
+.chat-msg .content.md h2 { font-size: 1rem; }
+.chat-msg .content.md h3 { font-size: 0.95rem; color: var(--text-mute); }
+.chat-msg .content.md h4,
+.chat-msg .content.md h5 { font-size: 0.9rem; color: var(--text-mute); }
+.chat-msg .content.md ul,
+.chat-msg .content.md ol { margin: 0.25rem 0 0.5rem; padding-left: 1.4rem; }
+.chat-msg .content.md li { margin: 0.1rem 0; }
+.chat-msg .content.md a { color: var(--accent); text-decoration: none; }
+.chat-msg .content.md a:hover { text-decoration: underline; }
+.chat-msg .content.md strong { color: var(--text); }
+.chat-msg .content.md code { background: var(--bg-2); padding: 0.05rem 0.3rem; border-radius: 3px; font-family: ui-monospace, Menlo, monospace; font-size: 0.85em; }
 .tool-call { margin-top: 0.4rem; background: var(--bg-2); border-left: 3px solid var(--warn); border-radius: 4px; font-size: 0.8rem; color: var(--text-mute); }
 .tool-call summary { padding: 0.4rem 0.6rem; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 0.4rem; }
 .tool-call summary::-webkit-details-marker { display: none; }
@@ -483,6 +560,12 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 #chat-input:focus { border-color: var(--accent); outline: none; }
 #chat-send { padding: 0 1.25rem; }
 #chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+#chat-attach {
+  padding: 0 0.75rem; font-size: 1.1rem; background: var(--bg-0);
+  color: var(--text-mute); border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer;
+}
+#chat-attach:hover { color: var(--text-hi); border-color: var(--accent); }
 
 /* Mobile responsive */
 @media (max-width: 600px) {
@@ -511,6 +594,8 @@ const chatBody = `
 <div id="tools-list"></div>
 <div id="chat-history"></div>
 <div id="chat-input-area">
+  <input type="file" id="chat-attach-file" style="display:none" onchange="handleAttachFile(event)">
+  <button id="chat-attach" title="Attach a text file (log, config, etc.)" onclick="document.getElementById('chat-attach-file').click()">📎</button>
   <textarea id="chat-input" placeholder="Message…" rows="1"></textarea>
   <button id="chat-send" class="primary" onclick="sendChat()">Send</button>
 </div>
@@ -558,13 +643,23 @@ function createAssistantPlaceholder() {
   var hist = document.getElementById('chat-history');
   var div = document.createElement('div');
   div.className = 'chat-msg assistant';
-  div.innerHTML = '<pre class="content"></pre><div class="tools"></div>';
+  // Thinking dots appear while waiting for the first chunk or
+  // tool_call event. removeThinkingDots() clears them on any
+  // activity in the bubble.
+  div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>'
+    + '<pre class="content"></pre><div class="tools"></div>';
   hist.appendChild(div);
   hist.scrollTop = hist.scrollHeight;
   return div;
 }
 
+function removeThinkingDots(msgEl) {
+  var dots = msgEl.querySelector('.thinking-dots');
+  if (dots) dots.remove();
+}
+
 function appendChunk(msgEl, text) {
+  removeThinkingDots(msgEl);
   var pre = msgEl.querySelector('.content');
   pre.textContent += text;
   var hist = document.getElementById('chat-history');
@@ -572,6 +667,7 @@ function appendChunk(msgEl, text) {
 }
 
 function appendToolCall(msgEl, name, args) {
+  removeThinkingDots(msgEl);
   var tools = msgEl.querySelector('.tools');
   var tc = document.createElement('details');
   tc.className = 'tool-call pending';
@@ -603,6 +699,7 @@ function appendToolResult(msgEl, name, result) {
 
 function appendError(msgEl, text) {
   if (msgEl) {
+    removeThinkingDots(msgEl);
     msgEl.classList.add('error');
     var pre = msgEl.querySelector('.content');
     if (pre) pre.textContent += '\n[error] ' + text;
@@ -663,10 +760,26 @@ function sendChat() {
       sending = false;
       btn.disabled = false;
       btn.textContent = 'Send';
-      // Trim trailing whitespace from the rendered message.
+      // Replace the streaming <pre class="content"> with a rendered
+      // markdown <div class="content md"> so ## headings, **bold**,
+      // lists, and links look like formatted prose instead of raw
+      // characters. Render only on completion because mid-stream
+      // markdown is visually jumpy — half-open ** and ## produce
+      // flicker until the closing token arrives. renderMarkdown is
+      // the shared helper loaded from core/webui/static/base.js.
       if (assistantEl) {
         var pre = assistantEl.querySelector('.content');
-        if (pre) pre.textContent = pre.textContent.replace(/\s+$/, '');
+        if (pre) {
+          var textIn = pre.textContent.replace(/\s+$/, '');
+          if (typeof renderMarkdown === 'function' && textIn) {
+            var div = document.createElement('div');
+            div.className = 'content md';
+            div.innerHTML = renderMarkdown(textIn);
+            pre.parentNode.replaceChild(div, pre);
+          } else {
+            pre.textContent = textIn;
+          }
+        }
       }
       if (success && fullReply) {
         chatHistory.push({role: 'user', content: msg});
@@ -720,6 +833,46 @@ document.getElementById('chat-input').addEventListener('keydown', function(e){
     sendChat();
   }
 });
+
+// handleAttachFile loads the selected file as text and inserts it into
+// the chat input wrapped in a fenced block, with the filename called
+// out so the LLM can refer to it and so it's clear what was pasted.
+// Size cap: 256KB — browsers handle bigger but the chat request body
+// gets unwieldy and the tool LLM has its own context limits. Only text
+// files are accepted; binary content would just produce garbled prose.
+function handleAttachFile(event) {
+  var file = event.target.files && event.target.files[0];
+  if (!file) return;
+  var maxBytes = 256 * 1024;
+  if (file.size > maxBytes) {
+    alert('File too large (' + Math.round(file.size/1024) + 'KB). Limit is 256KB. Attach a smaller slice.');
+    event.target.value = '';
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var text = e.target.result;
+    if (typeof text !== 'string') { return; }
+    var input = document.getElementById('chat-input');
+    var prefix = input.value.trim() ? input.value.replace(/\s+$/, '') + '\n\n' : '';
+    // Wrap in a fenced block with the filename as the header. \x60 is
+    // the backtick literal — written escaped because this whole JS
+    // blob lives inside a Go raw-string literal that uses backticks
+    // as its delimiter, so a real backtick here would terminate the
+    // Go string. The browser runs \x60 as U+0060 = backtick.
+    var fence = '\x60\x60\x60';
+    input.value = prefix + '--- ' + file.name + ' (' + file.size + ' bytes) ---\n' + fence + '\n' + text + '\n' + fence + '\n';
+    input.focus();
+    // Move cursor to end so the user can type their question right there.
+    input.setSelectionRange(input.value.length, input.value.length);
+  };
+  reader.onerror = function() {
+    alert('Failed to read file: ' + (reader.error && reader.error.message || 'unknown error'));
+  };
+  reader.readAsText(file);
+  // Reset the file input so the same file can be re-attached later.
+  event.target.value = '';
+}
 
 loadTools();
 `
