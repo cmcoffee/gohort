@@ -8,7 +8,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 
 	_ "github.com/cmcoffee/gohort/tools/calculate"
-	_ "github.com/cmcoffee/gohort/tools/command"
 	_ "github.com/cmcoffee/gohort/tools/datemath"
 	_ "github.com/cmcoffee/gohort/tools/email"
 	_ "github.com/cmcoffee/gohort/tools/localtime"
@@ -16,8 +15,8 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/websearch"
 )
 
-// wireToolDB is set by private.go to connect private tools to their database
-// buckets. No-op in public builds.
+// wireToolDB is set during initialization to connect tools to their database
+// buckets. No-op when not configured.
 var wireToolDB = func() {}
 
 // chatTools holds the loaded chat tools keyed by name.

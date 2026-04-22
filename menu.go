@@ -124,7 +124,7 @@ func set_agent_llm(agent Agent) {
 	}
 }
 
-// set_agent_prompt stores the agent's SystemPrompt() on the FuzzAgent.
+// set_agent_prompt stores the agent's SystemPrompt() on the AppCore.
 func set_agent_prompt(agent Agent) {
 	T := agent.Get()
 	T.SetSystemPrompt(agent.SystemPrompt())

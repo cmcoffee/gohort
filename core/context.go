@@ -56,6 +56,6 @@ func ShutdownApp() {
 // the request that started it (task queue submissions, persistent
 // pipelines, REPL loops) while still being cancellable on daemon
 // shutdown.
-func (T *FuzzAgent) BgContext() context.Context {
+func (T *AppCore) BgContext() context.Context {
 	return AppContext()
 }

@@ -26,7 +26,7 @@ type TechWriterAgent struct {
 	input struct {
 		web string
 	}
-	FuzzAgent
+	AppCore
 }
 
 func (T TechWriterAgent) Name() string { return "techwriter" }

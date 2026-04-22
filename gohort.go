@@ -52,6 +52,7 @@ func get_runtime_info() string {
 }
 
 func main() {
+	AppVersion = VERSION
 	nfo.HideTS()
 	defer Exit(0)
 

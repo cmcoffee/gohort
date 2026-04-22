@@ -16,7 +16,7 @@ func init() {
 // ChatAgent is the task definition. Currently no CLI flags — the only
 // entry point is the web UI mounted at /chat.
 type ChatAgent struct {
-	FuzzAgent
+	AppCore
 }
 
 func (T ChatAgent) Name() string { return "chat_tools" }

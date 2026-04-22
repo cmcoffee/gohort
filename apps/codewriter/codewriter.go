@@ -12,7 +12,7 @@ func init() {
 }
 
 type CodeWriterAgent struct {
-	FuzzAgent
+	AppCore
 }
 
 func (T CodeWriterAgent) Name() string { return "codewriter" }

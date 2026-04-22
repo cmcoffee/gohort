@@ -93,7 +93,7 @@ func (T *TechWriterAgent) handleUploadPersona(w http.ResponseWriter, r *http.Req
 
 	Debug("[personas] extracted %d page images from PDF", len(images))
 
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
+	agent := &AppCore{LLM: T.AppCore.LLM}
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), []Message{
 		{
@@ -171,7 +171,7 @@ func (T *TechWriterAgent) handleSavePersona(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
+	agent := &AppCore{LLM: T.AppCore.LLM}
 	session := agent.CreateSession(WORKER)
 	desc_resp, _ := session.Chat(r.Context(), []Message{
 		{Role: "user", Content: fmt.Sprintf("Summarize this writing style in one sentence (under 15 words):\n\n%s", req.Style)},

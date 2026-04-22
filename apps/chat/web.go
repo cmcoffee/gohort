@@ -37,7 +37,88 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	})
 	sub.HandleFunc("/api/send", T.handleSend)
 	sub.HandleFunc("/api/tools", T.handleTools)
+	sub.HandleFunc("/api/sessions", T.handleSessionsList)
+	sub.HandleFunc("/api/sessions/", T.handleSessionGet)
+	sub.HandleFunc("/api/sessions/delete/", T.handleSessionDelete)
+	sub.HandleFunc("/api/sessions/archive/", T.handleSessionArchive)
 	MountSubMux(mux, prefix, sub)
+}
+
+// handleSessionsList returns a lightweight summary of the caller's
+// saved chat sessions, most-recent first. The summary omits the full
+// Messages slice so the sidebar can page through sessions without
+// loading every prior conversation into memory.
+func (T *ChatAgent) handleSessionsList(w http.ResponseWriter, r *http.Request) {
+	username := sessionUsername(r)
+	sessions := ListChatSessionsForUser(T.DB, username)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(SessionSummaries(sessions))
+}
+
+// handleSessionGet returns the full session record (including every
+// stored Message) so the UI can rehydrate a past conversation when the
+// user clicks it in the sidebar. 404s when the caller doesn't own the
+// requested session — session access is strictly per-user.
+func (T *ChatAgent) handleSessionGet(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	s, ok := LoadChatSession(T.DB, id)
+	if !ok || s.Username != sessionUsername(r) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s)
+}
+
+// handleSessionDelete removes a session entirely. Only the session's
+// owner can delete; mismatched ownership returns 404 so the response
+// doesn't reveal whether a given id exists.
+func (T *ChatAgent) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "DELETE required", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/delete/")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	s, ok := LoadChatSession(T.DB, id)
+	if !ok || s.Username != sessionUsername(r) {
+		http.NotFound(w, r)
+		return
+	}
+	DeleteChatSession(T.DB, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSessionArchive flips the Archived flag. Same ownership check
+// as delete. Mirrors the research/debate archive pattern so the
+// shared webui.historyList component's archive flow works unchanged.
+func (T *ChatAgent) handleSessionArchive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/archive/")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	s, ok := LoadChatSession(T.DB, id)
+	if !ok || s.Username != sessionUsername(r) {
+		http.NotFound(w, r)
+		return
+	}
+	s.Archived = !s.Archived
+	s.LastAt = time.Now()
+	SaveChatSession(T.DB, s)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"archived": s.Archived})
 }
 
 // blockedTools is the set of tool names the chat app refuses to expose,
@@ -80,12 +161,23 @@ func (T *ChatAgent) handleTools(w http.ResponseWriter, r *http.Request) {
 
 // chatRequest is the wire format from the frontend.
 type chatRequest struct {
-	History []struct {
+	// SessionID ties the message to a persisted ChatSession. Empty =
+	// start a new session (server mints an ID and returns it in the
+	// first SSE event).
+	SessionID string `json:"session_id"`
+	History   []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"history"`
 	Message string   `json:"message"`
 	Tools   []string `json:"tools"` // optional whitelist; empty = all
+	// ReplaceHistory, when true, tells the server to treat the
+	// provided History as the new authoritative transcript for this
+	// session — any previously persisted messages beyond that length
+	// are dropped before the new Message is appended. Used by the
+	// "edit and resend" flow so an edit actually truncates future
+	// turns instead of leaving stale context in the session.
+	ReplaceHistory bool `json:"replace_history"`
 }
 
 // (chatResponse / toolCall types removed — chat now streams via SSE
@@ -129,11 +221,57 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		activeChatsMu.Unlock()
 	}()
 
-	// Build the message history for the agent loop. The frontend tracks
-	// the conversation client-side and sends it on every request.
-	messages := make([]Message, 0, len(req.History)+1)
-	for _, m := range req.History {
-		messages = append(messages, Message{Role: m.Role, Content: m.Content})
+	// Resolve the backing session. If the client provided a SessionID,
+	// load it; otherwise mint a fresh one. Ownership check: a user can
+	// only post into a session they own. New sessions are stamped with
+	// the caller's username so subsequent requests and the sessions
+	// listing endpoint scope correctly.
+	username := sessionUsername(r)
+	var session ChatSession
+	isNewSession := false
+	if req.SessionID != "" {
+		if s, ok := LoadChatSession(T.DB, req.SessionID); ok && s.Username == username {
+			session = s
+		} else {
+			// Provided ID is unknown or not owned — treat as new.
+			isNewSession = true
+		}
+	} else {
+		isNewSession = true
+	}
+	if isNewSession {
+		session = ChatSession{
+			ID:       UUIDv4(),
+			Username: username,
+			Created:  time.Now(),
+			LastAt:   time.Now(),
+		}
+	}
+
+	// Build the message history for the agent loop. Prefer the
+	// session's persisted messages over the client-sent history so the
+	// server is the source of truth. When the session is empty (new),
+	// fall back to the client's History field so the transition from
+	// the old single-session client works without changes.
+	// ReplaceHistory overrides: the client is editing a past turn and
+	// explicitly wants the session truncated to the supplied history
+	// before this new Message is appended.
+	if req.ReplaceHistory {
+		trimmed := make([]ChatMessage, 0, len(req.History))
+		for _, m := range req.History {
+			trimmed = append(trimmed, ChatMessage{Role: m.Role, Content: m.Content})
+		}
+		session.Messages = trimmed
+	}
+	messages := make([]Message, 0, len(session.Messages)+1)
+	if len(session.Messages) > 0 {
+		for _, m := range session.Messages {
+			messages = append(messages, Message{Role: m.Role, Content: m.Content})
+		}
+	} else {
+		for _, m := range req.History {
+			messages = append(messages, Message{Role: m.Role, Content: m.Content})
+		}
 	}
 	messages = append(messages, Message{Role: "user", Content: req.Message})
 
@@ -153,7 +291,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM, LeadLLM: T.FuzzAgent.LeadLLM, MaxRounds: 8, PromptTools: T.FuzzAgent.PromptTools}
+	agent := &AppCore{LLM: T.AppCore.LLM, LeadLLM: T.AppCore.LeadLLM, MaxRounds: 8, PromptTools: T.AppCore.PromptTools}
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -175,6 +313,58 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
+
+	// Announce the session ID to the client up front so it can update
+	// its currentSessionId before the response finishes — this way the
+	// sidebar can refresh as soon as a title appears.
+	writeSSEEvent(w, "session", map[string]string{"id": session.ID})
+	flusher.Flush()
+
+	// Accumulator that mirrors what the user sees streamed, so we can
+	// persist a faithful transcript without re-reading the raw
+	// resp.Content (which in prompt-tools mode still contains
+	// <tool_call> and procedure tags before they're stripped). Each
+	// round's emitChunk appends to this.
+	var assistantReply strings.Builder
+
+	// Persist the exchange and kick off auto-titling once the handler
+	// returns — defer fires regardless of which return path (done,
+	// error, canceled) we take, so every completed or interrupted
+	// turn gets saved.
+	defer func() {
+		session.Messages = append(session.Messages, ChatMessage{Role: "user", Content: req.Message})
+		if reply := strings.TrimSpace(assistantReply.String()); reply != "" {
+			session.Messages = append(session.Messages, ChatMessage{Role: "assistant", Content: reply})
+		}
+		session.LastAt = time.Now()
+		needTitle := isNewSession && session.Title == "" && len(session.Messages) >= 2
+		SaveChatSession(T.DB, session)
+		if needTitle {
+			// Generate the title asynchronously — the HTTP response is
+			// already flushed and the user is back to the UI. The title
+			// lands on a subsequent sidebar poll.
+			go func(s ChatSession) {
+				titleCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				titleAgent := &AppCore{LLM: T.AppCore.LLM}
+				worker := titleAgent.CreateSession(WORKER)
+				title := GenerateSessionTitle(titleCtx, worker, s)
+				if title == "" {
+					return
+				}
+				// Re-load before saving so we don't clobber any newer
+				// messages that landed while the title call was in
+				// flight. Only set the title if it's still empty —
+				// avoids overwriting a user-edited title in the future.
+				latest, ok := LoadChatSession(T.DB, s.ID)
+				if !ok || latest.Title != "" {
+					return
+				}
+				latest.Title = title
+				SaveChatSession(T.DB, latest)
+			}(session)
+		}
+	}()
 
 	// Streaming agent loop. Mirrors RunAgentLoop's structure but uses
 	// ChatStream so we can push tokens to the client as they arrive, and
@@ -230,7 +420,9 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 
 		// emitChunk sends text to the client but defers trailing newlines.
 		// They only get emitted when more non-whitespace text follows,
-		// so the response never ends with blank lines.
+		// so the response never ends with blank lines. Also appends to
+		// assistantReply so the persisted session transcript mirrors
+		// what the user saw streamed.
 		emitChunk := func(text string) {
 			if text == "" {
 				return
@@ -244,12 +436,14 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 				nl := strings.Repeat("\n", pendingNewlines)
 				writeSSEEvent(w, "chunk", map[string]string{"text": nl})
 				flusher.Flush()
+				assistantReply.WriteString(nl)
 				pendingNewlines = 0
 			}
 
 			if trimmed != "" {
 				writeSSEEvent(w, "chunk", map[string]string{"text": trimmed})
 				flusher.Flush()
+				assistantReply.WriteString(trimmed)
 			}
 			pendingNewlines += trailingCount
 		}
@@ -457,7 +651,87 @@ func truncate(s string, n int) string {
 // --- HTML / CSS / JS ---
 
 const chatCSS = `
-body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; margin: 0; }
+body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden; }
+#chat-layout { display: flex; flex-direction: row; height: 100%; width: 100%; }
+#chat-main { display: flex; flex-direction: column; flex: 1; min-width: 0; height: 100%; }
+
+/* Sidebar: open-webui style session list pinned to the left. Fixed
+   width on desktop, slides off-canvas on mobile behind a hamburger. */
+#chat-sidebar {
+  width: 260px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-1); border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+#chat-sidebar.hidden { display: none; }
+#sidebar-head {
+  display: flex; gap: 0.4rem; align-items: center;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+#sidebar-new { flex: 1; padding: 0.45rem 0.75rem; font-size: 0.85rem; }
+#sidebar-close {
+  background: transparent; border: none; color: var(--text-mute);
+  cursor: pointer; font-size: 1rem; padding: 0.2rem 0.45rem; line-height: 1;
+}
+#sidebar-close:hover { color: var(--text-hi); }
+#sidebar-filter {
+  padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border);
+}
+#sidebar-archived-toggle {
+  background: transparent; border: none; color: var(--text-mute);
+  cursor: pointer; font-size: 0.75rem; padding: 0.2rem 0.3rem;
+  border-radius: 3px;
+}
+#sidebar-archived-toggle:hover { color: var(--text-hi); background: var(--bg-2); }
+#sidebar-archived-toggle.active { color: var(--accent); }
+#sessions-list {
+  flex: 1; overflow-y: auto;
+  padding: 0.4rem 0.4rem 0.75rem;
+}
+.session-item {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.3;
+  position: relative;
+}
+.session-item:hover { background: var(--bg-2); }
+.session-item.active { background: var(--bg-2); color: var(--text-hi); }
+.session-item .si-title {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.session-item[data-archived="true"] .si-title { color: var(--text-mute); font-style: italic; }
+.session-item .si-actions {
+  display: none; gap: 0.15rem; flex-shrink: 0;
+}
+.session-item:hover .si-actions,
+.session-item.active .si-actions { display: flex; }
+.session-item .si-actions button {
+  background: transparent; border: none; color: var(--text-mute);
+  cursor: pointer; padding: 0.15rem 0.3rem; font-size: 0.8rem;
+  border-radius: 3px;
+}
+.session-item .si-actions button:hover { color: var(--text-hi); background: var(--bg-0); }
+#sessions-empty {
+  color: var(--text-mute); font-size: 0.8rem;
+  padding: 1rem 0.75rem; text-align: center;
+}
+#sidebar-toggle {
+  background: transparent; border: none; color: var(--text-mute);
+  cursor: pointer; font-size: 1.1rem; padding: 0.2rem 0.45rem; line-height: 1;
+  display: none;
+}
+#sidebar-toggle:hover { color: var(--text-hi); }
+#chat-layout.sidebar-hidden #sidebar-toggle { display: inline-block; }
+@media (min-width: 601px) {
+  #chat-layout.sidebar-hidden #chat-sidebar { display: none; }
+}
+
 #chat-header { padding: 0.75rem 1rem; background: var(--bg-1); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.75rem; }
 #chat-header h1 { font-size: 1rem; margin: 0; color: var(--text-hi); }
 #tools-summary { color: var(--text-mute); font-size: 0.85rem; margin-left: auto; cursor: pointer; }
@@ -468,17 +742,40 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 #chat-history {
   flex: 1; overflow-y: auto;
   padding: 0.75rem 1rem;
-  max-width: 780px; margin: 0 auto; width: 100%;
+  max-width: 760px; margin: 0 auto; width: 100%;
 }
 .chat-msg {
   margin-bottom: 0.5rem; line-height: 1.5;
 }
 .chat-msg.user {
-  background: var(--accent); color: #fff; margin-left: auto;
-  padding: 0.25rem 0.55rem; border-radius: 10px;
-  max-width: fit-content; line-height: 1.35;
-  font-size: 0.9rem;
+  display: flex; flex-direction: column; align-items: flex-end;
+  margin-left: auto; max-width: fit-content;
+  background: transparent; color: inherit; padding: 0; border-radius: 0;
 }
+.chat-msg.user .bubble {
+  background: transparent; color: var(--text);
+  padding: 0.25rem 0.55rem; border-radius: 10px;
+  border: 1px solid var(--border);
+  line-height: 1.35; font-size: 0.9rem;
+  max-width: 100%;
+}
+.chat-msg.user .bubble pre { color: var(--text); }
+.chat-msg.user .edit-area {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  width: min(640px, 90vw);
+}
+.chat-msg.user .edit-area textarea {
+  background: var(--bg-0); border: 1px solid var(--accent); color: var(--text);
+  border-radius: 6px; padding: 0.4rem 0.6rem; font: inherit;
+  font-size: 0.9rem; min-height: 60px; resize: vertical;
+}
+.chat-msg.user .edit-area .buttons { display: flex; gap: 0.35rem; justify-content: flex-end; }
+.chat-msg.user .edit-area button {
+  padding: 0.25rem 0.7rem; font-size: 0.8rem; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--bg-1); color: var(--text); cursor: pointer;
+}
+.chat-msg.user .edit-area button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chat-msg.user .msg-actions { justify-content: flex-end; }
 /* Assistant messages flow the full column width with no bubble or
    border — open-webui style. A small muted "Gohort" label sits above
    each assistant turn so whose-turn-is-whose reads at a glance. */
@@ -554,8 +851,31 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 .tool-details { padding: 0.3rem 0.6rem 0.4rem; }
 .tool-call .args, .tool-call .result { display: block; margin-top: 0.2rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; }
 .tool-call .result { color: var(--text); }
+/* Action row shown under a completed assistant message: copy/retry
+   buttons, open-webui style. Fades in on hover to stay out of the way
+   while reading, and is always visible on touch devices. */
+.msg-actions {
+  display: flex; gap: 0.25rem; margin-top: 0.3rem;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.chat-msg:hover .msg-actions,
+.chat-msg:focus-within .msg-actions { opacity: 1; }
+.msg-actions button {
+  background: transparent; border: 1px solid transparent;
+  color: var(--text-mute); cursor: pointer;
+  padding: 0.2rem 0.45rem; border-radius: 4px;
+  font-size: 0.75rem; line-height: 1;
+}
+.msg-actions button:hover { color: var(--text-hi); border-color: var(--border); background: var(--bg-2); }
+.msg-actions button.copied { color: var(--green, #3fb950); }
+@media (hover: none) { .msg-actions { opacity: 1; } }
 .chat-msg.error { background: #2d1a1a; border: 1px solid var(--danger); color: #ffb4b4; }
-#chat-input-area { display: flex; gap: 0.5rem; padding: 0.75rem 1rem; background: var(--bg-1); border-top: 1px solid var(--border); }
+#chat-input-area {
+  display: flex; gap: 0.5rem;
+  padding: 0.75rem 1rem 1rem;
+  max-width: 760px; width: 100%; margin: 0 auto;
+  background: transparent;
+}
 #chat-input { flex: 1; min-height: 38px; max-height: 200px; padding: 0.5rem 0.75rem; background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.9rem; resize: vertical; }
 #chat-input:focus { border-color: var(--accent); outline: none; }
 #chat-send { padding: 0 1.25rem; }
@@ -569,6 +889,22 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 
 /* Mobile responsive */
 @media (max-width: 600px) {
+  /* Sidebar: off-canvas drawer. Open state slides it in; hamburger
+     in the header toggles it. Overlays chat-main rather than
+     resizing so small screens keep the full chat width. */
+  #chat-sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0;
+    z-index: 20; width: 80%; max-width: 280px;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.3);
+    transform: translateX(-100%); transition: transform 0.2s ease;
+  }
+  #chat-layout:not(.sidebar-hidden) #chat-sidebar { transform: translateX(0); }
+  #chat-layout.sidebar-hidden #chat-sidebar { transform: translateX(-100%); }
+  /* On mobile, the sidebar starts hidden — unlike desktop. The
+     toggle button is shown whenever the sidebar isn't open. */
+  #sidebar-toggle { display: inline-block; }
+  #chat-layout:not(.sidebar-hidden) #sidebar-toggle { display: none; }
+
   #chat-header { padding: 0.5rem; gap: 0.5rem; flex-wrap: wrap; }
   #chat-header h1 { font-size: 0.9rem; }
   #tools-summary { font-size: 0.75rem; }
@@ -586,29 +922,281 @@ body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; mar
 `
 
 const chatBody = `
-<div id="chat-header">
-  <span class="app-title">Chat</span>
-  <h1 style="display:none">Chat — Tool Tester</h1>
-  <span id="tools-summary" onclick="toggleTools()">Loading tools…</span>
-</div>
-<div id="tools-list"></div>
-<div id="chat-history"></div>
-<div id="chat-input-area">
-  <input type="file" id="chat-attach-file" style="display:none" onchange="handleAttachFile(event)">
-  <button id="chat-attach" title="Attach a text file (log, config, etc.)" onclick="document.getElementById('chat-attach-file').click()">📎</button>
-  <textarea id="chat-input" placeholder="Message…" rows="1"></textarea>
-  <button id="chat-send" class="primary" onclick="sendChat()">Send</button>
+<div id="chat-layout">
+  <aside id="chat-sidebar">
+    <div id="sidebar-head">
+      <button id="sidebar-new" class="primary" onclick="newChat()">+ New Chat</button>
+      <button id="sidebar-close" onclick="toggleSidebar(false)" title="Hide sidebar" aria-label="Hide sidebar">✕</button>
+    </div>
+    <div id="sidebar-filter">
+      <button id="sidebar-archived-toggle" type="button" onclick="toggleArchivedSessions()">Show archived</button>
+    </div>
+    <div id="sessions-list"></div>
+  </aside>
+  <div id="chat-main">
+    <div id="chat-header">
+      <button id="sidebar-toggle" onclick="toggleSidebar(true)" title="Show sessions" aria-label="Show sessions">☰</button>
+      <span class="app-title">Chat</span>
+      <h1 id="chat-title" style="display:none">Chat — Tool Tester</h1>
+      <span id="tools-summary" onclick="toggleTools()">Loading tools…</span>
+    </div>
+    <div id="tools-list"></div>
+    <div id="chat-history"></div>
+    <div id="chat-input-area">
+      <input type="file" id="chat-attach-file" style="display:none" onchange="handleAttachFile(event)">
+      <button id="chat-attach" title="Attach a text file (log, config, etc.)" onclick="document.getElementById('chat-attach-file').click()">📎</button>
+      <textarea id="chat-input" placeholder="Message…" rows="1"></textarea>
+      <button id="chat-send" class="primary" onclick="sendChat()">Send</button>
+    </div>
+  </div>
 </div>
 `
 
 const chatJS = `
 var chatHistory = [];
 var sending = false;
+// currentSessionId: the active persisted session on the server. Null
+// means "next send starts a fresh one" — the server mints the ID and
+// returns it via the first SSE event, which we stash here.
+var currentSessionId = null;
+var sessionsRefreshTimer = null;
+var showArchivedSessions = false;
 
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ---------- Sidebar / sessions ----------
+
+function toggleSidebar(show) {
+  var layout = document.getElementById('chat-layout');
+  if (!layout) return;
+  if (show === true) layout.classList.remove('sidebar-hidden');
+  else if (show === false) layout.classList.add('sidebar-hidden');
+  else layout.classList.toggle('sidebar-hidden');
+}
+
+function loadSessions() {
+  return fetch('api/sessions').then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(sessions){
+    renderSessions(sessions || []);
+  }).catch(function(){
+    // Silent — sessions list is best-effort. Don't clobber the chat.
+  });
+}
+
+function toggleArchivedSessions() {
+  showArchivedSessions = !showArchivedSessions;
+  var btn = document.getElementById('sidebar-archived-toggle');
+  if (btn) {
+    btn.textContent = showArchivedSessions ? 'Hide archived' : 'Show archived';
+    btn.classList.toggle('active', showArchivedSessions);
+  }
+  loadSessions();
+}
+
+function renderSessions(sessions) {
+  var list = document.getElementById('sessions-list');
+  if (!list) return;
+  var archivedCount = 0;
+  var visible = [];
+  for (var i = 0; i < sessions.length; i++) {
+    var s = sessions[i];
+    if (s.Archived) archivedCount++;
+    if (!showArchivedSessions && s.Archived) continue;
+    visible.push(s);
+  }
+  var toggleBtn = document.getElementById('sidebar-archived-toggle');
+  if (toggleBtn) {
+    // Hide the toggle entirely when there's nothing to show — avoids
+    // advertising a mode that has no effect on a fresh account.
+    toggleBtn.parentNode.style.display = archivedCount > 0 ? '' : 'none';
+  }
+  if (!visible.length) {
+    list.innerHTML = '<div id="sessions-empty">No sessions yet. Send a message to start one.</div>';
+    return;
+  }
+  var html = '';
+  for (var j = 0; j < visible.length; j++) {
+    var s = visible[j];
+    var id = s.ID;
+    var title = s.Title || s.Preview || 'New chat';
+    var active = (id === currentSessionId) ? ' active' : '';
+    var archAttr = s.Archived ? ' data-archived="true"' : '';
+    html += '<div class="session-item' + active + '" data-id="' + escapeHtml(id) + '"' + archAttr + '>'
+      + '<span class="si-title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>'
+      + '<span class="si-actions">'
+      + '<button class="si-archive" title="' + (s.Archived ? 'Unarchive' : 'Archive') + '">' + (s.Archived ? '↺' : '🗄') + '</button>'
+      + '<button class="si-delete" title="Delete">🗑</button>'
+      + '</span>'
+      + '</div>';
+  }
+  list.innerHTML = html;
+  wireSessionItems();
+}
+
+function wireSessionItems() {
+  var items = document.querySelectorAll('#sessions-list .session-item');
+  for (var i = 0; i < items.length; i++) {
+    (function(it) {
+      var id = it.getAttribute('data-id');
+      it.onclick = function(e) {
+        if (e.target.closest('.si-actions')) return;
+        openSession(id);
+      };
+      var del = it.querySelector('.si-delete');
+      if (del) del.onclick = function(e) {
+        e.stopPropagation();
+        if (!confirm('Delete this chat?')) return;
+        fetch('api/sessions/delete/' + encodeURIComponent(id), {method: 'DELETE'})
+          .then(function(){
+            if (id === currentSessionId) newChat();
+            loadSessions();
+          });
+      };
+      var arch = it.querySelector('.si-archive');
+      if (arch) arch.onclick = function(e) {
+        e.stopPropagation();
+        fetch('api/sessions/archive/' + encodeURIComponent(id), {method: 'POST'})
+          .then(function(){ loadSessions(); });
+      };
+    })(items[i]);
+  }
+}
+
+function openSession(id) {
+  if (sending) return;
+  fetch('api/sessions/' + encodeURIComponent(id)).then(function(r){
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  }).then(function(s){
+    currentSessionId = s.ID;
+    chatHistory = [];
+    var msgs = s.Messages || [];
+    var hist = document.getElementById('chat-history');
+    hist.innerHTML = '';
+    for (var i = 0; i < msgs.length; i++) {
+      var m = msgs[i];
+      var role = m.role || m.Role;
+      var content = m.content || m.Content || '';
+      if (role === 'user') {
+        appendUserMessage(content);
+        chatHistory.push({role: 'user', content: content});
+      } else if (role === 'assistant') {
+        renderSavedAssistant(content);
+        chatHistory.push({role: 'assistant', content: content});
+      }
+    }
+    hist.scrollTop = hist.scrollHeight;
+    loadSessions();
+    // Collapse the sidebar on mobile after pick so the chat is visible.
+    if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
+      toggleSidebar(false);
+    }
+  }).catch(function(err){
+    appendError(null, 'Failed to load session: ' + err.message);
+  });
+}
+
+function renderSavedAssistant(text) {
+  var hist = document.getElementById('chat-history');
+  var div = document.createElement('div');
+  div.className = 'chat-msg assistant';
+  var content;
+  if (typeof renderMarkdown === 'function' && text) {
+    content = document.createElement('div');
+    content.className = 'content md';
+    content.innerHTML = renderMarkdown(text);
+  } else {
+    content = document.createElement('pre');
+    content.className = 'content';
+    content.textContent = text;
+  }
+  div.appendChild(content);
+  var tools = document.createElement('div');
+  tools.className = 'tools';
+  div.appendChild(tools);
+  addAssistantActions(div, text);
+  hist.appendChild(div);
+}
+
+// addAssistantActions attaches the copy/retry button row to a
+// completed assistant message. The raw text is stashed on the element
+// so copy works regardless of how the content is rendered (markdown
+// div vs. pre), and retry can find the preceding user turn.
+function addAssistantActions(msgEl, rawText) {
+  msgEl.dataset.raw = rawText || '';
+  var bar = document.createElement('div');
+  bar.className = 'msg-actions';
+  bar.innerHTML =
+    '<button type="button" class="act-copy" title="Copy response" onclick="copyAssistant(this)">Copy</button>' +
+    '<button type="button" class="act-retry" title="Retry this response" onclick="retryAssistant(this)">Retry</button>';
+  msgEl.appendChild(bar);
+}
+
+function copyAssistant(btn) {
+  var msgEl = btn.closest('.chat-msg.assistant');
+  if (!msgEl) return;
+  var text = msgEl.dataset.raw || '';
+  var done = function() {
+    var orig = btn.textContent;
+    btn.textContent = 'Copied';
+    btn.classList.add('copied');
+    setTimeout(function(){ btn.textContent = orig; btn.classList.remove('copied'); }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function(){});
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); try { document.execCommand('copy'); done(); } catch(e) {}
+    document.body.removeChild(ta);
+  }
+}
+
+function retryAssistant(btn) {
+  if (sending) return;
+  var msgEl = btn.closest('.chat-msg.assistant');
+  if (!msgEl) return;
+  // The preceding sibling must be the user turn that produced this
+  // assistant reply. If it isn't, bail rather than re-sending the
+  // wrong message.
+  var prev = msgEl.previousElementSibling;
+  while (prev && !prev.classList.contains('chat-msg')) prev = prev.previousElementSibling;
+  if (!prev || !prev.classList.contains('user')) return;
+  var userPre = prev.querySelector('pre');
+  var userText = userPre ? userPre.textContent : '';
+  if (!userText) return;
+  // Drop the in-memory history pair that corresponds to this exchange
+  // so the backend doesn't see the prior (discarded) assistant reply
+  // when we re-send.
+  if (chatHistory.length && chatHistory[chatHistory.length - 1].role === 'assistant') chatHistory.pop();
+  if (chatHistory.length && chatHistory[chatHistory.length - 1].role === 'user') chatHistory.pop();
+  prev.remove();
+  msgEl.remove();
+  var input = document.getElementById('chat-input');
+  input.value = userText;
+  sendChat({replaceHistory: true});
+}
+
+function newChat() {
+  if (sending) return;
+  currentSessionId = null;
+  chatHistory = [];
+  var hist = document.getElementById('chat-history');
+  if (hist) hist.innerHTML = '';
+  // Deselect any currently-active item in the sidebar.
+  var items = document.querySelectorAll('#sessions-list .session-item.active');
+  for (var i = 0; i < items.length; i++) items[i].classList.remove('active');
+  var input = document.getElementById('chat-input');
+  if (input) input.focus();
+  if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
+    toggleSidebar(false);
+  }
 }
 
 function loadTools() {
@@ -633,9 +1221,90 @@ function appendUserMessage(text) {
   var hist = document.getElementById('chat-history');
   var div = document.createElement('div');
   div.className = 'chat-msg user';
-  div.innerHTML = '<pre>' + escapeHtml(text) + '</pre>';
+  div.dataset.raw = text;
+  var bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  var pre = document.createElement('pre');
+  pre.textContent = text;
+  bubble.appendChild(pre);
+  div.appendChild(bubble);
+  var actions = document.createElement('div');
+  actions.className = 'msg-actions';
+  actions.innerHTML = '<button type="button" class="act-edit" title="Edit message" onclick="editUserMessage(this)">Edit</button>';
+  div.appendChild(actions);
   hist.appendChild(div);
   hist.scrollTop = hist.scrollHeight;
+}
+
+function editUserMessage(btn) {
+  if (sending) return;
+  var msgEl = btn.closest('.chat-msg.user');
+  if (!msgEl) return;
+  var original = msgEl.dataset.raw || '';
+  var bubble = msgEl.querySelector('.bubble');
+  var actions = msgEl.querySelector('.msg-actions');
+  if (!bubble) return;
+  bubble.style.display = 'none';
+  if (actions) actions.style.display = 'none';
+  var editor = document.createElement('div');
+  editor.className = 'edit-area';
+  editor.innerHTML =
+    '<textarea></textarea>' +
+    '<div class="buttons">' +
+      '<button type="button" class="act-cancel">Cancel</button>' +
+      '<button type="button" class="primary act-save">Send</button>' +
+    '</div>';
+  var ta = editor.querySelector('textarea');
+  ta.value = original;
+  editor.querySelector('.act-cancel').onclick = function() {
+    editor.remove();
+    bubble.style.display = '';
+    if (actions) actions.style.display = '';
+  };
+  editor.querySelector('.act-save').onclick = function() {
+    var next = ta.value.trim();
+    if (!next) return;
+    submitUserEdit(msgEl, next);
+  };
+  ta.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      editor.querySelector('.act-save').click();
+    } else if (e.key === 'Escape') {
+      editor.querySelector('.act-cancel').click();
+    }
+  });
+  msgEl.appendChild(editor);
+  ta.focus();
+  ta.setSelectionRange(ta.value.length, ta.value.length);
+}
+
+// submitUserEdit rewrites history from a given user turn forward:
+// drops the edited message and everything after it in both the DOM
+// and chatHistory, then re-sends with the new text. The server-side
+// session then gets truncated naturally on the next send because we
+// POST the updated history.
+function submitUserEdit(msgEl, newText) {
+  var hist = document.getElementById('chat-history');
+  // Count how many chat-msg elements precede msgEl; that's how many
+  // history entries we should keep.
+  var kept = 0;
+  var all = hist.querySelectorAll('.chat-msg');
+  for (var i = 0; i < all.length; i++) {
+    if (all[i] === msgEl) break;
+    if (all[i].classList.contains('user') || all[i].classList.contains('assistant')) kept++;
+  }
+  chatHistory = chatHistory.slice(0, kept);
+  // Remove this message and every sibling after it.
+  var node = msgEl;
+  while (node) {
+    var nxt = node.nextElementSibling;
+    node.remove();
+    node = nxt;
+  }
+  var input = document.getElementById('chat-input');
+  input.value = newText;
+  sendChat({replaceHistory: true});
 }
 
 // Create an empty assistant message placeholder that streams will fill in.
@@ -712,7 +1381,7 @@ function appendError(msgEl, text) {
   }
 }
 
-function sendChat() {
+function sendChat(opts) {
   if (sending) return;
   var input = document.getElementById('chat-input');
   var msg = input.value.trim();
@@ -726,11 +1395,12 @@ function sendChat() {
 
   var assistantEl = createAssistantPlaceholder();
   var fullReply = '';
+  var replaceHistory = !!(opts && opts.replaceHistory);
 
   fetch('api/send', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({history: chatHistory, message: msg})
+    body: JSON.stringify({session_id: currentSessionId, history: chatHistory, message: msg, replace_history: replaceHistory})
   }).then(function(response) {
     if (!response.ok) {
       return response.text().then(function(t) { throw new Error(t || 'HTTP ' + response.status); });
@@ -741,7 +1411,14 @@ function sendChat() {
 
     function handleEvent(eventType, data) {
       try { data = JSON.parse(data); } catch(e) { return; }
-      if (eventType === 'chunk' && data.text) {
+      if (eventType === 'session' && data.id) {
+        // First event of every send — stash the server-assigned ID so
+        // subsequent turns post into the same session, and refresh the
+        // sidebar so the new row shows up right away.
+        var wasNew = (currentSessionId !== data.id);
+        currentSessionId = data.id;
+        if (wasNew) loadSessions();
+      } else if (eventType === 'chunk' && data.text) {
         fullReply += data.text;
         appendChunk(assistantEl, data.text);
       } else if (eventType === 'tool_call') {
@@ -769,21 +1446,32 @@ function sendChat() {
       // the shared helper loaded from core/webui/static/base.js.
       if (assistantEl) {
         var pre = assistantEl.querySelector('.content');
+        var finalText = '';
         if (pre) {
-          var textIn = pre.textContent.replace(/\s+$/, '');
-          if (typeof renderMarkdown === 'function' && textIn) {
+          finalText = pre.textContent.replace(/\s+$/, '');
+          if (typeof renderMarkdown === 'function' && finalText) {
             var div = document.createElement('div');
             div.className = 'content md';
-            div.innerHTML = renderMarkdown(textIn);
+            div.innerHTML = renderMarkdown(finalText);
             pre.parentNode.replaceChild(div, pre);
           } else {
-            pre.textContent = textIn;
+            pre.textContent = finalText;
           }
         }
+        if (success && finalText) addAssistantActions(assistantEl, finalText);
       }
       if (success && fullReply) {
         chatHistory.push({role: 'user', content: msg});
         chatHistory.push({role: 'assistant', content: fullReply.replace(/\s+$/, '')});
+      }
+      // Refresh the sidebar so a newly-saved session shows up and an
+      // updated LastAt reorders existing rows. Schedule a second
+      // refresh ~4s later to pick up the async-generated title for
+      // brand-new sessions without polling forever.
+      if (success) {
+        loadSessions();
+        if (sessionsRefreshTimer) clearTimeout(sessionsRefreshTimer);
+        sessionsRefreshTimer = setTimeout(loadSessions, 4000);
       }
     }
 
@@ -875,4 +1563,10 @@ function handleAttachFile(event) {
 }
 
 loadTools();
+loadSessions();
+// Default-collapse the sidebar on narrow viewports so the chat gets
+// the full width on first load; desktop stays open.
+if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
+  toggleSidebar(false);
+}
 `

@@ -8,7 +8,7 @@ import (
 )
 
 // PipelineConfig describes a pipeline run. Apps fill this in and pass
-// it to FuzzAgent.RunPipeline, which handles session registration,
+// it to AppCore.RunPipeline, which handles session registration,
 // persistent queuing, slot acquisition, notification, and cleanup.
 type PipelineConfig struct {
 	App        string      // app identifier for queue/logging
@@ -84,7 +84,7 @@ type PipelineWork func(ctx context.Context, pc *PipelineCtx) error
 // RunPipeline executes a pipeline with full lifecycle management:
 // session registration, persistent queue, slot acquisition, work
 // execution, notification, and cleanup. Returns the pipeline ID.
-func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
+func (T *AppCore) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 	id := UUIDv4()
 	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
@@ -170,7 +170,7 @@ func (T *FuzzAgent) RunPipeline(cfg PipelineConfig, work PipelineWork) string {
 
 // RunPipelineAsync is like RunPipeline but runs in a goroutine and
 // returns the pipeline ID immediately.
-func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) string {
+func (T *AppCore) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) string {
 	id := UUIDv4()
 	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 
@@ -246,7 +246,7 @@ func (T *FuzzAgent) RunPipelineAsync(cfg PipelineConfig, work PipelineWork) stri
 
 // RestorePipeline re-runs a pipeline from a persistent queue entry.
 // Called by QueueHandler implementations registered via RegisterQueueHandler.
-func (T *FuzzAgent) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work PipelineWork) {
+func (T *AppCore) RestorePipeline(entry QueueEntry, cfg PipelineConfig, work PipelineWork) {
 	id := entry.ID
 	ctx, cancel := context.WithCancel(pipelineRoot(cfg))
 

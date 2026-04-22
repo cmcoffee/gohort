@@ -116,7 +116,7 @@ func formatArgs(args map[string]any) string {
 // Run is a convenience method that resolves tools from SetTools(), uses the
 // stored system prompt, and applies MaxRounds, then calls RunAgentLoop.
 // Additional ChatOptions can be passed for per-call settings like WithMaxTokens.
-func (T *FuzzAgent) Run(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, []Message, error) {
+func (T *AppCore) Run(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, []Message, error) {
 	if err := T.RequireLLM(); err != nil {
 		return nil, messages, err
 	}
@@ -156,7 +156,7 @@ func (T *FuzzAgent) Run(ctx context.Context, messages []Message, opts ...ChatOpt
 //
 // The returned Response is from the final LLM call. The returned []Message
 // contains the full conversation history including all tool interactions.
-func (T *FuzzAgent) RunAgentLoop(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
+func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg AgentLoopConfig) (*Response, []Message, error) {
 	if T.LLM == nil {
 		return nil, messages, fmt.Errorf("LLM is not configured")
 	}

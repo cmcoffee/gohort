@@ -370,7 +370,7 @@ func (cs *chatSession) sendAndHandle() error {
 		},
 	}
 
-	fa := &FuzzAgent{LLM: cs.llm}
+	fa := &AppCore{LLM: cs.llm}
 
 	startSpinner()
 

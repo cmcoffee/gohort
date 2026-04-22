@@ -227,7 +227,7 @@ These rules prevent the output from reading as AI-generated. They should be part
 	today := time.Now().Format("January 2, 2006")
 
 	// TechWriter always uses the local worker LLM.
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
+	agent := &AppCore{LLM: T.AppCore.LLM}
 
 	// Build message list: prior turns (capped) then the current message
 	// with article context. Article body rides on the current message
@@ -516,7 +516,7 @@ The merged article must preserve all important facts, data, and claims from both
 			return ""
 		}())
 
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM}
+	agent := &AppCore{LLM: T.AppCore.LLM}
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), []Message{
 		{Role: "user", Content: merge_prompt},
@@ -813,14 +813,14 @@ const techwriterCSS = `
   .chat-msg code { background: #161b22; padding: 0.1rem 0.25rem; border-radius: 3px; font-size: 0.85em; }
   .chat-msg pre code { background: none; padding: 0; }
   #chat-input-area {
-    display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem;
+    display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem 1.25rem;
     border-top: 1px solid #21262d;
     align-items: flex-end;
   }
   #chat-input {
     flex: 1; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
     padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem;
-    font-family: inherit; resize: vertical; min-height: 38px; max-height: 200px;
+    font-family: inherit; resize: vertical; min-height: 80px; max-height: 300px;
   }
   #chat-input:focus { border-color: #58a6ff; outline: none; }
   #chat-send, #chat-talk {
@@ -915,7 +915,7 @@ Click 'Process' or use the chat to expand your content."></textarea>
     <div id="chat-header">Chat <button onclick="document.getElementById('chat-messages').innerHTML='';clearChatHistory();" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.75rem;padding:0 0.3rem" title="Clear chat">Clear</button></div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <textarea id="chat-input" rows="1" placeholder="Discuss with Chat, or click Edit to apply changes. Enter = Edit, Alt+Enter = Chat, Shift+Enter = newline." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event.altKey?'chat':'edit');}"></textarea>
+      <textarea id="chat-input" rows="3" placeholder="Discuss with Chat, or click Edit to apply changes. Enter = Edit, Alt+Enter = Chat, Shift+Enter = newline." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event.altKey?'chat':'edit');}"></textarea>
       <button id="chat-talk" onclick="sendChat('chat')" title="Discuss without changing the article">Chat</button>
       <button id="chat-send" onclick="sendChat('edit')" title="Propose a rewrite to apply to the article">Edit</button>
     </div>

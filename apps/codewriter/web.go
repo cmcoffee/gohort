@@ -160,7 +160,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the code, not asking for it to be changed. Do NOT write out a revised full script or propose an applyable change. Do NOT emit a fenced code block (```). Explain your thinking, ask clarifying questions, or describe the approach you'd take. Short inline snippets using single backticks are fine. If the user asks for the actual edit, tell them to click Edit instead of Chat."
 	}
 
-	agent := &FuzzAgent{LLM: T.FuzzAgent.LLM, LeadLLM: T.FuzzAgent.LeadLLM}
+	agent := &AppCore{LLM: T.AppCore.LLM, LeadLLM: T.AppCore.LeadLLM}
 
 	// Build messages: prior turns (capped) + current message with file
 	// context. File state rides on the last user message only so the
@@ -595,13 +595,13 @@ body { height: 100vh; display: flex; flex-direction: column; }
 }
 
 #chat-input-area {
-  display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem; border-top: 1px solid var(--border);
+  display: flex; gap: 0.5rem; padding: 0.5rem 0.75rem 1.25rem; border-top: 1px solid var(--border);
   align-items: flex-end;
 }
 #chat-input {
   flex: 1; background: var(--bg-0); border: 1px solid var(--border); color: var(--text);
   padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.85rem;
-  font-family: inherit; resize: vertical; min-height: 38px; max-height: 200px;
+  font-family: inherit; resize: vertical; min-height: 80px; max-height: 300px;
 }
 #chat-input:focus { border-color: var(--accent); outline: none; }
 #chat-send, #chat-talk {
@@ -802,7 +802,7 @@ Example:
     </div>
     <div id="chat-messages"></div>
     <div id="chat-input-area">
-      <textarea id="chat-input" rows="1" placeholder="Discuss with Chat, or click Edit to apply changes. Enter = Edit, Alt+Enter = Chat, Shift+Enter = newline." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event.altKey?'chat':'edit');}"></textarea>
+      <textarea id="chat-input" rows="3" placeholder="Discuss with Chat, or click Edit to apply changes. Enter = Edit, Alt+Enter = Chat, Shift+Enter = newline." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat(event.altKey?'chat':'edit');}"></textarea>
       <button id="chat-talk" onclick="sendChat('chat')" title="Discuss without changing the editor">Chat</button>
       <button id="chat-send" onclick="sendChat('edit')" title="Propose a change to apply to the editor">Edit</button>
     </div>

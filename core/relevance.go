@@ -39,7 +39,7 @@ type RelevanceBuckets struct {
 // On error or parse failure, returns the original index order so the
 // caller never loses candidates.
 func BucketCandidatesByRelevance(
-	agent *FuzzAgent,
+	agent *AppCore,
 	ctx context.Context,
 	contextDesc string,
 	candidates []SourceCandidate,
@@ -172,7 +172,7 @@ func identityOrder(n int) []int {
 // Returns nil on failure so callers can fall back to keeping all
 // candidates unchanged.
 func BucketCandidatesByRelevanceDetailed(
-	agent *FuzzAgent,
+	agent *AppCore,
 	ctx context.Context,
 	contextDesc string,
 	candidates []SourceCandidate,

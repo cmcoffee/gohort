@@ -22,6 +22,9 @@ import (
 	"github.com/cmcoffee/snugforge/xsync"
 )
 
+// AppVersion is set at startup from the build-time VERSION variable.
+var AppVersion = "dev"
+
 // err_table stores error messages for reporting.
 var err_table *Table
 
@@ -37,8 +40,8 @@ type FlagSet struct {
 	*eflag.EFlagSet
 }
 
-// FuzzAgent encapsulates the components required to execute an agent.
-type FuzzAgent struct {
+// AppCore encapsulates the components required to execute an agent.
+type AppCore struct {
 	Flags   FlagSet
 	DB      Database
 	Cache   Database
@@ -64,30 +67,30 @@ type FuzzAgent struct {
 	tools []string
 }
 
-// Get returns the FuzzAgent instance itself.
-func (T *FuzzAgent) Get() *FuzzAgent {
+// Get returns the AppCore instance itself.
+func (T *AppCore) Get() *AppCore {
 	return T
 }
 
 // SystemPrompt returns the default system prompt (empty).
 // Agents override this method to provide their own system prompt.
-func (T *FuzzAgent) SystemPrompt() string {
+func (T *AppCore) SystemPrompt() string {
 	return ""
 }
 
 // SetSystemPrompt stores the system prompt resolved from the Agent interface.
 // Called by the framework before Main().
-func (T *FuzzAgent) SetSystemPrompt(prompt string) {
+func (T *AppCore) SetSystemPrompt(prompt string) {
 	T.systemPrompt = prompt
 }
 
 // SetTools sets the tool names to resolve from the registry when Run() is called.
-func (T *FuzzAgent) SetTools(names ...string) {
+func (T *AppCore) SetTools(names ...string) {
 	T.tools = names
 }
 
 // RequireLLM returns an error if no LLM is configured.
-func (T *FuzzAgent) RequireLLM() error {
+func (T *AppCore) RequireLLM() error {
 	if T.LLM == nil {
 		return fmt.Errorf("LLM is required, run --setup")
 	}
@@ -105,7 +108,7 @@ func (T *FuzzAgent) RequireLLM() error {
 // fall back to a real chat call with a generous 5-minute timeout, since
 // that call may have to wait behind an in-flight long-running request
 // and a short timeout would produce false negatives under load.
-func (T *FuzzAgent) PingLLM(ctx context.Context) error {
+func (T *AppCore) PingLLM(ctx context.Context) error {
 	if T.LLM == nil {
 		return fmt.Errorf("LLM not configured")
 	}
@@ -132,7 +135,7 @@ func (T *FuzzAgent) PingLLM(ctx context.Context) error {
 // If no lead LLM is configured, returns nil (the primary handles fallback).
 // Prefers the Pinger fast path when available (e.g. Ollama /api/ps) so
 // the probe isn't queued behind an in-flight long-running call.
-func (T *FuzzAgent) PingLeadLLM(ctx context.Context) error {
+func (T *AppCore) PingLeadLLM(ctx context.Context) error {
 	if T.LeadLLM == nil {
 		return nil
 	}
@@ -156,7 +159,7 @@ func (T *FuzzAgent) PingLeadLLM(ctx context.Context) error {
 }
 
 // GetLeadLLM returns the lead LLM if configured, otherwise falls back to the primary LLM.
-func (T *FuzzAgent) GetLeadLLM() LLM {
+func (T *AppCore) GetLeadLLM() LLM {
 	if T.LeadLLM != nil {
 		return T.LeadLLM
 	}
@@ -165,7 +168,7 @@ func (T *FuzzAgent) GetLeadLLM() LLM {
 
 // WorkerContextSize returns the worker LLM's context window size, or 0
 // if the LLM doesn't implement ContextSizer.
-func (T *FuzzAgent) WorkerContextSize() int {
+func (T *AppCore) WorkerContextSize() int {
 	if cs, ok := T.LLM.(ContextSizer); ok {
 		return cs.ContextSize()
 	}
@@ -205,7 +208,7 @@ const (
 type Session struct {
 	CallerID string
 	Tier     LLMTier
-	agent    *FuzzAgent
+	agent    *AppCore
 
 	// Per-session usage counters. Bumped after each Chat/ChatStream
 	// response using Response.Tier so counters reflect which tier
@@ -234,7 +237,7 @@ type SessionUsage struct {
 // fresh UUID as the caller ID. Each session carries its own token
 // counters; call Report() at the end of the logical operation to read
 // back what this session consumed.
-func (T *FuzzAgent) CreateSession(tier LLMTier) *Session {
+func (T *AppCore) CreateSession(tier LLMTier) *Session {
 	return &Session{CallerID: UUIDv4(), Tier: tier, agent: T}
 }
 
@@ -370,7 +373,7 @@ func prependCaller(id string, opts []ChatOption) []ChatOption {
 // LeadChat calls the lead LLM and tallies token usage.
 // If the lead LLM fails and a separate primary LLM is available, it falls
 // back to the primary so the session can continue rather than aborting.
-func (T *FuzzAgent) LeadChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	// Honor routing config: if a route key was supplied via WithRouteKey
 	// and the stage is configured for "worker", delegate transparently.
 	var probe ChatConfig
@@ -570,7 +573,7 @@ func RouteThink(key string) *bool {
 var RunAgentFunc func(name string, args []string) (string, error)
 
 // DelegateAgent runs another agent by name and returns its captured output.
-func (T *FuzzAgent) DelegateAgent(name string, args ...string) (string, error) {
+func (T *AppCore) DelegateAgent(name string, args ...string) (string, error) {
 	if RunAgentFunc == nil {
 		return "", fmt.Errorf("agent delegation is not available")
 	}
@@ -578,7 +581,7 @@ func (T *FuzzAgent) DelegateAgent(name string, args ...string) (string, error) {
 }
 
 // WorkerChat calls T.LLM.Chat and tallies token usage on T.Report.
-func (T *FuzzAgent) WorkerChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+func (T *AppCore) WorkerChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	start := time.Now()
 	resp, err := T.LLM.Chat(ctx, messages, opts...)
 	elapsed := time.Since(start)
@@ -601,7 +604,7 @@ func (T *FuzzAgent) WorkerChat(ctx context.Context, messages []Message, opts ...
 // Works with both native tool calling and prompt-based fallback:
 // - Native: passes Tool definitions via WithTools, handles ToolCall responses
 // - Prompt-based: injects tool description into system prompt, parses <tool_call> tags
-func (T *FuzzAgent) WorkerChatWithCalc(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	calc, ok := FindChatTool("calculate")
 	if !ok {
 		return T.WorkerChat(ctx, messages, opts...)
@@ -716,7 +719,7 @@ func appendSystemPrompt(extra string) ChatOption {
 }
 
 // ChatStreamWithReport calls T.LLM.ChatStream and tallies token usage on T.Report.
-func (T *FuzzAgent) ChatStreamWithReport(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	start := time.Now()
 	resp, err := T.LLM.ChatStream(ctx, messages, handler, opts...)
 	elapsed := time.Since(start)
@@ -737,7 +740,7 @@ func (T *FuzzAgent) ChatStreamWithReport(ctx context.Context, messages []Message
 // paths call it. For lead-tier calls, use trackLeadTokens. The split
 // matters for cost estimation since worker and lead models typically
 // price very differently.
-func (T *FuzzAgent) trackTokens(resp *Response) {
+func (T *AppCore) trackTokens(resp *Response) {
 	if resp == nil {
 		return
 	}
@@ -759,7 +762,7 @@ func (T *FuzzAgent) trackTokens(resp *Response) {
 // LeadChat falls back to the primary LLM (LeadFallback path), callers
 // should use trackTokens instead so the tokens get attributed to the
 // worker tier that actually served them.
-func (T *FuzzAgent) trackLeadTokens(resp *Response) {
+func (T *AppCore) trackLeadTokens(resp *Response) {
 	if resp == nil {
 		return
 	}
@@ -775,12 +778,12 @@ func (T *FuzzAgent) trackLeadTokens(resp *Response) {
 }
 
 // SetLimiter sets the limiter with the given limit.
-func (T *FuzzAgent) SetLimiter(limit int) {
+func (T *AppCore) SetLimiter(limit int) {
 	T.Limiter = NewLimitGroup(limit)
 }
 
 // Wait blocks until a permit is available from the limiter.
-func (T *FuzzAgent) Wait() {
+func (T *AppCore) Wait() {
 	if T.Limiter == nil {
 		return
 	}
@@ -788,7 +791,7 @@ func (T *FuzzAgent) Wait() {
 }
 
 // Try attempts to acquire a permit from the rate limiter.
-func (T *FuzzAgent) Try() bool {
+func (T *AppCore) Try() bool {
 	if T.Limiter == nil {
 		return false
 	}
@@ -796,14 +799,14 @@ func (T *FuzzAgent) Try() bool {
 }
 
 // Done signals the completion of a task, decrementing the limiter if present.
-func (T *FuzzAgent) Done() {
+func (T *AppCore) Done() {
 	if T.Limiter != nil {
 		T.Limiter.Done()
 	}
 }
 
 // Add increments the limiter by the given input value.
-func (T *FuzzAgent) Add(input int) {
+func (T *AppCore) Add(input int) {
 	if T.Limiter == nil {
 		T.SetLimiter(50)
 	}
@@ -825,7 +828,7 @@ func (f *FlagSet) Text() (output []string) {
 
 // Agent defines the interface for fuzz agents.
 type Agent interface {
-	Get() *FuzzAgent
+	Get() *AppCore
 	Name() string
 	Desc() string
 	SystemPrompt() string

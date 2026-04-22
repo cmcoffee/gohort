@@ -40,11 +40,41 @@ func HTMLUnescape(s string) string {
 	return s
 }
 
+// inlineHTMLPassthroughRE matches common inline-formatting HTML tags
+// whose full span should survive the HTML-escape step so their tags
+// render correctly instead of leaking into the page as literal text.
+// Covers <sup>, <sub>, and anchor tags (<a href="...">) because the
+// blogger emits clickable citation superscripts that must reach the
+// browser intact. Three alternates (not one parameterized pattern)
+// so each non-greedy `.*?` is scoped to the matching closer — a
+// single `<(sup|sub|a)>...</(sup|sub|a)>` would stop at whichever
+// closer appears first and mismatched-tag breakage returns.
+var inlineHTMLPassthroughRE = regexp.MustCompile(
+	`<sup\b[^>]*>.*?</sup>|<sub\b[^>]*>.*?</sub>|<a\b[^>]*>.*?</a>`)
+
 // InlineMarkdownToHTML converts inline markdown (bold, italic, code) to HTML.
 func InlineMarkdownToHTML(s string) string {
+	// Protect approved inline HTML spans from the escape pass. Without
+	// this the blogger's <sup><a href="...">18</a></sup> citations
+	// reach the browser as escaped text — the tags show up as
+	// "&lt;sup&gt;18&lt;/sup&gt;" instead of rendering. Extract each
+	// protected span into a placeholder map keyed by a NUL-wrapped
+	// sentinel that won't appear in real prose or in HTMLEscape's
+	// output, escape the surrounding text, then substitute each
+	// placeholder back with the original verbatim HTML.
+	var protected []string
+	s = inlineHTMLPassthroughRE.ReplaceAllStringFunc(s, func(match string) string {
+		idx := len(protected)
+		protected = append(protected, match)
+		return fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx)
+	})
 	s = HTMLEscape(s)
 	// Markdown links: [text](url) → <a href="url">text</a>.
 	// Run before bold/italic so link text can contain formatting.
+	// Runs BEFORE protected-span restoration so the link loop can't
+	// be tricked by a bracket inside a restored <sup>[12]</sup>
+	// eating its way forward to a real markdown link elsewhere in
+	// the sentence.
 	for {
 		start := strings.Index(s, "[")
 		if start < 0 { break }
@@ -81,6 +111,12 @@ func InlineMarkdownToHTML(s string) string {
 		if end < 0 { break }
 		end += start + 1
 		s = s[:start] + "<em>" + s[start+1:end] + "</em>" + s[end+1:]
+	}
+	// Restore protected HTML spans last — the markdown link loop
+	// ran on placeholder-substituted text, so the [brackets] inside
+	// the restored <sup> spans can't interact with real markdown.
+	for idx, raw := range protected {
+		s = strings.ReplaceAll(s, fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx), raw)
 	}
 	return s
 }
