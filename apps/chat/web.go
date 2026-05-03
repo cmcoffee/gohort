@@ -516,8 +516,18 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		// Secure-API tools: one per registered credential. Loaded fresh
 		// each round so newly-added credentials become visible without
 		// session restart, and removed ones disappear immediately.
-		if api := BuildSecureAPITools(sess.DB); len(api) > 0 {
+		api := BuildSecureAPITools(sess.DB)
+		if len(api) > 0 {
+			var names []string
+			for _, td := range api {
+				names = append(names, td.Tool.Name)
+			}
+			Debug("[chat] secure-api tools loaded: %v", names)
 			active = append(active, api...)
+		} else if sess.DB == nil {
+			Debug("[chat] secure-api: sess.DB is nil — credentials cannot be loaded")
+		} else {
+			Debug("[chat] secure-api: no enabled credentials registered")
 		}
 		active = FilterToolsByCaps(active, allowedCaps)
 		defs := make([]Tool, 0, len(active))
