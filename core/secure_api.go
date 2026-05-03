@@ -351,6 +351,29 @@ func agentToolFromCredential(db Database, c SecureCredential) AgentToolDef {
 	}
 }
 
+// DispatchSecureAPIToolCall is the public entry point used by api-mode
+// temp tools. Loads the named credential and dispatches a single
+// pre-resolved request through the same allowlist + auth-injection
+// path the per-credential generic tool uses. Returns the response body
+// (capped, formatted) suitable for inclusion in a tool result.
+func DispatchSecureAPIToolCall(db Database, credName, url, method, body string) (string, error) {
+	if credName == "" {
+		return "", fmt.Errorf("credential name required")
+	}
+	c, ok := LoadSecureCredential(db, credName)
+	if !ok {
+		return "", fmt.Errorf("credential %q not registered", credName)
+	}
+	args := map[string]any{
+		"url":    url,
+		"method": method,
+	}
+	if body != "" {
+		args["body"] = body
+	}
+	return dispatchSecureAPICall(db, c, args)
+}
+
 // dispatchSecureAPICall is the handler logic for one credential's tool.
 // Validates the URL, reads the encrypted secret, builds the request
 // with auth attached, executes, returns the response body capped at

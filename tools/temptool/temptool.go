@@ -38,6 +38,7 @@ func init() {
 	RegisterChatTool(&CreateTempToolTool{})
 	RegisterChatTool(&ListTempToolsTool{})
 	RegisterChatTool(&DeleteTempToolTool{})
+	RegisterChatTool(&CreateAPIToolTool{})
 }
 
 // ----------------------------------------------------------------------
@@ -342,16 +343,26 @@ func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
 }
 
 func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
+	// Caps depend on execution mode. Shell mode requires CapExecute
+	// (sandboxed shell), API mode requires CapNetwork (HTTP call via
+	// stored credential). The AllowedCaps filter then hides the tool
+	// from sessions that don't grant the required tier.
+	var caps []Capability
+	descSuffix := " (temp tool — defined this session via create_temp_tool)"
+	switch tt.Mode {
+	case TempToolModeAPI:
+		caps = []Capability{CapNetwork}
+		descSuffix = fmt.Sprintf(" (api tool — wraps credential %q, defined this session via create_api_tool)", tt.Credential)
+	default:
+		caps = []Capability{CapExecute}
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        tt.Name,
-			Description: tt.Description + " (temp tool — defined this session via create_temp_tool)",
+			Description: tt.Description + descSuffix,
 			Parameters:  tt.Params,
 			Required:    tt.Required,
-			// Temp tools always run through the sandboxed exec path,
-			// so they declare CapExecute. The session's AllowedCaps
-			// gates whether they're visible at all.
-			Caps: []Capability{CapExecute},
+			Caps:        caps,
 		},
 		// Confirm so each temp-tool invocation goes through the same
 		// approval prompt run_local does. The LLM defined the tool but
@@ -363,22 +374,29 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	}
 }
 
-// dispatchTempTool fills the command template with shell-quoted args
-// and runs the result via RunSandboxedShell.
+// dispatchTempTool routes to the right execution path based on the
+// tool's Mode. Shell mode runs through RunSandboxedShell. API mode
+// substitutes URL/body templates and dispatches through the secure-
+// API call path against the named credential.
 func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
-	if sess == nil || sess.WorkspaceDir == "" {
-		return "", fmt.Errorf("temp tool %q requires a session with WorkspaceDir set", tt.Name)
+	if sess == nil {
+		return "", fmt.Errorf("temp tool %q requires a session", tt.Name)
 	}
-	// Required-arg check.
+	// Required-arg check (applies to both modes).
 	for _, r := range tt.Required {
 		if _, ok := args[r]; !ok {
 			return "", fmt.Errorf("missing required arg %q", r)
 		}
 	}
-	// Substitute placeholders. We walk the template once; anything
-	// {key} where key is a known param gets replaced with the
-	// shell-quoted arg value. Unknown {x} stays as-is (already
-	// rejected at create time, but be defensive).
+
+	if tt.Mode == TempToolModeAPI {
+		return dispatchAPIModeTempTool(sess, tt, args)
+	}
+
+	if sess.WorkspaceDir == "" {
+		return "", fmt.Errorf("temp tool %q requires a session with WorkspaceDir set", tt.Name)
+	}
+	// Shell mode: substitute with shell-quoted args.
 	cmd, err := substitute(tt.CommandTemplate, tt.Params, args)
 	if err != nil {
 		return "", err
@@ -600,4 +618,292 @@ func shellQuote(s string) string {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ----------------------------------------------------------------------
+// create_api_tool
+// ----------------------------------------------------------------------
+
+// CreateAPIToolTool wraps a registered secure-API credential into a
+// focused, structured tool. Sister of create_temp_tool but the body is
+// a URL template against a credential rather than a shell command —
+// the LLM never sees the credential value.
+type CreateAPIToolTool struct{}
+
+func (t *CreateAPIToolTool) Name() string       { return "create_api_tool" }
+func (t *CreateAPIToolTool) Caps() []Capability { return []Capability{CapNetwork} }
+func (t *CreateAPIToolTool) NeedsConfirm() bool { return true }
+
+func (t *CreateAPIToolTool) Desc() string {
+	return "Define a focused tool that calls a registered API credential. The body is a URL template (with {param} placeholders) targeting a specific credential — the credential's auth is injected server-side, you never see the secret. Use when you've discovered a useful endpoint pattern via call_<credname> and want a structured, reusable shape (e.g. get_github_issue(owner, repo, number) wrapping /repos/{owner}/{repo}/issues/{number}). Set persist=true to queue the tool for human approval and reuse across sessions."
+}
+
+func (t *CreateAPIToolTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"name": {
+			Type:        "string",
+			Description: "Tool name (snake_case, must not match an existing tool). E.g. \"get_github_issue\".",
+		},
+		"description": {
+			Type:        "string",
+			Description: "What the tool does. Include enough detail that you'll know when to call it in future rounds.",
+		},
+		"credential": {
+			Type:        "string",
+			Description: "Name of the registered secure-API credential to use (e.g. \"github_api\"). The credential's allowed-URL pattern is enforced — your URL template must resolve to a URL that matches.",
+		},
+		"url_template": {
+			Type:        "string",
+			Description: "URL template with {param} placeholders. Placeholders are URL-path-encoded at call time. Example: \"https://api.github.com/repos/{owner}/{repo}/issues/{number}\".",
+		},
+		"method": {
+			Type:        "string",
+			Description: "HTTP method. Defaults to GET. Use POST/PUT/PATCH/DELETE for write operations.",
+		},
+		"body_template": {
+			Type:        "string",
+			Description: "Optional JSON body template with {param} placeholders. Placeholders are JSON-encoded at call time. Example: '{\"title\": {title}, \"labels\": {labels}}'. Leave empty for GET requests.",
+		},
+		"params": {
+			Type:        "object",
+			Description: "Object describing the tool's parameters. Same shape as create_temp_tool. Each key matches a {placeholder} in url_template or body_template.",
+		},
+		"required": {
+			Type:        "array",
+			Description: "Optional list of param names that must be provided. Defaults to all of them.",
+		},
+		"persist": {
+			Type:        "boolean",
+			Description: "If true, request that this tool be saved across future sessions. Same approval flow as create_temp_tool — the tool works in this session immediately but persists only after human review.",
+		},
+	}
+}
+
+func (t *CreateAPIToolTool) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("create_api_tool requires a session")
+}
+
+func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("create_api_tool requires a session")
+	}
+	if sess.DB == nil {
+		return "", fmt.Errorf("create_api_tool requires a session with DB access")
+	}
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if !validToolName(name) {
+		return "", fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
+	}
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == name {
+			return "", fmt.Errorf("name %q collides with a registered tool", name)
+		}
+	}
+	desc := strings.TrimSpace(StringArg(args, "description"))
+	if desc == "" {
+		return "", fmt.Errorf("description is required")
+	}
+	credName := strings.TrimSpace(StringArg(args, "credential"))
+	if credName == "" {
+		return "", fmt.Errorf("credential is required")
+	}
+	cred, ok := LoadSecureCredential(sess.DB, credName)
+	if !ok {
+		return "", fmt.Errorf("credential %q is not registered — register it via the admin UI first", credName)
+	}
+	urlTpl := strings.TrimSpace(StringArg(args, "url_template"))
+	if urlTpl == "" {
+		return "", fmt.Errorf("url_template is required")
+	}
+	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
+	if method == "" {
+		method = "GET"
+	}
+	bodyTpl := strings.TrimSpace(StringArg(args, "body_template"))
+
+	params, err := parseParamsArg(args["params"])
+	if err != nil {
+		return "", fmt.Errorf("params: %w", err)
+	}
+	if err := validateTemplate(urlTpl, params); err != nil {
+		return "", fmt.Errorf("url_template: %w", err)
+	}
+	if bodyTpl != "" {
+		if err := validateTemplate(bodyTpl, params); err != nil {
+			return "", fmt.Errorf("body_template: %w", err)
+		}
+	}
+
+	required := stringSliceArg(args["required"])
+	if len(required) == 0 {
+		for k := range params {
+			required = append(required, k)
+		}
+	} else {
+		for _, r := range required {
+			if _, ok := params[r]; !ok {
+				return "", fmt.Errorf("required lists %q which is not in params", r)
+			}
+		}
+	}
+
+	tool := &TempTool{
+		Name:            name,
+		Description:     desc,
+		Params:          params,
+		Required:        required,
+		CommandTemplate: urlTpl,
+		Mode:            TempToolModeAPI,
+		Credential:      credName,
+		Method:          method,
+		BodyTemplate:    bodyTpl,
+	}
+	if err := sess.AppendTempTool(tool); err != nil {
+		return "", err
+	}
+
+	persist := BoolArg(args, "persist")
+	if persist {
+		if sess.Username == "" {
+			return fmt.Sprintf("Created api tool %q for this session. Persistence not available without an authenticated user.", name), nil
+		}
+		if err := QueuePendingTempTool(sess.DB, sess.Username, *tool, ""); err != nil {
+			return fmt.Sprintf("Created api tool %q for this session. Persistence requested but queueing failed: %v.", name, err), nil
+		}
+		return fmt.Sprintf("Created api tool %q (wraps credential %q). Persistence requested — queued for user approval via admin UI. The credential's allowed-URL pattern is %s; the LLM still cannot see its value.", name, credName, cred.AllowedURLPattern), nil
+	}
+	return fmt.Sprintf("Created api tool %q (wraps credential %q) for this session. Available on the next round; will be discarded at session end.", name, credName), nil
+}
+
+// dispatchAPIModeTempTool handles a TempTool whose Mode is api. The
+// URL template gets URL-path-encoded args; the optional body template
+// gets JSON-encoded args. The resolved request is then dispatched
+// through DispatchSecureAPICredentialCall, which validates the URL
+// against the credential's allowlist and injects the encrypted secret.
+func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	if sess.DB == nil {
+		return "", fmt.Errorf("api tool %q requires a session with DB access", tt.Name)
+	}
+	if tt.Credential == "" {
+		return "", fmt.Errorf("api tool %q has no credential configured", tt.Name)
+	}
+	urlStr, err := substituteURL(tt.CommandTemplate, tt.Params, args)
+	if err != nil {
+		return "", fmt.Errorf("url template: %w", err)
+	}
+	method := strings.ToUpper(strings.TrimSpace(tt.Method))
+	if method == "" {
+		method = "GET"
+	}
+	var body string
+	if tt.BodyTemplate != "" {
+		body, err = substituteJSON(tt.BodyTemplate, tt.Params, args)
+		if err != nil {
+			return "", fmt.Errorf("body template: %w", err)
+		}
+	}
+	if sess.DB != nil && sess.Username != "" {
+		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
+	}
+	return DispatchSecureAPIToolCall(sess.DB, tt.Credential, urlStr, method, body)
+}
+
+// substituteURL replaces {param} placeholders in a URL template with
+// URL-path-encoded arg values. Different from shell quoting —
+// placeholders inside path segments must be %-encoded.
+func substituteURL(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		end := strings.IndexByte(tmpl[i+1:], '}')
+		if end < 0 {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		name := tmpl[i+1 : i+1+end]
+		if _, known := params[name]; !known {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		val, ok := args[name]
+		if !ok {
+			return "", fmt.Errorf("missing arg %q", name)
+		}
+		b.WriteString(urlEscape(stringify(val)))
+		i = i + 1 + end
+	}
+	return b.String(), nil
+}
+
+// urlEscape percent-encodes a value for safe inclusion in a URL path
+// or query. Encodes everything not in the unreserved set (RFC 3986)
+// — conservative, won't double-encode legitimately-encoded values
+// because callers should pass raw param values, not pre-encoded ones.
+func urlEscape(s string) string {
+	const safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if strings.IndexByte(safe, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%%%02X", c)
+	}
+	return b.String()
+}
+
+// substituteJSON replaces {param} placeholders in a body template
+// with JSON-encoded arg values. Strings get JSON-quoted; numbers/
+// bools pass through as-is; objects/arrays serialize structurally.
+// This lets the LLM write JSON body templates like
+// `{"title": {title}, "labels": {labels}}` and have them serialize
+// correctly regardless of the underlying arg type.
+func substituteJSON(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		end := strings.IndexByte(tmpl[i+1:], '}')
+		if end < 0 {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		name := tmpl[i+1 : i+1+end]
+		if _, known := params[name]; !known {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		val, ok := args[name]
+		if !ok {
+			return "", fmt.Errorf("missing arg %q", name)
+		}
+		j, err := jsonMarshal(val)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(j)
+		i = i + 1 + end
+	}
+	return b.String(), nil
+}
+
+// jsonMarshal is a wrapper around json.Marshal that returns the
+// string form. Inlined to avoid pulling json into substituteJSON's
+// signature.
+func jsonMarshal(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

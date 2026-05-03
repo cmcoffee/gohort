@@ -1170,21 +1170,51 @@ func (s *ToolSession) AppendFile(f FileAttachment) {
 	s.mu.Unlock()
 }
 
-// TempTool is a runtime-defined tool created via create_temp_tool. It
-// wraps a shell command template that the handler substitutes args into
-// (with proper quoting) and runs through the sandboxed exec path. The
-// LLM sees it in its tool catalog like any other tool, but it lives
-// only for the current session.
+// TempToolMode determines how a temp tool's body is interpreted at
+// dispatch time. Two modes today: shell command (the original) and
+// secure-API call (wraps a registered credential).
+const (
+	TempToolModeShell = "shell"
+	TempToolModeAPI   = "api"
+)
+
+// TempTool is a runtime-defined tool created via create_temp_tool or
+// create_api_tool. The LLM sees it in its tool catalog like any other
+// tool, but it lives only for the current session unless persisted.
+//
+// Two execution modes:
+//
+//   - shell (default): CommandTemplate is a shell command run through
+//     RunSandboxedShell. Placeholders are POSIX-shell-quoted. Requires
+//     CapExecute.
+//
+//   - api: CommandTemplate is reinterpreted as the URL template of an
+//     HTTP call against the named Credential. Placeholders in the URL
+//     are URL-path-encoded; placeholders in BodyTemplate are JSON-encoded.
+//     The auth header is injected server-side from the credential's
+//     encrypted secret. Requires CapNetwork.
 type TempTool struct {
 	Name        string               `json:"name"`
 	Description string               `json:"description"`
 	Params      map[string]ToolParam `json:"params,omitempty"`
 	Required    []string             `json:"required,omitempty"`
-	// CommandTemplate is the shell command run when the tool is called.
-	// `{arg_name}` placeholders are replaced with shell-quoted argument
-	// values at dispatch time. The command runs through RunSandboxedShell
-	// in the session's WorkspaceDir.
+	// CommandTemplate is the body. Interpreted as a shell command in
+	// shell mode and as a URL template in api mode. `{arg_name}`
+	// placeholders are substituted with the args at dispatch time
+	// (quoting/encoding rules depend on Mode).
 	CommandTemplate string `json:"command_template"`
+	// Mode picks the execution backend. Empty defaults to shell for
+	// backward-compatibility with TempTool records written before this
+	// field existed.
+	Mode string `json:"mode,omitempty"`
+	// Credential is the registered secure-API credential name this
+	// tool dispatches through. Used in api mode only.
+	Credential string `json:"credential,omitempty"`
+	// Method is the HTTP method for api mode (default GET).
+	Method string `json:"method,omitempty"`
+	// BodyTemplate is an optional request body template for api mode.
+	// `{arg_name}` placeholders are JSON-encoded.
+	BodyTemplate string `json:"body_template,omitempty"`
 }
 
 // AppendTempTool registers a temp tool on the session. Returns an error
