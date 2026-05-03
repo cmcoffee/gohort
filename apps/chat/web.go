@@ -11,7 +11,16 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/webui"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
+
+// tempToolDefs converts the session's runtime-defined temp tools into
+// AgentToolDef entries the streaming chat agent loop can dispatch. Thin
+// wrapper around temptool.BuildAgentToolDefs so the per-round catalog
+// rebuild stays terse.
+func tempToolDefs(sess *ToolSession) []AgentToolDef {
+	return temptool.BuildAgentToolDefs(sess)
+}
 
 func (T *ChatAgent) WebPath() string { return "/chat" }
 func (T *ChatAgent) WebName() string { return "Chat" }
@@ -20,6 +29,11 @@ func (T *ChatAgent) WebDesc() string {
 }
 
 func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
+	// Wire the chat-scheduled-update handler so the global scheduler
+	// can fire recurring chat callbacks set up via schedule_chat_update.
+	// Safe to call once — the chat app is registered exactly once.
+	registerChatScheduledUpdates(T)
+
 	sub := http.NewServeMux()
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -329,7 +343,20 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// paths against `<data>/workspaces/<username>/`. Failure to provision
 	// the dir is logged but not fatal — the sandboxed tools just return
 	// "no session WorkspaceDir" errors and other tools keep working.
-	sess := &ToolSession{LLM: agent.LLM, LeadLLM: agent.LeadLLM}
+	sess := &ToolSession{
+		LLM:           agent.LLM,
+		LeadLLM:       agent.LeadLLM,
+		Username:      sessionUsername(r),
+		DB:            T.AppCore.DB,
+		ChatSessionID: session.ID,
+	}
+	// Load any persistent temp tools the user has previously approved
+	// via the admin UI. They become visible to the LLM in this session
+	// alongside any new ones it defines mid-conversation.
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		t := p.Tool
+		_ = sess.AppendTempTool(&t)
+	}
 	if ws, err := EnsureWorkspaceDir(sessionUsername(r)); err == nil {
 		sess.WorkspaceDir = ws
 	} else {
@@ -378,6 +405,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// Tool handlers run synchronously in this goroutine, so a direct read
 	// of sess.Images is race-free here.
 	imagesFlushed := 0
+	filesFlushed := 0
 	flushNewImages := func() {
 		if sess == nil {
 			return
@@ -387,6 +415,22 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 		imagesFlushed = len(sess.Images)
+		// Files: deliver any new entries from sess.Files as a separate
+		// SSE event the client renders as an inline download link.
+		// Reusing this function (rather than a separate flushNewFiles)
+		// because every existing call site that wants to flush images
+		// also wants to flush files — same lifecycle.
+		for i := filesFlushed; i < len(sess.Files); i++ {
+			f := sess.Files[i]
+			writeSSEEvent(w, "file", map[string]any{
+				"name":      f.Name,
+				"mime_type": f.MimeType,
+				"size":      f.Size,
+				"data":      f.Data,
+			})
+			flusher.Flush()
+		}
+		filesFlushed = len(sess.Files)
 	}
 
 	// Announce the session ID to the client up front so it can update
@@ -456,19 +500,51 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	systemPrompt := fmt.Sprintf("Today is %s.\n\n", today) + T.SystemPrompt() + buildProcedurePrompt(T.DB)
 	promptTools := agent.PromptTools
 
-	toolDefs := make([]Tool, 0, len(tools))
-	handlers := make(map[string]ToolHandlerFunc)
-	for _, td := range tools {
-		toolDefs = append(toolDefs, td.Tool)
-		handlers[td.Tool.Name] = td.Handler
+	// rebuildCatalog merges static `tools` with any session-scoped temp
+	// tools the LLM has defined since the loop started, runs the result
+	// through caps filtering (so runtime registration can't escape the
+	// session's tier), and returns the active catalog. Called at the
+	// top of each round so newly-defined temp tools become visible
+	// without restarting the loop.
+	staticTools := tools
+	allowedCaps := []Capability{CapRead, CapNetwork}
+	rebuildCatalog := func() ([]AgentToolDef, []Tool, map[string]ToolHandlerFunc) {
+		active := append([]AgentToolDef{}, staticTools...)
+		if dyn := tempToolDefs(sess); len(dyn) > 0 {
+			active = append(active, dyn...)
+		}
+		// Secure-API tools: one per registered credential. Loaded fresh
+		// each round so newly-added credentials become visible without
+		// session restart, and removed ones disappear immediately.
+		if api := BuildSecureAPITools(sess.DB); len(api) > 0 {
+			active = append(active, api...)
+		}
+		active = FilterToolsByCaps(active, allowedCaps)
+		defs := make([]Tool, 0, len(active))
+		hs := make(map[string]ToolHandlerFunc, len(active))
+		for _, td := range active {
+			defs = append(defs, td.Tool)
+			hs[td.Tool.Name] = td.Handler
+		}
+		return active, defs, hs
 	}
 
+	activeTools, toolDefs, handlers := rebuildCatalog()
+
 	// In PromptTools mode, inject tool descriptions into the system prompt.
-	if promptTools && len(tools) > 0 {
-		systemPrompt += BuildToolPrompt(tools)
+	if promptTools && len(activeTools) > 0 {
+		systemPrompt += BuildToolPrompt(activeTools)
 	}
 
 	for round := 1; round <= maxRounds; round++ {
+		// Rebuild catalog each round so temp tools the LLM created on a
+		// prior round become visible. PromptTools mode also needs the
+		// system prompt regenerated; for simplicity we suppress that
+		// case and let prompt-tools sessions stick with their initial
+		// catalog. Native tool-calling (the default) sees the dynamic
+		// catalog because it goes via WithTools below.
+		activeTools, toolDefs, handlers = rebuildCatalog()
+		_ = activeTools
 		opts := []ChatOption{}
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
@@ -978,6 +1054,12 @@ body.select-mode .session-item .si-actions { display: none; }
 .tool-details { padding: 0.3rem 0.6rem 0.4rem; }
 .tool-call .args, .tool-call .result { display: block; margin-top: 0.2rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; }
 .tool-call .result { color: var(--text); }
+/* Generic file attachments produced via attach_file. Rendered as an
+   inline download link styled like a small pill; click downloads via
+   the data URL with the LLM-chosen filename. */
+.tool-files { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.tool-file { display: inline-block; padding: 0.4rem 0.7rem; background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); text-decoration: none; font-size: 0.85rem; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-file:hover { background: var(--bg-3, var(--bg-2)); border-color: var(--accent, #4f8cff); }
 /* In-progress status messages from the send_status tool. Rendered as a
    subdued italic note inline in the assistant bubble so the user knows
    work is still happening. */
@@ -1322,6 +1404,13 @@ function wireSessionItems() {
   }
 }
 
+// renderedMessageCount tracks how many messages we've already painted
+// for the current session. Used by pollScheduledUpdates to detect
+// new turns persisted by the chat-scheduled-update handler (which
+// runs server-side outside any SSE connection) and render only the
+// new tail without nuking the live stream.
+var renderedMessageCount = 0;
+
 function openSession(id) {
   if (sending) return;
   fetch('api/sessions/' + encodeURIComponent(id)).then(function(r){
@@ -1345,6 +1434,7 @@ function openSession(id) {
         chatHistory.push({role: 'assistant', content: content});
       }
     }
+    renderedMessageCount = msgs.length;
     hist.scrollTop = hist.scrollHeight;
     loadSessions();
     // Collapse the sidebar on mobile after pick so the chat is visible.
@@ -1691,6 +1781,35 @@ function appendToolImage(msgEl, b64) {
   hist.scrollTop = hist.scrollHeight;
 }
 
+function appendToolFile(msgEl, name, mimeType, size, b64) {
+  // Render a tool-produced generic file as an inline download link in
+  // the assistant's bubble. Click downloads the file with the LLM-
+  // chosen name. Decoded once on click via a Blob so the dataurl
+  // doesn't sit in DOM forever.
+  if (!msgEl || !b64 || !name) return;
+  removeThinkingDots(msgEl);
+  var files = msgEl.querySelector('.tool-files');
+  if (!files) {
+    files = document.createElement('div');
+    files.className = 'tool-files';
+    msgEl.appendChild(files);
+  }
+  var link = document.createElement('a');
+  link.className = 'tool-file';
+  link.textContent = '📎 ' + name + ' (' + (mimeType || 'file') + ', ' + humanSize(size || 0) + ')';
+  link.href = 'data:' + (mimeType || 'application/octet-stream') + ';base64,' + b64;
+  link.download = name;
+  files.appendChild(link);
+  var hist = document.getElementById('chat-history');
+  hist.scrollTop = hist.scrollHeight;
+}
+
+function humanSize(n) {
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024)    return (n / 1024).toFixed(1) + ' KB';
+  return n + ' B';
+}
+
 function appendStatus(msgEl, text) {
   // Render a send_status progress note inline in the assistant bubble.
   // Visible while streaming so the user knows long-running work is in
@@ -1767,6 +1886,8 @@ function sendChat(opts) {
         appendToolResult(assistantEl, data.name, data.result);
       } else if (eventType === 'image' && data.data) {
         appendToolImage(assistantEl, data.data);
+      } else if (eventType === 'file' && data.data && data.name) {
+        appendToolFile(assistantEl, data.name, data.mime_type, data.size, data.data);
       } else if (eventType === 'status' && data.text) {
         appendStatus(assistantEl, data.text);
       } else if (eventType === 'done') {
@@ -1815,6 +1936,10 @@ function sendChat(opts) {
       if (success && fullReply) {
         chatHistory.push({role: 'user', content: msg});
         chatHistory.push({role: 'assistant', content: fullReply.replace(/\s+$/, '')});
+        // Bump the rendered-message counter so the scheduled-update
+        // poller doesn't think the new turns are unrendered and
+        // re-paint them.
+        renderedMessageCount = chatHistory.length;
       }
       // Refresh the sidebar so a newly-saved session shows up and an
       // updated LastAt reorders existing rows. Schedule a second
@@ -1923,4 +2048,36 @@ loadSessions();
 if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
   toggleSidebar(false);
 }
+
+// Poll for new turns persisted by the chat-scheduled-update handler.
+// Fires every 30s while a session is open and not actively sending,
+// fetches the session, and appends any new turns since the last
+// render. Skip while sending so the live SSE stream isn't raced.
+function pollScheduledUpdates() {
+  if (!currentSessionId || sending) return;
+  fetch('api/sessions/' + encodeURIComponent(currentSessionId)).then(function(r){
+    if (!r.ok) return null;
+    return r.json();
+  }).then(function(s){
+    if (!s || !s.Messages) return;
+    var msgs = s.Messages;
+    if (msgs.length <= renderedMessageCount) return;
+    var hist = document.getElementById('chat-history');
+    for (var i = renderedMessageCount; i < msgs.length; i++) {
+      var m = msgs[i];
+      var role = m.role || m.Role;
+      var content = m.content || m.Content || '';
+      if (role === 'user') {
+        appendUserMessage(content);
+        chatHistory.push({role: 'user', content: content});
+      } else if (role === 'assistant') {
+        renderSavedAssistant(content);
+        chatHistory.push({role: 'assistant', content: content});
+      }
+    }
+    renderedMessageCount = msgs.length;
+    hist.scrollTop = hist.scrollHeight;
+  }).catch(function(){});
+}
+setInterval(pollScheduledUpdates, 30000);
 `

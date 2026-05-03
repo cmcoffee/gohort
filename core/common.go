@@ -1104,6 +1104,7 @@ type ToolSession struct {
 	Silenced          bool     // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	LLM               LLM      // optional LLM made available to tools that need sub-calls
 	LeadLLM           LLM      // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
+	DB                Database // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
 	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
 	// an in-progress status message to the user mid-turn ("Working on it…").
@@ -1113,7 +1114,129 @@ type ToolSession struct {
 	// just ignore the call). Must be safe to call from a tool handler
 	// goroutine — set it once at session creation and don't mutate after.
 	StatusCallback func(text string)
-	mu             sync.Mutex
+
+	// TempTools holds tools the LLM defined at runtime (via the
+	// create_temp_tool tool). They live for the session only — never
+	// persisted, never shared across users. Apps that want to expose
+	// runtime-defined tools wire AgentLoopConfig.DynamicTools to a
+	// closure that converts these to AgentToolDef. Empty by default;
+	// nil-safe.
+	TempTools []*TempTool
+
+	// Username scopes session-aware features that need a stable identity:
+	// loading a user's persistent temp tools, scoping the workspace,
+	// approval-queue association. Empty for unauthenticated sessions
+	// (chat without auth) or apps that don't support per-user features
+	// (phantom, since persistence isn't honored there).
+	Username string
+
+	// ChatSessionID identifies the chat session this tool call is running
+	// within (chat app only). Used by tools that need to schedule recurring
+	// callbacks back into the same conversation (schedule_chat_update,
+	// stock-tracker style features). Empty for non-chat apps.
+	ChatSessionID string
+
+	// Files holds generic file attachments the LLM produced via
+	// attach_file. Distinct from Images/Videos — those have inline
+	// rendering paths in the chat UI and bridge protocol; Files is
+	// for arbitrary types (PDFs, archives, CSVs, audio, etc.) and
+	// renders as a download link in chat. Phantom currently ignores
+	// this channel (delivery via the bridge's iMessage attachment
+	// path is a future addition).
+	Files []FileAttachment
+
+	mu sync.Mutex
+}
+
+// FileAttachment is one entry in ToolSession.Files. Data is base64-
+// encoded bytes; MimeType is sniffed from the content (not trusted
+// from any user-supplied extension); Name is the workspace-relative
+// path the LLM referenced — useful as the suggested filename when
+// the user downloads.
+type FileAttachment struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mime_type"`
+	Data     string `json:"data"` // base64
+	Size     int    `json:"size"` // raw byte count, pre-base64
+}
+
+// AppendFile records a file attachment on the session under the lock.
+func (s *ToolSession) AppendFile(f FileAttachment) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.Files = append(s.Files, f)
+	s.mu.Unlock()
+}
+
+// TempTool is a runtime-defined tool created via create_temp_tool. It
+// wraps a shell command template that the handler substitutes args into
+// (with proper quoting) and runs through the sandboxed exec path. The
+// LLM sees it in its tool catalog like any other tool, but it lives
+// only for the current session.
+type TempTool struct {
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Params      map[string]ToolParam `json:"params,omitempty"`
+	Required    []string             `json:"required,omitempty"`
+	// CommandTemplate is the shell command run when the tool is called.
+	// `{arg_name}` placeholders are replaced with shell-quoted argument
+	// values at dispatch time. The command runs through RunSandboxedShell
+	// in the session's WorkspaceDir.
+	CommandTemplate string `json:"command_template"`
+}
+
+// AppendTempTool registers a temp tool on the session. Returns an error
+// if the name conflicts with an existing temp tool (caller is expected
+// to have already validated against the static catalog).
+func (s *ToolSession) AppendTempTool(t *TempTool) error {
+	if s == nil || t == nil {
+		return fmt.Errorf("nil session or tool")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.TempTools {
+		if existing.Name == t.Name {
+			return fmt.Errorf("temp tool %q already exists in this session", t.Name)
+		}
+	}
+	s.TempTools = append(s.TempTools, t)
+	return nil
+}
+
+// RemoveTempTool deletes a temp tool from the session by name. Returns
+// true if a tool was actually removed.
+func (s *ToolSession) RemoveTempTool(name string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, t := range s.TempTools {
+		if t.Name == name {
+			s.TempTools = append(s.TempTools[:i], s.TempTools[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// CopyTempTools returns a snapshot of the session's temp tools. Used by
+// the agent loop's DynamicTools hook to convert them to AgentToolDef
+// without holding the lock during the conversion.
+func (s *ToolSession) CopyTempTools() []*TempTool {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.TempTools) == 0 {
+		return nil
+	}
+	out := make([]*TempTool, len(s.TempTools))
+	copy(out, s.TempTools)
+	return out
 }
 
 // AppendImage appends a base64-encoded image to the session image list.

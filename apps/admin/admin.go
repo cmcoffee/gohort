@@ -309,6 +309,125 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		json.NewEncoder(w).Encode(VectorStats(a.db))
 	})
 
+	// Secure API credentials. GET lists metadata (no secrets). POST
+	// upserts a credential (consumes the secret). DELETE removes one.
+	// GET ?audit=NAME returns recent calls for that credential.
+	sub.HandleFunc("/api/secure-api", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			if name := r.URL.Query().Get("audit"); name != "" {
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(LoadSecureAPIAudit(a.db, name))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ListSecureCredentials(a.db))
+		case http.MethodPost:
+			var req struct {
+				Name              string `json:"name"`
+				Type              string `json:"type"`
+				AllowedURLPattern string `json:"allowed_url_pattern"`
+				ParamName         string `json:"param_name"`
+				Description       string `json:"description"`
+				RequiresConfirm   bool   `json:"requires_confirm"`
+				Secret            string `json:"secret"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			c := SecureCredential{
+				Name:              strings.TrimSpace(req.Name),
+				Type:              strings.TrimSpace(req.Type),
+				AllowedURLPattern: strings.TrimSpace(req.AllowedURLPattern),
+				ParamName:         strings.TrimSpace(req.ParamName),
+				Description:       strings.TrimSpace(req.Description),
+				RequiresConfirm:   req.RequiresConfirm,
+			}
+			if err := SaveSecureCredential(a.db, c, req.Secret); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			if err := DeleteSecureCredential(a.db, name); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Persistent tools (created via create_temp_tool with persist=true).
+	// GET returns {pending: [...], active: [...]} for the current user.
+	// POST/DELETE mutate per the action query param. Each entry includes
+	// the full command_template so the admin can spot anything fishy
+	// before approving — that visibility is the whole point of the
+	// approval queue.
+	sub.HandleFunc("/api/persistent-tools", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		username := AuthCurrentUser(r)
+		if username == "" {
+			http.Error(w, "no user identity", http.StatusUnauthorized)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"pending": LoadPendingTempTools(a.db, username),
+				"active":  LoadPersistentTempTools(a.db, username),
+			})
+		case http.MethodPost:
+			action := r.URL.Query().Get("action")
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			var err error
+			switch action {
+			case "approve":
+				err = ApprovePendingTempTool(a.db, username, name)
+			case "reject":
+				err = RejectPendingTempTool(a.db, username, name)
+			default:
+				http.Error(w, "action must be approve|reject", http.StatusBadRequest)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			if err := DeletePersistentTempTool(a.db, username, name); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// LLM routing: GET returns all stages + current values, POST updates one.
 	sub.HandleFunc("/api/routing", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -1527,6 +1646,79 @@ const adminBody = `
     <div id="scheduled-tasks-empty" style="font-size:0.85rem;color:#8b949e;margin-top:0.5rem">No pending tasks.</div>
   </div>
   <div class="section">
+    <h2>API Credentials</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Bearer tokens / API keys / basic auth credentials available to the chat LLM as auto-generated <code>call_&lt;name&gt;</code> tools. The LLM never sees the secret value — it's injected server-side. The Allowed URL pattern is the linchpin safety property: requests to URLs that don't match are rejected before any header is attached. <code>*</code> matches up to next slash; <code>**</code> matches arbitrary chars. Audit log shows the last 50 calls per credential.</span>
+    </div>
+    <div id="secure-api-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
+    <div id="secure-api-empty" style="font-size:0.85rem;color:#8b949e">No API credentials registered.</div>
+
+    <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Add credential</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.6rem;margin-top:0.4rem">
+      <div>
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Name</label>
+        <input type="text" id="cred-name" placeholder="github_api"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">snake_case. Becomes <code>call_&lt;name&gt;</code> in the LLM catalog.</span>
+      </div>
+      <div>
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Type</label>
+        <select id="cred-type" onchange="onCredTypeChange()"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+          <option value="bearer">Bearer (Authorization: Bearer ...)</option>
+          <option value="header">Custom header</option>
+          <option value="query">Query param</option>
+          <option value="basic_auth">HTTP Basic (user:pass)</option>
+        </select>
+      </div>
+      <div id="cred-param-wrap" style="display:none">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Header / Param name</label>
+        <input type="text" id="cred-param" placeholder="X-Api-Key or api_key"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+      </div>
+    </div>
+    <div style="margin-top:0.5rem">
+      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Allowed URL pattern</label>
+      <input type="text" id="cred-pattern" placeholder="https://api.github.com/**"
+        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+      <span class="setting-desc">Use <code>*</code> for path-segment wildcards or <code>**</code> for full subtree.</span>
+    </div>
+    <div style="margin-top:0.5rem">
+      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Description (optional)</label>
+      <input type="text" id="cred-desc" placeholder="GitHub personal access token (read-only repo scope)"
+        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+      <span class="setting-desc">Shown to the LLM in the tool description so it knows what this credential is for.</span>
+    </div>
+    <div style="margin-top:0.5rem">
+      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Secret value</label>
+      <input type="password" id="cred-secret" placeholder="paste token / key / user:pass"
+        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+      <span class="setting-desc">Stored encrypted. The UI never re-displays this value.</span>
+    </div>
+    <div style="margin-top:0.5rem">
+      <label class="toggle-label" style="font-size:0.85rem">
+        <input type="checkbox" id="cred-confirm">
+        <span>Require user confirmation per call</span>
+      </label>
+      <span class="setting-desc">For high-blast-radius credentials (write APIs, billing). Each LLM call surfaces an approval prompt.</span>
+    </div>
+    <div style="margin-top:0.7rem">
+      <button onclick="saveCredential()" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Save credential</button>
+    </div>
+  </div>
+  <div class="section">
+    <h2>Persistent Tools</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Tools the LLM has defined via create_temp_tool with persist=true. Each runs a shell command; review the command template carefully before approving. Approving makes the tool available to the LLM in every future chat session for the user. Active tools can be deleted at any time to revoke them.</span>
+    </div>
+    <h3 style="margin-top:0.6rem;font-size:0.95rem;color:#c9d1d9">Pending approval</h3>
+    <div id="pending-tools-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
+    <div id="pending-tools-empty" style="font-size:0.85rem;color:#8b949e">No pending tools.</div>
+    <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Active</h3>
+    <div id="active-tools-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
+    <div id="active-tools-empty" style="font-size:0.85rem;color:#8b949e">No active persistent tools.</div>
+  </div>
+  <div class="section">
     <h2>Database Browser</h2>
     <div class="setting-row">
       <span class="setting-desc">Read-only view of the server database. Click a table to list its keys, click a key to inspect the record.</span>
@@ -2592,6 +2784,293 @@ function deleteScheduledTask(id) {
     .catch(function(){ loadScheduledTasks(); });
 }
 
+// --- Secure API Credentials ---
+
+function onCredTypeChange() {
+  var type = document.getElementById('cred-type').value;
+  var wrap = document.getElementById('cred-param-wrap');
+  wrap.style.display = (type === 'header' || type === 'query') ? '' : 'none';
+}
+
+function saveCredential() {
+  var payload = {
+    name: document.getElementById('cred-name').value.trim(),
+    type: document.getElementById('cred-type').value,
+    allowed_url_pattern: document.getElementById('cred-pattern').value.trim(),
+    param_name: document.getElementById('cred-param').value.trim(),
+    description: document.getElementById('cred-desc').value.trim(),
+    requires_confirm: document.getElementById('cred-confirm').checked,
+    secret: document.getElementById('cred-secret').value
+  };
+  if (!payload.name || !payload.allowed_url_pattern || !payload.secret) {
+    alert('Name, allowed_url_pattern, and secret are all required.');
+    return;
+  }
+  fetch('api/secure-api', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  }).then(function(r){
+    if (!r.ok) return r.text().then(function(t){ alert('save failed: ' + t); });
+    document.getElementById('cred-name').value = '';
+    document.getElementById('cred-pattern').value = '';
+    document.getElementById('cred-param').value = '';
+    document.getElementById('cred-desc').value = '';
+    document.getElementById('cred-secret').value = '';
+    document.getElementById('cred-confirm').checked = false;
+    loadSecureAPICredentials();
+  }).catch(function(e){ alert('save failed: ' + e); });
+}
+
+function loadSecureAPICredentials() {
+  fetch('api/secure-api').then(function(r){ return r.json(); }).then(function(creds){
+    var list = document.getElementById('secure-api-list');
+    var empty = document.getElementById('secure-api-empty');
+    list.innerHTML = '';
+    if (!creds || !creds.length) {
+      list.style.display = 'none';
+      empty.style.display = '';
+      return;
+    }
+    list.style.display = '';
+    empty.style.display = 'none';
+    creds.forEach(function(c){ list.appendChild(renderCredentialCard(c)); });
+  }).catch(function(){});
+}
+
+function renderCredentialCard(c) {
+  var card = document.createElement('div');
+  card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:6px;padding:0.7rem 0.85rem';
+  var head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;gap:0.6rem;margin-bottom:0.3rem;flex-wrap:wrap';
+  var titleWrap = document.createElement('div');
+  var title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;color:#c9d1d9;font-size:0.95rem';
+  title.textContent = 'call_' + c.name;
+  titleWrap.appendChild(title);
+  var meta = document.createElement('div');
+  meta.style.cssText = 'font-size:0.75rem;color:#8b949e;margin-top:0.15rem';
+  var bits = [c.type];
+  if (c.requires_confirm) bits.push('requires confirm');
+  if (c.last_used_at && c.last_used_at !== '0001-01-01T00:00:00Z') {
+    bits.push('last used ' + relTime(c.last_used_at));
+  } else {
+    bits.push('never used');
+  }
+  meta.textContent = bits.join(' • ');
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+  var btns = document.createElement('div');
+  btns.style.cssText = 'display:flex;gap:0.4rem';
+  var auditBtn = document.createElement('button');
+  auditBtn.textContent = 'Audit';
+  auditBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
+  auditBtn.onclick = function(){ showAuditLog(c.name); };
+  btns.appendChild(auditBtn);
+  var delBtn = document.createElement('button');
+  delBtn.textContent = 'Delete';
+  delBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #f85149;border-radius:5px;color:#f85149;font-size:0.8rem;cursor:pointer';
+  delBtn.onclick = function(){ deleteCredential(c.name); };
+  btns.appendChild(delBtn);
+  head.appendChild(btns);
+  card.appendChild(head);
+
+  if (c.description) {
+    var desc = document.createElement('div');
+    desc.style.cssText = 'font-size:0.85rem;color:#c9d1d9;margin-bottom:0.3rem';
+    desc.textContent = c.description;
+    card.appendChild(desc);
+  }
+  var url = document.createElement('div');
+  url.style.cssText = 'font-size:0.78rem;color:#8b949e;font-family:ui-monospace,Menlo,monospace';
+  url.textContent = 'allowed: ' + c.allowed_url_pattern;
+  if (c.param_name) {
+    url.textContent += ' • param: ' + c.param_name;
+  }
+  card.appendChild(url);
+  return card;
+}
+
+function deleteCredential(name) {
+  if (!confirm('Delete credential "' + name + '"? The LLM will lose access immediately.')) return;
+  fetch('api/secure-api?name=' + encodeURIComponent(name), {method: 'DELETE'})
+    .then(function(r){
+      if (!r.ok) return r.text().then(function(t){ alert('delete failed: ' + t); });
+      loadSecureAPICredentials();
+    });
+}
+
+function showAuditLog(name) {
+  fetch('api/secure-api?audit=' + encodeURIComponent(name)).then(function(r){ return r.json(); }).then(function(entries){
+    if (!entries || !entries.length) {
+      alert('No audit entries for ' + name + ' yet.');
+      return;
+    }
+    var lines = entries.map(function(e){
+      var s = e.timestamp + '  ' + e.method + ' ' + e.url + '  → ';
+      if (e.error) s += 'ERROR: ' + e.error;
+      else s += e.status + ' (' + e.response_bytes + ' bytes)';
+      return s;
+    });
+    alert('Audit log for ' + name + ':\n\n' + lines.join('\n'));
+  });
+}
+
+// --- Persistent Tools ---
+
+function loadPersistentTools() {
+  fetch('api/persistent-tools').then(function(r){ return r.json(); }).then(function(d){
+    renderPendingTools(d.pending || []);
+    renderActiveTools(d.active || []);
+  }).catch(function(){
+    renderPendingTools([]);
+    renderActiveTools([]);
+  });
+}
+
+function renderPendingTools(pending) {
+  var list = document.getElementById('pending-tools-list');
+  var empty = document.getElementById('pending-tools-empty');
+  list.innerHTML = '';
+  if (!pending.length) {
+    list.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+  list.style.display = '';
+  empty.style.display = 'none';
+  pending.forEach(function(p){
+    list.appendChild(renderToolCard(p.tool, {
+      meta: 'Requested ' + relTime(p.requested_at),
+      pending: true
+    }));
+  });
+}
+
+function renderActiveTools(active) {
+  var list = document.getElementById('active-tools-list');
+  var empty = document.getElementById('active-tools-empty');
+  list.innerHTML = '';
+  if (!active.length) {
+    list.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+  list.style.display = '';
+  empty.style.display = 'none';
+  active.forEach(function(p){
+    var meta = 'Approved ' + relTime(p.approved_at);
+    if (p.last_used_at && p.last_used_at !== '0001-01-01T00:00:00Z') {
+      meta += ' • last used ' + relTime(p.last_used_at);
+    } else {
+      meta += ' • never used';
+    }
+    list.appendChild(renderToolCard(p.tool, {meta: meta, pending: false}));
+  });
+}
+
+function renderToolCard(tool, opts) {
+  var card = document.createElement('div');
+  card.style.cssText = 'background:#161b22;border:1px solid #30363d;border-radius:6px;padding:0.7rem 0.85rem';
+  var head = document.createElement('div');
+  head.style.cssText = 'display:flex;justify-content:space-between;align-items:flex-start;gap:0.6rem;margin-bottom:0.4rem;flex-wrap:wrap';
+  var titleWrap = document.createElement('div');
+  var title = document.createElement('div');
+  title.style.cssText = 'font-weight:600;color:#c9d1d9;font-size:0.95rem';
+  title.textContent = tool.name;
+  titleWrap.appendChild(title);
+  var meta = document.createElement('div');
+  meta.style.cssText = 'font-size:0.75rem;color:#8b949e;margin-top:0.15rem';
+  meta.textContent = opts.meta || '';
+  titleWrap.appendChild(meta);
+  head.appendChild(titleWrap);
+  var btns = document.createElement('div');
+  btns.style.cssText = 'display:flex;gap:0.4rem';
+  if (opts.pending) {
+    var approveBtn = document.createElement('button');
+    approveBtn.textContent = 'Approve';
+    approveBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#238636;border:1px solid #2ea043;border-radius:5px;color:#fff;font-size:0.8rem;cursor:pointer';
+    approveBtn.onclick = function(){ persistentToolAction('approve', tool.name); };
+    btns.appendChild(approveBtn);
+    var rejectBtn = document.createElement('button');
+    rejectBtn.textContent = 'Reject';
+    rejectBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
+    rejectBtn.onclick = function(){ persistentToolAction('reject', tool.name); };
+    btns.appendChild(rejectBtn);
+  } else {
+    var delBtn = document.createElement('button');
+    delBtn.textContent = 'Delete';
+    delBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #f85149;border-radius:5px;color:#f85149;font-size:0.8rem;cursor:pointer';
+    delBtn.onclick = function(){ deletePersistentTool(tool.name); };
+    btns.appendChild(delBtn);
+  }
+  head.appendChild(btns);
+  card.appendChild(head);
+
+  var desc = document.createElement('div');
+  desc.style.cssText = 'font-size:0.85rem;color:#c9d1d9;margin-bottom:0.45rem;line-height:1.45';
+  desc.textContent = tool.description;
+  card.appendChild(desc);
+
+  var cmdLabel = document.createElement('div');
+  cmdLabel.style.cssText = 'font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.15rem';
+  cmdLabel.textContent = 'Command template';
+  card.appendChild(cmdLabel);
+
+  var cmd = document.createElement('pre');
+  cmd.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:0.4rem 0.6rem;font-family:ui-monospace,Menlo,monospace;font-size:0.8rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;margin:0';
+  cmd.textContent = tool.command_template;
+  card.appendChild(cmd);
+
+  if (tool.params && Object.keys(tool.params).length) {
+    var paramsLabel = document.createElement('div');
+    paramsLabel.style.cssText = 'font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em;margin:0.5rem 0 0.15rem';
+    paramsLabel.textContent = 'Params';
+    card.appendChild(paramsLabel);
+    var pl = document.createElement('div');
+    pl.style.cssText = 'font-size:0.78rem;color:#c9d1d9;font-family:ui-monospace,Menlo,monospace;line-height:1.5';
+    Object.keys(tool.params).forEach(function(k){
+      var p = tool.params[k];
+      var line = document.createElement('div');
+      line.textContent = k + ' (' + (p.type||'?') + ') — ' + (p.description||'');
+      pl.appendChild(line);
+    });
+    card.appendChild(pl);
+  }
+  return card;
+}
+
+function persistentToolAction(action, name) {
+  if (action === 'reject' && !confirm('Reject "' + name + '"? It will be removed from the pending queue.')) return;
+  fetch('api/persistent-tools?action=' + action + '&name=' + encodeURIComponent(name), {method: 'POST'})
+    .then(function(r){
+      if (!r.ok) return r.text().then(function(t){ alert(action + ' failed: ' + t); });
+      loadPersistentTools();
+    })
+    .catch(function(e){ alert(action + ' failed: ' + e); });
+}
+
+function deletePersistentTool(name) {
+  if (!confirm('Delete "' + name + '"? The LLM will lose access to it in future sessions immediately.')) return;
+  fetch('api/persistent-tools?name=' + encodeURIComponent(name), {method: 'DELETE'})
+    .then(function(r){
+      if (!r.ok) return r.text().then(function(t){ alert('delete failed: ' + t); });
+      loadPersistentTools();
+    })
+    .catch(function(e){ alert('delete failed: ' + e); });
+}
+
+function relTime(iso) {
+  if (!iso) return 'unknown';
+  var t = new Date(iso).getTime();
+  if (!t) return iso;
+  var s = Math.round((Date.now() - t) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.round(s/60) + 'm ago';
+  if (s < 86400) return Math.round(s/3600) + 'h ago';
+  return Math.round(s/86400) + 'd ago';
+}
+
 // --- DB Browser ---
 
 var dbActiveTable = '';
@@ -2678,8 +3157,13 @@ document.addEventListener('DOMContentLoaded', function() {
     loadMaintenanceFuncs();
     loadDBTables();
     loadScheduledTasks();
+    loadSecureAPICredentials();
+    loadPersistentTools();
     // Refresh scheduled tasks every 30s so cancelled tasks disappear without reload.
     setInterval(loadScheduledTasks, 30000);
+    // Refresh persistent tools every 30s so newly-queued requests
+    // appear without a manual reload.
+    setInterval(loadPersistentTools, 30000);
     // Refresh the cost chart every minute so runs that finish while
     // the admin page is open show up without a manual reload. One
     // small JSON fetch per tick — cheap.

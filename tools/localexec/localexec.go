@@ -8,10 +8,8 @@
 package localexec
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -39,7 +37,7 @@ type RunLocalTool struct{}
 func (t *RunLocalTool) Name() string { return "run_local" }
 
 func (t *RunLocalTool) Desc() string {
-	return "Run a shell command in your workspace sandbox. The command runs with the workspace as the working directory; commands cannot read or write outside it. Each call requires explicit user approval before execution. Output is capped at 10,000 characters and the command is killed if it runs longer than 90 seconds."
+	return "Run a shell command in your workspace sandbox. When bubblewrap is available the command runs in an isolated mount namespace where only the workspace is writable and only a minimal read-only set of system dirs is visible — commands cannot reach any user files, configs, or secrets outside the workspace. Network is allowed. Each call requires explicit user approval. Output is capped at 10,000 characters; the command is killed after 90 seconds."
 }
 
 func (t *RunLocalTool) Caps() []Capability {
@@ -82,18 +80,9 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
-	c := exec.CommandContext(ctx, "sh", "-c", cmd)
-	c.Dir = sess.WorkspaceDir
-	// Inherit a minimal env so PATH still works for common utilities, but
-	// don't leak secrets the gohort process happens to hold. The shell
-	// itself comes from /bin/sh, no shell rc files.
-	c.Env = sanitizeEnv()
-
-	var buf bytes.Buffer
-	c.Stdout = &buf
-	c.Stderr = &buf
-	runErr := c.Run()
-	output := strings.TrimSpace(buf.String())
+	res := RunSandboxedShell(ctx, cmd, sess.WorkspaceDir)
+	runErr := res.Err
+	output := strings.TrimSpace(res.Output)
 
 	if len(output) > maxOutput {
 		totalLines := strings.Count(output, "\n") + 1
@@ -129,25 +118,3 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	return output, nil
 }
 
-// sanitizeEnv returns a minimal env for shell calls — keep PATH so common
-// utilities resolve, drop everything else so e.g. AWS_ACCESS_KEY env vars
-// the gohort process holds aren't visible to LLM-driven commands.
-func sanitizeEnv() []string {
-	const fallbackPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-	pathVal := envGet("PATH")
-	if pathVal == "" {
-		pathVal = fallbackPath
-	}
-	return []string{
-		"PATH=" + pathVal,
-		"HOME=" + envGet("HOME"),
-		"LANG=" + envGet("LANG"),
-		"LC_ALL=" + envGet("LC_ALL"),
-		"TZ=" + envGet("TZ"),
-		"SHELL=/bin/sh",
-	}
-}
-
-func envGet(name string) string {
-	return os.Getenv(name)
-}

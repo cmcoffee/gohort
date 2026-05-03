@@ -7,6 +7,7 @@ package main
 import (
 	. "github.com/cmcoffee/gohort/core"
 
+	_ "github.com/cmcoffee/gohort/tools/attach"
 	_ "github.com/cmcoffee/gohort/tools/browser"
 	_ "github.com/cmcoffee/gohort/tools/calculate"
 	_ "github.com/cmcoffee/gohort/tools/comedian"
@@ -19,6 +20,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/orchestrator"
 	_ "github.com/cmcoffee/gohort/tools/silent"
 	_ "github.com/cmcoffee/gohort/tools/status"
+	_ "github.com/cmcoffee/gohort/tools/temptool"
 	_ "github.com/cmcoffee/gohort/tools/videodl"
 	_ "github.com/cmcoffee/gohort/tools/websearch"
 )
