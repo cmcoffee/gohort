@@ -268,6 +268,17 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 	if ImageGenerationAvailable() {
 		out = append(out, toolInfo{Name: "generate_image", Desc: "Generate an AI image from a description and send it as an attachment."})
 	}
+	// Secure-API tools (call_<credname>) — auto-generated from registered
+	// credentials. Surface them in the phantom tools picker so the operator
+	// can opt a conv into them via checkbox like any other tool. Hidden
+	// when the master switch is off so the picker doesn't tease tools
+	// that wouldn't fire anyway.
+	cfg := defaultConfig(T.DB)
+	if cfg.SecureAPIEnabled {
+		for _, td := range Secure().BuildTools() {
+			out = append(out, toolInfo{Name: td.Tool.Name, Desc: td.Tool.Description})
+		}
+	}
 	jsonOK(w, out)
 }
 
