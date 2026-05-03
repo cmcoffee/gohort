@@ -425,6 +425,8 @@ const caseRule = "Always use proper capitalization: start sentences with a capit
 
 const statusRule = "When a task will take more than a few seconds (download_video, delegate, multi-step research, scheduled callbacks, phone calls), call send_status BEFORE starting so the user sees you're working — examples: 'One moment, looking that up.' / 'Placing the call, will follow up when it ends.' Send another status when you switch phases. This is the right way to surface progress; do NOT narrate via your final reply text."
 
+const followThroughRule = "FOLLOW-THROUGH: if you say 'let me try', 'I'll figure this out', 'one moment', or any phrase that promises an action, you MUST call the corresponding tool in the SAME turn. Never end a reply with stated intent and no tool call — that leaves the user waiting on nothing. Either execute and report, or say plainly 'I can't do X' without promising further effort. When an API rejects a request with a 4xx error, READ the message field — it usually names the exact field to fix. Adjust and retry; do not give up after one failure or fabricate field names from training data when the error tells you what's actually wrong."
+
 // phantomWorkspaceID returns a stable, filesystem-safe identifier for
 // the workspace shared across all phantom conversations on this host.
 // Phantom acts as one persona (the device owner), so all convs share
@@ -546,7 +548,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule + " " + statusRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}
