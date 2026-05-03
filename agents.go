@@ -8,8 +8,12 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 
 	_ "github.com/cmcoffee/gohort/apps/admin"
+	_ "github.com/cmcoffee/gohort/apps/answer"
 	_ "github.com/cmcoffee/gohort/apps/chat"
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
+	_ "github.com/cmcoffee/gohort/apps/dual"
+	_ "github.com/cmcoffee/gohort/apps/phantom"
+	_ "github.com/cmcoffee/gohort/apps/servitor"
 	_ "github.com/cmcoffee/gohort/apps/techwriter"
 )
 
