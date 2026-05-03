@@ -144,17 +144,23 @@ func FindChatTool(name string) (ChatTool, bool) {
 
 // ChatToolToAgentToolDef converts a ChatTool into an AgentToolDef for use
 // with RunAgentLoop. If the tool implements ConfirmableTool, the NeedsConfirm
-// flag is set accordingly.
+// flag is set accordingly. If it implements CapabilityTool, declared caps
+// flow into Tool.Caps for AllowedCaps filtering at the agent-loop level.
 func ChatToolToAgentToolDef(ct ChatTool) AgentToolDef {
 	confirm := false
 	if c, ok := ct.(ConfirmableTool); ok {
 		confirm = c.NeedsConfirm()
+	}
+	var caps []Capability
+	if c, ok := ct.(CapabilityTool); ok {
+		caps = c.Caps()
 	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        ct.Name(),
 			Description: ct.Desc(),
 			Parameters:  ct.Params(),
+			Caps:        caps,
 		},
 		Handler:      ct.Run,
 		NeedsConfirm: confirm,
@@ -173,4 +179,93 @@ func GetAgentTools(names ...string) ([]AgentToolDef, error) {
 		tools = append(tools, ChatToolToAgentToolDef(ct))
 	}
 	return tools, nil
+}
+
+// ChatToolToAgentToolDefWithSession converts a ChatTool into an AgentToolDef,
+// binding a ToolSession so that tools implementing SessionChatTool receive it.
+func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentToolDef {
+	confirm := false
+	if c, ok := ct.(ConfirmableTool); ok {
+		confirm = c.NeedsConfirm()
+	}
+	var handler ToolHandlerFunc
+	if sess != nil {
+		if sct, ok := ct.(SessionChatTool); ok {
+			handler = func(args map[string]any) (string, error) {
+				return sct.RunWithSession(args, sess)
+			}
+		}
+	}
+	if handler == nil {
+		handler = ct.Run
+	}
+	var caps []Capability
+	if c, ok := ct.(CapabilityTool); ok {
+		caps = c.Caps()
+	}
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        ct.Name(),
+			Description: ct.Desc(),
+			Parameters:  ct.Params(),
+			Caps:        caps,
+		},
+		Handler:      handler,
+		NeedsConfirm: confirm,
+	}
+}
+
+// GetAgentToolsWithSession looks up registered chat tools by name and returns
+// them as AgentToolDefs bound to sess. Session-aware tools (SessionChatTool)
+// receive sess on each call; stateless tools fall back to Run as usual.
+func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDef, error) {
+	var tools []AgentToolDef
+	for _, name := range names {
+		ct, ok := FindChatTool(name)
+		if !ok {
+			return nil, fmt.Errorf("tool %q not found in registry", name)
+		}
+		tools = append(tools, ChatToolToAgentToolDefWithSession(ct, sess))
+	}
+	return tools, nil
+}
+
+// BlockedTools is the set of tool names that are never exposed in chat,
+// regardless of mode. Tools that perform real-world side effects are
+// blocked from the testing UI to keep it sandboxed.
+var BlockedTools = map[string]bool{
+	"run_command": true, // shell execution — risky in a web UI
+	"send_email":  true, // sends real email
+	"run_local":   true, // sandboxed shell — opt-in only via AllowedCaps[CapExecute]
+	"write_file":  true, // sandboxed file write — opt-in only via AllowedCaps[CapWrite]
+}
+
+// FilterChatTools returns a copy of tools excluding those whose names are
+// in the provided blocklist.
+func FilterChatTools(blocklist map[string]bool) []ChatTool {
+	var out []ChatTool
+	for _, t := range RegisteredChatTools() {
+		if blocklist[t.Name()] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// FilterChatToolsPrivate returns tools that do not contact the internet.
+// Tools implementing InternetTool with IsInternetTool() returning true are
+// excluded. The global BlockedTools set is always respected.
+func FilterChatToolsPrivate() []ChatTool {
+	var out []ChatTool
+	for _, t := range RegisteredChatTools() {
+		if BlockedTools[t.Name()] {
+			continue
+		}
+		if it, ok := t.(InternetTool); ok && it.IsInternetTool() {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }

@@ -71,6 +71,13 @@ type AgentLoopConfig struct {
 	// ChatOptions are additional options passed to every LLM call.
 	ChatOptions []ChatOption
 
+	// ToolRoundOptions are options applied to rounds that follow a tool-call
+	// round (i.e. rounds where the model is processing tool results). When set,
+	// these replace ChatOptions for those rounds. Use to enable thinking only
+	// for tool-execution rounds while keeping the initial conversational round
+	// lean — e.g. ChatOptions: [WithThink(false)], ToolRoundOptions: [WithThink(true)].
+	ToolRoundOptions []ChatOption
+
 	// PromptTools describes tools in the system prompt as text instead of
 	// using native function calling. The LLM responds with plain text
 	// containing tool calls in a defined format, which the loop parses and
@@ -78,6 +85,49 @@ type AgentLoopConfig struct {
 	// caller full control over context. This works reliably with models
 	// that have poor or no native tool support (e.g. Gemma via Ollama).
 	PromptTools bool
+
+	// Tier selects which LLM tier runs the loop. Defaults to WORKER.
+	// Set to LEAD to route all rounds through the lead LLM.
+	// Ignored when RouteKey is set.
+	Tier LLMTier
+
+	// RouteKey is a registered route stage key (see RegisterRouteStage).
+	// When set, the tier is resolved from the admin routing config via
+	// RouteToLead(key) instead of the Tier field. This lets admins
+	// configure per-agent LLM routing from the admin panel.
+	RouteKey string
+
+	// MaskDebugOutput suppresses tool argument and result content from debug
+	// logs. Use this for sessions that handle sensitive data (SSH credentials,
+	// system facts, private files) to prevent data leaking into log files.
+	// Tool names are still logged; content is replaced with byte counts.
+	MaskDebugOutput bool
+
+	// SerialTools limits execution to one tool call per round. When the LLM
+	// returns multiple tool calls in a single response, only the first is
+	// executed; the rest receive a SKIPPED notice so the LLM is forced to
+	// proceed one step at a time and see each result before deciding what to
+	// do next. Recommended for investigative agents where failure feedback
+	// must be seen before the next attempt.
+	SerialTools bool
+
+	// OnRoundStart, when set, is called at the top of each round AFTER the
+	// ctx-cancellation check and BEFORE the LLM call. Any messages it returns
+	// are appended to history before the call. Use to inject mid-flight user
+	// notes into a long-running orchestrator without interrupting in-flight
+	// worker sub-loops — workers that don't set this hook never see the notes.
+	OnRoundStart func() []Message
+
+	// AllowedCaps gates which tools the LLM is offered, by capability tier
+	// (CapRead, CapNetwork, CapWrite, CapExecute). Tools whose declared Caps
+	// aren't all in this set are filtered out before the LLM ever sees the
+	// catalog. Empty/nil means "no restriction" (legacy behavior — every
+	// tool the caller passed is offered). Use to enforce least-privilege:
+	// e.g. a chat agent permits read+network but not write+execute, so even
+	// if a write/execute tool ends up in the registry it can't be invoked
+	// from chat. Tools with empty Caps (unannotated) pass through unfiltered
+	// during the migration period.
+	AllowedCaps []Capability
 }
 
 // defaultConfirm prompts the user in the terminal with a Claude Code-style
@@ -171,11 +221,32 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		confirmFn = defaultConfirm
 	}
 
+	// Apply capability filtering once before tool lookup tables are built —
+	// a filtered-out tool is removed from both the LLM catalog and the
+	// dispatch map, so even a hallucinated tool call by name can't reach
+	// the handler. AllowedCaps == nil means "no restriction" (legacy mode).
+	tools := cfg.Tools
+	if len(cfg.AllowedCaps) > 0 {
+		allowedSet := make(map[Capability]bool, len(cfg.AllowedCaps))
+		for _, c := range cfg.AllowedCaps {
+			allowedSet[c] = true
+		}
+		filtered := make([]AgentToolDef, 0, len(tools))
+		for _, td := range tools {
+			if !capsAllowed(td.Tool.Caps, allowedSet) {
+				Debug("[agent_loop] tool '%s' filtered out by AllowedCaps (declares %v, allowed %v)", td.Tool.Name, td.Tool.Caps, cfg.AllowedCaps)
+				continue
+			}
+			filtered = append(filtered, td)
+		}
+		tools = filtered
+	}
+
 	// Build tool definitions and lookup maps.
 	var toolDefs []Tool
 	handlers := make(map[string]ToolHandlerFunc)
 	needsConfirm := make(map[string]bool)
-	for _, td := range cfg.Tools {
+	for _, td := range tools {
 		toolDefs = append(toolDefs, td.Tool)
 		handlers[td.Tool.Name] = td.Handler
 		if td.NeedsConfirm {
@@ -191,16 +262,50 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// as plain text — tool calls are parsed from <tool_call> tags and
 	// results are sent back as regular user messages.
 	systemPrompt := cfg.SystemPrompt
-	if cfg.PromptTools && len(cfg.Tools) > 0 {
-		systemPrompt += BuildToolPrompt(cfg.Tools)
+	if cfg.PromptTools && len(tools) > 0 {
+		systemPrompt += BuildToolPrompt(tools)
 	}
 
 	var lastResp *Response
+	prevHadToolCalls := false
 
 	for round := 1; round <= maxRounds; round++ {
-		opts := append([]ChatOption{}, cfg.ChatOptions...)
+		// Bail immediately on cancellation so the loop doesn't burn another
+		// LLM call (or tool execution) after the session was aborted. Tool
+		// handlers that don't check ctx themselves can otherwise hold the
+		// loop open for a tick after cancel().
+		if err := ctx.Err(); err != nil {
+			return lastResp, history, err
+		}
+		// Drain any mid-flight injections (e.g. user notes interjected into
+		// a running orchestrator). Workers don't set OnRoundStart so they
+		// don't see these — only the orchestrator does, and only between
+		// rounds, so an in-flight worker dispatch finishes uninterrupted.
+		if cfg.OnRoundStart != nil {
+			if injected := cfg.OnRoundStart(); len(injected) > 0 {
+				history = append(history, injected...)
+			}
+		}
+		// Route think is the default; ChatOptions override it. Build route
+		// defaults first so per-call WithThink(true/false) takes precedence.
+		var opts []ChatOption
+		if cfg.RouteKey != "" {
+			if think := RouteThink(cfg.RouteKey); think != nil {
+				opts = append(opts, WithThink(*think))
+			}
+		}
+		// If the previous round produced tool calls and ToolRoundOptions are
+		// configured, use them instead of ChatOptions for this round.
+		roundOpts := cfg.ChatOptions
+		if prevHadToolCalls && len(cfg.ToolRoundOptions) > 0 {
+			roundOpts = cfg.ToolRoundOptions
+		}
+		opts = append(opts, roundOpts...)
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
+		}
+		if cfg.MaskDebugOutput {
+			opts = append(opts, WithMaskDebug())
 		}
 		// Only offer native tools when NOT in PromptTools mode.
 		if !cfg.PromptTools && len(toolDefs) > 0 && round < maxRounds {
@@ -212,7 +317,19 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if cfg.Stream != nil {
 			resp, err = T.ChatStreamWithReport(ctx, history, cfg.Stream, opts...)
 		} else {
-			resp, err = T.WorkerChat(ctx, history, opts...)
+			// NoLead redirects all routing to worker — no escalation.
+			useLead := cfg.Tier == LEAD && !T.NoLead
+			if cfg.RouteKey != "" && !T.NoLead {
+				useLead = RouteToLead(cfg.RouteKey)
+			}
+			callFn := T.WorkerChat
+			if useLead {
+				callFn = T.LeadChat
+			}
+			// Empty/timeout/empty-error retry happens inside retryLLM
+			// (core/llm.go) — every caller gets it for free, including
+			// direct WorkerChat/LeadChat and chat-handler ChatStream.
+			resp, err = callFn(ctx, history, opts...)
 		}
 		if err != nil {
 			return resp, history, err
@@ -235,14 +352,18 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			tc, preamble := ParsePromptToolCall(resp.Content, handlers)
 			if tc == nil {
 				// No tool call — LLM is done. Record and return.
-				history = append(history, Message{Role: "assistant", Content: resp.Content})
+				history = append(history, Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning})
 				if cfg.OnStep != nil {
 					cfg.OnStep(StepInfo{Round: round, Content: resp.Content, Done: true})
 				}
 				return resp, history, nil
 			}
 
-			Debug("[agent_loop] prompt-tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
+			if cfg.MaskDebugOutput {
+				Debug("[agent_loop] prompt-tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
+			} else {
+				Debug("[agent_loop] prompt-tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
+			}
 
 			// Record the assistant's message (preamble only, strip the tag).
 			if preamble != "" {
@@ -274,10 +395,15 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			} else {
 				resultText = fmt.Sprintf("Tool result from %s:\n%s", tc.Name, output)
 			}
-			Debug("[agent_loop] prompt-tool result: %s", resultText)
+			if cfg.MaskDebugOutput {
+				Debug("[agent_loop] prompt-tool result: %s: [masked: %d bytes]", tc.Name, len(resultText))
+			} else {
+				Debug("[agent_loop] prompt-tool result: %s", resultText)
+			}
 
 			// Send result back as a plain user message.
 			history = append(history, Message{Role: "user", Content: resultText})
+			prevHadToolCalls = true
 
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{Round: round, ToolCalls: []ToolCall{*tc}, ToolErrors: toolErrors})
@@ -291,6 +417,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		history = append(history, Message{
 			Role:      "assistant",
 			Content:   resp.Content,
+			Reasoning: resp.Reasoning,
 			ToolCalls: resp.ToolCalls,
 		})
 
@@ -336,7 +463,11 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		var work []toolWork
 
 		for i, tc := range resp.ToolCalls {
-			Debug("[agent_loop] tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
+			if cfg.MaskDebugOutput {
+				Debug("[agent_loop] tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
+			} else {
+				Debug("[agent_loop] tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
+			}
 
 			handler, ok := handlers[tc.Name]
 			if !ok {
@@ -359,17 +490,44 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			work = append(work, toolWork{index: i, tc: tc, handler: handler})
 		}
 
+		// SerialTools: discard all but the first approved call so the LLM
+		// must observe each result before deciding what to run next.
+		if cfg.SerialTools && len(work) > 1 {
+			for _, w := range work[1:] {
+				results[w.index] = ToolResult{
+					ID:      w.tc.ID,
+					Content: fmt.Sprintf("[SKIPPED] Submit one tool call at a time. Resubmit '%s' after reviewing the result above.", w.tc.Name),
+				}
+			}
+			work = work[:1]
+		}
+
 		// Second pass: execute approved tool calls in parallel.
+		debugResult := func(name, output string) {
+			if cfg.MaskDebugOutput {
+				Debug("[agent_loop] tool result: %s: [masked: %d bytes]", name, len(output))
+			} else {
+				Debug("[agent_loop] tool result: %s: %s", name, output)
+			}
+		}
+		debugToolErr := func(name string, err error) {
+			if cfg.MaskDebugOutput {
+				Debug("[agent_loop] tool error: %s: [masked]", name)
+			} else {
+				Debug("[agent_loop] tool error: %s: %s", name, err)
+			}
+		}
+
 		if len(work) == 1 {
 			// Single call — no goroutine overhead.
 			w := work[0]
 			output, err := w.handler(w.tc.Args)
 			if err != nil {
-				Debug("[agent_loop] tool error: %s: %s", w.tc.Name, err)
+				debugToolErr(w.tc.Name, err)
 				results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
 				toolErrors++
 			} else {
-				Debug("[agent_loop] tool result: %s: %s", w.tc.Name, output)
+				debugResult(w.tc.Name, output)
 				results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
 			}
 		} else if len(work) > 1 {
@@ -381,11 +539,11 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 					defer wg.Done()
 					output, err := w.handler(w.tc.Args)
 					if err != nil {
-						Debug("[agent_loop] tool error: %s: %s", w.tc.Name, err)
+						debugToolErr(w.tc.Name, err)
 						results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
 						atomic.AddInt32(&errCount, 1)
 					} else {
-						Debug("[agent_loop] tool result: %s: %s", w.tc.Name, output)
+						debugResult(w.tc.Name, output)
 						results[w.index] = ToolResult{ID: w.tc.ID, Content: output}
 					}
 				}(w)
@@ -399,6 +557,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			Role:        "user",
 			ToolResults: results,
 		})
+		prevHadToolCalls = true
 
 		if cfg.OnStep != nil {
 			cfg.OnStep(StepInfo{
@@ -408,6 +567,22 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				ToolErrors: toolErrors,
 				Done:       false,
 			})
+		}
+	}
+
+	// If the loop exhausted maxRounds and the last response has no content,
+	// scan backwards through history for the most recent assistant message
+	// that had content but no tool calls (a synthesis round). This handles
+	// models (e.g. Llama via Ollama) that occasionally return an empty final
+	// response after completing their tool-call sequence.
+	if lastResp != nil && strings.TrimSpace(lastResp.Content) == "" {
+		for i := len(history) - 1; i >= 0; i-- {
+			m := history[i]
+			if m.Role == "assistant" && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) != "" {
+				Debug("[agent_loop] rescued empty final response; using last non-empty assistant turn (history[%d])", i)
+				lastResp = &Response{Content: m.Content}
+				break
+			}
 		}
 	}
 
@@ -559,7 +734,7 @@ func BuildToolPrompt(tools []AgentToolDef) string {
 {"name": "tool_name", "arguments": {"param": "value"}}
 </tool_call>
 
-After you see the tool result, continue your response to the user.
+After each tool result, decide whether you have enough information to fully answer the question. If not, call another tool. Only reply once you can satisfactorily answer the request.
 If you do not need a tool, respond normally without any <tool_call> tags.
 Only call ONE tool at a time. Wait for the result before calling another.
 `)

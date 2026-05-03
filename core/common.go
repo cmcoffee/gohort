@@ -50,6 +50,7 @@ type AppCore struct {
 	LLM          LLM     // Primary (worker) LLM — used for most calls.
 	LeadLLM      LLM     // Lead (judge) LLM — used for high-precision calls. Falls back to LLM if nil.
 	LeadFallback bool    // Set to true if any lead LLM call fell back to the primary during this session.
+	NoLead       bool    // HARD GUARD: when true, LeadChat() redirects to worker and RunAgentLoop ignores LEAD tier.
 
 	// MaxRounds limits how many LLM call rounds Run() will perform.
 	// Set this in Init() or Main(). Default is 10 if unset.
@@ -97,6 +98,11 @@ func (T *AppCore) RequireLLM() error {
 	return nil
 }
 
+// Private marks this AppCore as a private/worker-only agent.
+// Sets NoLead=true, which redirects LeadChat() to worker and blocks
+// RunAgentLoop from escalating to LEAD tier. Call once in Init() or Main().
+func (T *AppCore) Private() { T.NoLead = true }
+
 // PingLLM performs a connectivity check against the worker LLM.
 // Returns an error if the LLM is unreachable or the call fails.
 // Use this at the start of long-running pipelines to fail fast instead of
@@ -133,10 +139,9 @@ func (T *AppCore) PingLLM(ctx context.Context) error {
 
 // PingLeadLLM performs a quick connectivity check against the lead LLM.
 // If no lead LLM is configured, returns nil (the primary handles fallback).
-// Prefers the Pinger fast path when available (e.g. Ollama /api/ps) so
-// the probe isn't queued behind an in-flight long-running call.
+// Returns nil immediately when NoLead is set — no probe is sent.
 func (T *AppCore) PingLeadLLM(ctx context.Context) error {
-	if T.LeadLLM == nil {
+	if T.NoLead || T.LeadLLM == nil {
 		return nil
 	}
 	if p, ok := T.LeadLLM.(Pinger); ok {
@@ -159,7 +164,11 @@ func (T *AppCore) PingLeadLLM(ctx context.Context) error {
 }
 
 // GetLeadLLM returns the lead LLM if configured, otherwise falls back to the primary LLM.
+// Returns nil when NoLead is set — the caller should never attempt lead escalation.
 func (T *AppCore) GetLeadLLM() LLM {
+	if T.NoLead {
+		return nil
+	}
 	if T.LeadLLM != nil {
 		return T.LeadLLM
 	}
@@ -173,6 +182,18 @@ func (T *AppCore) WorkerContextSize() int {
 		return cs.ContextSize()
 	}
 	return 0
+}
+
+// LeadContextSize returns the lead LLM's context window size, or 0 if the
+// lead LLM doesn't implement ContextSizer. Falls back to the worker LLM's
+// size when the lead tier is not separately configured.
+func (T *AppCore) LeadContextSize() int {
+	if T.LeadLLM != nil {
+		if cs, ok := T.LeadLLM.(ContextSizer); ok {
+			return cs.ContextSize()
+		}
+	}
+	return T.WorkerContextSize()
 }
 
 // LLMTier selects which LLM tier a Session routes to. Worker is the
@@ -248,7 +269,7 @@ func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOpti
 	opts = prependCaller(s.CallerID, opts)
 	var resp *Response
 	var err error
-	if s.Tier == LEAD {
+	if s.Tier == LEAD && !s.agent.NoLead {
 		resp, err = s.agent.LeadChat(ctx, messages, opts...)
 	} else {
 		resp, err = s.agent.WorkerChat(ctx, messages, opts...)
@@ -266,7 +287,7 @@ func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOpti
 func (s *Session) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	opts = prependCaller(s.CallerID, opts)
 	var llm LLM
-	if s.Tier == LEAD {
+	if s.Tier == LEAD && !s.agent.NoLead {
 		llm = s.agent.GetLeadLLM()
 	} else {
 		llm = s.agent.LLM
@@ -374,6 +395,10 @@ func prependCaller(id string, opts []ChatOption) []ChatOption {
 // If the lead LLM fails and a separate primary LLM is available, it falls
 // back to the primary so the session can continue rather than aborting.
 func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	if T.NoLead {
+		// NoLead is set — redirect to worker instead of escalating.
+		return T.WorkerChat(ctx, messages, opts...)
+	}
 	// Honor routing config: if a route key was supplied via WithRouteKey
 	// and the stage is configured for "worker", delegate transparently.
 	var probe ChatConfig
@@ -381,12 +406,23 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 		opt(&probe)
 	}
 	if probe.RouteKey != "" && !RouteToLead(probe.RouteKey) {
-		if think := RouteThink(probe.RouteKey); think != nil {
-			opts = append(opts, WithThink(*think))
-			Debug("[llm] %s routed to worker LLM with thinking (routing config)", probe.RouteKey)
+		if probe.Think == nil {
+			if think := RouteThink(probe.RouteKey); think != nil {
+				opts = append(opts, WithThink(*think))
+				if *think && probe.ThinkBudget == nil {
+					if budget := RouteThinkBudget(probe.RouteKey); budget != nil {
+						opts = append(opts, WithThinkBudget(*budget))
+					}
+				}
+				Debug("[llm] %s routed to worker LLM (thinking=%v, routing config)", probe.RouteKey, *think)
+			} else {
+				// RouteThink returns nil only when LookupRouteFunc is nil; guard
+				// against that edge by defaulting thinking off on any worker route.
+				opts = append(opts, WithThink(false))
+				Debug("[llm] %s routed to worker LLM (routing config)", probe.RouteKey)
+			}
 		} else {
-			opts = append(opts, WithThink(false))
-			Debug("[llm] %s routed to worker LLM (routing config)", probe.RouteKey)
+			Debug("[llm] %s routed to worker LLM (thinking=%v, call-site override)", probe.RouteKey, *probe.Think)
 		}
 		return T.WorkerChat(ctx, messages, opts...)
 	}
@@ -461,6 +497,23 @@ type WebSearchConfig struct {
 	Endpoint  string // Custom endpoint (for searxng instances)
 }
 
+// OllamaBackendFunc returns the Ollama backend base URL, configured model name,
+// and context window size (num_ctx). Set by the main application at startup.
+// Returns ("", "", 0) when Ollama is not the active provider or is not configured.
+var OllamaBackendFunc func() (backend, model string, numCtx int)
+
+// LlamaCppBackendFunc returns the llama.cpp server base URL (including /v1 path)
+// and configured model name. Returns ("", "") when llama.cpp is not the active provider.
+var LlamaCppBackendFunc func() (endpoint, model string)
+
+// OllamaProxyEnabledFunc reports whether the Ollama proxy is enabled.
+// Set by the main application. Returns false when unset.
+var OllamaProxyEnabledFunc func() bool
+
+// OllamaProxyPortFunc returns the port the standalone Ollama proxy server
+// should listen on. Returns 0 when unset or not configured.
+var OllamaProxyPortFunc func() int
+
 // LoadWebSearchConfigFunc is set by the application to load search settings from the database.
 var LoadWebSearchConfigFunc func() WebSearchConfig
 
@@ -504,8 +557,12 @@ func LoadGhostConfig() GhostConfig {
 // downgraded to the worker LLM via the routing menu. Apps self-register
 // their stages via RegisterRouteStage in init().
 type RouteStage struct {
-	Key   string // db key, e.g. "myapp.stage_name"
-	Label string // menu label
+	Key           string // db key, e.g. "myapp.stage_name"
+	Label         string // menu label
+	Default       string // effective value when not set in DB: "lead" (default), "worker", or "worker (thinking)"
+	DefaultBudget int    // default thinking budget tokens for this stage; 0 means fall back to global
+	Group         string // display group in the admin routing UI; derived from key prefix if empty
+	Private       bool   // when true, the stage is locked to worker tier (private-only app)
 }
 
 var routeRegistry struct {
@@ -538,36 +595,98 @@ func ListRouteStages() []RouteStage {
 	return out
 }
 
+// IsPrivateStage reports whether the given stage key is registered as
+// private (locked to worker tier).
+func IsPrivateStage(key string) bool {
+	routeRegistry.mu.RLock()
+	defer routeRegistry.mu.RUnlock()
+	for _, s := range routeRegistry.stages {
+		if s.Key == key && s.Private {
+			return true
+		}
+	}
+	return false
+}
+
 // LookupRouteFunc is set by the application to read a route stage's
 // current setting from the database. Returns "worker" or "" (lead).
 var LookupRouteFunc func(key string) string
 
-// RouteToLead returns true if the named route stage should use the lead
-// LLM. Registered stages default to lead; users can opt into worker via
-// the routing menu. Returns true for unknown keys (safe default).
-func RouteToLead(key string) bool {
-	if LookupRouteFunc == nil {
-		return true
+// LookupRouteThinkBudgetFunc is set by the application to read per-route
+// thinking budget overrides. Returns &N or nil (use global default).
+var LookupRouteThinkBudgetFunc func(key string) *int
+
+// routeEffectiveVal returns the effective routing value for key,
+// falling back to the stage's Default when the DB has no stored value.
+func routeEffectiveVal(key string) string {
+	val := ""
+	if LookupRouteFunc != nil {
+		val = LookupRouteFunc(key)
 	}
-	val := LookupRouteFunc(key)
+	if val == "" {
+		routeRegistry.mu.RLock()
+		for _, s := range routeRegistry.stages {
+			if s.Key == key {
+				val = s.Default
+				break
+			}
+		}
+		routeRegistry.mu.RUnlock()
+	}
+	return val
+}
+
+// RouteToLead returns true if the named route stage should use the lead
+// LLM. Stages default to lead unless their Default field or DB value says
+// "worker" or "worker (thinking)".
+func RouteToLead(key string) bool {
+	val := routeEffectiveVal(key)
 	return val != "worker" && val != "worker (thinking)"
 }
 
-// RouteThink returns a thinking override for the named route stage, or
-// nil if the stage should use its hardcoded default. When a stage is
-// configured as "worker (thinking)" in the routing menu, this forces
-// thinking on regardless of what the code passes to WithThink.
+// RouteThink returns the thinking override for the named route stage.
+//   - "worker (thinking)" → &true
+//   - "worker"            → &false
+//   - "lead" / ""         → nil (not routed to worker)
 func RouteThink(key string) *bool {
-	if LookupRouteFunc == nil {
-		return nil
-	}
-	val := LookupRouteFunc(key)
-	if val == "worker (thinking)" {
+	val := routeEffectiveVal(key)
+	switch val {
+	case "worker (thinking)":
 		t := true
 		return &t
+	case "worker":
+		f := false
+		return &f
 	}
 	return nil
 }
+
+// RouteThinkBudget returns the per-route thinking token budget, checking
+// (in order): DB override → stage DefaultBudget → nil (use global default).
+func RouteThinkBudget(key string) *int {
+	if LookupRouteThinkBudgetFunc != nil {
+		if n := LookupRouteThinkBudgetFunc(key); n != nil {
+			return n
+		}
+	}
+	routeRegistry.mu.RLock()
+	defer routeRegistry.mu.RUnlock()
+	for _, s := range routeRegistry.stages {
+		if s.Key == key && s.DefaultBudget > 0 {
+			n := s.DefaultBudget
+			return &n
+		}
+	}
+	return nil
+}
+
+// SaveSnippetFunc is set by the CodeWriter app so other apps can save code snippets
+// to the user's CodeWriter library without importing the codewriter package.
+var SaveSnippetFunc func(userID, name, lang, code string) (id string, err error)
+
+// SaveArticleFunc is set by the TechWriter app so other apps can save documents
+// to the user's TechWriter library without importing the techwriter package.
+var SaveArticleFunc func(userID, subject, body string) (id string, err error)
 
 // RunAgentFunc is set by the application to enable agent-to-agent delegation.
 var RunAgentFunc func(name string, args []string) (string, error)
@@ -581,7 +700,31 @@ func (T *AppCore) DelegateAgent(name string, args ...string) (string, error) {
 }
 
 // WorkerChat calls T.LLM.Chat and tallies token usage on T.Report.
+// If the call includes a WithRouteKey option and the routing menu has a
+// thinking override configured for that stage, it is applied here so
+// direct worker-session calls respect the same setting as lead-routed calls.
 func (T *AppCore) WorkerChat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	var probe ChatConfig
+	for _, opt := range opts {
+		opt(&probe)
+	}
+	if probe.RouteKey != "" && probe.Think == nil {
+		if think := RouteThink(probe.RouteKey); think != nil {
+			opts = append(opts, WithThink(*think))
+			probe.Think = think
+			if *think && probe.ThinkBudget == nil {
+				if budget := RouteThinkBudget(probe.RouteKey); budget != nil {
+					opts = append(opts, WithThinkBudget(*budget))
+				}
+			}
+			Debug("[llm] %s worker thinking override: %v (routing config)", probe.RouteKey, *think)
+		}
+	}
+	// Worker tier: thinking on by default. Callers that don't need thinking
+	// (e.g. title generation) pass WithThink(false) explicitly.
+	if probe.Think == nil {
+		opts = append(opts, WithThink(true))
+	}
 	start := time.Now()
 	resp, err := T.LLM.Chat(ctx, messages, opts...)
 	elapsed := time.Since(start)
@@ -698,14 +841,97 @@ func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, op
 	return finalResp, finalErr
 }
 
-// ChatWithCalc is a session-scoped wrapper around WorkerChatWithCalc:
-// tool-calling loop lives in the agent method (handles the calculate
-// tool), and this wrapper adds the session's CallerID + attributes the
-// cumulative token count to the session's counters. Use when a caller
-// wants the calculate tool available *and* per-session attribution.
+// LeadChatWithCalc is like WorkerChatWithCalc but uses the lead LLM for every
+// round. Route config (WithRouteKey) is respected — if the stage is set to
+// "worker" or "worker (thinking)", LeadChat will redirect to the worker.
+func (T *AppCore) LeadChatWithCalc(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	calc, ok := FindChatTool("calculate")
+	if !ok {
+		return T.LeadChat(ctx, messages, opts...)
+	}
+
+	calcTool := Tool{
+		Name:        calc.Name(),
+		Description: calc.Desc(),
+		Parameters:  calc.Params(),
+	}
+	calcDef := AgentToolDef{Tool: calcTool, Handler: calc.Run}
+	handlers := map[string]ToolHandlerFunc{calc.Name(): calc.Run}
+
+	nativeOpts := append(append([]ChatOption{}, opts...), WithTools([]Tool{calcTool}))
+	promptToolText := BuildToolPrompt([]AgentToolDef{calcDef})
+
+	history := make([]Message, len(messages))
+	copy(history, messages)
+
+	var cumInput, cumOutput int
+	for round := 0; round < 3; round++ {
+		callOpts := append(nativeOpts, appendSystemPrompt(promptToolText))
+
+		resp, err := T.LeadChat(ctx, history, callOpts...)
+		if err != nil {
+			return resp, err
+		}
+		cumInput += resp.InputTokens
+		cumOutput += resp.OutputTokens
+
+		if len(resp.ToolCalls) > 0 {
+			history = append(history, Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
+			var results []ToolResult
+			for _, tc := range resp.ToolCalls {
+				result, runErr := calc.Run(tc.Args)
+				if runErr != nil {
+					results = append(results, ToolResult{ID: tc.ID, Content: runErr.Error(), IsError: true})
+				} else {
+					results = append(results, ToolResult{ID: tc.ID, Content: result})
+				}
+				Debug("[calc] %s -> %s", tc.Args["expression"], result)
+			}
+			history = append(history, Message{Role: "tool", ToolResults: results})
+			continue
+		}
+
+		tc, preamble := ParsePromptToolCall(resp.Content, handlers)
+		if tc == nil {
+			resp.InputTokens = cumInput
+			resp.OutputTokens = cumOutput
+			return resp, nil
+		}
+		result, runErr := calc.Run(tc.Args)
+		var resultText string
+		if runErr != nil {
+			resultText = "Error: " + runErr.Error()
+		} else {
+			resultText = result
+		}
+		Debug("[calc] %s -> %s", tc.Args["expression"], resultText)
+
+		if preamble != "" {
+			history = append(history, Message{Role: "assistant", Content: preamble})
+		}
+		history = append(history, Message{Role: "user", Content: fmt.Sprintf("Tool result: %s\n\nContinue your response using this result.", resultText)})
+	}
+
+	finalResp, finalErr := T.LeadChat(ctx, history, opts...)
+	if finalResp != nil {
+		finalResp.InputTokens += cumInput
+		finalResp.OutputTokens += cumOutput
+	}
+	return finalResp, finalErr
+}
+
+// ChatWithCalc dispatches to LeadChatWithCalc or WorkerChatWithCalc based on
+// the session's tier. The tool-calling loop runs on the same LLM tier as the
+// session so lead sessions (e.g. gemma4) use lead for arithmetic too.
 func (s *Session) ChatWithCalc(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	opts = prependCaller(s.CallerID, opts)
-	resp, err := s.agent.WorkerChatWithCalc(ctx, messages, opts...)
+	var resp *Response
+	var err error
+	if s.Tier == LEAD {
+		resp, err = s.agent.LeadChatWithCalc(ctx, messages, opts...)
+	} else {
+		resp, err = s.agent.WorkerChatWithCalc(ctx, messages, opts...)
+	}
 	s.recordTokens(resp)
 	return resp, err
 }
@@ -849,6 +1075,65 @@ type ChatTool interface {
 // can implement to indicate the tool requires user confirmation before execution.
 type ConfirmableTool interface {
 	NeedsConfirm() bool
+}
+
+// InternetTool is an optional interface that ChatTool implementations
+// can implement to indicate the tool contacts the internet. Tools that
+// implement this are excluded from private-mode chat sessions.
+type InternetTool interface {
+	IsInternetTool() bool
+}
+
+// CapabilityTool is an optional interface ChatTool implementations can
+// satisfy to declare what side effects they have (CapRead / CapNetwork /
+// CapWrite / CapExecute). The agent loop reads these via Tool.Caps when
+// AllowedCaps gating is active. A tool that doesn't implement this is
+// treated as "unannotated" and passes the cap filter unconditionally —
+// migration-safe; tighten gradually as tools opt in.
+type CapabilityTool interface {
+	Caps() []Capability
+}
+
+// ToolSession carries mutable per-session state shared between the caller
+// and session-aware tools. Pass a *ToolSession when building agent tools via
+// GetAgentToolsWithSession; read results back from it after the loop completes.
+type ToolSession struct {
+	Images       []string // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
+	Videos       []string // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
+	Silenced     bool     // set true by the stay_silent tool
+	LLM          LLM      // optional LLM made available to tools that need sub-calls
+	WorkspaceDir string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
+	mu           sync.Mutex
+}
+
+// AppendImage appends a base64-encoded image to the session image list.
+func (s *ToolSession) AppendImage(b64 string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.Images = append(s.Images, b64)
+	s.mu.Unlock()
+}
+
+// AppendVideo appends a base64-encoded video to the session video list.
+// Consumed by apps that deliver outbound attachments (phantom iMessage
+// repost path); ignored by apps that don't.
+func (s *ToolSession) AppendVideo(b64 string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.Videos = append(s.Videos, b64)
+	s.mu.Unlock()
+}
+
+// SessionChatTool extends ChatTool for tools that need per-session state.
+// When a *ToolSession is provided via GetAgentToolsWithSession, RunWithSession
+// is called in preference to Run.
+type SessionChatTool interface {
+	ChatTool
+	RunWithSession(args map[string]any, sess *ToolSession) (string, error)
 }
 
 // NeedInteract pauses for user input.

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
@@ -55,7 +57,9 @@ type StreamHandler func(chunk string)
 type Message struct {
 	Role        string       `json:"role"`
 	Content     string       `json:"content"`
-	Images      [][]byte     `json:"-"` // Base64-decoded image data for vision models.
+	Reasoning   string       `json:"reasoning,omitempty"` // Thinking content from the prior turn; forwarded to Ollama when preserve_thinking is on.
+	Images      [][]byte     `json:"-"`                   // Decoded image data for vision models.
+	Videos      [][]byte     `json:"-"`                   // Raw video bytes; buildMessages auto-extracts metadata + N frames into Images at send time.
 	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
 }
@@ -81,12 +85,74 @@ type Response struct {
 	Tier LLMTier
 }
 
+// Capability describes the kind of side effect a tool can have. Apps use
+// these tiers to gate which tools the LLM is even allowed to see — e.g. a
+// chat agent might be permitted to read and reach the network but not
+// execute shell commands or write files. Tools self-declare their caps;
+// AgentLoopConfig.AllowedCaps gates the set the LLM is offered.
+type Capability string
+
+const (
+	CapRead    Capability = "read"    // pure read: queries, lookups, in-memory transforms — no side effects
+	CapNetwork Capability = "network" // outbound network: web search, API fetches, external calls
+	CapWrite   Capability = "write"   // local writes: create/modify files, persist DB records
+	CapExecute Capability = "execute" // shell commands, code execution, system control
+)
+
 // Tool describes a function the LLM can call.
 type Tool struct {
-	Name        string                `json:"name"`
-	Description string                `json:"description"`
-	Parameters  map[string]ToolParam  `json:"parameters,omitempty"`
-	Required    []string              `json:"required,omitempty"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Parameters  map[string]ToolParam `json:"parameters,omitempty"`
+	Required    []string             `json:"required,omitempty"`
+
+	// Caps lists which capability tiers this tool exercises. Empty means
+	// "unannotated" — treated as legacy/unrestricted by AllowedCaps filtering
+	// for backward compatibility. Tools should self-declare honestly: the
+	// system trusts the declaration, it doesn't introspect the handler.
+	Caps []Capability `json:"-"`
+}
+
+// capsAllowed reports whether every capability a tool declares is in the
+// allowed set. An unannotated tool (empty Caps) is allowed unconditionally
+// during the migration period; once every tool annotates, callers can
+// flip the default to deny-by-empty.
+func capsAllowed(toolCaps []Capability, allowed map[Capability]bool) bool {
+	if len(toolCaps) == 0 {
+		return true // legacy / unannotated — pass through
+	}
+	for _, c := range toolCaps {
+		if !allowed[c] {
+			return false
+		}
+	}
+	return true
+}
+
+// FilterToolsByCaps returns a new slice containing only the tools whose
+// declared Caps fit inside the allowed set. Tools with empty Caps
+// (unannotated) pass through unchanged for backward compatibility. When
+// allowed is empty/nil the input is returned as-is — same "no restriction"
+// semantics as AgentLoopConfig.AllowedCaps.
+//
+// Callers that build tool lists outside RunAgentLoop (e.g. chat handlers
+// that drive ChatStream directly) use this to enforce capability gating
+// at the same layer the agent loop does internally.
+func FilterToolsByCaps(tools []AgentToolDef, allowed []Capability) []AgentToolDef {
+	if len(allowed) == 0 {
+		return tools
+	}
+	allowedSet := make(map[Capability]bool, len(allowed))
+	for _, c := range allowed {
+		allowedSet[c] = true
+	}
+	out := make([]AgentToolDef, 0, len(tools))
+	for _, td := range tools {
+		if capsAllowed(td.Tool.Caps, allowedSet) {
+			out = append(out, td)
+		}
+	}
+	return out
 }
 
 // ToolParam describes a single parameter of a tool.
@@ -256,7 +322,15 @@ func unwrapSchemaEchoAny(val map[string]interface{}) any {
 
 // unwrapSchemaEcho extracts the actual value as a string (legacy helper for stringify).
 func unwrapSchemaEcho(val map[string]interface{}) string {
-	return stringify(unwrapSchemaEchoAny(val))
+	inner := unwrapSchemaEchoAny(val)
+	// If the result is still a map, JSON-serialize it directly to break the
+	// stringify → unwrapSchemaEcho → stringify recursion that occurs when
+	// unwrapSchemaEchoAny returns the original map unchanged.
+	if _, isMap := inner.(map[string]interface{}); isMap {
+		j, _ := json.Marshal(inner)
+		return string(j)
+	}
+	return stringify(inner)
 }
 
 // stringify converts an interface value to a clean string for use as a tool argument.
@@ -304,8 +378,10 @@ type ChatConfig struct {
 	JSONMode     bool
 	MaxRetries   *int
 	Think        *bool // Enable/disable thinking for thinking models (nil = model default)
+	ThinkBudget  *int  // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
 	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
+	MaskDebug    bool   // Suppress request/response content from debug logs (use for sessions with sensitive data).
 }
 
 // ChatOption is a functional option for configuring an LLM call.
@@ -352,12 +428,24 @@ func WithThink(enabled bool) ChatOption {
 	return func(c *ChatConfig) { c.Think = &enabled }
 }
 
+// WithThinkBudget caps the thinking token budget for this call, overriding the
+// global ThinkingBudget setting. Has no effect when thinking is disabled.
+func WithThinkBudget(n int) ChatOption {
+	return func(c *ChatConfig) { c.ThinkBudget = &n }
+}
+
 // WithRouteKey tags a LeadChat call with a routing stage key. If the stage
 // is configured for "worker" in the routing menu, LeadChat transparently
 // delegates to WorkerChat with the same options. Unknown/unset keys default
 // to lead, so it's safe to add WithRouteKey before registering the stage.
 func WithRouteKey(key string) ChatOption {
 	return func(c *ChatConfig) { c.RouteKey = key }
+}
+
+// WithMaskDebug suppresses request/response content from debug logs for this
+// call. Use for sessions that handle sensitive data (credentials, private docs).
+func WithMaskDebug() ChatOption {
+	return func(c *ChatConfig) { c.MaskDebug = true }
 }
 
 // WithCaller identifies the app or pipeline stage making this LLM call.
@@ -395,9 +483,11 @@ type LLMProviderConfig struct {
 	ContextSize     int           // Context window size (Ollama only); 0 uses default.
 	ConnectTimeout  time.Duration // Dial timeout; defaults to 10s if zero.
 	RequestTimeout  time.Duration // Response header timeout; defaults to 120s if zero.
-	DisableThinking bool          // Ollama only: master override forcing think=false on every call regardless of per-call WithThink(true). Escape hatch for thinking hangs on local models.
+	DisableThinking bool          // Master override: forces think=false on every call regardless of per-call WithThink(true). Supported for Ollama and Gemini (Flash) providers.
+	ThinkingBudget  int           // Max thinking tokens per call (Gemini and Ollama). 0 = model default. Ignored when DisableThinking is set.
 	NativeTools     bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
-	OllamaMaxParallel int         // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
+	OllamaMaxParallel   int         // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
+	LlamacppMaxParallel int         // llama.cpp only: global concurrency cap. Default 1 (llama.cpp is single-threaded). Raise only when the server supports concurrent requests.
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -411,7 +501,7 @@ func newLLMAPIClient(cfg LLMProviderConfig) *apiclient.APIClient {
 	}
 	requestTimeout := cfg.RequestTimeout
 	if requestTimeout == 0 {
-		requestTimeout = 2 * time.Minute
+		requestTimeout = 5 * time.Minute
 	}
 	return &apiclient.APIClient{
 		ConnectTimeout: connectTimeout,
@@ -441,7 +531,16 @@ func isTransientError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	if netErr, ok := err.(net.Error); ok {
+		// Timeout or temporary (connection reset, refused, etc.)
+		return netErr.Timeout() || netErr.Temporary() //nolint:staticcheck
+	}
+	// Unwrap and retry any net.OpError (e.g. "connection reset by peer").
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
 		return true
 	}
 	return false
@@ -449,7 +548,9 @@ func isTransientError(err error) bool {
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	return doWithRetry(ctx, r.maxRetries, opts, func() (*Response, error) {
-		return r.inner.Chat(ctx, messages, opts...)
+		return callWithEmptyRetry(opts, func(o []ChatOption) (*Response, error) {
+			return r.inner.Chat(ctx, messages, o...)
+		})
 	})
 }
 
@@ -460,14 +561,93 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		handler(chunk)
 	}
 	return doWithRetry(ctx, r.maxRetries, opts, func() (*Response, error) {
+		// Stream-aware empty retry: only safe to retry if the handler
+		// hasn't already received chunks (otherwise the user has seen
+		// partial output and a retry would duplicate or contradict it).
 		handlerCalled = false
 		resp, err := r.inner.ChatStream(ctx, messages, wrappedHandler, opts...)
 		if err != nil && handlerCalled {
 			// Chunks were already delivered to the caller; do not retry.
 			return resp, &nonRetryableError{err}
 		}
+		if handlerCalled || !shouldRetryEmpty(resp, err) {
+			return resp, err
+		}
+		Debug("[retry] empty stream response (err=%v) — retrying once with thinking disabled", err)
+		f := false
+		retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
+		handlerCalled = false
+		resp2, err2 := r.inner.ChatStream(ctx, messages, wrappedHandler, retryOpts...)
+		if err2 == nil && responseIsUseable(resp2) {
+			return resp2, nil
+		}
 		return resp, err
 	})
+}
+
+// responseIsUseable reports whether resp has actionable output for the caller.
+// Reasoning alone doesn't count — every downstream consumer (agent loops, chat
+// handlers, tool-call dispatchers) acts on Content or ToolCalls.
+func responseIsUseable(resp *Response) bool {
+	if resp == nil {
+		return false
+	}
+	if strings.TrimSpace(resp.Content) != "" {
+		return true
+	}
+	return len(resp.ToolCalls) > 0
+}
+
+// shouldRetryEmpty reports whether an LLM result should trigger a one-shot
+// retry with thinking disabled. Triggers on:
+//   - timeout errors (thinking is the slow part)
+//   - "empty LLM response" errors (model exhausted budget producing nothing)
+//   - successful but empty responses (model produced only reasoning)
+func shouldRetryEmpty(resp *Response, err error) bool {
+	if err != nil {
+		return isTimeoutErr(err) || isEmptyResponseErr(err)
+	}
+	return !responseIsUseable(resp)
+}
+
+// callWithEmptyRetry invokes call once; if the result is empty (no content,
+// no tool calls) or signals an empty/timeout error, retries once with
+// thinking disabled and returns whichever attempt yielded useable output.
+func callWithEmptyRetry(opts []ChatOption, call func(opts []ChatOption) (*Response, error)) (*Response, error) {
+	resp, err := call(opts)
+	if !shouldRetryEmpty(resp, err) {
+		return resp, err
+	}
+	Debug("[retry] empty response (err=%v) — retrying once with thinking disabled", err)
+	f := false
+	retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
+	resp2, err2 := call(retryOpts)
+	if err2 == nil && responseIsUseable(resp2) {
+		return resp2, nil
+	}
+	// Both empty — return the original (it had a real status, even if useless).
+	return resp, err
+}
+
+// isTimeoutErr reports whether err looks like an HTTP timeout. Mirrors the
+// same substring check the agent loop used historically.
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "timeout") || strings.Contains(s, "deadline exceeded")
+}
+
+// isEmptyResponseErr reports whether err is the "empty LLM response" surfaced
+// by the OpenAI-compatible client when the model consumed output tokens
+// without producing content (most often: thinking ate the budget, or
+// finish_reason=length with no content).
+func isEmptyResponseErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "empty LLM response")
 }
 
 // nonRetryableError wraps an error to signal that retry should not be attempted.
@@ -497,8 +677,12 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 		}
 		lastErr = err
 		if attempt < maxRetries {
-			backoff := time.Duration(math.Pow(float64(attempt+1), 2)) * time.Second
-			Debug("[retry]: attempt %d/%d failed: %v, backing off %v", attempt+1, maxRetries, err, backoff)
+			secs := math.Pow(float64(attempt+1), 2)
+			if secs > 30 {
+				secs = 30
+			}
+			backoff := time.Duration(secs) * time.Second
+			Log("[retry] attempt %d/%d failed: %v — retrying in %v", attempt+1, maxRetries, err, backoff)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -541,7 +725,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		if model == "" {
 			model = "gemini-2.5-flash"
 		}
-		inner = newGeminiLLM(cfg.APIKey, model, api)
+		inner = newGeminiLLM(cfg.APIKey, model, cfg.DisableThinking, cfg.ThinkingBudget, api)
 	case "ollama":
 		model := cfg.Model
 		if model == "" {
@@ -566,9 +750,33 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 			maxParallel = 1
 		}
 		StartOllamaScheduler(maxParallel)
+	case "llama.cpp":
+		ep := "http://localhost:8080/v1"
+		if cfg.Endpoint != "" {
+			ep = cfg.Endpoint
+		}
+		model := cfg.Model
+		if model == "" {
+			model = "local"
+		}
+		client := newOpenAILLM(cfg.APIKey, model, ep, api)
+		oc := client.(*openAIClient)
+		oc.llamacpp = true
+		oc.llamacppBudget = cfg.ThinkingBudget
+		oc.disableThinking = cfg.DisableThinking
+		oc.contextSize = cfg.ContextSize
+		inner = client
+		// Start the serializer so concurrent callers queue here instead
+		// of racing to llama.cpp and getting 503s. Default 1 matches
+		// llama.cpp's single-threaded design; configurable via admin UI.
+		mp := cfg.LlamacppMaxParallel
+		if mp < 1 {
+			mp = 1
+		}
+		StartLlamacppScheduler(mp)
 	default:
 		return nil, Error("unknown LLM provider, run --setup to configure")
 	}
 
-	return &retryLLM{inner: inner, maxRetries: 3}, nil
+	return &retryLLM{inner: inner, maxRetries: 5}, nil
 }
