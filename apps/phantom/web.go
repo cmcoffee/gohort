@@ -1137,7 +1137,7 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		//      are exposed.
 		var secureAPIByName map[string]AgentToolDef
 		if cfg.SecureAPIEnabled {
-			secureAPI := BuildSecureAPITools(T.DB)
+			secureAPI := Secure().BuildTools()
 			secureAPIByName = make(map[string]AgentToolDef, len(secureAPI))
 			for _, td := range secureAPI {
 				secureAPIByName[td.Tool.Name] = td

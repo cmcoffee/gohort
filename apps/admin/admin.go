@@ -320,11 +320,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		case http.MethodGet:
 			if name := r.URL.Query().Get("audit"); name != "" {
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(LoadSecureAPIAudit(a.db, name))
+				json.NewEncoder(w).Encode(Secure().LoadAudit(name))
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(ListSecureCredentials(a.db))
+			json.NewEncoder(w).Encode(Secure().List())
 		case http.MethodPost:
 			// Two POST shapes: the upsert body (full credential) and the
 			// toggle action (?action=enable|disable&name=X). Distinguish
@@ -337,12 +337,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				}
 				switch action {
 				case "enable":
-					if err := SetSecureCredentialDisabled(a.db, name, false); err != nil {
+					if err := Secure().SetDisabled(name, false); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
 				case "disable":
-					if err := SetSecureCredentialDisabled(a.db, name, true); err != nil {
+					if err := Secure().SetDisabled(name, true); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
@@ -374,7 +374,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				Description:       strings.TrimSpace(req.Description),
 				RequiresConfirm:   req.RequiresConfirm,
 			}
-			if err := SaveSecureCredential(a.db, c, req.Secret); err != nil {
+			if err := Secure().Save(c, req.Secret); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -385,7 +385,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, "missing name", http.StatusBadRequest)
 				return
 			}
-			if err := DeleteSecureCredential(a.db, name); err != nil {
+			if err := Secure().Delete(name); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}

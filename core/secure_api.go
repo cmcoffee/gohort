@@ -16,6 +16,12 @@
 // header (custom header name + value), query (custom query param), and
 // basic_auth (HTTP basic). OAuth flow is a future addition; in the
 // interim, paste a long-lived personal access token.
+//
+// All operations go through a singleton `*SecureAPI` accessed via
+// Secure(). The store binds to the root global DB once (resolved from
+// AuthDB) — secure-api credentials are intentionally global, so admin
+// (which uses the root) and chat/phantom (which use bucketed views of
+// the root) all read and write to the same namespace.
 
 package core
 
@@ -51,12 +57,12 @@ const (
 // (which doesn't need the value) never has to decrypt it. ParamName
 // applies to header (the header name) and query (the query param).
 type SecureCredential struct {
-	Name              string    `json:"name"`
-	Type              string    `json:"type"`
-	AllowedURLPattern string    `json:"allowed_url_pattern"`
-	Description       string    `json:"description,omitempty"`
-	ParamName         string    `json:"param_name,omitempty"`
-	RequiresConfirm   bool      `json:"requires_confirm"`
+	Name              string `json:"name"`
+	Type              string `json:"type"`
+	AllowedURLPattern string `json:"allowed_url_pattern"`
+	Description       string `json:"description,omitempty"`
+	ParamName         string `json:"param_name,omitempty"`
+	RequiresConfirm   bool   `json:"requires_confirm"`
 	// Disabled skips this credential from the auto-generated tool
 	// catalog without deleting it. Useful for temporarily revoking
 	// access (suspected misbehavior, vendor outage, etc.) while
@@ -64,8 +70,8 @@ type SecureCredential struct {
 	// later. Inverted (Disabled rather than Enabled) so that records
 	// written before this field was added — which deserialize to the
 	// zero value — keep their default-on behavior.
-	Disabled  bool `json:"disabled,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Disabled   bool      `json:"disabled,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 	LastUsedAt time.Time `json:"last_used_at,omitempty"`
 }
 
@@ -100,35 +106,51 @@ const (
 	auditRingSize = 50
 )
 
-var secureAPIMu sync.Mutex
+// ----------------------------------------------------------------------
+// SecureAPI singleton
+// ----------------------------------------------------------------------
 
-// resolveSecureAPIDB returns the canonical DB for secure-api credential
-// storage: the root global DB. Callers may pass a bucketed/scoped DB
-// (e.g. ChatAgent's bucket-prefixed view of global.db) — secure-API
-// data is intentionally global, shared across apps, so we always
-// resolve back to the root via AuthDB() rather than honoring the
-// caller-supplied bucket. Without this, admin (which uses the root
-// directly) and chat (which gets a bucketed view) would write to and
-// read from different namespaces and credentials saved via admin
-// would be invisible to the LLM.
-//
-// Falls back to the passed db if AuthDB is unset (uncommon — only
-// during early startup before gohort.go wires AuthDB).
-func resolveSecureAPIDB(db Database) Database {
-	if AuthDB != nil {
-		if root := AuthDB(); root != nil {
-			return root
-		}
-	}
-	return db
+// SecureAPI is the singleton accessor for the credential store. Holds
+// a reference to the root global DB and serializes mutations under a
+// single mutex.
+type SecureAPI struct {
+	db Database
+	mu sync.Mutex
 }
 
-// SaveSecureCredential upserts a credential record and (re)stores its
-// secret value encrypted. Validates inputs.
-func SaveSecureCredential(db Database, c SecureCredential, secret string) error {
-	db = resolveSecureAPIDB(db)
-	if db == nil {
-		return fmt.Errorf("DB not available")
+var (
+	secureAPIInstance   *SecureAPI
+	secureAPIInstanceMu sync.Mutex
+)
+
+// Secure returns the singleton SecureAPI. The DB binding is resolved
+// from AuthDB() the first time it's needed and re-resolved while it's
+// still nil (covers very-early-startup paths where AuthDB isn't yet
+// wired). Once a non-nil DB is bound it sticks.
+func Secure() *SecureAPI {
+	secureAPIInstanceMu.Lock()
+	defer secureAPIInstanceMu.Unlock()
+	if secureAPIInstance == nil {
+		secureAPIInstance = &SecureAPI{}
+	}
+	if secureAPIInstance.db == nil && AuthDB != nil {
+		secureAPIInstance.db = AuthDB()
+	}
+	return secureAPIInstance
+}
+
+// ready returns true when the store has a usable DB binding.
+func (s *SecureAPI) ready() bool { return s != nil && s.db != nil }
+
+// ----------------------------------------------------------------------
+// CRUD
+// ----------------------------------------------------------------------
+
+// Save upserts a credential record and (re)stores its secret value
+// encrypted. Validates inputs.
+func (s *SecureAPI) Save(c SecureCredential, secret string) error {
+	if !s.ready() {
+		return fmt.Errorf("secure-api store not initialized (AuthDB unset)")
 	}
 	if !validToolNameStr(c.Name) {
 		return fmt.Errorf("name must be lowercase letters/digits/underscores only")
@@ -150,219 +172,151 @@ func SaveSecureCredential(db Database, c SecureCredential, secret string) error 
 	if strings.TrimSpace(secret) == "" {
 		return fmt.Errorf("secret value is required")
 	}
-	secureAPIMu.Lock()
-	defer secureAPIMu.Unlock()
-	// Preserve CreatedAt across updates.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Preserve CreatedAt + LastUsedAt across updates.
 	var existing SecureCredential
-	if db.Get(secureAPITable, c.Name, &existing) {
+	if s.db.Get(secureAPITable, c.Name, &existing) {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
 	} else {
 		c.CreatedAt = time.Now()
 	}
-	db.Set(secureAPITable, c.Name, c)
-	db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), secret)
+	s.db.Set(secureAPITable, c.Name, c)
+	s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), secret)
 	return nil
 }
 
-// LoadSecureCredential fetches the public metadata for a credential.
-func LoadSecureCredential(db Database, name string) (SecureCredential, bool) {
-	db = resolveSecureAPIDB(db)
+// Load fetches the public metadata for a credential by name.
+func (s *SecureAPI) Load(name string) (SecureCredential, bool) {
 	var c SecureCredential
-	if db == nil || name == "" {
+	if !s.ready() || name == "" {
 		return c, false
 	}
-	ok := db.Get(secureAPITable, name, &c)
+	ok := s.db.Get(secureAPITable, name, &c)
 	return c, ok
 }
 
-// ListSecureCredentials returns metadata for every registered credential.
-// Secrets are not included.
-func ListSecureCredentials(db Database) []SecureCredential {
-	db = resolveSecureAPIDB(db)
-	if db == nil {
+// List returns metadata for every registered credential. Secrets are
+// not included.
+func (s *SecureAPI) List() []SecureCredential {
+	if !s.ready() {
 		return nil
 	}
 	var out []SecureCredential
-	for _, k := range db.Keys(secureAPITable) {
-		// Skip secret subkeys.
+	for _, k := range s.db.Keys(secureAPITable) {
 		if strings.HasSuffix(k, "__secret") {
 			continue
 		}
 		var c SecureCredential
-		if db.Get(secureAPITable, k, &c) {
+		if s.db.Get(secureAPITable, k, &c) {
 			out = append(out, c)
 		}
 	}
 	return out
 }
 
-// SetSecureCredentialDisabled toggles the per-credential disabled flag.
-// Disabled credentials stay in the encrypted store but disappear from
-// auto-generated tool catalogs until re-enabled. Used by the admin
-// UI's per-card enable/disable toggle.
-func SetSecureCredentialDisabled(db Database, name string, disabled bool) error {
-	db = resolveSecureAPIDB(db)
-	if db == nil || name == "" {
+// SetDisabled toggles the per-credential disabled flag.
+func (s *SecureAPI) SetDisabled(name string, disabled bool) error {
+	if !s.ready() || name == "" {
 		return fmt.Errorf("name required")
 	}
-	secureAPIMu.Lock()
-	defer secureAPIMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var c SecureCredential
-	if !db.Get(secureAPITable, name, &c) {
+	if !s.db.Get(secureAPITable, name, &c) {
 		return fmt.Errorf("credential %q not found", name)
 	}
 	c.Disabled = disabled
-	db.Set(secureAPITable, name, c)
+	s.db.Set(secureAPITable, name, c)
 	return nil
 }
 
-// DeleteSecureCredential removes both metadata and encrypted secret.
-func DeleteSecureCredential(db Database, name string) error {
-	db = resolveSecureAPIDB(db)
-	if db == nil || name == "" {
+// Delete removes both metadata and encrypted secret.
+func (s *SecureAPI) Delete(name string) error {
+	if !s.ready() || name == "" {
 		return fmt.Errorf("name required")
 	}
-	secureAPIMu.Lock()
-	defer secureAPIMu.Unlock()
-	db.Unset(secureAPITable, name)
-	db.Unset(secureAPITable, secureCredSecretKey(name))
-	// Also drop the audit log for this credential.
-	for _, k := range db.Keys(secureAPIAuditTable) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Unset(secureAPITable, name)
+	s.db.Unset(secureAPITable, secureCredSecretKey(name))
+	for _, k := range s.db.Keys(secureAPIAuditTable) {
 		if strings.HasPrefix(k, name+":") {
-			db.Unset(secureAPIAuditTable, k)
+			s.db.Unset(secureAPIAuditTable, k)
 		}
 	}
 	return nil
 }
 
-// LoadSecureAPIAudit returns the most recent audit entries for a
-// credential, newest first.
-func LoadSecureAPIAudit(db Database, name string) []SecureAPIAuditEntry {
-	db = resolveSecureAPIDB(db)
-	if db == nil || name == "" {
+// LoadAudit returns the most recent audit entries for a credential,
+// newest first.
+func (s *SecureAPI) LoadAudit(name string) []SecureAPIAuditEntry {
+	if !s.ready() || name == "" {
 		return nil
 	}
 	var entries []SecureAPIAuditEntry
-	if db.Get(secureAPIAuditTable, name, &entries) {
+	if s.db.Get(secureAPIAuditTable, name, &entries) {
 		return entries
 	}
 	return nil
 }
 
-// recordSecureAPIAudit prepends an entry, capping ring size.
-func recordSecureAPIAudit(db Database, e SecureAPIAuditEntry) {
-	db = resolveSecureAPIDB(db)
-	if db == nil {
+// recordAudit prepends an entry, capping ring size.
+func (s *SecureAPI) recordAudit(e SecureAPIAuditEntry) {
+	if !s.ready() {
 		return
 	}
-	secureAPIMu.Lock()
-	defer secureAPIMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var entries []SecureAPIAuditEntry
-	db.Get(secureAPIAuditTable, e.CredentialName, &entries)
+	s.db.Get(secureAPIAuditTable, e.CredentialName, &entries)
 	entries = append([]SecureAPIAuditEntry{e}, entries...)
 	if len(entries) > auditRingSize {
 		entries = entries[:auditRingSize]
 	}
-	db.Set(secureAPIAuditTable, e.CredentialName, entries)
+	s.db.Set(secureAPIAuditTable, e.CredentialName, entries)
 }
 
-// touchSecureCredential bumps LastUsedAt. Best-effort.
-func touchSecureCredential(db Database, name string) {
-	db = resolveSecureAPIDB(db)
-	if db == nil {
+// touch bumps LastUsedAt for the named credential. Best-effort.
+func (s *SecureAPI) touch(name string) {
+	if !s.ready() {
 		return
 	}
-	secureAPIMu.Lock()
-	defer secureAPIMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var c SecureCredential
-	if !db.Get(secureAPITable, name, &c) {
+	if !s.db.Get(secureAPITable, name, &c) {
 		return
 	}
 	c.LastUsedAt = time.Now()
-	db.Set(secureAPITable, name, c)
+	s.db.Set(secureAPITable, name, c)
 }
 
-// urlMatchesPattern reports whether u satisfies pattern. Pattern uses
-// a simple glob — `*` matches any non-slash run, `**` matches any run
-// including slashes. Designed for endpoint allowlisting, not arbitrary
-// regex (regex is too easy to get wrong).
-//
-//   https://api.github.com/*           matches https://api.github.com/repos
-//                                      does NOT match https://api.github.com/repos/x/y
-//   https://api.github.com/**          matches both above
-//   https://api.example.com/users/*    matches /users/me, NOT /users/me/repos
-func urlMatchesPattern(u, pattern string) bool {
-	return globMatch(u, pattern)
-}
-
-func globMatch(s, pattern string) bool {
-	// Walk both strings simultaneously. `*` matches up to next '/' or end.
-	// `**` (consecutive stars) matches arbitrary chars including '/'.
-	si, pi := 0, 0
-	for pi < len(pattern) {
-		c := pattern[pi]
-		if c == '*' {
-			doubleStar := pi+1 < len(pattern) && pattern[pi+1] == '*'
-			if doubleStar {
-				pi += 2
-				if pi == len(pattern) {
-					return true // ** at end matches everything remaining
-				}
-				// Try every possible match position.
-				for k := si; k <= len(s); k++ {
-					if globMatch(s[k:], pattern[pi:]) {
-						return true
-					}
-				}
-				return false
-			}
-			pi++
-			if pi == len(pattern) {
-				// Single * at end: match up to next '/' or end.
-				for ; si < len(s); si++ {
-					if s[si] == '/' {
-						return false
-					}
-				}
-				return true
-			}
-			// Try every position up to next '/'.
-			for k := si; k <= len(s); k++ {
-				if k > si && s[k-1] == '/' {
-					return false
-				}
-				if globMatch(s[k:], pattern[pi:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if si == len(s) || s[si] != c {
-			return false
-		}
-		si++
-		pi++
+// loadSecret returns the decrypted secret value for a credential.
+func (s *SecureAPI) loadSecret(name string) (string, bool) {
+	if !s.ready() {
+		return "", false
 	}
-	return si == len(s)
+	var secret string
+	ok := s.db.Get(secureAPITable, secureCredSecretKey(name), &secret)
+	return secret, ok
 }
 
-// BuildSecureAPITools converts every registered credential into an
-// AgentToolDef the LLM can call. Each tool's handler injects the
-// credential server-side and validates the requested URL against the
-// allowlist before calling out. Caps default to CapNetwork; if the
-// credential's RequiresConfirm flag is set, the tool is marked
-// NeedsConfirm so each call surfaces a user prompt.
-//
-// db is consulted at handler time, not at build time, so secret
-// rotations take effect immediately for in-flight sessions.
-func BuildSecureAPITools(db Database) []AgentToolDef {
-	db = resolveSecureAPIDB(db)
-	if db == nil {
+// ----------------------------------------------------------------------
+// Tool generation + dispatch
+// ----------------------------------------------------------------------
+
+// BuildTools converts every enabled registered credential into an
+// AgentToolDef. The handler closure captures the credential's metadata;
+// secrets are loaded fresh at call time so rotations take effect
+// immediately for in-flight sessions.
+func (s *SecureAPI) BuildTools() []AgentToolDef {
+	if !s.ready() {
 		return nil
 	}
-	allKeys := db.Keys(secureAPITable)
-	creds := ListSecureCredentials(db)
+	allKeys := s.db.Keys(secureAPITable)
+	creds := s.List()
 	out := make([]AgentToolDef, 0, len(creds))
 	disabledCount := 0
 	for _, c := range creds {
@@ -370,10 +324,10 @@ func BuildSecureAPITools(db Database) []AgentToolDef {
 			disabledCount++
 			continue
 		}
-		out = append(out, agentToolFromCredential(db, c))
+		out = append(out, s.agentToolFromCredential(c))
 	}
 	if len(allKeys) > 0 && len(out) == 0 {
-		Debug("[secure_api] BuildSecureAPITools: %d keys in table, %d credentials decoded, %d disabled, 0 enabled — check key names, struct decode, or Disabled flag", len(allKeys), len(creds), disabledCount)
+		Debug("[secure_api] BuildTools: %d keys in table, %d credentials decoded, %d disabled, 0 enabled — check key names, struct decode, or Disabled flag", len(allKeys), len(creds), disabledCount)
 		for _, k := range allKeys {
 			Debug("[secure_api]   key: %q", k)
 		}
@@ -384,7 +338,7 @@ func BuildSecureAPITools(db Database) []AgentToolDef {
 	return out
 }
 
-func agentToolFromCredential(db Database, c SecureCredential) AgentToolDef {
+func (s *SecureAPI) agentToolFromCredential(c SecureCredential) AgentToolDef {
 	toolName := "call_" + c.Name
 	desc := fmt.Sprintf(
 		"Call the %s API. The auth credential is injected server-side; you do not see it. Allowed URLs: %s. %s",
@@ -418,41 +372,41 @@ func agentToolFromCredential(db Database, c SecureCredential) AgentToolDef {
 		},
 		NeedsConfirm: c.RequiresConfirm,
 		Handler: func(args map[string]any) (string, error) {
-			return dispatchSecureAPICall(db, c, args)
+			return s.dispatch(c, args)
 		},
 	}
 }
 
-// DispatchSecureAPIToolCall is the public entry point used by api-mode
-// temp tools. Loads the named credential and dispatches a single
-// pre-resolved request through the same allowlist + auth-injection
-// path the per-credential generic tool uses. Returns the response body
-// (capped, formatted) suitable for inclusion in a tool result.
-func DispatchSecureAPIToolCall(db Database, credName, url, method, body string) (string, error) {
-	db = resolveSecureAPIDB(db)
+// DispatchToolCall is the entry point used by api-mode temp tools
+// (create_api_tool). Loads the named credential and dispatches a
+// pre-resolved request through the same path as the auto-generated
+// per-credential tool.
+func (s *SecureAPI) DispatchToolCall(credName, urlStr, method, body string) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
-	c, ok := LoadSecureCredential(db, credName)
+	c, ok := s.Load(credName)
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
 	args := map[string]any{
-		"url":    url,
+		"url":    urlStr,
 		"method": method,
 	}
 	if body != "" {
 		args["body"] = body
 	}
-	return dispatchSecureAPICall(db, c, args)
+	return s.dispatch(c, args)
 }
 
-// dispatchSecureAPICall is the handler logic for one credential's tool.
-// Validates the URL, reads the encrypted secret, builds the request
-// with auth attached, executes, returns the response body capped at
+// dispatch is the handler logic for one credential's tool. Validates
+// the URL, reads the encrypted secret, builds the request with auth
+// attached, executes, returns the response body capped at
 // secureAPIMaxResponseBytes.
-func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any) (string, error) {
-	db = resolveSecureAPIDB(db)
+func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any) (string, error) {
+	if !s.ready() {
+		return "", fmt.Errorf("secure-api store not initialized")
+	}
 	rawURL := strings.TrimSpace(StringArg(args, "url"))
 	if rawURL == "" {
 		return "", fmt.Errorf("url is required")
@@ -473,25 +427,18 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 	if err != nil {
 		return "", fmt.Errorf("invalid url: %w", err)
 	}
-	// Extra defense: only allow https unless the pattern explicitly
-	// permits http. (urlMatchesPattern would already have caught a
-	// scheme mismatch, but make it loud here.)
 	if parsed.Scheme != "https" && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
 		return "", fmt.Errorf("non-https URL not allowed for credential %q", c.Name)
 	}
 
-	// Load the encrypted secret. Held in a local string for the
-	// minimum time needed; the *http.Request takes a copy of the
-	// header value, so we can let the local go out of scope after.
-	var secret string
-	if !db.Get(secureAPITable, secureCredSecretKey(c.Name), &secret) {
+	secret, ok := s.loadSecret(c.Name)
+	if !ok {
 		return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
 	}
 	if secret == "" {
 		return "", fmt.Errorf("credential %q has empty secret", c.Name)
 	}
 
-	// Build request with auth attached.
 	ctx, cancel := context.WithTimeout(context.Background(), secureAPIRequestTimeout)
 	defer cancel()
 
@@ -508,14 +455,12 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 	// be overridden.
 	if hdrs, ok := args["request_headers"].(map[string]any); ok {
 		for k, v := range hdrs {
-			if s, ok := v.(string); ok {
-				// Block obvious overrides of auth-related fields. Not
-				// exhaustive but raises the bar for clever LLM tricks.
+			if str, ok := v.(string); ok {
 				lower := strings.ToLower(k)
 				if lower == "authorization" || lower == "proxy-authorization" {
 					continue
 				}
-				req.Header.Set(k, s)
+				req.Header.Set(k, str)
 			}
 		}
 	}
@@ -533,7 +478,6 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 		q.Set(c.ParamName, secret)
 		req.URL.RawQuery = q.Encode()
 	case SecureCredBasicAuth:
-		// secret format: "username:password"
 		idx := strings.Index(secret, ":")
 		if idx < 0 {
 			return "", fmt.Errorf("basic_auth secret must be 'username:password'")
@@ -547,21 +491,17 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 	// Build the redaction set BEFORE the request fires. Any string in
 	// this slice will be replaced with [REDACTED] in any text we
 	// return to the LLM (response body OR error message). Covers the
-	// raw secret plus, for basic_auth, the base64-encoded form (which
-	// is what would actually appear if a server echoed the
-	// Authorization header back).
+	// raw secret plus, for basic_auth, the base64-encoded form.
 	redactList := []string{secret}
 	if c.Type == SecureCredBasicAuth {
 		redactList = append(redactList, base64.StdEncoding.EncodeToString([]byte(secret)))
-		// Also redact "user:password" if it ever appeared on the wire.
-		// Same string we already added; duplicates are harmless.
 	}
 	redact := func(s string) string {
-		for _, secret := range redactList {
-			if secret == "" || len(secret) < 4 {
-				continue // refuse to redact trivially-short values that would shred response bodies
+		for _, sec := range redactList {
+			if sec == "" || len(sec) < 4 {
+				continue
 			}
-			s = strings.ReplaceAll(s, secret, "[REDACTED]")
+			s = strings.ReplaceAll(s, sec, "[REDACTED]")
 		}
 		return s
 	}
@@ -576,18 +516,17 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 	}
 	if err != nil {
 		auditEntry.Error = redact(err.Error())
-		recordSecureAPIAudit(db, auditEntry)
+		s.recordAudit(auditEntry)
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
 	defer resp.Body.Close()
 
-	// Read up to cap+1 to detect overflow without buffering the rest.
 	limited := io.LimitReader(resp.Body, secureAPIMaxResponseBytes+1)
 	bodyBytes, err := io.ReadAll(limited)
 	if err != nil {
 		auditEntry.Status = resp.StatusCode
 		auditEntry.Error = redact("body read: " + err.Error())
-		recordSecureAPIAudit(db, auditEntry)
+		s.recordAudit(auditEntry)
 		return "", fmt.Errorf("read response: %s", redact(err.Error()))
 	}
 	truncated := false
@@ -595,13 +534,6 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 		bodyBytes = bodyBytes[:secureAPIMaxResponseBytes]
 		truncated = true
 	}
-	// Apply redaction to the body BEFORE the LLM sees it. If the
-	// upstream server echoed the auth header back (httpbin.org/headers
-	// style, debug endpoints, or accidental verbose error responses),
-	// the secret value would otherwise land in the LLM's context — and
-	// from there potentially anywhere the LLM writes (chat, files, other
-	// API calls). Doing this AFTER the size cap so we redact the post-
-	// truncation slice — small CPU saving, same effect.
 	if redacted := redact(string(bodyBytes)); redacted != string(bodyBytes) {
 		bodyBytes = []byte(redacted)
 		Debug("[secure_api] redacted secret from response body for credential %q", c.Name)
@@ -609,20 +541,16 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 
 	auditEntry.Status = resp.StatusCode
 	auditEntry.ResponseBytes = len(bodyBytes)
-	recordSecureAPIAudit(db, auditEntry)
-	touchSecureCredential(db, c.Name)
+	s.recordAudit(auditEntry)
+	s.touch(c.Name)
 
-	// Format response for the LLM. Keep it terse — status + body.
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "HTTP %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
-	// Prefer pretty JSON when the response is JSON, since the LLM
-	// is much better at parsing structured data than unformatted
-	// blobs. Best-effort — fall through to raw on parse failure.
 	ct := resp.Header.Get("Content-Type")
 	if strings.Contains(ct, "json") {
-		var any interface{}
-		if json.Unmarshal(bodyBytes, &any) == nil {
-			if pretty, err := json.MarshalIndent(any, "", "  "); err == nil {
+		var anyVal interface{}
+		if json.Unmarshal(bodyBytes, &anyVal) == nil {
+			if pretty, err := json.MarshalIndent(anyVal, "", "  "); err == nil {
 				sb.Write(pretty)
 				if truncated {
 					sb.WriteString("\n... [TRUNCATED — response exceeded 1MB cap]")
@@ -636,6 +564,69 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 		sb.WriteString("\n... [TRUNCATED — response exceeded 1MB cap]")
 	}
 	return sb.String(), nil
+}
+
+// ----------------------------------------------------------------------
+// URL allowlist matching
+// ----------------------------------------------------------------------
+
+// urlMatchesPattern reports whether u satisfies pattern. Pattern uses
+// a simple glob — `*` matches any non-slash run, `**` matches any run
+// including slashes. Designed for endpoint allowlisting, not arbitrary
+// regex (regex is too easy to get wrong).
+//
+//   https://api.github.com/*           matches https://api.github.com/repos
+//                                      does NOT match https://api.github.com/repos/x/y
+//   https://api.github.com/**          matches both above
+//   https://api.example.com/users/*    matches /users/me, NOT /users/me/repos
+func urlMatchesPattern(u, pattern string) bool {
+	return globMatch(u, pattern)
+}
+
+func globMatch(s, pattern string) bool {
+	si, pi := 0, 0
+	for pi < len(pattern) {
+		c := pattern[pi]
+		if c == '*' {
+			doubleStar := pi+1 < len(pattern) && pattern[pi+1] == '*'
+			if doubleStar {
+				pi += 2
+				if pi == len(pattern) {
+					return true
+				}
+				for k := si; k <= len(s); k++ {
+					if globMatch(s[k:], pattern[pi:]) {
+						return true
+					}
+				}
+				return false
+			}
+			pi++
+			if pi == len(pattern) {
+				for ; si < len(s); si++ {
+					if s[si] == '/' {
+						return false
+					}
+				}
+				return true
+			}
+			for k := si; k <= len(s); k++ {
+				if k > si && s[k-1] == '/' {
+					return false
+				}
+				if globMatch(s[k:], pattern[pi:]) {
+					return true
+				}
+			}
+			return false
+		}
+		if si == len(s) || s[si] != c {
+			return false
+		}
+		si++
+		pi++
+	}
+	return si == len(s)
 }
 
 // validToolNameStr matches the temptool name validator. Inlined here

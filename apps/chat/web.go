@@ -513,21 +513,13 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		if dyn := tempToolDefs(sess); len(dyn) > 0 {
 			active = append(active, dyn...)
 		}
-		// Secure-API tools: one per registered credential. Loaded fresh
+		// Secure-API tools: one per registered credential, loaded fresh
 		// each round so newly-added credentials become visible without
-		// session restart, and removed ones disappear immediately.
-		api := BuildSecureAPITools(sess.DB)
-		if len(api) > 0 {
-			var names []string
-			for _, td := range api {
-				names = append(names, td.Tool.Name)
-			}
-			Debug("[chat] secure-api tools loaded: %v", names)
+		// session restart and removed ones disappear immediately.
+		// Secure() is a singleton bound to the root global DB — chat's
+		// bucketed DB view doesn't apply here (credentials are global).
+		if api := Secure().BuildTools(); len(api) > 0 {
 			active = append(active, api...)
-		} else if sess.DB == nil {
-			Debug("[chat] secure-api: sess.DB is nil — credentials cannot be loaded")
-		} else {
-			Debug("[chat] secure-api: no enabled credentials registered")
 		}
 		active = FilterToolsByCaps(active, allowedCaps)
 		defs := make([]Tool, 0, len(active))
