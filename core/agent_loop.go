@@ -474,8 +474,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// shouldn't drop it. The history entry keeps both so subsequent
 		// rounds (and the rescue path on MaxRounds exit) see what the
 		// model said.
+		//
+		// Qwen3 in particular sometimes emits the XML-style tool-call
+		// markup in resp.Reasoning rather than resp.Content (the
+		// "thinking" channel) when it's mid-reasoning about which tool
+		// to invoke. Try Content first, then fall back to Reasoning so
+		// those calls don't slip through and render as visible text.
 		if len(resp.ToolCalls) == 0 {
-			if parsed := parseTextToolCall(resp.Content, handlers, toolDefs); parsed != nil {
+			parsed := parseTextToolCall(resp.Content, handlers, toolDefs)
+			if parsed == nil && resp.Reasoning != "" && strings.Contains(resp.Reasoning, "<function=") {
+				if reasoningCall := parseTextToolCall(resp.Reasoning, handlers, toolDefs); reasoningCall != nil {
+					Debug("[agent_loop] parsed tool call out of reasoning channel: %s", reasoningCall.Name)
+					parsed = reasoningCall
+				}
+			}
+			if parsed != nil {
 				Debug("[agent_loop] parsed text-based tool call: %s", parsed.Name)
 				resp.ToolCalls = []ToolCall{*parsed}
 				history[len(history)-1] = Message{

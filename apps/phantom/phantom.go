@@ -423,6 +423,8 @@ const emojiRule = "Use at most one emoji per message, only when it genuinely fit
 
 const caseRule = "Always use proper capitalization: start sentences with a capital letter and capitalize proper nouns. This rule overrides any instruction to mirror the group's casing — match their tone and slang, but not their lowercase style."
 
+const statusRule = "When a task will take more than a few seconds (download_video, delegate, multi-step research, scheduled callbacks, phone calls), call send_status BEFORE starting so the user sees you're working — examples: 'One moment, looking that up.' / 'Placing the call, will follow up when it ends.' Send another status when you switch phases. This is the right way to surface progress; do NOT narrate via your final reply text."
+
 // phantomWorkspaceID returns a stable, filesystem-safe identifier for
 // the workspace shared across all phantom conversations on this host.
 // Phantom acts as one persona (the device owner), so all convs share
@@ -544,7 +546,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}
