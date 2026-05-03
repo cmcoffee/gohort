@@ -1103,6 +1103,7 @@ type ToolSession struct {
 	PendingViewImages [][]byte // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
 	Silenced          bool     // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	LLM               LLM      // optional LLM made available to tools that need sub-calls
+	LeadLLM           LLM      // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
 	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
 	// an in-progress status message to the user mid-turn ("Working on it…").

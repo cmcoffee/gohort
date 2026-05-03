@@ -789,7 +789,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"), personaName, senderDesc, basePrompt, memoryBlock(T.DB, p.ChatID), p.Prompt,
 	)
 
-	sess := &ToolSession{LLM: T.LLM}
+	sess := &ToolSession{LLM: T.LLM, LeadLLM: T.LeadLLM}
 	// send_status: enqueue an immediate outbox item so the user gets a
 	// progress iMessage before the scheduled reply. FIFO ordering in the
 	// outbox preserves arrival order.

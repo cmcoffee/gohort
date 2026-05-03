@@ -329,7 +329,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// paths against `<data>/workspaces/<username>/`. Failure to provision
 	// the dir is logged but not fatal — the sandboxed tools just return
 	// "no session WorkspaceDir" errors and other tools keep working.
-	sess := &ToolSession{LLM: agent.LLM}
+	sess := &ToolSession{LLM: agent.LLM, LeadLLM: agent.LeadLLM}
 	if ws, err := EnsureWorkspaceDir(sessionUsername(r)); err == nil {
 		sess.WorkspaceDir = ws
 	} else {

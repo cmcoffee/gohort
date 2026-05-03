@@ -1300,7 +1300,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		personaName, senderDesc, systemPrompt, membersNote, memoryBlock(T.DB, chatID),
 	)
 
-	sess := &ToolSession{LLM: T.LLM}
+	sess := &ToolSession{LLM: T.LLM, LeadLLM: T.LeadLLM}
 	// send_status: enqueue an immediate outbox item so the user receives
 	// the status as its own iMessage before the eventual reply. The
 	// outbox is FIFO so order is preserved. We also persist it as an

@@ -16,6 +16,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/imagefetch"
 	_ "github.com/cmcoffee/gohort/tools/localexec"
 	_ "github.com/cmcoffee/gohort/tools/localtime"
+	_ "github.com/cmcoffee/gohort/tools/orchestrator"
 	_ "github.com/cmcoffee/gohort/tools/silent"
 	_ "github.com/cmcoffee/gohort/tools/status"
 	_ "github.com/cmcoffee/gohort/tools/videodl"
