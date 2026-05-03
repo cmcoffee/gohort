@@ -470,6 +470,28 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 		return "", fmt.Errorf("unknown credential type %q", c.Type)
 	}
 
+	// Build the redaction set BEFORE the request fires. Any string in
+	// this slice will be replaced with [REDACTED] in any text we
+	// return to the LLM (response body OR error message). Covers the
+	// raw secret plus, for basic_auth, the base64-encoded form (which
+	// is what would actually appear if a server echoed the
+	// Authorization header back).
+	redactList := []string{secret}
+	if c.Type == SecureCredBasicAuth {
+		redactList = append(redactList, base64.StdEncoding.EncodeToString([]byte(secret)))
+		// Also redact "user:password" if it ever appeared on the wire.
+		// Same string we already added; duplicates are harmless.
+	}
+	redact := func(s string) string {
+		for _, secret := range redactList {
+			if secret == "" || len(secret) < 4 {
+				continue // refuse to redact trivially-short values that would shred response bodies
+			}
+			s = strings.ReplaceAll(s, secret, "[REDACTED]")
+		}
+		return s
+	}
+
 	httpClient := &http.Client{Timeout: secureAPIRequestTimeout}
 	resp, err := httpClient.Do(req)
 	auditEntry := SecureAPIAuditEntry{
@@ -479,9 +501,9 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 		Timestamp:      time.Now(),
 	}
 	if err != nil {
-		auditEntry.Error = err.Error()
+		auditEntry.Error = redact(err.Error())
 		recordSecureAPIAudit(db, auditEntry)
-		return "", fmt.Errorf("request failed: %w", err)
+		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
 	defer resp.Body.Close()
 
@@ -490,14 +512,25 @@ func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any)
 	bodyBytes, err := io.ReadAll(limited)
 	if err != nil {
 		auditEntry.Status = resp.StatusCode
-		auditEntry.Error = "body read: " + err.Error()
+		auditEntry.Error = redact("body read: " + err.Error())
 		recordSecureAPIAudit(db, auditEntry)
-		return "", fmt.Errorf("read response: %w", err)
+		return "", fmt.Errorf("read response: %s", redact(err.Error()))
 	}
 	truncated := false
 	if len(bodyBytes) > secureAPIMaxResponseBytes {
 		bodyBytes = bodyBytes[:secureAPIMaxResponseBytes]
 		truncated = true
+	}
+	// Apply redaction to the body BEFORE the LLM sees it. If the
+	// upstream server echoed the auth header back (httpbin.org/headers
+	// style, debug endpoints, or accidental verbose error responses),
+	// the secret value would otherwise land in the LLM's context — and
+	// from there potentially anywhere the LLM writes (chat, files, other
+	// API calls). Doing this AFTER the size cap so we redact the post-
+	// truncation slice — small CPU saving, same effect.
+	if redacted := redact(string(bodyBytes)); redacted != string(bodyBytes) {
+		bodyBytes = []byte(redacted)
+		Debug("[secure_api] redacted secret from response body for credential %q", c.Name)
 	}
 
 	auditEntry.Status = resp.StatusCode

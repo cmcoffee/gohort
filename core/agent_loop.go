@@ -873,14 +873,29 @@ func ParsePromptToolCall(content string, handlers map[string]ToolHandlerFunc) (*
 	}
 
 	preamble := strings.TrimSpace(content[:start])
-	jsonStr := strings.TrimSpace(content[start+len("<tool_call>") : end])
+	body := strings.TrimSpace(content[start+len("<tool_call>") : end])
+
+	// Try the JSON form we instruct first: {"name": "...", "arguments": {...}}.
+	// Fall back to the XML-style form Llama-3/Qwen/Hermes models often
+	// emit even when prompted otherwise: <function=name><parameter=foo>value</parameter></function>.
+	// Different surface forms, same intent — accept both rather than
+	// drop the call and burn a round.
+	var name string
+	args := make(map[string]any)
 
 	var raw map[string]interface{}
-	if json.Unmarshal([]byte(jsonStr), &raw) != nil {
-		return nil, content
+	if json.Unmarshal([]byte(body), &raw) == nil {
+		name, _ = raw["name"].(string)
+		if a, ok := raw["arguments"].(map[string]interface{}); ok {
+			for k, v := range a {
+				args[k] = v
+			}
+		}
+	} else {
+		// Fallback: parse <function=NAME>...<parameter=KEY>VALUE</parameter>...</function>.
+		name, args = parseFunctionTagToolCall(body)
 	}
 
-	name, _ := raw["name"].(string)
 	if name == "" {
 		return nil, content
 	}
@@ -888,16 +903,71 @@ func ParsePromptToolCall(content string, handlers map[string]ToolHandlerFunc) (*
 		return nil, content
 	}
 
-	args := make(map[string]any)
-	if a, ok := raw["arguments"].(map[string]interface{}); ok {
-		for k, v := range a {
-			args[k] = v
-		}
-	}
-
 	return &ToolCall{
 		ID:   fmt.Sprintf("prompt_%s", UUIDv4()),
 		Name: name,
 		Args: args,
 	}, preamble
+}
+
+// parseFunctionTagToolCall handles the XML-style tool-call body that
+// Llama-3 / Qwen / Hermes-style instruction tunes often emit instead
+// of the JSON form we instruct. Format:
+//
+//	<function=tool_name>
+//	<parameter=arg1>
+//	value1
+//	</parameter>
+//	<parameter=arg2>
+//	value2
+//	</parameter>
+//	</function>
+//
+// Returns the function name and parsed args map. Empty name means
+// the body wasn't recognizable in this format either; caller treats
+// as "drop the call" the same as a JSON parse failure.
+func parseFunctionTagToolCall(body string) (string, map[string]any) {
+	args := map[string]any{}
+	// Find <function=...> or <function=...
+	const fnPrefix = "<function="
+	si := strings.Index(body, fnPrefix)
+	if si < 0 {
+		return "", nil
+	}
+	rest := body[si+len(fnPrefix):]
+	// Function name runs until '>'.
+	gt := strings.IndexByte(rest, '>')
+	if gt < 0 {
+		return "", nil
+	}
+	name := strings.TrimSpace(rest[:gt])
+	rest = rest[gt+1:]
+
+	// Walk through every <parameter=KEY>VALUE</parameter> chunk.
+	const pPrefix = "<parameter="
+	const pClose = "</parameter>"
+	for {
+		pi := strings.Index(rest, pPrefix)
+		if pi < 0 {
+			break
+		}
+		rest = rest[pi+len(pPrefix):]
+		gt := strings.IndexByte(rest, '>')
+		if gt < 0 {
+			break
+		}
+		paramName := strings.TrimSpace(rest[:gt])
+		rest = rest[gt+1:]
+		closeIdx := strings.Index(rest, pClose)
+		if closeIdx < 0 {
+			break
+		}
+		// Strip leading/trailing whitespace + newlines around the value
+		// so a multi-line shell command doesn't keep its surrounding
+		// blank lines.
+		val := strings.TrimSpace(rest[:closeIdx])
+		args[paramName] = val
+		rest = rest[closeIdx+len(pClose):]
+	}
+	return name, args
 }

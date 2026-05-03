@@ -129,6 +129,15 @@ func bwrapArgv(workspaceDir, shellCmd string) []string {
 		"--ro-bind-try", "/etc/ssl", "/etc/ssl",
 		"--ro-bind-try", "/etc/ca-certificates", "/etc/ca-certificates",
 		"--ro-bind-try", "/etc/pki", "/etc/pki",
+		// /etc/alternatives is RHEL/Rocky/Fedora's symlink-routing dir
+		// that binaries like python3, java, vim, podman, editor route
+		// through. Without this bind, a `python3` symlink at
+		// /usr/bin/python3 points at /etc/alternatives/python3 which
+		// dangles inside the namespace, and the sandbox sees "command
+		// not found" for everything that uses the alternatives system.
+		// On Debian/Ubuntu this is /etc/alternatives too — same fix
+		// works across distros.
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
 		// Synthesized filesystems.
 		"--proc", "/proc",
 		"--dev", "/dev",
