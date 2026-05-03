@@ -1718,9 +1718,9 @@ const adminBody = `
     </div>
     <div style="margin-top:0.5rem">
       <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Secret value</label>
-      <input type="password" id="cred-secret" placeholder="paste token / key / user:pass"
+      <input type="password" id="cred-secret" placeholder="paste token / key / user:pass — leave blank to keep existing"
         style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Stored encrypted. The UI never re-displays this value.</span>
+      <span class="setting-desc">Stored encrypted. The UI never re-displays this value. Leave blank when updating an existing credential to preserve the stored secret — only required on first save.</span>
     </div>
     <div style="margin-top:0.5rem">
       <label class="toggle-label" style="font-size:0.85rem">
@@ -2829,8 +2829,8 @@ function saveCredential() {
     requires_confirm: document.getElementById('cred-confirm').checked,
     secret: document.getElementById('cred-secret').value
   };
-  if (!payload.name || !payload.allowed_url_pattern || !payload.secret) {
-    alert('Name, allowed_url_pattern, and secret are all required.');
+  if (!payload.name || !payload.allowed_url_pattern) {
+    alert('Name and allowed_url_pattern are required.');
     return;
   }
   fetch('api/secure-api', {
@@ -2893,6 +2893,11 @@ function renderCredentialCard(c) {
   head.appendChild(titleWrap);
   var btns = document.createElement('div');
   btns.style.cssText = 'display:flex;gap:0.4rem';
+  var editBtn = document.createElement('button');
+  editBtn.textContent = 'Edit';
+  editBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
+  editBtn.onclick = function(){ editCredential(c); };
+  btns.appendChild(editBtn);
   var toggleBtn = document.createElement('button');
   toggleBtn.textContent = c.disabled ? 'Enable' : 'Disable';
   toggleBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + (c.disabled ? '#2ea043' : '#d29922') + ';border-radius:5px;color:' + (c.disabled ? '#56d364' : '#d29922') + ';font-size:0.8rem;cursor:pointer';
@@ -2934,6 +2939,27 @@ function deleteCredential(name) {
       if (!r.ok) return r.text().then(function(t){ alert('delete failed: ' + t); });
       loadSecureAPICredentials();
     });
+}
+
+function editCredential(c) {
+  // Repopulate the "Add credential" form with the existing record so
+  // the operator can tweak the URL pattern, description, type, or
+  // confirm-on-call flag without re-entering everything. Secret is
+  // intentionally blank — the backend preserves the existing secret
+  // when this field is empty on update; paste a new value here only
+  // when rotating the key.
+  document.getElementById('cred-name').value = c.name || '';
+  document.getElementById('cred-type').value = c.type || 'bearer';
+  document.getElementById('cred-pattern').value = c.allowed_url_pattern || '';
+  document.getElementById('cred-param').value = c.param_name || '';
+  document.getElementById('cred-desc').value = c.description || '';
+  document.getElementById('cred-confirm').checked = !!c.requires_confirm;
+  document.getElementById('cred-secret').value = '';
+  onCredTypeChange();
+  // Scroll the form into view so the operator sees what they're editing.
+  var anchor = document.getElementById('cred-name');
+  if (anchor && anchor.scrollIntoView) anchor.scrollIntoView({behavior: 'smooth', block: 'center'});
+  anchor.focus();
 }
 
 function toggleCredential(name, currentlyDisabled) {

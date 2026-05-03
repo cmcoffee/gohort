@@ -169,18 +169,32 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	if !strings.HasPrefix(c.AllowedURLPattern, "https://") && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
 		return fmt.Errorf("allowed_url_pattern must start with http:// or https://")
 	}
-	if strings.TrimSpace(secret) == "" {
-		return fmt.Errorf("secret value is required")
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Preserve CreatedAt + LastUsedAt across updates.
 	var existing SecureCredential
-	if s.db.Get(secureAPITable, c.Name, &existing) {
+	exists := s.db.Get(secureAPITable, c.Name, &existing)
+	if exists {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
 	} else {
 		c.CreatedAt = time.Now()
+	}
+	// Secret is required on first save, optional on update — empty
+	// secret on update means "leave the existing encrypted value in
+	// place." Lets the operator change the URL pattern, description,
+	// or other metadata without re-pasting the key on every edit.
+	if strings.TrimSpace(secret) == "" {
+		if !exists {
+			return fmt.Errorf("secret value is required for new credentials")
+		}
+		var existingSecret string
+		if !s.db.Get(secureAPITable, secureCredSecretKey(c.Name), &existingSecret) || existingSecret == "" {
+			return fmt.Errorf("secret value is required (no existing secret to preserve)")
+		}
+		// Keep existing secret; just upsert the metadata record.
+		s.db.Set(secureAPITable, c.Name, c)
+		return nil
 	}
 	s.db.Set(secureAPITable, c.Name, c)
 	s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), secret)
