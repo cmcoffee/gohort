@@ -981,7 +981,13 @@ answer is YES if the message matches the rule, NO if it does not. reason is a si
 		userMsg = fmt.Sprintf("Rule:\n%s\n\nNew message to evaluate:\nFrom: %s\nText: %s", prompt, senderLabel, msgDesc)
 	}
 
-	Log("[phantom] gatekeeper eval — from=%s msg=%q", senderLabel, truncateStr(msgDesc, 120))
+	// Run cleanMessageText on the log preview only — the gatekeeper LLM
+	// still sees the raw msgDesc (with whatever typedstream prefix bytes
+	// the bridge surfaced) so nothing about its evaluation changes;
+	// just tidies the log output so a reader scanning gohort.log
+	// isn't visually drowned by `streamtyped NSAttributedString iI ...`
+	// noise alongside the real text.
+	Log("[phantom] gatekeeper eval — from=%s msg=%q", senderLabel, truncateStr(cleanMessageText(msgDesc), 120))
 
 	resp, err := T.LLM.Chat(context.Background(),
 		[]Message{{Role: "user", Content: userMsg}},
