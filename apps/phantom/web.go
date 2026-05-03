@@ -1142,8 +1142,14 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 			for _, td := range secureAPI {
 				secureAPIByName[td.Tool.Name] = td
 			}
+			var availNames []string
+			for n := range secureAPIByName {
+				availNames = append(availNames, n)
+			}
+			Debug("[phantom] secure-api: master ON, %d available (%v), enabled tools in conv: %v", len(secureAPIByName), availNames, toolNames)
 		} else {
 			secureAPIByName = map[string]AgentToolDef{}
+			Debug("[phantom] secure-api: master switch OFF in PhantomConfig.SecureAPIEnabled — no credentials reachable")
 		}
 
 		var registryNames []string
