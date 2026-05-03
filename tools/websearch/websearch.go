@@ -3,12 +3,14 @@ package websearch
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -200,18 +202,37 @@ type FetchURLTool struct{}
 func (t *FetchURLTool) Name() string { return "fetch_url" }
 func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP GET against live web
 func (t *FetchURLTool) Desc() string {
-	return "Fetch the readable text content of a specific URL from the live web. Use after web_search returns a URL whose content you want to read in full, or when the user pastes a URL and asks you to read or summarize it. Returns up to 8000 characters of extracted text. Strips HTML, scripts, ads. If the result looks empty or is just a loading skeleton (JS-rendered site), retry with browse_page instead."
+	return "Fetch a URL from the live web. Two modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs without auth, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode."
 }
 
 func (t *FetchURLTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"url": {Type: "string", Description: "The URL to fetch. Must be http:// or https://."},
+		"save_to": {
+			Type:        "string",
+			Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"report.pdf\", \"image.jpg\"). When set, response is streamed straight to disk and the tool result is a short metadata line instead of the body — use for binary content the LLM can't usefully read as text.",
+		},
 	}
 }
 
 func (t *FetchURLTool) IsInternetTool() bool { return true }
 
+// fetchURLMaxSaveBytes caps save_to writes. Mirrors the secure-API
+// save cap so the two paths behave the same: 100MB covers PDFs, audio,
+// short videos. Larger content has to be retrieved by another mechanism.
+const fetchURLMaxSaveBytes = 100 * 1024 * 1024
+
 func (t *FetchURLTool) Run(args map[string]any) (string, error) {
+	return t.runImpl(args, nil)
+}
+
+// RunWithSession is the session-aware entry point. Required when
+// save_to is used — sess.WorkspaceDir is the only writable destination.
+func (t *FetchURLTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return t.runImpl(args, sess)
+}
+
+func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, error) {
 	target := StringArg(args, "url")
 	if target == "" {
 		return "", fmt.Errorf("'url' is required")
@@ -232,6 +253,28 @@ func (t *FetchURLTool) Run(args map[string]any) (string, error) {
 			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
 		}
 	}
+
+	// save_to path — streams raw bytes to workspace. Caller must have
+	// a session with WorkspaceDir set.
+	if saveTo := strings.TrimSpace(StringArg(args, "save_to")); saveTo != "" {
+		if sess == nil || sess.WorkspaceDir == "" {
+			return "", fmt.Errorf("save_to requires a session with WorkspaceDir set")
+		}
+		savePath, err := ResolveWorkspacePath(sess.WorkspaceDir, saveTo)
+		if err != nil {
+			return "", fmt.Errorf("save_to: %w", err)
+		}
+		return fetchURLToFile(target, savePath, saveTo)
+	}
+
+	// Text-extraction path — make a HEAD-equivalent first via a GET that
+	// only inspects Content-Type so we can fail fast on binary content
+	// before pulling the whole body. Cheaper UX: the LLM gets a clear
+	// "use save_to instead" error rather than 8000 chars of mangled bytes.
+	if mime, err := peekContentType(target); err == nil && isBinaryMime(mime) {
+		return "", fmt.Errorf("response Content-Type is %q (binary). fetch_url's text-extraction path can't handle binary content. Retry with save_to=<workspace-relative path>, then attach_file the saved path to deliver to the user", mime)
+	}
+
 	text, err := FetchArticle(target, 8000)
 	if err != nil {
 		return "", fmt.Errorf("fetch failed: %w", err)
@@ -242,6 +285,89 @@ func (t *FetchURLTool) Run(args map[string]any) (string, error) {
 	}
 	Debug("[fetch_url] %s → %d chars", target, len(text))
 	return fmt.Sprintf("Fetched %s (%d chars):\n\n%s", target, len(text), text), nil
+}
+
+// fetchURLToFile streams target to absPath, capped at fetchURLMaxSaveBytes.
+// Returns the tool-result message describing what was saved.
+func fetchURLToFile(target, absPath, displayPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", "gohort/fetch_url")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("fetch returned HTTP %d", resp.StatusCode)
+	}
+	f, err := os.Create(absPath)
+	if err != nil {
+		return "", fmt.Errorf("create file: %w", err)
+	}
+	defer f.Close()
+	limited := io.LimitReader(resp.Body, fetchURLMaxSaveBytes+1)
+	written, err := io.Copy(f, limited)
+	if err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	if written > fetchURLMaxSaveBytes {
+		return "", fmt.Errorf("response exceeded %d byte cap (got %d, partial write left at %s)", fetchURLMaxSaveBytes, written, displayPath)
+	}
+	mime := resp.Header.Get("Content-Type")
+	Debug("[fetch_url] %s → %d bytes → %s (%s)", target, written, displayPath, mime)
+	return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
+		resp.StatusCode, http.StatusText(resp.StatusCode), written, displayPath, mime, displayPath), nil
+}
+
+// peekContentType issues a tiny GET (range-limited if the server
+// supports it) just to read the Content-Type header. Falls back to
+// silent success on error — the caller treats unknown as "try text".
+func peekContentType(target string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "gohort/fetch_url")
+	req.Header.Set("Range", "bytes=0-0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	// Drain a single byte so the connection can be reused.
+	_, _ = io.CopyN(io.Discard, resp.Body, 1)
+	return resp.Header.Get("Content-Type"), nil
+}
+
+// isBinaryMime returns true for Content-Types that fetch_url's text
+// extraction path will mangle. Conservative — anything not text-like
+// counts as binary.
+func isBinaryMime(mime string) bool {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if mime == "" {
+		return false
+	}
+	// Strip parameters: "text/html; charset=utf-8" → "text/html"
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	switch {
+	case strings.HasPrefix(mime, "text/"):
+		return false
+	case mime == "application/json", mime == "application/xml",
+		mime == "application/xhtml+xml", mime == "application/javascript",
+		mime == "application/ld+json", mime == "application/rss+xml",
+		mime == "application/atom+xml":
+		return false
+	}
+	return true
 }
 
 // SearchWithProvider runs a search query using a specific provider.
