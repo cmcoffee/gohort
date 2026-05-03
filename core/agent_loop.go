@@ -118,6 +118,15 @@ type AgentLoopConfig struct {
 	// worker sub-loops — workers that don't set this hook never see the notes.
 	OnRoundStart func() []Message
 
+	// DynamicTools, when set, is called at the top of each round to fetch
+	// runtime-defined tools to merge into the catalog. Used by apps that
+	// support session-scoped tools the LLM creates mid-conversation
+	// (e.g. via create_temp_tool). The returned tools go through the
+	// same AllowedCaps filter as static tools — runtime registration
+	// can't escape capability gating. Returning nil/empty is fine and
+	// just means "no extras this round."
+	DynamicTools func() []AgentToolDef
+
 	// AllowedCaps gates which tools the LLM is offered, by capability tier
 	// (CapRead, CapNetwork, CapWrite, CapExecute). Tools whose declared Caps
 	// aren't all in this set are filtered out before the LLM ever sees the
@@ -221,38 +230,59 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		confirmFn = defaultConfirm
 	}
 
-	// Apply capability filtering once before tool lookup tables are built —
-	// a filtered-out tool is removed from both the LLM catalog and the
-	// dispatch map, so even a hallucinated tool call by name can't reach
-	// the handler. AllowedCaps == nil means "no restriction" (legacy mode).
-	tools := cfg.Tools
+	// Capability allow-set, computed once. Static tools and dynamic ones
+	// (from cfg.DynamicTools) both pass through the same filter — runtime
+	// tool registration can't elevate beyond the session's tier.
+	var allowedSet map[Capability]bool
 	if len(cfg.AllowedCaps) > 0 {
-		allowedSet := make(map[Capability]bool, len(cfg.AllowedCaps))
+		allowedSet = make(map[Capability]bool, len(cfg.AllowedCaps))
 		for _, c := range cfg.AllowedCaps {
 			allowedSet[c] = true
 		}
-		filtered := make([]AgentToolDef, 0, len(tools))
-		for _, td := range tools {
+	}
+	filterCaps := func(in []AgentToolDef) []AgentToolDef {
+		if allowedSet == nil {
+			return in
+		}
+		out := make([]AgentToolDef, 0, len(in))
+		for _, td := range in {
 			if !capsAllowed(td.Tool.Caps, allowedSet) {
 				Debug("[agent_loop] tool '%s' filtered out by AllowedCaps (declares %v, allowed %v)", td.Tool.Name, td.Tool.Caps, cfg.AllowedCaps)
 				continue
 			}
-			filtered = append(filtered, td)
+			out = append(out, td)
 		}
-		tools = filtered
+		return out
 	}
 
-	// Build tool definitions and lookup maps.
+	// Static (per-session) tools — survive across rounds. Dynamic tools
+	// (cfg.DynamicTools) are pulled fresh per round and merged in below.
+	tools := filterCaps(cfg.Tools)
+
+	// Tool dispatch maps. When DynamicTools is set these get rebuilt at
+	// the top of each round so newly-defined temp tools become visible
+	// to the LLM on the next call. When unset, the static slice is used
+	// directly and these maps are computed once.
 	var toolDefs []Tool
 	handlers := make(map[string]ToolHandlerFunc)
 	needsConfirm := make(map[string]bool)
-	for _, td := range tools {
-		toolDefs = append(toolDefs, td.Tool)
-		handlers[td.Tool.Name] = td.Handler
-		if td.NeedsConfirm {
-			needsConfirm[td.Tool.Name] = true
+	rebuildToolMaps := func(active []AgentToolDef) {
+		toolDefs = toolDefs[:0]
+		for k := range handlers {
+			delete(handlers, k)
+		}
+		for k := range needsConfirm {
+			delete(needsConfirm, k)
+		}
+		for _, td := range active {
+			toolDefs = append(toolDefs, td.Tool)
+			handlers[td.Tool.Name] = td.Handler
+			if td.NeedsConfirm {
+				needsConfirm[td.Tool.Name] = true
+			}
 		}
 	}
+	rebuildToolMaps(tools)
 
 	history := make([]Message, len(messages))
 	copy(history, messages)
@@ -284,6 +314,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if cfg.OnRoundStart != nil {
 			if injected := cfg.OnRoundStart(); len(injected) > 0 {
 				history = append(history, injected...)
+			}
+		}
+		// Pull dynamic tools (e.g. temp tools defined by the LLM via
+		// create_temp_tool earlier this loop) and merge into the catalog
+		// for this round. Filtered through the same caps gate as static
+		// tools so the LLM can't elevate via runtime registration.
+		if cfg.DynamicTools != nil {
+			dyn := filterCaps(cfg.DynamicTools())
+			if len(dyn) > 0 {
+				active := make([]AgentToolDef, 0, len(tools)+len(dyn))
+				active = append(active, tools...)
+				active = append(active, dyn...)
+				rebuildToolMaps(active)
+			} else {
+				rebuildToolMaps(tools)
 			}
 		}
 		// Route think is the default; ChatOptions override it. Build route
@@ -423,14 +468,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 		// If no tool calls, check if the model emitted a tool call as
 		// text (common with models that don't support function calling).
+		// Preserve resp.Content alongside the synthesized tool call —
+		// the LLM produced text reasoning AND happened to mention a
+		// tool; that text may be the actual answer-in-progress and we
+		// shouldn't drop it. The history entry keeps both so subsequent
+		// rounds (and the rescue path on MaxRounds exit) see what the
+		// model said.
 		if len(resp.ToolCalls) == 0 {
-			if parsed := parseTextToolCall(resp.Content, handlers); parsed != nil {
+			if parsed := parseTextToolCall(resp.Content, handlers, toolDefs); parsed != nil {
 				Debug("[agent_loop] parsed text-based tool call: %s", parsed.Name)
 				resp.ToolCalls = []ToolCall{*parsed}
-				resp.Content = ""
-				// Rewrite the history entry we just appended.
 				history[len(history)-1] = Message{
 					Role:      "assistant",
+					Content:   resp.Content,
+					Reasoning: resp.Reasoning,
 					ToolCalls: resp.ToolCalls,
 				}
 			}
@@ -571,12 +622,28 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	}
 
 	// If the loop exhausted maxRounds and the last response has no content,
-	// scan backwards through history for the most recent assistant message
-	// that had content but no tool calls (a synthesis round). This handles
-	// models (e.g. Llama via Ollama) that occasionally return an empty final
-	// response after completing their tool-call sequence.
+	// scan backwards through the most recent few history entries for an
+	// assistant message that had content but no tool calls (a synthesis
+	// round). This handles models (e.g. Llama via Ollama) that occasionally
+	// return an empty final response after completing their tool-call
+	// sequence.
+	//
+	// CAP THE LOOKBACK. The rescue is meant to recover the model's
+	// IMMEDIATELY-PRIOR clean turn — e.g. it produced a synthesis on
+	// round N-1, then round N tool-called and returned empty. Walking
+	// arbitrarily far back can dredge up an answer to a much earlier
+	// user message and emit it as the reply to the current one, which
+	// reads to the user as the agent ignoring their last message and
+	// repeating itself. Limit to the last rescueLookback entries; if
+	// nothing useful is in that window, surface the empty response and
+	// let the caller decide (e.g. "I ran out of rounds, please retry").
+	const rescueLookback = 4
 	if lastResp != nil && strings.TrimSpace(lastResp.Content) == "" {
-		for i := len(history) - 1; i >= 0; i-- {
+		floor := len(history) - rescueLookback
+		if floor < 0 {
+			floor = 0
+		}
+		for i := len(history) - 1; i >= floor; i-- {
 			m := history[i]
 			if m.Role == "assistant" && len(m.ToolCalls) == 0 && strings.TrimSpace(m.Content) != "" {
 				Debug("[agent_loop] rescued empty final response; using last non-empty assistant turn (history[%d])", i)
@@ -594,21 +661,72 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 // with "name" and "parameters"/"arguments" keys. If that fails, it falls back
 // to scanning for known tool names mentioned in natural language (common with
 // thinking models that reason about tool calls without emitting them).
-func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc) *ToolCall {
+//
+// toolDefs is consulted to validate that any synthesized call satisfies the
+// tool's `Required` fields. If the extractor produces a call missing required
+// args (typical of the prose-scan fallback when the model reasons about a
+// tool but doesn't emit structured args), it's rejected — better to let the
+// loop count the round as "model produced content but didn't act" than to
+// fire a guaranteed-to-fail tool call and burn a round on the error.
+func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) *ToolCall {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil
 	}
 
-	// Try structured JSON tool call first.
+	// Try structured JSON tool call first. JSON-emitted calls usually
+	// have proper args, so we still validate required fields below
+	// rather than trusting them blindly.
 	if tc := parseJSONToolCall(content, handlers); tc != nil {
-		return tc
+		if hasRequired(tc, toolDefs) {
+			return tc
+		}
+		Debug("[agent_loop] dropping synthesized JSON tool call '%s' — missing required args", tc.Name)
 	}
 
 	// Fallback: scan for a known tool name mentioned in the text.
 	// Thinking models often reason like "call run_healthcheck with args ..."
 	// without emitting the actual structured call.
-	return parseNaturalToolCall(content, handlers)
+	if tc := parseNaturalToolCall(content, handlers); tc != nil {
+		if hasRequired(tc, toolDefs) {
+			return tc
+		}
+		Debug("[agent_loop] dropping synthesized natural-language tool call '%s' — could not extract required args from prose", tc.Name)
+	}
+	return nil
+}
+
+// hasRequired reports whether tc.Args contains every key listed in the
+// matching tool's Required slice. Tools with no Required restriction
+// always pass.
+func hasRequired(tc *ToolCall, toolDefs []Tool) bool {
+	if tc == nil {
+		return false
+	}
+	for _, td := range toolDefs {
+		if td.Name != tc.Name {
+			continue
+		}
+		for _, req := range td.Required {
+			v, ok := tc.Args[req]
+			if !ok {
+				return false
+			}
+			// Treat empty string / nil as missing — the tool's
+			// validation would reject those anyway, and we want the
+			// loop to recover, not waste a round.
+			if v == nil {
+				return false
+			}
+			if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+				return false
+			}
+		}
+		return true
+	}
+	// Unknown tool name (handler exists but no def — shouldn't happen
+	// in practice). Permit, since we can't validate.
+	return true
 }
 
 // parseJSONToolCall extracts a tool call from a JSON object in the text.

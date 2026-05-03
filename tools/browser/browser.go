@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,20 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// clearStaleSingleton removes Chromium's SingletonLock / SingletonCookie /
+// SingletonSocket files left behind when a previous Chromium instance
+// crashed or was killed. Without this, a fresh launch fails with
+// "Failed to create .../SingletonLock: File exists (17)". Safe because
+// only one gohort process owns this profile dir.
+func clearStaleSingleton(profileDir string) {
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
+		path := filepath.Join(profileDir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			Debug("[browser] clearStaleSingleton: could not remove %s: %v", path, err)
+		}
+	}
+}
 
 func init() { RegisterChatTool(&BrowsePageTool{}) }
 
@@ -72,13 +88,24 @@ func (t *BrowsePageTool) launch() {
 			return
 		}
 
+		profileDir := dir + "/profile"
+		// Clean up stale SingletonLock from a previous Chromium that
+		// crashed or was killed without clean shutdown. The lock is a
+		// symlink whose target encodes the previous PID; if the PID is
+		// dead the lock is stale and a fresh launch fails with
+		// "File exists (17)" until it's removed. Verifying the symlink
+		// target is non-trivial across distros — simplest and safest
+		// is to remove it unconditionally at our own startup, since
+		// only one gohort process owns this profile.
+		clearStaleSingleton(profileDir)
+
 		u, err := launcher.New().
 			Bin(binPath).
 			Headless(true).
 			NoSandbox(true).
 			Set("disable-gpu").
 			Set("disable-dev-shm-usage").
-			UserDataDir(dir + "/profile").
+			UserDataDir(profileDir).
 			Launch()
 		if err != nil {
 			t.initErr = fmt.Errorf("Chromium launch failed: %w", err)

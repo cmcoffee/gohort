@@ -789,7 +789,11 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"), personaName, senderDesc, basePrompt, memoryBlock(T.DB, p.ChatID), p.Prompt,
 	)
 
-	sess := &ToolSession{LLM: T.LLM, LeadLLM: T.LeadLLM}
+	sess := &ToolSession{
+		LLM:          T.LLM,
+		LeadLLM:      T.LeadLLM,
+		WorkspaceDir: ensurePhantomWorkspace(cfg),
+	}
 	// send_status: enqueue an immediate outbox item so the user gets a
 	// progress iMessage before the scheduled reply. FIFO ordering in the
 	// outbox preserves arrival order.
@@ -822,7 +826,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 	resp, _, err := T.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
-		MaxRounds:    6,
+		MaxRounds:    15,
 		RouteKey:     "app.phantom",
 		PromptTools:  T.PromptTools,
 		ChatOptions:  phantomChatOpts,
@@ -878,6 +882,13 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		return
 	}
 
+	// Replay guard: drop if this exact text was sent recently (catches
+	// rescued-empty-response replays from the agent loop and coalesced
+	// re-run repeats). See processMessage for the full rationale.
+	if T.matchesRecentReply(replyText) {
+		Log("[phantom/scheduler] dropping duplicate scheduled reply for %s (matches recently-sent text)", p.Handle)
+		return
+	}
 	T.rememberRecentReply(replyText)
 	enqueueOutbox(T.DB, OutboxItem{
 		ID:      newID(),

@@ -700,14 +700,23 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Skip the scan for conversations already in the DB with no alias — they
-	// were scanned on first arrival and are confirmed primaries. Exception:
-	// when we just cleared a stale pointer, the conv WAS aliased; we need to
-	// re-scan to find its current primary, not auto-promote it to primary.
-	if !routingResolved && !stalePointerCleared && knownConv && incomingConv.AliasOf == "" {
-		routingResolved = true // treat as primary — no scan needed
-		// isAlias stays false: this is the conversation's own record, not an alias.
-	}
+	// Always scan AliasHandles when no cached alias pointer is set, even
+	// for already-known convs. The previous behavior fast-pathed any
+	// known conv with empty AliasOf as "confirmed primary, skip scan,"
+	// which permanently locked in routing decisions made before the
+	// alias relationship was configured. If +14155551234 was first seen
+	// as its own conv and the user later added it to gmail's
+	// AliasHandles, the fast-path kept routing it as a separate primary
+	// forever. Running the scan here lets the cmcoffee@gmail.com primary
+	// reclaim it via its AliasHandles entry, self-healing the routing
+	// without manual DB surgery.
+	//
+	// The scan is O(convs * aliases-per-conv) which is negligible for
+	// any plausible volume (hundreds of convs at most), so we just
+	// always pay the cost rather than maintaining a reverse index.
+	//
+	// If the scan finds no match, the post-scan fallback below treats
+	// the conv as its own primary — same outcome as the old fast path.
 	if !routingResolved {
 		var aliasConvsChecked int
 		for _, k := range T.DB.Keys(conversationTable) {
@@ -752,8 +761,17 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 			} else {
 				Debug("[phantom] alias scan: no convs have alias_handles configured (handle=%q chatID=%q)", req.Handle, req.ChatID)
 			}
+			// Post-scan fallback: an already-known conv that nobody
+			// claims as an alias is its own primary. This restores the
+			// behavior the old fast path provided, but only AFTER the
+			// scan has had a chance to redirect to a real primary.
+			if knownConv {
+				routingResolved = true
+				// isAlias stays false — this conv is the primary.
+			}
 		}
 	}
+	_ = stalePointerCleared // retained for future use; the always-scan path makes it incidental
 
 	// Sync members from history so every sender is captured.
 	if !routingResolved {
@@ -1300,7 +1318,11 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		personaName, senderDesc, systemPrompt, membersNote, memoryBlock(T.DB, chatID),
 	)
 
-	sess := &ToolSession{LLM: T.LLM, LeadLLM: T.LeadLLM}
+	sess := &ToolSession{
+		LLM:          T.LLM,
+		LeadLLM:      T.LeadLLM,
+		WorkspaceDir: ensurePhantomWorkspace(cfg),
+	}
 	// send_status: enqueue an immediate outbox item so the user receives
 	// the status as its own iMessage before the eventual reply. The
 	// outbox is FIFO so order is preserved. We also persist it as an
@@ -1336,7 +1358,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	resp, _, err := T.RunAgentLoop(context.Background(), msgs, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
-		MaxRounds:    6,
+		MaxRounds:    15,
 		RouteKey:     "app.phantom",
 		PromptTools:  T.PromptTools,
 		ChatOptions:  phantomChatOpts,
@@ -1415,9 +1437,25 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		Timestamp: now(),
 	})
 
+	// Replay guard: if this exact reply was already enqueued recently,
+	// drop it. Catches two failure modes that both produce a confused
+	// user experience:
+	//   1. The agent loop's empty-response rescue (agent_loop.go) pulled
+	//      a stale earlier assistant turn after MaxRounds was hit — the
+	//      model would have re-emitted a turn the user already received.
+	//   2. A coalesced re-run that produced identical output to a prior
+	//      pass (rare but possible on deterministic small models).
+	// The recentReplies map is shared with the loop-back guard from
+	// hookHandler — same TTL, same exact-match semantics.
+	if T.matchesRecentReply(reply) {
+		Log("[phantom] dropping duplicate reply (matches recently-sent text) for %s", handle)
+		return
+	}
+
 	// Remember the reply text so the hook handler can drop a loop-back of
-	// our own outbound if the bridge's skip mechanisms miss it. Belt and
-	// suspenders alongside the bridge-side ROWID + sentText filtering.
+	// our own outbound if the bridge's skip mechanisms miss it, AND so
+	// the replay guard above can catch repeats. Belt and suspenders
+	// alongside the bridge-side ROWID + sentText filtering.
 	T.rememberRecentReply(reply)
 
 	// Queue for delivery. ChatID is the iMessage destination address —

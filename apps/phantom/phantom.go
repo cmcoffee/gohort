@@ -416,6 +416,47 @@ const emojiRule = "Use at most one emoji per message, only when it genuinely fit
 
 const caseRule = "Always use proper capitalization: start sentences with a capital letter and capitalize proper nouns. This rule overrides any instruction to mirror the group's casing — match their tone and slang, but not their lowercase style."
 
+// phantomWorkspaceID returns a stable, filesystem-safe identifier for
+// the workspace shared across all phantom conversations on this host.
+// Phantom acts as one persona (the device owner), so all convs share
+// one workspace — that lets a tool the LLM uses in convo A leave files
+// the LLM can pick up in convo B (e.g. a reusable script written via
+// write_file). If OwnerHandle isn't configured, falls back to a fixed
+// label so workspace provisioning still works.
+func phantomWorkspaceID(cfg PhantomConfig) string {
+	id := cfg.OwnerHandle
+	if id == "" {
+		return "phantom"
+	}
+	// Replace anything that EnsureWorkspaceDir would reject (path
+	// separators, "..") with underscore. Email and phone-number
+	// handles otherwise pass through fine.
+	var b strings.Builder
+	b.WriteString("phantom_")
+	for _, r := range id {
+		switch r {
+		case '/', '\\', '.':
+			b.WriteByte('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// ensurePhantomWorkspace provisions and returns the phantom workspace
+// dir, or empty string + a Debug log on failure (caller treats empty
+// as "sandboxed tools disabled" — same posture chat uses).
+func ensurePhantomWorkspace(cfg PhantomConfig) string {
+	id := phantomWorkspaceID(cfg)
+	ws, err := EnsureWorkspaceDir(id)
+	if err != nil {
+		Debug("[phantom] workspace setup failed (id=%q): %v — sandboxed tools disabled", id, err)
+		return ""
+	}
+	return ws
+}
+
 // stripEmojis removes all but the first emoji cluster from s.
 // Handles single emojis, variation selectors, skin tone modifiers, ZWJ
 // compound sequences (e.g. 👨‍💻), and flag pairs (two regional indicators).
