@@ -102,9 +102,31 @@ const (
 
 var secureAPIMu sync.Mutex
 
+// resolveSecureAPIDB returns the canonical DB for secure-api credential
+// storage: the root global DB. Callers may pass a bucketed/scoped DB
+// (e.g. ChatAgent's bucket-prefixed view of global.db) — secure-API
+// data is intentionally global, shared across apps, so we always
+// resolve back to the root via AuthDB() rather than honoring the
+// caller-supplied bucket. Without this, admin (which uses the root
+// directly) and chat (which gets a bucketed view) would write to and
+// read from different namespaces and credentials saved via admin
+// would be invisible to the LLM.
+//
+// Falls back to the passed db if AuthDB is unset (uncommon — only
+// during early startup before gohort.go wires AuthDB).
+func resolveSecureAPIDB(db Database) Database {
+	if AuthDB != nil {
+		if root := AuthDB(); root != nil {
+			return root
+		}
+	}
+	return db
+}
+
 // SaveSecureCredential upserts a credential record and (re)stores its
 // secret value encrypted. Validates inputs.
 func SaveSecureCredential(db Database, c SecureCredential, secret string) error {
+	db = resolveSecureAPIDB(db)
 	if db == nil {
 		return fmt.Errorf("DB not available")
 	}
@@ -145,6 +167,7 @@ func SaveSecureCredential(db Database, c SecureCredential, secret string) error 
 
 // LoadSecureCredential fetches the public metadata for a credential.
 func LoadSecureCredential(db Database, name string) (SecureCredential, bool) {
+	db = resolveSecureAPIDB(db)
 	var c SecureCredential
 	if db == nil || name == "" {
 		return c, false
@@ -156,6 +179,7 @@ func LoadSecureCredential(db Database, name string) (SecureCredential, bool) {
 // ListSecureCredentials returns metadata for every registered credential.
 // Secrets are not included.
 func ListSecureCredentials(db Database) []SecureCredential {
+	db = resolveSecureAPIDB(db)
 	if db == nil {
 		return nil
 	}
@@ -178,6 +202,7 @@ func ListSecureCredentials(db Database) []SecureCredential {
 // auto-generated tool catalogs until re-enabled. Used by the admin
 // UI's per-card enable/disable toggle.
 func SetSecureCredentialDisabled(db Database, name string, disabled bool) error {
+	db = resolveSecureAPIDB(db)
 	if db == nil || name == "" {
 		return fmt.Errorf("name required")
 	}
@@ -194,6 +219,7 @@ func SetSecureCredentialDisabled(db Database, name string, disabled bool) error 
 
 // DeleteSecureCredential removes both metadata and encrypted secret.
 func DeleteSecureCredential(db Database, name string) error {
+	db = resolveSecureAPIDB(db)
 	if db == nil || name == "" {
 		return fmt.Errorf("name required")
 	}
@@ -213,6 +239,7 @@ func DeleteSecureCredential(db Database, name string) error {
 // LoadSecureAPIAudit returns the most recent audit entries for a
 // credential, newest first.
 func LoadSecureAPIAudit(db Database, name string) []SecureAPIAuditEntry {
+	db = resolveSecureAPIDB(db)
 	if db == nil || name == "" {
 		return nil
 	}
@@ -225,6 +252,7 @@ func LoadSecureAPIAudit(db Database, name string) []SecureAPIAuditEntry {
 
 // recordSecureAPIAudit prepends an entry, capping ring size.
 func recordSecureAPIAudit(db Database, e SecureAPIAuditEntry) {
+	db = resolveSecureAPIDB(db)
 	if db == nil {
 		return
 	}
@@ -241,6 +269,7 @@ func recordSecureAPIAudit(db Database, e SecureAPIAuditEntry) {
 
 // touchSecureCredential bumps LastUsedAt. Best-effort.
 func touchSecureCredential(db Database, name string) {
+	db = resolveSecureAPIDB(db)
 	if db == nil {
 		return
 	}
@@ -328,6 +357,7 @@ func globMatch(s, pattern string) bool {
 // db is consulted at handler time, not at build time, so secret
 // rotations take effect immediately for in-flight sessions.
 func BuildSecureAPITools(db Database) []AgentToolDef {
+	db = resolveSecureAPIDB(db)
 	if db == nil {
 		return nil
 	}
@@ -399,6 +429,7 @@ func agentToolFromCredential(db Database, c SecureCredential) AgentToolDef {
 // path the per-credential generic tool uses. Returns the response body
 // (capped, formatted) suitable for inclusion in a tool result.
 func DispatchSecureAPIToolCall(db Database, credName, url, method, body string) (string, error) {
+	db = resolveSecureAPIDB(db)
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -421,6 +452,7 @@ func DispatchSecureAPIToolCall(db Database, credName, url, method, body string) 
 // with auth attached, executes, returns the response body capped at
 // secureAPIMaxResponseBytes.
 func dispatchSecureAPICall(db Database, c SecureCredential, args map[string]any) (string, error) {
+	db = resolveSecureAPIDB(db)
 	rawURL := strings.TrimSpace(StringArg(args, "url"))
 	if rawURL == "" {
 		return "", fmt.Errorf("url is required")
