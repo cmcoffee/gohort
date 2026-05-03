@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,19 +17,23 @@ import (
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
+	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
-// LLM API clients route through apiclient, which wraps response
-// bodies with iotimeout.NewReadCloser using RequestTimeout as the
-// inter-read idle timeout. These defaults give:
+const (
+	visionMaxDim  = 1024 // longest side for images sent to LLM
+	visionJQQual  = 82   // JPEG quality for resized images
+)
+
+// LLM API clients apply iotimeout.NewReadCloser to every response body using
+// c.api.RequestTimeout as the per-read idle timeout. These defaults give:
 //   - llmConnectTimeout:  dial + TLS handshake cap
-//   - llmRequestTimeout:  response header deadline AND inter-read
-//                         idle timeout on body reads. Must be long
-//                         enough to tolerate Ollama cold-load silence
-//                         between the request and the first token.
+//   - llmRequestTimeout:  response header deadline AND per-read idle timeout
+//                         on body reads. Must be long enough to tolerate
+//                         Ollama cold-load silence and extended thinking.
 const (
 	llmConnectTimeout = 10 * time.Second
-	llmRequestTimeout = 2 * time.Minute
+	llmRequestTimeout = 5 * time.Minute
 )
 
 const (
@@ -62,14 +68,65 @@ type openAIClient struct {
 	endpoint        string
 	api             *apiclient.APIClient
 	ollama          bool // true when created via NewOllamaLLM
+	llamacpp        bool // true when provider is llama.cpp server
+	llamacppBudget  int  // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
 	contextSize     int  // Ollama num_ctx; 0 uses ollamaDefaultCtx
-	disableThinking bool // Ollama-only master override forcing think=false on every call (escape hatch for thinking hangs).
-	nativeTools     bool // When true, send native tool specs. When false, strip them (tools handled via text prompts at agent loop level).
+	disableThinking  bool // master override forcing think=false / thinking_budget_tokens=0 on every call.
+	nativeTools      bool // When true, send native tool specs. When false, strip them (tools handled via text prompts at agent loop level).
+	thinkingBudget   int  // reserved (unused after Ollama thinking_budget removal).
 }
 
 // isOllama reports whether this client is talking to an Ollama instance.
 func (c *openAIClient) isOllama() bool {
 	return c.ollama
+}
+
+// provider returns the log tag for this client.
+func (c *openAIClient) provider() string {
+	if c.llamacpp {
+		return "llama.cpp"
+	}
+	return "openai"
+}
+
+// llamacppThinkBudget returns the thinking_budget_tokens value for a llama.cpp
+// request, or nil to omit. The primary disable path is chat_template_kwargs
+// (reliable on Qwen 3.6+); we still send budget=0 alongside as a fallback for
+// models whose chat templates don't read enable_thinking (e.g. DeepSeek-R1),
+// where a sampler-level cap is the only way to suppress thinking.
+func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
+	// Explicit per-call disable: also cap budget to 0 as a fallback for
+	// models that don't honor chat_template_kwargs.enable_thinking.
+	if cfg.Think != nil && !*cfg.Think {
+		zero := 0
+		return &zero
+	}
+	// Per-call budget override takes priority over global config.
+	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
+		return cfg.ThinkBudget
+	}
+	// Global configured budget.
+	if c.llamacppBudget > 0 {
+		return &c.llamacppBudget
+	}
+	// Thinking explicitly requested but no budget configured — use a sensible
+	// default so enabling thinking per-route works without requiring a budget.
+	if cfg.Think != nil && *cfg.Think {
+		n := 8192
+		return &n
+	}
+	return nil // omit → server decides
+}
+
+// llamacppChatTemplateKwargs returns the chat_template_kwargs map for a
+// llama.cpp request, or nil to omit the field. This is the reliable
+// per-request thinking switch on Qwen 3.6+: setting enable_thinking
+// overrides the launch-time --reasoning flag for this single request.
+func (c *openAIClient) llamacppChatTemplateKwargs(cfg ChatConfig) map[string]any {
+	if cfg.Think == nil {
+		return nil // let the server's launch default apply
+	}
+	return map[string]any{"enable_thinking": *cfg.Think}
 }
 
 // Ping implements the Pinger interface. For Ollama it issues a bounded
@@ -123,6 +180,54 @@ func OpenAIModels(apiKey string) ([]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, m := range result.Data {
+		names = append(names, m.ID)
+	}
+	return names, nil
+}
+
+// LlamaCppModels queries the llama.cpp HTTP server at the given base URL
+// (e.g. "http://localhost:8080" or "http://localhost:8080/v1") and returns
+// the model IDs it advertises via its OpenAI-compatible /v1/models endpoint.
+func LlamaCppModels(baseURL string) ([]string, error) {
+	u, err := url.Parse(strings.TrimSuffix(baseURL, "/"))
+	if err != nil {
+		return nil, err
+	}
+	// llama.cpp's models endpoint is /v1/models. Honor an existing /v1 path
+	// if the user already included it; otherwise add it.
+	path := strings.TrimSuffix(u.Path, "/")
+	if !strings.HasSuffix(path, "/v1") {
+		path += "/v1"
+	}
+	path += "/models"
+	client := &apiclient.APIClient{
+		Server:         u.Host,
+		URLScheme:      u.Scheme,
+		ConnectTimeout: llmConnectTimeout,
+		RequestTimeout: 15 * time.Second,
+		AuthFunc:       func(req *http.Request) {},
+	}
+	req, err := client.NewRequest("GET", path)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
 	var result struct {
 		Data []struct {
 			ID string `json:"id"`
@@ -161,6 +266,7 @@ func OllamaModels(baseURL string) ([]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
 	var result struct {
 		Models []struct {
 			Name string `json:"name"`
@@ -224,15 +330,17 @@ type oaiResponseFormat struct {
 }
 
 type oaiRequest struct {
-	Model          string             `json:"model"`
-	Messages       []oaiMessage       `json:"messages"`
-	MaxTokens      int                `json:"max_tokens,omitempty"`
-	Temperature    *float64           `json:"temperature,omitempty"`
-	Stream         bool               `json:"stream,omitempty"`
-	Tools          []oaiTool          `json:"tools,omitempty"`
-	ResponseFormat *oaiResponseFormat `json:"response_format,omitempty"`
-	Think          *bool              `json:"think,omitempty"`
-	Options        map[string]any     `json:"options,omitempty"` // Ollama-specific options (num_ctx, etc.)
+	Model                string             `json:"model"`
+	Messages             []oaiMessage       `json:"messages"`
+	MaxTokens            int                `json:"max_tokens,omitempty"`
+	Temperature          *float64           `json:"temperature,omitempty"`
+	Stream               bool               `json:"stream,omitempty"`
+	Tools                []oaiTool          `json:"tools,omitempty"`
+	ResponseFormat       *oaiResponseFormat `json:"response_format,omitempty"`
+	Think                *bool              `json:"think,omitempty"`
+	ThinkingBudgetTokens *int               `json:"thinking_budget_tokens,omitempty"` // llama.cpp: budget when thinking is on; do NOT use 0 to disable (unreliable on Qwen 3.6)
+	ChatTemplateKwargs   map[string]any     `json:"chat_template_kwargs,omitempty"`   // llama.cpp: per-request {"enable_thinking": bool} — works reliably even when launch is --reasoning on
+	Options              map[string]any     `json:"options,omitempty"`                // Ollama-specific options (num_ctx, etc.)
 }
 
 // ollamaDefaultCtx is the default context window size for Ollama when not configured.
@@ -314,6 +422,95 @@ func oaiTextContent(s string) json.RawMessage {
 	return b
 }
 
+// resizeImage resizes a single image to visionMaxDim on the longest side
+// and encodes it as JPEG at visionJQQual quality. Returns the encoded bytes;
+// on any decode/encode failure returns the original src unchanged.
+func resizeImage(src []byte) []byte {
+	img, _, err := image.Decode(bytes.NewReader(src))
+	if err != nil {
+		return src // fallback to original if decode fails
+	}
+	bounds := img.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= visionMaxDim && h <= visionMaxDim {
+		return src // already small enough
+	}
+	// Compute new dimensions preserving aspect ratio.
+	var nw, nh int
+	if w >= h {
+		nw = visionMaxDim
+		nh = h * visionMaxDim / w
+	} else {
+		nh = visionMaxDim
+		nw = w * visionMaxDim / h
+	}
+	resized := resizePNG(img, nw, nh)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: visionJQQual}); err != nil {
+		return src
+	}
+	return buf.Bytes()
+}
+
+// resizePNG scales img to nw×nh using a simple box filter (fast, good enough for vision).
+func resizePNG(img image.Image, nw, nh int) image.Image {
+	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	dx, dy := float64(img.Bounds().Dx()), float64(img.Bounds().Dy())
+	for y := 0; y < nh; y++ {
+		for x := 0; x < nw; x++ {
+			sx := float64(x) * dx / float64(nw)
+			sy := float64(y) * dy / float64(nh)
+			if sx >= dx {
+				sx = dx - 1
+			}
+			if sy >= dy {
+				sy = dy - 1
+			}
+			dst.Set(x, y, img.At(int(sx), int(sy)))
+		}
+	}
+	return dst
+}
+
+// hasImages reports whether any message in the slice carries images or
+// videos. Videos count because they're sampled into still frames at send
+// time, so the same vision-mode defaults (no thinking, deterministic temp,
+// authoritative-location directive) should apply.
+func hasImages(messages []Message) bool {
+	for _, m := range messages {
+		if len(m.Images) > 0 || len(m.Videos) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// applyVisionDefaults disables thinking and forces temperature=0 when images
+// are present. Most backends don't support extended reasoning alongside image
+// inputs, and image analysis is factual — deterministic output is the default.
+//
+// It also appends a directive to the system prompt telling the model to trust
+// the resolved `location:` field in [image_context] over its own coordinate-
+// based recall. Without this, the model has been observed to confabulate a
+// landmark in a wrong country even when an authoritative place name was right
+// there in the prompt — pure training-data prior overpowering the context.
+func applyVisionDefaults(cfg *ChatConfig, messages []Message) {
+	if !hasImages(messages) {
+		return
+	}
+	if cfg.Think == nil {
+		f := false
+		cfg.Think = &f
+	} else if *cfg.Think {
+		*cfg.Think = false
+	}
+	if cfg.Temperature == nil {
+		t := 0.0
+		cfg.Temperature = &t
+	}
+	cfg.SystemPrompt += "\n\nWhen an image's [image_context] block contains a `location:` field, that field is the authoritative source of where the photo was taken. Do not infer a different location from the `gps:` coordinates, the `taken:` timestamp, or your training data — the resolved name comes from a geocoding service and supersedes coordinate-based recall."
+}
+
 // oaiVisionContent creates a Content field with text + base64 images
 // in the OpenAI vision format that Ollama also supports.
 func oaiVisionContent(text string, images [][]byte) json.RawMessage {
@@ -327,20 +524,39 @@ func oaiVisionContent(text string, images [][]byte) json.RawMessage {
 	}
 	parts := []part{{Type: "text", Text: text}}
 	for _, img := range images {
-		b64 := "data:image/png;base64," + base64.StdEncoding.EncodeToString(img)
+		img = resizeImage(img)
+		mime := detectImageMIME(img)
+		b64 := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(img)
 		parts = append(parts, part{Type: "image_url", ImageURL: &imgURL{URL: b64}})
 	}
 	b, _ := json.Marshal(parts)
 	return b
 }
 
+// detectImageMIME returns the MIME type of image bytes.
+// Falls back to image/jpeg for unrecognised formats (HEIC, AVIF, etc.).
+func detectImageMIME(data []byte) string {
+	ct := http.DetectContentType(data)
+	switch ct {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return ct
+	}
+	// ISO Base Media File Format (HEIC, AVIF): bytes 4-7 are "ftyp".
+	if len(data) >= 12 && string(data[4:8]) == "ftyp" {
+		return "image/jpeg" // treat as JPEG; caller should convert if possible
+	}
+	return "image/jpeg"
+}
+
 type oaiResponse struct {
 	Choices []struct {
 		Message struct {
 			Content          string           `json:"content"`
-			Reasoning string           `json:"reasoning,omitempty"`
+			Reasoning        string           `json:"reasoning,omitempty"`         // some forks / older llama.cpp builds
+			ReasoningContent string           `json:"reasoning_content,omitempty"` // current llama.cpp + Qwen 3.6
 			ToolCalls        []oaiToolCallMsg `json:"tool_calls,omitempty"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
 	Model string `json:"model"`
 	Usage struct {
@@ -353,9 +569,11 @@ type oaiStreamChunk struct {
 	Choices []struct {
 		Delta struct {
 			Content          string           `json:"content"`
-			Reasoning string           `json:"reasoning,omitempty"`
+			Reasoning        string           `json:"reasoning,omitempty"`
+			ReasoningContent string           `json:"reasoning_content,omitempty"`
 			ToolCalls        []oaiToolCallMsg `json:"tool_calls,omitempty"`
 		} `json:"delta"`
+		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
 	Model string `json:"model"`
 	Usage *struct {
@@ -375,7 +593,8 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 	if cfg.SystemPrompt != "" {
 		msgs = append(msgs, oaiMessage{Role: "system", Content: oaiTextContent(cfg.SystemPrompt)})
 	}
-	for _, m := range messages {
+	lastIdx := len(messages) - 1
+	for i, m := range messages {
 		switch {
 		case m.Role == "assistant" && len(m.ToolCalls) > 0:
 			var calls []oaiToolCallMsg
@@ -396,8 +615,50 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 				msgs = append(msgs, oaiMessage{Role: "tool", Content: oaiTextContent(tr.Content), ToolCallID: tr.ID})
 			}
 		default:
-			if len(m.Images) > 0 {
-				msgs = append(msgs, oaiMessage{Role: m.Role, Content: oaiVisionContent(m.Content, m.Images)})
+			// Only include images/videos from the last message — older
+			// attachments in history would be re-sent on every turn,
+			// ballooning the context window.
+			if (len(m.Images) > 0 || len(m.Videos) > 0) && i == lastIdx {
+				// Prepend [image_context] / [video_context] blocks (mime/
+				// size/dimensions + EXIF or container metadata, GPS →
+				// place name) so the vision model has ambient grounding
+				// alongside the pixels.
+				text := m.Content
+				var contextBlocks []string
+				if meta := extractImagesMetadata(m.Images); meta != "" {
+					Debug("[vision] extracted metadata for %d image(s):\n%s", len(m.Images), meta)
+					contextBlocks = append(contextBlocks, meta)
+				} else if len(m.Images) > 0 {
+					Debug("[vision] no metadata extracted for %d image(s) (no EXIF, undecodable, or empty)", len(m.Images))
+				}
+
+				// Videos: extract container metadata and sample N frames.
+				// The frames are concatenated onto Images so the LLM sees
+				// them as a temporal sequence of stills. Failures (ffmpeg
+				// missing, bad container, no decodable streams) silently
+				// degrade — we send what we have, including raw text.
+				images := m.Images
+				if len(m.Videos) > 0 {
+					if meta := extractVideosMetadata(m.Videos); meta != "" {
+						Debug("[vision] extracted metadata for %d video(s):\n%s", len(m.Videos), meta)
+						contextBlocks = append(contextBlocks, meta)
+					}
+					if frames := extractVideosFrames(m.Videos, videoFrameSampleCount); len(frames) > 0 {
+						Debug("[vision] sampled %d frame(s) across %d video(s)", len(frames), len(m.Videos))
+						images = append(images, frames...)
+					} else {
+						Debug("[vision] no frames extracted from %d video(s) — ffmpeg missing or unreadable", len(m.Videos))
+					}
+				}
+
+				if joined := strings.Join(contextBlocks, "\n\n"); joined != "" {
+					if text != "" {
+						text = joined + "\n\n" + text
+					} else {
+						text = joined
+					}
+				}
+				msgs = append(msgs, oaiMessage{Role: m.Role, Content: oaiVisionContent(text, images)})
 			} else {
 				msgs = append(msgs, oaiMessage{Role: m.Role, Content: oaiTextContent(m.Content)})
 			}
@@ -485,7 +746,7 @@ func snoopOAIResponse(statusCode int, body []byte) {
 }
 
 func (c *openAIClient) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
-	Debug("[openai]: Sending request to %s/chat/completions", c.endpoint)
+	Debug("[%s]: Sending request to %s/chat/completions", c.provider(), c.endpoint)
 
 	// Extract the path portion from the endpoint for APIClient.
 	path := "/v1/chat/completions"
@@ -506,9 +767,10 @@ func (c *openAIClient) doRequest(ctx context.Context, body []byte) (*http.Respon
 
 	resp, err := c.api.SendRawRequest("", req)
 	if err != nil {
-		Debug("[openai]: Request failed: %v", err)
+		Debug("[%s]: Request failed: %v", c.provider(), err)
 	} else {
-		Debug("[openai]: Response status: %d", resp.StatusCode)
+		Debug("[%s]: Response status: %d", c.provider(), resp.StatusCode)
+		resp.Body = iotimeout.NewReadCloser(resp.Body, c.api.RequestTimeout)
 	}
 	return resp, err
 }
@@ -517,13 +779,14 @@ func (c *openAIClient) doRequest(ctx context.Context, body []byte) (*http.Respon
 // Note: this uses nativeOllamaMessage (not oaiMessage) so that tool_calls
 // arguments are sent as structured objects instead of JSON strings.
 type nativeOllamaChatRequest struct {
-	Model    string                `json:"model"`
-	Messages []nativeOllamaMessage `json:"messages"`
-	Stream   bool                  `json:"stream"`
-	Think    *bool                 `json:"think,omitempty"`
-	Options  map[string]any        `json:"options,omitempty"`
-	Format   any                   `json:"format,omitempty"`
-	Tools    []oaiTool             `json:"tools,omitempty"`
+	Model            string                `json:"model"`
+	Messages         []nativeOllamaMessage `json:"messages"`
+	Stream           bool                  `json:"stream"`
+	Think            *bool                 `json:"think,omitempty"`
+	PreserveThinking *bool                 `json:"preserve_thinking,omitempty"`
+	Options          map[string]any        `json:"options,omitempty"`
+	Format           any                   `json:"format,omitempty"`
+	Tools            []oaiTool             `json:"tools,omitempty"`
 }
 
 // nativeOllamaMessage is the message format ollama's /api/chat expects.
@@ -532,7 +795,8 @@ type nativeOllamaChatRequest struct {
 type nativeOllamaMessage struct {
 	Role      string                 `json:"role"`
 	Content   string                 `json:"content"`
-	Images    []string               `json:"images,omitempty"` // base64-encoded images for vision
+	Thinking  string                 `json:"thinking,omitempty"`  // preserve_thinking: prior turn's reasoning content
+	Images    []string               `json:"images,omitempty"`    // base64-encoded images for vision
 	ToolCalls []nativeOllamaToolCall `json:"tool_calls,omitempty"`
 }
 
@@ -618,6 +882,33 @@ func convertToNativeOllamaMessages(msgs []oaiMessage) []nativeOllamaMessage {
 	return out
 }
 
+// modelPreservesThinking reports whether the given Ollama model should run
+// with preserve_thinking=true. Auto-enabled for Qwen 3.6+, which supports
+// replaying prior thinking blocks in assistant history.
+func modelPreservesThinking(model string) bool {
+	return strings.Contains(strings.ToLower(model), "qwen3.6")
+}
+
+// enrichThinking copies reasoning from the original Message slice into the
+// corresponding assistant entries in the native ollama message slice.
+// Called when preserve_thinking is enabled so Ollama can replay prior
+// thinking blocks in subsequent turns.
+func enrichThinking(msgs []nativeOllamaMessage, origMessages []Message) {
+	var assistants []string
+	for _, m := range origMessages {
+		if m.Role == "assistant" {
+			assistants = append(assistants, m.Reasoning)
+		}
+	}
+	idx := 0
+	for i, m := range msgs {
+		if m.Role == "assistant" && idx < len(assistants) {
+			msgs[i].Thinking = assistants[idx]
+			idx++
+		}
+	}
+}
+
 // truncateForDebug shortens a string for safe debug logging.
 func truncateForDebug(s string, max int) string {
 	if len(s) <= max {
@@ -648,6 +939,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 		f := false
 		cfg.Think = &f
 	}
+	applyVisionDefaults(&cfg, messages)
 	// Strip native tool specs when the model doesn't support function calling.
 	// Tools are handled via text prompts at the agent loop level instead.
 	if !c.nativeTools {
@@ -666,7 +958,6 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	if cfg.MaxTokens > 0 {
 		options["num_predict"] = cfg.MaxTokens
 	}
-
 	payload := nativeOllamaChatRequest{
 		Model:    cfg.Model,
 		Messages: msgs,
@@ -674,6 +965,12 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 		Think:    cfg.Think,
 		Options:  options,
 		Tools:    buildOAITools(cfg.Tools),
+	}
+	preserve := modelPreservesThinking(cfg.Model)
+	if preserve {
+		t := true
+		payload.PreserveThinking = &t
+		enrichThinking(msgs, messages)
 	}
 	if cfg.JSONMode {
 		payload.Format = "json"
@@ -686,7 +983,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 
 	c.snoopRequest(body, false)
 
-	Debug("[ollama]: Sending request to %s/api/chat (tools=%d, body=%d bytes, think=%s, json=%v)", c.api.Server, len(payload.Tools), len(body), fmtThink(cfg.Think), cfg.JSONMode)
+	Debug("[ollama]: Sending request to %s/api/chat (tools=%d, body=%d bytes, think=%s, preserve_thinking=%v, json=%v)", c.api.Server, len(payload.Tools), len(body), fmtThink(cfg.Think), preserve, cfg.JSONMode)
 	req, err := c.api.NewRequestWithContext(ctx, "POST", "/api/chat")
 	if err != nil {
 		return nil, err
@@ -706,6 +1003,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 		return nil, err
 	}
 	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, c.api.RequestTimeout)
 
 	// Abort promptly if the caller cancelled while we were waiting for
 	// the response to start.
@@ -722,9 +1020,10 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	snoopOAIResponse(resp.StatusCode, respBody)
 
 	if resp.StatusCode != http.StatusOK {
-		// Log the outgoing payload on error so we can diagnose validation issues.
 		Debug("[ollama] error response: status=%d body=%s", resp.StatusCode, string(respBody))
-		Debug("[ollama] outgoing payload (truncated to 4KB):\n%s", truncateForDebug(string(body), 4096))
+		if !cfg.MaskDebug {
+			Debug("[ollama] outgoing payload (truncated to 4KB):\n%s", truncateForDebug(string(body), 4096))
+		}
 		return nil, &APIError{StatusCode: resp.StatusCode, Message: string(respBody), Provider: "ollama"}
 	}
 
@@ -772,6 +1071,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 		f := false
 		cfg.Think = &f
 	}
+	applyVisionDefaults(&cfg, messages)
 	if !c.nativeTools {
 		cfg.Tools = nil
 	}
@@ -786,7 +1086,6 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	if cfg.MaxTokens > 0 {
 		options["num_predict"] = cfg.MaxTokens
 	}
-
 	payload := nativeOllamaChatRequest{
 		Model:    cfg.Model,
 		Messages: msgs,
@@ -794,6 +1093,12 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 		Think:    cfg.Think,
 		Options:  options,
 		Tools:    buildOAITools(cfg.Tools),
+	}
+	preserve := modelPreservesThinking(cfg.Model)
+	if preserve {
+		t := true
+		payload.PreserveThinking = &t
+		enrichThinking(msgs, messages)
 	}
 	if cfg.JSONMode {
 		payload.Format = "json"
@@ -806,7 +1111,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 
 	c.snoopRequest(body, true)
 
-	Debug("[ollama]: Sending stream request to %s/api/chat (tools=%d, body=%d bytes, think=%s, json=%v)", c.api.Server, len(payload.Tools), len(body), fmtThink(cfg.Think), cfg.JSONMode)
+	Debug("[ollama]: Sending stream request to %s/api/chat (tools=%d, body=%d bytes, think=%s, preserve_thinking=%v, json=%v)", c.api.Server, len(payload.Tools), len(body), fmtThink(cfg.Think), preserve, cfg.JSONMode)
 	req, err := c.api.NewRequestWithContext(ctx, "POST", "/api/chat")
 	if err != nil {
 		return nil, err
@@ -823,6 +1128,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 		return nil, err
 	}
 	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, c.api.RequestTimeout)
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
@@ -934,14 +1240,39 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		return c.chatViaOllamaNative(ctx, cfg, messages)
 	}
 
+	// llama.cpp is single-threaded. Serialize requests so concurrent
+	// callers (e.g. background consolidation + a new session) queue up
+	// here instead of racing to the server and getting 503s.
+	if c.llamacpp {
+		if err := AcquireLlamacppSlot(ctx, cfg.Caller); err != nil {
+			return nil, err
+		}
+		defer ReleaseLlamacppSlot(cfg.Caller)
+	}
+
 	// At this point we know it's NOT ollama (ollama is routed through native).
+	if c.disableThinking {
+		f := false
+		cfg.Think = &f
+	}
+	applyVisionDefaults(&cfg, messages)
 	payload := oaiRequest{
 		Model:       cfg.Model,
 		Messages:    c.buildMessages(cfg, messages),
 		MaxTokens:   cfg.MaxTokens,
 		Temperature: cfg.Temperature,
 		Tools:       buildOAITools(cfg.Tools),
-		Think:       cfg.Think,
+	}
+	if c.llamacpp {
+		payload.ChatTemplateKwargs = c.llamacppChatTemplateKwargs(cfg)
+		payload.ThinkingBudgetTokens = c.llamacppThinkBudget(cfg)
+		// llama.cpp counts thinking tokens against max_tokens, so inflate
+		// the limit by the budget to ensure response tokens remain after thinking.
+		if payload.ThinkingBudgetTokens != nil && *payload.ThinkingBudgetTokens > 0 && payload.MaxTokens > 0 {
+			payload.MaxTokens += *payload.ThinkingBudgetTokens
+		}
+	} else {
+		payload.Think = cfg.Think
 	}
 	if cfg.JSONMode {
 		payload.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
@@ -954,7 +1285,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 
 	c.snoopRequest(body, false)
 
-	Debug("[openai]: Sending request (body=%d bytes, think=%s, json=%v)", len(body), fmtThink(cfg.Think), cfg.JSONMode)
+	Debug("[%s]: Sending request (body=%d bytes, think=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode)
 	resp, err := c.doRequest(ctx, body)
 	if err != nil {
 		return nil, err
@@ -974,11 +1305,11 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		provider := "openai"
-		if c.isOllama() {
-			provider = "ollama"
+		ep := "openai"
+		if c.llamacpp {
+			ep = "llama.cpp"
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: provider}
+		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep}
 	}
 
 	var result oaiResponse
@@ -988,14 +1319,22 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 
 	content := ""
 	reasoning := ""
+	finishReason := ""
 	var toolCalls []ToolCall
 	if len(result.Choices) > 0 {
 		content = result.Choices[0].Message.Content
-		reasoning = result.Choices[0].Message.Reasoning
+		// Prefer reasoning_content (current llama.cpp + Qwen 3.6); fall back
+		// to reasoning for older builds and other backends. Don't silently
+		// drop one if the other is empty.
+		reasoning = result.Choices[0].Message.ReasoningContent
+		if reasoning == "" {
+			reasoning = result.Choices[0].Message.Reasoning
+		}
+		finishReason = result.Choices[0].FinishReason
 		toolCalls = parseOAIToolCalls(result.Choices[0].Message.ToolCalls)
 
-		Trace("[openai]: <-- RAW content (%d chars): %s", len(content), content)
-		Trace("[openai]: <-- RAW reasoning (%d chars): %s", len(reasoning), reasoning)
+		Trace("[%s]: <-- RAW content (%d chars): %s", c.provider(), len(content), content)
+		Trace("[%s]: <-- RAW reasoning (%d chars): %s", c.provider(), len(reasoning), reasoning)
 
 		// Ollama's OpenAI-compatible endpoint embeds <think> blocks
 		// directly in content rather than separating them into reasoning.
@@ -1014,11 +1353,18 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 
 		// Always trace reasoning when present.
 		if reasoning != "" {
-			Trace("[openai]: <-- REASONING:\n%s", reasoning)
+			Trace("[%s]: <-- REASONING:\n%s", c.provider(), reasoning)
 		}
 	}
 
-	Debug("[openai]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d", result.Model, result.Usage.PromptTokens, result.Usage.CompletionTokens, len(toolCalls))
+	Debug("[%s]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d finish=%s", c.provider(), result.Model, result.Usage.PromptTokens, result.Usage.CompletionTokens, len(toolCalls), finishReason)
+
+	// finish_reason == "length" with empty content means thinking burned the
+	// entire output budget. Surface this so the agent loop can retry instead
+	// of accepting an empty response as terminal.
+	if finishReason == "length" && content == "" && len(toolCalls) == 0 {
+		return nil, &APIError{Message: fmt.Sprintf("empty LLM response: finish_reason=length after %d output tokens (raise max_tokens or disable thinking for this call)", result.Usage.CompletionTokens), Provider: c.provider()}
+	}
 
 	return &Response{
 		Content:      content,
@@ -1044,6 +1390,19 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		return c.chatStreamViaOllamaNative(ctx, cfg, messages, handler)
 	}
 
+	// Serialize llama.cpp requests — see Chat() for rationale.
+	if c.llamacpp {
+		if err := AcquireLlamacppSlot(ctx, cfg.Caller); err != nil {
+			return nil, err
+		}
+		defer ReleaseLlamacppSlot(cfg.Caller)
+	}
+
+	if c.disableThinking {
+		f := false
+		cfg.Think = &f
+	}
+	applyVisionDefaults(&cfg, messages)
 	payload := oaiRequest{
 		Model:       cfg.Model,
 		Messages:    c.buildMessages(cfg, messages),
@@ -1051,7 +1410,15 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		Temperature: cfg.Temperature,
 		Stream:      true,
 		Tools:       buildOAITools(cfg.Tools),
-		Think:       cfg.Think,
+	}
+	if c.llamacpp {
+		payload.ChatTemplateKwargs = c.llamacppChatTemplateKwargs(cfg)
+		payload.ThinkingBudgetTokens = c.llamacppThinkBudget(cfg)
+		if payload.ThinkingBudgetTokens != nil && *payload.ThinkingBudgetTokens > 0 && payload.MaxTokens > 0 {
+			payload.MaxTokens += *payload.ThinkingBudgetTokens
+		}
+	} else {
+		payload.Think = cfg.Think
 	}
 	if cfg.JSONMode {
 		payload.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
@@ -1064,7 +1431,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 	c.snoopRequest(body, true)
 
-	Debug("[openai]: Sending stream request (body=%d bytes, think=%s, json=%v)", len(body), fmtThink(cfg.Think), cfg.JSONMode)
+	Debug("[%s]: Sending stream request (body=%d bytes, think=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode)
 	resp, err := c.doRequest(ctx, body)
 	if err != nil {
 		return nil, err
@@ -1079,11 +1446,11 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		provider := "openai"
-		if c.isOllama() {
-			provider = "ollama"
+		ep := "openai"
+		if c.llamacpp {
+			ep = "llama.cpp"
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: provider}
+		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep}
 	}
 
 	var full strings.Builder
@@ -1100,7 +1467,12 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer for thinking models
+	totalLines := 0
+	skipCount := 0
+	contentCount := 0
+	finishReason := ""
 	for scanner.Scan() {
+		totalLines++
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -1112,7 +1484,12 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 		var chunk oaiStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			skipCount++
 			continue
+		}
+
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			contentCount++
 		}
 
 		if chunk.Model != "" {
@@ -1125,9 +1502,16 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
+			if chunk.Choices[0].FinishReason != "" {
+				finishReason = chunk.Choices[0].FinishReason
+			}
 
-			// Thinking models (qwen3, deepseek-r1, etc.) emit reasoning
-			// in a separate field before the final answer.
+			// Thinking models (qwen3, deepseek-r1, etc.) emit reasoning in
+			// a separate field. llama.cpp + Qwen 3.6 use reasoning_content;
+			// some other backends use reasoning. Accept both.
+			if delta.ReasoningContent != "" {
+				reasoning.WriteString(delta.ReasoningContent)
+			}
 			if delta.Reasoning != "" {
 				reasoning.WriteString(delta.Reasoning)
 			}
@@ -1181,11 +1565,11 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 	// Always trace reasoning when present.
 	if reasoning.Len() > 0 {
-		Trace("[openai]: <-- REASONING:\n%s", reasoning.String())
+		Trace("[%s]: <-- REASONING:\n%s", c.provider(), reasoning.String())
 	}
 
 	if reasoning.Len() > 0 {
-		Debug("[openai]: reasoning present (%d chars), content=%d chars", reasoning.Len(), full.Len())
+		Debug("[%s]: reasoning present (%d chars), content=%d chars", c.provider(), reasoning.Len(), full.Len())
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -1206,7 +1590,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		})
 	}
 
-	Debug("[openai]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d", model, inputTokens, outputTokens, len(toolCalls))
+	Debug("[%s]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d finish=%s (lines=%d content=%d skipped=%d, resp=%d chars)", c.provider(), model, inputTokens, outputTokens, len(toolCalls), finishReason, totalLines, contentCount, skipCount, full.Len())
 	Trace("<-- STREAM COMPLETE: model=%s input_tokens=%d output_tokens=%d", model, inputTokens, outputTokens)
 	if full.Len() > 0 {
 		Trace("<-- RESPONSE TEXT:\n%s", full.String())
@@ -1214,6 +1598,20 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	for _, tc := range toolCalls {
 		argsJSON, _ := json.Marshal(tc.Args)
 		Trace("<-- TOOL CALL: id=%s name=%s args=%s", tc.ID, tc.Name, string(argsJSON))
+	}
+
+	// Detect empty response with consumed output tokens — the model hit its
+	// output ceiling mid-generation and the stream completed with no content.
+	// Return an error so the agent loop can retry (thinking disabled or lower
+	// max_tokens gives the model room for actual output).
+	if outputTokens > 0 && full.Len() == 0 && reasoning.Len() == 0 && len(toolCalls) == 0 {
+		return nil, &APIError{Message: fmt.Sprintf("empty LLM response after consuming %d output tokens (model hit output ceiling mid-generation)", outputTokens), Provider: c.provider()}
+	}
+	// finish_reason == "length" with empty content is the same problem — thinking
+	// burned the entire budget and no answer was emitted. Surface explicitly so
+	// the agent loop's retry kicks in.
+	if finishReason == "length" && full.Len() == 0 && len(toolCalls) == 0 {
+		return nil, &APIError{Message: fmt.Sprintf("empty LLM response: finish_reason=length after %d output tokens (raise max_tokens or disable thinking for this call)", outputTokens), Provider: c.provider()}
 	}
 
 	return &Response{

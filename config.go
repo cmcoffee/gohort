@@ -30,6 +30,12 @@ func browseModels(provider, apiKey, endpoint string, target *string) bool {
 			ep = "http://localhost:11434"
 		}
 		models, err = OllamaModels(ep)
+	case "llama.cpp":
+		ep := endpoint
+		if ep == "" {
+			ep = "http://localhost:8080/v1"
+		}
+		models, err = LlamaCppModels(ep)
 	case "openai":
 		if apiKey == "" {
 			Stderr("\n  Set API Key first.\n")
@@ -68,24 +74,114 @@ func browseModels(provider, apiKey, endpoint string, target *string) bool {
 	return true
 }
 
-// load_mail_config reads the stored mail configuration from the database.
-func load_mail_config() MailConfig {
-	var cfg MailConfig
-	global.db.Get(MailTable, "server", &cfg.Server)
-	global.db.Get(MailTable, "from", &cfg.From)
-	global.db.Get(MailTable, "username", &cfg.Username)
-	global.db.Get(MailTable, "password", &cfg.Password)
-	global.db.Get(MailTable, "recipient", &cfg.Recipient)
-	return cfg
+// dbCFG is a zero-value accessor for all persistent configuration stored in
+// global.db. Callers use the package-level dbcfg variable; no initialization
+// required. Adding a new config field means one new method here, not a new
+// standalone function scattered across the file.
+type dbCFG struct{}
+
+var dbcfg dbCFG
+
+func (d dbCFG) llm() LLMProviderConfig {
+	var c LLMProviderConfig
+	global.db.Get(LLMTable, "provider", &c.Provider)
+	global.db.Get(LLMTable, "model", &c.Model)
+	global.db.Get(LLMTable, "api_key", &c.APIKey)
+	global.db.Get(LLMTable, "endpoint", &c.Endpoint)
+	global.db.Get(LLMTable, "context_size", &c.ContextSize)
+	global.db.Get(LLMTable, "disable_thinking", &c.DisableThinking)
+	global.db.Get(LLMTable, "thinking_budget", &c.ThinkingBudget)
+	global.db.Get(LLMTable, "native_tools", &c.NativeTools)
+	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
+	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
+	var timeout_seconds int
+	global.db.Get(LLMTable, "request_timeout_seconds", &timeout_seconds)
+	if timeout_seconds > 0 {
+		c.RequestTimeout = time.Duration(timeout_seconds) * time.Second
+	}
+	return c
 }
 
-// load_search_config reads the stored web search configuration from the database.
-func load_search_config() WebSearchConfig {
-	var cfg WebSearchConfig
-	global.db.Get(SearchTable, "provider", &cfg.Provider)
-	global.db.Get(SearchTable, "api_key", &cfg.APIKey)
-	global.db.Get(SearchTable, "endpoint", &cfg.Endpoint)
-	return cfg
+func (d dbCFG) leadLLM() LLMProviderConfig {
+	var c LLMProviderConfig
+	global.db.Get(LeadLLMTable, "provider", &c.Provider)
+	global.db.Get(LeadLLMTable, "model", &c.Model)
+	global.db.Get(LeadLLMTable, "api_key", &c.APIKey)
+	global.db.Get(LeadLLMTable, "endpoint", &c.Endpoint)
+	global.db.Get(LeadLLMTable, "disable_thinking", &c.DisableThinking)
+	global.db.Get(LeadLLMTable, "thinking_budget", &c.ThinkingBudget)
+	global.db.Get(LeadLLMTable, "native_tools", &c.NativeTools)
+	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
+	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
+	return c
+}
+
+func (d dbCFG) mail() MailConfig {
+	var c MailConfig
+	global.db.Get(MailTable, "server", &c.Server)
+	global.db.Get(MailTable, "from", &c.From)
+	global.db.Get(MailTable, "username", &c.Username)
+	global.db.Get(MailTable, "password", &c.Password)
+	global.db.Get(MailTable, "recipient", &c.Recipient)
+	return c
+}
+
+func (d dbCFG) search() WebSearchConfig {
+	var c WebSearchConfig
+	global.db.Get(SearchTable, "provider", &c.Provider)
+	global.db.Get(SearchTable, "api_key", &c.APIKey)
+	global.db.Get(SearchTable, "endpoint", &c.Endpoint)
+	return c
+}
+
+func (d dbCFG) imageProvider() string {
+	var provider string
+	global.db.Get(ImageTable, "provider", &provider)
+	if provider == "" {
+		return "gemini"
+	}
+	return provider
+}
+
+func (d dbCFG) imageGenProfile(name string) ImageGenProfile {
+	var p ImageGenProfile
+	global.db.Get(ImageTable, name+"_provider", &p.Provider)
+	global.db.Get(ImageTable, name+"_api_key", &p.APIKey)
+	return p
+}
+
+func (d dbCFG) geminiAPIKey() string {
+	var imageKey string
+	global.db.Get(ImageTable, "api_key", &imageKey)
+	if imageKey != "" {
+		return imageKey
+	}
+	c := d.llm()
+	if c.Provider == "gemini" && c.APIKey != "" {
+		return c.APIKey
+	}
+	lead := d.leadLLM()
+	if lead.Provider == "gemini" && lead.APIKey != "" {
+		return lead.APIKey
+	}
+	return ""
+}
+
+func (d dbCFG) openAIAPIKey() string {
+	var imageKey string
+	global.db.Get(ImageTable, "api_key", &imageKey)
+	if imageKey != "" {
+		return imageKey
+	}
+	c := d.llm()
+	if c.Provider == "openai" && c.APIKey != "" {
+		return c.APIKey
+	}
+	lead := d.leadLLM()
+	if lead.Provider == "openai" && lead.APIKey != "" {
+		return lead.APIKey
+	}
+	return ""
 }
 
 // setup_fuzz runs the interactive configuration.
@@ -97,8 +193,10 @@ func setup_fuzz() {
 	var contextSize int
 	var requestTimeoutSec int
 	var disableThinking bool
+	var thinkingBudget int
 	var nativeTools bool
 	var ollamaMaxParallel int
+	var llamacppMaxParallel int
 	global.db.Get(LLMTable, "provider", &provider)
 	global.db.Get(LLMTable, "model", &model)
 	global.db.Get(LLMTable, "api_key", &apiKey)
@@ -106,21 +204,28 @@ func setup_fuzz() {
 	global.db.Get(LLMTable, "context_size", &contextSize)
 	global.db.Get(LLMTable, "request_timeout_seconds", &requestTimeoutSec)
 	global.db.Get(LLMTable, "disable_thinking", &disableThinking)
+	global.db.Get(LLMTable, "thinking_budget", &thinkingBudget)
 	global.db.Get(LLMTable, "native_tools", &nativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &ollamaMaxParallel)
 	if ollamaMaxParallel < 1 {
 		ollamaMaxParallel = 1 // default: strict serial execution through Ollama
 	}
+	global.db.Get(LLMTable, "llamacpp_max_parallel", &llamacppMaxParallel)
+	if llamacppMaxParallel < 1 {
+		llamacppMaxParallel = 1 // default: strict serial execution through llama.cpp
+	}
 
 	// Load current Lead LLM values.
 	var leadProvider, leadModel, leadAPIKey, leadEndpoint string
 	var leadDisableThinking bool
+	var leadThinkingBudget int
 	var leadNativeTools bool
 	global.db.Get(LeadLLMTable, "provider", &leadProvider)
 	global.db.Get(LeadLLMTable, "model", &leadModel)
 	global.db.Get(LeadLLMTable, "api_key", &leadAPIKey)
 	global.db.Get(LeadLLMTable, "endpoint", &leadEndpoint)
 	global.db.Get(LeadLLMTable, "disable_thinking", &leadDisableThinking)
+	global.db.Get(LeadLLMTable, "thinking_budget", &leadThinkingBudget)
 	global.db.Get(LeadLLMTable, "native_tools", &leadNativeTools)
 	if leadProvider == "" {
 		leadProvider = "(use primary)"
@@ -138,27 +243,31 @@ func setup_fuzz() {
 
 	// LLM settings.
 	llm := NewOptions(" [LLM Provider Settings] ", "(selection or 'q' to return to previous)", 'q')
-	llm.StringSelectVar(&provider, "LLM Provider", provider, "anthropic", "openai", "gemini", "ollama")
+	llm.StringSelectVar(&provider, "LLM Provider", provider, "anthropic", "openai", "gemini", "ollama", "llama.cpp")
 	llm.SecretVar(&apiKey, "API Key", apiKey, NONE)
-	llm.ShowWhen(func() bool { return provider != "ollama" })
+	llm.ShowWhen(func() bool { return provider != "ollama" && provider != "llama.cpp" })
 	llm.StringVar(&model, "Model", model, "LLM model name (leave blank for provider default).")
 	llm.Func("Browse Available Models", func() bool {
 		return browseModels(provider, apiKey, endpoint, &model)
 	})
 	llm.StringVar(&endpoint, "Endpoint", endpoint, "Custom API endpoint (leave blank for default).")
-	llm.ShowWhen(func() bool { return provider == "ollama" })
-	llm.IntVar(&contextSize, "Context Size", contextSize, "Context window size in tokens (0=default 65K).", 0, 262144)
-	llm.ShowWhen(func() bool { return provider == "ollama" })
+	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "llama.cpp" })
+	llm.IntVar(&contextSize, "Context Size", contextSize, "Context window size in tokens (0=default 65K). For llama.cpp: must match the --ctx-size the server was started with.", 0, 262144)
+	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "llama.cpp" })
 	llm.IntVar(&requestTimeoutSec, "Request Timeout (seconds)", requestTimeoutSec, "Max wait for first response header. 0=default 300s. Bump for slow local models or huge prompts.", 0, 3600)
 	llm.ToggleVar(&disableThinking, "Disable Thinking (force think=false on every call)", disableThinking)
-	llm.ShowWhen(func() bool { return provider == "ollama" })
+	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "gemini" || provider == "llama.cpp" })
+	llm.IntVar(&thinkingBudget, "Thinking Budget (tokens, 0=unlimited)", thinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Lower values reduce latency on simple queries. Only supported by llama.cpp and Gemini.", 0, 131072)
+	llm.ShowWhen(func() bool { return (provider == "gemini" || provider == "llama.cpp") && !disableThinking })
 	llm.ToggleVar(&nativeTools, "Native Tool Calling (disable for models without tool support)", nativeTools)
 	llm.ShowWhen(func() bool { return provider == "ollama" })
 	llm.IntVar(&ollamaMaxParallel, "Max Parallel Ollama Requests", ollamaMaxParallel, "How many concurrent requests Ollama will process. Default 1 (strict serial). Raise only if the host GPU can truly run more in parallel. Requests are fair-queued across caller sessions.", 1, 16)
 	llm.ShowWhen(func() bool { return provider == "ollama" })
+	llm.IntVar(&llamacppMaxParallel, "Max Parallel llama.cpp Requests", llamacppMaxParallel, "How many concurrent requests llama.cpp will process. Default 1 (single-threaded). Raise only if your server supports concurrent requests. Requests are fair-queued across caller sessions.", 1, 16)
+	llm.ShowWhen(func() bool { return provider == "llama.cpp" })
 	// Precision LLM settings (judge/fact-checker — falls back to primary if not set).
 	lead := NewOptions(" [Precision LLM (Secondary)] ", "(selection or 'q' to return to previous)", 'q')
-	lead.StringSelectVar(&leadProvider, "LLM Provider", leadProvider, "(use primary)", "anthropic", "openai", "gemini", "ollama")
+	lead.StringSelectVar(&leadProvider, "LLM Provider", leadProvider, "(use primary)", "anthropic", "openai", "gemini", "ollama", "llama.cpp")
 	lead.SecretVar(&leadAPIKey, "API Key", leadAPIKey, "API key (leave blank to use primary).")
 	lead.ShowWhen(func() bool { return leadProvider != "ollama" && leadProvider != "(use primary)" })
 	lead.StringVar(&leadModel, "Model", leadModel, "Model name (leave blank for provider default).")
@@ -172,9 +281,11 @@ func setup_fuzz() {
 	})
 	lead.ShowWhen(func() bool { return leadProvider != "(use primary)" })
 	lead.StringVar(&leadEndpoint, "Endpoint", leadEndpoint, "Custom API endpoint (leave blank for default).")
-	lead.ShowWhen(func() bool { return leadProvider == "ollama" })
+	lead.ShowWhen(func() bool { return leadProvider == "ollama" || leadProvider == "llama.cpp" })
 	lead.ToggleVar(&leadDisableThinking, "Disable Thinking (force think=false on every call)", leadDisableThinking)
-	lead.ShowWhen(func() bool { return leadProvider == "ollama" })
+	lead.ShowWhen(func() bool { return leadProvider == "ollama" || leadProvider == "gemini" || leadProvider == "llama.cpp" })
+	lead.IntVar(&leadThinkingBudget, "Thinking Budget (tokens, 0=unlimited)", leadThinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Only supported by llama.cpp and Gemini.", 0, 131072)
+	lead.ShowWhen(func() bool { return (leadProvider == "gemini" || leadProvider == "llama.cpp") && !leadDisableThinking })
 	lead.ToggleVar(&leadNativeTools, "Native Tool Calling (disable for models without tool support)", leadNativeTools)
 	lead.ShowWhen(func() bool { return leadProvider == "ollama" })
 
@@ -197,19 +308,9 @@ func setup_fuzz() {
 	}
 
 	imagegen := NewOptions(" [Image Generation] ", "(selection or 'q' to return to previous)", 'q')
-	imagegen.StringSelectVar(&imageProvider, "Image Provider", imageProvider, "gemini", "openai", "none")
-	imagegen.SecretVar(&imageAPIKey, "API Key", imageAPIKey, "Dedicated image generation API key (only needed if no LLM provider already has this key).")
-	imagegen.ShowWhen(func() bool {
-		if imageProvider == "none" {
-			return false
-		}
-		for _, p := range []string{provider, leadProvider} {
-			if p == imageProvider {
-				return false
-			}
-		}
-		return true
-	})
+	imagegen.StringSelectVar(&imageProvider, "Provider", imageProvider, "gemini", "openai", "none")
+	imagegen.SecretVar(&imageAPIKey, "API Key", imageAPIKey, "API key for image generation. Leave blank to reuse the matching LLM provider key.")
+	imagegen.ShowWhen(func() bool { return imageProvider != "none" })
 
 	// Group all LLM settings under one menu.
 	llmSettings := NewOptions(" [LLM Settings] ", "(selection or 'q' to return to previous)", 'q')
@@ -433,6 +534,21 @@ func setup_fuzz() {
 	embedOpts.StringVar(&embedModel, "Embedding model", embedModel, "Model name the endpoint should load. Default nomic-embed-text (run `ollama pull nomic-embed-text` on the server first). Alternatives: mxbai-embed-large, all-minilm.")
 	setup.Options("Embeddings (vector-DB semantic search)", embedOpts, false)
 
+	// --- Network Settings ---
+	var netConnectSec, netRequestSec int
+	global.db.Get(NetworkTable, "connect_timeout_seconds", &netConnectSec)
+	global.db.Get(NetworkTable, "request_timeout_seconds", &netRequestSec)
+	if netConnectSec <= 0 {
+		netConnectSec = 10
+	}
+	if netRequestSec <= 0 {
+		netRequestSec = 15
+	}
+	netmenu := NewOptions(" [Network Settings] ", "(selection or 'q' to return to previous)", 'q')
+	netmenu.IntVar(&netConnectSec, "Connect Timeout (seconds)", netConnectSec, "TCP+TLS connection timeout for outbound HTTP calls (source hooks, search APIs). Default: 10.", 1, 120)
+	netmenu.IntVar(&netRequestSec, "Request Timeout (seconds)", netRequestSec, "Per-read I/O timeout for HTTP response bodies. Default: 15.", 1, 300)
+	setup.Options("Network Settings", netmenu, false)
+
 	// App-contributed setup sections.
 	app_sections := RegisteredSetupSections()
 	if len(app_sections) > 0 {
@@ -457,8 +573,10 @@ func setup_fuzz() {
 	global.db.Set(LLMTable, "context_size", contextSize)
 	global.db.Set(LLMTable, "request_timeout_seconds", requestTimeoutSec)
 	global.db.Set(LLMTable, "disable_thinking", disableThinking)
+	global.db.Set(LLMTable, "thinking_budget", thinkingBudget)
 	global.db.Set(LLMTable, "native_tools", nativeTools)
 	global.db.Set(LLMTable, "ollama_max_parallel", ollamaMaxParallel)
+	global.db.Set(LLMTable, "llamacpp_max_parallel", llamacppMaxParallel)
 	if apiKey != "" {
 		global.db.CryptSet(LLMTable, "api_key", apiKey)
 	}
@@ -471,6 +589,7 @@ func setup_fuzz() {
 	global.db.Set(LeadLLMTable, "model", leadModel)
 	global.db.Set(LeadLLMTable, "endpoint", leadEndpoint)
 	global.db.Set(LeadLLMTable, "disable_thinking", leadDisableThinking)
+	global.db.Set(LeadLLMTable, "thinking_budget", leadThinkingBudget)
 	global.db.Set(LeadLLMTable, "native_tools", leadNativeTools)
 	if leadAPIKey != "" {
 		global.db.CryptSet(LeadLLMTable, "api_key", leadAPIKey)
@@ -529,6 +648,12 @@ func setup_fuzz() {
 	if err := SaveEmbeddingConfigToDB(global.db, newEmbedCfg); err != nil {
 		Err("Failed to save embedding config: %s", err)
 	}
+
+	// Save network timeouts and apply immediately so the running process
+	// picks them up without a restart.
+	global.db.Set(NetworkTable, "connect_timeout_seconds", netConnectSec)
+	global.db.Set(NetworkTable, "request_timeout_seconds", netRequestSec)
+	ApplyHTTPTimeouts(global.db)
 
 	// Save Web Server configuration.
 	global.db.Set(WebTable, "addr", webAddr)
@@ -847,97 +972,15 @@ func add_template_hook() {
 	Stdout("Source hook '%s' added.\n", hook.Name)
 }
 
-// load_llm_config reads the stored LLM configuration from the database.
-func load_llm_config() LLMProviderConfig {
-	var cfg LLMProviderConfig
-	global.db.Get(LLMTable, "provider", &cfg.Provider)
-	global.db.Get(LLMTable, "model", &cfg.Model)
-	global.db.Get(LLMTable, "api_key", &cfg.APIKey)
-	global.db.Get(LLMTable, "endpoint", &cfg.Endpoint)
-	global.db.Get(LLMTable, "context_size", &cfg.ContextSize)
-	global.db.Get(LLMTable, "disable_thinking", &cfg.DisableThinking)
-	global.db.Get(LLMTable, "native_tools", &cfg.NativeTools)
-	global.db.Get(LLMTable, "ollama_max_parallel", &cfg.OllamaMaxParallel)
-	var timeout_seconds int
-	global.db.Get(LLMTable, "request_timeout_seconds", &timeout_seconds)
-	if timeout_seconds > 0 {
-		cfg.RequestTimeout = time.Duration(timeout_seconds) * time.Second
-	}
-	return cfg
-}
-
-// load_lead_llm_config reads the stored Lead LLM configuration from the database.
-func load_lead_llm_config() LLMProviderConfig {
-	var cfg LLMProviderConfig
-	global.db.Get(LeadLLMTable, "provider", &cfg.Provider)
-	global.db.Get(LeadLLMTable, "model", &cfg.Model)
-	global.db.Get(LeadLLMTable, "api_key", &cfg.APIKey)
-	global.db.Get(LeadLLMTable, "endpoint", &cfg.Endpoint)
-	global.db.Get(LeadLLMTable, "disable_thinking", &cfg.DisableThinking)
-	global.db.Get(LeadLLMTable, "native_tools", &cfg.NativeTools)
-	// Lead uses the same scheduler cap as primary when both point at
-	// Ollama (global process-level limiter).
-	global.db.Get(LLMTable, "ollama_max_parallel", &cfg.OllamaMaxParallel)
-	return cfg
-}
-
-// ImageProvider returns the configured image generation provider.
-func ImageProvider() string {
-	var provider string
-	global.db.Get(ImageTable, "provider", &provider)
-	if provider == "" {
-		return "gemini"
-	}
-	return provider
-}
-
-// GeminiAPIKey returns the Gemini API key for image generation.
-// Checks the dedicated image key first, then LLM configs.
-func GeminiAPIKey() string {
-	var imageKey string
-	global.db.Get(ImageTable, "api_key", &imageKey)
-	if imageKey != "" {
-		return imageKey
-	}
-	cfg := load_llm_config()
-	if cfg.Provider == "gemini" && cfg.APIKey != "" {
-		return cfg.APIKey
-	}
-	lead := load_lead_llm_config()
-	if lead.Provider == "gemini" && lead.APIKey != "" {
-		return lead.APIKey
-	}
-	return ""
-}
-
-// OpenAIAPIKey returns the OpenAI API key for image generation.
-// Checks the dedicated image config first, then falls back to
-// whichever LLM config is set to OpenAI (primary or lead).
-func OpenAIAPIKey() string {
-	// Dedicated image generation key (set in --setup → Image Generation).
-	var imageKey string
-	global.db.Get(ImageTable, "api_key", &imageKey)
-	if imageKey != "" {
-		return imageKey
-	}
-	// Fall back to LLM provider keys.
-	cfg := load_llm_config()
-	if cfg.Provider == "openai" && cfg.APIKey != "" {
-		return cfg.APIKey
-	}
-	lead := load_lead_llm_config()
-	if lead.Provider == "openai" && lead.APIKey != "" {
-		return lead.APIKey
-	}
-	return ""
-}
-
 // init_database initializes the application database.
 func init_database() {
 	var err error
 
 	MkDir(fmt.Sprintf("%s/data/", global.root))
 	SetImageDir(fmt.Sprintf("%s/data/images", global.root))
+	SetBrowserDir(fmt.Sprintf("%s/data/browser", global.root))
+	SetGeocodeDir(fmt.Sprintf("%s/data/geocode", global.root))
+	SetWorkspacesDir(fmt.Sprintf("%s/data/workspaces", global.root))
 
 	db_filename := FormatPath(fmt.Sprintf("%s/data/%s.db", global.root, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
@@ -952,6 +995,9 @@ func init_database() {
 
 	// Load global source hooks — available to all agents regardless of entry point.
 	LoadSourceHooks(global.db)
+
+	// Apply configurable HTTP timeouts for all source-hook API clients.
+	ApplyHTTPTimeouts(global.db)
 
 	// Load persisted cost rates so per-run usage telemetry shows dollar
 	// estimates instead of "rates not configured." Must happen after the
