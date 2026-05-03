@@ -857,6 +857,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 	}
 	sessionImages := filterNewImages(sess.Images)
 	sessionVideos := filterNewVideos(sess.Videos)
+	sessionVideos = normalizeAudioForDelivery(sessionVideos)
 
 	// stay_silent suppresses the LLM's text but lets gathered attachments
 	// through. With nothing gathered, silence means "send nothing."

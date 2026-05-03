@@ -1451,6 +1451,12 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 
 	sessionImages := filterNewImages(sess.Images)
 	sessionVideos := filterNewVideos(sess.Videos)
+	// Audio normalization: anything in sessionVideos that's actually
+	// non-AAC audio (MP3 from ElevenLabs, WAV/OGG from other tools) gets
+	// transcoded to M4A/AAC server-side. Real video clips and audio
+	// already in AAC pass through unchanged. iMessage renders M4A as a
+	// clean audio bubble that survives MMS fallback.
+	sessionVideos = normalizeAudioForDelivery(sessionVideos)
 
 	// stay_silent suppresses the LLM's text reply but lets gathered
 	// attachments through. Pattern: LLM calls download_video, then
