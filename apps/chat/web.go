@@ -518,7 +518,9 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		// session restart and removed ones disappear immediately.
 		// Secure() is a singleton bound to the root global DB — chat's
 		// bucketed DB view doesn't apply here (credentials are global).
-		if api := Secure().BuildTools(); len(api) > 0 {
+		// sess is passed so the save_to param can resolve to the
+		// session's workspace dir.
+		if api := Secure().BuildTools(sess); len(api) > 0 {
 			active = append(active, api...)
 		}
 		active = FilterToolsByCaps(active, allowedCaps)

@@ -808,7 +808,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if sess.DB != nil && sess.Username != "" {
 		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
 	}
-	return Secure().DispatchToolCall(tt.Credential, urlStr, method, body)
+	return Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
 }
 
 // substituteURL replaces {param} placeholders in a URL template with

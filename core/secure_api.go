@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -94,9 +95,18 @@ type SecureAPIAuditEntry struct {
 
 const (
 	// secureAPIMaxResponseBytes caps response bodies returned to the
-	// LLM. Beyond this the body is truncated with a notice. Prevents
-	// a runaway endpoint from blowing the LLM's context.
+	// LLM as text. Beyond this the body is truncated with a notice.
+	// Prevents a runaway endpoint from blowing the LLM's context.
 	secureAPIMaxResponseBytes = 1 * 1024 * 1024 // 1 MB
+
+	// secureAPIMaxSaveBytes caps response bodies written to the
+	// workspace via save_to. Higher than the text cap because the
+	// LLM never reads the bytes — they go straight to disk and the
+	// LLM only sees a short metadata line. 100MB covers most
+	// generated audio (10+ minutes of ElevenLabs MP3), short videos,
+	// PDFs, etc. Larger downloads are still within the workspace
+	// disk-quota footprint so they don't escape the sandbox.
+	secureAPIMaxSaveBytes = 100 * 1024 * 1024 // 100 MB
 
 	// secureAPIRequestTimeout caps wall-clock time per call.
 	secureAPIRequestTimeout = 30 * time.Second
@@ -322,10 +332,15 @@ func (s *SecureAPI) loadSecret(name string) (string, bool) {
 // ----------------------------------------------------------------------
 
 // BuildTools converts every enabled registered credential into an
-// AgentToolDef. The handler closure captures the credential's metadata;
-// secrets are loaded fresh at call time so rotations take effect
-// immediately for in-flight sessions.
-func (s *SecureAPI) BuildTools() []AgentToolDef {
+// AgentToolDef. The handler closure captures the credential's metadata
+// + the calling session (so the save_to param can resolve to the
+// session's workspace); secrets are loaded fresh at call time so
+// rotations take effect immediately for in-flight sessions.
+//
+// sess may be nil for callers that don't have a session (e.g. tool
+// catalog enumeration outside a request). With a nil session, save_to
+// becomes unusable but text-mode responses still work.
+func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	if !s.ready() {
 		return nil
 	}
@@ -338,7 +353,7 @@ func (s *SecureAPI) BuildTools() []AgentToolDef {
 			disabledCount++
 			continue
 		}
-		out = append(out, s.agentToolFromCredential(c))
+		out = append(out, s.agentToolFromCredential(c, sess))
 	}
 	if len(allKeys) > 0 && len(out) == 0 {
 		Debug("[secure_api] BuildTools: %d keys in table, %d credentials decoded, %d disabled, 0 enabled — check key names, struct decode, or Disabled flag", len(allKeys), len(creds), disabledCount)
@@ -352,7 +367,7 @@ func (s *SecureAPI) BuildTools() []AgentToolDef {
 	return out
 }
 
-func (s *SecureAPI) agentToolFromCredential(c SecureCredential) AgentToolDef {
+func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSession) AgentToolDef {
 	toolName := "call_" + c.Name
 	desc := fmt.Sprintf(
 		"Call the %s API. The auth credential is injected server-side; you do not see it. Allowed URLs: %s. %s",
@@ -380,13 +395,17 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential) AgentToolDef {
 					Type:        "object",
 					Description: "Optional extra headers as a {name: value} object. Cannot override the auth header — that's set by the credential.",
 				},
+				"save_to": {
+					Type:        "string",
+					Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"voice.mp3\", \"report.pdf\"). Use for binary responses (audio, image, PDF, archive) — without this, binary content returns as garbled text in the tool result. When set, the tool result is a short metadata line (status, size, content-type, path) instead of the body. Pair with attach_file to deliver the saved file to the user.",
+				},
 			},
 			Required: []string{"url"},
 			Caps:     []Capability{CapNetwork},
 		},
 		NeedsConfirm: c.RequiresConfirm,
 		Handler: func(args map[string]any) (string, error) {
-			return s.dispatch(c, args)
+			return s.dispatch(c, args, sess)
 		},
 	}
 }
@@ -394,8 +413,9 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential) AgentToolDef {
 // DispatchToolCall is the entry point used by api-mode temp tools
 // (create_api_tool). Loads the named credential and dispatches a
 // pre-resolved request through the same path as the auto-generated
-// per-credential tool.
-func (s *SecureAPI) DispatchToolCall(credName, urlStr, method, body string) (string, error) {
+// per-credential tool. sess provides workspace context for save_to;
+// nil disables the save_to capability for this call.
+func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -410,14 +430,18 @@ func (s *SecureAPI) DispatchToolCall(credName, urlStr, method, body string) (str
 	if body != "" {
 		args["body"] = body
 	}
-	return s.dispatch(c, args)
+	return s.dispatch(c, args, sess)
 }
 
 // dispatch is the handler logic for one credential's tool. Validates
 // the URL, reads the encrypted secret, builds the request with auth
-// attached, executes, returns the response body capped at
-// secureAPIMaxResponseBytes.
-func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any) (string, error) {
+// attached, executes, and either returns the response body as text
+// (capped at secureAPIMaxResponseBytes) or writes raw bytes to a
+// workspace file when save_to is set (capped at secureAPIMaxSaveBytes).
+//
+// sess is consulted only for the save_to path, which needs a workspace
+// dir. nil sess just disables save_to.
+func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *ToolSession) (string, error) {
 	if !s.ready() {
 		return "", fmt.Errorf("secure-api store not initialized")
 	}
@@ -430,6 +454,20 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any) (string, e
 		method = "GET"
 	}
 	body := StringArg(args, "body")
+	saveTo := strings.TrimSpace(StringArg(args, "save_to"))
+	if saveTo != "" && (sess == nil || sess.WorkspaceDir == "") {
+		return "", fmt.Errorf("save_to requires a session with WorkspaceDir set")
+	}
+	// Pre-validate the save path before firing the request — no point
+	// fetching megabytes of audio just to discover the path was bad.
+	var savePath string
+	if saveTo != "" {
+		resolved, err := ResolveWorkspacePath(sess.WorkspaceDir, saveTo)
+		if err != nil {
+			return "", fmt.Errorf("save_to: %w", err)
+		}
+		savePath = resolved
+	}
 
 	// URL allowlist check. THIS IS THE LINCHPIN. If the LLM somehow
 	// produces a URL outside the allowed pattern, we refuse — no
@@ -535,6 +573,33 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any) (string, e
 	}
 	defer resp.Body.Close()
 
+	// save_to path: read up to the larger save cap and stream straight
+	// to disk. The LLM only sees a metadata line, so we don't pay the
+	// cost of holding 100MB in memory just to redact-and-discard. Note
+	// redaction is NOT applied to the saved bytes — the LLM never reads
+	// them, and the typical use is binary content (audio, video) where
+	// the secret string is statistically vanishingly unlikely to appear
+	// anyway. The audit log records the metadata as usual.
+	ct := resp.Header.Get("Content-Type")
+	if saveTo != "" {
+		// Read with cap+1 so we can detect truncation. ResponseBytes
+		// in the audit reflects what we actually wrote.
+		limited := io.LimitReader(resp.Body, secureAPIMaxSaveBytes+1)
+		written, err := writeWorkspaceFile(savePath, limited, secureAPIMaxSaveBytes)
+		if err != nil {
+			auditEntry.Status = resp.StatusCode
+			auditEntry.Error = redact("save_to write: " + err.Error())
+			s.recordAudit(auditEntry)
+			return "", fmt.Errorf("save_to: %s", redact(err.Error()))
+		}
+		auditEntry.Status = resp.StatusCode
+		auditEntry.ResponseBytes = int(written)
+		s.recordAudit(auditEntry)
+		s.touch(c.Name)
+		return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
+			resp.StatusCode, http.StatusText(resp.StatusCode), written, saveTo, ct, saveTo), nil
+	}
+
 	limited := io.LimitReader(resp.Body, secureAPIMaxResponseBytes+1)
 	bodyBytes, err := io.ReadAll(limited)
 	if err != nil {
@@ -560,7 +625,6 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any) (string, e
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "HTTP %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
-	ct := resp.Header.Get("Content-Type")
 	if strings.Contains(ct, "json") {
 		var anyVal interface{}
 		if json.Unmarshal(bodyBytes, &anyVal) == nil {
@@ -641,6 +705,27 @@ func globMatch(s, pattern string) bool {
 		pi++
 	}
 	return si == len(s)
+}
+
+// writeWorkspaceFile streams r to absPath, capping at maxBytes. Returns
+// the byte count written. If the limit is hit the error reads
+// "response exceeded %d byte cap"; partial output is left on disk so
+// the LLM can decide whether to retry. Caller has already validated
+// the path via ResolveWorkspacePath.
+func writeWorkspaceFile(absPath string, r io.Reader, maxBytes int64) (int64, error) {
+	f, err := os.Create(absPath)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	written, err := io.Copy(f, r)
+	if err != nil {
+		return written, err
+	}
+	if written > maxBytes {
+		return written, fmt.Errorf("response exceeded %d byte cap (got %d)", maxBytes, written)
+	}
+	return written, nil
 }
 
 // validToolNameStr matches the temptool name validator. Inlined here

@@ -275,7 +275,9 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 	// that wouldn't fire anyway.
 	cfg := defaultConfig(T.DB)
 	if cfg.SecureAPIEnabled {
-		for _, td := range Secure().BuildTools() {
+		// nil session — this endpoint enumerates the catalog for the
+		// admin UI, no save_to dispatch happens here.
+		for _, td := range Secure().BuildTools(nil) {
 			out = append(out, toolInfo{Name: td.Tool.Name, Desc: td.Tool.Description})
 		}
 	}
@@ -1154,7 +1156,7 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		//      are exposed.
 		var secureAPIByName map[string]AgentToolDef
 		if cfg.SecureAPIEnabled {
-			secureAPI := Secure().BuildTools()
+			secureAPI := Secure().BuildTools(sess)
 			secureAPIByName = make(map[string]AgentToolDef, len(secureAPI))
 			for _, td := range secureAPI {
 				secureAPIByName[td.Tool.Name] = td
