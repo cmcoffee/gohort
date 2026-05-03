@@ -790,6 +790,32 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 	)
 
 	sess := &ToolSession{LLM: T.LLM}
+	// send_status: enqueue an immediate outbox item so the user gets a
+	// progress iMessage before the scheduled reply. FIFO ordering in the
+	// outbox preserves arrival order.
+	sess.StatusCallback = func(text string) {
+		text = strings.TrimSpace(stripEmojis(text))
+		if text == "" {
+			return
+		}
+		Log("[phantom/scheduler] send_status for %s: %q", p.Handle, text)
+		T.rememberRecentReply(text)
+		storeMessage(T.DB, PhantomMessage{
+			ID:        now() + "-" + newID(),
+			ChatID:    p.ChatID,
+			Role:      "assistant",
+			Text:      text,
+			Timestamp: now(),
+		})
+		enqueueOutbox(T.DB, OutboxItem{
+			ID:      newID(),
+			ChatID:  p.ChatID,
+			Handle:  p.Handle,
+			Text:    text,
+			Type:    "status",
+			Created: now(),
+		})
+	}
 	tools := T.buildConvTools(p.ChatID, p.Handle, conv, cfg, sess, false)
 
 	phantomChatOpts := buildThinkOpts("app.phantom")
@@ -852,6 +878,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		return
 	}
 
+	T.rememberRecentReply(replyText)
 	enqueueOutbox(T.DB, OutboxItem{
 		ID:      newID(),
 		ChatID:  p.ChatID,

@@ -96,9 +96,61 @@ var (
 const maxEmptyPolls = 6 // ~30s at 5s interval before giving up on an empty row
 
 var (
-	sentROWIDMu   sync.Mutex
-	sentROWIDs    = map[int64]struct{}{} // ROWIDs of is_from_me=1 rows we sent; skip these in the processing loop
+	sentROWIDMu sync.Mutex
+	sentROWIDs  = map[int64]struct{}{} // ROWIDs of is_from_me=1 rows we sent; skip these in the processing loop
+	// sentText is a TTL-bounded set of recently-sent message texts. It's a
+	// fallback skip key for is_from_me=1 rows whose ROWID never landed in
+	// sentROWIDs (iMessage occasionally writes the row > 10s after our
+	// osascript send returns, and a bridge restart wipes the ROWID set
+	// entirely). Without this, our own outbound messages loop back through
+	// the hook as if the user typed them.
+	sentTextMu sync.Mutex
+	sentText   = map[string]time.Time{}
 )
+
+const sentTextTTL = 10 * time.Minute
+
+// rememberSentText records s with the current time so subsequent polls can
+// match against it as a fallback to the ROWID set. Empty / very short
+// strings are skipped to avoid false matches on common short replies.
+func rememberSentText(s string) {
+	s = strings.TrimSpace(s)
+	if len(s) < 8 {
+		return
+	}
+	sentTextMu.Lock()
+	defer sentTextMu.Unlock()
+	sentText[s] = time.Now()
+	// Lazy GC: walk the map and drop expired entries when it grows large.
+	if len(sentText) > 200 {
+		cutoff := time.Now().Add(-sentTextTTL)
+		for k, t := range sentText {
+			if t.Before(cutoff) {
+				delete(sentText, k)
+			}
+		}
+	}
+}
+
+// matchesRecentSentText returns true if s was recently sent by us (within
+// sentTextTTL). Used as a secondary skip key for is_from_me=1 rows.
+func matchesRecentSentText(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) < 8 {
+		return false
+	}
+	sentTextMu.Lock()
+	defer sentTextMu.Unlock()
+	t, ok := sentText[s]
+	if !ok {
+		return false
+	}
+	if time.Since(t) > sentTextTTL {
+		delete(sentText, s)
+		return false
+	}
+	return true
+}
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
@@ -379,14 +431,29 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 			nfo.Log("found rowid=%d is_from_me=%d handle=%q chatID=%q text=%q body_bytes=%d", rowID, isFromMe, handle, chatID, truncate(text, 40), len(body))
 		}
 
-		// Skip is_from_me=1 rows that we know we sent (ROWID recorded at delivery time).
-		// User self-messages are NOT in this set and pass through normally.
+		// Skip is_from_me=1 rows that we know we sent. Two skip paths:
+		//   - Primary: ROWID recorded at delivery time (recordSentROWIDs).
+		//   - Fallback: text matches a recently-sent message. Catches the
+		//     race where chat.db wrote the row after the recordSent
+		//     window closed, or where a bridge restart wiped the ROWID set.
+		// User self-messages from another device are NOT in either set
+		// and pass through normally.
 		if isFromMe == 1 {
 			sentROWIDMu.Lock()
-			_, skip := sentROWIDs[rowID]
+			_, skipByID := sentROWIDs[rowID]
 			sentROWIDMu.Unlock()
-			if skip {
-				nfo.Log("rowid=%d: skipping our own outgoing reply", rowID)
+			if skipByID {
+				nfo.Log("rowid=%d: skipping our own outgoing reply (matched by ROWID)", rowID)
+				newMax = rowID
+				continue
+			}
+			if matchesRecentSentText(text) {
+				nfo.Log("rowid=%d: skipping our own outgoing reply (matched by text)", rowID)
+				// Record the ROWID so subsequent passes use the fast path
+				// even if the same row reappears.
+				sentROWIDMu.Lock()
+				sentROWIDs[rowID] = struct{}{}
+				sentROWIDMu.Unlock()
 				newMax = rowID
 				continue
 			}
@@ -655,8 +722,54 @@ func bplistNSString(body []byte) string {
 	return ""
 }
 
-// extractTextHeuristic is the fallback: find all printable UTF-8 runs
-// in the blob and join them. No filtering — gohort cleans the output.
+// typedstreamClassNames is the registry of class / key names that the
+// NSKeyedArchiver / streamtyped format emits as printable ASCII runs at
+// the start of a serialized NSAttributedString blob. The heuristic
+// extractor sees them as printable UTF-8 and would happily prepend them
+// to the user's actual text — so we filter explicit matches out before
+// joining. The list is the union of class names observed in macOS
+// chat.db blobs across Sonoma+ and the iMessage-internal attribute keys
+// that ride alongside data-detector / link runs.
+var typedstreamClassNames = map[string]bool{
+	"streamtyped":                  true,
+	"NSObject":                     true,
+	"NSString":                     true,
+	"NSMutableString":              true,
+	"NSAttributedString":           true,
+	"NSMutableAttributedString":    true,
+	"NSDictionary":                 true,
+	"NSMutableDictionary":          true,
+	"NSArray":                      true,
+	"NSMutableArray":               true,
+	"NSData":                       true,
+	"NSMutableData":                true,
+	"NSNumber":                     true,
+	"NSValue":                      true,
+	"NSDate":                       true,
+	"NSURL":                        true,
+	"NSColor":                      true,
+	"NSFont":                       true,
+	"NSKeyedArchiver":              true,
+	"DDScannerResult":              true,
+	"NSDictionary0":                true,
+	"__kIMMessagePartAttributeName": true,
+	"__kIMBaseWritingDirectionAttributeName": true,
+	"__kIMFileTransferGUIDAttributeName":     true,
+	"__kIMLinkAttributeName":                 true,
+	"__kIMDataDetectedAttributeName":         true,
+	"__kIMMentionConfirmedMention":           true,
+	"__kIMTextEffectAttributeName":           true,
+	"NS.string":                     true,
+	"NS.keys":                       true,
+	"NS.objects":                    true,
+}
+
+// extractTextHeuristic is the fallback: find printable UTF-8 runs in
+// the blob, drop typedstream class-name preamble tokens, and join the
+// rest. The class-name filter prevents the leading
+// "streamtyped NSAttributedString NSObject NSString …" preamble that
+// every macOS-encoded NSAttributedString carries from being prepended
+// to every empty-handle (is_from_me=1) message the server sees.
 func extractTextHeuristic(body []byte) string {
 	var parts []string
 	i := 0
@@ -676,9 +789,13 @@ func extractTextHeuristic(body []byte) string {
 		}
 		s := strings.TrimSpace(string(body[start:i]))
 		s = stripStreamtypedFraming(s)
-		if len(s) >= 2 {
-			parts = append(parts, s)
+		if len(s) < 2 {
+			continue
 		}
+		if typedstreamClassNames[s] {
+			continue
+		}
+		parts = append(parts, s)
 	}
 	return strings.Join(parts, " ")
 }
@@ -1031,6 +1148,11 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	}
 	nfo.Log("send OK to %s", item.Handle)
 
+	// Remember the sent text so a fallback skip path can identify our own
+	// outbound even if recordSentROWIDs misses the row (slow chat.db
+	// commit, bridge restart, etc.).
+	rememberSentText(item.Text)
+
 	// Find the is_from_me=1 row(s) that appeared after we sent and record their
 	// ROWIDs so the processing loop won't treat them as inbound messages.
 	if db != nil {
@@ -1038,10 +1160,20 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	}
 }
 
-// recordSentROWIDs polls briefly for new is_from_me=1 rows above preROWID and
-// adds them to sentROWIDs. Called right after a successful osascript delivery.
+// recordSentROWIDs polls for new is_from_me=1 rows above preROWID and
+// adds them to sentROWIDs. Called right after a successful osascript
+// delivery. The poll runs in the background so a slow chat.db commit
+// doesn't stall the deliver loop, and the window is generous (15s) —
+// observed in the wild that iMessage occasionally takes 5-10s to write
+// the row, especially under load.
 func recordSentROWIDs(db *sql.DB, preROWID int64) {
-	deadline := time.Now().Add(2 * time.Second)
+	go recordSentROWIDsBlocking(db, preROWID)
+}
+
+// recordSentROWIDsBlocking is the actual polling loop. Spawned as a
+// goroutine by recordSentROWIDs.
+func recordSentROWIDsBlocking(db *sql.DB, preROWID int64) {
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, err := db.Query(`SELECT ROWID FROM message WHERE is_from_me = 1 AND ROWID > ?`, preROWID)
 		if err != nil {

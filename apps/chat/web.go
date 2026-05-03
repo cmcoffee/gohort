@@ -362,6 +362,15 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Wire send_status: when a tool fires sess.StatusCallback, emit an
+	// SSE 'status' event so the client can render an inline progress
+	// note. The LLM's final reply still flows through the normal chunk
+	// path. Set after flusher is resolved so the closure can flush.
+	sess.StatusCallback = func(text string) {
+		writeSSEEvent(w, "status", map[string]string{"text": text})
+		flusher.Flush()
+	}
+
 	// flushNewImages emits SSE `image` events for any new entries the
 	// tool calls have appended to sess.Images since the last flush. Called
 	// after each tool round and at session close so the user sees images
@@ -969,6 +978,11 @@ body.select-mode .session-item .si-actions { display: none; }
 .tool-details { padding: 0.3rem 0.6rem 0.4rem; }
 .tool-call .args, .tool-call .result { display: block; margin-top: 0.2rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; }
 .tool-call .result { color: var(--text); }
+/* In-progress status messages from the send_status tool. Rendered as a
+   subdued italic note inline in the assistant bubble so the user knows
+   work is still happening. */
+.status-note { margin-top: 0.4rem; padding: 0.3rem 0.6rem; background: var(--bg-2); border-left: 3px solid var(--accent, #4f8cff); border-radius: 4px; font-size: 0.8rem; font-style: italic; color: var(--text-mute); }
+.status-note::before { content: '… '; font-style: normal; }
 /* Inline images delivered alongside the assistant's reply: screenshots,
    fetched images, generated images. Click opens at full size. */
 .tool-images { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
@@ -1677,6 +1691,21 @@ function appendToolImage(msgEl, b64) {
   hist.scrollTop = hist.scrollHeight;
 }
 
+function appendStatus(msgEl, text) {
+  // Render a send_status progress note inline in the assistant bubble.
+  // Visible while streaming so the user knows long-running work is in
+  // flight; not persisted with the final transcript (the LLM's actual
+  // reply is what gets saved).
+  if (!msgEl || !text) return;
+  removeThinkingDots(msgEl);
+  var note = document.createElement('div');
+  note.className = 'status-note';
+  note.textContent = text;
+  msgEl.appendChild(note);
+  var hist = document.getElementById('chat-history');
+  hist.scrollTop = hist.scrollHeight;
+}
+
 function appendError(msgEl, text) {
   if (msgEl) {
     removeThinkingDots(msgEl);
@@ -1738,6 +1767,8 @@ function sendChat(opts) {
         appendToolResult(assistantEl, data.name, data.result);
       } else if (eventType === 'image' && data.data) {
         appendToolImage(assistantEl, data.data);
+      } else if (eventType === 'status' && data.text) {
+        appendStatus(assistantEl, data.text);
       } else if (eventType === 'done') {
         finishChat(true);
       } else if (eventType === 'error') {

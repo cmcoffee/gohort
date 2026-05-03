@@ -615,6 +615,23 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Text = stripLeadingArtifact(req.Text)
 
+	// Loop-back guard: if the bridge's ROWID + sentText skip both missed
+	// (slow chat.db commit, bridge restart), our own reply text could
+	// arrive here as if the user typed it. Apply cleanMessageText first
+	// since the body extractor may prepend typedstream prefixes that
+	// would otherwise prevent the comparison from matching. Empty handle
+	// is the only path that can be a loop-back; user messages from
+	// another device also use empty handle (is_from_me=1) but won't
+	// match the recent-reply set.
+	if req.Handle == "" && req.Text != "" {
+		clean := cleanMessageText(req.Text)
+		if T.matchesRecentReply(clean) {
+			Log("[phantom] dropping loop-back of our own reply (chat_id=%s, %d chars)", req.ChatID, len(clean))
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+	}
+
 	// Normalize from_me messages: the relay sends the owner's phone number as the
 	// handle for messages sent from this device. Zero it out so ownerLabel() is used
 	// instead of the raw number (which confuses the gatekeeper's wake-word check).
@@ -801,12 +818,12 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 			// chat ID uses an unresolvable service (e.g. "any;-;..." for
 			// cross-service threads like Gmail), in which case fall back to
 			// the primary so the reply can actually be delivered.
-			sendTo := activeChatID
+			deliverChatID := activeChatID
 			if req.Handle == "" && !strings.HasPrefix(req.ChatID, "any;-;") {
-				sendTo = req.ChatID
+				deliverChatID = req.ChatID
 			}
 			go func() {
-				T.processCoalesced(sendTo, req.Handle, req.Text, conv)
+				T.processCoalesced(activeChatID, deliverChatID, req.Handle, req.Text, conv)
 			}()
 		}
 	}
@@ -997,10 +1014,21 @@ func isLetter(r rune) bool {
 
 // processCoalesced acquires the per-chat slot and runs processMessage, coalescing
 // any messages that arrive while the LLM is working into a single follow-up reply.
-// If another goroutine is already running for this chatID, the new message is
-// queued and the running goroutine will pick it up when it finishes.
-func (T *Phantom) processCoalesced(chatID, handle, text string, conv Conversation) {
-	slotVal, _ := T.chatSlots.LoadOrStore(chatID, &chatPending{})
+// If another goroutine is already running for this convChatID, the new message
+// is queued and the running goroutine will pick it up when it finishes.
+//
+// convChatID is the alias-resolved primary chat_id used for storage, history,
+// and the per-chat slot key — every conversation participant routes through
+// the same primary so the LLM sees one continuous thread regardless of which
+// alias address the bridge delivered the hook from.
+//
+// deliverChatID is the iMessage address replies are sent to. For aliased
+// inbound (Craig typed from his iPhone, hook came in via iMessage;-;phone#)
+// we want to reply to the same address so it lands in the right thread on
+// the user's device, NOT to the resolved primary. Decoupling the two
+// closes the bug where storage and history were under different IDs.
+func (T *Phantom) processCoalesced(convChatID, deliverChatID, handle, text string, conv Conversation) {
+	slotVal, _ := T.chatSlots.LoadOrStore(convChatID, &chatPending{})
 	slot := slotVal.(*chatPending)
 
 	slot.mu.Lock()
@@ -1009,10 +1037,11 @@ func (T *Phantom) processCoalesced(chatID, handle, text string, conv Conversatio
 		slot.handle = handle
 		slot.text = text
 		slot.conv = conv
+		slot.deliverChatID = deliverChatID
 		slot.queued = true
 		slot.generation++
 		slot.mu.Unlock()
-		Log("[phantom] coalescing message from %s into in-flight reply for %s", handle, chatID)
+		Log("[phantom] coalescing message from %s into in-flight reply for %s", handle, convChatID)
 		return
 	}
 	slot.active = true
@@ -1031,7 +1060,7 @@ func (T *Phantom) processCoalesced(chatID, handle, text string, conv Conversatio
 			return slot.generation == gen
 		}
 
-		T.processMessage(chatID, handle, text, conv, shouldSend)
+		T.processMessage(convChatID, deliverChatID, handle, text, conv, shouldSend)
 
 		slot.mu.Lock()
 		if !slot.queued {
@@ -1043,9 +1072,10 @@ func (T *Phantom) processCoalesced(chatID, handle, text string, conv Conversatio
 		handle = slot.handle
 		text = slot.text
 		conv = slot.conv
+		deliverChatID = slot.deliverChatID
 		slot.queued = false
 		slot.mu.Unlock()
-		Log("[phantom] running coalesced reply for %s", chatID)
+		Log("[phantom] running coalesced reply for %s", convChatID)
 	}
 }
 
@@ -1115,7 +1145,13 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 // shouldSend, if non-nil, is called before the LLM call and again before
 // enqueueing the reply; returning false aborts to let a coalesced re-run take
 // over with the full updated history.
-func (T *Phantom) processMessage(chatID, handle, text string, conv Conversation, shouldSend func() bool) {
+//
+// convChatID is the alias-resolved primary used for storage and history fetch;
+// deliverChatID is the address the outbound reply is delivered to (may equal
+// convChatID, but for aliased inbound it's the original incoming address so
+// the reply lands in the user's actual thread).
+func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string, conv Conversation, shouldSend func() bool) {
+	chatID := convChatID // legacy local name used throughout the body for storage/history
 	if T.LLM == nil {
 		Log("[phantom] processMessage: LLM not configured")
 		return
@@ -1265,6 +1301,33 @@ func (T *Phantom) processMessage(chatID, handle, text string, conv Conversation,
 	)
 
 	sess := &ToolSession{LLM: T.LLM}
+	// send_status: enqueue an immediate outbox item so the user receives
+	// the status as its own iMessage before the eventual reply. The
+	// outbox is FIFO so order is preserved. We also persist it as an
+	// assistant message in chat history for transcript parity.
+	sess.StatusCallback = func(text string) {
+		text = strings.TrimSpace(stripEmojis(text))
+		if text == "" {
+			return
+		}
+		Log("[phantom] send_status for %s: %q", handle, text)
+		T.rememberRecentReply(text)
+		storeMessage(T.DB, PhantomMessage{
+			ID:        now() + "-" + newID(),
+			ChatID:    chatID,
+			Role:      "assistant",
+			Text:      text,
+			Timestamp: now(),
+		})
+		enqueueOutbox(T.DB, OutboxItem{
+			ID:      newID(),
+			ChatID:  deliverChatID,
+			Handle:  handle,
+			Text:    text,
+			Type:    "status",
+			Created: now(),
+		})
+	}
 	tools := T.buildConvTools(chatID, handle, conv, cfg, sess, true)
 
 	Log("[phantom] processing reply for %s (%d history msgs, %d tools)", senderDesc, len(msgs), len(tools))
@@ -1352,10 +1415,17 @@ func (T *Phantom) processMessage(chatID, handle, text string, conv Conversation,
 		Timestamp: now(),
 	})
 
-	// Queue for delivery.
+	// Remember the reply text so the hook handler can drop a loop-back of
+	// our own outbound if the bridge's skip mechanisms miss it. Belt and
+	// suspenders alongside the bridge-side ROWID + sentText filtering.
+	T.rememberRecentReply(reply)
+
+	// Queue for delivery. ChatID is the iMessage destination address —
+	// for aliased inbound this is the original sender thread, NOT the
+	// internal storage convChatID.
 	enqueueOutbox(T.DB, OutboxItem{
 		ID:      newID(),
-		ChatID:  chatID,
+		ChatID:  deliverChatID,
 		Handle:  handle,
 		Text:    reply,
 		Images:  sessionImages,

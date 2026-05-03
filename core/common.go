@@ -1104,7 +1104,15 @@ type ToolSession struct {
 	Silenced          bool     // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	LLM               LLM      // optional LLM made available to tools that need sub-calls
 	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
-	mu                sync.Mutex
+	// StatusCallback, if set, is invoked by the send_status tool to deliver
+	// an in-progress status message to the user mid-turn ("Working on it…").
+	// Each app wires it differently: chat emits an SSE status event, phantom
+	// enqueues an outbox item that becomes its own iMessage. If the callback
+	// is nil the tool no-ops gracefully (apps that don't support live status
+	// just ignore the call). Must be safe to call from a tool handler
+	// goroutine — set it once at session creation and don't mutate after.
+	StatusCallback func(text string)
+	mu             sync.Mutex
 }
 
 // AppendImage appends a base64-encoded image to the session image list.

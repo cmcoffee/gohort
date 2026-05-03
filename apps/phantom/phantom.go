@@ -29,20 +29,80 @@ func init() {
 }
 
 // chatPending tracks coalesced messages that arrived while a processMessage
-// goroutine was already running for a given chatID.
+// goroutine was already running for a given convChatID.
 type chatPending struct {
-	mu         sync.Mutex
-	active     bool
-	generation int  // incremented each time a newer message is queued
-	handle     string
-	text       string
-	conv       Conversation
-	queued     bool // a message arrived while active; re-run when done
+	mu            sync.Mutex
+	active        bool
+	generation    int  // incremented each time a newer message is queued
+	handle        string
+	text          string
+	conv          Conversation
+	deliverChatID string // outbound destination for the next coalesced reply (may differ from convChatID for aliased inbound)
+	queued        bool   // a message arrived while active; re-run when done
 }
 
 type Phantom struct {
 	AppCore
 	chatSlots sync.Map // chatID → *chatPending
+
+	// recentRepliesMu / recentReplies tracks text we've recently sent to
+	// any conversation. A loop-back (bridge re-reads our outbound from
+	// chat.db with is_from_me=1 but ROWID skip missed) shows up at the
+	// hook handler with empty handle and our own text. Even with the
+	// bridge's text-content skip, this is a belt-and-suspenders defense
+	// at the server boundary.
+	recentRepliesMu sync.Mutex
+	recentReplies   map[string]time.Time // text → time sent
+}
+
+const recentReplyTTL = 10 * time.Minute
+
+// rememberRecentReply records text with the current time. Caller is the
+// outbox enqueue path. Empty / very short strings are skipped to avoid
+// false positives on common short replies.
+func (T *Phantom) rememberRecentReply(text string) {
+	text = strings.TrimSpace(text)
+	if len(text) < 8 {
+		return
+	}
+	T.recentRepliesMu.Lock()
+	defer T.recentRepliesMu.Unlock()
+	if T.recentReplies == nil {
+		T.recentReplies = make(map[string]time.Time)
+	}
+	T.recentReplies[text] = time.Now()
+	// Lazy GC.
+	if len(T.recentReplies) > 200 {
+		cutoff := time.Now().Add(-recentReplyTTL)
+		for k, t := range T.recentReplies {
+			if t.Before(cutoff) {
+				delete(T.recentReplies, k)
+			}
+		}
+	}
+}
+
+// matchesRecentReply returns true if text was sent by us within
+// recentReplyTTL. Used by the hook handler to drop loop-back hooks.
+func (T *Phantom) matchesRecentReply(text string) bool {
+	text = strings.TrimSpace(text)
+	if len(text) < 8 {
+		return false
+	}
+	T.recentRepliesMu.Lock()
+	defer T.recentRepliesMu.Unlock()
+	if T.recentReplies == nil {
+		return false
+	}
+	t, ok := T.recentReplies[text]
+	if !ok {
+		return false
+	}
+	if time.Since(t) > recentReplyTTL {
+		delete(T.recentReplies, text)
+		return false
+	}
+	return true
 }
 
 func (T Phantom) Name() string  { return "phantom" }
