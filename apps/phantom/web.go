@@ -1381,6 +1381,19 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		LeadLLM:      T.LeadLLM,
 		WorkspaceDir: ensurePhantomWorkspace(cfg),
 		DB:           T.DB,
+		// Username scopes persistent temp tools (and any future
+		// per-user features). Set to OwnerHandle so persistent tools
+		// defined + approved via chat (which uses the admin's auth
+		// username) are visible here when OwnerHandle == admin email.
+		// Empty OwnerHandle just disables persistence loading; harmless.
+		Username: cfg.OwnerHandle,
+	}
+	// Load any persistent temp tools approved for this owner so the
+	// LLM can use them in phantom too. Same pool the chat agent reads
+	// when the admin is logged in as the same email.
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		t := p.Tool
+		_ = sess.AppendTempTool(&t)
 	}
 	// send_status: enqueue an immediate outbox item so the user receives
 	// the status as its own iMessage before the eventual reply. The

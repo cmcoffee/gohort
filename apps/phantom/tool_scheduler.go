@@ -794,6 +794,11 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		LeadLLM:      T.LeadLLM,
 		WorkspaceDir: ensurePhantomWorkspace(cfg),
 		DB:           T.DB,
+		Username:     cfg.OwnerHandle,
+	}
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		t := p.Tool
+		_ = sess.AppendTempTool(&t)
 	}
 	// send_status: enqueue an immediate outbox item so the user gets a
 	// progress iMessage before the scheduled reply. FIFO ordering in the
