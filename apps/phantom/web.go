@@ -1278,6 +1278,21 @@ func (T *Phantom) processMessage(chatID, handle, text string, conv Conversation,
 		PromptTools:  T.PromptTools,
 		ChatOptions:  phantomChatOpts,
 		Confirm:      func(string, string) bool { return true },
+		// Drain any view-images deposited by tools (view_video,
+		// download_video frame sampling) into a follow-up user message
+		// at the next round so the LLM sees them. Images go to the LLM
+		// only — not delivered to the iMessage user via sess.Images.
+		OnRoundStart: func() []Message {
+			imgs := sess.DrainViewImages()
+			if len(imgs) == 0 {
+				return nil
+			}
+			return []Message{{
+				Role:    "user",
+				Content: "Here are the sampled frames for visual analysis:",
+				Images:  imgs,
+			}}
+		},
 	})
 	if err != nil {
 		Log("[phantom] chat error for %s: %v", handle, err)

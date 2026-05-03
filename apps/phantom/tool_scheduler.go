@@ -801,6 +801,19 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		PromptTools:  T.PromptTools,
 		ChatOptions:  phantomChatOpts,
 		Confirm:      func(string, string) bool { return true },
+		// Drain any view-images deposited by tools so the LLM sees the
+		// frames on its next round (LLM-only, not delivered to user).
+		OnRoundStart: func() []Message {
+			imgs := sess.DrainViewImages()
+			if len(imgs) == 0 {
+				return nil
+			}
+			return []Message{{
+				Role:    "user",
+				Content: "Here are the sampled frames for visual analysis:",
+				Images:  imgs,
+			}}
+		},
 	})
 	if err != nil {
 		Log("[phantom/scheduler] LLM error for %s: %v", p.Handle, err)

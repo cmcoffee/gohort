@@ -23,13 +23,8 @@
 package videodl
 
 import (
-	"bytes"
-	"context"
 	"encoding/base64"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -59,7 +54,7 @@ func (t *DownloadVideoTool) Caps() []Capability {
 }
 
 func (t *DownloadVideoTool) Desc() string {
-	return "Download a video from a URL via yt-dlp. Supports Instagram, TikTok, YouTube, Twitter/X, Reddit, Vimeo, Facebook, and ~1000 other sites. The downloaded video is sampled into frames you can analyze, and (where the calling app supports outbound attachments) carried back to the user as a video file. Use when the user pastes a video link and wants you to watch, describe, summarize, or share it. DRM-protected sources (Netflix, paid YouTube, etc.) cannot be downloaded — the tool will return an error in that case."
+	return "Download a video from a URL via yt-dlp and attach the file to your reply. Supports Instagram, TikTok, YouTube, Twitter/X, Reddit, Vimeo, Facebook, and roughly 1000 other sites. Returns container metadata (mime, dimensions, duration, recorded date, GPS-resolved location, camera) the calling app can use to describe the file. DRM-protected sources (Netflix, paid YouTube, etc.) return an error."
 }
 
 // IsInternetTool ensures private-mode chat hides this tool — it makes
@@ -89,76 +84,9 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 		return "", fmt.Errorf("url is required")
 	}
 
-	// Verify yt-dlp is installed before launching the download dance.
-	if _, err := exec.LookPath("yt-dlp"); err != nil {
-		return "", fmt.Errorf("yt-dlp is not installed on this server. Install via `pip install yt-dlp` or download the static binary from https://github.com/yt-dlp/yt-dlp/releases")
-	}
-
-	dir, err := os.MkdirTemp("", "videodl-*")
-	if err != nil {
-		return "", fmt.Errorf("create temp dir: %w", err)
-	}
-	defer os.RemoveAll(dir)
-
-	outPattern := filepath.Join(dir, "video.%(ext)s")
-	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
-	defer cancel()
-
-	// Prefer mp4 (compatible with iMessage attachments and most vision
-	// pipelines). Fall back to whatever the site offers if mp4 isn't
-	// available. --no-playlist guards against accidentally pulling an
-	// entire YouTube playlist when the URL looks like a single video.
-	cmd := exec.CommandContext(ctx, "yt-dlp",
-		"-f", "best[ext=mp4]/best",
-		"-o", outPattern,
-		"--no-playlist",
-		"--no-warnings",
-		"--no-progress",
-		"--max-filesize", fmt.Sprintf("%d", downloadMaxBytes),
-		target,
-	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		if ctx.Err() == context.DeadlineExceeded {
-			return "", fmt.Errorf("download timed out after %s", downloadTimeout)
-		}
-		return "", fmt.Errorf("yt-dlp failed: %s", msg)
-	}
-
-	// Find the produced file (extension chosen by yt-dlp from `%(ext)s`).
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("read output dir: %w", err)
-	}
-	var videoPath string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if strings.HasPrefix(e.Name(), "video.") {
-			videoPath = filepath.Join(dir, e.Name())
-			break
-		}
-	}
-	if videoPath == "" {
-		return "", fmt.Errorf("yt-dlp produced no output file")
-	}
-	info, err := os.Stat(videoPath)
+	data, err := downloadViaYtDlp(target)
 	if err != nil {
 		return "", err
-	}
-	if info.Size() > downloadMaxBytes {
-		return "", fmt.Errorf("downloaded video too large: %d bytes (cap %d)", info.Size(), downloadMaxBytes)
-	}
-
-	data, err := os.ReadFile(videoPath)
-	if err != nil {
-		return "", fmt.Errorf("read output: %w", err)
 	}
 
 	// Carry the full video bytes for outbound delivery — phantom or any
@@ -166,20 +94,36 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// reply. Apps that don't consume sess.Videos just ignore them.
 	sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
 
+	// Sample frames into PendingViewImages so the LLM can actually
+	// describe what it's sending in its reply ("here's the clip, it's
+	// a 12s skateboard trick at sunset"). These frames go to the LLM
+	// only — they are NOT delivered to the user. Frame failures are
+	// non-fatal; the metadata fallback still gives the LLM something.
+	frames, ferr := ExtractVideoFrames(data, viewFrameCount)
+	if ferr == nil {
+		for _, f := range frames {
+			sess.AppendViewImage(f)
+		}
+	} else {
+		Debug("[videodl] frame sampling failed for %s: %v", target, ferr)
+	}
+
 	// Container metadata (mime, dimensions, duration, GPS-resolved
-	// location, camera) gets rolled into the tool result so the LLM has
-	// enough context to describe the clip in its reply, even though it
-	// can't see the actual frames.
+	// location, camera) gets rolled into the tool result alongside the
+	// frames so the LLM has both visual and structured context.
 	meta := ExtractVideoMetadata(data)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Downloaded video from %s (%s). It will be attached to your reply.\n", target, humanSize(info.Size()))
+	fmt.Fprintf(&sb, "Downloaded video from %s (%s). It will be attached to your reply.\n", target, humanSize(int64(len(data))))
+	if len(frames) > 0 {
+		fmt.Fprintf(&sb, "Sampled %d frames for visual analysis — they will be available to you on the next round so you can describe what you're sending.\n", len(frames))
+	}
 	if meta != "" {
 		sb.WriteString("\n")
 		sb.WriteString(meta)
 		sb.WriteString("\n")
 	}
-	Debug("[videodl] %s → %d bytes", target, len(data))
+	Debug("[videodl] %s → %d bytes, %d frames", target, len(data), len(frames))
 	return sb.String(), nil
 }
 

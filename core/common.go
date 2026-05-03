@@ -1098,12 +1098,13 @@ type CapabilityTool interface {
 // and session-aware tools. Pass a *ToolSession when building agent tools via
 // GetAgentToolsWithSession; read results back from it after the loop completes.
 type ToolSession struct {
-	Images       []string // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
-	Videos       []string // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
-	Silenced     bool     // set true by the stay_silent tool
-	LLM          LLM      // optional LLM made available to tools that need sub-calls
-	WorkspaceDir string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
-	mu           sync.Mutex
+	Images            []string // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
+	Videos            []string // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
+	PendingViewImages [][]byte // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
+	Silenced          bool     // set true by the stay_silent tool
+	LLM               LLM      // optional LLM made available to tools that need sub-calls
+	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
+	mu                sync.Mutex
 }
 
 // AppendImage appends a base64-encoded image to the session image list.
@@ -1126,6 +1127,39 @@ func (s *ToolSession) AppendVideo(b64 string) {
 	s.mu.Lock()
 	s.Videos = append(s.Videos, b64)
 	s.mu.Unlock()
+}
+
+// AppendViewImage queues a raw image byte slice (typically a sampled video
+// frame) for the LLM to see on its next round. Tools that want the LLM to
+// "look at" something call this; the agent loop's caller is responsible
+// for draining and injecting them as a synthetic user message before the
+// next LLM call. These bytes never reach the user — they're LLM-input only.
+func (s *ToolSession) AppendViewImage(data []byte) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.PendingViewImages = append(s.PendingViewImages, data)
+	s.mu.Unlock()
+}
+
+// DrainViewImages returns and clears any pending view images. Callers
+// should drain right before the next LLM call, after tool results have
+// been appended to history; the frames go into a synthetic user message
+// with Images set so buildMessages handles them through the standard
+// vision content path.
+func (s *ToolSession) DrainViewImages() [][]byte {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.PendingViewImages) == 0 {
+		return nil
+	}
+	out := s.PendingViewImages
+	s.PendingViewImages = nil
+	return out
 }
 
 // SessionChatTool extends ChatTool for tools that need per-session state.

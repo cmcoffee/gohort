@@ -698,6 +698,18 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 			Role:        "user",
 			ToolResults: results,
 		})
+		// Drain any view-images a tool deposited (e.g. view_video /
+		// download_video sampling frames for visual analysis). These go
+		// into a follow-up user message with Images attached so the LLM
+		// sees them on the next round. They are NOT pushed to sess.Images
+		// so the chat UI doesn't render them as outbound attachments.
+		if viewImgs := sess.DrainViewImages(); len(viewImgs) > 0 {
+			streamMessages = append(streamMessages, Message{
+				Role:    "user",
+				Content: "Here are the sampled frames for visual analysis:",
+				Images:  viewImgs,
+			})
+		}
 		flushNewImages()
 	}
 
