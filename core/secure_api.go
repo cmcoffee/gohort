@@ -331,13 +331,25 @@ func BuildSecureAPITools(db Database) []AgentToolDef {
 	if db == nil {
 		return nil
 	}
+	allKeys := db.Keys(secureAPITable)
 	creds := ListSecureCredentials(db)
 	out := make([]AgentToolDef, 0, len(creds))
+	disabledCount := 0
 	for _, c := range creds {
 		if c.Disabled {
+			disabledCount++
 			continue
 		}
 		out = append(out, agentToolFromCredential(db, c))
+	}
+	if len(allKeys) > 0 && len(out) == 0 {
+		Debug("[secure_api] BuildSecureAPITools: %d keys in table, %d credentials decoded, %d disabled, 0 enabled — check key names, struct decode, or Disabled flag", len(allKeys), len(creds), disabledCount)
+		for _, k := range allKeys {
+			Debug("[secure_api]   key: %q", k)
+		}
+		for _, c := range creds {
+			Debug("[secure_api]   credential: name=%q type=%q disabled=%v allowed=%q", c.Name, c.Type, c.Disabled, c.AllowedURLPattern)
+		}
 	}
 	return out
 }
