@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/apps/ollama_proxy"
 
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -103,12 +104,47 @@ func main() {
 
 	// Wire up mail config loader.
 	LoadMailConfigFunc = func() MailConfig {
-		return load_mail_config()
+		return dbcfg.mail()
 	}
 
 	// Wire up web search config loader.
 	LoadWebSearchConfigFunc = func() WebSearchConfig {
-		return load_search_config()
+		return dbcfg.search()
+	}
+
+	// Wire up Ollama proxy backend. Returns the base URL and model for the
+	// configured worker LLM when it is Ollama; empty strings otherwise.
+	OllamaBackendFunc = func() (string, string, int) {
+		cfg := dbcfg.llm()
+		if cfg.Provider != "ollama" {
+			return "", "", 0
+		}
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:11434"
+		}
+		return ep, cfg.Model, cfg.ContextSize
+	}
+	LlamaCppBackendFunc = func() (string, string) {
+		cfg := dbcfg.llm()
+		if cfg.Provider != "llama.cpp" {
+			return "", ""
+		}
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:8080/v1"
+		}
+		return ep, cfg.Model
+	}
+	OllamaProxyEnabledFunc = func() bool {
+		var enabled bool
+		global.db.Get(WebTable, "ollama_proxy_enabled", &enabled)
+		return enabled
+	}
+	OllamaProxyPortFunc = func() int {
+		var port int
+		global.db.Get(WebTable, "ollama_proxy_port", &port)
+		return port
 	}
 
 	// Wire up LLM routing lookup. Reads per-stage setting from db.
@@ -117,16 +153,26 @@ func main() {
 		global.db.Get(RoutingTable, key, &val)
 		return val
 	}
+	LookupRouteThinkBudgetFunc = func(key string) *int {
+		var n int
+		if global.db.Get(RoutingTable, key+".think_budget", &n) && n > 0 {
+			return &n
+		}
+		return nil
+	}
 
 	// Wire up web agent setup for the central dashboard.
 	// Initialize LLMs once and share across all web apps.
 	var shared_llm, shared_lead_llm LLM
+	var shared_prompt_tools bool
 	SetupWebAgentFunc = func(agent Agent) {
 		set_agent_db(agent, get_agentstore(agent.Name()))
 		if shared_llm == nil {
 			set_agent_llm(agent)
-			shared_llm = agent.Get().LLM
-			shared_lead_llm = agent.Get().LeadLLM
+			T := agent.Get()
+			shared_llm = T.LLM
+			shared_lead_llm = T.LeadLLM
+			shared_prompt_tools = T.PromptTools
 			// Expose to stateless tools that need an inline LLM call
 			// (e.g., the mock-shell tool). Only runs once because the
 			// first-agent branch is gated on shared_llm being nil.
@@ -135,6 +181,7 @@ func main() {
 			T := agent.Get()
 			T.LLM = shared_llm
 			T.LeadLLM = shared_lead_llm
+			T.PromptTools = shared_prompt_tools
 		}
 	}
 
@@ -169,6 +216,7 @@ func main() {
 	if *web != "" {
 		Log("### %s v%s ###", APPNAME, VERSION)
 		init_database()
+		RootDB = global.db
 		wireToolDB()
 		init_logging()
 
@@ -274,6 +322,7 @@ func main() {
 			return val
 		}
 
+		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
 		if err := ServeDashboard(*web); err != nil {
 			Fatal(err)
 		}
@@ -282,7 +331,17 @@ func main() {
 
 	// Check for chat mode before processing other flags.
 	if args := flags.Args(); len(args) > 0 && args[0] == "chat" {
-		if err := startChat(); err != nil {
+		if len(args) > 1 && args[1] == "--help" {
+			Stderr("Usage: %s chat [--private]\n\n  --private    Disable internet-facing tools (web_search, browse_page, etc.).", os.Args[0])
+			Exit(0)
+		}
+		privateMode := false
+		for _, a := range args[1:] {
+			if a == "--private" {
+				privateMode = true
+			}
+		}
+		if err := startChat(privateMode); err != nil {
 			Stderr(err)
 			Exit(1)
 		}
@@ -318,7 +377,7 @@ func main() {
 
 	// No command given — launch interactive chat.
 	if len(args) == 0 {
-		if err := startChat(); err != nil {
+		if err := startChat(false); err != nil {
 			Stderr(err)
 			Exit(1)
 		}

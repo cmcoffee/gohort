@@ -91,6 +91,7 @@ type PageOpts struct {
 	AppCSS   string // app-specific CSS appended after BaseCSS
 	AppJS    string // app-specific JS appended after BaseJS
 	InitJS   string // optional inline init script run on DOMContentLoaded
+	HeadHTML string // extra <head> content (link/script tags) injected before </head>
 	Prefix   string // mount prefix (e.g. "/techwriter") — empty for standalone
 }
 
@@ -132,9 +133,12 @@ func RenderPage(opts PageOpts) string {
 		sb.WriteString("\n/* --- app-specific --- */\n")
 		sb.WriteString(opts.AppCSS)
 	}
-	sb.WriteString(`
-</style>
-</head>
+	sb.WriteString("\n</style>\n")
+	if opts.HeadHTML != "" {
+		sb.WriteString(opts.HeadHTML)
+		sb.WriteString("\n")
+	}
+	sb.WriteString(`</head>
 <body data-app="`)
 	sb.WriteString(html.EscapeString(opts.AppName))
 	sb.WriteString(`">
@@ -142,7 +146,7 @@ func RenderPage(opts PageOpts) string {
 	if opts.Prefix != "" {
 		sb.WriteString(backChromeHTML)
 	}
-	body := opts.BodyHTML
+	body := strings.ReplaceAll(opts.BodyHTML, "{{AppName}}", html.EscapeString(opts.AppName))
 	if opts.Prefix != "" {
 		// Convert absolute /api/ paths to relative so <base href> resolves
 		// them. Same transform ServeHTMLWithBase historically did.

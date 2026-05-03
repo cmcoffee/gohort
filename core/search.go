@@ -636,11 +636,6 @@ func (c *SearchCache) incAPI() int {
 	c.apiCalls++
 	n := c.apiCalls
 	c.mu.Unlock()
-	// Also bump the process-wide tracker. incAPI only fires on real
-	// external hits — cache hits and in-flight dedupe never reach
-	// here — so this reflects genuine search-API consumption for
-	// cost attribution.
-	ProcessUsage().AddSearchCall()
 	return n
 }
 

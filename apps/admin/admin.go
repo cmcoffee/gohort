@@ -4,7 +4,9 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -42,6 +44,10 @@ func (a *AdminApp) WebRestricted(r *http.Request) bool {
 	return !AuthIsAdmin(a.db, r)
 }
 
+// RegisterRoutes configures the administrative web interface and API endpoints.
+// It sets up a sub-mux with routes for user management, system settings,
+// cost tracking, and vector statistics, then prepares a gated handler to
+// be mounted to the provided mux under the specified prefix.
 func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Grab the database from SetupWebAgentFunc's wiring. The admin app
 	// isn't an Agent, so we use AuthDB which is set by the main app.
@@ -241,6 +247,57 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		json.NewEncoder(w).Encode(counts)
 	})
 
+	// List registered maintenance functions (GET) or run one by key (POST ?key=<key>).
+	sub.HandleFunc("/api/maintenance", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ListMaintenanceFuncs())
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		key := r.URL.Query().Get("key")
+		if key == "" {
+			http.Error(w, "missing key", http.StatusBadRequest)
+			return
+		}
+		count := RunMaintenanceFunc(r.Context(), key)
+		if count < 0 {
+			http.Error(w, "unknown maintenance function", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{"fixed": count})
+	})
+
+	// Scheduled tasks: list pending tasks (GET) or delete by ID (DELETE ?id=xxx).
+	sub.HandleFunc("/api/scheduled-tasks", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ListScheduledTasks(""))
+			return
+		}
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := r.URL.Query().Get("id")
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		UnscheduleTask(id)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Snapshot of the vector index for the admin UI: total chunks,
 	// embedded vs empty, breakdown by source. One-pass scan; cheap
 	// enough to call on page load.
@@ -251,6 +308,173 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(VectorStats(a.db))
 	})
+
+	// LLM routing: GET returns all stages + current values, POST updates one.
+	sub.HandleFunc("/api/routing", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		type stageEntry struct {
+			Key           string `json:"key"`
+			Label         string `json:"label"`
+			Value         string `json:"value"`
+			Default       string `json:"default"`
+			ThinkBudget   int    `json:"think_budget"`
+			DefaultBudget int    `json:"default_budget"`
+			Group         string `json:"group"`
+			Private       bool   `json:"private"`
+		}
+		if r.Method == http.MethodPost {
+			var req struct {
+				Key         string `json:"key"`
+				Value       string `json:"value"`
+				ThinkBudget int    `json:"think_budget"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			allowed := map[string]bool{"lead": true, "worker": true, "worker (thinking)": true}
+			if !allowed[req.Value] {
+				http.Error(w, "invalid value", http.StatusBadRequest)
+				return
+			}
+			// Private stages can't route to lead, but allow worker ↔ worker (thinking).
+			if IsPrivateStage(req.Key) && req.Value == "lead" {
+				http.Error(w, "private stage — cannot route to lead", http.StatusForbidden)
+				return
+			}
+			if a.db != nil {
+				a.db.Set(RoutingTable, req.Key, req.Value)
+				if req.ThinkBudget > 0 {
+					a.db.Set(RoutingTable, req.Key+".think_budget", req.ThinkBudget)
+				} else {
+					a.db.Unset(RoutingTable, req.Key+".think_budget")
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		stages := ListRouteStages()
+		out := make([]stageEntry, len(stages))
+		for i, s := range stages {
+			val := ""
+			if a.db != nil {
+				a.db.Get(RoutingTable, s.Key, &val)
+			}
+			if val == "" {
+				val = s.Default
+			}
+			if val == "" {
+				val = "lead"
+			}
+			def := s.Default
+			if def == "" {
+				def = "lead"
+			}
+			var thinkBudget int
+			if a.db != nil {
+				a.db.Get(RoutingTable, s.Key+".think_budget", &thinkBudget)
+			}
+			group := s.Group
+			if group == "" {
+				parts := strings.SplitN(s.Key, ".", 2)
+				group = strings.Title(parts[0])
+			}
+			out[i] = stageEntry{Key: s.Key, Label: s.Label, Value: val, Default: def, ThinkBudget: thinkBudget, DefaultBudget: s.DefaultBudget, Group: group, Private: s.Private}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
+	})
+
+	// Worker LLM thinking defaults: GET returns current settings, POST updates.
+	sub.HandleFunc("/api/worker-thinking", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			var req struct {
+				Enabled bool `json:"enabled"`
+				Budget  int  `json:"budget"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if a.db != nil {
+				a.db.Set(LLMTable, "disable_thinking", !req.Enabled)
+				if req.Budget > 0 {
+					a.db.Set(LLMTable, "thinking_budget", req.Budget)
+				} else {
+					a.db.Unset(LLMTable, "thinking_budget")
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var disabled bool
+		var budget int
+		if a.db != nil {
+			a.db.Get(LLMTable, "disable_thinking", &disabled)
+			a.db.Get(LLMTable, "thinking_budget", &budget)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"enabled": !disabled,
+			"budget":  budget,
+		})
+	})
+
+		// Local model scheduler: GET returns max parallel for Ollama and llama.cpp,
+		// POST updates both values. Requires restart to apply.
+		sub.HandleFunc("/api/local-scheduler", func(w http.ResponseWriter, r *http.Request) {
+			if !a.requireAdmin(w, r) {
+				return
+			}
+			if r.Method == http.MethodPost {
+				var req struct {
+					OllamaMaxParallel   int `json:"ollama_max_parallel"`
+					LlamacppMaxParallel int `json:"llamacpp_max_parallel"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				if a.db != nil {
+					if req.OllamaMaxParallel < 1 {
+						req.OllamaMaxParallel = 1
+					}
+					if req.LlamacppMaxParallel < 1 {
+						req.LlamacppMaxParallel = 1
+					}
+					a.db.Set(LLMTable, "ollama_max_parallel", req.OllamaMaxParallel)
+					a.db.Set(LLMTable, "llamacpp_max_parallel", req.LlamacppMaxParallel)
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			var ollamaMP, llamacppMP int
+			if a.db != nil {
+				a.db.Get(LLMTable, "ollama_max_parallel", &ollamaMP)
+				a.db.Get(LLMTable, "llamacpp_max_parallel", &llamacppMP)
+			}
+			if ollamaMP < 1 {
+				ollamaMP = 1
+			}
+			if llamacppMP < 1 {
+				llamacppMP = 1
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"ollama_max_parallel":   ollamaMP,
+				"llamacpp_max_parallel": llamacppMP,
+			})
+		})
+
+	// API: database browser.
+	sub.HandleFunc("/api/db/tables", a.handleDBTables)
+	sub.HandleFunc("/api/db/keys", a.handleDBKeys)
+	sub.HandleFunc("/api/db/record", a.handleDBRecord)
 
 	// Gate the entire sub-mux behind IP allowlist + admin check.
 	gated := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -497,8 +721,8 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
-	var allow_signup bool
-	var session_days, max_attempts, lockout_minutes int
+	var allow_signup, ollama_proxy_enabled bool
+	var session_days, max_attempts, lockout_minutes, ollama_proxy_port int
 	var service_name, external_url, notify_from string
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
 	a.db.Get(WebTable, "session_days", &session_days)
@@ -507,6 +731,8 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	a.db.Get(WebTable, "service_name", &service_name)
 	a.db.Get(WebTable, "external_url", &external_url)
 	a.db.Get(WebTable, "notify_from", &notify_from)
+	a.db.Get(WebTable, "ollama_proxy_enabled", &ollama_proxy_enabled)
+	a.db.Get(WebTable, "ollama_proxy_port", &ollama_proxy_port)
 	if session_days == 0 {
 		session_days = 7
 	}
@@ -516,29 +742,62 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if lockout_minutes == 0 {
 		lockout_minutes = 15
 	}
+	// Build the proxy URL from the configured port and external host (if set).
+	var proxy_url string
+	if ollama_proxy_port > 0 {
+		host := "localhost"
+		if external_url != "" {
+			// Strip scheme and path, keep just the hostname.
+			h := strings.TrimRight(external_url, "/")
+			h = strings.TrimPrefix(h, "https://")
+			h = strings.TrimPrefix(h, "http://")
+			if slash := strings.Index(h, "/"); slash >= 0 {
+				h = h[:slash]
+			}
+			if colon := strings.Index(h, ":"); colon >= 0 {
+				h = h[:colon]
+			}
+			if h != "" {
+				host = h
+			}
+		}
+		proxy_url = fmt.Sprintf("http://%s:%d", host, ollama_proxy_port)
+	}
+	// Only expose proxy config when Ollama is the active provider.
+	ollama_active := OllamaBackendFunc != nil
+	if ollama_active {
+		_, m, _ := OllamaBackendFunc()
+		ollama_active = m != ""
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"allow_signup":       allow_signup,
-		"session_days":       session_days,
-		"max_login_attempts": max_attempts,
-		"lockout_minutes":    lockout_minutes,
-		"service_name":       service_name,
-		"external_url":       external_url,
-		"notify_from":        notify_from,
-		"default_apps":       AuthGetDefaultApps(a.db),
+		"allow_signup":          allow_signup,
+		"session_days":          session_days,
+		"max_login_attempts":    max_attempts,
+		"lockout_minutes":       lockout_minutes,
+		"service_name":          service_name,
+		"external_url":          external_url,
+		"notify_from":           notify_from,
+		"default_apps":          AuthGetDefaultApps(a.db),
+		"ollama_proxy_enabled":  ollama_proxy_enabled,
+		"ollama_proxy_port":     ollama_proxy_port,
+		"ollama_proxy_url":      proxy_url,
+		"ollama_active":         ollama_active,
 	})
 }
 
 func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AllowSignup      *bool     `json:"allow_signup,omitempty"`
-		SessionDays      *int      `json:"session_days,omitempty"`
-		MaxLoginAttempts *int      `json:"max_login_attempts,omitempty"`
-		LockoutMinutes   *int      `json:"lockout_minutes,omitempty"`
-		ServiceName      *string   `json:"service_name,omitempty"`
-		ExternalURL      *string   `json:"external_url,omitempty"`
-		NotifyFrom       *string   `json:"notify_from,omitempty"`
-		DefaultApps      *[]string `json:"default_apps,omitempty"`
+		AllowSignup         *bool     `json:"allow_signup,omitempty"`
+		SessionDays         *int      `json:"session_days,omitempty"`
+		MaxLoginAttempts    *int      `json:"max_login_attempts,omitempty"`
+		LockoutMinutes      *int      `json:"lockout_minutes,omitempty"`
+		ServiceName         *string   `json:"service_name,omitempty"`
+		ExternalURL         *string   `json:"external_url,omitempty"`
+		NotifyFrom          *string   `json:"notify_from,omitempty"`
+		DefaultApps         *[]string `json:"default_apps,omitempty"`
+		OllamaProxyEnabled  *bool     `json:"ollama_proxy_enabled,omitempty"`
+		OllamaProxyPort     *int      `json:"ollama_proxy_port,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -576,6 +835,14 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.DefaultApps != nil {
 		AuthSetDefaultApps(a.db, *req.DefaultApps)
 		Log("[admin] user %q set default_apps=%v", current, *req.DefaultApps)
+	}
+	if req.OllamaProxyEnabled != nil {
+		a.db.Set(WebTable, "ollama_proxy_enabled", *req.OllamaProxyEnabled)
+		Log("[admin] user %q set ollama_proxy_enabled=%v", current, *req.OllamaProxyEnabled)
+	}
+	if req.OllamaProxyPort != nil && *req.OllamaProxyPort >= 0 && *req.OllamaProxyPort <= 65535 {
+		a.db.Set(WebTable, "ollama_proxy_port", *req.OllamaProxyPort)
+		Log("[admin] user %q set ollama_proxy_port=%d", current, *req.OllamaProxyPort)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
@@ -733,6 +1000,125 @@ func (a *AdminApp) handleUpdateUserApps(w http.ResponseWriter, r *http.Request, 
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
+// --- DB Browser ---
+
+func (a *AdminApp) handleDBTables(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	tables := a.db.Tables()
+	sort.Strings(tables)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tables)
+}
+
+func (a *AdminApp) handleDBKeys(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	table := r.URL.Query().Get("table")
+	if table == "" {
+		http.Error(w, "table required", http.StatusBadRequest)
+		return
+	}
+	keys := a.db.Keys(table)
+	sort.Strings(keys)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(keys)
+}
+
+func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	table := r.URL.Query().Get("table")
+	key := r.URL.Query().Get("key")
+	if table == "" || key == "" {
+		http.Error(w, "table and key required", http.StatusBadRequest)
+		return
+	}
+
+	// DBase.Get calls Critical(err) on decode failure, which kills the server.
+	// Bypass the wrapper by accessing the underlying kvlite.Store directly so
+	// we can probe multiple concrete types without a fatal on type mismatch.
+	dbase, ok := a.db.(*DBase)
+	if !ok {
+		http.Error(w, "unsupported database type", http.StatusInternalServerError)
+		return
+	}
+
+	val, found := dbProbeRecord(dbase.Store, table, key)
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	b, err := json.MarshalIndent(val, "", "  ")
+	if err != nil {
+		http.Error(w, "marshal error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(b)
+}
+
+// dbProbeRecord tries to decode a kvlite record into the first matching
+// primitive type. For complex/struct values it returns a descriptive
+// placeholder. Uses Store.Get directly to avoid the Critical(err) wrapper.
+func dbProbeRecord(store interface {
+	Get(table, key string, output interface{}) (bool, error)
+}, table, key string) (interface{}, bool) {
+	// Ordered by how commonly these appear in settings/routing/config tables.
+	probes := []interface{}{
+		new(string),
+		new(bool),
+		new(int),
+		new(int64),
+		new(float64),
+		new([]string),
+		new([]byte),
+	}
+	for _, ptr := range probes {
+		found, err := store.Get(table, key, ptr)
+		if !found {
+			return nil, false
+		}
+		if err != nil {
+			continue
+		}
+		// Dereference the pointer to get the concrete value.
+		switch v := ptr.(type) {
+		case *string:
+			return *v, true
+		case *bool:
+			return *v, true
+		case *int:
+			return *v, true
+		case *int64:
+			return *v, true
+		case *float64:
+			return *v, true
+		case *[]string:
+			return *v, true
+		case *[]byte:
+			return *v, true
+		}
+	}
+	// Value exists but is a struct type — return a placeholder rather than crashing.
+	return map[string]string{"_type": "struct", "_note": "binary-encoded struct; map probe not supported"}, true
+}
+
 // --- UI ---
 
 const adminCSS = `
@@ -872,6 +1258,35 @@ const adminCSS = `
 }
 .default-apps-panel .app-select-panel {
   margin-top: 0.3rem;
+}
+.db-browser {
+  display: flex; gap: 0.75rem; margin-top: 0.5rem; min-height: 200px;
+}
+.db-pane {
+  display: flex; flex-direction: column; min-width: 0;
+}
+.db-pane-label {
+  font-size: 0.72rem; color: #8b949e; text-transform: uppercase;
+  letter-spacing: 0.05em; margin-bottom: 0.35rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.db-list {
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  overflow-y: auto; max-height: 380px; flex: 1;
+}
+.db-item {
+  padding: 0.35rem 0.6rem; font-size: 0.8rem; color: #c9d1d9;
+  border-bottom: 1px solid #161b22; cursor: pointer;
+  word-break: break-all; line-height: 1.4;
+}
+.db-item:last-child { border-bottom: none; }
+.db-item:hover { background: #21262d; }
+.db-item.active { background: #1f3047; color: #79c0ff; }
+.db-empty { padding: 0.5rem 0.6rem; font-size: 0.8rem; color: #8b949e; font-style: italic; }
+.db-record {
+  background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
+  padding: 0.6rem 0.75rem; overflow: auto; max-height: 380px;
+  font-size: 0.78rem; color: #c9d1d9; margin: 0;
+  white-space: pre; font-family: monospace; line-height: 1.5;
 }
 `
 
@@ -1014,6 +1429,78 @@ const adminBody = `
     <div id="cost-chart-summary" style="margin-top:0.5rem;font-size:0.85rem;color:#c9d1d9"></div>
   </div>
   <div class="section">
+    <h2>LLM Routing</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Control which LLM handles each pipeline stage. <strong>Lead</strong> uses the precision (remote) LLM. <strong>Worker</strong> uses the local model. <strong>Worker (Thinking)</strong> enables extended reasoning on the local model. <strong>*</strong> marks the stage default. <strong>Budget</strong> sets the thinking token limit for that stage (0 = use the stage default).</span>
+    </div>
+    <div id="routing-list" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.25rem"></div>
+  </div>
+  <div class="section">
+    <h2>Worker LLM Thinking</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Default thinking settings for the worker (local) LLM. Per-route overrides in the Routing table above take precedence. <strong>Budget 0</strong> = unlimited (model decides). Changes take effect on the next request — no restart required.</span>
+    </div>
+    <div class="setting-row" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+      <label style="font-size:0.9rem;color:#c9d1d9">Thinking</label>
+      <select id="worker-think-enabled" onchange="saveWorkerThinking()" style="background:#161b22;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:4px 8px;font-size:0.85rem;cursor:pointer">
+        <option value="off">Off</option>
+        <option value="on">On</option>
+      </select>
+      <label style="font-size:0.9rem;color:#c9d1d9">Default Budget (tokens)</label>
+      <input type="number" id="worker-think-budget" min="0" step="1024" placeholder="0=unlimited"
+        style="width:8rem;padding:0.35rem 0.5rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+        onchange="saveWorkerThinking()">
+    </div>
+  </div>
+  <div class="section" id="local-scheduler-section" style="display:none">
+    <h2>Local Model Scheduler</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Control how many concurrent requests each local model backend processes. Default 1 (strict serial). Raise only if your backend truly supports parallel requests. Requests are fair-queued across caller sessions. Requires restart to apply.</span>
+    </div>
+    <div class="setting-row" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem">
+      <label style="font-size:0.9rem;color:#c9d1d9;white-space:nowrap">Ollama</label>
+      <input type="number" id="sched-ollama-mp" min="1" max="16" step="1" placeholder="1"
+        style="width:6rem;padding:0.35rem 0.5rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+        onchange="saveLocalScheduler()">
+    </div>
+    <div class="setting-row" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:0.5rem">
+      <label style="font-size:0.9rem;color:#c9d1d9;white-space:nowrap">llama.cpp</label>
+      <input type="number" id="sched-llamacpp-mp" min="1" max="16" step="1" placeholder="1"
+        style="width:6rem;padding:0.35rem 0.5rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+        onchange="saveLocalScheduler()">
+    </div>
+    <div class="setting-row">
+      <span style="font-size:0.8rem;color:#8b949e">Changes require restart to apply.</span>
+    </div>
+  </div>
+  <div class="section" id="ollama-proxy-section" style="display:none">
+    <h2>Ollama Proxy</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Expose gohort as a fair-queued Ollama endpoint on a dedicated plain-HTTP port. Point Ollama clients here instead of directly at Ollama — they will see <strong>gohort</strong> as the model name and share the scheduler slot budget with internal pipeline calls. Requires restart to take effect when the port changes.</span>
+    </div>
+    <div class="setting-row" style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      <label style="font-size:0.9rem;color:#c9d1d9;white-space:nowrap">Proxy Port</label>
+      <input type="number" id="ollama-proxy-port" min="1" max="65535" placeholder="e.g. 11435"
+        style="width:7rem;padding:0.3rem 0.5rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.9rem"
+        onchange="saveOllamaProxyPort(this.value)">
+      <span style="font-size:0.8rem;color:#8b949e">Requires restart to apply port change.</span>
+    </div>
+    <div class="setting-row">
+      <label class="toggle-label">
+        <input type="checkbox" id="toggle-ollama-proxy" onchange="toggleOllamaProxy(this.checked)">
+        <span>Enable Ollama Proxy</span>
+      </label>
+    </div>
+    <div id="ollama-proxy-url-row" class="setting-row" style="display:none">
+      <label style="font-size:0.9rem;color:#c9d1d9">Proxy Endpoint</label>
+      <span class="setting-desc">Set this as the Ollama base URL in your client. Model name: <code>gohort</code> or <code>gohort:latest</code>.</span>
+      <div style="display:flex;align-items:center;gap:0.5rem;margin-top:0.3rem">
+        <code id="ollama-proxy-url" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.85rem;color:#79c0ff"></code>
+        <button onclick="copyProxyURL()" style="padding:0.3rem 0.6rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.8rem;cursor:pointer">Copy</button>
+      </div>
+    </div>
+  </div>
+  <div class="section">
     <h2>Vector Index</h2>
     <div class="setting-row">
       <span class="setting-desc">Rebuild the semantic-search index from stored records. Run once after enabling embeddings for the first time or after switching embedding models. Safe to re-run — records already ingested are skipped. Ingestion runs synchronously here and may take a while on large deployments (one embedding call per chunk, typically one per section per record).</span>
@@ -1023,6 +1510,41 @@ const adminBody = `
       <span id="embed-backfill-status" style="font-size:0.85rem;color:#8b949e"></span>
     </div>
     <div id="vector-stats" style="font-size:0.8rem;color:#8b949e;margin-top:0.25rem;font-family:monospace;line-height:1.6"></div>
+  </div>
+  <div class="section" id="maintenance-section" style="display:none">
+    <h2>Maintenance</h2>
+    <div class="setting-row">
+      <span class="setting-desc">One-shot repair utilities. Each runs synchronously and may take a while on large record sets.</span>
+    </div>
+    <div id="maintenance-list"></div>
+  </div>
+  <div class="section">
+    <h2>Scheduled Tasks</h2>
+    <div class="setting-row">
+      <span class="setting-desc">All pending deferred jobs across every app. Delete a task to cancel it; the scheduler will pick up the next due task automatically.</span>
+    </div>
+    <div id="scheduled-tasks-list" style="display:flex;flex-direction:column;gap:0.4rem;margin-top:0.5rem"></div>
+    <div id="scheduled-tasks-empty" style="font-size:0.85rem;color:#8b949e;margin-top:0.5rem">No pending tasks.</div>
+  </div>
+  <div class="section">
+    <h2>Database Browser</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Read-only view of the server database. Click a table to list its keys, click a key to inspect the record.</span>
+    </div>
+    <div class="db-browser">
+      <div class="db-pane" style="width:180px;flex-shrink:0">
+        <div class="db-pane-label">Tables</div>
+        <div class="db-list" id="db-tables-list"><div class="db-empty">Loading…</div></div>
+      </div>
+      <div class="db-pane" id="db-keys-pane" style="width:200px;flex-shrink:0;display:none">
+        <div class="db-pane-label" id="db-keys-label">Keys</div>
+        <div class="db-list" id="db-keys-list"></div>
+      </div>
+      <div class="db-pane" id="db-record-pane" style="flex:1;display:none">
+        <div class="db-pane-label" id="db-record-label">Record</div>
+        <pre class="db-record" id="db-record-view"></pre>
+      </div>
+    </div>
   </div>
   <div class="section">
     <h2>User Management</h2>
@@ -1169,6 +1691,49 @@ function loadSettings() {
         body: JSON.stringify({default_apps: apps})
       });
     });
+    // Ollama proxy section — only shown when Ollama is the active provider.
+    if (s.ollama_active) {
+      var sec = document.getElementById('ollama-proxy-section');
+      if (sec) sec.style.display = '';
+      var portEl = document.getElementById('ollama-proxy-port');
+      if (portEl && s.ollama_proxy_port) portEl.value = s.ollama_proxy_port;
+      var cb = document.getElementById('toggle-ollama-proxy');
+      if (cb) cb.checked = !!s.ollama_proxy_enabled;
+      var urlEl = document.getElementById('ollama-proxy-url');
+      if (urlEl) urlEl.textContent = s.ollama_proxy_url || '';
+      var urlRow = document.getElementById('ollama-proxy-url-row');
+      if (urlRow) urlRow.style.display = (s.ollama_proxy_enabled && s.ollama_proxy_url) ? '' : 'none';
+    }
+    // Local scheduler section — shown when Ollama is active (llama.cpp always available).
+    loadLocalScheduler();
+  });
+}
+
+function saveOllamaProxyPort(val) {
+  var port = parseInt(val, 10);
+  if (isNaN(port) || port < 1 || port > 65535) return;
+  updateSetting('ollama_proxy_port', port);
+}
+
+function toggleOllamaProxy(enabled) {
+  updateSetting('ollama_proxy_enabled', enabled);
+  var urlRow = document.getElementById('ollama-proxy-url-row');
+  if (urlRow) {
+    var urlEl = document.getElementById('ollama-proxy-url');
+    urlRow.style.display = (enabled && urlEl && urlEl.textContent) ? '' : 'none';
+  }
+}
+
+function copyProxyURL() {
+  var el = document.getElementById('ollama-proxy-url');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).catch(function() {
+    var ta = document.createElement('textarea');
+    ta.value = el.textContent;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
   });
 }
 
@@ -1481,6 +2046,151 @@ function loadCostSources() {
   });
 }
 
+function loadRouting() {
+  fetch('api/routing').then(function(r){ return r.json(); }).then(function(stages) {
+    var el = document.getElementById('routing-list');
+    if (!el || !stages || stages.length === 0) return;
+    var html = '';
+    var tierOpts = [
+      {val:'lead',            label:'Lead'},
+      {val:'worker',          label:'Worker'},
+      {val:'worker (thinking)',label:'Worker (Thinking)'},
+    ];
+    // Stable sort by group, preserving registration order within each group.
+    var groupOrder = [];
+    var grouped = {};
+    for (var i = 0; i < stages.length; i++) {
+      var g = stages[i].group || '';
+      if (!grouped[g]) { grouped[g] = []; groupOrder.push(g); }
+      grouped[g].push(stages[i]);
+    }
+    var sorted = [];
+    for (var gi = 0; gi < groupOrder.length; gi++) {
+      var gs = grouped[groupOrder[gi]];
+      for (var si = 0; si < gs.length; si++) sorted.push(gs[si]);
+    }
+    var lastGroup = '';
+    for (var i = 0; i < sorted.length; i++) {
+      var s = sorted[i];
+      var group = s.group || '';
+      if (group !== lastGroup) {
+        html += '<div style="margin-top:0.6rem;padding:0.2rem 0 0.2rem;font-size:0.72rem;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#58a6ff;border-bottom:1px solid #1f6feb">'
+          + escapeHtml(group) + '</div>';
+        lastGroup = group;
+      }
+      var def = s.default || 'lead';
+      var kid = s.key.replace(/\./g, '-');
+      var budgetPlaceholder = s.default_budget > 0 ? 'default: ' + s.default_budget : '0=global';
+      html += '<div style="display:flex;align-items:center;gap:0.6rem;padding:0.35rem 0;border-bottom:1px solid #21262d;flex-wrap:wrap">';
+      if (s.private) {
+        // Private stage: locked to worker tier only, but still has budget control.
+        html += '<span style="font-size:0.75rem;font-weight:600;color:#f0883e;background:#2d1f0e;border:1px solid #5a3a15;border-radius:3px;padding:1px 6px;white-space:nowrap">Private</span>';
+        var privateOpts = [
+          {val:'worker',          label:'Worker'},
+          {val:'worker (thinking)',label:'Worker (Thinking)'},
+        ];
+        html += '<span style="flex:1;min-width:8rem;font-size:0.82rem;color:#c9d1d9">' + escapeHtml(s.label) + '</span>';
+        html += '<select id="rtier-' + kid + '" onchange="saveRouting(\'' + escapeHtml(s.key) + '\')" style="width:11rem;background:#161b22;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:3px 6px;font-size:0.8rem;cursor:pointer">';
+        for (var j = 0; j < privateOpts.length; j++) {
+          var isSel = privateOpts[j].val === s.value ? ' selected' : '';
+          html += '<option value="' + privateOpts[j].val + '"' + isSel + '>' + privateOpts[j].label + '</option>';
+        }
+        html += '</select>';
+        html += '<span style="display:flex;align-items:center;gap:0.3rem">'
+          + '<span style="font-size:0.78rem;color:#8b949e">Budget</span>'
+          + '<input type="number" id="rbudget-' + kid + '" value="' + (s.think_budget || 0) + '" min="0" step="1024" placeholder="' + budgetPlaceholder + '"'
+          + ' onchange="saveRouting(\'' + escapeHtml(s.key) + '\')"'
+          + ' style="width:5.5rem;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:0.78rem;padding:3px 5px">'
+          + '</span>';
+      } else {
+        html += '<span style="flex:1;min-width:8rem;font-size:0.82rem;color:#c9d1d9">' + escapeHtml(s.label) + '</span>';
+        html += '<select id="rtier-' + kid + '" onchange="saveRouting(\'' + escapeHtml(s.key) + '\')" style="width:10rem;background:#161b22;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:3px 6px;font-size:0.8rem;cursor:pointer">';
+        for (var j = 0; j < tierOpts.length; j++) {
+          var isSel = tierOpts[j].val === s.value ? ' selected' : '';
+          var lbl = (tierOpts[j].val === def ? '* ' : '') + tierOpts[j].label;
+          html += '<option value="' + tierOpts[j].val + '"' + isSel + '>' + lbl + '</option>';
+        }
+        html += '</select>';
+        html += '<span style="display:flex;align-items:center;gap:0.3rem">'
+          + '<span style="font-size:0.78rem;color:#8b949e">Budget</span>'
+          + '<input type="number" id="rbudget-' + kid + '" value="' + (s.think_budget || 0) + '" min="0" step="1024" placeholder="' + budgetPlaceholder + '"'
+          + ' onchange="saveRouting(\'' + escapeHtml(s.key) + '\')"'
+          + ' style="width:5.5rem;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:0.78rem;padding:3px 5px">'
+          + '</span>';
+      }
+      html += '</div>';
+    }
+    el.innerHTML = html;
+  });
+}
+
+function saveRouting(key) {
+  var kid = key.replace(/\./g, '-');
+  var tierEl = document.getElementById('rtier-' + kid);
+  var budgetEl = document.getElementById('rbudget-' + kid);
+  if (!tierEl) return;
+  var tier = tierEl.value;
+  var budget = budgetEl ? parseInt(budgetEl.value, 10) || 0 : 0;
+  fetch('api/routing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({key: key, value: tier, think_budget: budget}),
+  });
+}
+
+function loadWorkerThinking() {
+  fetch('api/worker-thinking').then(function(r){ return r.json(); }).then(function(d) {
+    var en = document.getElementById('worker-think-enabled');
+    var bud = document.getElementById('worker-think-budget');
+    if (en) en.value = d.enabled ? 'on' : 'off';
+    if (bud) bud.value = d.budget || 0;
+  });
+}
+
+function saveWorkerThinking() {
+  var en = document.getElementById('worker-think-enabled');
+  var bud = document.getElementById('worker-think-budget');
+  fetch('api/worker-thinking', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      enabled: en ? en.value === 'on' : false,
+      budget: bud ? parseInt(bud.value, 10) || 0 : 0,
+    }),
+  });
+}
+
+function loadLocalScheduler() {
+  fetch('api/local-scheduler').then(function(r){ return r.json(); }).then(function(d) {
+    var sec = document.getElementById('local-scheduler-section');
+    var ollamaInput = document.getElementById('sched-ollama-mp');
+    var llamacppInput = document.getElementById('sched-llamacpp-mp');
+    if (!sec) return;
+    sec.style.display = '';
+    if (ollamaInput) ollamaInput.value = d.ollama_max_parallel || 1;
+    if (llamacppInput) llamacppInput.value = d.llamacpp_max_parallel || 1;
+  });
+}
+
+function saveLocalScheduler() {
+  var ollamaInput = document.getElementById('sched-ollama-mp');
+  var llamacppInput = document.getElementById('sched-llamacpp-mp');
+  var ollamaVal = parseInt(ollamaInput.value, 10) || 1;
+  var llamacppVal = parseInt(llamacppInput.value, 10) || 1;
+  if (ollamaVal < 1) ollamaVal = 1;
+  if (ollamaVal > 16) ollamaVal = 16;
+  if (llamacppVal < 1) llamacppVal = 1;
+  if (llamacppVal > 16) llamacppVal = 16;
+  fetch('api/local-scheduler', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      ollama_max_parallel:   ollamaVal,
+      llamacpp_max_parallel: llamacppVal,
+    }),
+  });
+}
+
 function loadVectorStats() {
   fetch('api/vector-stats').then(function(r){
     if (!r.ok) return null;
@@ -1558,6 +2268,58 @@ function runEmbeddingBackfill(btn) {
       status.style.color = '#f85149';
     }
   });
+}
+
+function loadMaintenanceFuncs() {
+  fetch('api/maintenance').then(function(r){ return r.json(); }).then(function(items){
+    if (!items || items.length === 0) return;
+    var section = document.getElementById('maintenance-section');
+    if (section) section.style.display = '';
+    var list = document.getElementById('maintenance-list');
+    if (!list) return;
+    list.innerHTML = '';
+    items.forEach(function(item) {
+      var row = document.createElement('div');
+      row.style.cssText = 'margin-bottom:1rem';
+      var desc = document.createElement('div');
+      desc.className = 'setting-desc';
+      desc.style.marginBottom = '0.5rem';
+      desc.textContent = item.Desc || item.Label;
+      var btnRow = document.createElement('div');
+      btnRow.style.cssText = 'display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap';
+      var btn = document.createElement('button');
+      btn.textContent = item.Label;
+      btn.style.cssText = 'padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer';
+      var status = document.createElement('span');
+      status.style.cssText = 'font-size:0.85rem;color:#8b949e';
+      btn.onclick = function() {
+        btn.disabled = true;
+        btn.style.opacity = '0.6';
+        status.textContent = 'Running...';
+        status.style.color = '#8b949e';
+        fetch('api/maintenance?key=' + encodeURIComponent(item.Label), {method: 'POST'}).then(function(r){
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        }).then(function(result){
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          var n = result.fixed || 0;
+          status.textContent = n === 0 ? 'Done — no records needed correction.' : 'Corrected ' + n + ' record' + (n === 1 ? '' : 's') + '.';
+          status.style.color = n === 0 ? '#8b949e' : '#2ea043';
+        }).catch(function(err){
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          status.textContent = 'Failed: ' + err.message;
+          status.style.color = '#f85149';
+        });
+      };
+      btnRow.appendChild(btn);
+      btnRow.appendChild(status);
+      row.appendChild(desc);
+      row.appendChild(btnRow);
+      list.appendChild(row);
+    });
+  }).catch(function(){});
 }
 
 function loadCostHistory() {
@@ -1765,6 +2527,140 @@ function renderCostChart(days) {
   }
 }
 
+// --- Scheduled Tasks ---
+
+var _taskExpanded = false;
+
+function loadScheduledTasks() {
+  fetch('api/scheduled-tasks').then(function(r){ return r.json(); }).then(function(tasks){
+    var list = document.getElementById('scheduled-tasks-list');
+    var empty = document.getElementById('scheduled-tasks-empty');
+    if (!tasks || !tasks.length) {
+      list.innerHTML = '';
+      if (empty) empty.style.display = '';
+      return;
+    }
+    if (empty) empty.style.display = 'none';
+    _taskExpanded = false;
+    var html = '';
+    for (var i = 0; i < tasks.length; i++) {
+      var t = tasks[i];
+      var runAt = t.run_at || '';
+      var when = '';
+      if (runAt) {
+        var d = new Date(runAt);
+        when = d.toLocaleString();
+      }
+      var payloadPreview = '';
+      try { payloadPreview = JSON.stringify(t.payload).substring(0, 120); } catch(e) { payloadPreview = '[parse error]'; }
+      var fullPayload = escapeHtml(JSON.stringify(t.payload, null, 2));
+      html += '<div class="task-row" style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0.75rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;font-size:0.85rem;cursor:pointer" onclick="toggleTaskDetail(this, \'' + escapeHtml(t.id) + '\')">'
+        + '<span style="color:#8b949e;min-width:160px;font-family:monospace;font-size:0.8rem">' + escapeHtml(when) + '</span>'
+        + '<span style="color:#58a6ff;min-width:100px">' + escapeHtml(t.kind) + '</span>'
+        + '<span style="flex:1;color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(payloadPreview) + '</span>'
+        + '<span style="color:#8b949e;font-size:0.75rem;width:1.2rem;display:inline-block;text-align:center;font-family:monospace" id="chevron-' + escapeHtml(t.id) + '">&gt;</span>'
+        + '<button class="btn btn-danger" style="padding:0.25rem 0.5rem;font-size:0.8rem" onclick="event.stopPropagation();deleteScheduledTask(\'' + escapeHtml(t.id) + '\')">Delete</button>'
+        + '</div>'
+        + '<div class="task-detail" id="detail-' + escapeHtml(t.id) + '" style="display:none;padding:0.75rem;background:#0d1117;border-radius:0 0 6px 6px;margin-top:-6px;margin-bottom:0.4rem;border:1px solid #30363d;border-top:none;cursor:pointer" onclick="toggleTaskDetail(this, \'' + escapeHtml(t.id) + '\')">'
+        + '<pre style="margin:0;font-size:0.78rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto;font-family:monospace;cursor:pointer;">' + fullPayload + '</pre>'
+        + '</div>';
+    }
+    list.innerHTML = html;
+  }).catch(function() {
+    var list = document.getElementById('scheduled-tasks-list');
+    if (list) list.innerHTML = '<div style="color:#f85149;font-size:0.85rem">Failed to load scheduled tasks.</div>';
+  });
+}
+
+function toggleTaskDetail(row, id) {
+  var detail = document.getElementById('detail-' + id);
+  var chevron = document.getElementById('chevron-' + id);
+  if (!detail) return;
+  if (detail.style.display === 'block') {
+    detail.style.display = 'none';
+    chevron.textContent = '>';
+  } else {
+    detail.style.display = 'block';
+    chevron.textContent = 'v';
+  }
+}
+
+function deleteScheduledTask(id) {
+  if (!confirm('Cancel this scheduled task?')) return;
+  fetch('api/scheduled-tasks?id=' + encodeURIComponent(id), {method: 'DELETE'})
+    .then(function(){ loadScheduledTasks(); })
+    .catch(function(){ loadScheduledTasks(); });
+}
+
+// --- DB Browser ---
+
+var dbActiveTable = '';
+
+function loadDBTables() {
+  fetch('api/db/tables').then(function(r) { return r.json(); }).then(function(tables) {
+    var list = document.getElementById('db-tables-list');
+    if (!tables || !tables.length) {
+      list.innerHTML = '<div class="db-empty">No tables found.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < tables.length; i++) {
+      html += '<div class="db-item" id="dbtbl-' + i + '" onclick="selectDBTable(' + escapeHtml(JSON.stringify(tables[i])) + ', this)">'
+            + escapeHtml(tables[i]) + '</div>';
+    }
+    list.innerHTML = html;
+  }).catch(function() {
+    var list = document.getElementById('db-tables-list');
+    if (list) list.innerHTML = '<div class="db-empty">Failed to load tables.</div>';
+  });
+}
+
+function selectDBTable(table, el) {
+  dbActiveTable = table;
+  document.querySelectorAll('#db-tables-list .db-item').forEach(function(e) { e.classList.remove('active'); });
+  if (el) el.classList.add('active');
+  var keyPane = document.getElementById('db-keys-pane');
+  var recPane = document.getElementById('db-record-pane');
+  keyPane.style.display = '';
+  recPane.style.display = 'none';
+  document.getElementById('db-keys-label').textContent = table;
+  var keyList = document.getElementById('db-keys-list');
+  keyList.innerHTML = '<div class="db-empty">Loading…</div>';
+  fetch('api/db/keys?table=' + encodeURIComponent(table)).then(function(r) { return r.json(); }).then(function(keys) {
+    if (!keys || !keys.length) {
+      keyList.innerHTML = '<div class="db-empty">No keys.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < keys.length; i++) {
+      html += '<div class="db-item" id="dbkey-' + i + '" onclick="loadDBRecord(' + escapeHtml(JSON.stringify(keys[i])) + ', this)">'
+            + escapeHtml(keys[i]) + '</div>';
+    }
+    keyList.innerHTML = html;
+  }).catch(function() {
+    keyList.innerHTML = '<div class="db-empty">Failed to load keys.</div>';
+  });
+}
+
+function loadDBRecord(key, el) {
+  document.querySelectorAll('#db-keys-list .db-item').forEach(function(e) { e.classList.remove('active'); });
+  if (el) el.classList.add('active');
+  var recPane = document.getElementById('db-record-pane');
+  var view = document.getElementById('db-record-view');
+  recPane.style.display = '';
+  document.getElementById('db-record-label').textContent = key;
+  view.textContent = 'Loading…';
+  fetch('api/db/record?table=' + encodeURIComponent(dbActiveTable) + '&key=' + encodeURIComponent(key))
+    .then(function(r) {
+      if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+      return r.json();
+    }).then(function(v) {
+      view.textContent = JSON.stringify(v, null, 2);
+    }).catch(function(err) {
+      view.textContent = 'Error: ' + err.message;
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   loadApps().then(function(){
     fetch('api/whoami').then(function(r){ return r.json(); }).then(function(d){
@@ -1776,7 +2672,14 @@ document.addEventListener('DOMContentLoaded', function() {
     loadCostRates();
     loadCostSources();
     loadCostHistory();
+    loadRouting();
+    loadWorkerThinking();
     loadVectorStats();
+    loadMaintenanceFuncs();
+    loadDBTables();
+    loadScheduledTasks();
+    // Refresh scheduled tasks every 30s so cancelled tasks disappear without reload.
+    setInterval(loadScheduledTasks, 30000);
     // Refresh the cost chart every minute so runs that finish while
     // the admin page is open show up without a manual reload. One
     // small JSON fetch per tick — cheap.

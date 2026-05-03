@@ -62,10 +62,20 @@ func RegisterPublicPath(path string) {
 }
 
 // isPublicPath checks whether the given path is registered as public.
+// Exact registrations match only that path; registrations ending in "/"
+// act as prefix matches (e.g. "/relay/api/ack/" matches "/relay/api/ack/xyz").
 func isPublicPath(path string) bool {
 	authPublicMu.Lock()
 	defer authPublicMu.Unlock()
-	return authPublicPaths[path]
+	if authPublicPaths[path] {
+		return true
+	}
+	for p := range authPublicPaths {
+		if len(p) > 0 && p[len(p)-1] == '/' && strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // authSession tracks an active login session.
@@ -224,6 +234,7 @@ type AuthUser struct {
 	Pending       bool     `json:"pending,omitempty"`  // true if awaiting admin approval
 	Apps          []string `json:"apps,omitempty"`     // allowed app paths; empty = use defaults
 	NotifyDefault bool     `json:"notify_default,omitempty"` // persistent notify preference
+	PrivateMode   bool     `json:"private_mode,omitempty"`   // persistent chat private-mode preference
 }
 
 // AuthSetNotifyDefault updates the user's persistent notify preference.
@@ -243,6 +254,26 @@ func AuthGetNotifyDefault(db Database, username string) bool {
 		return false
 	}
 	return user.NotifyDefault
+}
+
+// AuthSetPrivateMode updates the user's persistent chat private-mode preference.
+func AuthSetPrivateMode(db Database, username string, enabled bool) {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	user.PrivateMode = enabled
+	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthGetPrivateMode returns the user's persistent chat private-mode preference.
+// Defaults to false when the user has no stored preference (same as NotifyDefault).
+func AuthGetPrivateMode(db Database, username string) bool {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return false
+	}
+	return user.PrivateMode
 }
 
 // sessionDuration returns the configured session lifetime.

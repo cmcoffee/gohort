@@ -108,7 +108,7 @@ Reply with ONLY a JSON object (no markdown fencing):
 	},
 		WithSystemPrompt("Bucket sources into strong/moderate/weak by SUBJECT relevance, not vocabulary overlap. Reply with ONLY the JSON object."),
 		WithMaxTokens(512),
-		WithThink(true))
+		WithThink(false))
 	if err != nil {
 		Debug("[%s] relevance bucket call failed: %s", labelPrefix, err)
 		return identityOrder(len(candidates))
@@ -234,7 +234,7 @@ Reply with ONLY a JSON object (no markdown fencing):
 	},
 		WithSystemPrompt("Bucket sources into strong/moderate/weak by SUBJECT relevance, not vocabulary overlap or domain authority. Mark off-topic content WEAK even on authoritative domains. Reply with ONLY the JSON object."),
 		WithMaxTokens(512),
-		WithThink(true))
+		WithThink(false))
 	if err != nil {
 		Debug("[%s] relevance bucket call failed: %s", labelPrefix, err)
 		return nil

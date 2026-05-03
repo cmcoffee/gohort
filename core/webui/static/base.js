@@ -126,6 +126,43 @@
     for (var i = 0; i < links.length; i++) {
       html = html.replace('%%LINK' + i + '%%', '<a href="' + links[i].url + '" target="_blank">' + escapeHtml(links[i].label) + '</a>');
     }
+
+    // Convert markdown table blocks to HTML tables.
+    // Pipes survive escapeHtml, so this runs on already-escaped content.
+    html = (function(h) {
+      var lines = h.split('\n');
+      var out = [];
+      var i = 0;
+      while (i < lines.length) {
+        var t = lines[i].trim();
+        if (t.charAt(0) === '|' && t.charAt(t.length - 1) === '|') {
+          var rows = [];
+          while (i < lines.length) {
+            var lt = lines[i].trim();
+            if (lt.charAt(0) === '|' && lt.charAt(lt.length - 1) === '|') { rows.push(lt); i++; }
+            else break;
+          }
+          var sep = -1;
+          for (var j = 0; j < rows.length; j++) {
+            if (/^\|[\s|\-:]+\|$/.test(rows[j])) { sep = j; break; }
+          }
+          var tbl = '<table>';
+          if (sep > 0) tbl += '<thead>';
+          for (var j = 0; j < rows.length; j++) {
+            if (j === sep) { tbl += '</thead><tbody>'; continue; }
+            var cells = rows[j].split('|').slice(1, -1);
+            var tag = (sep > 0 && j < sep) ? 'th' : 'td';
+            tbl += '<tr>';
+            for (var k = 0; k < cells.length; k++) tbl += '<' + tag + '>' + cells[k].trim() + '</' + tag + '>';
+            tbl += '</tr>';
+          }
+          if (sep >= 0) tbl += '</tbody>';
+          tbl += '</table>';
+          out.push(tbl);
+        } else { out.push(lines[i]); i++; }
+      }
+      return out.join('\n');
+    })(html);
     html = html.replace(/(^|[^"'>])(https?:\/\/[^\s<)]+)/gm, '$1<a href="$2" target="_blank">$2</a>');
 
     html = html.replace(/^##### (.+)$/gm, '<h5>$1</h5>');

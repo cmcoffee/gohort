@@ -1,16 +1,18 @@
 package techwriter
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/editor"
-	"github.com/cmcoffee/gohort/core/webui"
 )
 
 
@@ -108,20 +110,10 @@ func (T *TechWriterAgent) WebDesc() string {
 }
 
 func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	sub := http.NewServeMux()
-	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-			Title:    "TechWriter",
-			AppName:  "TechWriter",
-			Prefix:   prefix,
-			BodyHTML: techwriterBody,
-			AppCSS:   editor.DiffCSS() + techwriterCSS,
-			AppJS:    editor.DiffJS() + techwriterJS,
-		}))
+	sub := NewWebUI(T, prefix, AppUIAssets{
+		BodyHTML: techwriterBody,
+		AppCSS:   editor.DiffCSS() + techwriterCSS,
+		AppJS:    editor.UtilsJS() + editor.DiffJS() + techwriterJS,
 	})
 	sub.HandleFunc("/api/chat", T.handleChat)
 	sub.HandleFunc("/api/save", T.handleSave)
@@ -131,14 +123,42 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/export/", T.handleExport)
 	sub.HandleFunc("/api/import", T.handleImport)
 	sub.HandleFunc("/api/merge", T.handleMerge)
+	sub.HandleFunc("/api/merge-sources", T.handleMergeSources)
+	sub.HandleFunc("/api/merge-source/", T.handleMergeSource)
+	sub.HandleFunc("/api/revisions/", T.handleRevisions)
+	sub.HandleFunc("/api/revision/", T.handleRevision)
+	sub.HandleFunc("/api/suggest-title", T.handleSuggestTitle)
 	sub.HandleFunc("/api/prompt", T.handlePrompt)
 	sub.HandleFunc("/api/preview", T.handlePreview)
 	sub.HandleFunc("/api/upload-persona", T.handleUploadPersona)
 	sub.HandleFunc("/api/save-persona", T.handleSavePersona)
 	sub.HandleFunc("/api/personas", T.handleListPersonas)
 	sub.HandleFunc("/api/persona/", T.handlePersona)
+	sub.HandleFunc("/api/generate-image", T.handleGenerateImage)
 
 	RegisterUserDataHandler(&techWriterUserData{agent: T})
+
+	twDB := T.DB
+	SaveArticleFunc = func(userID, subject, body string) (string, error) {
+		udb := UserDB(twDB, userID)
+		id := UUIDv4()
+		now := time.Now().Format(time.RFC3339)
+		udb.Set(HistoryTable, id, ArticleRecord{
+			ID:      id,
+			Subject: subject,
+			Body:    body,
+			Date:    now,
+		})
+		revID := UUIDv4()
+		udb.Set(revisionTable, revID, ArticleRevision{
+			ID:        revID,
+			ArticleID: id,
+			Subject:   subject,
+			Body:      body,
+			Date:      now,
+		})
+		return id, nil
+	}
 
 	// Gate the entire sub-mux behind per-user app permission.
 	// Loopback requests bypass the check so internal inter-app RPCs
@@ -226,9 +246,6 @@ These rules prevent the output from reading as AI-generated. They should be part
 	}
 	today := time.Now().Format("January 2, 2006")
 
-	// TechWriter always uses the local worker LLM.
-	agent := &AppCore{LLM: T.AppCore.LLM}
-
 	// Build message list: prior turns (capped) then the current message
 	// with article context. Article body rides on the current message
 	// only — past turns stay pure conversation, no stale body snapshots.
@@ -252,11 +269,10 @@ These rules prevent the output from reading as AI-generated. They should be part
 		Role:    "user",
 		Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context),
 	})
-	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(r.Context(), messages,
+	resp, err := T.AppCore.LeadChat(r.Context(), messages,
 		WithSystemPrompt(system_prompt),
 		WithMaxTokens(4096),
-		WithThink(false))
+		WithRouteKey("app.techwriter"))
 
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -310,14 +326,38 @@ func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
 	if req.ID == "" {
 		req.ID = UUIDv4()
 	}
+	now := time.Now().Format(time.RFC3339)
 	udb.Set(HistoryTable, req.ID, ArticleRecord{
 		ID:      req.ID,
 		Subject: req.Subject,
 		Body:    req.Body,
-		Date:    time.Now().Format(time.RFC3339),
+		Date:    now,
 	})
+	revID := UUIDv4()
+	udb.Set(revisionTable, revID, ArticleRevision{
+		ID:        revID,
+		ArticleID: req.ID,
+		Subject:   req.Subject,
+		Body:      req.Body,
+		Date:      now,
+	})
+	// Prune oldest revisions for this article, keeping the most recent maxArticleRevisions.
+	type keyDate struct{ key, date string }
+	var all []keyDate
+	for _, k := range udb.Keys(revisionTable) {
+		var rev ArticleRevision
+		if udb.Get(revisionTable, k, &rev) && rev.ArticleID == req.ID {
+			all = append(all, keyDate{k, rev.Date})
+		}
+	}
+	if len(all) > maxArticleRevisions {
+		sort.Slice(all, func(i, j int) bool { return all[i].date < all[j].date })
+		for _, kd := range all[:len(all)-maxArticleRevisions] {
+			udb.Unset(revisionTable, kd.key)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"id":"%s"}`, req.ID)
+	json.NewEncoder(w).Encode(map[string]string{"id": req.ID, "rev_id": revID})
 }
 
 func (T *TechWriterAgent) handleList(w http.ResponseWriter, r *http.Request) {
@@ -462,6 +502,214 @@ func (T *TechWriterAgent) handleImport(w http.ResponseWriter, r *http.Request) {
 	}())
 }
 
+func (T *TechWriterAgent) handleRevisions(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	articleID := strings.TrimPrefix(r.URL.Path, "/api/revisions/")
+	if articleID == "" || udb == nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "[]")
+		return
+	}
+	type RevisionSummary struct {
+		ID   string `json:"id"`
+		Date string `json:"date"`
+	}
+	var summaries []RevisionSummary
+	for _, k := range udb.Keys(revisionTable) {
+		var rev ArticleRevision
+		if udb.Get(revisionTable, k, &rev) && rev.ArticleID == articleID {
+			summaries = append(summaries, RevisionSummary{ID: rev.ID, Date: rev.Date})
+		}
+	}
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Date < summaries[j].Date })
+	if summaries == nil {
+		summaries = []RevisionSummary{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summaries)
+}
+
+func (T *TechWriterAgent) handleRevision(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	revID := strings.TrimPrefix(r.URL.Path, "/api/revision/")
+	if revID == "" || udb == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var rev ArticleRevision
+	if !udb.Get(revisionTable, revID, &rev) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rev)
+}
+
+// handleGenerateImage generates an image using the blog image profile and
+// returns either a remote URL (DALL-E) or a base64 data URL (Gemini).
+// The frontend displays it as a preview and stores the URL for publishing.
+func (T *TechWriterAgent) handleGenerateImage(w http.ResponseWriter, r *http.Request) {
+	_, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Prompt) == "" {
+		http.Error(w, "prompt required", http.StatusBadRequest)
+		return
+	}
+
+	if !ImageProfileAvailable("blog") && !ImageGenerationAvailable() {
+		http.Error(w, "image generation not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	result, err := GenerateImageLandscape(r.Context(), "", req.Prompt)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("image generation failed: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Resolve the result to a URL the browser can use.
+	// DALL-E returns a remote HTTPS URL directly; Gemini saves to a local file.
+	var imageURL string
+	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
+		imageURL = result.URL
+	} else {
+		// Read local file and return as a data URL so no static server is needed.
+		data, err := os.ReadFile(result.URL)
+		os.Remove(result.URL)
+		if err != nil {
+			http.Error(w, "failed to read generated image", http.StatusInternalServerError)
+			return
+		}
+		mime := "image/png"
+		if strings.HasSuffix(result.URL, ".jpg") || strings.HasSuffix(result.URL, ".jpeg") {
+			mime = "image/jpeg"
+		}
+		imageURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"url": imageURL})
+}
+
+func (T *TechWriterAgent) handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Body == "" {
+		http.Error(w, "body required", http.StatusBadRequest)
+		return
+	}
+	preview := req.Body
+	if len(preview) > 2000 {
+		preview = preview[:2000]
+	}
+	agent := &AppCore{LLM: T.AppCore.LLM}
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(r.Context(), []Message{
+		{Role: "user", Content: "Suggest a concise title (max 8 words) for this article:\n\n" + preview},
+	}, WithSystemPrompt("Reply with ONLY the title. No quotes. No trailing punctuation."), WithMaxTokens(32), WithThink(false))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	title := strings.TrimSpace(ResponseText(resp))
+	title = strings.Trim(title, `"'`)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"subject": title})
+}
+
+func (T *TechWriterAgent) handleMergeSources(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		if udb == nil {
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, "[]")
+			return
+		}
+		var items []MergeSourceRecord
+		for _, key := range udb.Keys(mergeSourceTable) {
+			var rec MergeSourceRecord
+			if udb.Get(mergeSourceTable, key, &rec) {
+				items = append(items, rec)
+			}
+		}
+		if items == nil {
+			items = []MergeSourceRecord{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(items)
+	case http.MethodPost:
+		if udb == nil {
+			http.Error(w, "no database", http.StatusInternalServerError)
+			return
+		}
+		var req MergeSourceRecord
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if req.ID == "" {
+			req.ID = UUIDv4()
+		}
+		req.Date = time.Now().Format(time.RFC3339)
+		udb.Set(mergeSourceTable, req.ID, req)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(req)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (T *TechWriterAgent) handleMergeSource(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/merge-source/")
+	if id == "" || udb == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		var rec MergeSourceRecord
+		if !udb.Get(mergeSourceTable, id, &rec) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rec)
+	case http.MethodDelete:
+		udb.Unset(mergeSourceTable, id)
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // handleMerge combines the current editor content with pasted text into one
 // cohesive article, preserving Sources sections and respecting the current mode.
 func (T *TechWriterAgent) handleMerge(w http.ResponseWriter, r *http.Request) {
@@ -516,13 +764,11 @@ The merged article must preserve all important facts, data, and claims from both
 			return ""
 		}())
 
-	agent := &AppCore{LLM: T.AppCore.LLM}
-	session := agent.CreateSession(WORKER)
-	resp, err := session.Chat(r.Context(), []Message{
+	resp, err := T.AppCore.LeadChat(r.Context(), []Message{
 		{Role: "user", Content: merge_prompt},
 	}, WithSystemPrompt(system_prompt),
 		WithMaxTokens(8192),
-		WithThink(false))
+		WithRouteKey("app.techwriter"))
 
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -756,6 +1002,16 @@ func exportHTML(rec ArticleRecord) string {
 // buttons, scrollbars, and modal primitives come from webui.BaseCSS().
 const techwriterCSS = `
   body { height: 100vh; display: flex; flex-direction: column; }
+  .rev-nav { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
+  .rev-nav button {
+    background: transparent; border: 1px solid #30363d; color: #8b949e;
+    border-radius: 4px; padding: 0.2rem 0.45rem; cursor: pointer; font-size: 0.75rem; line-height: 1;
+  }
+  .rev-nav button:disabled { opacity: 0.3; cursor: default; }
+  .rev-nav button:not(:disabled):hover { color: #c9d1d9; border-color: #8b949e; }
+  #rev-indicator { font-size: 0.72rem; color: #8b949e; white-space: nowrap; min-width: 3.5rem; text-align: center; }
+  #rev-mark-latest { background: #1f3a2a !important; border-color: #238636 !important; color: #3fb950 !important; }
+  #rev-mark-latest:hover { background: #238636 !important; color: #fff !important; }
   #toolbar {
     display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem;
     background: #161b22; border-bottom: 1px solid #21262d;
@@ -783,6 +1039,61 @@ const techwriterCSS = `
     flex: 1; background: #0d1117; color: #c9d1d9; border: none; resize: none;
     padding: 1rem; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem;
     line-height: 1.6; outline: none;
+  }
+  #merge-toggle {
+    display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.75rem;
+    background: #161b22; border-top: 1px solid #21262d; cursor: pointer;
+    font-size: 0.8rem; color: #8b949e; user-select: none; flex-shrink: 0;
+  }
+  #merge-toggle:hover { color: #c9d1d9; }
+  #merge-toggle .arr { font-size: 0.6rem; transition: transform 0.15s; }
+  #merge-toggle .arr.open { transform: rotate(90deg); }
+  .merge-actions { margin-left: auto; display: flex; align-items: center; gap: 0.3rem; flex-shrink: 0; }
+  .merge-btn {
+    background: transparent; border: 1px solid #30363d; color: #8b949e;
+    border-radius: 3px; padding: 0.1rem 0.5rem; cursor: pointer; font-size: 0.7rem;
+  }
+  .merge-btn:hover { color: #c9d1d9; border-color: #8b949e; }
+  .merge-run-btn {
+    background: #238636; border: none; color: #fff; border-radius: 4px;
+    padding: 0.2rem 0.6rem; cursor: pointer; font-size: 0.75rem;
+  }
+  .merge-run-btn:hover { opacity: 0.9; }
+  #merge-guidance-inline {
+    background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; width: 180px;
+  }
+  #merge-guidance-inline:focus { border-color: #58a6ff; outline: none; }
+  #merge-source-current { color: #58a6ff; font-size: 0.75rem; }
+  #merge-source-pane { display: none; border-top: 1px solid #21262d; flex-direction: column; }
+  #merge-source-pane.open { display: flex; height: 200px; min-height: 80px; max-height: 85%; }
+  #merge-source-resizer { height: 5px; background: #21262d; cursor: row-resize; flex-shrink: 0; }
+  #merge-source-resizer:hover, #merge-source-resizer.dragging { background: #58a6ff; }
+  #merge-source-pane textarea {
+    flex: 1; background: #0d1117; color: #c9d1d9; border: none; resize: none;
+    padding: 0.75rem 1rem; font-family: inherit; font-size: 0.85rem; line-height: 1.6; outline: none;
+  }
+  #merge-sources-panel {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 1rem; width: 500px; max-height: 70vh; overflow-y: auto; z-index: 100;
+  }
+  #merge-sources-panel h3 { color: #c9d1d9; margin-bottom: 0.75rem; }
+  .merge-source-item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.5rem 0.75rem; border: 1px solid #21262d; border-radius: 6px;
+    margin-bottom: 0.4rem; cursor: pointer; background: #0d1117;
+  }
+  .merge-source-item:hover { border-color: #30363d; background: #1c2128; }
+  .merge-source-item .title { color: #c9d1d9; font-weight: 600; font-size: 0.85rem; }
+  .merge-source-item .date { color: #484f58; font-size: 0.75rem; }
+  .merge-source-item .del-btn { background: none; border: none; color: #484f58; cursor: pointer; font-size: 0.85rem; }
+  .merge-source-item .del-btn:hover { color: #f85149; }
+  #chat-resizer {
+    width: 5px; background: var(--border); cursor: col-resize; flex-shrink: 0;
+  }
+  #chat-resizer:hover, #chat-resizer.dragging {
+    background: var(--accent);
   }
   #chat-pane {
     width: 380px; display: flex; flex-direction: column; background: #161b22;
@@ -845,7 +1156,11 @@ const techwriterCSS = `
     background: #161b22; border: 1px solid #30363d; border-radius: 8px;
     padding: 1rem; width: 500px; max-height: 70vh; overflow-y: auto; z-index: 100;
   }
-  #articles-panel h3 { color: #c9d1d9; margin-bottom: 0.75rem; }
+  .art-panel-hdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem; }
+  .art-panel-hdr h3 { color: #c9d1d9; margin: 0; }
+  .art-sort-bar { display:flex; gap:2px; }
+  .art-sort-btn { background:#0d1117; border:1px solid #30363d; color:#8b949e; font-size:0.72rem; padding:2px 8px; border-radius:4px; cursor:pointer; }
+  .art-sort-btn.active { background:#388bfd; border-color:#388bfd; color:#fff; }
   .article-item {
     display: flex; justify-content: space-between; align-items: center;
     padding: 0.5rem 0.75rem; border: 1px solid #21262d; border-radius: 6px;
@@ -864,6 +1179,67 @@ const techwriterCSS = `
   }
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 0.3rem; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  #diagram-modal {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    width: min(940px, 92vw); height: min(620px, 88vh);
+    flex-direction: column; z-index: 100;
+  }
+  #diagram-modal.open { display: flex; }
+  #diagram-modal-hdr {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.6rem 1rem; border-bottom: 1px solid #21262d; flex-shrink: 0;
+  }
+  #diagram-modal-hdr span { font-size: 0.9rem; font-weight: 600; color: #c9d1d9; }
+  #diagram-modal-hdr button {
+    background: none; border: none; color: #8b949e; cursor: pointer;
+    font-size: 1rem; padding: 0.2rem 0.4rem; border-radius: 4px;
+  }
+  #diagram-modal-hdr button:hover { color: #f85149; }
+  #diagram-body { display: flex; flex: 1; overflow: hidden; }
+  #diagram-left {
+    width: 290px; flex-shrink: 0; display: flex; flex-direction: column;
+    gap: 0.5rem; padding: 0.75rem; border-right: 1px solid #21262d;
+  }
+  #diagram-source {
+    flex: 1; background: #0d1117; border: 1px solid #30363d; color: #c9d1d9;
+    border-radius: 6px; padding: 0.5rem 0.6rem; font-family: 'SF Mono','Fira Code',monospace;
+    font-size: 0.78rem; line-height: 1.5; resize: none; outline: none; min-height: 0;
+  }
+  #diagram-source:focus { border-color: #58a6ff; }
+  #diagram-left-btns { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  #diagram-left-btns button {
+    flex: 1; background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    border-radius: 6px; padding: 0.35rem 0.5rem; cursor: pointer; font-size: 0.78rem;
+  }
+  #diagram-left-btns button:hover { border-color: #58a6ff; color: #58a6ff; }
+  #diagram-left-btns button.primary { background: #238636; border: none; color: #fff; }
+  #diagram-left-btns button.primary:hover { opacity: 0.9; }
+  #diagram-picker { display: flex; flex-direction: column; gap: 0.25rem; max-height: 110px; overflow-y: auto; flex-shrink: 0; }
+  .diagram-pick-btn {
+    background: #0d1117; border: 1px solid #21262d; color: #8b949e;
+    border-radius: 4px; padding: 0.25rem 0.5rem; cursor: pointer; font-size: 0.72rem;
+    text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .diagram-pick-btn:hover { border-color: #58a6ff; color: #c9d1d9; }
+  #diagram-right { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #diagram-preview-area {
+    flex: 1; overflow: auto; padding: 1.25rem; display: flex;
+    align-items: center; justify-content: center; background: #0d1117;
+  }
+  #diagram-preview svg { max-width: 100%; height: auto; }
+  #diagram-preview .diagram-hint { color: #484f58; font-size: 0.85rem; }
+  #diagram-export {
+    display: flex; gap: 0.5rem; padding: 0.65rem 0.75rem;
+    border-top: 1px solid #21262d; justify-content: flex-end; flex-shrink: 0;
+  }
+  #diagram-export button {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    border-radius: 6px; padding: 0.35rem 0.8rem; cursor: pointer; font-size: 0.8rem;
+  }
+  #diagram-export button:hover { border-color: #58a6ff; color: #58a6ff; }
+  #diagram-export button.primary { background: #1a7f37; border-color: #2ea043; color: #fff; }
+  #diagram-export button.primary:hover { background: #238636; }
 `
 
 // techwriterBody is the app's main HTML panel, inserted into the
@@ -872,6 +1248,12 @@ const techwriterBody = `
 <div id="toolbar">
   <span class="app-title">TechWriter</span>
   <button class="secondary" onclick="showArticles()">Articles</button>
+  <span class="rev-nav">
+    <button id="rev-back" onclick="navigateRevision(-1)" disabled title="Previous revision">&#9664;</button>
+    <span id="rev-indicator"></span>
+    <button id="rev-fwd" onclick="navigateRevision(1)" disabled title="Next revision">&#9654;</button>
+    <button id="rev-mark-latest" class="secondary" onclick="markAsLatest()" style="display:none">Make Latest</button>
+  </span>
   <input id="subject" type="text" placeholder="Article subject..." style="flex:1">
   <select id="persona-select" style="padding:0.4rem;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;font-size:0.85rem;max-width:150px" onchange="onPersonaChange()">
     <option value="">Default Style</option>
@@ -882,9 +1264,10 @@ const techwriterBody = `
   <button id="fill-gaps-btn" onclick="fillGaps()">Process</button>
   <button class="secondary" onclick="exportArticle()">Export</button>
   <button class="secondary" onclick="previewForCopy()" title="Preview for copy-paste into Confluence">Preview</button>
+  <button class="secondary" onclick="openDiagramTool()" title="Render and export Mermaid diagrams">Diagrams</button>
   <button class="secondary" onclick="document.getElementById('import-file').click()">Import</button>
   <input type="file" id="import-file" accept=".html,.htm" style="display:none" onchange="importArticle(this)">
-  <button class="secondary" onclick="showMergeDialog()">Merge</button>
+  <button class="secondary" onclick="toggleMergeSource()">Merge</button>
   <button class="secondary" onclick="newArticle()">New</button>
   <button class="secondary" onclick="resetPage()" title="Reset everything" style="color:#f85149">Reset</button>
 </div>
@@ -900,17 +1283,23 @@ Examples:
   3. Check the logs
 
 Click 'Process' or use the chat to expand your content."></textarea>
-  </div>
-  <div id="merge-pane" style="display:none;flex-direction:column;flex:1;border-left:1px solid #30363d;background:#0d1117">
-    <div style="padding:0.5rem 1rem;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:0.5rem">
-      <strong style="color:#c9d1d9;font-size:0.9rem;flex:1">Merge with pasted content</strong>
-      <button id="merge-run" onclick="runMerge()" style="padding:0.35rem 0.85rem;background:#238636;border:none;border-radius:4px;color:#fff;cursor:pointer;font-size:0.85rem">Merge</button>
-      <button onclick="closeMerge()" style="padding:0.35rem 0.85rem;background:#21262d;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;cursor:pointer;font-size:0.85rem">Cancel</button>
+    <div id="merge-toggle" onclick="toggleMergeSource()">
+      <span class="arr" id="merge-arr">&#9654;</span> Merge Source
+      <span class="merge-actions">
+        <input id="merge-guidance-inline" type="text" placeholder="Merge guidance (optional)..." onclick="event.stopPropagation()">
+        <button class="merge-btn" onclick="event.stopPropagation();saveMergeSource()">Save</button>
+        <button class="merge-btn" onclick="event.stopPropagation();showMergeSources()">Load</button>
+        <button class="merge-btn" onclick="event.stopPropagation();importMergeSource()" title="Import file">Import</button>
+        <button id="merge-run" class="merge-run-btn" onclick="event.stopPropagation();runMerge()">Merge</button>
+        <span id="merge-source-current"></span>
+      </span>
     </div>
-    <input id="merge-guidance" type="text" placeholder="Optional: merge guidance (e.g. focus on technical aspects)"
-      style="padding:0.5rem 1rem;background:#0d1117;border:none;border-bottom:1px solid #30363d;color:#c9d1d9;font-size:0.85rem">
-    <textarea id="merge-input" placeholder="Paste the second article or content here..." style="flex:1;background:#0d1117;border:none;color:#c9d1d9;padding:1rem;font-family:inherit;font-size:0.9rem;resize:none;outline:none"></textarea>
+    <div id="merge-source-pane">
+      <div id="merge-source-resizer" onmousedown="startMergeSourceResize(event)"></div>
+      <textarea id="merge-source-input" placeholder="Paste the second article or content here..."></textarea>
+    </div>
   </div>
+  <div id="chat-resizer" onmousedown="startChatResize(event)"></div>
   <div id="chat-pane">
     <div id="chat-header">Chat <button onclick="document.getElementById('chat-messages').innerHTML='';clearChatHistory();" style="float:right;background:none;border:none;color:#8b949e;cursor:pointer;font-size:0.75rem;padding:0 0.3rem" title="Clear chat">Clear</button></div>
     <div id="chat-messages"></div>
@@ -922,12 +1311,126 @@ Click 'Process' or use the chat to expand your content."></textarea>
   </div>
 </div>
 <div id="overlay" onclick="hideArticles()"></div>
-<div id="articles-panel"><h3>Saved Articles</h3><div id="articles-list"></div></div>
+<div id="diagram-modal">
+  <div id="diagram-modal-hdr">
+    <span>Diagram Tool</span>
+    <button onclick="closeDiagramTool()" title="Close">&#10005;</button>
+  </div>
+  <div id="diagram-body">
+    <div id="diagram-left">
+      <textarea id="diagram-source" placeholder="Paste Mermaid source here, or click Scan Document to find diagrams in the current article..."></textarea>
+      <div id="diagram-left-btns">
+        <button onclick="scanForMermaid()">Scan Document</button>
+        <button class="primary" onclick="renderDiagramPreview()">Render</button>
+      </div>
+      <div id="diagram-picker"></div>
+    </div>
+    <div id="diagram-right">
+      <div id="diagram-preview-area">
+        <div id="diagram-preview"><span class="diagram-hint">Paste or scan for a diagram, then click Render.</span></div>
+      </div>
+      <div id="diagram-export">
+        <button class="primary" onclick="downloadDiagramDrawio()" title="Import into Gliffy via draw.io import">Download draw.io</button>
+        <button onclick="downloadDiagramPNG()">Download PNG</button>
+        <button onclick="downloadDiagramSVG()">Download SVG</button>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="articles-panel"><div class="art-panel-hdr"><h3>Saved Articles</h3><div class="art-sort-bar"><button id="art-sort-date" class="art-sort-btn active" onclick="setArticleSort('date')">Newest</button><button id="art-sort-name" class="art-sort-btn" onclick="setArticleSort('name')">A–Z</button></div></div><div id="articles-list"></div></div>
+<div id="merge-sources-panel"><h3>Saved Sources</h3><div id="merge-sources-list"></div></div>
+<input type="file" id="merge-source-file" style="display:none" onchange="importMergeSourceFile(this)">
 `
 
 // techwriterJS is the app's main JS, appended after webui.BaseJS().
 const techwriterJS = `
 var currentId = null;
+var revisions = [];
+var revisionIndex = -1;
+
+function loadRevisions(articleID) {
+  if (!articleID) { revisions = []; revisionIndex = -1; updateRevNav(); return; }
+  fetch('/api/revisions/' + encodeURIComponent(articleID))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      revisions = data || [];
+      revisionIndex = revisions.length - 1;
+      updateRevNav();
+    }).catch(function() { revisions = []; revisionIndex = -1; updateRevNav(); });
+}
+
+function updateRevNav() {
+  var back = document.getElementById('rev-back');
+  var fwd = document.getElementById('rev-fwd');
+  var ind = document.getElementById('rev-indicator');
+  var mark = document.getElementById('rev-mark-latest');
+  if (!back) return;
+  var n = revisions.length;
+  back.disabled = revisionIndex <= 0;
+  fwd.disabled = revisionIndex >= n - 1;
+  ind.textContent = n > 0 ? 'rev ' + (revisionIndex + 1) + '/' + n : '';
+  mark.style.display = (n > 0 && revisionIndex < n - 1) ? '' : 'none';
+}
+
+function navigateRevision(dir) {
+  var idx = revisionIndex + dir;
+  if (idx < 0 || idx >= revisions.length) return;
+  fetch('/api/revision/' + encodeURIComponent(revisions[idx].id))
+    .then(function(r) { if (!r.ok) throw new Error('load'); return r.json(); })
+    .then(function(rev) {
+      document.getElementById('editor').value = rev.body || '';
+      document.getElementById('subject').value = rev.subject || '';
+      revisionIndex = idx;
+      updateRevNav();
+    }).catch(function(err) { addChatMsg('assistant', 'Could not load revision: ' + err.message); });
+}
+
+function markAsLatest() {
+  autoSave();
+}
+
+function autoSave() {
+  var body = document.getElementById('editor').value;
+  if (!body.trim()) return;
+  var subject = document.getElementById('subject').value.trim();
+  if (subject) {
+    doAutoSave(subject, body);
+  } else {
+    fetch('/api/suggest-title', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({body: body.slice(0, 2000)})
+    }).then(function(r) { return r.json(); })
+      .then(function(data) {
+        var title = (data.subject || '').trim();
+        if (title) document.getElementById('subject').value = title;
+        doAutoSave(title || 'Untitled', body);
+      }).catch(function() { doAutoSave('Untitled', body); });
+  }
+}
+
+function doAutoSave(subject, body) {
+  fetch('/api/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: currentId || '', subject: subject, body: body})
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.id) {
+        currentId = data.id;
+        loadRevisions(currentId);
+      }
+    }).catch(function() {});
+}
+
+function startChatResize(e) {
+  editorStartResize(e, 'col', {
+    target: document.getElementById('chat-pane'),
+    container: document.getElementById('main'),
+    resizer: document.getElementById('chat-resizer'),
+    min: 240, pad: 200
+  });
+}
 
 // --- Persona Management ---
 
@@ -1204,25 +1707,132 @@ function revertDefaultPrompt() {
 // Load personas on startup.
 loadPersonas();
 
-function showMergeDialog() {
-  var body = document.getElementById('editor').value.trim();
-  if (!body) { alert('Current article is empty. Load or write something first.'); return; }
-  document.getElementById('merge-pane').style.display = 'flex';
-  document.getElementById('merge-input').focus();
+function toggleMergeSource() {
+  var pane = document.getElementById('merge-source-pane');
+  var arr = document.getElementById('merge-arr');
+  pane.classList.toggle('open');
+  arr.classList.toggle('open');
+  if (pane.classList.contains('open')) {
+    document.getElementById('merge-source-input').focus();
+  }
 }
 
-function closeMerge() {
-  document.getElementById('merge-pane').style.display = 'none';
-  document.getElementById('merge-input').value = '';
-  document.getElementById('merge-guidance').value = '';
+function openMergeSource() {
+  var pane = document.getElementById('merge-source-pane');
+  var arr = document.getElementById('merge-arr');
+  if (!pane.classList.contains('open')) {
+    pane.classList.add('open');
+    arr.classList.add('open');
+  }
+  document.getElementById('merge-source-input').focus();
 }
+
+function startMergeSourceResize(e) {
+  editorStartResize(e, 'row', {
+    target: document.getElementById('merge-source-pane'),
+    container: document.getElementById('editor-pane'),
+    resizer: document.getElementById('merge-source-resizer'),
+    min: 80, pad: 80
+  });
+}
+
+var currentMergeSourceId = null;
+var currentMergeSourceName = null;
+
+function setCurrentMergeSource(id, name) {
+  currentMergeSourceId = id;
+  currentMergeSourceName = name;
+  var el = document.getElementById('merge-source-current');
+  if (el) el.textContent = name ? '[' + name + ']' : '';
+}
+
+function saveMergeSource() {
+  var body = document.getElementById('merge-source-input').value;
+  if (!body.trim()) { alert('Merge source is empty.'); return; }
+  var name = prompt('Name this source:', currentMergeSourceName || '');
+  if (!name) return;
+  name = name.trim();
+  if (!name) return;
+  fetch('/api/merge-sources', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({id: currentMergeSourceId, name: name, body: body})
+  }).then(function(r) { return r.json(); }).then(function(rec) {
+    setCurrentMergeSource(rec.id, rec.name);
+    addChatMsg('assistant', 'Merge source <strong>' + escapeHtml(name) + '</strong> saved.');
+  }).catch(function() { alert('Save failed.'); });
+}
+
+function showMergeSources() {
+  fetch('/api/merge-sources').then(function(r) { return r.json(); }).then(function(items) {
+    document.getElementById('overlay').style.display = 'block';
+    document.getElementById('merge-sources-panel').style.display = 'block';
+    var list = document.getElementById('merge-sources-list');
+    if (!items || items.length === 0) {
+      list.innerHTML = '<div style="color:#8b949e;text-align:center;padding:0.5rem">No saved sources.</div>';
+      return;
+    }
+    var html = '';
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      var date = '';
+      try { date = new Date(item.date).toLocaleDateString(); } catch(e) {}
+      html += '<div class="merge-source-item" onclick="loadMergeSource(\'' + item.id + '\')">';
+      html += '<div><div class="title">' + escapeHtml(item.name || 'Untitled') + '</div><div class="date">' + date + '</div></div>';
+      html += '<button class="del-btn" onclick="event.stopPropagation();deleteMergeSource(\'' + item.id + '\',this.closest(\'.merge-source-item\'))">&times;</button>';
+      html += '</div>';
+    }
+    list.innerHTML = html;
+  });
+}
+
+function loadMergeSource(id) {
+  fetch('/api/merge-source/' + encodeURIComponent(id))
+    .then(function(r) { if (!r.ok) throw new Error('load'); return r.json(); })
+    .then(function(rec) {
+      document.getElementById('merge-source-input').value = rec.body || '';
+      setCurrentMergeSource(rec.id, rec.name);
+      openMergeSource();
+      hideArticles();
+    }).catch(function() { alert('Load failed.'); });
+}
+
+function deleteMergeSource(id, el) {
+  if (!confirm('Delete this saved source?')) return;
+  fetch('/api/merge-source/' + encodeURIComponent(id), {method: 'DELETE'})
+    .then(function() {
+      if (currentMergeSourceId === id) setCurrentMergeSource(null, null);
+      if (el) el.remove();
+    });
+}
+
+function importMergeSource() {
+  document.getElementById('merge-source-file').click();
+}
+
+function importMergeSourceFile(input) {
+  if (!input.files || !input.files[0]) return;
+  var file = input.files[0];
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    document.getElementById('merge-source-input').value = e.target.result;
+    setCurrentMergeSource(null, file.name.replace(/\.[^.]+$/, ''));
+    openMergeSource();
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+// showMergeDialog kept as alias so any bookmarks/external calls still work.
+function showMergeDialog() { toggleMergeSource(); }
 
 function runMerge() {
   var subject = document.getElementById('subject').value.trim();
   var body = document.getElementById('editor').value.trim();
-  var other = document.getElementById('merge-input').value.trim();
-  var guidance = document.getElementById('merge-guidance').value.trim();
-  if (!other) { alert('Paste content to merge with.'); return; }
+  var other = document.getElementById('merge-source-input').value.trim();
+  var guidance = document.getElementById('merge-guidance-inline').value.trim();
+  if (!other) { alert('Paste content into the Merge Source panel first.'); return; }
+  if (!body) { alert('Current article is empty.'); return; }
 
   var btn = document.getElementById('merge-run');
   btn.disabled = true;
@@ -1254,10 +1864,10 @@ function runMerge() {
       onApply: function(text) {
         document.getElementById('editor').value = text;
         if (mergeTitle) document.getElementById('subject').value = mergeTitle;
+        autoSave();
       }
     });
     addChatMsg('assistant', mergeHtml, data.content, mergeTitle);
-    closeMerge();
   }).catch(function(err) {
     btn.disabled = false;
     btn.textContent = 'Merge';
@@ -1403,6 +2013,7 @@ function chatAPI(message, mode) {
           onApply: function(text) {
             document.getElementById('editor').value = text;
             if (chatTitle) document.getElementById('subject').value = chatTitle;
+            autoSave();
           }
         });
         addChatMsg('assistant', html, data.content, chatTitle);
@@ -1479,12 +2090,14 @@ function saveArticle() {
   }).then(function(r) { return r.json(); }).then(function(data) {
     currentId = data.id;
     addChatMsg('assistant', 'Article saved.');
+    loadRevisions(currentId);
   });
 }
 
 function newArticle() {
   if (personaEditMode) return; // stay in persona mode — use Cancel to exit
   currentId = null;
+  revisions = []; revisionIndex = -1; updateRevNav();
   document.getElementById('subject').value = '';
   document.getElementById('editor').value = '';
   document.getElementById('chat-messages').innerHTML = '';
@@ -1501,34 +2114,57 @@ function exportArticle() {
   window.open('/api/export/' + currentId);
 }
 
+var articleSort = 'date';
+var articleItems = [];
+
+function setArticleSort(s) {
+  articleSort = s;
+  document.getElementById('art-sort-date').className = 'art-sort-btn' + (s === 'date' ? ' active' : '');
+  document.getElementById('art-sort-name').className = 'art-sort-btn' + (s === 'name' ? ' active' : '');
+  renderArticles();
+}
+
+function renderArticles() {
+  var list = document.getElementById('articles-list');
+  if (!articleItems || articleItems.length === 0) {
+    list.innerHTML = '<div style="color:#8b949e;text-align:center;padding:0.5rem">No saved articles.</div>';
+    return;
+  }
+  var sorted = articleItems.slice();
+  if (articleSort === 'name') {
+    sorted.sort(function(a, b) { return (a.Subject || '').localeCompare(b.Subject || ''); });
+  } else {
+    sorted.sort(function(a, b) { return (b.Date || '') < (a.Date || '') ? -1 : 1; });
+  }
+  var html = '';
+  for (var i = 0; i < sorted.length; i++) {
+    var item = sorted[i];
+    var date = '';
+    try { date = new Date(item.Date).toLocaleDateString(); } catch(e) {}
+    html += '<div class="article-item" onclick="loadArticle(\'' + item.ID + '\')">';
+    html += '<div><div class="title">' + escapeHtml(item.Subject || 'Untitled') + '</div><div class="date">' + date + '</div></div>';
+    html += '<button class="del-btn" onclick="event.stopPropagation();deleteArticle(\'' + item.ID + '\',this.closest(\'.article-item\'))">&times;</button>';
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
 function showArticles() {
   document.getElementById('overlay').style.display = 'block';
   document.getElementById('articles-panel').style.display = 'block';
   var list = document.getElementById('articles-list');
   list.innerHTML = '<div style="color:#8b949e;text-align:center;padding:0.5rem">Loading...</div>';
-
   fetch('/api/list').then(function(r) { return r.json(); }).then(function(items) {
-    if (!items || items.length === 0) {
-      list.innerHTML = '<div style="color:#8b949e;text-align:center;padding:0.5rem">No saved articles.</div>';
-      return;
-    }
-    var html = '';
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-      var date = '';
-      try { date = new Date(item.Date).toLocaleDateString(); } catch(e) {}
-      html += '<div class="article-item" onclick="loadArticle(\'' + item.ID + '\')">';
-      html += '<div><div class="title">' + escapeHtml(item.Subject || 'Untitled') + '</div><div class="date">' + date + '</div></div>';
-      html += '<button class="del-btn" onclick="event.stopPropagation();deleteArticle(\'' + item.ID + '\',this.closest(\'.article-item\'))">&times;</button>';
-      html += '</div>';
-    }
-    list.innerHTML = html;
+    articleItems = items || [];
+    renderArticles();
   });
 }
 
 function hideArticles() {
   document.getElementById('overlay').style.display = 'none';
   document.getElementById('articles-panel').style.display = 'none';
+  document.getElementById('merge-sources-panel').style.display = 'none';
+  document.getElementById('diagram-modal').classList.remove('open');
 }
 
 function loadArticle(id) {
@@ -1537,16 +2173,15 @@ function loadArticle(id) {
     currentId = rec.ID;
     document.getElementById('subject').value = rec.Subject || '';
     document.getElementById('editor').value = rec.Body || '';
-    // Loading a different article invalidates the prior discussion —
-    // keep conversation scoped to a single article so Edit can't act
-    // on notes from a different file.
     document.getElementById('chat-messages').innerHTML = '';
     clearChatHistory();
+    loadRevisions(currentId);
   });
 }
 
 function deleteArticle(id, el) {
   fetch('/api/delete/' + id, {method: 'DELETE'}).then(function() {
+    articleItems = articleItems.filter(function(a) { return a.ID !== id; });
     if (el) el.remove();
     if (currentId === id) newArticle();
   });
@@ -1581,4 +2216,184 @@ function escapeHtml(s) {
     });
   }
 })();
+
+// --- Diagram Tool ---
+
+var mermaidLoaded = false;
+
+function openDiagramTool() {
+  document.getElementById('diagram-modal').classList.add('open');
+  document.getElementById('overlay').style.display = 'block';
+}
+
+function closeDiagramTool() {
+  document.getElementById('diagram-modal').classList.remove('open');
+  document.getElementById('overlay').style.display = 'none';
+}
+
+function scanForMermaid() {
+  var body = document.getElementById('editor').value;
+  var blocks = [];
+  var re = /` + "```" + `mermaid\n([\s\S]*?)` + "```" + `/g;
+  var m;
+  while ((m = re.exec(body)) !== null) {
+    blocks.push(m[1].trim());
+  }
+  var picker = document.getElementById('diagram-picker');
+  if (blocks.length === 0) {
+    picker.innerHTML = '<div style="color:#8b949e;font-size:0.78rem">No Mermaid diagrams found in the document.</div>';
+    return;
+  }
+  if (blocks.length === 1) {
+    picker.innerHTML = '';
+    document.getElementById('diagram-source').value = blocks[0];
+    renderDiagramPreview();
+    return;
+  }
+  picker.innerHTML = '<div style="color:#8b949e;font-size:0.72rem;margin-bottom:0.2rem">' + blocks.length + ' diagrams found — pick one:</div>';
+  blocks.forEach(function(block, i) {
+    var btn = document.createElement('button');
+    btn.className = 'diagram-pick-btn';
+    var first = block.split('\n')[0] || '';
+    btn.textContent = 'Diagram ' + (i + 1) + (first ? ': ' + first : '');
+    btn.title = block.substring(0, 120);
+    btn.onclick = function() {
+      document.getElementById('diagram-source').value = block;
+      renderDiagramPreview();
+    };
+    picker.appendChild(btn);
+  });
+}
+
+function loadMermaid(cb) {
+  if (mermaidLoaded) { cb(); return; }
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js';
+  s.onload = function() {
+    mermaid.initialize({ startOnLoad: false, theme: 'neutral' });
+    mermaidLoaded = true;
+    cb();
+  };
+  s.onerror = function() {
+    document.getElementById('diagram-preview').innerHTML =
+      '<span style="color:#f85149;font-size:0.85rem">Failed to load Mermaid.js — check your connection.</span>';
+  };
+  document.head.appendChild(s);
+}
+
+// fixMermaidZOrder moves .cluster-label elements (subgraph titles) to paint
+// after .nodes so they are never hidden behind node rectangles. Mermaid renders
+// clusters before nodes in the SVG, meaning node shapes cover subgraph titles.
+// We clone each label with its absolute SVG position and re-append to the root.
+function fixMermaidZOrder(svg) {
+  if (!svg) return;
+  var root = svg.querySelector('g.root') || svg;
+  var ctm = svg.getScreenCTM && svg.getScreenCTM();
+  var inv = ctm && ctm.inverse();
+  if (!inv) return;
+  Array.from(root.querySelectorAll('.cluster-label')).forEach(function(label) {
+    var r = label.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return;
+    var pt = svg.createSVGPoint();
+    pt.x = r.left; pt.y = r.top;
+    var sp = pt.matrixTransform(inv);
+    var clone = label.cloneNode(true);
+    clone.setAttribute('transform', 'translate(' + sp.x + ',' + sp.y + ')');
+    label.style.visibility = 'hidden';
+    root.appendChild(clone);
+  });
+}
+
+function renderDiagramPreview() {
+  var src = document.getElementById('diagram-source').value.trim();
+  if (!src) return;
+  var preview = document.getElementById('diagram-preview');
+  preview.innerHTML = '<span class="spinner"></span><span style="color:#8b949e;font-size:0.85rem">Rendering...</span>';
+  loadMermaid(function() {
+    var id = 'mermaid-' + Date.now();
+    mermaid.render(id, src).then(function(result) {
+      preview.innerHTML = result.svg;
+      fixMermaidZOrder(preview.querySelector('svg'));
+    }).catch(function(err) {
+      var msg = err && err.message ? err.message : String(err);
+      preview.innerHTML = '<span style="color:#f85149;font-size:0.85rem">Render failed: ' + escapeHtml(msg) + '</span>';
+    });
+  });
+}
+
+function diagramSVG() {
+  return document.querySelector('#diagram-preview svg');
+}
+
+function diagramDims(svg) {
+  var vb = svg.viewBox && svg.viewBox.baseVal;
+  var w = (vb && vb.width > 0 ? vb.width : svg.clientWidth) || 800;
+  var h = (vb && vb.height > 0 ? vb.height : svg.clientHeight) || 600;
+  return { w: Math.round(w), h: Math.round(h) };
+}
+
+function triggerDownload(href, name) {
+  var a = document.createElement('a');
+  a.href = href; a.download = name; a.click();
+  if (href.startsWith('blob:')) setTimeout(function() { URL.revokeObjectURL(href); }, 1500);
+}
+
+function downloadDiagramSVG() {
+  var svg = diagramSVG();
+  if (!svg) { alert('Render a diagram first.'); return; }
+  var data = new XMLSerializer().serializeToString(svg);
+  triggerDownload(URL.createObjectURL(new Blob([data], {type: 'image/svg+xml'})), 'diagram.svg');
+}
+
+function downloadDiagramPNG() {
+  var svg = diagramSVG();
+  if (!svg) { alert('Render a diagram first.'); return; }
+  var scale = 2;
+  var pad = 16; // padding so edge text isn't clipped by the tight Mermaid viewBox
+  var clone = svg.cloneNode(true);
+  if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  // Expand the viewBox by pad on every side so labels at the boundary aren't cut off.
+  var vb = svg.viewBox && svg.viewBox.baseVal;
+  var vx = vb && vb.width > 0 ? vb.x : 0;
+  var vy = vb && vb.height > 0 ? vb.y : 0;
+  var vw = vb && vb.width > 0 ? vb.width : (svg.clientWidth || 800);
+  var vh = vb && vb.height > 0 ? vb.height : (svg.clientHeight || 600);
+  clone.setAttribute('viewBox', (vx - pad) + ' ' + (vy - pad) + ' ' + (vw + pad * 2) + ' ' + (vh + pad * 2));
+  var w = Math.round(vw + pad * 2);
+  var h = Math.round(vh + pad * 2);
+  clone.setAttribute('width', w);
+  clone.setAttribute('height', h);
+  var svgData = new XMLSerializer().serializeToString(clone);
+  var dataUrl = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+  var canvas = document.createElement('canvas');
+  canvas.width = w * scale; canvas.height = h * scale;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  var img = new Image();
+  img.onload = function() {
+    ctx.drawImage(img, 0, 0);
+    triggerDownload(canvas.toDataURL('image/png'), 'diagram.png');
+  };
+  img.onerror = function() { alert('PNG export failed — try SVG instead.'); };
+  img.src = dataUrl;
+}
+
+function downloadDiagramDrawio() {
+  var svg = diagramSVG();
+  if (!svg) { alert('Render a diagram first.'); return; }
+  var d = diagramDims(svg);
+  var svgData = new XMLSerializer().serializeToString(svg);
+  var b64 = btoa(unescape(encodeURIComponent(svgData)));
+  var xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+    + '<mxGraphModel><root>'
+    + '<mxCell id="0"/><mxCell id="1" parent="0"/>'
+    + '<mxCell id="2" value="" style="shape=image;verticalLabelPosition=bottom;labelBackgroundColor=default;'
+    + 'verticalAlign=top;align=center;strokeColor=none;fillColor=none;'
+    + 'image=data:image/svg+xml;base64,' + b64 + ';" vertex="1" parent="1">'
+    + '<mxGeometry x="20" y="20" width="' + d.w + '" height="' + d.h + '" as="geometry"/>'
+    + '</mxCell></root></mxGraphModel>';
+  triggerDownload(URL.createObjectURL(new Blob([xml], {type: 'application/xml'})), 'diagram.drawio');
+}
 `

@@ -1,9 +1,11 @@
 package core
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -386,6 +388,39 @@ func ServeHTMLWithBase(w http.ResponseWriter, html string, prefix string) {
 	fmt.Fprint(w, html)
 }
 
+// AppUIAssets holds the app-specific HTML, CSS, and JS passed to NewWebUI.
+// Title, AppName, and Prefix are filled in automatically from the WebApp.
+type AppUIAssets struct {
+	BodyHTML string
+	AppCSS   string
+	AppJS    string
+	HeadHTML string
+}
+
+// NewWebUI creates a sub-mux and registers the app's root HTML page on it
+// using the app's WebName() for the title and toolbar. The caller is
+// responsible for mounting the returned sub-mux (via MountSubMux or a
+// custom gate) so apps with special access-control wrappers can interpose.
+func NewWebUI(app WebApp, prefix string, assets AppUIAssets) *http.ServeMux {
+	sub := http.NewServeMux()
+	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
+			Title:    app.WebName(),
+			AppName:  app.WebName(),
+			Prefix:   prefix,
+			BodyHTML: assets.BodyHTML,
+			AppCSS:   assets.AppCSS,
+			AppJS:    assets.AppJS,
+			HeadHTML: assets.HeadHTML,
+		}))
+	})
+	return sub
+}
+
 // MountSubMux registers a sub-mux under a prefix using StripPrefix.
 // When prefix is empty (standalone mode), mounts at root. The sub-mux
 // is wrapped with UsageReportMiddleware so every handler registered on
@@ -513,6 +548,9 @@ func ServeDashboard(addr string) error {
 		}
 	}
 
+	// Pre-initialize the scheduler DB so apps can call ScheduleTask during RegisterRoutes.
+	PreInitScheduler()
+
 	// Second pass: register routes now that all agents are ready.
 	for _, wa := range webApps {
 		prefix := wa.WebPath()
@@ -531,6 +569,10 @@ func ServeDashboard(addr string) error {
 		})
 		Log("  Registered: %s -> %s/\n", wa.WebName(), prefix)
 	}
+
+	// All apps are registered — start the global scheduler so handlers added
+	// during RegisterRoutes are in place before any tasks can fire.
+	StartGlobalScheduler(AppContext())
 
 	// Sort by WebOrder (if implemented), then alphabetically.
 	sort.Slice(apps, func(i, j int) bool {
@@ -639,7 +681,8 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		// Skip noisy poll endpoints to keep the log readable.
 		path := r.URL.Path
 		if path == "/api/live" || strings.HasSuffix(path, "/api/live") ||
-			strings.HasSuffix(path, "/api/events") || strings.HasSuffix(path, "/api/reconnect") {
+			strings.HasSuffix(path, "/api/events") || strings.HasSuffix(path, "/api/reconnect") ||
+			strings.HasSuffix(path, "/api/poll") {
 			return
 		}
 		ip := clientIP(r)
@@ -670,6 +713,16 @@ func (lw *loggingWriter) Flush() {
 	if f, ok := lw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack delegates to the underlying ResponseWriter so WebSocket upgrades
+// (which require http.Hijacker) work through the logging wrapper.
+func (lw *loggingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := lw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not implement http.Hijacker")
+	}
+	return h.Hijack()
 }
 
 func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
@@ -1188,24 +1241,40 @@ func (m *LiveSessionMap[T]) HandleReconnect() http.HandlerFunc {
 
 		// Replay buffered events.
 		for _, ev := range events {
-			sse.Send(ev)
+			if err := sse.Send(ev); err != nil {
+				return
+			}
 		}
 		if done {
 			return
 		}
 
-		// Stream new events as they arrive.
+		// Stream new events as they arrive. Send a keepalive comment every
+		// 15 seconds of silence to prevent proxy and browser timeouts during
+		// long LLM pauses. Return immediately if the client disconnects.
+		const heartbeat = 15 * time.Second
 		sent := len(events)
+		lastActivity := time.Now()
 		for {
 			time.Sleep(500 * time.Millisecond)
 			current, isDone := m.SnapshotEvents(id)
 			if current == nil {
 				return
 			}
-			for i := sent; i < len(current); i++ {
-				sse.Send(current[i])
+			if len(current) > sent {
+				for i := sent; i < len(current); i++ {
+					if err := sse.Send(current[i]); err != nil {
+						return
+					}
+				}
+				sent = len(current)
+				lastActivity = time.Now()
+			} else if time.Since(lastActivity) >= heartbeat {
+				if err := sse.SendComment("heartbeat"); err != nil {
+					return
+				}
+				lastActivity = time.Now()
 			}
-			sent = len(current)
 			if isDone {
 				return
 			}

@@ -26,6 +26,10 @@ var (
 
 	// ErrBadPadlock indicates an error when a padlock is invalid.
 	ErrBadPadlock = kvlite.ErrBadPadlock
+
+	// RootDB is the top-level application database, set at startup.
+	// Apps can use it to access sibling buckets (e.g. for one-time migrations).
+	RootDB Database
 )
 
 // OpenDB opens a database from the given filename.

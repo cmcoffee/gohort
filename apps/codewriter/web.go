@@ -4,19 +4,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/editor"
-	"github.com/cmcoffee/gohort/core/webui"
 )
 
 const (
-	snippetTable = "codewriter_snippets"
-	valueTable   = "codewriter_values"
-	contextTable = "codewriter_contexts"
+	snippetTable        = "codewriter_snippets"
+	valueTable          = "codewriter_values"
+	contextTable        = "codewriter_contexts"
+	cwRevisionTable     = "codewriter_revisions"
+	maxSnippetRevisions = 50
 )
+
+// SnippetRevision is a point-in-time snapshot created on each snippet save.
+type SnippetRevision struct {
+	ID        string `json:"id"`
+	SnippetID string `json:"snippet_id"`
+	Name      string `json:"name"`
+	Lang      string `json:"lang"`
+	Code      string `json:"code"`
+	Date      string `json:"date"`
+}
 
 // SnippetRecord stores a saved code snippet with optional variables.
 type SnippetRecord struct {
@@ -54,20 +66,10 @@ func (T *CodeWriterAgent) WebDesc() string {
 }
 
 func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	sub := http.NewServeMux()
-	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-			Title:    "CodeWriter",
-			AppName:  "CodeWriter",
-			Prefix:   prefix,
-			BodyHTML: cwBody,
-			AppCSS:   editor.DiffCSS() + cwCSS,
-			AppJS:    editor.UtilsJS() + editor.DiffJS() + cwJS,
-		}))
+	sub := NewWebUI(T, prefix, AppUIAssets{
+		BodyHTML: cwBody,
+		AppCSS:   editor.DiffCSS() + cwCSS,
+		AppJS:    editor.UtilsJS() + editor.DiffJS() + cwJS,
 	})
 	sub.HandleFunc("/api/chat", T.handleChat)
 	sub.HandleFunc("/api/snippets", T.handleSnippets)
@@ -76,8 +78,35 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/value/", T.handleValue)
 	sub.HandleFunc("/api/contexts", T.handleContexts)
 	sub.HandleFunc("/api/context/", T.handleContext)
+	sub.HandleFunc("/api/revisions/", T.handleRevisions)
+	sub.HandleFunc("/api/revision/", T.handleRevision)
+	sub.HandleFunc("/api/suggest-name", T.handleSuggestName)
 	MountSubMux(mux, prefix, sub)
 	RegisterUserDataHandler(&codeWriterUserData{agent: T})
+
+	cwDB := T.DB
+	SaveSnippetFunc = func(userID, name, lang, code string) (string, error) {
+		udb := UserDB(cwDB, userID)
+		id := UUIDv4()
+		rec := SnippetRecord{
+			ID:   id,
+			Name: name,
+			Lang: lang,
+			Code: code,
+			Date: time.Now().Format(time.RFC3339),
+		}
+		udb.Set(snippetTable, rec.ID, rec)
+		revID := UUIDv4()
+		udb.Set(cwRevisionTable, revID, SnippetRevision{
+			ID:        revID,
+			SnippetID: rec.ID,
+			Name:      rec.Name,
+			Lang:      rec.Lang,
+			Code:      rec.Code,
+			Date:      rec.Date,
+		})
+		return id, nil
+	}
 }
 
 // handleChat receives the current editor code + a chat message, sends to the
@@ -160,7 +189,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the code, not asking for it to be changed. Do NOT write out a revised full script or propose an applyable change. Do NOT emit a fenced code block (```). Explain your thinking, ask clarifying questions, or describe the approach you'd take. Short inline snippets using single backticks are fine. If the user asks for the actual edit, tell them to click Edit instead of Chat."
 	}
 
-	agent := &AppCore{LLM: T.AppCore.LLM, LeadLLM: T.AppCore.LeadLLM}
+	agent := &AppCore{LLM: T.AppCore.LLM}
 
 	// Build messages: prior turns (capped) + current message with file
 	// context. File state rides on the last user message only so the
@@ -184,7 +213,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	messages = append(messages, Message{Role: "user", Content: prompt})
 
 	resp, err := agent.LeadChat(r.Context(), messages,
-		WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithThink(false), WithRouteKey("codewriter.generate"))
+		WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithRouteKey("app.codewriter"))
 
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -298,8 +327,31 @@ func (T *CodeWriterAgent) handleSaveSnippet(w http.ResponseWriter, r *http.Reque
 	}
 	req.Date = time.Now().Format(time.RFC3339)
 	udb.Set(snippetTable, req.ID, req)
+	revID := UUIDv4()
+	udb.Set(cwRevisionTable, revID, SnippetRevision{
+		ID:        revID,
+		SnippetID: req.ID,
+		Name:      req.Name,
+		Lang:      req.Lang,
+		Code:      req.Code,
+		Date:      req.Date,
+	})
+	type keyDate struct{ key, date string }
+	var all []keyDate
+	for _, k := range udb.Keys(cwRevisionTable) {
+		var rev SnippetRevision
+		if udb.Get(cwRevisionTable, k, &rev) && rev.SnippetID == req.ID {
+			all = append(all, keyDate{k, rev.Date})
+		}
+	}
+	if len(all) > maxSnippetRevisions {
+		sort.Slice(all, func(i, j int) bool { return all[i].date < all[j].date })
+		for _, kd := range all[:len(all)-maxSnippetRevisions] {
+			udb.Unset(cwRevisionTable, kd.key)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(req)
+	json.NewEncoder(w).Encode(map[string]interface{}{"id": req.ID, "rev_id": revID, "name": req.Name, "lang": req.Lang})
 }
 
 // handleSnippet handles GET (load) and DELETE for /api/snippet/{id}.
@@ -494,8 +546,99 @@ func (T *CodeWriterAgent) handleContext(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (T *CodeWriterAgent) handleRevisions(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	snippetID := strings.TrimPrefix(r.URL.Path, "/api/revisions/")
+	if snippetID == "" || udb == nil {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, "[]")
+		return
+	}
+	type RevisionSummary struct {
+		ID   string `json:"id"`
+		Date string `json:"date"`
+	}
+	var summaries []RevisionSummary
+	for _, k := range udb.Keys(cwRevisionTable) {
+		var rev SnippetRevision
+		if udb.Get(cwRevisionTable, k, &rev) && rev.SnippetID == snippetID {
+			summaries = append(summaries, RevisionSummary{ID: rev.ID, Date: rev.Date})
+		}
+	}
+	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Date < summaries[j].Date })
+	if summaries == nil {
+		summaries = []RevisionSummary{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(summaries)
+}
+
+func (T *CodeWriterAgent) handleRevision(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	revID := strings.TrimPrefix(r.URL.Path, "/api/revision/")
+	if revID == "" || udb == nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var rev SnippetRevision
+	if !udb.Get(cwRevisionTable, revID, &rev) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rev)
+}
+
+func (T *CodeWriterAgent) handleSuggestName(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+		Lang string `json:"lang"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Code == "" {
+		http.Error(w, "code required", http.StatusBadRequest)
+		return
+	}
+	preview := req.Code
+	if len(preview) > 1000 {
+		preview = preview[:1000]
+	}
+	lang := req.Lang
+	if lang == "" {
+		lang = "code"
+	}
+	agent := &AppCore{LLM: T.AppCore.LLM}
+	session := agent.CreateSession(WORKER)
+	resp, err := session.Chat(r.Context(), []Message{
+		{Role: "user", Content: fmt.Sprintf("Suggest a concise snake_case filename (max 5 words, no extension) for this %s script:\n\n```\n%s\n```", lang, preview)},
+	}, WithSystemPrompt("Reply with ONLY the name in snake_case. No extension. No quotes."), WithMaxTokens(16), WithThink(false))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	name := strings.TrimSpace(ResponseText(resp))
+	name = strings.Trim(name, "`\"'")
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"name": name})
+}
+
 const cwCSS = `
 body { height: 100vh; display: flex; flex-direction: column; }
+.rev-nav { display: flex; align-items: center; gap: 0.25rem; flex-shrink: 0; }
+.rev-nav button {
+  background: transparent; border: 1px solid var(--border); color: var(--text-mute);
+  border-radius: 4px; padding: 0.2rem 0.45rem; cursor: pointer; font-size: 0.75rem; line-height: 1;
+}
+.rev-nav button:disabled { opacity: 0.3; cursor: default; }
+.rev-nav button:not(:disabled):hover { color: var(--text-hi); border-color: var(--text-mute); }
+#rev-indicator { font-size: 0.72rem; color: var(--text-mute); white-space: nowrap; min-width: 3.5rem; text-align: center; }
+#rev-mark-latest { border-color: var(--accent) !important; color: var(--accent) !important; }
+#rev-mark-latest:hover { background: var(--accent) !important; color: #fff !important; }
 #toolbar {
   display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem;
   background: var(--bg-1); border-bottom: 1px solid var(--border);
@@ -626,7 +769,11 @@ body { height: 100vh; display: flex; flex-direction: column; }
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
   padding: 1rem; width: 500px; max-height: 70vh; overflow-y: auto; z-index: 100;
 }
-#snippets-panel h3 { color: var(--text-hi); margin-bottom: 0.75rem; }
+.panel-hdr { display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem; }
+.panel-hdr h3 { color: var(--text-hi); margin: 0; }
+.sort-bar { display:flex; gap:2px; }
+.sort-btn { background:var(--bg-0); border:1px solid var(--border); color:var(--text-mute); font-size:0.72rem; padding:2px 8px; border-radius:4px; cursor:pointer; }
+.sort-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; }
 .snippet-item {
   display: flex; justify-content: space-between; align-items: center;
   padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 6px;
@@ -746,6 +893,12 @@ const cwBody = `
 <div id="toolbar">
   <span class="app-title">CodeWriter</span>
   <button class="secondary" onclick="showSnippets()">Snippets</button>
+  <span class="rev-nav">
+    <button id="rev-back" onclick="navigateRevision(-1)" disabled title="Previous revision">&#9664;</button>
+    <span id="rev-indicator"></span>
+    <button id="rev-fwd" onclick="navigateRevision(1)" disabled title="Next revision">&#9654;</button>
+    <button id="rev-mark-latest" class="secondary" onclick="markAsLatest()" style="display:none">Make Latest</button>
+  </span>
   <input id="script-name" type="text" placeholder="Script name...">
   <select id="lang-select">
     <option value="bash">bash</option>
@@ -809,7 +962,7 @@ Example:
   </div>
 </div>
 <div id="overlay" onclick="hideSnippets()"></div>
-<div id="snippets-panel"><h3>Saved Snippets</h3><div id="snippets-list"></div></div>
+<div id="snippets-panel"><div class="panel-hdr"><h3>Saved Snippets</h3><div class="sort-bar"><button id="snip-sort-date" class="sort-btn active" onclick="setSnippetSort('date')">Newest</button><button id="snip-sort-name" class="sort-btn" onclick="setSnippetSort('name')">A–Z</button></div></div><div id="snippets-list"></div></div>
 <div id="var-modal">
   <h3 id="var-modal-title">Set Variables</h3>
   <div class="desc">Each variable can be a static value or a shell command that runs to produce the value.</div>
@@ -856,6 +1009,94 @@ Example:
 const cwJS = `
 var currentId = null;
 var currentName = null;
+var revisions = [];
+var revisionIndex = -1;
+
+function loadRevisions(snippetID) {
+  if (!snippetID) { revisions = []; revisionIndex = -1; updateRevNav(); return; }
+  fetch('api/revisions/' + encodeURIComponent(snippetID))
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      revisions = data || [];
+      revisionIndex = revisions.length - 1;
+      updateRevNav();
+    }).catch(function() { revisions = []; revisionIndex = -1; updateRevNav(); });
+}
+
+function updateRevNav() {
+  var back = document.getElementById('rev-back');
+  var fwd = document.getElementById('rev-fwd');
+  var ind = document.getElementById('rev-indicator');
+  var mark = document.getElementById('rev-mark-latest');
+  if (!back) return;
+  var n = revisions.length;
+  back.disabled = revisionIndex <= 0;
+  fwd.disabled = revisionIndex >= n - 1;
+  ind.textContent = n > 0 ? 'rev ' + (revisionIndex + 1) + '/' + n : '';
+  mark.style.display = (n > 0 && revisionIndex < n - 1) ? '' : 'none';
+}
+
+function navigateRevision(dir) {
+  var idx = revisionIndex + dir;
+  if (idx < 0 || idx >= revisions.length) return;
+  fetch('api/revision/' + encodeURIComponent(revisions[idx].id))
+    .then(function(r) { if (!r.ok) throw new Error('load'); return r.json(); })
+    .then(function(rev) {
+      document.getElementById('editor').value = rev.code || '';
+      document.getElementById('script-name').value = rev.name || '';
+      var sel = document.getElementById('lang-select');
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === rev.lang) { sel.selectedIndex = i; break; }
+      }
+      revisionIndex = idx;
+      updateRevNav();
+    }).catch(function(err) { addChatMsg('assistant', 'Could not load revision: ' + escapeHtml(err.message)); });
+}
+
+function markAsLatest() { autoSave(); }
+
+function autoSave() {
+  var code = document.getElementById('editor').value;
+  if (!code.trim()) return;
+  var name = document.getElementById('script-name').value.trim();
+  var lang = document.getElementById('lang-select').value;
+  if (name) {
+    doAutoSave(name, lang, code);
+  } else {
+    fetch('api/suggest-name', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code: code.slice(0, 1000), lang: lang})
+    }).then(function(r) { return r.json(); })
+      .then(function(data) {
+        var n = (data.name || '').trim();
+        if (n) document.getElementById('script-name').value = n;
+        doAutoSave(n || 'untitled', lang, code);
+      }).catch(function() { doAutoSave('untitled', lang, code); });
+  }
+}
+
+function doAutoSave(name, lang, code) {
+  var vars = {};
+  var varNames = extractVars(code);
+  for (var i = 0; i < varNames.length; i++) {
+    vars[varNames[i]] = savedVarValues[varNames[i]] || '';
+  }
+  var body = {name: name, lang: lang, code: code, vars: vars};
+  if (currentId && currentName === name) body.id = currentId;
+  fetch('api/snippets', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.id) {
+        currentId = data.id;
+        currentName = name;
+        loadRevisions(currentId);
+      }
+    }).catch(function() {});
+}
 
 function escapeHtml(s) {
   return String(s == null ? '' : s)
@@ -1088,6 +1329,7 @@ function chatAPI(message, mode) {
         newText: data.code,
         onApply: function(text) {
           document.getElementById('editor').value = text;
+          autoSave();
         }
       });
     }
@@ -1204,6 +1446,7 @@ function saveSnippet() {
     currentId = data.id;
     currentName = name;
     addChatMsg('assistant', 'Saved <strong>' + escapeHtml(name) + '</strong>.');
+    loadRevisions(currentId);
   }).catch(function(err) {
     addChatMsg('assistant', 'Save failed: ' + err.message);
   });
@@ -1220,26 +1463,47 @@ function hideSnippets() {
   document.getElementById('snippets-panel').style.display = 'none';
 }
 
+var snippetSort = 'date';
+var snippetItems = [];
+
+function setSnippetSort(s) {
+  snippetSort = s;
+  document.getElementById('snip-sort-date').className = 'sort-btn' + (s === 'date' ? ' active' : '');
+  document.getElementById('snip-sort-name').className = 'sort-btn' + (s === 'name' ? ' active' : '');
+  renderSnippets();
+}
+
+function renderSnippets() {
+  var list = document.getElementById('snippets-list');
+  if (!snippetItems || snippetItems.length === 0) {
+    list.innerHTML = '<div style="color:var(--text-mute);font-size:0.85rem;padding:0.5rem">No saved snippets yet.</div>';
+    return;
+  }
+  var sorted = snippetItems.slice();
+  if (snippetSort === 'name') {
+    sorted.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+  } else {
+    sorted.sort(function(a, b) { return (b.date || '') < (a.date || '') ? -1 : 1; });
+  }
+  var html = '';
+  for (var i = 0; i < sorted.length; i++) {
+    var s = sorted[i];
+    var date = s.date ? new Date(s.date).toLocaleDateString() : '';
+    var varCount = extractVars(s.code).length;
+    var meta = s.lang + ' &middot; ' + date;
+    if (varCount > 0) meta += ' &middot; ' + varCount + ' var' + (varCount > 1 ? 's' : '');
+    html += '<div class="snippet-item" onclick="loadSnippet(\'' + s.id + '\')">'
+      + '<div class="info"><div class="title">' + escapeHtml(s.name) + '</div><div class="meta">' + meta + '</div></div>'
+      + '<button class="del-btn" onclick="event.stopPropagation();deleteSnippet(\'' + s.id + '\')" title="Delete">&times;</button>'
+      + '</div>';
+  }
+  list.innerHTML = html;
+}
+
 function loadSnippets() {
   fetch('api/snippets').then(function(r) { return r.json(); }).then(function(items) {
-    var list = document.getElementById('snippets-list');
-    if (!items || items.length === 0) {
-      list.innerHTML = '<div style="color:var(--text-mute);font-size:0.85rem;padding:0.5rem">No saved snippets yet.</div>';
-      return;
-    }
-    var html = '';
-    for (var i = 0; i < items.length; i++) {
-      var s = items[i];
-      var date = s.date ? new Date(s.date).toLocaleDateString() : '';
-      var varCount = extractVars(s.code).length;
-      var meta = s.lang + ' &middot; ' + date;
-      if (varCount > 0) meta += ' &middot; ' + varCount + ' var' + (varCount > 1 ? 's' : '');
-      html += '<div class="snippet-item" onclick="loadSnippet(\'' + s.id + '\')">'
-        + '<div class="info"><div class="title">' + escapeHtml(s.name) + '</div><div class="meta">' + meta + '</div></div>'
-        + '<button class="del-btn" onclick="event.stopPropagation();deleteSnippet(\'' + s.id + '\')" title="Delete">&times;</button>'
-        + '</div>';
-    }
-    list.innerHTML = html;
+    snippetItems = items || [];
+    renderSnippets();
   });
 }
 
@@ -1279,6 +1543,7 @@ function loadSnippet(id) {
     } else {
       addChatMsg('assistant', 'Loaded <strong>' + escapeHtml(s.name) + '</strong>.');
     }
+    loadRevisions(currentId);
   });
 }
 
@@ -1293,6 +1558,7 @@ function newScript() {
   currentId = null;
   currentName = null;
   savedVarValues = {};
+  revisions = []; revisionIndex = -1; updateRevNav();
   document.getElementById('script-name').value = '';
   document.getElementById('editor').value = '';
   document.getElementById('context-editor').value = '';

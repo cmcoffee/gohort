@@ -157,6 +157,87 @@ func OllamaSchedulerStats() OllamaSchedStats {
 	return <-reply
 }
 
+// llamacppSched serializes requests to llama.cpp. llama.cpp is
+// single-threaded and returns 503 under concurrent load. A maxParallel
+// of 1 turns this into a pure mutex; >1 allows controlled bursting when
+// the server supports it.
+var (
+	llamacppSchedOnce atomic.Bool
+	llamacppSched     *OllamaScheduler
+)
+
+// StartLlamacppScheduler initializes the global llama.cpp request
+// serializer. Idempotent: subsequent calls adjust MaxParallel without
+// restarting the dispatcher. maxParallel should be 1 for stock
+// llama.cpp (single-threaded); set higher only when the server
+// explicitly supports concurrent requests.
+func StartLlamacppScheduler(maxParallel int) {
+	if maxParallel < 1 {
+		if llamacppSched != nil {
+			llamacppSched.setN <- 1 << 30
+		}
+		return
+	}
+	if llamacppSchedOnce.CompareAndSwap(false, true) {
+		s := &OllamaScheduler{
+			submit:  make(chan *ollamaReqToken, 64),
+			release: make(chan string, 64),
+			setN:    make(chan int, 4),
+			statReq: make(chan chan OllamaSchedStats, 4),
+		}
+		llamacppSched = s
+		go s.dispatch(maxParallel)
+	} else {
+		llamacppSched.setN <- maxParallel
+	}
+}
+
+// AcquireLlamacppSlot blocks until a llama.cpp slot is available.
+// Caller MUST call ReleaseLlamacppSlot after the HTTP call completes.
+// Returns immediately when the scheduler has not been started.
+func AcquireLlamacppSlot(ctx context.Context, callerID string) error {
+	s := llamacppSched
+	if s == nil {
+		return nil
+	}
+	if callerID == "" {
+		callerID = "unknown"
+	}
+	tok := &ollamaReqToken{
+		callerID: callerID,
+		ctx:      ctx,
+		done:     make(chan error, 1),
+	}
+	select {
+	case s.submit <- tok:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-tok.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ReleaseLlamacppSlot returns the slot previously acquired. Safe to
+// call when the scheduler is disabled (no-op).
+func ReleaseLlamacppSlot(callerID string) {
+	s := llamacppSched
+	if s == nil {
+		return
+	}
+	if callerID == "" {
+		callerID = "unknown"
+	}
+	select {
+	case s.release <- callerID:
+	default:
+		s.release <- callerID
+	}
+}
+
 // dispatch is the scheduler's main loop. Owns all mutable state; no
 // other goroutine reads or writes callers/queues/order/inFlight.
 //

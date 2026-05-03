@@ -214,6 +214,43 @@ func RunAllEmbeddingBackfills(ctx context.Context) map[string]int {
 	return out
 }
 
+// MaintenanceFunc is a named one-shot repair function registered by a
+// private package at init time. The admin UI can trigger any registered
+// function by key. Returns the number of records modified.
+type MaintenanceFunc struct {
+	Label string
+	Desc  string
+	Run   func(ctx context.Context) int
+}
+
+var maintenanceFuncs []MaintenanceFunc
+
+// RegisterMaintenanceFunc registers a named maintenance function for the
+// admin panel. Called from package init() functions.
+func RegisterMaintenanceFunc(key, label, desc string, fn func(ctx context.Context) int) {
+	maintenanceFuncs = append(maintenanceFuncs, MaintenanceFunc{Label: label, Desc: desc, Run: fn})
+}
+
+// ListMaintenanceFuncs returns metadata for all registered maintenance funcs.
+func ListMaintenanceFuncs() []struct{ Key, Label, Desc string } {
+	out := make([]struct{ Key, Label, Desc string }, len(maintenanceFuncs))
+	for i, m := range maintenanceFuncs {
+		out[i] = struct{ Key, Label, Desc string }{Key: m.Label, Label: m.Label, Desc: m.Desc}
+	}
+	return out
+}
+
+// RunMaintenanceFunc runs the maintenance function matching key (by Label).
+// Returns -1 if not found.
+func RunMaintenanceFunc(ctx context.Context, key string) int {
+	for _, m := range maintenanceFuncs {
+		if m.Label == key {
+			return m.Run(ctx)
+		}
+	}
+	return -1
+}
+
 // BackfillMissing walks every record in the given history table and
 // ingests any whose report text hasn't yet been chunked (detected by
 // absence of any EmbeddedChunk row pointing at the report ID under
@@ -234,22 +271,71 @@ func BackfillMissing(ctx context.Context, db Database, source, historyTable stri
 	// chunk with a non-empty vector. Records whose chunks all have
 	// empty vectors (because embedding was down when they were first
 	// ingested) are NOT skipped — the backfill is the retry path.
+	//
+	// We also detect "fallback-only" chunks (Topic/Verdict/Confidence)
+	// that were created before the full report was generated. If the
+	// current text is richer than fallback, the record is NOT marked
+	// ingested so it gets re-embedded with the full content.
 	ingested := make(map[string]bool)
-	embedReady := GetEmbeddingConfig().Enabled
+	fallbackSections := map[string]bool{"Topic": true, "Verdict": true, "Confidence": true}
+	cfg := GetEmbeddingConfig()
+
+	// Collect section names per report ID.
+	type chunkInfo struct {
+		sections    map[string]bool
+		hasValidVec bool
+	}
+	infoByReport := make(map[string]*chunkInfo)
 	for _, key := range db.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
 		if !db.Get(EmbeddedChunks, key, &c) || c.Source != source {
 			continue
 		}
-		// When embeddings are currently disabled, any existing chunk
-		// counts as "ingested" (no point re-ingesting what we can't
-		// embed). When embeddings ARE enabled, require a non-empty
-		// vector — empty means a prior embed failed and this is a
-		// retry opportunity.
-		if !embedReady || len(c.Vector) > 0 {
-			ingested[c.ReportID] = true
+		ci, ok := infoByReport[c.ReportID]
+		if !ok {
+			ci = &chunkInfo{sections: make(map[string]bool)}
+			infoByReport[c.ReportID] = ci
+		}
+		ci.sections[c.Section] = true
+		if len(c.Vector) > 0 && c.Model == cfg.Model {
+			ci.hasValidVec = true
 		}
 	}
+
+	// Mark records as ingested: must have valid vector AND non-fallback sections.
+	for reportID, ci := range infoByReport {
+		if !ci.hasValidVec {
+			continue
+		}
+		hasRealSection := false
+		for s := range ci.sections {
+			if !fallbackSections[s] {
+				hasRealSection = true
+				break
+			}
+		}
+		if hasRealSection && cfg.Enabled {
+			ingested[reportID] = true
+		}
+		// Fallback-only chunks are NOT marked ingested — the per-record
+		// loop below will re-ingest only if the current text is richer.
+	}
+
+	// Fallback helper: check if text looks like fallback (Topic+Verdict+Confidence).
+	isFallbackOnly := func(text string) bool {
+		sections := strings.Split(text, "## ")
+		if len(sections) < 3 {
+			return false
+		}
+		for _, s := range sections[1:] {
+			firstWord := strings.TrimSpace(strings.SplitN(s, "\n", 2)[0])
+			if !fallbackSections[firstWord] {
+				return false
+			}
+		}
+		return true
+	}
+
 	var count, skipped int
 	for _, key := range db.Keys(historyTable) {
 		id, report, ok := reportsFor(key)
@@ -260,8 +346,14 @@ func BackfillMissing(ctx context.Context, db Database, source, historyTable stri
 			skipped++
 			continue
 		}
-		IngestReport(ctx, db, source, id, report)
-		count++
+		// Record has fallback-only chunks but current text is richer —
+		// re-ingest with the full content.
+		if !isFallbackOnly(report) {
+			IngestReport(ctx, db, source, id, report)
+			count++
+		} else {
+			skipped++
+		}
 	}
 	Debug("[vector] backfill %s: %d ingested, %d already-indexed skipped", source, count, skipped)
 	return count

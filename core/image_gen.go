@@ -33,6 +33,23 @@ func SetImageDir(dir string) {
 
 var imageDir string
 
+// BrowserDir returns the directory where go-rod stores its Chromium binary and
+// user data. Defaults to os.TempDir()/gohort-browser if not set via SetBrowserDir.
+func BrowserDir() string {
+	if browserDir != "" {
+		return browserDir
+	}
+	return filepath.Join(os.TempDir(), "gohort-browser")
+}
+
+// SetBrowserDir configures the directory used for Chromium binary caching.
+func SetBrowserDir(dir string) {
+	browserDir = dir
+	os.MkdirAll(dir, 0755)
+}
+
+var browserDir string
+
 // GeminiKeyFunc is set by the main package to provide the Gemini API key.
 var GeminiKeyFunc func() string
 
@@ -42,54 +59,144 @@ var OpenAIKeyFunc func() string
 // ImageProviderFunc returns the configured image provider ("gemini", "openai", "none").
 var ImageProviderFunc func() string
 
+// ImageGenProfile holds provider and key for a named image generation slot.
+type ImageGenProfile struct {
+	Provider string // "gemini", "openai", or "none"
+	APIKey   string
+}
+
+// ImageGenProfileFunc looks up a named image generation profile by name.
+// Returns a zero-value ImageGenProfile when the profile is not configured.
+// Set by the main package at startup.
+var ImageGenProfileFunc func(name string) ImageGenProfile
+
+// ImageGenerationAvailable reports whether the default image generation provider
+// is configured. Returns false when no provider is set or it is "none".
+func ImageGenerationAvailable() bool {
+	if ImageProviderFunc == nil {
+		return false
+	}
+	p := ImageProviderFunc()
+	return p != "" && p != "none"
+}
+
+func init() {
+	RegisterChatTool(&generateImageChatTool{})
+}
+
+type generateImageChatTool struct{}
+
+func (t *generateImageChatTool) Name() string { return "generate_image" }
+func (t *generateImageChatTool) Desc() string {
+	return "Generate an AI image from a text description and return the image URL."
+}
+func (t *generateImageChatTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"prompt": {Type: "string", Description: "A detailed description of the image to generate."},
+	}
+}
+func (t *generateImageChatTool) Run(args map[string]any) (string, error) {
+	if !ImageGenerationAvailable() {
+		return "", fmt.Errorf("image generation is not configured")
+	}
+	prompt, _ := args["prompt"].(string)
+	if prompt == "" {
+		return "", fmt.Errorf("prompt is required")
+	}
+	result, err := GenerateImage(context.Background(), "", prompt)
+	if err != nil {
+		return "", err
+	}
+	// Return a short reference instead of embedding the full base64 payload
+	// — that would bloat every future LLM request with megabytes of image data.
+	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
+		return "IMAGE:" + result.URL, nil
+	}
+	os.Remove(result.URL)
+	return "IMAGE:generated (local file: " + result.URL + ")", nil
+}
+
+// RunWithSession generates an image and appends it to the session's image list
+// so it gets delivered as an outbox attachment. Returns a short reference to
+// avoid bloating LLM context with base64 image data.
+func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if !ImageGenerationAvailable() {
+		return "", fmt.Errorf("image generation is not configured")
+	}
+	prompt, _ := args["prompt"].(string)
+	if prompt == "" {
+		return "", fmt.Errorf("prompt is required")
+	}
+	result, err := GenerateImage(context.Background(), "", prompt)
+	if err != nil {
+		return "", err
+	}
+	// For HTTP URLs (DALL-E), return the URL — no session append needed.
+	if strings.HasPrefix(result.URL, "http://") || strings.HasPrefix(result.URL, "https://") {
+		return "IMAGE:" + result.URL, nil
+	}
+	// For local files (Gemini), read and encode the image for session delivery,
+	// then return a short reference to avoid bloating LLM context.
+	data, err := os.ReadFile(result.URL)
+	if err == nil {
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+	}
+	os.Remove(result.URL)
+	if err != nil {
+		return "IMAGE:generated", nil
+	}
+	return "IMAGE:generated (local file: " + result.URL + ")", nil
+}
+
+func (t *generateImageChatTool) IsInternetTool() bool { return true }
+
+// ImageProfileAvailable reports whether a named image generation profile is
+// configured and usable. Falls back to ImageGenerationAvailable when the name
+// is "default" or the profile func is not set.
+func ImageProfileAvailable(name string) bool {
+	if name == "default" || name == "" {
+		return ImageGenerationAvailable()
+	}
+	if ImageGenProfileFunc == nil {
+		return false
+	}
+	p := ImageGenProfileFunc(name)
+	return p.Provider != "" && p.Provider != "none"
+}
+
 // ImageGenResult holds the output of an image generation call.
 type ImageGenResult struct {
 	URL    string // URL or local path to the generated image
 	Prompt string // the prompt that was used
 }
 
-// GenerateImage generates an image from a prompt using the configured provider.
-// On success, bumps ProcessUsage's image counter so per-run telemetry and cost
-// estimates reflect the call. Counter fires once per returned image regardless
-// of provider — Gemini/Imagen and DALL-E are priced at the per-call ImagePerCall
-// rate in CostRates (not per-resolution; see AddImageCall comment).
-func GenerateImage(ctx context.Context, apiKey, prompt string) (result *ImageGenResult, err error) {
+// generateWithProvider dispatches to the appropriate backend.
+// Both provider and apiKey must already be resolved by the caller.
+// landscape=true produces a wide 16:9 image; false produces 1024x1024 square.
+func generateWithProvider(ctx context.Context, provider, apiKey, prompt string, landscape bool) (result *ImageGenResult, err error) {
 	defer func() {
 		if err == nil && result != nil {
 			ProcessUsage().AddImageCall()
 		}
 	}()
 
-	provider := "gemini"
-	if ImageProviderFunc != nil {
-		if p := ImageProviderFunc(); p != "" {
-			provider = p
-		}
-	}
-
 	switch provider {
 	case "none":
 		return nil, fmt.Errorf("image generation disabled")
 	case "gemini":
-		geminiKey := apiKey
-		if GeminiKeyFunc != nil {
-			if k := GeminiKeyFunc(); k != "" {
-				geminiKey = k
-			}
-		}
-		if geminiKey == "" {
+		if apiKey == "" {
 			return nil, fmt.Errorf("Gemini API key not configured for image generation")
 		}
-		return generateGeminiImage(ctx, geminiKey, prompt)
+		return generateGeminiImage(ctx, apiKey, prompt, landscape)
 	case "openai":
 		if apiKey == "" {
 			return nil, fmt.Errorf("OpenAI API key not configured for image generation")
 		}
-		result, err = doOpenAIRequest(ctx, apiKey, prompt)
+		result, err = doOpenAIRequest(ctx, apiKey, prompt, landscape)
 		if err != nil && isServerError(err) {
 			Debug("[image_gen] DALL-E first attempt failed, retrying: %s", err)
 			time.Sleep(2 * time.Second)
-			result, err = doOpenAIRequest(ctx, apiKey, prompt)
+			result, err = doOpenAIRequest(ctx, apiKey, prompt, landscape)
 		}
 		return result, err
 	default:
@@ -97,9 +204,76 @@ func GenerateImage(ctx context.Context, apiKey, prompt string) (result *ImageGen
 	}
 }
 
+func resolveDefaultProviderAndKey() (provider, apiKey string) {
+	provider = "gemini"
+	if ImageProviderFunc != nil {
+		if p := ImageProviderFunc(); p != "" {
+			provider = p
+		}
+	}
+	switch provider {
+	case "gemini":
+		if GeminiKeyFunc != nil {
+			apiKey = GeminiKeyFunc()
+		}
+	case "openai":
+		if OpenAIKeyFunc != nil {
+			apiKey = OpenAIKeyFunc()
+		}
+	}
+	return
+}
+
+// GenerateImage generates a landscape 16:9 image.
+func GenerateImage(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
+	provider, defaultKey := resolveDefaultProviderAndKey()
+	if apiKey == "" {
+		apiKey = defaultKey
+	}
+	return generateWithProvider(ctx, provider, apiKey, prompt, true)
+}
+
+// GenerateImageLandscape generates a wide 16:9 image (blog/article use).
+func GenerateImageLandscape(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
+	provider, defaultKey := resolveDefaultProviderAndKey()
+	if apiKey == "" {
+		apiKey = defaultKey
+	}
+	return generateWithProvider(ctx, provider, apiKey, prompt, true)
+}
+
+// GenerateImageWithProfile generates an image using a named profile.
+// Falls back to the default provider when the named profile is not configured.
+func GenerateImageWithProfile(ctx context.Context, profile, prompt string) (*ImageGenResult, error) {
+	if profile != "" && profile != "default" && ImageGenProfileFunc != nil {
+		p := ImageGenProfileFunc(profile)
+		if p.Provider != "" && p.Provider != "none" {
+			key := p.APIKey
+			if key == "" {
+				switch p.Provider {
+				case "gemini":
+					if GeminiKeyFunc != nil {
+						key = GeminiKeyFunc()
+					}
+				case "openai":
+					if OpenAIKeyFunc != nil {
+						key = OpenAIKeyFunc()
+					}
+				}
+			}
+			return generateWithProvider(ctx, p.Provider, key, prompt, false)
+		}
+	}
+	return GenerateImage(ctx, "", prompt)
+}
+
 // generateGeminiImage uses Gemini's Imagen model to generate an image.
 // Returns a local file path since Imagen returns base64 data, not a URL.
-func generateGeminiImage(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
+func generateGeminiImage(ctx context.Context, apiKey, prompt string, landscape bool) (*ImageGenResult, error) {
+	aspectRatio := "1:1"
+	if landscape {
+		aspectRatio = "16:9"
+	}
 	body := map[string]interface{}{
 		"contents": []map[string]interface{}{
 			{
@@ -111,7 +285,7 @@ func generateGeminiImage(ctx context.Context, apiKey, prompt string) (*ImageGenR
 		"generationConfig": map[string]interface{}{
 			"responseModalities": []string{"TEXT", "IMAGE"},
 			"imageConfig": map[string]interface{}{
-				"aspectRatio": "16:9",
+				"aspectRatio": aspectRatio,
 			},
 		},
 	}
@@ -224,12 +398,16 @@ func isServerError(err error) bool {
 	return strings.Contains(msg, "HTTP 500") || strings.Contains(msg, "HTTP 502") || strings.Contains(msg, "HTTP 503")
 }
 
-func doOpenAIRequest(ctx context.Context, apiKey, prompt string) (*ImageGenResult, error) {
+func doOpenAIRequest(ctx context.Context, apiKey, prompt string, landscape bool) (*ImageGenResult, error) {
+	size := "1024x1024"
+	if landscape {
+		size = "1792x1024"
+	}
 	body := map[string]interface{}{
 		"model":   "dall-e-3",
 		"prompt":  prompt,
 		"n":       1,
-		"size":    "1792x1024",
+		"size":    size,
 		"quality": "standard",
 	}
 

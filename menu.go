@@ -88,14 +88,15 @@ func set_agent_db(agent Agent, DB Database) {
 
 func init() {
 	// Wire key providers for image generation.
-	ImageProviderFunc = ImageProvider
-	GeminiKeyFunc = GeminiAPIKey
-	OpenAIKeyFunc = OpenAIAPIKey
+	ImageProviderFunc = dbcfg.imageProvider
+	GeminiKeyFunc = dbcfg.geminiAPIKey
+	OpenAIKeyFunc = dbcfg.openAIAPIKey
+	ImageGenProfileFunc = dbcfg.imageGenProfile
 }
 
 // set_agent_llm initializes the LLM client for a given agent from stored config.
 func set_agent_llm(agent Agent) {
-	cfg := load_llm_config()
+	cfg := dbcfg.llm()
 	if cfg.Provider == "" {
 		return
 	}
@@ -107,12 +108,13 @@ func set_agent_llm(agent Agent) {
 	T := agent.Get()
 	T.LLM = llm
 	// Auto-enable prompt-based tools when native tool calling is disabled.
-	if !cfg.NativeTools {
+	// llama.cpp always uses the OpenAI-compatible endpoint which supports native tools.
+	if !cfg.NativeTools && cfg.Provider != "llama.cpp" {
 		T.PromptTools = true
 	}
 
 	// Initialize lead LLM if configured.
-	lead_cfg := load_lead_llm_config()
+	lead_cfg := dbcfg.leadLLM()
 	if lead_cfg.Provider != "" {
 		lead_llm, err := NewLLMFromConfig(lead_cfg)
 		if err != nil {

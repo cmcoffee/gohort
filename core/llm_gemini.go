@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
+	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
 const (
@@ -41,6 +42,7 @@ func GeminiModels(apiKey string) ([]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, client.RequestTimeout)
 	var result struct {
 		Models []struct {
 			Name                       string   `json:"name"`
@@ -65,18 +67,20 @@ func GeminiModels(apiKey string) ([]string, error) {
 
 // geminiClient implements the LLM interface for Google's Gemini API.
 type geminiClient struct {
-	apiKey string
-	model  string
-	api    *apiclient.APIClient
+	apiKey          string
+	model           string
+	api             *apiclient.APIClient
+	disableThinking bool
+	thinkingBudget  int // 0 = default (16384); positive = cap at that many tokens
 }
 
 // NewGeminiLLM creates an LLM client for Google Gemini using the default HTTP client.
 func NewGeminiLLM(apiKey string, model string) LLM {
-	return newGeminiLLM(apiKey, model, nil)
+	return newGeminiLLM(apiKey, model, false, 0, nil)
 }
 
 // newGeminiLLM creates a Gemini LLM client with optional APIClient.
-func newGeminiLLM(apiKey string, model string, api *apiclient.APIClient) LLM {
+func newGeminiLLM(apiKey string, model string, disableThinking bool, thinkingBudget int, api *apiclient.APIClient) LLM {
 	if api == nil {
 		api = &apiclient.APIClient{
 			VerifySSL:      true,
@@ -92,9 +96,11 @@ func newGeminiLLM(apiKey string, model string, api *apiclient.APIClient) LLM {
 		req.URL.RawQuery = q.Encode()
 	}
 	return &geminiClient{
-		apiKey: apiKey,
-		model:  model,
-		api:    api,
+		apiKey:          apiKey,
+		model:           model,
+		api:             api,
+		disableThinking: disableThinking,
+		thinkingBudget:  thinkingBudget,
 	}
 }
 
@@ -133,7 +139,7 @@ type gemFunctionDecl struct {
 }
 
 type gemThinkingConfig struct {
-	ThinkingBudget int `json:"thinkingBudget,omitempty"` // Max thinking tokens; 0 = model default.
+	ThinkingBudget *int `json:"thinkingBudget,omitempty"` // Max thinking tokens; nil = model default, -1 = disabled.
 }
 
 type gemGenerationConfig struct {
@@ -292,6 +298,13 @@ func parseGeminiResponse(resp gemResponse) (string, string, []ToolCall) {
 	return strings.Join(textParts, ""), strings.Join(thinkParts, ""), toolCalls
 }
 
+// geminiSupportsThinking reports whether the model accepts a ThinkingConfig.
+// Covers gemini-2.5-* and gemini-3.* families; older models ignore the field
+// but some return an error, so we gate it explicitly.
+func geminiSupportsThinking(model string) bool {
+	return strings.Contains(model, "2.5") || strings.Contains(model, "gemini-3")
+}
+
 func (c *geminiClient) doRequest(ctx context.Context, urlPath string, body []byte) (*http.Response, error) {
 	path := "/v1beta/" + urlPath
 
@@ -309,7 +322,11 @@ func (c *geminiClient) doRequest(ctx context.Context, urlPath string, body []byt
 		return io.NopCloser(bytes.NewReader(body)), nil
 	}
 
-	return c.api.SendRawRequest("", req)
+	resp, err := c.api.SendRawRequest("", req)
+	if err == nil {
+		resp.Body = iotimeout.NewReadCloser(resp.Body, c.api.RequestTimeout)
+	}
+	return resp, err
 }
 
 // Chat sends a non-streaming request to Gemini.
@@ -342,18 +359,38 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if cfg.JSONMode {
 		genCfg.ResponseMimeType = "application/json"
 	}
-	// Enable thinking for models that support it (gemini-2.5-*).
-	// Set a reasonable thinking budget so the model has room to reason
-	// but doesn't spend all tokens on internal thought.
-	if strings.Contains(cfg.Model, "2.5") {
-		budget := 16384
-		genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: budget}
-		// maxOutputTokens includes both thinking and visible output for 2.5 models.
-		// Increase it so visible output isn't starved by thinking tokens.
-		if genCfg.MaxOutputTokens > 0 {
-			genCfg.MaxOutputTokens += budget
+	// Enable thinking for models that support it (gemini-2.5-* and gemini-3.*).
+	// Flash supports thinkingBudget:0 to fully disable thinking. Pro models
+	// require a minimum positive budget and reject 0 — for those, omitting
+	// ThinkingConfig lets the model use its default (Pro always thinks anyway).
+	// When thinking is on, bump maxOutputTokens so visible output isn't
+	// starved by thinking tokens.
+	if c.disableThinking {
+		f := false
+		cfg.Think = &f
+	}
+	if geminiSupportsThinking(cfg.Model) {
+		if cfg.Think != nil && !*cfg.Think {
+			if strings.Contains(cfg.Model, "flash") {
+				zero := 0
+				genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &zero}
+			}
+			// Pro: leave ThinkingConfig nil — can't disable, model uses default.
+			Debug("[gemini]: thinking disabled: model=%s", cfg.Model)
+		} else {
+			budget := c.thinkingBudget
+			if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
+				budget = *cfg.ThinkBudget
+			}
+			if budget <= 0 {
+				budget = 16384
+			}
+			genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &budget}
+			if genCfg.MaxOutputTokens > 0 {
+				genCfg.MaxOutputTokens += budget
+			}
+			Debug("[gemini]: thinking enabled: model=%s budget=%d maxOutputTokens=%d", cfg.Model, budget, genCfg.MaxOutputTokens)
 		}
-		Debug("[gemini]: thinking enabled: model=%s budget=%d maxOutputTokens=%d", cfg.Model, budget, genCfg.MaxOutputTokens)
 	}
 	payload.GenerationConfig = genCfg
 
@@ -361,6 +398,9 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	if err != nil {
 		return nil, err
 	}
+
+	Debug("[gemini]: Sending request: model=%s body=%d bytes think=%s maxOutputTokens=%d",
+		cfg.Model, len(body), fmtThink(cfg.Think), genCfg.MaxOutputTokens)
 
 	urlPath := fmt.Sprintf("models/%s:generateContent", cfg.Model)
 	resp, err := c.doRequest(ctx, urlPath, body)
@@ -441,11 +481,24 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	if cfg.JSONMode {
 		genCfg.ResponseMimeType = "application/json"
 	}
-	if strings.Contains(cfg.Model, "2.5") {
-		budget := 16384
-		genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: budget}
-		if genCfg.MaxOutputTokens > 0 {
-			genCfg.MaxOutputTokens += budget
+	if geminiSupportsThinking(cfg.Model) {
+		if cfg.Think != nil && !*cfg.Think {
+			if strings.Contains(cfg.Model, "flash") {
+				zero := 0
+				genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &zero}
+			}
+		} else {
+			budget := c.thinkingBudget
+			if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
+				budget = *cfg.ThinkBudget
+			}
+			if budget <= 0 {
+				budget = 16384
+			}
+			genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &budget}
+			if genCfg.MaxOutputTokens > 0 {
+				genCfg.MaxOutputTokens += budget
+			}
 		}
 	}
 	payload.GenerationConfig = genCfg
@@ -454,6 +507,9 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 	if err != nil {
 		return nil, err
 	}
+
+	Debug("[gemini]: Sending stream request: model=%s body=%d bytes think=%s maxOutputTokens=%d",
+		cfg.Model, len(body), fmtThink(cfg.Think), genCfg.MaxOutputTokens)
 
 	urlPath := fmt.Sprintf("models/%s:streamGenerateContent?alt=sse", cfg.Model)
 	resp, err := c.doRequest(ctx, urlPath, body)

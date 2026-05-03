@@ -84,11 +84,11 @@ func Embed(ctx context.Context, text string) ([]float32, error) {
 		return nil, fmt.Errorf("embedding endpoint or model not configured")
 	}
 	payload, _ := json.Marshal(struct {
-		Model string `json:"model"`
-		Input string `json:"input"`
-	}{cfg.Model, text})
+		Model string   `json:"model"`
+		Input []string `json:"input"`
+	}{cfg.Model, []string{text}})
 
-	url := strings.TrimRight(cfg.Endpoint, "/") + "/api/embed"
+	url := strings.TrimRight(cfg.Endpoint, "/") + "/embeddings"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
@@ -115,10 +115,16 @@ func Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 
 	// Ollama returns {"embeddings": [[float, float, ...]], "model": "..."}.
-	// Older versions returned {"embedding": [...]}. Handle both.
+	// Older versions returned {"embedding": [...]}. OpenAI-compatible
+	// servers (llama.cpp, etc.) return {"data": [{"embedding": [...]}]}.
+	// Handle all three.
+	type openAIItem struct {
+		Embedding []float32 `json:"embedding"`
+	}
 	var out struct {
-		Embeddings [][]float32 `json:"embeddings"`
-		Embedding  []float32   `json:"embedding"`
+		Embeddings [][]float32    `json:"embeddings"`
+		Embedding  []float32      `json:"embedding"`
+		Data       []openAIItem   `json:"data"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("embed response parse: %w", err)
@@ -128,6 +134,9 @@ func Embed(ctx context.Context, text string) ([]float32, error) {
 	}
 	if len(out.Embedding) > 0 {
 		return out.Embedding, nil
+	}
+	if len(out.Data) > 0 && len(out.Data[0].Embedding) > 0 {
+		return out.Data[0].Embedding, nil
 	}
 	return nil, fmt.Errorf("embed response had no vector")
 }

@@ -30,11 +30,16 @@ func NewSSEWriter(w http.ResponseWriter) (*SSEWriter, error) {
 }
 
 // SendComment writes an SSE comment (prefixed with ":") to keep the connection alive.
-func (s *SSEWriter) SendComment(text string) {
+// Returns an error if the client has disconnected.
+func (s *SSEWriter) SendComment(text string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	fmt.Fprintf(s.w, ": %s\n\n", text)
+	_, err := fmt.Fprintf(s.w, ": %s\n\n", text)
+	if err != nil {
+		return err
+	}
 	s.flusher.Flush()
+	return nil
 }
 
 // Send marshals v to JSON and writes it as an SSE data event.

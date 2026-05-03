@@ -16,4 +16,5 @@ const (
 	AuthTable        = "auth_config"
 	AuthSessionTable = "auth_sessions"
 	AuthResetTable   = "auth_reset_tokens"
+	NetworkTable     = "network_config"
 )

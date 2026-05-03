@@ -12,7 +12,28 @@ import (
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
+	"github.com/cmcoffee/snugforge/iotimeout"
 )
+
+var (
+	HTTPConnectTimeout = 10 * time.Second
+	HTTPRequestTimeout = 15 * time.Second
+)
+
+// ApplyHTTPTimeouts reads connect/request timeout values from the database and
+// updates the package-level vars used by all source-hook API clients. Called
+// once at startup and again after --setup saves new values.
+func ApplyHTTPTimeouts(db Database) {
+	var connect_sec, request_sec int
+	db.Get(NetworkTable, "connect_timeout_seconds", &connect_sec)
+	db.Get(NetworkTable, "request_timeout_seconds", &request_sec)
+	if connect_sec > 0 {
+		HTTPConnectTimeout = time.Duration(connect_sec) * time.Second
+	}
+	if request_sec > 0 {
+		HTTPRequestTimeout = time.Duration(request_sec) * time.Second
+	}
+}
 
 const sourceHookTable = "source_hooks"
 
@@ -186,7 +207,8 @@ func queryPubMed(hook SourceHook, query string) (string, error) {
 		Server:         "eutils.ncbi.nlm.nih.gov",
 		URLScheme:      "https",
 		VerifySSL:      true,
-		RequestTimeout: 15 * time.Second,
+		ConnectTimeout: HTTPConnectTimeout,
+		RequestTimeout: HTTPRequestTimeout,
 	}
 
 	// Step 1: esearch to get PMIDs.
@@ -203,6 +225,7 @@ func queryPubMed(hook SourceHook, query string) (string, error) {
 		return "", fmt.Errorf("PubMed esearch: %w", err)
 	}
 	defer resp.Body.Close()
+	resp.Body = iotimeout.NewReadCloser(resp.Body, HTTPRequestTimeout)
 	body, _ := io.ReadAll(resp.Body)
 
 	var searchResult struct {
@@ -229,6 +252,7 @@ func queryPubMed(hook SourceHook, query string) (string, error) {
 		return "", fmt.Errorf("PubMed esummary: %w", err)
 	}
 	defer resp2.Body.Close()
+	resp2.Body = iotimeout.NewReadCloser(resp2.Body, HTTPRequestTimeout)
 	body2, _ := io.ReadAll(resp2.Body)
 
 	var summaryResult struct {
@@ -374,7 +398,8 @@ func queryOpenAlex(hook SourceHook, query string) (string, error) {
 		Server:         parsed.Host,
 		URLScheme:      parsed.Scheme,
 		VerifySSL:      true,
-		RequestTimeout: 15 * time.Second,
+		ConnectTimeout: HTTPConnectTimeout,
+		RequestTimeout: HTTPRequestTimeout,
 	}
 
 	req_path := parsed.Path
@@ -400,6 +425,7 @@ func queryOpenAlex(hook SourceHook, query string) (string, error) {
 		return "", fmt.Errorf("OpenAlex returned HTTP %d", resp.StatusCode)
 	}
 
+	resp.Body = iotimeout.NewReadCloser(resp.Body, HTTPRequestTimeout)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading OpenAlex response: %w", err)
@@ -499,7 +525,8 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 		Server:         "efts.sec.gov",
 		URLScheme:      "https",
 		VerifySSL:      true,
-		RequestTimeout: 15 * time.Second,
+		ConnectTimeout: HTTPConnectTimeout,
+		RequestTimeout: HTTPRequestTimeout,
 		AgentString:    fmt.Sprintf("Gohort/%s (%s)", AppVersion, contactEmail),
 	}
 
@@ -522,6 +549,7 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 		return "", fmt.Errorf("EDGAR returned HTTP %d", resp.StatusCode)
 	}
 
+	resp.Body = iotimeout.NewReadCloser(resp.Body, HTTPRequestTimeout)
 	body, _ := io.ReadAll(resp.Body)
 
 	var result struct {
@@ -885,7 +913,8 @@ func queryHookLive(hook SourceHook, query string) (string, error) {
 		Server:         parsed_endpoint.Host,
 		URLScheme:      scheme,
 		VerifySSL:      true,
-		RequestTimeout: 15 * time.Second,
+		ConnectTimeout: HTTPConnectTimeout,
+		RequestTimeout: HTTPRequestTimeout,
 		AgentString:    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 		AuthFunc:       auth_func,
 	}
@@ -914,6 +943,7 @@ func queryHookLive(hook SourceHook, query string) (string, error) {
 		return "", fmt.Errorf("%s returned HTTP %d", hook.Name, resp.StatusCode)
 	}
 
+	resp.Body = iotimeout.NewReadCloser(resp.Body, HTTPRequestTimeout)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", fmt.Errorf("reading response from %s: %w", hook.Name, err)

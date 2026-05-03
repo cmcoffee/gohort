@@ -128,6 +128,13 @@ func MarkdownToHTML(md string) string {
 	in_code := false
 	in_list := false
 	in_ol := false
+	in_table := false
+
+	closeBlocks := func() {
+		if in_list { out.WriteString("</ul>\n"); in_list = false }
+		if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+		if in_table { out.WriteString("</tbody></table>\n"); in_table = false }
+	}
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
@@ -138,8 +145,7 @@ func MarkdownToHTML(md string) string {
 				out.WriteString("</code></pre>\n")
 				in_code = false
 			} else {
-				if in_list { out.WriteString("</ul>\n"); in_list = false }
-				if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+				closeBlocks()
 				out.WriteString("<pre><code>")
 				in_code = true
 			}
@@ -155,6 +161,43 @@ func MarkdownToHTML(md string) string {
 		}
 
 		stripped := strings.TrimSpace(line)
+
+		// Tables.
+		if strings.HasPrefix(stripped, "|") && strings.HasSuffix(stripped, "|") {
+			// Separator row (e.g. |---|---|) — marks end of header, skip.
+			isSep := true
+			for _, ch := range strings.Trim(stripped, "|") {
+				if ch != '-' && ch != ':' && ch != ' ' && ch != '|' {
+					isSep = false
+					break
+				}
+			}
+			if isSep {
+				continue
+			}
+			cells := strings.Split(strings.Trim(stripped, "|"), "|")
+			if !in_table {
+				if in_list { out.WriteString("</ul>\n"); in_list = false }
+				if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+				out.WriteString("<table><thead><tr>")
+				for _, cell := range cells {
+					fmt.Fprintf(&out, "<th>%s</th>", InlineMarkdownToHTML(strings.TrimSpace(cell)))
+				}
+				out.WriteString("</tr></thead><tbody>\n")
+				in_table = true
+			} else {
+				out.WriteString("<tr>")
+				for _, cell := range cells {
+					fmt.Fprintf(&out, "<td>%s</td>", InlineMarkdownToHTML(strings.TrimSpace(cell)))
+				}
+				out.WriteString("</tr>\n")
+			}
+			continue
+		}
+		if in_table {
+			out.WriteString("</tbody></table>\n")
+			in_table = false
+		}
 
 		if stripped == "" {
 			if in_list { out.WriteString("</ul>\n"); in_list = false }
@@ -223,6 +266,7 @@ func MarkdownToHTML(md string) string {
 	if in_code { out.WriteString("</code></pre>\n") }
 	if in_list { out.WriteString("</ul>\n") }
 	if in_ol { out.WriteString("</ol>\n") }
+	if in_table { out.WriteString("</tbody></table>\n") }
 	return out.String()
 }
 

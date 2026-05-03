@@ -155,7 +155,7 @@ func (cs *chatSession) runTool(name string, args map[string]any) (string, bool, 
 }
 
 // newChatSession creates a chat session from the current menu state.
-func newChatSession(llm LLM) *chatSession {
+func newChatSession(llm LLM, privateMode bool) *chatSession {
 	cs := &chatSession{
 		llm:       llm,
 		agents:    make(map[string]*menu_elem),
@@ -177,9 +177,15 @@ func newChatSession(llm LLM) *chatSession {
 		}
 	}
 
-	// Register chat tools.
-	for name, ct := range chatTools {
-		cs.chatTools[name] = ct
+	// Register chat tools — filter out internet tools in private mode.
+	if privateMode {
+		for _, ct := range FilterChatToolsPrivate() {
+			cs.chatTools[ct.Name()] = ct
+		}
+	} else {
+		for name, ct := range chatTools {
+			cs.chatTools[name] = ct
+		}
 	}
 
 	// Build the three meta-tools that the LLM sees.
@@ -218,7 +224,7 @@ func newChatSession(llm LLM) *chatSession {
 
 	// Include configured mail recipient context if available.
 	var mail_context string
-	if mail_cfg := load_mail_config(); mail_cfg.Recipient != "" {
+	if mail_cfg := dbcfg.mail(); mail_cfg.Recipient != "" {
 		mail_context = fmt.Sprintf("\nConfigured default report recipient: %s\n", mail_cfg.Recipient)
 	}
 
@@ -524,10 +530,10 @@ func (cs *chatSession) printHelp() {
 }
 
 // startChat initializes and runs the interactive chat session.
-func startChat() error {
+func startChat(privateMode bool) error {
 	init_database()
 
-	cfg := load_llm_config()
+	cfg := dbcfg.llm()
 	if cfg.Provider == "" {
 		return fmt.Errorf("no LLM provider configured, run: %s --setup", os.Args[0])
 	}
@@ -537,6 +543,6 @@ func startChat() error {
 		return err
 	}
 
-	session := newChatSession(llm)
+	session := newChatSession(llm, privateMode)
 	return session.run()
 }

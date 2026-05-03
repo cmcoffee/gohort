@@ -1,6 +1,10 @@
 # Compiled binary
 gohort
 
+# Phantom bridge build artifacts (Mac binary, source lives in apps/phantom/_bridge/)
+apps/phantom/_bridge/agent
+apps/phantom/_bridge/build/
+
 # Data directory
 data/
 
