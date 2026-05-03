@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -267,12 +270,25 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		return fetchURLToFile(target, savePath, saveTo)
 	}
 
-	// Text-extraction path — make a HEAD-equivalent first via a GET that
-	// only inspects Content-Type so we can fail fast on binary content
-	// before pulling the whole body. Cheaper UX: the LLM gets a clear
-	// "use save_to instead" error rather than 8000 chars of mangled bytes.
-	if mime, err := peekContentType(target); err == nil && isBinaryMime(mime) {
-		return "", fmt.Errorf("response Content-Type is %q (binary). fetch_url's text-extraction path can't handle binary content. Retry with save_to=<workspace-relative path>, then attach_file the saved path to deliver to the user", mime)
+	// Text-extraction path. Peek Content-Type first; binary responses
+	// auto-cache to workspace so the LLM has a path to recover from
+	// (rather than a hard error wasting the round). Text responses
+	// that would be truncated also cache the full content for follow-up
+	// reading via read_file.
+	mime, _ := peekContentType(target)
+	if isBinaryMime(mime) {
+		if sess != nil && sess.WorkspaceDir != "" {
+			cachePath, savedAt, written, err := fetchAndCache(target, sess.WorkspaceDir, mime)
+			if err != nil {
+				return "", fmt.Errorf("response is %q (binary) and auto-cache failed: %w. Retry with save_to=<path>", mime, err)
+			}
+			Debug("[fetch_url] auto-cached %s → %s (%d bytes, %s)", target, cachePath, written, mime)
+			return fmt.Sprintf(
+				"Response is binary (%s, %d bytes). Auto-cached to %s. Use attach_file(%q) to deliver to the user, or read_file/run_local for binary inspection. To choose a friendlier filename, retry with save_to=<name>.",
+				mime, written, savedAt, savedAt), nil
+		}
+		// No session — can't cache, fall back to hard error.
+		return "", fmt.Errorf("response Content-Type is %q (binary). fetch_url can't return binary content as text. Retry with save_to=<workspace-relative path>", mime)
 	}
 
 	text, err := FetchArticle(target, 8000)
@@ -283,8 +299,221 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	if text == "" {
 		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty).", nil
 	}
+	// If the article was likely truncated (close to or at the limit),
+	// auto-cache the full text so the LLM can read the rest if needed.
+	// Heuristic: when extracted text is ≥7900 chars (within 100 of the
+	// 8000 cap), assume more content exists and write the full version
+	// (separately fetched without truncation) to the cache.
+	suffix := ""
+	if sess != nil && sess.WorkspaceDir != "" && len(text) >= 7900 {
+		if full, err := FetchArticle(target, 0); err == nil && len(full) > len(text) {
+			if cachePath, savedAt, _, cerr := writeCacheString(target, sess.WorkspaceDir, full, mime); cerr == nil {
+				Debug("[fetch_url] truncated text auto-cached: %s → %s (full %d chars)", target, cachePath, len(full))
+				suffix = fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s. Use read_file with offset to access the rest.]", len(full), savedAt)
+			}
+		}
+	}
 	Debug("[fetch_url] %s → %d chars", target, len(text))
-	return fmt.Sprintf("Fetched %s (%d chars):\n\n%s", target, len(text), text), nil
+	return fmt.Sprintf("Fetched %s (%d chars):\n\n%s%s", target, len(text), text, suffix), nil
+}
+
+// fetchAndCache downloads target into the workspace's .fetch_cache dir
+// using a sha256-prefixed filename and a content-type-derived extension.
+// Returns the absolute path, the workspace-relative display path, and
+// the byte count.
+func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, error) {
+	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
+		return "", "", 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return "", "", 0, err
+	}
+	req.Header.Set("User-Agent", "gohort/fetch_url")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", "", 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	f, err := os.Create(cacheAbs)
+	if err != nil {
+		return "", "", 0, err
+	}
+	defer f.Close()
+	limited := io.LimitReader(resp.Body, fetchURLMaxSaveBytes+1)
+	written, err := io.Copy(f, limited)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if written > fetchURLMaxSaveBytes {
+		os.Remove(cacheAbs)
+		return "", "", 0, fmt.Errorf("response exceeded %d byte cap", fetchURLMaxSaveBytes)
+	}
+	enforceFetchCacheQuota(workspaceDir)
+	return cacheAbs, cacheRel, written, nil
+}
+
+// writeCacheString writes a string body (truncated text) to the cache
+// directly without re-fetching. Used when FetchArticle has already
+// retrieved the full text body.
+func writeCacheString(target, workspaceDir, body, mime string) (string, string, int64, error) {
+	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
+		return "", "", 0, err
+	}
+	if err := os.WriteFile(cacheAbs, []byte(body), 0644); err != nil {
+		return "", "", 0, err
+	}
+	enforceFetchCacheQuota(workspaceDir)
+	return cacheAbs, cacheRel, int64(len(body)), nil
+}
+
+// cachePathForURL builds the workspace-relative + absolute cache path
+// for a URL. Stable across repeat fetches so the same URL hits the
+// same cache file, enabling free re-reads.
+func cachePathForURL(workspaceDir, target, mime string) (string, string, error) {
+	hash := sha256.Sum256([]byte(target))
+	id := hex.EncodeToString(hash[:8])
+	ext := extensionForMime(mime)
+	rel := filepath.Join(".fetch_cache", id+ext)
+	abs, err := ResolveWorkspacePath(workspaceDir, rel)
+	if err != nil {
+		// First-time call for this dir: ResolveWorkspacePath rejects
+		// paths whose parent doesn't exist yet. Create the dir and
+		// retry without symlink validation since we control the path.
+		if err := os.MkdirAll(filepath.Join(workspaceDir, ".fetch_cache"), 0755); err != nil {
+			return "", "", err
+		}
+		abs, err = ResolveWorkspacePath(workspaceDir, rel)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return rel, abs, nil
+}
+
+// extensionForMime maps a Content-Type to a likely file extension. Best-
+// effort — falls back to .bin for unknown binary, .txt for unknown text.
+func extensionForMime(mime string) string {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	switch mime {
+	case "text/html":
+		return ".html"
+	case "text/plain":
+		return ".txt"
+	case "text/css":
+		return ".css"
+	case "text/javascript", "application/javascript":
+		return ".js"
+	case "application/json", "application/ld+json":
+		return ".json"
+	case "application/xml", "text/xml":
+		return ".xml"
+	case "application/pdf":
+		return ".pdf"
+	case "application/zip":
+		return ".zip"
+	case "application/x-tar":
+		return ".tar"
+	case "application/gzip", "application/x-gzip":
+		return ".gz"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/mp4", "audio/aac":
+		return ".m4a"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	}
+	if strings.HasPrefix(mime, "text/") {
+		return ".txt"
+	}
+	return ".bin"
+}
+
+// enforceFetchCacheQuota walks the .fetch_cache dir and evicts oldest
+// files (LRU-by-mtime) until total size is under the configured quota.
+// Best-effort — silent no-op on any error since failure to GC isn't
+// fatal to the calling fetch.
+func enforceFetchCacheQuota(workspaceDir string) {
+	quota := FetchCacheQuotaBytes()
+	if quota <= 0 {
+		return
+	}
+	cacheDir := filepath.Join(workspaceDir, ".fetch_cache")
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return
+	}
+	type entry struct {
+		path  string
+		size  int64
+		mtime time.Time
+	}
+	var files []entry
+	var total int64
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, entry{
+			path:  filepath.Join(cacheDir, e.Name()),
+			size:  info.Size(),
+			mtime: info.ModTime(),
+		})
+		total += info.Size()
+	}
+	if total <= quota {
+		return
+	}
+	// Sort by mtime ascending — oldest first.
+	for i := 1; i < len(files); i++ {
+		for j := i; j > 0 && files[j].mtime.Before(files[j-1].mtime); j-- {
+			files[j], files[j-1] = files[j-1], files[j]
+		}
+	}
+	for i := 0; i < len(files) && total > quota; i++ {
+		if err := os.Remove(files[i].path); err == nil {
+			total -= files[i].size
+			Debug("[fetch_url] evicted cache entry %s (%d bytes, mtime %s)", files[i].path, files[i].size, files[i].mtime.Format(time.RFC3339))
+		}
+	}
 }
 
 // fetchURLToFile streams target to absPath, capped at fetchURLMaxSaveBytes.

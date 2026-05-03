@@ -40,6 +40,27 @@ func WorkspacesDir() string {
 	return workspacesDir
 }
 
+// FetchCacheQuotaBytes returns the per-user fetch_url cache quota in
+// bytes, configured via the admin Settings panel (key: fetch_cache_quota_mb).
+// Defaults to 100MB when unset. Returns 0 when AuthDB isn't wired or
+// the lookup fails — caller treats 0 as "skip cache write" rather than
+// "unlimited" so misconfiguration doesn't accidentally fill the disk.
+func FetchCacheQuotaBytes() int64 {
+	if AuthDB == nil {
+		return 100 * 1024 * 1024
+	}
+	db := AuthDB()
+	if db == nil {
+		return 100 * 1024 * 1024
+	}
+	var mb int
+	db.Get(WebTable, "fetch_cache_quota_mb", &mb)
+	if mb <= 0 {
+		mb = 100
+	}
+	return int64(mb) * 1024 * 1024
+}
+
 // EnsureWorkspaceDir computes the absolute workspace directory for userID,
 // creating it (with parents) if it doesn't exist yet. Returns the absolute
 // path. userID must be non-empty and free of path-separator characters

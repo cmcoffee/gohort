@@ -868,7 +868,7 @@ func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	var allow_signup, ollama_proxy_enabled bool
-	var session_days, max_attempts, lockout_minutes, ollama_proxy_port int
+	var session_days, max_attempts, lockout_minutes, ollama_proxy_port, fetch_cache_quota_mb int
 	var service_name, external_url, notify_from string
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
 	a.db.Get(WebTable, "session_days", &session_days)
@@ -879,6 +879,10 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	a.db.Get(WebTable, "notify_from", &notify_from)
 	a.db.Get(WebTable, "ollama_proxy_enabled", &ollama_proxy_enabled)
 	a.db.Get(WebTable, "ollama_proxy_port", &ollama_proxy_port)
+	a.db.Get(WebTable, "fetch_cache_quota_mb", &fetch_cache_quota_mb)
+	if fetch_cache_quota_mb == 0 {
+		fetch_cache_quota_mb = 100
+	}
 	if session_days == 0 {
 		session_days = 7
 	}
@@ -929,6 +933,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"ollama_proxy_port":     ollama_proxy_port,
 		"ollama_proxy_url":      proxy_url,
 		"ollama_active":         ollama_active,
+		"fetch_cache_quota_mb":  fetch_cache_quota_mb,
 	})
 }
 
@@ -944,6 +949,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		DefaultApps         *[]string `json:"default_apps,omitempty"`
 		OllamaProxyEnabled  *bool     `json:"ollama_proxy_enabled,omitempty"`
 		OllamaProxyPort     *int      `json:"ollama_proxy_port,omitempty"`
+		FetchCacheQuotaMB   *int      `json:"fetch_cache_quota_mb,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -989,6 +995,10 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.OllamaProxyPort != nil && *req.OllamaProxyPort >= 0 && *req.OllamaProxyPort <= 65535 {
 		a.db.Set(WebTable, "ollama_proxy_port", *req.OllamaProxyPort)
 		Log("[admin] user %q set ollama_proxy_port=%d", current, *req.OllamaProxyPort)
+	}
+	if req.FetchCacheQuotaMB != nil && *req.FetchCacheQuotaMB >= 0 && *req.FetchCacheQuotaMB <= 10240 {
+		a.db.Set(WebTable, "fetch_cache_quota_mb", *req.FetchCacheQuotaMB)
+		Log("[admin] user %q set fetch_cache_quota_mb=%d", current, *req.FetchCacheQuotaMB)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
@@ -1498,6 +1508,13 @@ const adminBody = `
         style="margin-top:0.3rem;width:20rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
         onchange="updateSetting('notify_from', this.value)">
     </div>
+    <div class="setting-row">
+      <label style="font-size:0.9rem;color:#c9d1d9">Fetch Cache Quota (MB per user)</label>
+      <span class="setting-desc">Maximum disk used by fetch_url's auto-cache (.fetch_cache/ in each user's workspace). When fetch_url retrieves binary content or text that exceeds the inline cap, it writes the full content here so the LLM can recover via read_file or attach_file. LRU-by-mtime evicts oldest cache files when over quota. Default 100 MB. Range 0–10240.</span>
+      <input type="number" id="fetch-cache-quota-mb" min="0" max="10240" value="100"
+        style="margin-top:0.3rem;width:6rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+        onchange="updateSetting('fetch_cache_quota_mb', parseInt(this.value)||0)">
+    </div>
     <div class="setting-row default-apps-panel">
       <span style="font-size:0.9rem;color:#c9d1d9">Default Apps for New Users</span>
       <span class="setting-desc">Apps assigned to new users who sign up. Users with no custom assignments use these defaults.</span>
@@ -1902,6 +1919,7 @@ function loadSettings() {
     setField('service-name', s.service_name || '');
     setField('external-url', s.external_url || '');
     setField('notify-from', s.notify_from || '');
+    setField('fetch-cache-quota-mb', s.fetch_cache_quota_mb || 100);
     var defaults = s.default_apps || [];
     renderAppCheckboxes('default-apps-list', defaults, function(apps){
       fetch('api/settings', {
