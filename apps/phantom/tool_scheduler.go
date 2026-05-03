@@ -793,6 +793,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		LLM:          T.LLM,
 		LeadLLM:      T.LeadLLM,
 		WorkspaceDir: ensurePhantomWorkspace(cfg),
+		DB:           T.DB,
 	}
 	// send_status: enqueue an immediate outbox item so the user gets a
 	// progress iMessage before the scheduled reply. FIFO ordering in the

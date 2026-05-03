@@ -1123,6 +1123,29 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	}
 
 	if len(toolNames) > 0 {
+		// Pre-build the secure-API tool catalog so we can match
+		// `call_<credname>` entries against it. Three independent
+		// gates apply:
+		//   1. Per-credential Disabled flag (handled inside
+		//      BuildSecureAPITools).
+		//   2. Phantom-app master switch cfg.SecureAPIEnabled —
+		//      when off, BuildSecureAPITools isn't called at all so
+		//      no credential is reachable via phantom regardless of
+		//      individual credential or per-conv state.
+		//   3. Per-conv EnabledTools opt-in — only call_<credname>
+		//      entries listed in the current conv's EnabledTools
+		//      are exposed.
+		var secureAPIByName map[string]AgentToolDef
+		if cfg.SecureAPIEnabled {
+			secureAPI := BuildSecureAPITools(T.DB)
+			secureAPIByName = make(map[string]AgentToolDef, len(secureAPI))
+			for _, td := range secureAPI {
+				secureAPIByName[td.Tool.Name] = td
+			}
+		} else {
+			secureAPIByName = map[string]AgentToolDef{}
+		}
+
 		var registryNames []string
 		for _, n := range toolNames {
 			switch n {
@@ -1133,6 +1156,16 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 					registryNames = append(registryNames, n)
 				}
 			default:
+				// Secure-API tools (call_<credname>) live outside the
+				// global RegisteredChatTools registry — they're built
+				// per-session from the encrypted credential store.
+				// Match those first so they don't fall through to
+				// GetAgentToolsWithSession (which would log "not
+				// registered" and skip).
+				if td, ok := secureAPIByName[n]; ok {
+					tools = append(tools, td)
+					continue
+				}
 				registryNames = append(registryNames, n)
 			}
 		}
@@ -1322,6 +1355,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		LLM:          T.LLM,
 		LeadLLM:      T.LeadLLM,
 		WorkspaceDir: ensurePhantomWorkspace(cfg),
+		DB:           T.DB,
 	}
 	// send_status: enqueue an immediate outbox item so the user receives
 	// the status as its own iMessage before the eventual reply. The
@@ -1425,7 +1459,19 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		return
 	}
 
-	Log("[phantom] reply generated for %s (%d chars, %d images, %d videos), queuing outbox", handle, len(reply), len(sessionImages), len(sessionVideos))
+	Log("[phantom] reply generated for %s (%d chars, %d images, %d videos, %d files), queuing outbox", handle, len(reply), len(sessionImages), len(sessionVideos), len(sess.Files))
+	// Phantom doesn't currently deliver generic file attachments through
+	// the bridge (only images and videos). If the LLM called attach_file,
+	// surface that loudly so the operator notices the silent drop and
+	// either (a) adds bridge file-attachment support or (b) tells the
+	// LLM not to attach_file in phantom contexts.
+	if len(sess.Files) > 0 {
+		var names []string
+		for _, f := range sess.Files {
+			names = append(names, f.Name)
+		}
+		Log("[phantom] WARNING: %d file attachment(s) discarded — phantom doesn't deliver generic files yet (got: %s)", len(sess.Files), strings.Join(names, ", "))
+	}
 
 	// Store assistant reply.
 	storeMessage(T.DB, PhantomMessage{

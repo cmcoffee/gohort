@@ -239,6 +239,10 @@ const phantomBody = `
     <input type="checkbox" id="cfg-auto-all">
     <label style="margin:0">Auto-reply to all conversations</label>
   </div>
+  <div class="row" title="Master switch for secure-API tools (call_<credname>) in phantom. Off: no credential is reachable via phantom regardless of EnabledTools entries. On: per-conv EnabledTools whitelist controls which credentials each conversation can use.">
+    <input type="checkbox" id="cfg-secure-api-enabled">
+    <label style="margin:0">Allow secure-API tools in phantom</label>
+  </div>
   <label>Gatekeeper Rule</label>
   <div class="preset-chips">
     <span class="preset-chip" onclick="applyPreset('cfg-gatekeeper', presets.gatekeeper.directed)">Directed only</span>
@@ -842,6 +846,7 @@ function showConfig() {
     document.getElementById('cfg-proactive-window').value = cfg.proactive_window || '';
     document.getElementById('cfg-proactive-prompt').value = cfg.proactive_prompt || '';
     document.getElementById('cfg-proactive-max-per-day').value = cfg.proactive_max_per_day || 0;
+    document.getElementById('cfg-secure-api-enabled').checked = !!cfg.secure_api_enabled;
       var list = document.getElementById('cfg-tools-list');
     if (!tools.length) {
       list.innerHTML = '<span style="font-size:0.8rem;color:var(--text-mute)">No tools registered.</span>';
@@ -883,7 +888,8 @@ function saveConfig() {
     proactive_enabled: document.getElementById('cfg-proactive-enabled').checked,
     proactive_window: document.getElementById('cfg-proactive-window').value.trim(),
     proactive_prompt: document.getElementById('cfg-proactive-prompt').value.trim(),
-    proactive_max_per_day: parseInt(document.getElementById('cfg-proactive-max-per-day').value, 10) || 0
+    proactive_max_per_day: parseInt(document.getElementById('cfg-proactive-max-per-day').value, 10) || 0,
+    secure_api_enabled: document.getElementById('cfg-secure-api-enabled').checked
   };
   fetch('api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(cfg)})
     .then(() => hideModals()).catch(() => {});

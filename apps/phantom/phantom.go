@@ -223,6 +223,13 @@ type PhantomConfig struct {
 	ProactiveWindow    string `json:"proactive_window"`      // "HH:MM-HH:MM" daily window
 	ProactivePrompt    string `json:"proactive_prompt"`      // language rules / what to say
 	ProactiveMaxPerDay int    `json:"proactive_max_per_day"` // 0 = unlimited
+	// SecureAPIEnabled is the master switch for secure-API tools in
+	// phantom. When false, BuildSecureAPITools is skipped during
+	// buildConvTools so no credential is reachable via phantom even
+	// if a conv has call_<credname> in its EnabledTools list. Off by
+	// default — explicit opt-in given the elevated trust required to
+	// expose credentials to potentially-untrusted iMessage senders.
+	SecureAPIEnabled bool `json:"secure_api_enabled"`
 }
 
 // ownerLabel returns the configured name for the phone owner, defaulting to "me".

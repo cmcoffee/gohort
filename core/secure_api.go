@@ -57,8 +57,16 @@ type SecureCredential struct {
 	Description       string    `json:"description,omitempty"`
 	ParamName         string    `json:"param_name,omitempty"`
 	RequiresConfirm   bool      `json:"requires_confirm"`
-	CreatedAt         time.Time `json:"created_at"`
-	LastUsedAt        time.Time `json:"last_used_at,omitempty"`
+	// Disabled skips this credential from the auto-generated tool
+	// catalog without deleting it. Useful for temporarily revoking
+	// access (suspected misbehavior, vendor outage, etc.) while
+	// keeping the encrypted secret + config intact for re-enabling
+	// later. Inverted (Disabled rather than Enabled) so that records
+	// written before this field was added — which deserialize to the
+	// zero value — keep their default-on behavior.
+	Disabled  bool `json:"disabled,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
 }
 
 // secureCredSecretKey is the DB key under which the encrypted secret
@@ -163,6 +171,25 @@ func ListSecureCredentials(db Database) []SecureCredential {
 		}
 	}
 	return out
+}
+
+// SetSecureCredentialDisabled toggles the per-credential disabled flag.
+// Disabled credentials stay in the encrypted store but disappear from
+// auto-generated tool catalogs until re-enabled. Used by the admin
+// UI's per-card enable/disable toggle.
+func SetSecureCredentialDisabled(db Database, name string, disabled bool) error {
+	if db == nil || name == "" {
+		return fmt.Errorf("name required")
+	}
+	secureAPIMu.Lock()
+	defer secureAPIMu.Unlock()
+	var c SecureCredential
+	if !db.Get(secureAPITable, name, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.Disabled = disabled
+	db.Set(secureAPITable, name, c)
+	return nil
 }
 
 // DeleteSecureCredential removes both metadata and encrypted secret.
@@ -307,6 +334,9 @@ func BuildSecureAPITools(db Database) []AgentToolDef {
 	creds := ListSecureCredentials(db)
 	out := make([]AgentToolDef, 0, len(creds))
 	for _, c := range creds {
+		if c.Disabled {
+			continue
+		}
 		out = append(out, agentToolFromCredential(db, c))
 	}
 	return out

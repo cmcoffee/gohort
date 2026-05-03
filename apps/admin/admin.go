@@ -326,6 +326,33 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(ListSecureCredentials(a.db))
 		case http.MethodPost:
+			// Two POST shapes: the upsert body (full credential) and the
+			// toggle action (?action=enable|disable&name=X). Distinguish
+			// by query param.
+			if action := r.URL.Query().Get("action"); action != "" {
+				name := strings.TrimSpace(r.URL.Query().Get("name"))
+				if name == "" {
+					http.Error(w, "missing name", http.StatusBadRequest)
+					return
+				}
+				switch action {
+				case "enable":
+					if err := SetSecureCredentialDisabled(a.db, name, false); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				case "disable":
+					if err := SetSecureCredentialDisabled(a.db, name, true); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				default:
+					http.Error(w, "action must be enable|disable", http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 			var req struct {
 				Name              string `json:"name"`
 				Type              string `json:"type"`
@@ -2851,6 +2878,7 @@ function renderCredentialCard(c) {
   var meta = document.createElement('div');
   meta.style.cssText = 'font-size:0.75rem;color:#8b949e;margin-top:0.15rem';
   var bits = [c.type];
+  if (c.disabled) bits.push('DISABLED');
   if (c.requires_confirm) bits.push('requires confirm');
   if (c.last_used_at && c.last_used_at !== '0001-01-01T00:00:00Z') {
     bits.push('last used ' + relTime(c.last_used_at));
@@ -2858,10 +2886,18 @@ function renderCredentialCard(c) {
     bits.push('never used');
   }
   meta.textContent = bits.join(' • ');
+  if (c.disabled) {
+    card.style.opacity = '0.55';
+  }
   titleWrap.appendChild(meta);
   head.appendChild(titleWrap);
   var btns = document.createElement('div');
   btns.style.cssText = 'display:flex;gap:0.4rem';
+  var toggleBtn = document.createElement('button');
+  toggleBtn.textContent = c.disabled ? 'Enable' : 'Disable';
+  toggleBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + (c.disabled ? '#2ea043' : '#d29922') + ';border-radius:5px;color:' + (c.disabled ? '#56d364' : '#d29922') + ';font-size:0.8rem;cursor:pointer';
+  toggleBtn.onclick = function(){ toggleCredential(c.name, c.disabled); };
+  btns.appendChild(toggleBtn);
   var auditBtn = document.createElement('button');
   auditBtn.textContent = 'Audit';
   auditBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
@@ -2896,6 +2932,15 @@ function deleteCredential(name) {
   fetch('api/secure-api?name=' + encodeURIComponent(name), {method: 'DELETE'})
     .then(function(r){
       if (!r.ok) return r.text().then(function(t){ alert('delete failed: ' + t); });
+      loadSecureAPICredentials();
+    });
+}
+
+function toggleCredential(name, currentlyDisabled) {
+  var action = currentlyDisabled ? 'enable' : 'disable';
+  fetch('api/secure-api?action=' + action + '&name=' + encodeURIComponent(name), {method: 'POST'})
+    .then(function(r){
+      if (!r.ok) return r.text().then(function(t){ alert(action + ' failed: ' + t); });
       loadSecureAPICredentials();
     });
 }
