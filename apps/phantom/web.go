@@ -1305,13 +1305,22 @@ func (T *Phantom) processMessage(chatID, handle, text string, conv Conversation,
 		reasoning = resp.Reasoning
 	}
 
-	if sess.Silenced {
-		Log("[phantom] stay_silent called for %s — no reply sent", handle)
-		return
-	}
-
 	sessionImages := filterNewImages(sess.Images)
 	sessionVideos := filterNewVideos(sess.Videos)
+
+	// stay_silent suppresses the LLM's text reply but lets gathered
+	// attachments through. Pattern: LLM calls download_video, then
+	// stay_silent — user receives the file with no caption. If nothing
+	// was gathered, silence collapses to "send nothing at all" (the
+	// classic stay_silent semantic).
+	if sess.Silenced {
+		if len(sessionImages) == 0 && len(sessionVideos) == 0 {
+			Log("[phantom] stay_silent called for %s — no reply sent", handle)
+			return
+		}
+		Log("[phantom] stay_silent called for %s — text suppressed, %d images / %d videos still delivered", handle, len(sessionImages), len(sessionVideos))
+		reply = ""
+	}
 
 	if reply == "" && len(sessionImages) == 0 && len(sessionVideos) == 0 {
 		// Capture diagnostic context so we can tell why the LLM came back empty.

@@ -4,22 +4,24 @@ import . "github.com/cmcoffee/gohort/core"
 
 func init() { RegisterChatTool(new(StaySilentTool)) }
 
-// StaySilentTool lets the LLM signal that no reply should be sent.
-// When called, it sets ToolSession.Silenced = true; the caller is responsible
-// for checking that flag after RunAgentLoop and skipping delivery.
+// StaySilentTool lets the LLM signal that no text reply should be sent.
+// When called, it sets ToolSession.Silenced = true; the caller suppresses
+// the text reply but still flushes any attachments (images, videos) the
+// LLM gathered during the turn. So pairing stay_silent with download_video
+// delivers the file with no caption.
 type StaySilentTool struct{}
 
 func (t *StaySilentTool) Name() string { return "stay_silent" }
 func (t *StaySilentTool) Caps() []Capability { return nil } // control-flow signal — no side effects
 func (t *StaySilentTool) Desc() string {
-	return "When called, the user will receive no reply message from you for this turn. Calling this tool closes the turn — any text or further tool calls produced afterward are discarded."
+	return "Suppress your text reply for this turn — the user receives no message text. Any attachments you've already produced (e.g. via download_video, generate_image) ARE still delivered. Pair with download_video to send a file silently with no caption. Calling this tool closes the turn — any text or further tool calls afterward are discarded."
 }
 func (t *StaySilentTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
 
 // silenceConfirmation is what the LLM sees as the tool result. It is phrased
 // as a hard stop signal so the model halts immediately rather than calling
 // stay_silent again or producing additional content that will be discarded.
-const silenceConfirmation = "Silence acknowledged. This turn is now closed — no reply will be sent. Do not produce any further text and do not call any more tools, including stay_silent. Stop now."
+const silenceConfirmation = "Silence acknowledged. This turn is now closed — your text reply will be suppressed (attachments you've already gathered will still be delivered). Do not produce any further text and do not call any more tools, including stay_silent. Stop now."
 
 // Run is the fallback for callers without a ToolSession — no-op.
 func (t *StaySilentTool) Run(args map[string]any) (string, error) {

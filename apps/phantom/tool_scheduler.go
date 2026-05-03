@@ -820,17 +820,23 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		return
 	}
 
-	if sess.Silenced {
-		Log("[phantom/scheduler] stay_silent called for %s — no scheduled reply sent", p.Handle)
-		return
-	}
-
 	var replyText string
 	if resp != nil {
 		replyText = strings.TrimSpace(stripEmojis(resp.Content))
 	}
 	sessionImages := filterNewImages(sess.Images)
 	sessionVideos := filterNewVideos(sess.Videos)
+
+	// stay_silent suppresses the LLM's text but lets gathered attachments
+	// through. With nothing gathered, silence means "send nothing."
+	if sess.Silenced {
+		if len(sessionImages) == 0 && len(sessionVideos) == 0 {
+			Log("[phantom/scheduler] stay_silent called for %s — no scheduled reply sent", p.Handle)
+			return
+		}
+		Log("[phantom/scheduler] stay_silent called for %s — text suppressed, %d images / %d videos still delivered", p.Handle, len(sessionImages), len(sessionVideos))
+		replyText = ""
+	}
 	if replyText == "" && len(sessionImages) == 0 && len(sessionVideos) == 0 {
 		if len(sess.Images) > 0 || len(sess.Videos) > 0 {
 			Log("[phantom/scheduler] all attachments already sent to %s, nothing new to queue", p.Handle)
