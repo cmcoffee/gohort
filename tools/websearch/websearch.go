@@ -225,6 +225,16 @@ func (t *FetchURLTool) IsInternetTool() bool { return true }
 // short videos. Larger content has to be retrieved by another mechanism.
 const fetchURLMaxSaveBytes = 100 * 1024 * 1024
 
+// fetchURLCacheTTL is how long a cached entry is considered fresh.
+// Repeat fetches within this window skip the network call and serve
+// from disk; older entries trigger a refetch. Mtime is touched on
+// each cache hit so frequently-accessed entries float to the top of
+// the LRU eviction order. Default 10 minutes — tight enough that
+// rapidly-changing content (weather, stock prices) doesn't stick,
+// generous enough that the LLM iterating on a doc within one session
+// gets free re-reads.
+const fetchURLCacheTTL = 10 * time.Minute
+
 func (t *FetchURLTool) Run(args map[string]any) (string, error) {
 	return t.runImpl(args, nil)
 }
@@ -319,12 +329,21 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 
 // fetchAndCache downloads target into the workspace's .fetch_cache dir
 // using a sha256-prefixed filename and a content-type-derived extension.
-// Returns the absolute path, the workspace-relative display path, and
-// the byte count.
+// Hits the cache (skipping the network call) when an entry exists
+// and is younger than fetchURLCacheTTL — touches mtime on hit so the
+// LRU evictor sees real access times, not just write times.
 func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, error) {
 	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
 	if err != nil {
 		return "", "", 0, err
+	}
+	// Cache hit + fresh: touch + return. Free re-reads of the same
+	// URL within the TTL window.
+	if info, err := os.Stat(cacheAbs); err == nil && time.Since(info.ModTime()) < fetchURLCacheTTL {
+		now := time.Now()
+		_ = os.Chtimes(cacheAbs, now, now)
+		Debug("[fetch_url] cache hit %s → %s (%d bytes, age %s)", target, cacheRel, info.Size(), time.Since(info.ModTime()).Round(time.Second))
+		return cacheAbs, cacheRel, info.Size(), nil
 	}
 	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
 		return "", "", 0, err
