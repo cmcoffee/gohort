@@ -13,6 +13,7 @@ type LocalTimeTool struct{}
 
 func (t *LocalTimeTool) Name() string { return "get_local_time" }
 func (t *LocalTimeTool) Desc() string { return "Get the current local date and time." }
+func (t *LocalTimeTool) Caps() []Capability { return []Capability{CapRead} } // reads system clock
 
 func (t *LocalTimeTool) Params() map[string]ToolParam { return nil }
 

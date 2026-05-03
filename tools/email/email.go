@@ -15,6 +15,7 @@ func init() { RegisterChatTool(new(EmailTool)) }
 type EmailTool struct{}
 
 func (t *EmailTool) Name() string { return "send_email" }
+func (t *EmailTool) Caps() []Capability { return []Capability{CapNetwork, CapWrite} } // SMTP send — outbound network + persistent side effect
 func (t *EmailTool) Desc() string {
 	return "Send an email to a recipient with a subject and body. The recipient email address must be known or explicitly provided by the user — never guess or fabricate an email address."
 }
@@ -29,6 +30,8 @@ func (t *EmailTool) Params() map[string]ToolParam {
 
 // NeedsConfirm implements ConfirmableTool — sending email always requires user approval.
 func (t *EmailTool) NeedsConfirm() bool { return true }
+
+func (t *EmailTool) IsInternetTool() bool { return true }
 
 func (t *EmailTool) Run(args map[string]any) (string, error) {
 	to := StringArg(args, "to")

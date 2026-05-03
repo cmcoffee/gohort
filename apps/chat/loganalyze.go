@@ -116,7 +116,7 @@ func (t *LogAnalyzeTool) Run(args map[string]any) (string, error) {
 		WithSystemPrompt(analyzeSystemPrompt),
 		WithMaxTokens(2048),
 		WithTemperature(0.2),
-		WithThink(true),
+		WithThink(false),
 	)
 	if err != nil {
 		return "", fmt.Errorf("analyze_log LLM call failed: %w", err)

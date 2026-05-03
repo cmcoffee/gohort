@@ -16,6 +16,8 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/apiclient"
+	"github.com/cmcoffee/gohort/tools/browser"
+	readability "github.com/go-shiori/go-readability"
 )
 
 func init() {
@@ -151,8 +153,9 @@ func SelectDiverseArticles(sources []Source, n int) []Source {
 type WebSearchTool struct{}
 
 func (t *WebSearchTool) Name() string { return "web_search" }
+func (t *WebSearchTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // search engine API call
 func (t *WebSearchTool) Desc() string {
-	return "Search the web for information. Returns a list of results with titles, URLs, and snippets."
+	return "Search the live web for information. Returns results with titles, URLs, and snippets. IMPORTANT: if search_knowledge is available, you MUST call it first — only call web_search after search_knowledge has returned no useful results."
 }
 
 func (t *WebSearchTool) Params() map[string]ToolParam {
@@ -160,6 +163,8 @@ func (t *WebSearchTool) Params() map[string]ToolParam {
 		"query": {Type: "string", Description: "The search query."},
 	}
 }
+
+func (t *WebSearchTool) IsInternetTool() bool { return true }
 
 func (t *WebSearchTool) Run(args map[string]any) (string, error) {
 	query := StringArg(args, "query")
@@ -193,8 +198,9 @@ func (t *WebSearchTool) Run(args map[string]any) (string, error) {
 type FetchURLTool struct{}
 
 func (t *FetchURLTool) Name() string { return "fetch_url" }
+func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP GET against live web
 func (t *FetchURLTool) Desc() string {
-	return "Fetch the readable text content of a specific URL from the live web. Use after web_search returns a URL whose content you want to read in full, or when the user pastes a URL and asks you to read or summarize it. Returns up to 8000 characters of extracted text. Strips HTML, scripts, ads."
+	return "Fetch the readable text content of a specific URL from the live web. Use after web_search returns a URL whose content you want to read in full, or when the user pastes a URL and asks you to read or summarize it. Returns up to 8000 characters of extracted text. Strips HTML, scripts, ads. If the result looks empty or is just a loading skeleton (JS-rendered site), retry with browse_page instead."
 }
 
 func (t *FetchURLTool) Params() map[string]ToolParam {
@@ -202,6 +208,8 @@ func (t *FetchURLTool) Params() map[string]ToolParam {
 		"url": {Type: "string", Description: "The URL to fetch. Must be http:// or https://."},
 	}
 }
+
+func (t *FetchURLTool) IsInternetTool() bool { return true }
 
 func (t *FetchURLTool) Run(args map[string]any) (string, error) {
 	target := StringArg(args, "url")
@@ -260,6 +268,8 @@ func SearchWithProvider(query string, provider string, apiKey string, endpoint s
 		Debug("[web_search] error: %s", err)
 	} else if result == "" || result == "No results found." {
 		Debug("[web_search] no results")
+	} else {
+		ProcessUsage().AddSearchCall()
 	}
 	return result, err
 }
@@ -651,6 +661,22 @@ func FetchArticle(target_url string, max_chars int) (string, error) {
 	return text, err
 }
 
+// jsDomains is the set of base domains (www. stripped) that require a real
+// browser to render useful content. Plain HTTP fetches return a JS skeleton.
+var jsDomains = map[string]bool{
+	"reddit.com":    true,
+	"linkedin.com":  true,
+	"x.com":         true,
+	"twitter.com":   true,
+	"instagram.com": true,
+	"facebook.com":  true,
+	"tiktok.com":    true,
+}
+
+func isJSDomain(host string) bool {
+	return jsDomains[strings.TrimPrefix(strings.ToLower(host), "www.")]
+}
+
 func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta, error) {
 	var meta SourceMeta
 	if target_url == "" {
@@ -665,6 +691,17 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 	parsed, err := url.Parse(target_url)
 	if err != nil {
 		return "", meta, fmt.Errorf("parsing URL: %w", err)
+	}
+
+	// Known JS-heavy domains: skip the HTTP path and go straight to the browser.
+	// Fall through to HTTP if the browser fails so the pipeline is never left empty-handed.
+	if isJSDomain(meta.Domain) {
+		text, berr := browser.Fetch(target_url, max_chars)
+		if berr == nil && strings.TrimSpace(text) != "" {
+			Debug("[fetch] browser fetch %s → %d chars", target_url, len(text))
+			return text, meta, nil
+		}
+		Debug("[fetch] browser failed for %s (%v), falling back to HTTP", meta.Domain, berr)
 	}
 
 	client := &apiclient.APIClient{
@@ -713,7 +750,15 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 	} else {
 		html_str := string(body)
 		meta = extractMeta(html_str, meta)
-		text = extractReadableText(html_str)
+		article, rerr := readability.FromReader(strings.NewReader(html_str), parsed)
+		if rerr == nil && strings.TrimSpace(article.TextContent) != "" {
+			text = strings.TrimSpace(article.TextContent)
+			if meta.Title == "" && article.Title != "" {
+				meta.Title = article.Title
+			}
+		} else {
+			text = extractReadableText(html_str)
+		}
 	}
 	if max_chars > 0 && len(text) > max_chars {
 		// Truncate at a word boundary.

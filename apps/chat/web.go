@@ -14,9 +14,9 @@ import (
 )
 
 func (T *ChatAgent) WebPath() string { return "/chat" }
-func (T *ChatAgent) WebName() string { return "Chat (Tool Tester)" }
+func (T *ChatAgent) WebName() string { return "Chat" }
 func (T *ChatAgent) WebDesc() string {
-	return "Test tools against the local worker LLM via a simple chat interface."
+	return "Chat with a tool-equipped LLM."
 }
 
 func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
@@ -27,7 +27,7 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-			Title:    "Chat — Tool Tester",
+			Title:    "Chat",
 			AppName:  "Chat",
 			Prefix:   prefix,
 			BodyHTML: chatBody,
@@ -41,6 +41,8 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/sessions/", T.handleSessionGet)
 	sub.HandleFunc("/api/sessions/delete/", T.handleSessionDelete)
 	sub.HandleFunc("/api/sessions/archive/", T.handleSessionArchive)
+	sub.HandleFunc("/api/settings/private", T.handlePrivateModeGet)
+	sub.HandleFunc("/api/settings/private/set", T.handlePrivateModeSet)
 	MountSubMux(mux, prefix, sub)
 }
 
@@ -121,27 +123,11 @@ func (T *ChatAgent) handleSessionArchive(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]bool{"archived": s.Archived})
 }
 
-// blockedTools is the set of tool names the chat app refuses to expose,
-// regardless of what the client requests. Tools that perform real-world
-// side effects (sending email, executing shell commands) are blocked
-// from the testing UI to keep it sandboxed. web_search is intentionally
-// allowed — the system prompt steers the LLM toward it for current-
-// event questions where training-era knowledge is stale.
-var blockedTools = map[string]bool{
-	"run_command": true, // shell execution — risky in a web UI
-	"send_email":  true, // sends real email
-}
-
-// allowedTools returns the registered tool list filtered by the blocklist.
+// allowedTools returns the registered tool list filtered by the core
+// BlockedTools set. Tools that perform real-world side effects are
+// blocked from the testing UI to keep it sandboxed.
 func allowedTools() []ChatTool {
-	var out []ChatTool
-	for _, t := range RegisteredChatTools() {
-		if blockedTools[t.Name()] {
-			continue
-		}
-		out = append(out, t)
-	}
-	return out
+	return FilterChatTools(BlockedTools)
 }
 
 // handleTools returns the list of allowed tool names + descriptions so
@@ -152,11 +138,48 @@ func (T *ChatAgent) handleTools(w http.ResponseWriter, r *http.Request) {
 		Desc string `json:"desc"`
 	}
 	var out []toolInfo
-	for _, t := range allowedTools() {
-		out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+	if r.URL.Query().Get("private") == "true" {
+		for _, t := range FilterChatToolsPrivate() {
+			out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+		}
+	} else {
+		for _, t := range allowedTools() {
+			out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// handlePrivateModeGet returns the current user's private-mode preference.
+func (T *ChatAgent) handlePrivateModeGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	username := sessionUsername(r)
+	mode := AuthGetPrivateMode(T.DB, username)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"private_mode": mode})
+}
+
+// handlePrivateModeSet updates the current user's private-mode preference.
+func (T *ChatAgent) handlePrivateModeSet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		PrivateMode bool `json:"private_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	username := sessionUsername(r)
+	AuthSetPrivateMode(T.DB, username, req.PrivateMode)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"private_mode": req.PrivateMode})
 }
 
 // chatRequest is the wire format from the frontend.
@@ -169,8 +192,9 @@ type chatRequest struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	} `json:"history"`
-	Message string   `json:"message"`
-	Tools   []string `json:"tools"` // optional whitelist; empty = all
+	Message   string   `json:"message"`
+	Tools     []string `json:"tools"` // optional whitelist; empty = all
+	PrivateMode bool   `json:"private_mode"`
 	// ReplaceHistory, when true, tells the server to treat the
 	// provided History as the new authoritative transcript for this
 	// session — any previously persisted messages beyond that length
@@ -275,13 +299,17 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	messages = append(messages, Message{Role: "user", Content: req.Message})
 
-	// Resolve tools. The chat app enforces its own blocklist (shell, email,
-	// web search) regardless of what the client requests, so a malicious or
-	// curious user can't pull a blocked tool into the chat by name.
+	// Resolve tools. The chat app enforces its own blocklist regardless of
+	// what the client requests, so a malicious or curious user can't pull
+	// a blocked tool into the chat by name.
 	var toolNames []string
-	if len(req.Tools) > 0 {
+	if req.PrivateMode {
+		for _, t := range FilterChatToolsPrivate() {
+			toolNames = append(toolNames, t.Name())
+		}
+	} else if len(req.Tools) > 0 {
 		for _, name := range req.Tools {
-			if !blockedTools[name] {
+			if !BlockedTools[name] {
 				toolNames = append(toolNames, name)
 			}
 		}
@@ -296,11 +324,31 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
-	tools, terr := GetAgentTools(toolNames...)
+	// Build a per-user tool session with a sandbox workspace so file/exec
+	// tools (read_file, list_directory, write_file, run_local) can resolve
+	// paths against `<data>/workspaces/<username>/`. Failure to provision
+	// the dir is logged but not fatal — the sandboxed tools just return
+	// "no session WorkspaceDir" errors and other tools keep working.
+	sess := &ToolSession{LLM: agent.LLM}
+	if ws, err := EnsureWorkspaceDir(sessionUsername(r)); err == nil {
+		sess.WorkspaceDir = ws
+	} else {
+		Debug("[chat] workspace setup failed for %s: %v — sandboxed tools disabled", sessionUsername(r), err)
+	}
+
+	tools, terr := GetAgentToolsWithSession(sess, toolNames...)
 	if terr != nil {
 		writeSSEEvent(w, "error", map[string]string{"message": "tool resolve failed: " + terr.Error()})
 		return
 	}
+
+	// Capability gating: by default chat permits CapRead + CapNetwork only.
+	// Tools that declare CapWrite or CapExecute (write_file, run_local,
+	// send_email, etc.) are filtered out before the LLM ever sees the
+	// catalog, so even a hallucinated call by name can't reach the handler.
+	// Opting in to higher tiers per session is future work; for now this is
+	// a hard, always-on baseline.
+	tools = FilterToolsByCaps(tools, []Capability{CapRead, CapNetwork})
 
 	// Set up SSE headers — single open response, server pushes events as
 	// the agent loop progresses (chunks, tool calls, tool results, done).
@@ -312,6 +360,24 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
+	}
+
+	// flushNewImages emits SSE `image` events for any new entries the
+	// tool calls have appended to sess.Images since the last flush. Called
+	// after each tool round and at session close so the user sees images
+	// (screenshots, fetched/generated images) inline alongside text.
+	// Tool handlers run synchronously in this goroutine, so a direct read
+	// of sess.Images is race-free here.
+	imagesFlushed := 0
+	flushNewImages := func() {
+		if sess == nil {
+			return
+		}
+		for i := imagesFlushed; i < len(sess.Images); i++ {
+			writeSSEEvent(w, "image", map[string]string{"data": sess.Images[i]})
+			flusher.Flush()
+		}
+		imagesFlushed = len(sess.Images)
 	}
 
 	// Announce the session ID to the client up front so it can update
@@ -509,6 +575,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		// Emit only the preamble (text before the tag) to the client.
 		if promptTools {
 			if resp == nil {
+				flushNewImages()
 				writeSSEEvent(w, "done", map[string]any{"round": round})
 				flusher.Flush()
 				return
@@ -524,6 +591,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 					writeSSEEvent(w, "chunk", map[string]string{"text": remaining})
 					flusher.Flush()
 				}
+				flushNewImages()
 				writeSSEEvent(w, "done", map[string]any{"round": round})
 				flusher.Flush()
 				return
@@ -559,6 +627,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 
 			// Send result back as a plain user message.
 			streamMessages = append(streamMessages, Message{Role: "user", Content: resultText})
+			flushNewImages()
 			continue
 		}
 
@@ -570,6 +639,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 			if resp != nil && resp.Content != "" {
 				parseProcedureActions(T.DB, resp.Content)
 			}
+			flushNewImages()
 			writeSSEEvent(w, "done", map[string]any{"round": round})
 			flusher.Flush()
 			return
@@ -628,6 +698,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 			Role:        "user",
 			ToolResults: results,
 		})
+		flushNewImages()
 	}
 
 	// Hit the max-rounds cap without a final answer.
@@ -685,6 +756,34 @@ body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden; }
 }
 #sidebar-archived-toggle:hover { color: var(--text-hi); background: var(--bg-2); }
 #sidebar-archived-toggle.active { color: var(--accent); }
+#sidebar-select-toggle {
+  background: transparent; border: 1px solid var(--border); color: var(--text-mute);
+  font-size: 0.75rem; padding: 0.25rem 0.6rem; border-radius: 4px;
+  cursor: pointer; transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+#sidebar-select-toggle:hover { color: var(--text-hi); background: var(--bg-2); }
+#sidebar-select-toggle.active { color: var(--accent); border-color: var(--accent); }
+#sidebar-bulkbar {
+  display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
+  padding: 0.4rem 0.75rem; background: var(--bg-2);
+  border-bottom: 1px solid var(--border); font-size: 0.78rem;
+}
+#bulkbar-count { color: var(--text-mute); margin-right: auto; }
+#sidebar-bulkbar button {
+  background: transparent; border: 1px solid var(--border); color: var(--text);
+  font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 4px; cursor: pointer;
+}
+#sidebar-bulkbar button:hover { background: var(--bg-1); }
+#sidebar-bulkbar button.danger { color: #f85149; border-color: #f85149; }
+#sidebar-bulkbar button.danger:hover { background: rgba(248, 81, 73, 0.12); }
+#sidebar-bulkbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+.session-item .si-check {
+  display: none; margin-right: 0.4rem; cursor: pointer;
+  width: 14px; height: 14px;
+}
+body.select-mode .session-item .si-check { display: inline-block; }
+body.select-mode .session-item .si-actions { display: none; }
+.session-item.selected { background: rgba(88, 166, 255, 0.18); }
 #sessions-list {
   flex: 1; overflow-y: auto;
   padding: 0.4rem 0.4rem 0.75rem;
@@ -736,6 +835,13 @@ body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden; }
 #chat-header h1 { font-size: 1rem; margin: 0; color: var(--text-hi); }
 #tools-summary { color: var(--text-mute); font-size: 0.85rem; margin-left: auto; cursor: pointer; }
 #tools-summary:hover { color: var(--text-hi); }
+#private-toggle {
+  background: transparent; border: 1px solid var(--border); color: var(--text-mute);
+  font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer;
+  white-space: nowrap;
+}
+#private-toggle:hover { color: var(--text-hi); border-color: var(--text-mute); }
+#private-toggle.active { color: var(--accent); border-color: var(--accent); }
 #tools-list { display: none; padding: 0.5rem 1rem; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--text-mute); max-height: 200px; overflow-y: auto; }
 #tools-list .tool { padding: 0.2rem 0; }
 #tools-list .tool b { color: var(--text); margin-right: 0.5rem; }
@@ -851,6 +957,11 @@ body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden; }
 .tool-details { padding: 0.3rem 0.6rem 0.4rem; }
 .tool-call .args, .tool-call .result { display: block; margin-top: 0.2rem; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; white-space: pre-wrap; word-break: break-word; }
 .tool-call .result { color: var(--text); }
+/* Inline images delivered alongside the assistant's reply: screenshots,
+   fetched images, generated images. Click opens at full size. */
+.tool-images { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
+.tool-image { max-width: 100%; max-height: 480px; border-radius: 6px; border: 1px solid var(--border); cursor: zoom-in; background: var(--bg-2); }
+.tool-image:hover { border-color: var(--accent); }
 /* Action row shown under a completed assistant message: copy/retry
    buttons, open-webui style. Fades in on hover to stay out of the way
    while reading, and is always visible on touch devices. */
@@ -930,6 +1041,14 @@ const chatBody = `
     </div>
     <div id="sidebar-filter">
       <button id="sidebar-archived-toggle" type="button" onclick="toggleArchivedSessions()">Show archived</button>
+      <button id="sidebar-select-toggle" type="button" onclick="toggleSelectMode()">Select</button>
+    </div>
+    <div id="sidebar-bulkbar" style="display:none">
+      <span id="bulkbar-count">0 selected</span>
+      <button id="bulkbar-all" type="button" onclick="bulkSelectAll()">All</button>
+      <button id="bulkbar-archive" type="button" onclick="bulkArchive()">Archive</button>
+      <button id="bulkbar-delete" type="button" onclick="bulkDelete()" class="danger">Delete</button>
+      <button id="bulkbar-cancel" type="button" onclick="toggleSelectMode()">Done</button>
     </div>
     <div id="sessions-list"></div>
   </aside>
@@ -938,6 +1057,7 @@ const chatBody = `
       <button id="sidebar-toggle" onclick="toggleSidebar(true)" title="Show sessions" aria-label="Show sessions">☰</button>
       <span class="app-title">Chat</span>
       <h1 id="chat-title" style="display:none">Chat — Tool Tester</h1>
+      <button id="private-toggle" title="Toggle private mode (no internet tools)" onclick="togglePrivateMode()">Private</button>
       <span id="tools-summary" onclick="toggleTools()">Loading tools…</span>
     </div>
     <div id="tools-list"></div>
@@ -1027,7 +1147,10 @@ function renderSessions(sessions) {
     var title = s.Title || s.Preview || 'New chat';
     var active = (id === currentSessionId) ? ' active' : '';
     var archAttr = s.Archived ? ' data-archived="true"' : '';
-    html += '<div class="session-item' + active + '" data-id="' + escapeHtml(id) + '"' + archAttr + '>'
+    var isSel = selectedSessions[id] ? ' selected' : '';
+    var checked = selectedSessions[id] ? ' checked' : '';
+    html += '<div class="session-item' + active + isSel + '" data-id="' + escapeHtml(id) + '"' + archAttr + '>'
+      + '<input type="checkbox" class="si-check"' + checked + ' aria-label="Select chat">'
       + '<span class="si-title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>'
       + '<span class="si-actions">'
       + '<button class="si-archive" title="' + (s.Archived ? 'Unarchive' : 'Archive') + '">' + (s.Archived ? '↺' : '🗄') + '</button>'
@@ -1037,6 +1160,98 @@ function renderSessions(sessions) {
   }
   list.innerHTML = html;
   wireSessionItems();
+  updateBulkBar();
+}
+
+// Multi-select state. selectMode tracks whether the sidebar is in
+// checkbox-mode; selectedSessions is a {id: true} set so re-renders
+// (which happen on every refresh) preserve selection state.
+var selectMode = false;
+var selectedSessions = {};
+
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  document.body.classList.toggle('select-mode', selectMode);
+  var btn = document.getElementById('sidebar-select-toggle');
+  if (btn) btn.classList.toggle('active', selectMode);
+  var bar = document.getElementById('sidebar-bulkbar');
+  if (bar) bar.style.display = selectMode ? 'flex' : 'none';
+  if (!selectMode) selectedSessions = {};
+  loadSessions();
+}
+
+function setSessionSelected(id, on) {
+  if (on) selectedSessions[id] = true;
+  else delete selectedSessions[id];
+  var item = document.querySelector('.session-item[data-id="' + cssEscapeAttr(id) + '"]');
+  if (item) item.classList.toggle('selected', !!on);
+  updateBulkBar();
+}
+
+function cssEscapeAttr(s) {
+  return String(s).replace(/["\\]/g, '\\$&');
+}
+
+function updateBulkBar() {
+  var count = Object.keys(selectedSessions).length;
+  var el = document.getElementById('bulkbar-count');
+  if (el) el.textContent = count + (count === 1 ? ' selected' : ' selected');
+  ['bulkbar-archive', 'bulkbar-delete'].forEach(function(bid) {
+    var b = document.getElementById(bid);
+    if (b) b.disabled = (count === 0);
+  });
+}
+
+function bulkSelectAll() {
+  var items = document.querySelectorAll('#sessions-list .session-item');
+  // If everything visible is already selected, treat the click as "clear all".
+  var allOn = items.length > 0;
+  items.forEach(function(it) {
+    var id = it.getAttribute('data-id');
+    if (!selectedSessions[id]) { allOn = false; }
+  });
+  items.forEach(function(it) {
+    var id = it.getAttribute('data-id');
+    var cb = it.querySelector('.si-check');
+    if (allOn) {
+      delete selectedSessions[id];
+      it.classList.remove('selected');
+      if (cb) cb.checked = false;
+    } else {
+      selectedSessions[id] = true;
+      it.classList.add('selected');
+      if (cb) cb.checked = true;
+    }
+  });
+  updateBulkBar();
+}
+
+function bulkArchive() {
+  var ids = Object.keys(selectedSessions);
+  if (!ids.length) return;
+  // Archive endpoint is a toggle; document this in the confirm so users
+  // know currently-archived sessions will unarchive.
+  if (!confirm('Toggle archive on ' + ids.length + ' chat' + (ids.length === 1 ? '' : 's') + '?')) return;
+  Promise.all(ids.map(function(id) {
+    return fetch('api/sessions/archive/' + encodeURIComponent(id), {method: 'POST'});
+  })).then(function() {
+    selectedSessions = {};
+    loadSessions();
+  });
+}
+
+function bulkDelete() {
+  var ids = Object.keys(selectedSessions);
+  if (!ids.length) return;
+  if (!confirm('Delete ' + ids.length + ' chat' + (ids.length === 1 ? '' : 's') + '? This cannot be undone.')) return;
+  Promise.all(ids.map(function(id) {
+    return fetch('api/sessions/delete/' + encodeURIComponent(id), {method: 'DELETE'});
+  })).then(function() {
+    // If the active session was in the deleted set, drop into a new chat.
+    if (currentSessionId && selectedSessions[currentSessionId]) newChat();
+    selectedSessions = {};
+    loadSessions();
+  });
 }
 
 function wireSessionItems() {
@@ -1045,6 +1260,19 @@ function wireSessionItems() {
     (function(it) {
       var id = it.getAttribute('data-id');
       it.onclick = function(e) {
+        // Select-mode: clicking the row toggles selection. Direct
+        // checkbox clicks bubble up here too, so we read its state
+        // post-click rather than flipping a stale value.
+        if (selectMode) {
+          if (e.target.closest('.si-actions')) return;
+          var cb = it.querySelector('.si-check');
+          if (e.target !== cb) {
+            // Row click outside the checkbox — flip the checkbox value.
+            if (cb) cb.checked = !cb.checked;
+          }
+          setSessionSelected(id, cb && cb.checked);
+          return;
+        }
         if (e.target.closest('.si-actions')) return;
         openSession(id);
       };
@@ -1199,8 +1427,42 @@ function newChat() {
   }
 }
 
+var privateMode = false;
+
+// isGarbageText detects binary / non-printable garbage in LLM output.
+// When the LLM returns non-text data (e.g. a crash dump, binary blob),
+// the stream still delivers it as chunk events, so we need to validate
+// the final text before rendering it as a successful response.
+function isGarbageText(s) {
+  if (!s) return true;
+  // Null bytes → definitely binary.
+  if (s.indexOf('\0') !== -1) return true;
+  // Count non-printable control characters (excluding \n, \r, \t).
+  var ctrl = 0, total = 0;
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i);
+    if (c < 32 && c !== 10 && c !== 13 && c !== 9) { ctrl++; }
+    else if (c > 127 && c < 160) { ctrl++; } // C1 control chars
+    else if (c >= 32) { total++; } // printable
+  }
+  // If more than half of printable-char candidates are garbage, reject.
+  if (total > 0 && ctrl > total * 2) return true;
+  // If there are zero printable chars at all, it's all noise.
+  if (total === 0) return true;
+  return false;
+}
+
+function loadPrivateMode() {
+  fetch('api/settings/private').then(function(r){return r.json()}).then(function(data){
+    privateMode = data.private_mode;
+    var btn = document.getElementById('private-toggle');
+    btn.classList.toggle('active', privateMode);
+    loadTools();
+  });
+}
+
 function loadTools() {
-  fetch('api/tools').then(function(r){return r.json()}).then(function(tools){
+  fetch('api/tools?private=' + privateMode).then(function(r){return r.json()}).then(function(tools){
     var summary = document.getElementById('tools-summary');
     summary.textContent = tools.length + ' tools available — click to expand';
     var list = document.getElementById('tools-list');
@@ -1209,6 +1471,19 @@ function loadTools() {
       html += '<div class="tool"><b>' + escapeHtml(tools[i].name) + '</b>' + escapeHtml(tools[i].desc) + '</div>';
     }
     list.innerHTML = html;
+  });
+}
+
+function togglePrivateMode() {
+  privateMode = !privateMode;
+  fetch('api/settings/private/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({private_mode: privateMode})
+  }).then(function(){
+    var btn = document.getElementById('private-toggle');
+    btn.classList.toggle('active', privateMode);
+    loadTools();
   });
 }
 
@@ -1366,6 +1641,30 @@ function appendToolResult(msgEl, name, result) {
   }
 }
 
+function appendToolImage(msgEl, b64) {
+  // Render a tool-produced image (screenshot, fetched image, generated
+  // image) inline in the assistant's message. Click toggles full-size in
+  // a new tab so cropped thumbnails stay readable.
+  if (!msgEl || !b64) return;
+  var imgs = msgEl.querySelector('.tool-images');
+  if (!imgs) {
+    imgs = document.createElement('div');
+    imgs.className = 'tool-images';
+    msgEl.appendChild(imgs);
+  }
+  var img = new Image();
+  img.className = 'tool-image';
+  img.src = 'data:image/png;base64,' + b64;
+  img.title = 'click to open at full size';
+  img.addEventListener('click', function() {
+    var w = window.open();
+    if (w) w.document.body.innerHTML = '<img src="' + img.src + '" style="max-width:100%">';
+  });
+  imgs.appendChild(img);
+  var hist = document.getElementById('chat-history');
+  hist.scrollTop = hist.scrollHeight;
+}
+
 function appendError(msgEl, text) {
   if (msgEl) {
     removeThinkingDots(msgEl);
@@ -1400,7 +1699,7 @@ function sendChat(opts) {
   fetch('api/send', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({session_id: currentSessionId, history: chatHistory, message: msg, replace_history: replaceHistory})
+    body: JSON.stringify({session_id: currentSessionId, history: chatHistory, message: msg, replace_history: replaceHistory, private_mode: privateMode})
   }).then(function(response) {
     if (!response.ok) {
       return response.text().then(function(t) { throw new Error(t || 'HTTP ' + response.status); });
@@ -1425,6 +1724,8 @@ function sendChat(opts) {
         appendToolCall(assistantEl, data.name, data.args);
       } else if (eventType === 'tool_result') {
         appendToolResult(assistantEl, data.name, data.result);
+      } else if (eventType === 'image' && data.data) {
+        appendToolImage(assistantEl, data.data);
       } else if (eventType === 'done') {
         finishChat(true);
       } else if (eventType === 'error') {
@@ -1449,13 +1750,21 @@ function sendChat(opts) {
         var finalText = '';
         if (pre) {
           finalText = pre.textContent.replace(/\s+$/, '');
+          // Guard against binary / garbled LLM output — treat as empty.
+          if (isGarbageText(finalText)) {
+            finalText = '';
+          }
           if (typeof renderMarkdown === 'function' && finalText) {
             var div = document.createElement('div');
             div.className = 'content md';
             div.innerHTML = renderMarkdown(finalText);
             pre.parentNode.replaceChild(div, pre);
-          } else {
+          } else if (finalText) {
             pre.textContent = finalText;
+          } else {
+            pre.textContent = '(empty response)';
+            pre.style.color = 'var(--text-mute)';
+            pre.style.fontStyle = 'italic';
           }
         }
         if (success && finalText) addAssistantActions(assistantEl, finalText);
@@ -1478,7 +1787,8 @@ function sendChat(opts) {
     function pump() {
       return reader.read().then(function(result) {
         if (result.done) {
-          // Stream ended without explicit done — treat as done if we got content.
+          // Stream ended without explicit done — treat as done if we got content,
+          // otherwise finish as failure so the UI unsticks.
           if (sending) finishChat(fullReply.length > 0);
           return;
         }
@@ -1562,6 +1872,7 @@ function handleAttachFile(event) {
   event.target.value = '';
 }
 
+loadPrivateMode();
 loadTools();
 loadSessions();
 // Default-collapse the sidebar on narrow viewports so the chat gets

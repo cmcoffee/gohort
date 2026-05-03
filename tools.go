@@ -7,11 +7,17 @@ package main
 import (
 	. "github.com/cmcoffee/gohort/core"
 
+	_ "github.com/cmcoffee/gohort/tools/browser"
 	_ "github.com/cmcoffee/gohort/tools/calculate"
+	_ "github.com/cmcoffee/gohort/tools/comedian"
 	_ "github.com/cmcoffee/gohort/tools/datemath"
 	_ "github.com/cmcoffee/gohort/tools/email"
+	_ "github.com/cmcoffee/gohort/tools/files"
+	_ "github.com/cmcoffee/gohort/tools/imagefetch"
+	_ "github.com/cmcoffee/gohort/tools/localexec"
 	_ "github.com/cmcoffee/gohort/tools/localtime"
-	_ "github.com/cmcoffee/gohort/tools/mockshell"
+	_ "github.com/cmcoffee/gohort/tools/silent"
+	_ "github.com/cmcoffee/gohort/tools/videodl"
 	_ "github.com/cmcoffee/gohort/tools/websearch"
 )
 

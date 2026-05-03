@@ -21,6 +21,7 @@ func init() { RegisterChatTool(new(DateMathTool)) }
 type DateMathTool struct{}
 
 func (t *DateMathTool) Name() string { return "date_math" }
+func (t *DateMathTool) Caps() []Capability { return nil } // pure transform — no side effects
 
 func (t *DateMathTool) Desc() string {
 	return `Compute date arithmetic. Two operations:
