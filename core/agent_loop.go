@@ -657,10 +657,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 }
 
 // parseTextToolCall attempts to extract a tool call from text content when the
-// model doesn't use structured tool calling. It first looks for JSON objects
-// with "name" and "parameters"/"arguments" keys. If that fails, it falls back
-// to scanning for known tool names mentioned in natural language (common with
-// thinking models that reason about tool calls without emitting them).
+// model doesn't use structured tool calling. Tries three forms in order:
+//
+//   1. XML-style: <function=name><parameter=key>value</parameter></function>,
+//      optionally wrapped in <tool_call> tags. Emitted by Llama-3 / Qwen /
+//      Hermes-style instruction tunes even in native function-calling mode.
+//   2. JSON: {"name": "...", "parameters": {...}} or {"name": "...", "arguments": {...}}.
+//   3. Natural-language tool name in prose (last-resort fallback).
 //
 // toolDefs is consulted to validate that any synthesized call satisfies the
 // tool's `Required` fields. If the extractor produces a call missing required
@@ -674,9 +677,35 @@ func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		return nil
 	}
 
-	// Try structured JSON tool call first. JSON-emitted calls usually
-	// have proper args, so we still validate required fields below
-	// rather than trusting them blindly.
+	// XML-style first — when the model emits this form, the JSON
+	// parser would otherwise see "{" inside the body and try (and
+	// fail) to JSON-parse the whole thing. Detect by the function tag.
+	if strings.Contains(content, "<function=") {
+		// If wrapped in <tool_call>...</tool_call>, peel that off first
+		// so the inner XML parser sees the function/parameter pairs
+		// directly. Some models emit with wrapper, some without.
+		body := content
+		if start := strings.Index(body, "<tool_call>"); start >= 0 {
+			if end := strings.Index(body, "</tool_call>"); end > start {
+				body = strings.TrimSpace(body[start+len("<tool_call>") : end])
+			}
+		}
+		if name, args := parseFunctionTagToolCall(body); name != "" {
+			if _, ok := handlers[name]; ok {
+				tc := &ToolCall{
+					ID:   fmt.Sprintf("text_%s", UUIDv4()),
+					Name: name,
+					Args: args,
+				}
+				if hasRequired(tc, toolDefs) {
+					return tc
+				}
+				Debug("[agent_loop] dropping XML-style tool call '%s' — missing required args", name)
+			}
+		}
+	}
+
+	// JSON form. Validate required fields below rather than trusting blindly.
 	if tc := parseJSONToolCall(content, handlers); tc != nil {
 		if hasRequired(tc, toolDefs) {
 			return tc
@@ -684,7 +713,7 @@ func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		Debug("[agent_loop] dropping synthesized JSON tool call '%s' — missing required args", tc.Name)
 	}
 
-	// Fallback: scan for a known tool name mentioned in the text.
+	// Last-resort: scan for a known tool name mentioned in the text.
 	// Thinking models often reason like "call run_healthcheck with args ..."
 	// without emitting the actual structured call.
 	if tc := parseNaturalToolCall(content, handlers); tc != nil {
