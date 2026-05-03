@@ -96,15 +96,37 @@ func (t *AttachFileTool) RunWithSession(args map[string]any, sess *ToolSession) 
 		displayName = filepath.Base(rel)
 	}
 
-	att := FileAttachment{
-		Name:     displayName,
-		MimeType: mime,
-		Data:     base64.StdEncoding.EncodeToString(data),
-		Size:     len(data),
+	// Route by MIME so each delivery channel gets the right shape:
+	//
+	//   image/*  → sess.Images (inline-rendered in chat, attached via
+	//              bridge in phantom)
+	//   audio/*, video/* → sess.Videos (delivered via the bridge's
+	//              video-attachment path on phantom; iMessage shows
+	//              audio as an audio bubble, video inline). Reuses the
+	//              existing bridge machinery instead of waiting for
+	//              generic-file support.
+	//   anything else → sess.Files (chat: download link; phantom:
+	//              dropped today with a warning log line, until the
+	//              bridge protocol grows generic-file support).
+	channel := "file"
+	switch {
+	case strings.HasPrefix(mime, "image/"):
+		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
+		channel = "image"
+	case strings.HasPrefix(mime, "audio/"), strings.HasPrefix(mime, "video/"):
+		sess.AppendVideo(base64.StdEncoding.EncodeToString(data))
+		channel = "audio/video"
+	default:
+		sess.AppendFile(FileAttachment{
+			Name:     displayName,
+			MimeType: mime,
+			Data:     base64.StdEncoding.EncodeToString(data),
+			Size:     len(data),
+		})
 	}
-	sess.AppendFile(att)
 
-	return fmt.Sprintf("Attached %q (%s, %s). The user will receive it as a download.", displayName, mime, humanSize(info.Size())), nil
+	return fmt.Sprintf("Attached %q (%s, %s) via %s channel. The user will receive it as an attachment.",
+		displayName, mime, humanSize(info.Size()), channel), nil
 }
 
 // humanSize formats a byte count compactly for the LLM-visible result.

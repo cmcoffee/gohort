@@ -1141,13 +1141,33 @@ func _set_db_locker() {
 }
 
 // _unlock_db decrypts or generates a database padlock.
+//
+// On first run (db_locker not yet stored), the current MAC is captured
+// AND immediately wrapped + persisted via the random-key trick so
+// subsequent restarts recover the same MAC bytes regardless of
+// net.Interfaces() enumeration order. Without this, get_mac_addr()
+// can return a different MAC each restart (Docker, libvirt, USB nics
+// shifting positions), and any value written via CryptSet under the
+// previous MAC fails to decrypt — the user-visible symptom is "my
+// secret survived this session but not the next restart."
+//
+// The wrapping is the same shape _set_db_locker uses (random || encrypt(mac, random)),
+// so existing tooling that toggles via that function still interoperates.
 func _unlock_db() (padlock []byte) {
 	if dbs := global.cfg.Get("do_not_modify", "db_locker"); len(dbs) > 0 {
 		code := []byte(dbs[0:40])
 		db_lock_code := []byte(dbs[40:])
 		padlock = decrypt(db_lock_code, code)
-	} else {
-		padlock = get_mac_addr()
+		return
+	}
+	// First call ever — capture current MAC, wrap it, persist. From
+	// now on, the padlock is recovered from the wrapping regardless of
+	// what net.Interfaces() returns.
+	padlock = get_mac_addr()
+	if len(padlock) > 0 {
+		random := RandBytes(40)
+		db_lock_code := string(encrypt(padlock, random))
+		Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
 	}
 	return
 }
