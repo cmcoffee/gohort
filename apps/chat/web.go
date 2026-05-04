@@ -57,6 +57,8 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/sessions/archive/", T.handleSessionArchive)
 	sub.HandleFunc("/api/settings/private", T.handlePrivateModeGet)
 	sub.HandleFunc("/api/settings/private/set", T.handlePrivateModeSet)
+	sub.HandleFunc("/api/settings/explorer", T.handleAPIExplorerModeGet)
+	sub.HandleFunc("/api/settings/explorer/set", T.handleAPIExplorerModeSet)
 	MountSubMux(mux, prefix, sub)
 }
 
@@ -203,6 +205,37 @@ func (T *ChatAgent) handlePrivateModeSet(w http.ResponseWriter, r *http.Request)
 	AuthSetPrivateMode(T.DB, username, req.PrivateMode)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"private_mode": req.PrivateMode})
+}
+
+// handleAPIExplorerModeGet returns the current user's API-explorer-mode preference.
+func (T *ChatAgent) handleAPIExplorerModeGet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET required", http.StatusMethodNotAllowed)
+		return
+	}
+	username := sessionUsername(r)
+	mode := AuthGetAPIExplorerMode(T.DB, username)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"api_explorer_mode": mode})
+}
+
+// handleAPIExplorerModeSet updates the current user's API-explorer-mode preference.
+func (T *ChatAgent) handleAPIExplorerModeSet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		APIExplorerMode bool `json:"api_explorer_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	username := sessionUsername(r)
+	AuthSetAPIExplorerMode(T.DB, username, req.APIExplorerMode)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"api_explorer_mode": req.APIExplorerMode})
 }
 
 // chatRequest is the wire format from the frontend.
@@ -507,6 +540,20 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// returns whoever was president when the model was last trained.
 	today := time.Now().Format("Monday, January 2, 2006")
 	systemPrompt := fmt.Sprintf("Today is %s.\n\n", today) + T.SystemPrompt() + buildProcedurePrompt(T.DB)
+	// API-explorer mode: tighter focus on iterating against APIs and
+	// promoting working patterns to persistent tools. Bigger round
+	// budget (the LLM needs room to retry against 4xx errors and
+	// land on the right shape) plus an appended directive that
+	// reframes the conversation as a tool-builder workshop.
+	if AuthGetAPIExplorerMode(T.DB, sessionUsername(r)) {
+		maxRounds = 30
+		systemPrompt += "\n\nAPI EXPLORER MODE — you are operating as a tool-builder. The user's intent is to discover the working shape of an API and SAVE it for future use, not just answer a one-off question.\n" +
+			"- For any non-trivial API call, expect to iterate: try a request, READ the error response carefully (it usually names the wrong field), adjust the body, retry. 2-5 iterations is normal.\n" +
+			"- AS SOON AS you land on a working request (any 2xx response), IMMEDIATELY call create_api_tool with persist=true to save the working shape — name it descriptively, hardcode the URL/method/body template with the working schema, expose only the variable bits as params. Tell the user which tool you saved.\n" +
+			"- Do NOT consider the work done after a single successful call — the SAVING is the deliverable. A successful call without a saved tool means the user has to re-discover next time. Saving is mandatory after success.\n" +
+			"- Use send_status frequently so the user can see your iteration progress (each retry, each schema discovery).\n" +
+			"- Use keep_going when you need another round to plan the next attempt without acting yet.\n"
+	}
 	promptTools := agent.PromptTools
 
 	// rebuildCatalog merges static `tools` with any session-scoped temp
@@ -1188,6 +1235,7 @@ const chatBody = `
       <span class="app-title">Chat</span>
       <h1 id="chat-title" style="display:none">Chat — Tool Tester</h1>
       <button id="private-toggle" title="Toggle private mode (no internet tools)" onclick="togglePrivateMode()">Private</button>
+      <button id="explorer-toggle" title="API Explorer mode: 30-round budget + LLM saves working API patterns as persistent tools" onclick="toggleExplorerMode()">Explorer</button>
       <span id="tools-summary" onclick="toggleTools()">Loading tools…</span>
     </div>
     <div id="tools-list"></div>
@@ -1622,6 +1670,28 @@ function togglePrivateMode() {
     var btn = document.getElementById('private-toggle');
     btn.classList.toggle('active', privateMode);
     loadTools();
+  });
+}
+
+var explorerMode = false;
+
+function loadExplorerMode() {
+  fetch('api/settings/explorer').then(function(r){return r.json()}).then(function(data){
+    explorerMode = !!data.api_explorer_mode;
+    var btn = document.getElementById('explorer-toggle');
+    if (btn) btn.classList.toggle('active', explorerMode);
+  });
+}
+
+function toggleExplorerMode() {
+  explorerMode = !explorerMode;
+  fetch('api/settings/explorer/set', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({api_explorer_mode: explorerMode})
+  }).then(function(){
+    var btn = document.getElementById('explorer-toggle');
+    if (btn) btn.classList.toggle('active', explorerMode);
   });
 }
 
@@ -2063,6 +2133,7 @@ function handleAttachFile(event) {
 }
 
 loadPrivateMode();
+loadExplorerMode();
 loadTools();
 loadSessions();
 // Default-collapse the sidebar on narrow viewports so the chat gets

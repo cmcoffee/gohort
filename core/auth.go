@@ -235,6 +235,7 @@ type AuthUser struct {
 	Apps          []string `json:"apps,omitempty"`     // allowed app paths; empty = use defaults
 	NotifyDefault bool     `json:"notify_default,omitempty"` // persistent notify preference
 	PrivateMode   bool     `json:"private_mode,omitempty"`   // persistent chat private-mode preference
+	APIExplorerMode bool   `json:"api_explorer_mode,omitempty"` // persistent chat api-explorer preference
 }
 
 // AuthSetNotifyDefault updates the user's persistent notify preference.
@@ -274,6 +275,28 @@ func AuthGetPrivateMode(db Database, username string) bool {
 		return false
 	}
 	return user.PrivateMode
+}
+
+// AuthSetAPIExplorerMode updates the user's persistent chat API-explorer preference.
+// API-explorer mode bumps the round budget and nudges the LLM toward
+// iterating against APIs and saving discovered patterns as persistent
+// tools — meant for figuring out unfamiliar API shapes.
+func AuthSetAPIExplorerMode(db Database, username string, enabled bool) {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	user.APIExplorerMode = enabled
+	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthGetAPIExplorerMode returns the user's persistent chat API-explorer preference.
+func AuthGetAPIExplorerMode(db Database, username string) bool {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return false
+	}
+	return user.APIExplorerMode
 }
 
 // sessionDuration returns the configured session lifetime.
