@@ -298,6 +298,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 	var lastResp *Response
 	prevHadToolCalls := false
+	// promiseCorrectionsTotal caps how many times we'll re-prompt the
+	// model for promising action without taking it. Two attempts is
+	// enough to nudge a stuck Qwen turn; further attempts would burn
+	// rounds without progress.
+	promiseCorrectionsTotal := 0
+	const maxPromiseCorrections = 2
 
 	for round := 1; round <= maxRounds; round++ {
 		// Bail immediately on cancellation so the loop doesn't burn another
@@ -500,8 +506,24 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			}
 		}
 
-		// If still no tool calls, the LLM is done reasoning.
+		// If still no tool calls, the LLM is done reasoning — UNLESS
+		// the content text is a promise of action without a tool call.
+		// "Let me try X." / "One moment, pulling that up." / "I'll
+		// figure this out properly." with no actual tool fired is the
+		// canonical Qwen-style failure mode where the user sees only
+		// stated intent and nothing happens. When detected, inject a
+		// corrective user message and re-loop instead of returning,
+		// up to maxPromiseCorrections times per session.
 		if len(resp.ToolCalls) == 0 {
+			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && containsActionPromise(resp.Content) {
+				Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
+				history = append(history, Message{
+					Role:    "user",
+					Content: "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
+				})
+				promiseCorrectionsTotal++
+				continue
+			}
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{
 					Round:   round,
@@ -736,6 +758,81 @@ func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		Debug("[agent_loop] dropping synthesized natural-language tool call '%s' — could not extract required args from prose", tc.Name)
 	}
 	return nil
+}
+
+// containsActionPromise reports whether content includes an explicit
+// promise of action — phrases the LLM emits when it intends to call a
+// tool but doesn't actually emit the call. Detection is conservative:
+// only matches forms that almost always indicate "I'm about to do
+// something" and never natural conversational closes ("let me know if
+// you have other questions" wouldn't trigger because of the "know if").
+//
+// Scope: matches the trailing portion of content (last ~200 chars)
+// since the action-promise is usually the closing sentence, and a
+// promise-shaped phrase mid-text followed by a real conclusion is
+// usually fine. Case-insensitive.
+func containsActionPromise(content string) bool {
+	c := strings.ToLower(strings.TrimSpace(content))
+	if c == "" {
+		return false
+	}
+	// Look at trailing 200 chars; longer content with a closing
+	// promise is the typical failure shape.
+	if len(c) > 200 {
+		c = c[len(c)-200:]
+	}
+	// Phrase set chosen to match "stated intent to act" and avoid
+	// natural conversational closes. Each must be followed by some
+	// hint of an upcoming action ("try", "pull", "check", etc.) or
+	// a temporal hold ("moment", "second", "sec").
+	phrases := []string{
+		"let me try",
+		"let me figure",
+		"let me pull",
+		"let me look up",
+		"let me check",
+		"let me see if",
+		"let me get",
+		"let me find",
+		"let me grab",
+		"let me look",
+		"let me actually",
+		"let me first",
+		"i'll figure",
+		"i'll pull",
+		"i'll check",
+		"i'll look",
+		"i'll try",
+		"i'll grab",
+		"i'll fetch",
+		"one moment",
+		"one sec",
+		"give me a moment",
+		"give me a sec",
+		"hold on",
+		"stand by",
+		"hang on",
+		"hold tight",
+		"bear with me",
+		"working on it",
+		"on it",
+	}
+	for _, p := range phrases {
+		if strings.Contains(c, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// truncForLog shortens s to n chars for log preview, replacing newlines
+// so the line stays one row.
+func truncForLog(s string, n int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // hasRequired reports whether tc.Args contains every key listed in the

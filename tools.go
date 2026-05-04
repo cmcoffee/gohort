@@ -15,6 +15,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/email"
 	_ "github.com/cmcoffee/gohort/tools/files"
 	_ "github.com/cmcoffee/gohort/tools/imagefetch"
+	_ "github.com/cmcoffee/gohort/tools/keepgoing"
 	_ "github.com/cmcoffee/gohort/tools/localexec"
 	_ "github.com/cmcoffee/gohort/tools/localtime"
 	_ "github.com/cmcoffee/gohort/tools/orchestrator"
