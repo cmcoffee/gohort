@@ -561,6 +561,27 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				promiseCorrectionsTotal++
 				continue
 			}
+
+			// Semantic fallback: the heuristic above is conservative and
+			// misses creative phrasings ("I'll write a raw UDP-based
+			// client...", "Let me try a different approach — I'll
+			// implement..."). When the message has any forward-looking
+			// signal but didn't hit the heuristic, ask the worker LLM to
+			// classify intent. One extra cheap call per exit, gated on
+			// remaining promise-correction budget so a stubborn judge
+			// can't loop forever. Skipped entirely when SharedWorkerLLM
+			// isn't wired (CLI tools, tests).
+			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && looksForwardLooking(resp.Content) {
+				if judgeSaysContinue(ctx, resp.Content) {
+					Debug("[agent_loop] judge says continue — re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
+					history = append(history, Message{
+						Role:    "user",
+						Content: "Your reply implies you intend to take another action (write code, make a request, try a different approach) but you called no tool to actually do it. Either call the tool now to follow through, or revise your reply to clearly state what you've decided not to do and why. Do NOT promise further action without taking it.",
+					})
+					promiseCorrectionsTotal++
+					continue
+				}
+			}
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{
 					Round:   round,
@@ -935,6 +956,84 @@ func containsActionPromise(content string) bool {
 		}
 	}
 	return false
+}
+
+// looksForwardLooking is the broader, cheaper companion to
+// containsActionPromise. Where containsActionPromise matches narrow,
+// almost-always-failing phrases ("let me try", "one moment"),
+// looksForwardLooking matches *any* signal that the LLM might be
+// stating an intention. It's the gate before invoking the judge LLM —
+// no point paying for a classifier call on a message that has no
+// forward-looking language at all.
+//
+// False positives here are fine (the judge sorts them out); false
+// negatives mean the judge never runs, so phrases here should err on
+// the side of "could be an intent." Scope is the trailing ~300 chars
+// since intentions usually live in the closing sentence.
+func looksForwardLooking(content string) bool {
+	c := strings.ToLower(strings.TrimSpace(content))
+	if len(c) < 30 {
+		return false
+	}
+	if len(c) > 300 {
+		c = c[len(c)-300:]
+	}
+	cues := []string{
+		"i'll ", "i will ", "i'm going to ", "i am going to ",
+		"i'd ", "i would ",
+		"let me ", "let's ",
+		"next, i", "next i'll", "next step",
+		"going to write", "going to try", "going to use",
+		"different approach", "another approach",
+		"try a different", "instead i'll", "instead i will",
+		"i'll implement", "i'll write", "i'll create", "i'll build",
+		"i'll set up", "i'll set", "i'll attempt",
+		"i'll need to", "i would need to", "i'll have to",
+		"i can write", "i can build", "i can create",
+		"will write", "will create", "will build",
+		"need to install", "need to set up",
+	}
+	for _, cue := range cues {
+		if strings.Contains(c, cue) {
+			return true
+		}
+	}
+	return false
+}
+
+// judgeSaysContinue asks SharedWorkerLLM to classify whether the
+// assistant's outgoing message implies further action it didn't
+// actually take. Returns true only when the judge clearly says
+// "continue"; ambiguous, errored, or unconfigured cases default to
+// false (let the message ship). One short call per invocation; the
+// content is the only input — no tool catalog, no context — because
+// we're classifying the message itself, not deciding next steps.
+func judgeSaysContinue(ctx context.Context, content string) bool {
+	llm := SharedWorkerLLM()
+	if llm == nil {
+		return false
+	}
+	excerpt := strings.TrimSpace(content)
+	if len(excerpt) > 1500 {
+		excerpt = excerpt[len(excerpt)-1500:]
+	}
+	sys := "You classify assistant replies. Read the reply and decide: does the assistant imply it intends to take another concrete action it has NOT yet taken? " +
+		"Examples of 'continue': 'I'll write a script that...', 'Let me try a different approach — I'll implement...', 'Next, I'll fetch the data...'. " +
+		"Examples of 'done': a final answer, a clean refusal, a question to the user, an explanation that completes the task. " +
+		"Reply with exactly one word: continue OR done."
+	user := "Reply to classify:\n\n" + excerpt
+	f := false
+	resp, err := llm.Chat(ctx,
+		[]Message{{Role: "user", Content: user}},
+		WithSystemPrompt(sys), WithThink(f), WithMaxTokens(8),
+	)
+	if err != nil || resp == nil {
+		Debug("[agent_loop] judge call failed: %v", err)
+		return false
+	}
+	verdict := strings.ToLower(strings.TrimSpace(resp.Content))
+	verdict = strings.Trim(verdict, ".!?\"' ")
+	return verdict == "continue"
 }
 
 // nearestToolName returns the registered tool whose name shares the

@@ -1,15 +1,13 @@
-// Package keepgoing provides the keep_going chat tool. It's a control-
-// flow signal — when the LLM needs another round to take action but
-// isn't ready to call the actual tool yet (still gathering context,
-// figuring out a body shape, deciding which credential to use), it
-// calls keep_going. The tool returns a "Continue with your plan"
-// message and the agent loop runs another round.
+// Package keepgoing provides the keep_going chat tool — the proactive
+// "I have more work to do" signal. When the LLM knows it needs another
+// round but isn't ready to call the real tool yet (still planning, or
+// the next step depends on context the current round just produced),
+// it calls keep_going and the agent loop runs another round.
 //
-// Without this, the LLM's only way to signal "I'm not done" is to call
-// a real tool. When it has nothing to call yet (still planning), it
-// often emits text content like "let me try X" and the loop ends —
-// because there's content but no tool call. keep_going gives the LLM
-// a legitimate empty-handed continuation.
+// This is the cheap path. There's also a reactive judge in the agent
+// loop that catches cases where the LLM trailed off into "let me try
+// X" without signalling continuation; keep_going is just the explicit,
+// no-extra-call version.
 //
 // Caps: nil (control flow only, no side effects).
 
@@ -30,7 +28,7 @@ func (t *KeepGoingTool) Name() string         { return "keep_going" }
 func (t *KeepGoingTool) Caps() []Capability   { return nil }
 
 func (t *KeepGoingTool) Desc() string {
-	return "Signal that you need another round to take action, when you're not ready to call the actual tool yet (still planning, gathering context, deciding which credential to use). Calling keep_going returns a brief continuation message; the loop runs another round and you can call the real tool then. Use INSTEAD of saying 'let me try X' or 'one moment' in your reply text — that text reaches the user as if it's your final answer. keep_going keeps the conversation going invisibly. The reason param is optional but useful for your own next-round context."
+	return "Call when you know you have more work to do but aren't ready to call the real tool yet (still planning the next step, or the next call depends on what you just learned). Returns a brief continuation message; the loop runs another round so you can take the real action then. The reason param is a private note to your next-round self."
 }
 
 func (t *KeepGoingTool) Params() map[string]ToolParam {
