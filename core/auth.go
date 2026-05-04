@@ -258,9 +258,17 @@ func AuthGetNotifyDefault(db Database, username string) bool {
 }
 
 // AuthSetPrivateMode updates the user's persistent chat private-mode preference.
+// If no user record exists yet (e.g. unauthenticated session, or pre-auth
+// startup) the write is a no-op AND a warning is logged so silent
+// non-persistence is visible in the operator's log.
 func AuthSetPrivateMode(db Database, username string, enabled bool) {
+	if username == "" {
+		Log("[auth] AuthSetPrivateMode: empty username, preference NOT persisted")
+		return
+	}
 	var user AuthUser
 	if !db.Get(AuthTable, "user:"+username, &user) {
+		Log("[auth] AuthSetPrivateMode: user %q not found, preference NOT persisted (sign in first)", username)
 		return
 	}
 	user.PrivateMode = enabled
@@ -282,8 +290,13 @@ func AuthGetPrivateMode(db Database, username string) bool {
 // iterating against APIs and saving discovered patterns as persistent
 // tools — meant for figuring out unfamiliar API shapes.
 func AuthSetAPIExplorerMode(db Database, username string, enabled bool) {
+	if username == "" {
+		Log("[auth] AuthSetAPIExplorerMode: empty username, preference NOT persisted")
+		return
+	}
 	var user AuthUser
 	if !db.Get(AuthTable, "user:"+username, &user) {
+		Log("[auth] AuthSetAPIExplorerMode: user %q not found, preference NOT persisted (sign in first)", username)
 		return
 	}
 	user.APIExplorerMode = enabled

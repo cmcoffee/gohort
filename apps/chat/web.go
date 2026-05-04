@@ -1001,13 +1001,13 @@ body.select-mode .session-item .si-actions { display: none; }
 #chat-header h1 { font-size: 1rem; margin: 0; color: var(--text-hi); }
 #tools-summary { color: var(--text-mute); font-size: 0.85rem; margin-left: auto; cursor: pointer; }
 #tools-summary:hover { color: var(--text-hi); }
-#private-toggle {
+#private-toggle, #explorer-toggle {
   background: transparent; border: 1px solid var(--border); color: var(--text-mute);
   font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer;
   white-space: nowrap;
 }
-#private-toggle:hover { color: var(--text-hi); border-color: var(--text-mute); }
-#private-toggle.active { color: var(--accent); border-color: var(--accent); }
+#private-toggle:hover, #explorer-toggle:hover { color: var(--text-hi); border-color: var(--text-mute); }
+#private-toggle.active, #explorer-toggle.active { color: var(--accent); border-color: var(--accent); }
 #tools-list { display: none; padding: 0.5rem 1rem; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--text-mute); max-height: 200px; overflow-y: auto; }
 #tools-list .tool { padding: 0.2rem 0; }
 #tools-list .tool b { color: var(--text); margin-right: 0.5rem; }
