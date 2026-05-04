@@ -695,6 +695,37 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		}
 	}
 
+	// Last-ditch rescue: if we still have empty content after the
+	// lookback scan, do ONE bonus LLM call instructing the model to
+	// produce a final answer NOW from what's already in history. No
+	// tools available on this call — content-only forced. Catches the
+	// "stuck in tool-call thrashing, hit MaxRounds with nothing to
+	// show the user" failure that the lookback rescue can't help
+	// with (when there's no clean assistant content anywhere recent).
+	if lastResp != nil && strings.TrimSpace(lastResp.Content) == "" && T.LLM != nil {
+		Debug("[agent_loop] empty after lookback rescue — issuing a forced-final-answer call with no tools")
+		wrapHistory := append([]Message{}, history...)
+		wrapHistory = append(wrapHistory, Message{
+			Role: "user",
+			Content: "Your previous response had no content for the user. Stop calling tools. Produce a final answer NOW from whatever you've gathered so far — even if incomplete, summarize what you found and what you tried. The user is waiting and seeing nothing. Just text, no tool calls.",
+		})
+		// No-tools, no-think final call so the model has nothing to
+		// chase — must produce text. Inherit RouteKey for telemetry.
+		var wrapOpts []ChatOption
+		wrapOpts = append(wrapOpts, WithSystemPrompt(systemPrompt))
+		f := false
+		wrapOpts = append(wrapOpts, WithThink(f), WithMaxTokens(2048))
+		if cfg.RouteKey != "" {
+			wrapOpts = append(wrapOpts, WithRouteKey(cfg.RouteKey))
+		}
+		if forced, err := T.LLM.Chat(ctx, wrapHistory, wrapOpts...); err == nil && forced != nil && strings.TrimSpace(forced.Content) != "" {
+			lastResp = forced
+			Debug("[agent_loop] forced-final-answer rescue produced %d chars", len(forced.Content))
+		} else {
+			Debug("[agent_loop] forced-final-answer rescue produced no usable content (err=%v)", err)
+		}
+	}
+
 	return lastResp, history, nil
 }
 
