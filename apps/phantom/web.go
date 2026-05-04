@@ -43,6 +43,11 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/memory/", T.handleMemory)
 	sub.HandleFunc("/api/conversation-clear/", T.handleConversationClear)
 
+	// Mobile dashboard at /phantom/mobile + its panic-button endpoint.
+	sub.HandleFunc("/mobile", T.handleMobileDashboard)
+	sub.HandleFunc("/mobile/", T.handleMobileDashboard)
+	sub.HandleFunc("/api/mobile/panic", T.handleMobilePanic)
+
 	// Agent endpoints (API key auth, no session needed).
 	sub.HandleFunc("/api/hook", T.handleHook)
 	sub.HandleFunc("/api/poll", T.handlePoll)
