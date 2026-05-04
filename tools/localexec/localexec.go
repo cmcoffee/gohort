@@ -28,7 +28,11 @@ const (
 	maxOutput = 10000
 )
 
-func init() { RegisterChatTool(new(RunLocalTool)) }
+// RunLocalTool is no longer registered — the consolidated `local`
+// grouped tool (in tools/files/local_grouped.go) provides the run
+// action via the same RunSandboxedShell path. Implementation kept
+// in case anything else calls it directly.
+func init() {}
 
 // RunLocalTool executes a shell command inside the caller's workspace
 // sandbox. Mandatory user confirmation per call.

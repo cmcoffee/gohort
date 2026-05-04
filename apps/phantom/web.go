@@ -262,7 +262,7 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	out = append(out,
-		toolInfo{Name: "save_memory", Desc: "Remember facts about the person across conversations."},
+		toolInfo{Name: "memory", Desc: "Manage per-conversation memory: save / list / delete saved facts about the person. Call with action=help for usage."},
 		toolInfo{Name: "schedule_callback", Desc: "Schedule a follow-up message at a specified time."},
 		toolInfo{Name: "follow_up", Desc: "Send a brief follow-up message after a short delay (1–5 seconds)."},
 	)
@@ -1181,7 +1181,7 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		var registryNames []string
 		for _, n := range toolNames {
 			switch n {
-			case "save_memory", "schedule_callback", "follow_up":
+			case "memory", "save_memory", "schedule_callback", "follow_up":
 				// phantom-specific — handled below
 			case "generate_image":
 				if ImageGenerationAvailable() {
@@ -1246,8 +1246,11 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		}
 	}
 
-	if toolEnabled("save_memory") {
-		tools = append(tools, saveMemoryToolDef(T.DB, chatID))
+	// Memory tool: accept either the new "memory" name or the legacy
+	// "save_memory" entry for backward compat with existing conv
+	// EnabledTools lists. Both expose the same grouped tool now.
+	if toolEnabled("memory") || toolEnabled("save_memory") {
+		tools = append(tools, memoryGroupedToolDef(T.DB, chatID))
 	}
 	if toolEnabled("follow_up") {
 		tools = append(tools, followUpToolDef(T.DB, chatID, handle))
@@ -1412,7 +1415,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		"Current date and time: %s\n\nYour name is %s. The person messaging you is %s.\n\n%s%s%s\n\n"+
 			"When you know someone's name, use it naturally in conversation. Never use more than one emoji in a message, and use them sparingly. "+
 			"Keep responses varied — avoid falling into repetitive patterns of jokes or phrases even across a long conversation. "+
-			"When you learn something worth remembering about the person — their name, preferences, relationships, or important facts — use the save_memory tool before replying. "+
+			"When you learn something worth remembering about the person — their name, preferences, relationships, or important facts — call memory(action=\"save\", note=\"...\") before replying. "+
 			"When asked about something you can look up or do with a tool, use the tool — never say you can't do something if a tool can do it. "+
 			"Your text replies must be plain text only — no markdown, no bullet points, no headers. This is a text message conversation.",
 		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"),

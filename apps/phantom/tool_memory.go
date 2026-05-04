@@ -53,33 +53,121 @@ func memoryBlock(db Database, chatID string) string {
 	return b.String()
 }
 
-// saveMemoryToolDef returns a tool that lets the AI persist a note about the conversation.
-func saveMemoryToolDef(db Database, chatID string) AgentToolDef {
+// memoryGroupedToolDef returns an AgentToolDef that consolidates the
+// per-conversation memory operations (save, list, delete) into one
+// catalog entry with action discriminator. Replaces the individual
+// save_memory tool. action="help" returns the full usage spec the
+// brief description points the LLM at.
+func memoryGroupedToolDef(db Database, chatID string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "save_memory",
-			Description: "Save a note to your persistent memory for this conversation. " +
-				"Use this to remember important facts about the person — their name, preferences, relationships, or anything worth recalling in future conversations.",
+			Name:        "memory",
+			Description: `Manage your persistent per-conversation memory: save notes you want to remember about the person, list what's saved, delete entries no longer relevant. Call with action="help" for the full usage.`,
 			Parameters: map[string]ToolParam{
-				"note": {
-					Type:        "string",
-					Description: "The fact or detail to remember.",
-				},
+				"action": {Type: "string", Description: `Which sub-action: save | list | delete | help.`},
+				"note":   {Type: "string", Description: "(save) The fact or detail to remember."},
+				"index":  {Type: "integer", Description: "(delete) 1-based index from the most recent list call."},
 			},
-			Required: []string{"note"},
+			Required: []string{"action"},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			note, _ := args["note"].(string)
-			if note == "" {
-				return "", fmt.Errorf("note is required")
+			action := strings.TrimSpace(StringArg(args, "action"))
+			switch action {
+			case "", "help":
+				return memoryHelp(), nil
+			case "save":
+				return memorySave(db, chatID, args)
+			case "list":
+				return memoryList(db, chatID)
+			case "delete":
+				return memoryDelete(db, chatID, args)
+			default:
+				return "", fmt.Errorf("unknown action %q. valid: save, list, delete, help", action)
 			}
-			key := chatID + ":" + newID()
-			db.Set(memoryTable, key, phantomMemory{
-				Note:      note,
-				CreatedAt: now(),
-			})
-			Log("[phantom/memory] saved for %s: %q", chatID, note)
-			return "Memory saved.", nil
 		},
 	}
+}
+
+func memoryHelp() string {
+	return `memory — usage:
+
+  action="save" — persist a note. Required: note (string).
+    Use for facts about the person you'll want next conversation:
+    name, preferences, relationships, ongoing topics.
+
+  action="list" — show all saved memories for this conversation,
+    oldest first, with 1-based index numbers (use index N with
+    action="delete" to remove a specific entry).
+
+  action="delete" — remove a saved memory by index. Required: index
+    (1-based, from the most recent list call).
+
+  action="help" — show this usage spec.
+`
+}
+
+func memorySave(db Database, chatID string, args map[string]any) (string, error) {
+	note, _ := args["note"].(string)
+	if strings.TrimSpace(note) == "" {
+		return "", fmt.Errorf("note is required")
+	}
+	key := chatID + ":" + newID()
+	db.Set(memoryTable, key, phantomMemory{
+		Note:      note,
+		CreatedAt: now(),
+	})
+	Log("[phantom/memory] saved for %s: %q", chatID, note)
+	return "Memory saved.", nil
+}
+
+func memoryList(db Database, chatID string) (string, error) {
+	mems := loadMemories(db, chatID)
+	if len(mems) == 0 {
+		return "No memories saved for this conversation.", nil
+	}
+	var b strings.Builder
+	for i, m := range mems {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, m.Note)
+	}
+	return b.String(), nil
+}
+
+func memoryDelete(db Database, chatID string, args map[string]any) (string, error) {
+	idx, _ := args["index"].(float64) // JSON numbers come through as float64
+	if idx < 1 {
+		return "", fmt.Errorf("index is required and must be >= 1")
+	}
+	target := int(idx) - 1 // convert 1-based to 0-based
+	mems := loadMemories(db, chatID)
+	if target < 0 || target >= len(mems) {
+		return "", fmt.Errorf("index %d out of range (have %d memories)", int(idx), len(mems))
+	}
+	// loadMemories sorts oldest-first; find the matching key.
+	prefix := chatID + ":"
+	type kv struct {
+		key string
+		mem phantomMemory
+	}
+	var entries []kv
+	for _, k := range db.Keys(memoryTable) {
+		if strings.HasPrefix(k, prefix) {
+			var m phantomMemory
+			if db.Get(memoryTable, k, &m) {
+				entries = append(entries, kv{k, m})
+			}
+		}
+	}
+	// Sort same as loadMemories (oldest first).
+	for i := 1; i < len(entries); i++ {
+		for j := i; j > 0 && entries[j].mem.CreatedAt < entries[j-1].mem.CreatedAt; j-- {
+			entries[j], entries[j-1] = entries[j-1], entries[j]
+		}
+	}
+	if target >= len(entries) {
+		return "", fmt.Errorf("index %d out of range", int(idx))
+	}
+	removed := entries[target]
+	db.Unset(memoryTable, removed.key)
+	Log("[phantom/memory] deleted for %s: %q", chatID, removed.mem.Note)
+	return fmt.Sprintf("Deleted memory %d: %q", int(idx), removed.mem.Note), nil
 }

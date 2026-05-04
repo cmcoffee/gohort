@@ -34,12 +34,12 @@ const commandTimeout = 90 * time.Second
 // maxOutput is the per-call output cap, same as run_local.
 const maxOutput = 10000
 
-func init() {
-	RegisterChatTool(&CreateTempToolTool{})
-	RegisterChatTool(&ListTempToolsTool{})
-	RegisterChatTool(&DeleteTempToolTool{})
-	RegisterChatTool(&CreateAPIToolTool{})
-}
+// Individual tools (CreateTempToolTool, ListTempToolsTool,
+// DeleteTempToolTool, CreateAPIToolTool) are no longer registered —
+// the consolidated tool_def grouped tool (registered in tool_def.go)
+// covers all four. Their implementations remain so tool_def.go's
+// dispatchers can call them; just dropped from the catalog.
+func init() {}
 
 // ----------------------------------------------------------------------
 // create_temp_tool

@@ -33,11 +33,12 @@ const (
 	maxWriteBytes = 256 * 1024
 )
 
-func init() {
-	RegisterChatTool(new(ReadFileTool))
-	RegisterChatTool(new(ListDirectoryTool))
-	RegisterChatTool(new(WriteFileTool))
-}
+// Individual tools (ReadFileTool, ListDirectoryTool, WriteFileTool)
+// are no longer registered — the consolidated `local` grouped tool
+// (registered in local_grouped.go) covers all three plus delete + run.
+// Their implementations remain so local_grouped.go's dispatchers can
+// call them; just dropped from the catalog.
+func init() {}
 
 // --- read_file ---
 
