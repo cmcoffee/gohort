@@ -143,6 +143,19 @@ const phantomMobileCSS = `
 }
 .conv-tools-btn:active { background: var(--bg-2); }
 
+.history-panel {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.6rem 0.7rem; margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;
+  max-height: 60vh; overflow-y: auto;
+}
+.history-header { font-size: 0.72rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+.history-empty { font-size: 0.85rem; color: var(--text-mute); }
+.history-msg { padding: 0.35rem 0.45rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.35; }
+.history-msg.msg-user { background: var(--bg-2); }
+.history-msg.msg-ai { background: var(--bg-2); border-left: 3px solid var(--accent, #4f8cff); }
+.history-who { font-size: 0.7rem; color: var(--text-mute); margin-bottom: 0.15rem; }
+.history-body { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+
 .tool-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
 .tool-chip {
   font-size: 0.75rem; padding: 0.25rem 0.55rem; border-radius: 12px;
@@ -239,6 +252,14 @@ function paintConvs() {
     }
     row.appendChild(nameWrap);
 
+    var historyBtn = document.createElement('button');
+    historyBtn.className = 'conv-tools-btn';
+    historyBtn.textContent = 'History';
+    historyBtn.addEventListener('click', function(){
+      toggleHistoryPanel(c, row);
+    });
+    row.appendChild(historyBtn);
+
     var toolsBtn = document.createElement('button');
     toolsBtn.className = 'conv-tools-btn';
     toolsBtn.textContent = 'Tools';
@@ -251,6 +272,69 @@ function paintConvs() {
   });
 }
 
+// HISTORY_CONTEXT_LIMIT mirrors the recentMessages cap used by
+// processMessage (web.go) so the operator sees exactly what the LLM
+// has in its context window — no more, no less. If processMessage's
+// limit changes, update this constant in lockstep.
+var HISTORY_CONTEXT_LIMIT = 20;
+
+function toggleHistoryPanel(conv, row) {
+  // Toggle off if a history panel for this row is already open.
+  var existing = row.nextElementSibling;
+  if (existing && existing.classList.contains('history-panel')) {
+    existing.remove();
+    return;
+  }
+  // Close any other open expansion panels (history or tools) first.
+  document.querySelectorAll('.history-panel, .tool-chips').forEach(function(el){ el.remove(); });
+
+  var panel = document.createElement('div');
+  panel.className = 'history-panel';
+  panel.textContent = 'Loading…';
+  row.parentNode.insertBefore(panel, row.nextSibling);
+
+  fetch('api/conversation/' + encodeURIComponent(conv.chat_id))
+    .then(function(r){ return r.json(); })
+    .then(function(msgs){
+      panel.innerHTML = '';
+      var header = document.createElement('div');
+      header.className = 'history-header';
+      header.textContent = 'Last ' + HISTORY_CONTEXT_LIMIT + ' messages (LLM context window)';
+      panel.appendChild(header);
+
+      if (!msgs || !msgs.length) {
+        var empty = document.createElement('div');
+        empty.className = 'history-empty';
+        empty.textContent = 'No messages yet.';
+        panel.appendChild(empty);
+        return;
+      }
+
+      // Server returns up to 50; trim to LLM context window so the
+      // displayed slice matches what the model actually sees.
+      var slice = msgs.slice(-HISTORY_CONTEXT_LIMIT);
+      slice.forEach(function(m){
+        var wrap = document.createElement('div');
+        wrap.className = 'history-msg ' + (m.role === 'assistant' ? 'msg-ai' : 'msg-user');
+        var label = m.role === 'assistant' ? 'AI' : (m.display_name || m.handle || 'them');
+        var who = document.createElement('div');
+        who.className = 'history-who';
+        who.textContent = label + (m.timestamp ? ' · ' + relTime(m.timestamp) : '');
+        wrap.appendChild(who);
+
+        var body = document.createElement('div');
+        body.className = 'history-body';
+        body.textContent = m.text || '(no text)';
+        wrap.appendChild(body);
+
+        panel.appendChild(wrap);
+      });
+    })
+    .catch(function(err){
+      panel.textContent = 'Failed to load: ' + err;
+    });
+}
+
 function toggleToolsPanel(conv, row) {
   // Toggle a chip panel below the row.
   var existing = row.nextElementSibling;
@@ -258,8 +342,8 @@ function toggleToolsPanel(conv, row) {
     existing.remove();
     return;
   }
-  // Remove any other open chip panels first.
-  document.querySelectorAll('.tool-chips').forEach(function(el){ el.remove(); });
+  // Remove any other open expansion panels (history or tools) first.
+  document.querySelectorAll('.history-panel, .tool-chips').forEach(function(el){ el.remove(); });
 
   var panel = document.createElement('div');
   panel.className = 'tool-chips';
