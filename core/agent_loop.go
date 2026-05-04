@@ -497,6 +497,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if parsed != nil {
 				Debug("[agent_loop] parsed text-based tool call: %s", parsed.Name)
 				resp.ToolCalls = []ToolCall{*parsed}
+				// Strip the synthesized tool-call markup (XML <tool_call>
+				// or bare <function=...>...</function>) from resp.Content
+				// so subsequent rounds and the rescue path don't expose
+				// the markup OR any preceding narration to the user. The
+				// real action lives in the dispatched tool now; the text
+				// shouldn't trail along.
+				resp.Content = stripToolCallMarkup(resp.Content)
 				history[len(history)-1] = Message{
 					Role:      "assistant",
 					Content:   resp.Content,
@@ -758,6 +765,50 @@ func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		Debug("[agent_loop] dropping synthesized natural-language tool call '%s' — could not extract required args from prose", tc.Name)
 	}
 	return nil
+}
+
+// stripToolCallMarkup removes <tool_call>...</tool_call> blocks and
+// bare <function=...>...</function> blocks from text. Used after the
+// agent loop promotes a synthesized tool call so the original markup
+// (and any leading "let me try..." narration) doesn't leak into the
+// user-visible reply.
+func stripToolCallMarkup(s string) string {
+	// Drop <tool_call>...</tool_call> wrappers first (they may contain
+	// JSON-shape calls or function-tag calls inside).
+	for {
+		start := strings.Index(s, "<tool_call>")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s, "</tool_call>")
+		if end < 0 || end < start {
+			// Unclosed tag — drop everything from <tool_call> onward
+			// to be safe.
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[end+len("</tool_call>"):]
+	}
+	// Drop bare <function=...>...</function> blocks (Hermes/Qwen form
+	// emitted without the tool_call wrapper).
+	for {
+		start := strings.Index(s, "<function=")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s, "</function>")
+		if end < 0 || end < start {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[end+len("</function>"):]
+	}
+	// Note: we do NOT strip "let me try" / "one moment" narration here
+	// even though it's noise the user shouldn't see. The promise-detector
+	// elsewhere in the loop catches that pattern and re-prompts the LLM
+	// to produce clean output, which is more useful than silent removal
+	// (the LLM learns the pattern is wrong; doesn't just keep doing it).
+	return strings.TrimSpace(s)
 }
 
 // containsActionPromise reports whether content includes an explicit
