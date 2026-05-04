@@ -510,6 +510,36 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 					Reasoning: resp.Reasoning,
 					ToolCalls: resp.ToolCalls,
 				}
+			} else if strings.Contains(resp.Content, "<function=") || strings.Contains(resp.Content, "<tool_call>") {
+				// Orphaned XML — the model emitted a tool-call attempt
+				// but the name didn't resolve (typo, hallucinated tool
+				// name like "run_shell_command" instead of "run_local").
+				// Strip the markup so the user doesn't see XML, and
+				// inject a corrective so the model gets a chance to
+				// retry with the right name.
+				attemptedName, _ := parseFunctionTagToolCall(resp.Content)
+				resp.Content = stripToolCallMarkup(resp.Content)
+				history[len(history)-1] = Message{
+					Role:      "assistant",
+					Content:   resp.Content,
+					Reasoning: resp.Reasoning,
+				}
+				if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds {
+					hint := ""
+					if attemptedName != "" {
+						hint = fmt.Sprintf(" You attempted to call %q which is not a registered tool.", attemptedName)
+						if suggestion := nearestToolName(attemptedName, handlers); suggestion != "" {
+							hint += fmt.Sprintf(" Did you mean %q?", suggestion)
+						}
+					}
+					Debug("[agent_loop] orphaned XML tool-call detected (name=%q), re-prompting: correction %d/%d", attemptedName, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					history = append(history, Message{
+						Role:    "user",
+						Content: "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
+					})
+					promiseCorrectionsTotal++
+					continue
+				}
 			}
 		}
 
@@ -905,6 +935,47 @@ func containsActionPromise(content string) bool {
 		}
 	}
 	return false
+}
+
+// nearestToolName returns the registered tool whose name shares the
+// longest common substring (by simple bigram overlap) with attempted.
+// Returns empty if no tool overlaps meaningfully — used for the "did
+// you mean foo?" hint when the LLM tried a non-existent name.
+func nearestToolName(attempted string, handlers map[string]ToolHandlerFunc) string {
+	if attempted == "" || len(handlers) == 0 {
+		return ""
+	}
+	att := strings.ToLower(attempted)
+	bestName := ""
+	bestScore := 0
+	for name := range handlers {
+		score := bigramOverlap(att, strings.ToLower(name))
+		if score > bestScore {
+			bestScore = score
+			bestName = name
+		}
+	}
+	// Threshold: require at least 2 shared bigrams to suggest, else
+	// the suggestion is probably noise.
+	if bestScore < 2 {
+		return ""
+	}
+	return bestName
+}
+
+// bigramOverlap counts how many character-bigrams from a appear in b.
+func bigramOverlap(a, b string) int {
+	if len(a) < 2 || len(b) < 2 {
+		return 0
+	}
+	count := 0
+	for i := 0; i < len(a)-1; i++ {
+		bg := a[i : i+2]
+		if strings.Contains(b, bg) {
+			count++
+		}
+	}
+	return count
 }
 
 // truncForLog shortens s to n chars for log preview, replacing newlines
