@@ -23,6 +23,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/status"
 	_ "github.com/cmcoffee/gohort/tools/temptool"
 	_ "github.com/cmcoffee/gohort/tools/videodl"
+	_ "github.com/cmcoffee/gohort/tools/watcher"
 	_ "github.com/cmcoffee/gohort/tools/websearch"
 )
 
