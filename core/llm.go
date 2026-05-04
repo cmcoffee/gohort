@@ -548,9 +548,39 @@ func isTransientError(err error) bool {
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	return doWithRetry(ctx, r.maxRetries, opts, func() (*Response, error) {
-		return callWithEmptyRetry(opts, func(o []ChatOption) (*Response, error) {
-			return r.inner.Chat(ctx, messages, o...)
+		// First attempt: original opts, original messages.
+		resp, err := r.inner.Chat(ctx, messages, opts...)
+		if !shouldRetryEmpty(resp, err) {
+			return resp, err
+		}
+		// First retry: keep thinking ON but append a hint message
+		// nudging the model to actually produce output. Qwen's failure
+		// shape here is "thought briefly, then stopped with finish=stop
+		// and nothing in content/tool_calls" — disabling thinking on
+		// retry strips its ability to decide on a tool, so we keep it
+		// and just nudge.
+		Debug("[retry] empty response (err=%v) — retrying with hint, thinking still enabled", err)
+		hinted := append([]Message{}, messages...)
+		hinted = append(hinted, Message{
+			Role:    "user",
+			Content: "Your previous turn produced no output. Reason briefly, then either call a tool or send a text reply — do not end your turn empty.",
 		})
+		resp2, err2 := r.inner.Chat(ctx, hinted, opts...)
+		if err2 == nil && responseIsUseable(resp2) {
+			return resp2, nil
+		}
+		// Last-ditch retry: drop thinking entirely. Worse for tool
+		// decisions but sometimes the only thing that produces output
+		// when the model is wedged.
+		Debug("[retry] still empty after hint — falling back to thinking disabled")
+		f := false
+		retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
+		resp3, err3 := r.inner.Chat(ctx, hinted, retryOpts...)
+		if err3 == nil && responseIsUseable(resp3) {
+			return resp3, nil
+		}
+		// All paths empty — return the original.
+		return resp, err
 	})
 }
 
@@ -573,13 +603,30 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		if handlerCalled || !shouldRetryEmpty(resp, err) {
 			return resp, err
 		}
-		Debug("[retry] empty stream response (err=%v) — retrying once with thinking disabled", err)
+		// First retry: keep thinking ON, append a hint message.
+		Debug("[retry] empty stream response (err=%v) — retrying with hint, thinking still enabled", err)
+		hinted := append([]Message{}, messages...)
+		hinted = append(hinted, Message{
+			Role:    "user",
+			Content: "Your previous turn produced no output. Reason briefly, then either call a tool or send a text reply — do not end your turn empty.",
+		})
+		handlerCalled = false
+		resp2, err2 := r.inner.ChatStream(ctx, hinted, wrappedHandler, opts...)
+		if err2 == nil && responseIsUseable(resp2) {
+			return resp2, nil
+		}
+		if handlerCalled {
+			// Second attempt produced visible chunks; can't safely retry again.
+			return resp2, err2
+		}
+		// Last-ditch retry: drop thinking.
+		Debug("[retry] still empty after hint — falling back to thinking disabled")
 		f := false
 		retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
 		handlerCalled = false
-		resp2, err2 := r.inner.ChatStream(ctx, messages, wrappedHandler, retryOpts...)
-		if err2 == nil && responseIsUseable(resp2) {
-			return resp2, nil
+		resp3, err3 := r.inner.ChatStream(ctx, hinted, wrappedHandler, retryOpts...)
+		if err3 == nil && responseIsUseable(resp3) {
+			return resp3, nil
 		}
 		return resp, err
 	})
@@ -608,25 +655,6 @@ func shouldRetryEmpty(resp *Response, err error) bool {
 		return isTimeoutErr(err) || isEmptyResponseErr(err)
 	}
 	return !responseIsUseable(resp)
-}
-
-// callWithEmptyRetry invokes call once; if the result is empty (no content,
-// no tool calls) or signals an empty/timeout error, retries once with
-// thinking disabled and returns whichever attempt yielded useable output.
-func callWithEmptyRetry(opts []ChatOption, call func(opts []ChatOption) (*Response, error)) (*Response, error) {
-	resp, err := call(opts)
-	if !shouldRetryEmpty(resp, err) {
-		return resp, err
-	}
-	Debug("[retry] empty response (err=%v) — retrying once with thinking disabled", err)
-	f := false
-	retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
-	resp2, err2 := call(retryOpts)
-	if err2 == nil && responseIsUseable(resp2) {
-		return resp2, nil
-	}
-	// Both empty — return the original (it had a real status, even if useless).
-	return resp, err
 }
 
 // isTimeoutErr reports whether err looks like an HTTP timeout. Mirrors the
