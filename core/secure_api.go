@@ -71,9 +71,24 @@ type SecureCredential struct {
 	// later. Inverted (Disabled rather than Enabled) so that records
 	// written before this field was added — which deserialize to the
 	// zero value — keep their default-on behavior.
-	Disabled   bool      `json:"disabled,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	Disabled bool `json:"disabled,omitempty"`
+	// AllowedMethods restricts which HTTP methods the LLM may use
+	// against this credential. Empty/nil = all methods allowed
+	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
+	// credential. Method check happens before any URL or auth work.
+	AllowedMethods []string `json:"allowed_methods,omitempty"`
+	// DeniedURLPatterns is a blacklist applied AFTER AllowedURLPattern.
+	// Useful for "give it Vapi but never the billing endpoints" —
+	// allow=https://api.vapi.ai/** + deny=https://api.vapi.ai/billing/**.
+	// Glob shape matches AllowedURLPattern (* = single segment, ** = any).
+	DeniedURLPatterns []string `json:"denied_url_patterns,omitempty"`
+	// MaxCallsPerDay caps successful calls in a rolling 24-hour
+	// window, counted from the audit log. 0 = unlimited (legacy).
+	// When the cap is hit the dispatcher rejects with a clear "daily
+	// cap of N reached for <name>" error so the operator sees it.
+	MaxCallsPerDay int       `json:"max_calls_per_day,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	LastUsedAt     time.Time `json:"last_used_at,omitempty"`
 }
 
 // secureCredSecretKey is the DB key under which the encrypted secret
@@ -469,11 +484,60 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		savePath = resolved
 	}
 
+	// Method allowlist check. Empty list = all methods allowed
+	// (legacy). When set, anything outside the list is rejected
+	// before URL/auth work — a read-only credential with
+	// AllowedMethods=["GET","HEAD"] denies POST/DELETE etc. cleanly.
+	if len(c.AllowedMethods) > 0 {
+		ok := false
+		for _, m := range c.AllowedMethods {
+			if strings.ToUpper(strings.TrimSpace(m)) == method {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return "", fmt.Errorf("method %s not allowed for credential %q (allowed: %v)", method, c.Name, c.AllowedMethods)
+		}
+	}
+
 	// URL allowlist check. THIS IS THE LINCHPIN. If the LLM somehow
 	// produces a URL outside the allowed pattern, we refuse — no
 	// header is ever attached.
 	if !urlMatchesPattern(rawURL, c.AllowedURLPattern) {
 		return "", fmt.Errorf("url %q is not allowed for credential %q (allowed pattern: %s)", rawURL, c.Name, c.AllowedURLPattern)
+	}
+
+	// URL deny patterns: applied after the allowlist for fine-grained
+	// carve-outs ("allow Vapi but never /billing/**"). Each pattern
+	// uses the same glob shape as AllowedURLPattern.
+	for _, deny := range c.DeniedURLPatterns {
+		deny = strings.TrimSpace(deny)
+		if deny == "" {
+			continue
+		}
+		if urlMatchesPattern(rawURL, deny) {
+			return "", fmt.Errorf("url %q matches deny pattern %q for credential %q", rawURL, deny, c.Name)
+		}
+	}
+
+	// Daily call cap: count successful (non-error) audit entries in
+	// the last 24h. Non-zero MaxCallsPerDay activates the cap.
+	if c.MaxCallsPerDay > 0 {
+		cutoff := time.Now().Add(-24 * time.Hour)
+		count := 0
+		for _, e := range s.LoadAudit(c.Name) {
+			if e.Timestamp.Before(cutoff) {
+				continue
+			}
+			if e.Error != "" {
+				continue // failed calls don't count toward the cap
+			}
+			count++
+		}
+		if count >= c.MaxCallsPerDay {
+			return "", fmt.Errorf("daily cap of %d reached for credential %q (counted %d successful calls in the last 24h) — raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count)
+		}
 	}
 	parsed, err := url.Parse(rawURL)
 	if err != nil {

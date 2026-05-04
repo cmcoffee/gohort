@@ -354,13 +354,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				return
 			}
 			var req struct {
-				Name              string `json:"name"`
-				Type              string `json:"type"`
-				AllowedURLPattern string `json:"allowed_url_pattern"`
-				ParamName         string `json:"param_name"`
-				Description       string `json:"description"`
-				RequiresConfirm   bool   `json:"requires_confirm"`
-				Secret            string `json:"secret"`
+				Name              string   `json:"name"`
+				Type              string   `json:"type"`
+				AllowedURLPattern string   `json:"allowed_url_pattern"`
+				ParamName         string   `json:"param_name"`
+				Description       string   `json:"description"`
+				RequiresConfirm   bool     `json:"requires_confirm"`
+				Secret            string   `json:"secret"`
+				AllowedMethods    []string `json:"allowed_methods"`
+				DeniedURLPatterns []string `json:"denied_url_patterns"`
+				MaxCallsPerDay    int      `json:"max_calls_per_day"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -373,6 +376,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				ParamName:         strings.TrimSpace(req.ParamName),
 				Description:       strings.TrimSpace(req.Description),
 				RequiresConfirm:   req.RequiresConfirm,
+				AllowedMethods:    req.AllowedMethods,
+				DeniedURLPatterns: req.DeniedURLPatterns,
+				MaxCallsPerDay:    req.MaxCallsPerDay,
 			}
 			if err := Secure().Save(c, req.Secret); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1746,6 +1752,24 @@ const adminBody = `
       </label>
       <span class="setting-desc">For high-blast-radius credentials (write APIs, billing). Each LLM call surfaces an approval prompt.</span>
     </div>
+    <div style="margin-top:0.5rem">
+      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Allowed HTTP methods</label>
+      <input type="text" id="cred-methods" placeholder="GET, POST, PUT (blank = all allowed)"
+        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+      <span class="setting-desc">Comma-separated. Blank = no method restriction. Use "GET, HEAD" for read-only credentials. Methods outside the list are rejected before any HTTP request fires.</span>
+    </div>
+    <div style="margin-top:0.5rem">
+      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Denied URL patterns</label>
+      <input type="text" id="cred-denied-urls" placeholder="https://api.vapi.ai/billing/**, https://api.vapi.ai/account/**"
+        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+      <span class="setting-desc">Comma-separated glob patterns applied AFTER the allowed-URL pattern. Carve out specific endpoints to block (billing, account-management, expensive operations) while leaving the rest of the API accessible.</span>
+    </div>
+    <div style="margin-top:0.5rem">
+      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Daily call cap</label>
+      <input type="number" id="cred-max-calls" min="0" max="100000" placeholder="0 (unlimited)"
+        style="margin-top:0.1rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem">
+      <span class="setting-desc">Successful calls per rolling 24h. Beyond this the dispatcher rejects with a clear "cap reached" error. 0 = unlimited (legacy default). Useful for cost-incurring APIs (Vapi minutes, paid LLMs, Twilio messages).</span>
+    </div>
     <div style="margin-top:0.7rem">
       <button onclick="saveCredential()" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Save credential</button>
     </div>
@@ -2838,6 +2862,9 @@ function onCredTypeChange() {
 }
 
 function saveCredential() {
+  var methodsRaw = document.getElementById('cred-methods').value.trim();
+  var deniedRaw = document.getElementById('cred-denied-urls').value.trim();
+  var maxCallsRaw = document.getElementById('cred-max-calls').value.trim();
   var payload = {
     name: document.getElementById('cred-name').value.trim(),
     type: document.getElementById('cred-type').value,
@@ -2845,7 +2872,10 @@ function saveCredential() {
     param_name: document.getElementById('cred-param').value.trim(),
     description: document.getElementById('cred-desc').value.trim(),
     requires_confirm: document.getElementById('cred-confirm').checked,
-    secret: document.getElementById('cred-secret').value
+    secret: document.getElementById('cred-secret').value,
+    allowed_methods: methodsRaw ? methodsRaw.split(',').map(function(s){return s.trim().toUpperCase();}).filter(function(s){return s;}) : [],
+    denied_url_patterns: deniedRaw ? deniedRaw.split(',').map(function(s){return s.trim();}).filter(function(s){return s;}) : [],
+    max_calls_per_day: maxCallsRaw ? parseInt(maxCallsRaw, 10) || 0 : 0
   };
   if (!payload.name || !payload.allowed_url_pattern) {
     alert('Name and allowed_url_pattern are required.');
@@ -2898,6 +2928,9 @@ function renderCredentialCard(c) {
   var bits = [c.type];
   if (c.disabled) bits.push('DISABLED');
   if (c.requires_confirm) bits.push('requires confirm');
+  if (c.allowed_methods && c.allowed_methods.length) bits.push(c.allowed_methods.join('/'));
+  if (c.max_calls_per_day) bits.push('cap ' + c.max_calls_per_day + '/day');
+  if (c.denied_url_patterns && c.denied_url_patterns.length) bits.push(c.denied_url_patterns.length + ' denied pattern' + (c.denied_url_patterns.length === 1 ? '' : 's'));
   if (c.last_used_at && c.last_used_at !== '0001-01-01T00:00:00Z') {
     bits.push('last used ' + relTime(c.last_used_at));
   } else {
@@ -2973,6 +3006,9 @@ function editCredential(c) {
   document.getElementById('cred-desc').value = c.description || '';
   document.getElementById('cred-confirm').checked = !!c.requires_confirm;
   document.getElementById('cred-secret').value = '';
+  document.getElementById('cred-methods').value = (c.allowed_methods || []).join(', ');
+  document.getElementById('cred-denied-urls').value = (c.denied_url_patterns || []).join(', ');
+  document.getElementById('cred-max-calls').value = c.max_calls_per_day || 0;
   onCredTypeChange();
   // Scroll the form into view so the operator sees what they're editing.
   var anchor = document.getElementById('cred-name');
