@@ -12,6 +12,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
@@ -1206,6 +1207,42 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 			} else {
 				tools = append(tools, rt...)
 			}
+		}
+	}
+	// Persistent temp tools: tools defined in chat with persist=true
+	// and approved by the admin. They live in sess.TempTools (loaded
+	// at session creation in processReply). We surface API-mode
+	// tools (call_<credname> wrappers) here without needing per-conv
+	// EnabledTools entries — admin approval IS the trust gate.
+	//
+	// Shell-mode temp tools are NOT auto-imported even when admin-
+	// approved — they exec arbitrary commands and the same logic that
+	// keeps run_local out of phantom by default applies here. Operator
+	// can opt a specific shell-mode temp tool into a specific conv by
+	// adding its name to that conv's EnabledTools list, same as run_local.
+	if dyn := temptool.BuildAgentToolDefs(sess); len(dyn) > 0 {
+		var apiOnly []AgentToolDef
+		var shellSkipped []string
+		for _, td := range dyn {
+			isShell := false
+			for _, cap := range td.Tool.Caps {
+				if cap == CapExecute {
+					isShell = true
+					break
+				}
+			}
+			if isShell {
+				shellSkipped = append(shellSkipped, td.Tool.Name)
+				continue
+			}
+			apiOnly = append(apiOnly, td)
+		}
+		if len(apiOnly) > 0 {
+			tools = append(tools, apiOnly...)
+			Debug("[phantom] %d persistent api-mode temp tools loaded for owner %q", len(apiOnly), sess.Username)
+		}
+		if len(shellSkipped) > 0 {
+			Debug("[phantom] %d persistent shell-mode temp tools skipped (CapExecute not auto-imported to phantom): %v", len(shellSkipped), shellSkipped)
 		}
 	}
 
