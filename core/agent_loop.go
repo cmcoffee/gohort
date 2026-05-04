@@ -103,6 +103,14 @@ type AgentLoopConfig struct {
 	// Tool names are still logged; content is replaced with byte counts.
 	MaskDebugOutput bool
 
+	// NoDynamicThinkBudget disables the per-round thinking-budget growth
+	// that scales by prior input-token count. Default behavior (false)
+	// scales the budget upward as the conversation accumulates history
+	// so deep multi-round flows don't truncate mid-thought. Set true
+	// for short fixed-shape loops (classifiers, judges, single-tool
+	// orchestrators) where a small constant budget is correct.
+	NoDynamicThinkBudget bool
+
 	// SerialTools limits execution to one tool call per round. When the LLM
 	// returns multiple tool calls in a single response, only the first is
 	// executed; the rest receive a SKIPPED notice so the LLM is forced to
@@ -345,6 +353,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				opts = append(opts, WithThink(*think))
 			}
 		}
+		// Dynamic thinking-budget scaling: as the conversation grows
+		// (more history, more tool results, longer plans), the model
+		// needs more room to integrate it all. Scale based on the
+		// prior round's input-token count so quick first rounds stay
+		// cheap and deep multi-round flows get headroom automatically.
+		// Caller can opt out with cfg.NoDynamicThinkBudget (e.g.
+		// classifier loops where a fixed small budget is correct).
+		if !cfg.NoDynamicThinkBudget && lastResp != nil && lastResp.InputTokens > 0 {
+			opts = append(opts, WithThinkBudget(dynamicThinkBudget(lastResp.InputTokens)))
+		}
 		// If the previous round produced tool calls and ToolRoundOptions are
 		// configured, use them instead of ChatOptions for this round.
 		roundOpts := cfg.ChatOptions
@@ -413,7 +431,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if cfg.MaskDebugOutput {
 				Debug("[agent_loop] prompt-tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
 			} else {
-				Debug("[agent_loop] prompt-tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
+				Debug("[agent_loop] prompt-tool call: %s (args=%d bytes)", tc.Name, len(formatArgs(tc.Args)))
+				Trace("[agent_loop] prompt-tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
 			}
 
 			// Record the assistant's message (preamble only, strip the tag).
@@ -449,7 +468,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if cfg.MaskDebugOutput {
 				Debug("[agent_loop] prompt-tool result: %s: [masked: %d bytes]", tc.Name, len(resultText))
 			} else {
-				Debug("[agent_loop] prompt-tool result: %s", resultText)
+				Debug("[agent_loop] prompt-tool result: %s (%d bytes)", tc.Name, len(resultText))
+				Trace("[agent_loop] prompt-tool result: %s", resultText)
 			}
 
 			// Send result back as a plain user message.
@@ -571,12 +591,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// remaining promise-correction budget so a stubborn judge
 			// can't loop forever. Skipped entirely when SharedWorkerLLM
 			// isn't wired (CLI tools, tests).
-			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && looksForwardLooking(resp.Content) {
-				if judgeSaysContinue(ctx, resp.Content) {
+			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && looksForwardLooking(resp.Reasoning, resp.Content) {
+				if judgeSaysContinue(ctx, resp.Reasoning, resp.Content, resp.ToolCalls) {
 					Debug("[agent_loop] judge says continue — re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
 					history = append(history, Message{
 						Role:    "user",
-						Content: "Your reply implies you intend to take another action (write code, make a request, try a different approach) but you called no tool to actually do it. Either call the tool now to follow through, or revise your reply to clearly state what you've decided not to do and why. Do NOT promise further action without taking it.",
+						Content: "Your reasoning declared an intent (or your reply claimed an action) that no tool call actually fulfilled this round. Either call the tool now to do what you said, or revise your reply to be honest about what you actually did and didn't do. Do NOT promise OR claim action without taking it.",
 					})
 					promiseCorrectionsTotal++
 					continue
@@ -610,7 +630,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if cfg.MaskDebugOutput {
 				Debug("[agent_loop] tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
 			} else {
-				Debug("[agent_loop] tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
+				Debug("[agent_loop] tool call: %s (args=%d bytes)", tc.Name, len(formatArgs(tc.Args)))
+				Trace("[agent_loop] tool call: %s(%s)", tc.Name, formatArgs(tc.Args))
 			}
 
 			handler, ok := handlers[tc.Name]
@@ -651,7 +672,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if cfg.MaskDebugOutput {
 				Debug("[agent_loop] tool result: %s: [masked: %d bytes]", name, len(output))
 			} else {
-				Debug("[agent_loop] tool result: %s: %s", name, output)
+				Debug("[agent_loop] tool result: %s (%d bytes)", name, len(output))
+				Trace("[agent_loop] tool result: %s: %s", name, output)
 			}
 		}
 		debugToolErr := func(name string, err error) {
@@ -958,27 +980,25 @@ func containsActionPromise(content string) bool {
 	return false
 }
 
-// looksForwardLooking is the broader, cheaper companion to
-// containsActionPromise. Where containsActionPromise matches narrow,
-// almost-always-failing phrases ("let me try", "one moment"),
-// looksForwardLooking matches *any* signal that the LLM might be
-// stating an intention. It's the gate before invoking the judge LLM —
-// no point paying for a classifier call on a message that has no
-// forward-looking language at all.
+// looksForwardLooking is the cheap pre-filter before invoking the
+// judge LLM. Scans BOTH the reasoning channel and the visible content
+// for any signal of intention — forward-looking ("I'll write...") OR
+// past-tense completion claims ("I deleted...", "all set", "done").
+// Reasoning is included because Qwen's failure mode is often "the
+// reasoning describes a multi-step plan but only step 1 actually
+// fires" — the visible content can look benign while the reasoning
+// declares an unfulfilled intent.
 //
-// False positives here are fine (the judge sorts them out); false
-// negatives mean the judge never runs, so phrases here should err on
-// the side of "could be an intent." Scope is the trailing ~300 chars
-// since intentions usually live in the closing sentence.
-func looksForwardLooking(content string) bool {
-	c := strings.ToLower(strings.TrimSpace(content))
-	if len(c) < 30 {
+// False positives are fine (the judge sorts them out); false negatives
+// mean the judge never runs, so phrases here err on the side of
+// "could be an intent or a claim of action."
+func looksForwardLooking(reasoning, content string) bool {
+	combined := strings.ToLower(strings.TrimSpace(reasoning + "\n" + content))
+	if len(combined) < 20 {
 		return false
 	}
-	if len(c) > 300 {
-		c = c[len(c)-300:]
-	}
 	cues := []string{
+		// Forward-looking
 		"i'll ", "i will ", "i'm going to ", "i am going to ",
 		"i'd ", "i would ",
 		"let me ", "let's ",
@@ -987,14 +1007,22 @@ func looksForwardLooking(content string) bool {
 		"different approach", "another approach",
 		"try a different", "instead i'll", "instead i will",
 		"i'll implement", "i'll write", "i'll create", "i'll build",
-		"i'll set up", "i'll set", "i'll attempt",
+		"i'll set up", "i'll set", "i'll attempt", "i'll delete",
 		"i'll need to", "i would need to", "i'll have to",
 		"i can write", "i can build", "i can create",
 		"will write", "will create", "will build",
 		"need to install", "need to set up",
+		// Past-tense completion claims (catches confabulated
+		// "I did X" replies when no tool was actually called)
+		"i deleted ", "i created ", "i added ", "i removed ",
+		"i sent ", "i scheduled ", "i set up ", "i installed ",
+		"i fixed ", "i updated ", "i wrote ", "i built ",
+		"all set", "all done",
+		"it's running", "is running now",
+		"now active", "now configured",
 	}
 	for _, cue := range cues {
-		if strings.Contains(c, cue) {
+		if strings.Contains(combined, cue) {
 			return true
 		}
 	}
@@ -1002,26 +1030,52 @@ func looksForwardLooking(content string) bool {
 }
 
 // judgeSaysContinue asks SharedWorkerLLM to classify whether the
-// assistant's outgoing message implies further action it didn't
-// actually take. Returns true only when the judge clearly says
-// "continue"; ambiguous, errored, or unconfigured cases default to
-// false (let the message ship). One short call per invocation; the
-// content is the only input — no tool catalog, no context — because
-// we're classifying the message itself, not deciding next steps.
-func judgeSaysContinue(ctx context.Context, content string) bool {
+// model's reasoning + content + actual tool calls form a coherent
+// turn — or whether the reasoning declared an intent that the action
+// channel didn't follow through on. Returns true only when the judge
+// clearly says "continue"; ambiguous, errored, or unconfigured cases
+// default to false (let the message ship).
+//
+// The alignment framing is sharper than content-only classification:
+// it catches both "promised to act, didn't" AND "claimed to have
+// acted, didn't" because both are reasoning-vs-action mismatches.
+func judgeSaysContinue(ctx context.Context, reasoning, content string, toolCalls []ToolCall) bool {
 	llm := SharedWorkerLLM()
 	if llm == nil {
 		return false
 	}
-	excerpt := strings.TrimSpace(content)
-	if len(excerpt) > 1500 {
-		excerpt = excerpt[len(excerpt)-1500:]
+
+	// Trim each channel independently — keep the trailing portion
+	// where intent / completion claims usually live.
+	trimTail := func(s string, n int) string {
+		s = strings.TrimSpace(s)
+		if len(s) > n {
+			return "…" + s[len(s)-n:]
+		}
+		return s
 	}
-	sys := "You classify assistant replies. Read the reply and decide: does the assistant imply it intends to take another concrete action it has NOT yet taken? " +
-		"Examples of 'continue': 'I'll write a script that...', 'Let me try a different approach — I'll implement...', 'Next, I'll fetch the data...'. " +
-		"Examples of 'done': a final answer, a clean refusal, a question to the user, an explanation that completes the task. " +
+	reasoning = trimTail(reasoning, 1500)
+	content = trimTail(content, 1500)
+
+	// Summarize what the model actually did this round (which tools
+	// fired). Names only — args aren't needed for the alignment check.
+	var actions string
+	if len(toolCalls) == 0 {
+		actions = "(none — model emitted text only)"
+	} else {
+		names := make([]string, 0, len(toolCalls))
+		for _, tc := range toolCalls {
+			names = append(names, tc.Name)
+		}
+		actions = strings.Join(names, ", ")
+	}
+
+	sys := "You classify whether an assistant's turn is coherent. The assistant has three channels: REASONING (private thought), TOOL_CALLS (actions taken this round), and CONTENT (text shown to the user). " +
+		"Decide: does the action channel match the intent? " +
+		"Reply 'continue' if the reasoning OR content declares an intent that the tool calls didn't fulfill — e.g. 'I'll delete the watcher' or 'I deleted it' but no delete tool was called; 'next I'll fetch X' but no fetch fired. " +
+		"Reply 'done' if the turn is internally consistent — a final answer, a question to the user, a deliberate refusal, or an action that matches what was claimed. " +
 		"Reply with exactly one word: continue OR done."
-	user := "Reply to classify:\n\n" + excerpt
+	user := fmt.Sprintf("REASONING:\n%s\n\nTOOL_CALLS: %s\n\nCONTENT:\n%s", reasoning, actions, content)
 	f := false
 	resp, err := llm.Chat(ctx,
 		[]Message{{Role: "user", Content: user}},
@@ -1034,6 +1088,42 @@ func judgeSaysContinue(ctx context.Context, content string) bool {
 	verdict := strings.ToLower(strings.TrimSpace(resp.Content))
 	verdict = strings.Trim(verdict, ".!?\"' ")
 	return verdict == "continue"
+}
+
+// dynamicThinkBudget scales the model's thinking budget based on the
+// prior round's input token count. Short first rounds stay cheap;
+// deep multi-round flows with large accumulated history get enough
+// headroom to integrate the context without truncation.
+//
+// Formula:
+//   - Below 4K input tokens: base (8K) — small queries don't need much
+//   - Above 4K: linear growth, +1024 budget tokens per 1K input above
+//   - Capped at 32K — past that, more thinking rarely helps Qwen3
+//
+// Tunable knobs are intentionally hardcoded for now; the scaling is
+// universal enough across reasoning models that exposing them as
+// config would be premature optimization. If a specific app needs
+// different scaling, set NoDynamicThinkBudget and pass an explicit
+// WithThinkBudget per-call.
+func dynamicThinkBudget(inputTokens int) int {
+	const (
+		base      = 8192
+		threshold = 4096
+		ceiling   = 32768
+		// scaleNum/scaleDen = 1024/1024 = 1 budget token per 1 input
+		// token above threshold. Kept as a fraction for easy tweaking.
+		scaleNum = 1024
+		scaleDen = 1024
+	)
+	if inputTokens <= threshold {
+		return base
+	}
+	extra := (inputTokens - threshold) * scaleNum / scaleDen
+	budget := base + extra
+	if budget > ceiling {
+		return ceiling
+	}
+	return budget
 }
 
 // nearestToolName returns the registered tool whose name shares the
