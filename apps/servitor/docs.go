@@ -28,18 +28,45 @@ const (
 )
 
 // DocWorkspace is a persistent documentation context tied to an appliance.
-// It is seeded by a chat Q&A pair and can accumulate additional Q&A entries,
-// uploaded reference documents, and a running draft.
+// The mental model is "working document backed by live system access +
+// attached supplements":
+//
+//   Draft       — the working document (markdown). The artifact you
+//                 export. Edited directly OR grown by promoting Q&A
+//                 answers into it.
+//   Supplements — uploaded reference docs the LLM uses as context for
+//                 answering questions. Optional appendix on export.
+//   Entries     — Q&A session log. Browseable in the UI for historical
+//                 reference; NOT included in export. The doc is the
+//                 artifact, not the transcript.
+//   Revisions   — point-in-time snapshots of Draft taken on every save.
+//                 50-cap, oldest dropped FIFO. Mirrors techwriter's
+//                 article-revision pattern so edits are undoable.
 type DocWorkspace struct {
 	ID          string                `json:"id"`
 	ApplianceID string                `json:"appliance_id"`
 	Name        string                `json:"name"`        // the initial question, used as title
-	Entries     []WorkspaceEntry      `json:"entries"`     // accumulated Q&A pairs
+	Entries     []WorkspaceEntry      `json:"entries"`     // session log; NOT exported (browseable in UI only)
 	Supplements []WorkspaceSupplement `json:"supplements"` // attached reference documents
-	Draft       string                `json:"draft"`       // editable documentation draft (markdown)
+	Draft       string                `json:"draft"`       // working document (markdown) — the export artifact
+	Revisions   []WorkspaceRevision   `json:"revisions"`   // snapshot history of Draft, oldest-first, capped
 	Created     string                `json:"created"`
 	Updated     string                `json:"updated"`
 }
+
+// WorkspaceRevision is a point-in-time snapshot of Draft, captured on
+// every save where Draft actually changed. Lets the operator revert
+// to a prior version without losing intermediate edits.
+type WorkspaceRevision struct {
+	ID   string `json:"id"`
+	Body string `json:"body"`
+	Date string `json:"date"`
+}
+
+// maxWorkspaceRevisions caps the per-workspace revision history.
+// Mirrors techwriter's maxArticleRevisions (50). Oldest-first ordering
+// so trimming is a simple slice from the front.
+const maxWorkspaceRevisions = 50
 
 // WorkspaceEntry is one Q&A pair saved into a workspace.
 type WorkspaceEntry struct {
@@ -990,7 +1017,10 @@ func (T *Servitor) handleWorkspaceView(w http.ResponseWriter, r *http.Request) {
 	}
 	content := strings.TrimSpace(ws.Draft)
 	if content == "" {
-		content = buildExportContent(ws)
+		// View page falls through to draft + supplement appendix when
+		// the draft is genuinely empty — gives the operator something
+		// to look at instead of "no content."
+		content = buildExportContent(ws, true)
 	}
 	if content == "" {
 		http.Error(w, "workspace has no content", http.StatusUnprocessableEntity)
@@ -1027,7 +1057,109 @@ func (T *Servitor) handleWorkspaceDraft(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "workspace not found", http.StatusNotFound)
 		return
 	}
+	// Snapshot the prior Draft into Revisions before overwriting, but
+	// only when it actually changed AND was non-empty. Empty drafts
+	// don't deserve a revision; identical re-saves don't either (would
+	// fill the cap with duplicates of the same body).
+	prior := strings.TrimSpace(ws.Draft)
+	incoming := strings.TrimSpace(req.Draft)
+	if prior != "" && prior != incoming {
+		ws.Revisions = append(ws.Revisions, WorkspaceRevision{
+			ID:   UUIDv4(),
+			Body: ws.Draft,
+			Date: time.Now().Format(time.RFC3339),
+		})
+		// FIFO trim — drop from the front when over cap.
+		if len(ws.Revisions) > maxWorkspaceRevisions {
+			ws.Revisions = ws.Revisions[len(ws.Revisions)-maxWorkspaceRevisions:]
+		}
+	}
 	ws.Draft = req.Draft
+	saveWorkspace(udb, ws)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleWorkspaceRevisions returns the revision history for a workspace,
+// newest first (UI-friendly ordering). Bodies are included so the UI
+// can preview without a second roundtrip.
+func (T *Servitor) handleWorkspaceRevisions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	ws, found := loadWorkspace(udb, id)
+	if !found {
+		http.Error(w, "workspace not found", http.StatusNotFound)
+		return
+	}
+	// Reverse the slice so newest is first — storage is oldest-first
+	// for cheap FIFO trim, but the UI wants newest-first for "show me
+	// recent edits."
+	revs := make([]WorkspaceRevision, len(ws.Revisions))
+	for i, r := range ws.Revisions {
+		revs[len(ws.Revisions)-1-i] = r
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(revs)
+}
+
+// handleWorkspaceRevert restores a prior revision into Draft, also
+// snapshotting the current Draft into Revisions first so the revert
+// itself is undoable.
+func (T *Servitor) handleWorkspaceRevert(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	var req struct {
+		WorkspaceID string `json:"workspace_id"`
+		RevisionID  string `json:"revision_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	ws, found := loadWorkspace(udb, req.WorkspaceID)
+	if !found {
+		http.Error(w, "workspace not found", http.StatusNotFound)
+		return
+	}
+	var target *WorkspaceRevision
+	for i := range ws.Revisions {
+		if ws.Revisions[i].ID == req.RevisionID {
+			target = &ws.Revisions[i]
+			break
+		}
+	}
+	if target == nil {
+		http.Error(w, "revision not found", http.StatusNotFound)
+		return
+	}
+	// Snapshot current Draft so the revert is itself undoable.
+	if strings.TrimSpace(ws.Draft) != "" && ws.Draft != target.Body {
+		ws.Revisions = append(ws.Revisions, WorkspaceRevision{
+			ID:   UUIDv4(),
+			Body: ws.Draft,
+			Date: time.Now().Format(time.RFC3339),
+		})
+		if len(ws.Revisions) > maxWorkspaceRevisions {
+			ws.Revisions = ws.Revisions[len(ws.Revisions)-maxWorkspaceRevisions:]
+		}
+	}
+	ws.Draft = target.Body
 	saveWorkspace(udb, ws)
 	w.WriteHeader(http.StatusNoContent)
 }

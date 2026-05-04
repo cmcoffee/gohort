@@ -504,9 +504,13 @@ func (T *Servitor) handleWorkspaceExport(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "workspace not found", http.StatusNotFound)
 		return
 	}
-	content := buildExportContent(ws)
+	// `?supplements=1` toggles the supplement appendix on. Default off
+	// — Draft alone is the artifact. The Q&A session log is never
+	// included regardless of this flag.
+	includeSupplements := r.URL.Query().Get("supplements") == "1"
+	content := buildExportContent(ws, includeSupplements)
 	if content == "" {
-		http.Error(w, "workspace has no content to export", http.StatusUnprocessableEntity)
+		http.Error(w, "workspace has no content to export — write something in the Draft first", http.StatusUnprocessableEntity)
 		return
 	}
 	docx, err := markdownToDocx(ws.Name, content)
@@ -522,30 +526,20 @@ func (T *Servitor) handleWorkspaceExport(w http.ResponseWriter, r *http.Request)
 }
 
 // buildExportContent assembles the markdown content to export.
-// Order: draft → Q&A history → reference document appendix.
-func buildExportContent(ws DocWorkspace) string {
+// The Draft IS the document — Q&A entries are session-log artifacts,
+// not knowledge-base content, and are deliberately excluded so the
+// export reads as a curated document instead of a transcript dump.
+// Supplements appended only when explicitly requested via
+// includeSupplements (the default is "document only").
+func buildExportContent(ws DocWorkspace, includeSupplements bool) string {
 	var b strings.Builder
 
 	if d := strings.TrimSpace(ws.Draft); d != "" {
 		b.WriteString(d)
 	}
 
-	if len(ws.Entries) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("\n\n---\n\n")
-		}
-		b.WriteString("## Q&A History\n\n")
-		for _, e := range ws.Entries {
-			if q := strings.TrimSpace(e.Question); q != "" {
-				b.WriteString("**Q: ")
-				b.WriteString(q)
-				b.WriteString("**\n\n")
-			}
-			if a := strings.TrimSpace(e.Answer); a != "" {
-				b.WriteString(a)
-				b.WriteString("\n\n")
-			}
-		}
+	if !includeSupplements {
+		return b.String()
 	}
 
 	// Append reference documents so the export is self-contained.

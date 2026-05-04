@@ -338,6 +338,8 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/workspace/save", T.handleWorkspaceSave)
 	sub.HandleFunc("/api/workspace/list", T.handleWorkspaceList)
 	sub.HandleFunc("/api/workspace/draft", T.handleWorkspaceDraft)
+	sub.HandleFunc("/api/workspace/revisions", T.handleWorkspaceRevisions)
+	sub.HandleFunc("/api/workspace/revert", T.handleWorkspaceRevert)
 	sub.HandleFunc("/api/workspace/synthesize", T.handleWorkspaceSynthesize)
 	sub.HandleFunc("/api/workspace/supplement/add", T.handleSupplementAdd)
 	sub.HandleFunc("/api/workspace/supplement/delete", T.handleSupplementDelete)
