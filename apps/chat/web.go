@@ -151,13 +151,22 @@ func (T *ChatAgent) handleTools(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 		Desc string `json:"desc"`
 	}
+	// Hidden from the picker UI: control-flow tools that are always
+	// auto-loaded so the user shouldn't see / toggle them.
+	hidden := map[string]bool{"keep_going": true}
 	var out []toolInfo
 	if r.URL.Query().Get("private") == "true" {
 		for _, t := range FilterChatToolsPrivate() {
+			if hidden[t.Name()] {
+				continue
+			}
 			out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
 		}
 	} else {
 		for _, t := range allowedTools() {
+			if hidden[t.Name()] {
+				continue
+			}
 			out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
 		}
 	}
@@ -508,8 +517,17 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// without restarting the loop.
 	staticTools := tools
 	allowedCaps := []Capability{CapRead, CapNetwork}
+	// Always-on control-flow tools: keep_going lets the LLM request
+	// another round without emitting visible "let me think" text.
+	// Resolved once and merged into every catalog rebuild so it's
+	// available regardless of what the user picked in the tools UI.
+	var alwaysOn []AgentToolDef
+	if kg, err := GetAgentToolsWithSession(sess, "keep_going"); err == nil {
+		alwaysOn = append(alwaysOn, kg...)
+	}
 	rebuildCatalog := func() ([]AgentToolDef, []Tool, map[string]ToolHandlerFunc) {
 		active := append([]AgentToolDef{}, staticTools...)
+		active = append(active, alwaysOn...)
 		if dyn := tempToolDefs(sess); len(dyn) > 0 {
 			active = append(active, dyn...)
 		}

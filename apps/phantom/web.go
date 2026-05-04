@@ -250,7 +250,7 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 		Desc string `json:"desc"`
 	}
 	// skip always-on tools and conditionally-available ones — handled below
-	skip := map[string]bool{"stay_silent": true, "generate_image": true}
+	skip := map[string]bool{"stay_silent": true, "keep_going": true, "generate_image": true}
 
 	var out []toolInfo
 	for _, t := range RegisteredChatTools() {
@@ -1137,7 +1137,13 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	}
 
 	var tools []AgentToolDef
-	if st, err := GetAgentToolsWithSession(sess, "stay_silent"); err == nil {
+	// Control-flow tools that are always available regardless of
+	// EnabledTools — they're prompt-shape essentials, not capability
+	// grants. stay_silent lets the LLM decline to reply; keep_going
+	// lets it request another round when it needs to plan more before
+	// acting (without that, "let me think" lands as visible text and
+	// the round ends).
+	if st, err := GetAgentToolsWithSession(sess, "stay_silent", "keep_going"); err == nil {
 		tools = append(tools, st...)
 	}
 
