@@ -427,6 +427,8 @@ const statusRule = "When a task will take more than a few seconds (download_vide
 
 const followThroughRule = "FOLLOW-THROUGH: if you say 'let me try', 'I'll figure this out', 'one moment', or any phrase that promises an action, you MUST call the corresponding tool in the SAME turn. Never end a reply with stated intent and no tool call — that leaves the user waiting on nothing. Either execute and report, or say plainly 'I can't do X' without promising further effort. When an API rejects a request with a 4xx error, READ the message field — it usually names the exact field to fix. Adjust and retry; do not give up after one failure or fabricate field names from training data when the error tells you what's actually wrong."
 
+const learnAndSaveRule = "LEARN-AND-SAVE: as soon as you figure out a working API call (especially after iterating through 4xx errors), IMMEDIATELY wrap it as a persistent tool via create_api_tool with persist=true — hardcode the discovered url_template/method/body_template, expose only the variable bits as params. Pending approval from the operator, but it stops you from re-discovering the same schema next session. The operator notices when they have to teach you the same API twice; it feels broken. Same applies to multi-step shell flows worth saving: create_temp_tool with persist=true."
+
 // phantomWorkspaceID returns a stable, filesystem-safe identifier for
 // the workspace shared across all phantom conversations on this host.
 // Phantom acts as one persona (the device owner), so all convs share
@@ -548,7 +550,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}
