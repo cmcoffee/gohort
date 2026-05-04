@@ -1438,6 +1438,15 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		// username) are visible here when OwnerHandle == admin email.
 		// Empty OwnerHandle just disables persistence loading; harmless.
 		Username: cfg.OwnerHandle,
+		// RoutingTarget tells generic tools (e.g. watcher) where to
+		// dispatch follow-up payloads back to. Mirrors what the normal
+		// reply path uses: deliverChatID for ChatID + a recipient
+		// handle. We try the per-message handle (most accurate),
+		// then conv.Handle (set on the conv record), then leave the
+		// target empty so RoutingTarget falls back to "log" — better
+		// to drop the watcher's iMessage delivery than queue a
+		// broken outbox item the bridge can't route.
+		RoutingTarget: phantomRoutingTarget(deliverChatID, handle, conv.Handle),
 	}
 	// Load any persistent temp tools approved for this owner so the
 	// LLM can use them in phantom too. Same pool the chat agent reads

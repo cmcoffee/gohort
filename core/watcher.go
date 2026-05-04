@@ -25,12 +25,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
+
 
 const (
 	watcherTable        = "watchers"
@@ -62,6 +65,21 @@ type Watcher struct {
 	Enabled      bool   `json:"enabled"`
 	Target       string `json:"target"` // "log" (default) — others added later
 
+	// DeliveryPrefix is prepended to the worker's reply text on
+	// delivery (only matters when Target routes to a user-visible
+	// channel like phantom). The routing app supplies a default
+	// (phantom uses "[watcher: <name>]\n") which is used when
+	// DeliveryPrefixSet is false. When DeliveryPrefixSet is true,
+	// the LLM has explicitly chosen a value — including the empty
+	// string, which means "no prefix at all."
+	//
+	// Two fields rather than *string because gob (kvlite's encoder)
+	// can't distinguish "nil pointer" from "non-nil pointer to empty
+	// string" on a roundtrip — both decode as nil. The bool sentinel
+	// makes "set to empty" persist correctly.
+	DeliveryPrefixSet bool   `json:"delivery_prefix_set,omitempty"`
+	DeliveryPrefix    string `json:"delivery_prefix,omitempty"`
+
 	// Last-result cache for change detection.
 	LastResultHash string `json:"last_result_hash,omitempty"`
 	LastResultBody string `json:"last_result_body,omitempty"` // size-capped, for diff
@@ -90,6 +108,58 @@ type WatcherResult struct {
 // Watchers fire using the process-wide SharedWorkerLLM (registered by
 // the app at startup via SetSharedLLMs). Same tier as delegate's
 // workers and shell-sim — no separate setter needed.
+
+// ----------------------------------------------------------------------
+// Result routing
+// ----------------------------------------------------------------------
+
+// WatcherResultRouter is invoked after a watcher fires and the worker
+// produces a reply. The target is the watcher's Target field (e.g.
+// "phantom:iMessage;-;+14155551234"); the router knows how to interpret
+// the part after the prefix and dispatch (enqueue an outbox item, post
+// to a chat session, POST to a webhook URL, etc.).
+//
+// Routers are registered by the app that owns the destination. Phantom
+// registers a "phantom" router; chat registers "chat"; webhook handling
+// could register "https"/"http". Errors are logged but not surfaced to
+// the watcher subsystem — routing failures don't unschedule the watcher.
+type WatcherResultRouter func(target string, w Watcher, reply string, runErr error)
+
+var (
+	watcherRouters   = map[string]WatcherResultRouter{}
+	watcherRoutersMu sync.Mutex
+)
+
+// RegisterWatcherResultRouter associates a router with a target prefix.
+// Call from an app's startup. Last-wins if called twice with the same
+// prefix.
+func RegisterWatcherResultRouter(prefix string, fn WatcherResultRouter) {
+	watcherRoutersMu.Lock()
+	defer watcherRoutersMu.Unlock()
+	watcherRouters[prefix] = fn
+}
+
+// dispatchWatcherResult routes a worker reply to the appropriate
+// destination based on the watcher's Target. The "log" target (or
+// empty) is a no-op here — the result is already in w.Results.
+func dispatchWatcherResult(w Watcher, reply string, runErr error) {
+	target := w.Target
+	if target == "" || target == "log" {
+		return
+	}
+	prefix := target
+	if i := strings.Index(target, ":"); i > 0 {
+		prefix = target[:i]
+	}
+	watcherRoutersMu.Lock()
+	fn := watcherRouters[prefix]
+	watcherRoutersMu.Unlock()
+	if fn == nil {
+		Log("[watcher] no router registered for target %q (watcher %s) — falling back to log", target, w.Name)
+		return
+	}
+	fn(target, w, reply, runErr)
+}
 
 // ----------------------------------------------------------------------
 // Storage
@@ -258,6 +328,15 @@ func schedulePollNow(w Watcher) {
 }
 
 func init() {
+	// kvlite encodes Watcher records via gob; ToolArgs is map[string]any
+	// and gob refuses to encode unregistered concrete types inside an
+	// interface field. Register the shapes the LLM actually passes in
+	// tool args so save round-trips work.
+	gob.Register(map[string]any{})
+	gob.Register([]any{})
+	gob.Register(map[string]string{})
+	gob.Register([]string{})
+
 	RegisterScheduleHandler(watcherScheduleKind, func(ctx context.Context, raw json.RawMessage) {
 		var p watcherPollPayload
 		if json.Unmarshal(raw, &p) != nil {
@@ -293,6 +372,7 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 	hash := sha256Sum(body)
 	Debug("[watcher] %s: invoked %s, %d bytes, hash=%s",
 		w.Name, w.ToolName, len(body), hash[:12])
+	Trace("[watcher] %s: response body=%q", w.Name, truncateForTrigger(body))
 	if hash == w.LastResultHash {
 		Debug("[watcher] %s: no change (hash matches), skipping worker", w.Name)
 		return
@@ -312,13 +392,6 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 	w.FireCount++
 	_ = SaveWatcher(w)
 
-	// First-fire seed: skip running the worker on the initial
-	// observation. Otherwise every brand-new watcher fires once
-	// immediately, which is rarely useful.
-	if w.FireCount == 1 {
-		Debug("[watcher] %s: baseline seeded (%d bytes), worker will fire on next change", w.Name, len(body))
-		return
-	}
 	Debug("[watcher] %s: change detected, dispatching worker (fire #%d)", w.Name, w.FireCount)
 
 	reply, runErr := runWatcherWorker(ctx, w, trigger)
@@ -331,6 +404,7 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 		res.Error = runErr.Error()
 	}
 	appendWatcherResult(w.ID, res)
+	dispatchWatcherResult(w, reply, runErr)
 }
 
 // buildTriggerContext formats prior + current body for the worker so
@@ -397,6 +471,13 @@ func sha256Sum(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
 }
+
+// HashWatcherBody is the exported wrapper around the same hash
+// function fireWatcherPoll uses for change detection. Callers that
+// pre-seed a watcher's baseline (e.g. the watcher tool's create
+// handler, which uses its probe response as the seed) need to compute
+// the hash the same way the polling loop will.
+func HashWatcherBody(s string) string { return sha256Sum(s) }
 
 // randomToken returns a URL-safe random token. Used by webhook
 // watchers (next slice) for unique URLs.

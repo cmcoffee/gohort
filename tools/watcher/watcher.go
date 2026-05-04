@@ -31,18 +31,32 @@ func init() {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Create a new polling watcher around a tool call you've already run successfully. Required: name, tool_name (any tool you can call — including secure-API call_<credname> tools), tool_args (the args object you want the watcher to pass each cycle), interval_seconds (>=60), action_prompt (what the worker should do when the result changes). The watcher invokes tool_name with tool_args every interval, hashes the result, and on change wakes the worker with the diff + your action_prompt. The first observation seeds the baseline silently. RECOMMENDED FLOW: call the tool once yourself first to confirm it works and returns the data you want — then mint a watcher with the same args.",
+		Description: "Create a new polling watcher around a tool call you've already run successfully. Required: name, tool_name (any tool you can call — including secure-API call_<credname> tools), tool_args (the args object you want the watcher to pass each cycle), interval_seconds (>=60), action_prompt (what the worker should do when the result changes). Optional: delivery_prefix (overrides the default tag prepended to delivered messages — pass empty string to suppress the prefix entirely). The watcher invokes tool_name with tool_args every interval, hashes the result, and on change wakes the worker with the diff + your action_prompt. RECOMMENDED FLOW: call the tool once yourself first to confirm it works and returns the data you want — then mint a watcher with the same args.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "Short identifier for the watcher (snake_case recommended)."},
 			"tool_name":        {Type: "string", Description: "Name of the tool to invoke each cycle. Anything you can call — built-in tools (web_search, fetch_url, etc.), secure-API call_<credname> tools, or runtime-defined tools."},
 			"tool_args":        {Type: "object", Description: "The args object the watcher passes to tool_name every cycle. Use the same args you used when you tested the call."},
 			"interval_seconds": {Type: "integer", Description: "How often to poll, in seconds. Minimum 60."},
 			"action_prompt":    {Type: "string", Description: "What you want the worker to do when a change is detected. Be specific — the worker has no other context besides this + the diff."},
+			"delivery_prefix":  {Type: "string", Description: "Optional. Text prepended to the worker's reply on delivery. Default is a tag like \"[watcher: <name>]\\n\" so recipients know it's an unprompted alert. Set empty string to suppress the prefix when the message body is self-explanatory (e.g. \"AAPL just crossed $250\")."},
 		},
 		Required:     []string{"name", "tool_name", "tool_args", "interval_seconds", "action_prompt"},
 		Caps:         []Capability{CapNetwork, CapWrite},
 		NeedsConfirm: true,
 		Handler:      handleCreate,
+	})
+
+	gt.AddAction("update", &GroupedToolAction{
+		Description: "Update an existing watcher's action_prompt, interval_seconds, or delivery_prefix. Cannot change the captured tool_name/tool_args (changing what's being watched is structurally a different watcher — delete + create instead). Returns the updated watcher record.",
+		Params: map[string]ToolParam{
+			"id":               {Type: "string", Description: "Watcher ID (from list)."},
+			"action_prompt":    {Type: "string", Description: "Optional. New action_prompt. Omit to leave unchanged."},
+			"interval_seconds": {Type: "integer", Description: "Optional. New polling interval (>=60). Omit or 0 to leave unchanged."},
+			"delivery_prefix":  {Type: "string", Description: "Optional. New delivery prefix. Pass empty string to suppress prefix; pass the literal string \"reset\" to revert to the routing app's default."},
+		},
+		Required: []string{"id"},
+		Caps:     []Capability{CapWrite},
+		Handler:  handleUpdate,
 	})
 
 	gt.AddAction("delete", &GroupedToolAction{
@@ -161,16 +175,36 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("test invocation of %q returned what looks like an error response (%d bytes): %s — fix the call before creating the watcher (otherwise it will never detect change since the error body is byte-identical every poll)", toolName, len(probe), truncate(probe, 300))
 	}
 
+	// The probe response IS the baseline — no point waiting for the
+	// first scheduled poll to seed something we already have.
+	probeBody := probe
+	if len(probeBody) > 4096 {
+		probeBody = probeBody[:4096]
+	}
 	w := Watcher{
-		Name:         name,
-		Owner:        ownerFor(sess),
-		Kind:         "polling",
-		ActionPrompt: prompt,
-		Enabled:      true,
-		Target:       "log",
-		ToolName:     toolName,
-		ToolArgs:     toolArgs,
-		IntervalSec:  interval,
+		Name:           name,
+		Owner:          ownerFor(sess),
+		Kind:           "polling",
+		ActionPrompt:   prompt,
+		Enabled:        true,
+		Target:         targetFor(sess),
+		ToolName:       toolName,
+		ToolArgs:       toolArgs,
+		IntervalSec:    interval,
+		LastResultHash: HashWatcherBody(probe),
+		LastResultBody: probeBody,
+		FireCount:      1, // probe counts as the seed; next change triggers the worker
+	}
+	// delivery_prefix is opt-in. The "Set" sentinel distinguishes
+	// "use the routing app's default" (false) from "use this exact
+	// value, even if empty" (true) so an LLM that wants to suppress
+	// the prefix entirely with delivery_prefix="" persists correctly
+	// across save/load.
+	if raw, ok := args["delivery_prefix"]; ok && raw != nil {
+		if s, isStr := raw.(string); isStr {
+			w.DeliveryPrefixSet = true
+			w.DeliveryPrefix = s
+		}
 	}
 	if err := SaveWatcher(w); err != nil {
 		return "", err
@@ -178,8 +212,9 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	for _, candidate := range ListWatchers(w.Owner) {
 		if candidate.Name == name && candidate.ToolName == toolName {
 			SchedulePollNow(candidate)
-			return fmt.Sprintf("Watcher created (id=%s, name=%q, polls %s every %ds). Test invocation succeeded — baseline will seed on first poll.",
-				candidate.ID, candidate.Name, candidate.ToolName, candidate.IntervalSec), nil
+			return fmt.Sprintf("Watcher created (id=%s, name=%q, polls %s every %ds). Test invocation returned %d bytes — review the response to confirm it's what you expected; if not, delete the watcher and recreate with corrected args.\n\n--- test response ---\n%s\n--- end test response ---",
+				candidate.ID, candidate.Name, candidate.ToolName, candidate.IntervalSec,
+				len(probe), truncate(probe, 800)), nil
 		}
 	}
 	return "Watcher created.", nil
@@ -217,6 +252,61 @@ func setEnabled(args map[string]any, sess *ToolSession, enabled bool) (string, e
 		state = "enabled"
 	}
 	return fmt.Sprintf("Watcher %q %s.", w.Name, state), nil
+}
+
+func handleUpdate(args map[string]any, sess *ToolSession) (string, error) {
+	id := strings.TrimSpace(StringArg(args, "id"))
+	w, ok := LoadWatcher(id)
+	if !ok {
+		return "", fmt.Errorf("watcher %q not found", id)
+	}
+	if !ownsWatcher(sess, w) {
+		return "", fmt.Errorf("watcher %q is not yours", id)
+	}
+
+	changed := []string{}
+
+	if v := strings.TrimSpace(StringArg(args, "action_prompt")); v != "" {
+		w.ActionPrompt = v
+		changed = append(changed, "action_prompt")
+	}
+
+	if interval := IntArg(args, "interval_seconds"); interval > 0 {
+		if interval < 60 {
+			return "", fmt.Errorf("interval_seconds must be >= 60 (you asked for %d)", interval)
+		}
+		if interval != w.IntervalSec {
+			w.IntervalSec = interval
+			changed = append(changed, "interval_seconds")
+		}
+	}
+
+	if raw, present := args["delivery_prefix"]; present && raw != nil {
+		if s, isStr := raw.(string); isStr {
+			if s == "reset" {
+				w.DeliveryPrefixSet = false
+				w.DeliveryPrefix = ""
+				changed = append(changed, "delivery_prefix (reset to default)")
+			} else {
+				w.DeliveryPrefixSet = true
+				w.DeliveryPrefix = s
+				changed = append(changed, "delivery_prefix")
+			}
+		}
+	}
+
+	if len(changed) == 0 {
+		return "No changes — pass at least one of action_prompt, interval_seconds, delivery_prefix.", nil
+	}
+
+	if err := SaveWatcher(w); err != nil {
+		return "", err
+	}
+	// Re-schedule with new interval if it changed and watcher is enabled.
+	if w.Enabled {
+		_ = SetWatcherEnabled(w.ID, true) // forces drop+reschedule with the new interval
+	}
+	return fmt.Sprintf("Watcher %q updated: %s.", w.Name, strings.Join(changed, ", ")), nil
 }
 
 func handlePeek(args map[string]any, sess *ToolSession) (string, error) {
@@ -297,6 +387,20 @@ func ownerFor(sess *ToolSession) string {
 
 func ownsWatcher(sess *ToolSession, w Watcher) bool {
 	return ownerFor(sess) == w.Owner
+}
+
+// targetFor reads the host app's stamped routing target verbatim,
+// falling back to "log" when the session was constructed without one
+// (CLI tools, tests). The watcher tool deliberately knows nothing
+// about specific apps — phantom, chat, or any future Discord/Slack
+// integration sets sess.RoutingTarget at construction time and
+// registers a matching WatcherResultRouter; the wiring works without
+// any change here.
+func targetFor(sess *ToolSession) string {
+	if sess == nil || sess.RoutingTarget == "" {
+		return "log"
+	}
+	return sess.RoutingTarget
 }
 
 // coerceArgsObject normalizes whatever the LLM passed for tool_args
