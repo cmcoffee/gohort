@@ -1,10 +1,11 @@
-// Watcher tool — LLM-facing management for polling/webhook watchers.
-// v1 supports polling watchers + log target only. Each watcher fires
-// the worker LLM with the operator's action_prompt + a diff of what
-// changed; the worker's reply lands in the watcher's results log.
+// Watcher tool — LLM-facing management for polling watchers.
 //
-// Catalog footprint is one entry; per-action specs live behind
-// action="help" so the round budget isn't burned every turn.
+// The model: a watcher is a captured tool call that re-runs every N
+// seconds. The LLM proves a tool call works (e.g. by invoking
+// call_ts3_api(url=/1/clientlist) once and seeing real data come back),
+// then asks for a watcher with that same tool_name + tool_args. The
+// watcher inherits the tool's auth, validation, and response shape —
+// nothing parallel to maintain in the watcher subsystem itself.
 
 package watcher
 
@@ -20,27 +21,25 @@ import (
 
 func init() {
 	gt := NewGroupedTool("watcher",
-		"Create + manage long-running polling watchers. A watcher periodically fetches a URL; on change the worker LLM wakes up with the diff and your action_prompt, and writes a brief reply to the watcher's log.")
+		"Create + manage long-running polling watchers. A watcher repeats one of your tool calls every N seconds and wakes the worker LLM when the result changes — useful for 'tell me when X happens' patterns. Watchers wrap an existing tool call, so authenticate/URL/format are handled by the tool you point them at, not by the watcher.")
 
 	gt.AddAction("list", &GroupedToolAction{
-		Description: "List all watchers you own. Returns id, name, kind, enabled, last fire time, total fires.",
+		Description: "List all watchers you own.",
 		Params:      map[string]ToolParam{},
 		Caps:        []Capability{CapRead},
 		Handler:     handleList,
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Create a new polling watcher. Provide a name, the URL to poll, the interval (seconds, min 60), and the action_prompt that tells the worker what to do when something changes. Optional: method (GET/POST/etc.), headers, body. The first observation seeds the baseline and does NOT trigger the worker; subsequent changes do.",
+		Description: "Create a new polling watcher around a tool call you've already run successfully. Required: name, tool_name (any tool you can call — including secure-API call_<credname> tools), tool_args (the args object you want the watcher to pass each cycle), interval_seconds (>=60), action_prompt (what the worker should do when the result changes). The watcher invokes tool_name with tool_args every interval, hashes the result, and on change wakes the worker with the diff + your action_prompt. The first observation seeds the baseline silently. RECOMMENDED FLOW: call the tool once yourself first to confirm it works and returns the data you want — then mint a watcher with the same args.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "Short identifier for the watcher (snake_case recommended)."},
-			"url":              {Type: "string", Description: "URL to poll."},
+			"tool_name":        {Type: "string", Description: "Name of the tool to invoke each cycle. Anything you can call — built-in tools (web_search, fetch_url, etc.), secure-API call_<credname> tools, or runtime-defined tools."},
+			"tool_args":        {Type: "object", Description: "The args object the watcher passes to tool_name every cycle. Use the same args you used when you tested the call."},
 			"interval_seconds": {Type: "integer", Description: "How often to poll, in seconds. Minimum 60."},
 			"action_prompt":    {Type: "string", Description: "What you want the worker to do when a change is detected. Be specific — the worker has no other context besides this + the diff."},
-			"method":           {Type: "string", Description: "HTTP method. Default GET."},
-			"headers":          {Type: "object", Description: "Optional request headers as a {key: value} object."},
-			"body":             {Type: "string", Description: "Optional request body (for POST/PUT/etc)."},
 		},
-		Required:     []string{"name", "url", "interval_seconds", "action_prompt"},
+		Required:     []string{"name", "tool_name", "tool_args", "interval_seconds", "action_prompt"},
 		Caps:         []Capability{CapNetwork, CapWrite},
 		NeedsConfirm: true,
 		Handler:      handleCreate,
@@ -76,6 +75,16 @@ func init() {
 		Handler:  func(args map[string]any, sess *ToolSession) (string, error) { return setEnabled(args, sess, false) },
 	})
 
+	gt.AddAction("peek", &GroupedToolAction{
+		Description: "Show the cached result the watcher is currently comparing against. Use this to debug why a watcher isn't firing: if peek shows an error response, the underlying tool call is broken; if peek shows the expected payload, the upstream truly isn't changing.",
+		Params: map[string]ToolParam{
+			"id": {Type: "string", Description: "Watcher ID."},
+		},
+		Required: []string{"id"},
+		Caps:     []Capability{CapRead},
+		Handler:  handlePeek,
+	})
+
 	gt.AddAction("results", &GroupedToolAction{
 		Description: "Show recent fires (trigger summary + worker reply) for one watcher. Newest first.",
 		Params: map[string]ToolParam{
@@ -103,13 +112,10 @@ func handleList(args map[string]any, sess *ToolSession) (string, error) {
 	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
 	var b strings.Builder
 	for _, w := range ws {
-		fmt.Fprintf(&b, "- id=%s  name=%q  kind=%s  enabled=%t  fires=%d",
-			w.ID, w.Name, w.Kind, w.Enabled, w.FireCount)
+		fmt.Fprintf(&b, "- id=%s  name=%q  enabled=%t  fires=%d  tool=%s  interval=%ds",
+			w.ID, w.Name, w.Enabled, w.FireCount, w.ToolName, w.IntervalSec)
 		if !w.LastFiredAt.IsZero() {
 			fmt.Fprintf(&b, "  last_fired=%s", w.LastFiredAt.UTC().Format(time.RFC3339))
-		}
-		if w.Kind == "polling" {
-			fmt.Fprintf(&b, "  url=%s  interval=%ds", w.PollingURL, w.PollingIntervalSec)
 		}
 		b.WriteString("\n")
 	}
@@ -118,58 +124,62 @@ func handleList(args map[string]any, sess *ToolSession) (string, error) {
 
 func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
-	url := strings.TrimSpace(StringArg(args, "url"))
+	toolName := strings.TrimSpace(StringArg(args, "tool_name"))
 	prompt := strings.TrimSpace(StringArg(args, "action_prompt"))
 	interval := IntArg(args, "interval_seconds")
 	if interval < 60 {
 		return "", fmt.Errorf("interval_seconds must be >= 60 (you asked for %d)", interval)
 	}
-	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
-	if method == "" {
-		method = "GET"
-	}
-	body := StringArg(args, "body")
 
-	var headers map[string]string
-	if raw, ok := args["headers"]; ok && raw != nil {
-		switch h := raw.(type) {
-		case map[string]any:
-			headers = make(map[string]string, len(h))
-			for k, v := range h {
-				headers[k] = fmt.Sprint(v)
-			}
-		case map[string]string:
-			headers = h
-		default:
-			// Try a JSON round-trip — Qwen sometimes hands us a string.
-			if s, isStr := raw.(string); isStr && strings.TrimSpace(s) != "" {
-				_ = json.Unmarshal([]byte(s), &headers)
-			}
+	toolArgs, err := coerceArgsObject(args["tool_args"])
+	if err != nil {
+		return "", fmt.Errorf("tool_args: %w", err)
+	}
+
+	// Validate the tool exists by attempting the dispatch path. Both
+	// the static registry path and the call_<name> credential path
+	// surface clear errors that we want the LLM to see at create time.
+	if strings.HasPrefix(toolName, "call_") {
+		credName := strings.TrimPrefix(toolName, "call_")
+		if _, ok := Secure().Load(credName); !ok {
+			return "", fmt.Errorf("tool_name %q references credential %q which is not registered", toolName, credName)
+		}
+	} else {
+		if _, ok := LookupChatTool(toolName); !ok {
+			return "", fmt.Errorf("tool_name %q is not a registered chat tool", toolName)
 		}
 	}
 
+	// Probe the call once to confirm it actually works. This becomes
+	// the baseline-seeding poll if successful — saves a 60s wait
+	// before the operator finds out the tool call is broken.
+	probe, probeErr := InvokeWatcherTool(toolName, toolArgs)
+	if probeErr != nil {
+		return "", fmt.Errorf("test invocation of %q failed: %w — fix the call (run it directly to confirm it works) before creating the watcher", toolName, probeErr)
+	}
+	if looksLikeErrorBody(probe) {
+		return "", fmt.Errorf("test invocation of %q returned what looks like an error response (%d bytes): %s — fix the call before creating the watcher (otherwise it will never detect change since the error body is byte-identical every poll)", toolName, len(probe), truncate(probe, 300))
+	}
+
 	w := Watcher{
-		Name:               name,
-		Owner:              ownerFor(sess),
-		Kind:               "polling",
-		ActionPrompt:       prompt,
-		Enabled:            true,
-		Target:             "log",
-		PollingURL:         url,
-		PollingMethod:      method,
-		PollingHeaders:     headers,
-		PollingBody:        body,
-		PollingIntervalSec: interval,
+		Name:         name,
+		Owner:        ownerFor(sess),
+		Kind:         "polling",
+		ActionPrompt: prompt,
+		Enabled:      true,
+		Target:       "log",
+		ToolName:     toolName,
+		ToolArgs:     toolArgs,
+		IntervalSec:  interval,
 	}
 	if err := SaveWatcher(w); err != nil {
 		return "", err
 	}
-	// Re-load to grab the assigned ID, then queue the first poll.
 	for _, candidate := range ListWatchers(w.Owner) {
-		if candidate.Name == name && candidate.PollingURL == url {
+		if candidate.Name == name && candidate.ToolName == toolName {
 			SchedulePollNow(candidate)
-			return fmt.Sprintf("Watcher created (id=%s, name=%q, polling every %ds). First poll scheduled. The first observation seeds the baseline; you'll get worker replies on subsequent changes.",
-				candidate.ID, candidate.Name, candidate.PollingIntervalSec), nil
+			return fmt.Sprintf("Watcher created (id=%s, name=%q, polls %s every %ds). Test invocation succeeded — baseline will seed on first poll.",
+				candidate.ID, candidate.Name, candidate.ToolName, candidate.IntervalSec), nil
 		}
 	}
 	return "Watcher created.", nil
@@ -209,6 +219,30 @@ func setEnabled(args map[string]any, sess *ToolSession, enabled bool) (string, e
 	return fmt.Sprintf("Watcher %q %s.", w.Name, state), nil
 }
 
+func handlePeek(args map[string]any, sess *ToolSession) (string, error) {
+	id := strings.TrimSpace(StringArg(args, "id"))
+	w, ok := LoadWatcher(id)
+	if !ok {
+		return "", fmt.Errorf("watcher %q not found", id)
+	}
+	if !ownsWatcher(sess, w) {
+		return "", fmt.Errorf("watcher %q is not yours", id)
+	}
+	argsJSON, _ := json.Marshal(w.ToolArgs)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Watcher %q (id=%s)\n", w.Name, w.ID)
+	fmt.Fprintf(&b, "  tool: %s\n", w.ToolName)
+	fmt.Fprintf(&b, "  args: %s\n", argsJSON)
+	fmt.Fprintf(&b, "  interval: %ds  enabled: %t  fires: %d\n", w.IntervalSec, w.Enabled, w.FireCount)
+	if !w.LastFiredAt.IsZero() {
+		fmt.Fprintf(&b, "  last_fired: %s\n", w.LastFiredAt.UTC().Format(time.RFC3339))
+	}
+	fmt.Fprintf(&b, "  hash: %s\n", w.LastResultHash)
+	fmt.Fprintf(&b, "  cached_result (%d bytes):\n---\n%s\n---\n",
+		len(w.LastResultBody), w.LastResultBody)
+	return b.String(), nil
+}
+
 func handleResults(args map[string]any, sess *ToolSession) (string, error) {
 	id := strings.TrimSpace(StringArg(args, "id"))
 	limit := IntArg(args, "limit")
@@ -228,7 +262,6 @@ func handleResults(args map[string]any, sess *ToolSession) (string, error) {
 	if len(w.Results) == 0 {
 		return fmt.Sprintf("No fires yet for watcher %q.", w.Name), nil
 	}
-	// Newest first.
 	results := append([]WatcherResult(nil), w.Results...)
 	for i, j := 0, len(results)-1; i < j; i, j = i+1, j-1 {
 		results[i], results[j] = results[j], results[i]
@@ -255,10 +288,6 @@ func handleResults(args map[string]any, sess *ToolSession) (string, error) {
 // helpers
 // ----------------------------------------------------------------------
 
-// ownerFor extracts the watcher owner from the session. Empty username
-// becomes empty owner (admin-created / unscoped); listing without an
-// owner returns only unowned watchers, so unauthenticated sessions
-// can't see others' work.
 func ownerFor(sess *ToolSession) string {
 	if sess == nil {
 		return ""
@@ -266,11 +295,61 @@ func ownerFor(sess *ToolSession) string {
 	return sess.Username
 }
 
-// ownsWatcher gates mutation actions: the LLM can only modify
-// watchers it owns. Empty-owner watchers are accessible to any
-// empty-owner session (i.e. the admin/console path).
 func ownsWatcher(sess *ToolSession, w Watcher) bool {
 	return ownerFor(sess) == w.Owner
+}
+
+// coerceArgsObject normalizes whatever the LLM passed for tool_args
+// into a map[string]any. Qwen sometimes hands us a JSON string instead
+// of a parsed object; tolerate both shapes.
+func coerceArgsObject(raw any) (map[string]any, error) {
+	if raw == nil {
+		return nil, fmt.Errorf("tool_args is required (pass the args object you'd give to tool_name)")
+	}
+	switch v := raw.(type) {
+	case map[string]any:
+		return v, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return nil, fmt.Errorf("tool_args was empty")
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(s), &out); err != nil {
+			return nil, fmt.Errorf("could not parse tool_args as JSON object: %w", err)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("tool_args must be an object, got %T", raw)
+	}
+}
+
+// looksLikeErrorBody mirrors core/watcher.go's looksLikeErrorBaseline
+// for use at create time — we want to fail fast if the test invocation
+// returned something that's clearly an error response, since that
+// would mean the watcher polls a constant error and never fires.
+func looksLikeErrorBody(body string) bool {
+	if len(body) < 50 {
+		return true
+	}
+	lower := strings.ToLower(body)
+	for _, marker := range []string{
+		`"error"`, `"err":`, `"status":{"code":`,
+		"unauthorized", "forbidden", "not found",
+		"insufficient", "invalid api key", "missing apikey",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncate(s string, max int) string {
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
 }
 
 func oneLine(s string, max int) string {

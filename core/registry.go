@@ -82,6 +82,22 @@ func RegisteredAdminAgents() []Agent { return registeredAdminAgents }
 // RegisteredChatTools returns all registered chat tools.
 func RegisteredChatTools() []ChatTool { return registeredChatTools }
 
+// LookupChatTool returns the registered chat tool with the given name,
+// or nil + false. Static-registry only; dynamically generated tools
+// (e.g. secure-API per-credential call_<name> tools) are not in this
+// registry — callers that need to handle those route on the name
+// prefix themselves.
+func LookupChatTool(name string) (ChatTool, bool) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	for _, t := range registeredChatTools {
+		if t.Name() == name {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
 // FindAgent looks up a registered agent or app by name.
 // Prefers agents that have a DB set (web mode initializes web app DBs, not CLI app DBs).
 func FindAgent(name string) (Agent, bool) {

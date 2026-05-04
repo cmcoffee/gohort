@@ -1,15 +1,23 @@
 // Watchers — long-running observers that wake up the worker LLM when
-// "something happens." v1 supports polling: the watcher periodically
-// fetches a URL, hashes the response, and on change spawns a worker
-// run with the diff + the LLM's action_prompt as context. Result is
-// appended to a per-watcher log.
+// "something happens." A watcher is a captured tool call: every
+// interval, the watcher re-invokes the same registered tool with the
+// same args, hashes the result, and on change spawns a worker run with
+// the diff + the LLM's action_prompt as context.
 //
-// Coming next: webhook receivers (push-style trigger) + non-log
-// targets (post to chat session, phantom outbox, downstream webhook).
+// Why "captured tool call" instead of "URL"? Because the LLM already
+// knows how to call tools correctly — it has descriptions, allowed URL
+// patterns, credential auth, response shape. By capturing the tool
+// invocation the LLM has already proven works, the watcher inherits all
+// that correctness for free. Watching a TS3 endpoint becomes:
+//   1. LLM calls call_ts3_api(url=/1/clientlist) — proves the call works.
+//   2. LLM creates a watcher with tool_name="call_ts3_api" and
+//      tool_args={"url":"/1/clientlist"} — same call, repeated.
+// No URL guessing, no parallel auth path, no credential routing in the
+// watcher itself. The only thing the watcher knows how to do is "invoke
+// a registered tool, hash the result, dispatch on change."
 //
-// Cost posture: every fire uses the worker LLM only (no LeadLLM).
-// Same tier as delegate's workers — bounded, cheap, no per-watcher
-// daily cap needed (the worker LLM is typically a local/cheap model).
+// Cost posture: every fire uses the worker LLM only. No per-watcher
+// daily cap needed (worker LLM is typically a local/cheap model).
 
 package core
 
@@ -20,39 +28,43 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 )
 
 const (
-	watcherTable          = "watchers"
-	watcherScheduleKind   = "watcher.poll"
-	watcherMaxResults     = 50
-	watcherDefaultTimeout = 30 * time.Second
+	watcherTable        = "watchers"
+	watcherScheduleKind = "watcher.poll"
+	watcherMaxResults   = 50
 )
 
-// Watcher is the persistent record. Polling-specific fields are
-// populated when Kind == "polling"; webhook-specific fields when
-// Kind == "webhook" (next slice).
+// Watcher is the persistent record. The captured tool call (ToolName +
+// ToolArgs) is the heart of it; everything else is metadata + history.
 type Watcher struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Owner        string `json:"owner"` // scopes which user owns the watcher
-	Kind         string `json:"kind"`  // "polling" | "webhook" (future)
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Owner string `json:"owner"` // scopes which user owns the watcher
+	Kind  string `json:"kind"`  // "polling" | "webhook" (future)
+
+	// ToolName is the registered tool to invoke each cycle. Both
+	// statically-registered tools (web_search, fetch_url, watcher,
+	// memory, etc.) and dynamically-built secure-API call_<name>
+	// tools are supported — the dispatcher routes on the name prefix.
+	ToolName string `json:"tool_name"`
+	// ToolArgs are the args passed to the tool every invocation,
+	// captured at create time from a known-good invocation.
+	ToolArgs map[string]any `json:"tool_args,omitempty"`
+	// IntervalSec controls the polling cadence. Floor is 60 to keep
+	// watchers from hammering APIs.
+	IntervalSec int `json:"interval_sec,omitempty"`
+
 	ActionPrompt string `json:"action_prompt"`
 	Enabled      bool   `json:"enabled"`
 	Target       string `json:"target"` // "log" (default) — others added later
 
-	// Polling-specific.
-	PollingURL         string            `json:"polling_url,omitempty"`
-	PollingMethod     string             `json:"polling_method,omitempty"` // GET / POST / etc.
-	PollingHeaders    map[string]string  `json:"polling_headers,omitempty"`
-	PollingBody       string             `json:"polling_body,omitempty"`
-	PollingIntervalSec int               `json:"polling_interval_sec,omitempty"`
-	LastResponseHash  string             `json:"last_response_hash,omitempty"`
-	LastResponseBody  string             `json:"last_response_body,omitempty"` // size-capped, for diff
+	// Last-result cache for change detection.
+	LastResultHash string `json:"last_result_hash,omitempty"`
+	LastResultBody string `json:"last_result_body,omitempty"` // size-capped, for diff
 
 	// Common timestamps + counters.
 	CreatedAt   time.Time `json:"created_at"`
@@ -70,12 +82,12 @@ type Watcher struct {
 // directly (small ring buffer; no separate table).
 type WatcherResult struct {
 	Timestamp time.Time `json:"timestamp"`
-	Trigger   string    `json:"trigger"` // diff summary or webhook body excerpt
+	Trigger   string    `json:"trigger"` // diff summary
 	Reply     string    `json:"reply"`
 	Error     string    `json:"error,omitempty"`
 }
 
-// Watcher fires use the process-wide SharedWorkerLLM (registered by
+// Watchers fire using the process-wide SharedWorkerLLM (registered by
 // the app at startup via SetSharedLLMs). Same tier as delegate's
 // workers and shell-sim — no separate setter needed.
 
@@ -149,8 +161,6 @@ func DeleteWatcher(id string) error {
 		return fmt.Errorf("invalid")
 	}
 	db.Unset(watcherTable, id)
-	// Unschedule any pending poll tasks. The scheduler stores tasks
-	// keyed by their own UUIDs; we walk and match by payload.
 	for _, t := range ListScheduledTasks(watcherScheduleKind) {
 		var p watcherPollPayload
 		if json.Unmarshal(t.Payload, &p) != nil {
@@ -175,7 +185,6 @@ func SetWatcherEnabled(id string, enabled bool) error {
 	if err := SaveWatcher(w); err != nil {
 		return err
 	}
-	// Drop existing pending polls for this watcher.
 	for _, t := range ListScheduledTasks(watcherScheduleKind) {
 		var p watcherPollPayload
 		if json.Unmarshal(t.Payload, &p) != nil {
@@ -192,6 +201,37 @@ func SetWatcherEnabled(id string, enabled bool) error {
 }
 
 // ----------------------------------------------------------------------
+// Tool invocation
+// ----------------------------------------------------------------------
+
+// InvokeWatcherTool runs the captured tool call. Routes by tool-name
+// prefix: call_<name> goes through the secure-API dispatcher (so
+// per-credential auth + URL allowlist + method allowlist + daily cap
+// all apply); everything else is looked up in the static chat-tool
+// registry. Exported so non-watcher code (e.g. tests, admin "fire
+// now") can re-use the same dispatch path.
+func InvokeWatcherTool(toolName string, toolArgs map[string]any) (string, error) {
+	if toolName == "" {
+		return "", fmt.Errorf("empty tool name")
+	}
+	if strings.HasPrefix(toolName, "call_") {
+		credName := strings.TrimPrefix(toolName, "call_")
+		urlStr := StringArg(toolArgs, "url")
+		method := StringArg(toolArgs, "method")
+		body := StringArg(toolArgs, "body")
+		return Secure().DispatchToolCall(nil, credName, urlStr, method, body)
+	}
+	t, ok := LookupChatTool(toolName)
+	if !ok {
+		return "", fmt.Errorf("tool %q is not registered", toolName)
+	}
+	if st, ok := t.(SessionChatTool); ok {
+		return st.RunWithSession(toolArgs, nil)
+	}
+	return t.Run(toolArgs)
+}
+
+// ----------------------------------------------------------------------
 // Polling scheduler integration
 // ----------------------------------------------------------------------
 
@@ -200,8 +240,6 @@ type watcherPollPayload struct {
 }
 
 // SchedulePollNow queues an immediate poll for a polling-kind watcher.
-// Used at watcher creation + enable-toggle time. After each fire the
-// handler re-schedules itself for the next interval.
 func SchedulePollNow(w Watcher) {
 	schedulePollNow(w)
 }
@@ -210,8 +248,8 @@ func schedulePollNow(w Watcher) {
 	if w.Kind != "polling" {
 		return
 	}
-	when := time.Now().Add(time.Duration(w.PollingIntervalSec) * time.Second)
-	if w.PollingIntervalSec <= 0 {
+	when := time.Now().Add(time.Duration(w.IntervalSec) * time.Second)
+	if w.IntervalSec <= 0 {
 		when = time.Now().Add(60 * time.Second) // safety floor
 	}
 	if _, err := ScheduleTask(watcherScheduleKind, watcherPollPayload{WatcherID: w.ID}, when); err != nil {
@@ -219,9 +257,6 @@ func schedulePollNow(w Watcher) {
 	}
 }
 
-// init registers the scheduler kind at package load. The handler
-// fetches the watcher, polls, runs the worker on change, and
-// re-schedules.
 func init() {
 	RegisterScheduleHandler(watcherScheduleKind, func(ctx context.Context, raw json.RawMessage) {
 		var p watcherPollPayload
@@ -236,42 +271,42 @@ func init() {
 	})
 }
 
-// fireWatcherPoll executes one polling cycle. Fetches the URL, hashes
-// the body, compares to LastResponseHash. On change, spawns the
-// worker; either way, re-schedules.
+// fireWatcherPoll executes one polling cycle. Invokes the captured
+// tool, hashes the result, compares to LastResultHash. On change,
+// spawns the worker; either way, re-schedules.
 func fireWatcherPoll(ctx context.Context, w Watcher) {
 	defer func() {
-		// Always re-schedule unless explicitly disabled mid-fire.
 		if reloaded, ok := LoadWatcher(w.ID); ok && reloaded.Enabled {
 			schedulePollNow(reloaded)
 		}
 	}()
 
-	body, err := fetchWatcherURL(ctx, w)
+	body, err := InvokeWatcherTool(w.ToolName, w.ToolArgs)
 	if err != nil {
+		Debug("[watcher] %s: tool %q failed: %v", w.Name, w.ToolName, err)
 		appendWatcherResult(w.ID, WatcherResult{
 			Timestamp: time.Now(),
-			Error:     "fetch failed: " + err.Error(),
+			Error:     fmt.Sprintf("tool %q failed: %v", w.ToolName, err),
 		})
 		return
 	}
 	hash := sha256Sum(body)
-	if hash == w.LastResponseHash {
-		// No change — nothing to do this cycle.
+	Debug("[watcher] %s: invoked %s, %d bytes, hash=%s",
+		w.Name, w.ToolName, len(body), hash[:12])
+	if hash == w.LastResultHash {
+		Debug("[watcher] %s: no change (hash matches), skipping worker", w.Name)
 		return
 	}
 
-	// Build a small diff context: prior body (truncated) + new body
-	// (truncated) so the worker has both to compare.
-	trigger := buildTriggerContext(w.LastResponseBody, body)
+	trigger := buildTriggerContext(w.LastResultBody, body)
 
 	// Update hash + cached body BEFORE running the worker so a slow
 	// worker call doesn't cause us to re-fire on the same change.
-	w.LastResponseHash = hash
+	w.LastResultHash = hash
 	if len(body) > 4096 {
-		w.LastResponseBody = body[:4096]
+		w.LastResultBody = body[:4096]
 	} else {
-		w.LastResponseBody = body
+		w.LastResultBody = body
 	}
 	w.LastFiredAt = time.Now()
 	w.FireCount++
@@ -279,10 +314,12 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 
 	// First-fire seed: skip running the worker on the initial
 	// observation. Otherwise every brand-new watcher fires once
-	// immediately ("look! it's set to 42!") which is rarely useful.
+	// immediately, which is rarely useful.
 	if w.FireCount == 1 {
+		Debug("[watcher] %s: baseline seeded (%d bytes), worker will fire on next change", w.Name, len(body))
 		return
 	}
+	Debug("[watcher] %s: change detected, dispatching worker (fire #%d)", w.Name, w.FireCount)
 
 	reply, runErr := runWatcherWorker(ctx, w, trigger)
 	res := WatcherResult{
@@ -294,39 +331,6 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 		res.Error = runErr.Error()
 	}
 	appendWatcherResult(w.ID, res)
-}
-
-// fetchWatcherURL performs the HTTP request configured on the watcher.
-func fetchWatcherURL(ctx context.Context, w Watcher) (string, error) {
-	method := w.PollingMethod
-	if method == "" {
-		method = "GET"
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, watcherDefaultTimeout)
-	defer cancel()
-	var bodyReader io.Reader
-	if w.PollingBody != "" {
-		bodyReader = strings.NewReader(w.PollingBody)
-	}
-	req, err := http.NewRequestWithContext(reqCtx, method, w.PollingURL, bodyReader)
-	if err != nil {
-		return "", err
-	}
-	for k, v := range w.PollingHeaders {
-		req.Header.Set(k, v)
-	}
-	req.Header.Set("User-Agent", "gohort/watcher")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	limited := io.LimitReader(resp.Body, 1<<20) // 1MB cap on watch payloads
-	b, err := io.ReadAll(limited)
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
 }
 
 // buildTriggerContext formats prior + current body for the worker so
@@ -348,7 +352,7 @@ func truncateForTrigger(s string) string {
 
 // runWatcherWorker spawns a single-pass worker LLM call with the
 // watcher's action_prompt + the trigger context. v1 has no tool
-// catalog — the worker just analyzes and replies. Tools come later.
+// catalog — the worker just analyzes and replies.
 func runWatcherWorker(ctx context.Context, w Watcher, trigger string) (string, error) {
 	llm := SharedWorkerLLM()
 	if llm == nil {
