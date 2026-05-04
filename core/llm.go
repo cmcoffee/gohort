@@ -72,6 +72,13 @@ type Response struct {
 	Model        string
 	InputTokens  int
 	OutputTokens int
+	// ReasoningTokens is the portion of OutputTokens spent on the
+	// thinking channel, as reported by the model when supported (e.g.
+	// llama.cpp's usage.completion_tokens_details.reasoning_tokens
+	// for Qwen3 thinking, or OpenAI's o1-style breakdown). Zero when
+	// the backend doesn't report it; callers can fall back to a
+	// char-ratio estimate from len(Reasoning) / len(Reasoning+Content).
+	ReasoningTokens int
 	// Tier reports which LLM tier actually served this response.
 	// Populated by WorkerChat (always WORKER), LeadChat (LEAD on
 	// native success, WORKER when the routing config or fallback

@@ -109,13 +109,11 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 	if c.llamacppBudget > 0 {
 		return &c.llamacppBudget
 	}
-	// Thinking explicitly requested but no budget configured — use a sensible
-	// default so enabling thinking per-route works without requiring a budget.
-	if cfg.Think != nil && *cfg.Think {
-		n := 8192
-		return &n
-	}
-	return nil // omit → server decides
+	// No client-side cap — defer to the llama-server's launch-time
+	// --reasoning-budget config. Apps that need a tighter cap should
+	// pass WithThinkBudget(n) per-call, or operators can set the
+	// global llamacppBudget via config / admin UI.
+	return nil
 }
 
 // llamacppChatTemplateKwargs returns the chat_template_kwargs map for a
@@ -560,8 +558,11 @@ type oaiResponse struct {
 	} `json:"choices"`
 	Model string `json:"model"`
 	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens            int `json:"prompt_tokens"`
+		CompletionTokens        int `json:"completion_tokens"`
+		CompletionTokensDetails struct {
+			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		} `json:"completion_tokens_details,omitempty"`
 	} `json:"usage"`
 }
 
@@ -577,8 +578,11 @@ type oaiStreamChunk struct {
 	} `json:"choices"`
 	Model string `json:"model"`
 	Usage *struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
+		PromptTokens            int `json:"prompt_tokens"`
+		CompletionTokens        int `json:"completion_tokens"`
+		CompletionTokensDetails struct {
+			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+		} `json:"completion_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
 }
 
@@ -1357,7 +1361,15 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		}
 	}
 
-	Debug("[%s]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d finish=%s", c.provider(), result.Model, result.Usage.PromptTokens, result.Usage.CompletionTokens, len(toolCalls), finishReason)
+	reasoningTokens := result.Usage.CompletionTokensDetails.ReasoningTokens
+	if reasoningTokens == 0 && reasoning != "" && (content != "" || len(toolCalls) > 0) {
+		// Backend didn't report a reasoning-token breakdown but we
+		// have visible reasoning + content; estimate by char ratio so
+		// debug output still surfaces "where did the budget go."
+		reasoningTokens = estimateReasoningTokens(result.Usage.CompletionTokens, reasoning, content, toolCalls)
+	}
+	Debug("[%s]: Response: model=%s input_tokens=%d output_tokens=%d (reasoning=%d) tool_calls=%d finish=%s",
+		c.provider(), result.Model, result.Usage.PromptTokens, result.Usage.CompletionTokens, reasoningTokens, len(toolCalls), finishReason)
 
 	// finish_reason == "length" with empty content means thinking burned the
 	// entire output budget. Surface this so the agent loop can retry instead
@@ -1367,13 +1379,39 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	}
 
 	return &Response{
-		Content:      content,
-		Reasoning:    reasoning,
-		ToolCalls:    toolCalls,
-		Model:        result.Model,
-		InputTokens:  result.Usage.PromptTokens,
-		OutputTokens: result.Usage.CompletionTokens,
+		Content:         content,
+		Reasoning:       reasoning,
+		ToolCalls:       toolCalls,
+		Model:           result.Model,
+		InputTokens:     result.Usage.PromptTokens,
+		OutputTokens:    result.Usage.CompletionTokens,
+		ReasoningTokens: reasoningTokens,
 	}, nil
+}
+
+// estimateReasoningTokens approximates the reasoning-channel share of
+// total output tokens via char ratio when the backend doesn't report
+// the breakdown directly. Tokenization isn't perfectly proportional
+// to char count, but for surfacing "thinking ate 90% of the budget"
+// patterns this is plenty accurate.
+func estimateReasoningTokens(total int, reasoning, content string, toolCalls []ToolCall) int {
+	if total <= 0 || reasoning == "" {
+		return 0
+	}
+	rChars := len(reasoning)
+	cChars := len(content)
+	tChars := 0
+	for _, tc := range toolCalls {
+		tChars += len(tc.Name) + 4
+		for k, v := range tc.Args {
+			tChars += len(k) + len(fmt.Sprint(v)) + 6
+		}
+	}
+	denom := rChars + cChars + tChars
+	if denom == 0 {
+		return 0
+	}
+	return total * rChars / denom
 }
 
 // ChatStream sends a streaming request.
@@ -1456,7 +1494,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	var full strings.Builder
 	var reasoning strings.Builder
 	var model string
-	var inputTokens, outputTokens int
+	var inputTokens, outputTokens, reasoningTokens int
 
 	// Accumulate tool call fragments by index.
 	toolCallBuilders := make(map[int]*struct {
@@ -1498,6 +1536,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		if chunk.Usage != nil {
 			inputTokens = chunk.Usage.PromptTokens
 			outputTokens = chunk.Usage.CompletionTokens
+			reasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
 		}
 
 		if len(chunk.Choices) > 0 {
@@ -1590,7 +1629,10 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		})
 	}
 
-	Debug("[%s]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d finish=%s (lines=%d content=%d skipped=%d, resp=%d chars)", c.provider(), model, inputTokens, outputTokens, len(toolCalls), finishReason, totalLines, contentCount, skipCount, full.Len())
+	if reasoningTokens == 0 && reasoning.Len() > 0 && (full.Len() > 0 || len(toolCalls) > 0) {
+		reasoningTokens = estimateReasoningTokens(outputTokens, reasoning.String(), full.String(), toolCalls)
+	}
+	Debug("[%s]: Stream complete: model=%s input_tokens=%d output_tokens=%d (reasoning=%d) tool_calls=%d finish=%s (lines=%d content=%d skipped=%d, resp=%d chars)", c.provider(), model, inputTokens, outputTokens, reasoningTokens, len(toolCalls), finishReason, totalLines, contentCount, skipCount, full.Len())
 	Trace("<-- STREAM COMPLETE: model=%s input_tokens=%d output_tokens=%d", model, inputTokens, outputTokens)
 	if full.Len() > 0 {
 		Trace("<-- RESPONSE TEXT:\n%s", full.String())
@@ -1615,11 +1657,12 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 
 	return &Response{
-		Content:      full.String(),
-		Reasoning:    reasoning.String(),
-		ToolCalls:    toolCalls,
-		Model:        model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
+		Content:         full.String(),
+		Reasoning:       reasoning.String(),
+		ToolCalls:       toolCalls,
+		Model:           model,
+		InputTokens:     inputTokens,
+		OutputTokens:    outputTokens,
+		ReasoningTokens: reasoningTokens,
 	}, nil
 }

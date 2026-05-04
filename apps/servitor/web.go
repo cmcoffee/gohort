@@ -30,7 +30,6 @@ func init() {
 		Key:           "app.servitor.orchestrator",
 		Label:         "Servitor: Orchestrator",
 		Default:       "worker (thinking)",
-		DefaultBudget: 16384,
 		Group:         "Servitor",
 		Private:       true,
 	})

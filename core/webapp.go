@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/webui"
@@ -451,10 +452,38 @@ var streamingPaths = map[string]bool{
 	"/api/reconnect": true,
 }
 
+// usageReportSkipKey identifies the context-stored flag the middleware
+// checks before printing its end-of-request cost summary. Handlers
+// that fire their own scoped report (UsageScope.Report etc.) flip the
+// flag via MarkUsageReportHandled so the middleware doesn't print a
+// near-duplicate on top of theirs.
+type usageReportSkipKey struct{}
+
+// MarkUsageReportHandled signals to UsageReportMiddleware that this
+// request's cost has already been reported by the handler — skip the
+// middleware's end-of-request log line. Idempotent and safe to call
+// from multiple goroutines on the same request.
+//
+// Pattern at the handler:
+//
+//	defer MarkUsageReportHandled(r.Context())
+//	defer scope.Report("my-op-"+id)()
+//
+// No-op when called on a context not wrapped by UsageReportMiddleware
+// (e.g. background jobs, scheduled tasks).
+func MarkUsageReportHandled(ctx context.Context) {
+	if flag, ok := ctx.Value(usageReportSkipKey{}).(*atomic.Bool); ok {
+		flag.Store(true)
+	}
+}
+
 // UsageReportMiddleware wraps an http.Handler so per-request usage is
 // snapshotted at entry and reported at exit via FormatUsageReport.
 // Skips when no counters moved (static GETs, HTML pages) so the log
 // doesn't fill with zero-delta noise. Skips streaming paths outright.
+// Skips when the handler called MarkUsageReportHandled — that's how
+// apps with their own scoped cost report (debate, research, etc.)
+// avoid printing a near-duplicate.
 //
 // Wired into MountSubMux so every registered WebApp gets cost reporting
 // for free; handlers don't need to import or call anything. Adding a
@@ -466,11 +495,19 @@ func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
+			// Wrap the request context with a skip flag handlers can
+			// flip via MarkUsageReportHandled.
+			skip := new(atomic.Bool)
+			ctx := context.WithValue(r.Context(), usageReportSkipKey{}, skip)
+			r = r.WithContext(ctx)
 			start := ProcessUsage().Snapshot()
 			// Defer so the report fires even if the handler panics. The
 			// Go server's own panic recovery lets the middleware's defer
 			// run before the connection is torn down.
 			defer func() {
+				if skip.Load() {
+					return
+				}
 				d := ProcessUsage().Diff(start)
 				if d == (UsageDiff{}) {
 					return

@@ -14,7 +14,6 @@ func init() {
 		Key:           "app.chat",
 		Label:         "Chat",
 		Default:       "worker (thinking)",
-		DefaultBudget: 16384,
 		Group:         "Apps",
 	})
 }

@@ -33,6 +33,7 @@ var global struct {
 	root          string
 	debug         bool
 	snoop         bool
+	trace         bool
 	sysmode       bool
 	single_thread bool
 }
@@ -83,6 +84,7 @@ func main() {
 	flags.BoolVar(&global.single_thread, "serial", NONE)
 	flags.BoolVar(&global.debug, "debug", NONE)
 	flags.BoolVar(&global.snoop, "snoop", NONE)
+	flags.BoolVar(&global.trace, "trace", NONE)
 
 	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 
@@ -189,7 +191,7 @@ func main() {
 		enable_debug()
 	}
 
-	if global.snoop {
+	if global.snoop || global.trace {
 		enable_trace()
 	}
 

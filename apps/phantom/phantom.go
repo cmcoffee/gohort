@@ -23,7 +23,6 @@ func init() {
 		Key:           "app.phantom",
 		Label:         "Phantom",
 		Default:       "worker (thinking)",
-		DefaultBudget: 8192,
 		Group:         "Apps",
 	})
 }

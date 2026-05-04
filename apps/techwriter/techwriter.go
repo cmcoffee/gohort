@@ -8,7 +8,7 @@ import (
 
 func init() {
 	RegisterApp(new(TechWriterAgent))
-	RegisterRouteStage(RouteStage{Key: "app.techwriter", Label: "TechWriter", Default: "worker (thinking)", DefaultBudget: 16384, Group: "Apps"})
+	RegisterRouteStage(RouteStage{Key: "app.techwriter", Label: "TechWriter", Default: "worker (thinking)", Group: "Apps"})
 }
 
 // ArticleRecord stores a saved article.

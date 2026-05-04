@@ -1616,7 +1616,7 @@ const adminBody = `
         <option value="on">On</option>
       </select>
       <label style="font-size:0.9rem;color:#c9d1d9">Default Budget (tokens)</label>
-      <input type="number" id="worker-think-budget" min="0" step="1024" placeholder="0=unlimited"
+      <input type="number" id="worker-think-budget" min="0" step="1024" placeholder="dynamic"
         style="width:8rem;padding:0.35rem 0.5rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
         onchange="saveWorkerThinking()">
     </div>
@@ -2341,7 +2341,7 @@ function loadRouting() {
       }
       var def = s.default || 'lead';
       var kid = s.key.replace(/\./g, '-');
-      var budgetPlaceholder = s.default_budget > 0 ? 'default: ' + s.default_budget : '0=global';
+      var budgetPlaceholder = s.default_budget > 0 ? 'default: ' + s.default_budget : 'dynamic';
       html += '<div style="display:flex;align-items:center;gap:0.6rem;padding:0.35rem 0;border-bottom:1px solid #21262d;flex-wrap:wrap">';
       if (s.private) {
         // Private stage: locked to worker tier only, but still has budget control.
@@ -2359,7 +2359,7 @@ function loadRouting() {
         html += '</select>';
         html += '<span style="display:flex;align-items:center;gap:0.3rem">'
           + '<span style="font-size:0.78rem;color:#8b949e">Budget</span>'
-          + '<input type="number" id="rbudget-' + kid + '" value="' + (s.think_budget || 0) + '" min="0" step="1024" placeholder="' + budgetPlaceholder + '"'
+          + '<input type="number" id="rbudget-' + kid + '" value="' + (s.think_budget > 0 ? s.think_budget : '') + '" min="0" step="1024" placeholder="' + budgetPlaceholder + '"'
           + ' onchange="saveRouting(\'' + escapeHtml(s.key) + '\')"'
           + ' style="width:5.5rem;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:0.78rem;padding:3px 5px">'
           + '</span>';
@@ -2374,7 +2374,7 @@ function loadRouting() {
         html += '</select>';
         html += '<span style="display:flex;align-items:center;gap:0.3rem">'
           + '<span style="font-size:0.78rem;color:#8b949e">Budget</span>'
-          + '<input type="number" id="rbudget-' + kid + '" value="' + (s.think_budget || 0) + '" min="0" step="1024" placeholder="' + budgetPlaceholder + '"'
+          + '<input type="number" id="rbudget-' + kid + '" value="' + (s.think_budget > 0 ? s.think_budget : '') + '" min="0" step="1024" placeholder="' + budgetPlaceholder + '"'
           + ' onchange="saveRouting(\'' + escapeHtml(s.key) + '\')"'
           + ' style="width:5.5rem;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font-size:0.78rem;padding:3px 5px">'
           + '</span>';
@@ -2404,7 +2404,7 @@ function loadWorkerThinking() {
     var en = document.getElementById('worker-think-enabled');
     var bud = document.getElementById('worker-think-budget');
     if (en) en.value = d.enabled ? 'on' : 'off';
-    if (bud) bud.value = d.budget || 0;
+    if (bud) bud.value = d.budget > 0 ? d.budget : '';
   });
 }
 
