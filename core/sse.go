@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 // SSEWriter wraps an http.ResponseWriter for Server-Sent Events streaming.
@@ -40,6 +42,50 @@ func (s *SSEWriter) SendComment(text string) error {
 	}
 	s.flusher.Flush()
 	return nil
+}
+
+// StartKeepalive ticks every interval and writes a comment-line to
+// the SSE stream so reverse proxies / browser EventSource don't drop
+// the connection during long quiet periods (LLM thinking before
+// first content chunk, slow tool calls, etc.). Returns a stop
+// function the caller defers — call it BEFORE the final event for
+// cleanest output, though it's safe to call after as well.
+//
+// Standard usage at the top of an SSE handler:
+//
+//	sse, err := NewSSEWriter(w)
+//	if err != nil { ... }
+//	defer sse.StartKeepalive(10 * time.Second)()
+//
+// 10s interval is the recommended default — well under nginx's 60s
+// proxy_read_timeout default, gentle enough that the comment overhead
+// is invisible.
+func (s *SSEWriter) StartKeepalive(interval time.Duration) func() {
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	stopped := new(atomic.Bool)
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if stopped.Load() {
+					return
+				}
+				_ = s.SendComment("ka")
+			}
+		}
+	}()
+	return func() {
+		if stopped.CompareAndSwap(false, true) {
+			close(done)
+		}
+	}
 }
 
 // Send marshals v to JSON and writes it as an SSE data event.

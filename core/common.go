@@ -638,8 +638,14 @@ func routeEffectiveVal(key string) string {
 
 // RouteToLead returns true if the named route stage should use the lead
 // LLM. Stages default to lead unless their Default field or DB value says
-// "worker" or "worker (thinking)".
+// "worker" or "worker (thinking)". Stages registered with Private=true
+// are locked to the worker tier and never escalate, regardless of DB
+// value — used by apps (e.g. servitor) that handle sensitive data and
+// must not send it to a remote lead model.
 func RouteToLead(key string) bool {
+	if IsPrivateStage(key) {
+		return false
+	}
 	val := routeEffectiveVal(key)
 	return val != "worker" && val != "worker (thinking)"
 }
@@ -1106,6 +1112,7 @@ type ToolSession struct {
 	LeadLLM           LLM      // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
 	DB                Database // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
 	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
+	WorkspaceID       string   // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
 	// an in-progress status message to the user mid-turn ("Working on it…").
 	// Each app wires it differently: chat emits an SSE status event, phantom
@@ -1230,6 +1237,27 @@ type TempTool struct {
 	// BodyTemplate is an optional request body template for api mode.
 	// `{arg_name}` placeholders are JSON-encoded.
 	BodyTemplate string `json:"body_template,omitempty"`
+	// ArchivePath, when set, points to a tar.gz on disk holding the
+	// tool's code (scripts, helpers, fixtures) at approval time. The
+	// path is relative to WorkspacesDir() — typically
+	// "_tools/<owner>/<name>.tar.gz". On every dispatch, the
+	// dispatcher creates a per-invocation tmpdir, extracts this
+	// archive into it, runs the command, then tears the tmpdir down.
+	// DB stays small; tar files are inspectable + standard-backup-
+	// friendly. Empty for ad-hoc shell tools whose CommandTemplate is
+	// fully self-contained (e.g. "uname -a").
+	ArchivePath string `json:"archive_path,omitempty"`
+	// ArchiveSize and ArchiveHash track the archive's metadata for
+	// integrity / admin display.
+	ArchiveSize int64  `json:"archive_size,omitempty"`
+	ArchiveHash string `json:"archive_hash,omitempty"`
+	// StatePath, when set, names a relative subdirectory inside the
+	// extracted workspace whose contents are preserved across
+	// invocations (rsync'd from a per-tool _state/ dir before each
+	// run, rsync'd back after). Use for tools that legitimately need
+	// runtime state (counters, accumulating logs, cached lookup DBs).
+	// Everything else is rebuilt fresh from the archive each fire.
+	StatePath string `json:"state_path,omitempty"`
 }
 
 // AppendTempTool registers a temp tool on the session. Returns an error

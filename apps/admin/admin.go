@@ -231,22 +231,6 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		json.NewEncoder(w).Encode(RegisteredCostSources())
 	})
 
-	// Run all registered embedding backfills. Intended as a one-shot
-	// after enabling embeddings for the first time or swapping models.
-	// Returns label → records-newly-ingested so the UI can report scope.
-	sub.HandleFunc("/api/embedding-backfill", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		counts := RunAllEmbeddingBackfills(r.Context())
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(counts)
-	})
-
 	// List registered maintenance functions (GET) or run one by key (POST ?key=<key>).
 	sub.HandleFunc("/api/maintenance", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -306,7 +290,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(VectorStats(a.db))
+		json.NewEncoder(w).Encode(VectorStats(a.db.Bucket("knowledge")))
 	})
 
 	// Secure API credentials. GET lists metadata (no secrets). POST
@@ -456,6 +440,151 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Watchers: GET lists all (admin sees every owner's), PATCH updates
+	// editable fields on one, POST toggles enabled, DELETE removes.
+	sub.HandleFunc("/api/watchers", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			ws := ListWatchers("")
+			out := make([]map[string]any, 0, len(ws))
+			for _, x := range ws {
+				eval := x.Evaluator
+				if eval == "" {
+					eval = "llm"
+				}
+				prefix := ""
+				if x.DeliveryPrefixSet {
+					prefix = x.DeliveryPrefix
+				}
+				argsJSON, _ := json.Marshal(x.ToolArgs)
+				out = append(out, map[string]any{
+					"id":                  x.ID,
+					"name":                x.Name,
+					"owner":               x.Owner,
+					"enabled":             x.Enabled,
+					"tool_name":           x.ToolName,
+					"tool_args":           string(argsJSON),
+					"interval_sec":        x.IntervalSec,
+					"action_prompt":       x.ActionPrompt,
+					"evaluator":           eval,
+					"evaluator_script":    x.EvaluatorScript,
+					"delivery_prefix":     prefix,
+					"delivery_prefix_set": x.DeliveryPrefixSet,
+					"target":              x.Target,
+					"fire_count":          x.FireCount,
+					"last_fired_at":       x.LastFiredAt.Format("2006-01-02T15:04:05Z"),
+					"last_result_body":    x.LastResultBody,
+					"results":             x.Results,
+				})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(out)
+
+		case http.MethodPatch:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			var req struct {
+				ActionPrompt       *string `json:"action_prompt,omitempty"`
+				IntervalSec        *int    `json:"interval_sec,omitempty"`
+				Evaluator          *string `json:"evaluator,omitempty"`
+				EvaluatorScript    *string `json:"evaluator_script,omitempty"`
+				DeliveryPrefix     *string `json:"delivery_prefix,omitempty"`
+				DeliveryPrefixUnset bool   `json:"delivery_prefix_unset,omitempty"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			watcher, ok := LoadWatcher(id)
+			if !ok {
+				http.Error(w, "watcher not found", http.StatusNotFound)
+				return
+			}
+			if req.ActionPrompt != nil {
+				watcher.ActionPrompt = *req.ActionPrompt
+			}
+			if req.IntervalSec != nil {
+				if *req.IntervalSec < 60 {
+					http.Error(w, "interval_sec must be >= 60", http.StatusBadRequest)
+					return
+				}
+				watcher.IntervalSec = *req.IntervalSec
+			}
+			if req.Evaluator != nil {
+				v := strings.ToLower(strings.TrimSpace(*req.Evaluator))
+				if v != "llm" && v != "script" && v != "raw" {
+					http.Error(w, "evaluator must be llm|script|raw", http.StatusBadRequest)
+					return
+				}
+				watcher.Evaluator = v
+			}
+			if req.EvaluatorScript != nil {
+				watcher.EvaluatorScript = *req.EvaluatorScript
+			}
+			if req.DeliveryPrefixUnset {
+				watcher.DeliveryPrefixSet = false
+				watcher.DeliveryPrefix = ""
+			} else if req.DeliveryPrefix != nil {
+				watcher.DeliveryPrefixSet = true
+				watcher.DeliveryPrefix = *req.DeliveryPrefix
+			}
+			if err := SaveWatcher(watcher); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			// Re-schedule with the new interval if enabled.
+			if watcher.Enabled {
+				_ = SetWatcherEnabled(watcher.ID, true)
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case http.MethodPost:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			action := r.URL.Query().Get("action")
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			switch action {
+			case "enable":
+				if err := SetWatcherEnabled(id, true); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			case "disable":
+				if err := SetWatcherEnabled(id, false); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			default:
+				http.Error(w, "action must be enable|disable", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
+		case http.MethodDelete:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			if err := DeleteWatcher(id); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -1672,11 +1801,7 @@ const adminBody = `
   <div class="section">
     <h2>Vector Index</h2>
     <div class="setting-row">
-      <span class="setting-desc">Rebuild the semantic-search index from stored records. Run once after enabling embeddings for the first time or after switching embedding models. Safe to re-run — records already ingested are skipped. Ingestion runs synchronously here and may take a while on large deployments (one embedding call per chunk, typically one per section per record).</span>
-    </div>
-    <div class="setting-row" style="display:flex;gap:0.75rem;align-items:center;flex-wrap:wrap;margin-bottom:0.5rem">
-      <button id="embed-backfill-btn" onclick="runEmbeddingBackfill(this)" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Run backfill</button>
-      <span id="embed-backfill-status" style="font-size:0.85rem;color:#8b949e"></span>
+      <span class="setting-desc">Snapshot of the semantic-search index. Chunks are written automatically as records (research/debate/answer) are produced.</span>
     </div>
     <div id="vector-stats" style="font-size:0.8rem;color:#8b949e;margin-top:0.25rem;font-family:monospace;line-height:1.6"></div>
   </div>
@@ -1785,6 +1910,14 @@ const adminBody = `
     <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Active</h3>
     <div id="active-tools-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
     <div id="active-tools-empty" style="font-size:0.85rem;color:#8b949e">No active persistent tools.</div>
+  </div>
+  <div class="section">
+    <h2>Watchers</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Long-running observers the LLM has minted. Each repeats a captured tool call every N seconds and on result change runs an evaluator (llm / script / raw) to decide whether to alert. Edit the script + interval + action_prompt inline; toggle enabled / delete from here too. Tool name &amp; args are read-only — changing what's being watched is a delete + recreate operation in chat.</span>
+    </div>
+    <div id="watchers-list" style="display:flex;flex-direction:column;gap:0.6rem;margin-top:0.5rem"></div>
+    <div id="watchers-empty" style="font-size:0.85rem;color:#8b949e">No watchers defined.</div>
   </div>
   <div class="section">
     <h2>Database Browser</h2>
@@ -2460,7 +2593,7 @@ function loadVectorStats() {
     var el = document.getElementById('vector-stats');
     if (!el || !s) return;
     if (s.total === 0) {
-      el.innerHTML = '<span style="color:#8b949e;font-style:italic">Index empty — run backfill to ingest existing records.</span>';
+      el.innerHTML = '<span style="color:#8b949e;font-style:italic">Index empty — chunks will appear as new records are produced.</span>';
       return;
     }
     var parts = [];
@@ -2478,56 +2611,6 @@ function loadVectorStats() {
     var line1 = parts.join('  |  ');
     var line2 = bySrc.length ? 'By source: ' + bySrc.join(', ') : '';
     el.innerHTML = line1 + (line2 ? '<br>' + line2 : '');
-  });
-}
-
-function runEmbeddingBackfill(btn) {
-  var status = document.getElementById('embed-backfill-status');
-  if (btn) {
-    btn.disabled = true;
-    btn.style.opacity = '0.6';
-    btn.textContent = 'Running...';
-  }
-  if (status) {
-    status.textContent = 'Ingesting records — this may take a while.';
-    status.style.color = '#8b949e';
-  }
-  fetch('api/embedding-backfill', {method: 'POST'}).then(function(r){
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(function(counts){
-    if (btn) {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.textContent = 'Run backfill';
-    }
-    if (status) {
-      var parts = [];
-      var total = 0;
-      Object.keys(counts).forEach(function(k){
-        parts.push(k + ': ' + counts[k]);
-        total += counts[k];
-      });
-      if (total === 0) {
-        status.textContent = 'No new records to ingest — everything already in the index.';
-        status.style.color = '#8b949e';
-      } else {
-        status.textContent = 'Ingested ' + total + ' record' + (total === 1 ? '' : 's') + ' (' + parts.join(', ') + ').';
-        status.style.color = '#2ea043';
-      }
-    }
-    // Refresh stats so the user sees the new counts immediately.
-    loadVectorStats();
-  }).catch(function(err){
-    if (btn) {
-      btn.disabled = false;
-      btn.style.opacity = '1';
-      btn.textContent = 'Run backfill';
-    }
-    if (status) {
-      status.textContent = 'Backfill failed: ' + err.message;
-      status.style.color = '#f85149';
-    }
   });
 }
 
@@ -3196,6 +3279,165 @@ function relTime(iso) {
   return Math.round(s/86400) + 'd ago';
 }
 
+// --- Watchers ---
+
+function loadWatchers() {
+  fetch('api/watchers').then(function(r) { return r.json(); }).then(function(d) {
+    renderWatchers(d || []);
+  }).catch(function() {
+    renderWatchers([]);
+  });
+}
+
+function renderWatchers(ws) {
+  var list = document.getElementById('watchers-list');
+  var empty = document.getElementById('watchers-empty');
+  if (!ws || !ws.length) {
+    if (list) list.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+  ws.sort(function(a,b) { return (a.name||'').localeCompare(b.name||''); });
+  var html = '';
+  for (var i = 0; i < ws.length; i++) {
+    var w = ws[i];
+    var id = w.id;
+    var safeID = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+    var enabledLabel = w.enabled ? 'Enabled' : 'Disabled';
+    var enabledColor = w.enabled ? '#3fb950' : '#8b949e';
+    var lastFired = w.last_fired_at && w.last_fired_at !== '0001-01-01T00:00:00Z'
+      ? '<span style="color:#8b949e;font-size:0.78rem">last: ' + escapeHtml(w.last_fired_at) + '</span>'
+      : '';
+    html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.6rem 0.75rem">';
+    html += '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.6rem;margin-bottom:0.5rem">';
+    html += '<strong style="color:#c9d1d9">' + escapeHtml(w.name) + '</strong>';
+    html += '<span style="color:' + enabledColor + ';font-size:0.78rem">' + enabledLabel + '</span>';
+    html += '<span style="color:#8b949e;font-size:0.78rem">owner=' + escapeHtml(w.owner||'-') + '</span>';
+    html += '<span style="color:#8b949e;font-size:0.78rem">tool=' + escapeHtml(w.tool_name||'-') + '</span>';
+    html += '<span style="color:#8b949e;font-size:0.78rem">fires=' + w.fire_count + '</span>';
+    html += lastFired;
+    html += '<span style="margin-left:auto;display:flex;gap:0.4rem">';
+    if (w.enabled) {
+      html += '<button class="btn" onclick="watcherToggle(\'' + id + '\', false)" style="padding:2px 8px;font-size:0.78rem">Disable</button>';
+    } else {
+      html += '<button class="btn" onclick="watcherToggle(\'' + id + '\', true)" style="padding:2px 8px;font-size:0.78rem">Enable</button>';
+    }
+    html += '<button class="btn" onclick="watcherSave(\'' + id + '\')" style="padding:2px 8px;font-size:0.78rem">Save</button>';
+    html += '<button class="btn btn-danger" onclick="watcherDelete(\'' + id + '\')" style="padding:2px 8px;font-size:0.78rem">Delete</button>';
+    html += '</span>';
+    html += '</div>';
+
+    html += '<div style="display:grid;grid-template-columns:auto 1fr;gap:0.4rem 0.6rem;font-size:0.82rem;align-items:start">';
+
+    html += '<label style="color:#8b949e;align-self:center">Args (read-only)</label>';
+    html += '<code style="background:#161b22;border:1px solid #30363d;border-radius:4px;padding:3px 6px;color:#c9d1d9;overflow-x:auto;display:block">' + escapeHtml(w.tool_args||'{}') + '</code>';
+
+    html += '<label style="color:#8b949e;align-self:center">Interval (sec)</label>';
+    html += '<input type="number" min="60" id="w-int-' + safeID + '" value="' + (w.interval_sec||60) + '" style="background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;padding:3px 6px;width:6rem">';
+
+    html += '<label style="color:#8b949e;align-self:center">Evaluator</label>';
+    html += '<select id="w-eval-' + safeID + '" style="background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;padding:3px 6px;width:8rem">';
+    var modes = ['llm','script','raw'];
+    for (var m = 0; m < modes.length; m++) {
+      html += '<option value="' + modes[m] + '"' + (w.evaluator === modes[m] ? ' selected' : '') + '>' + modes[m] + '</option>';
+    }
+    html += '</select>';
+
+    html += '<label style="color:#8b949e;align-self:start;padding-top:4px">Action prompt</label>';
+    html += '<textarea id="w-prompt-' + safeID + '" rows="2" style="background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;padding:4px 6px;font-family:inherit;width:100%;resize:vertical">' + escapeHtml(w.action_prompt||'') + '</textarea>';
+
+    html += '<label style="color:#8b949e;align-self:start;padding-top:4px">Script (python)</label>';
+    html += '<textarea id="w-script-' + safeID + '" rows="6" style="background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;padding:4px 6px;font-family:monospace;font-size:0.78rem;width:100%;resize:vertical">' + escapeHtml(w.evaluator_script||'') + '</textarea>';
+
+    html += '<label style="color:#8b949e;align-self:center">Delivery prefix</label>';
+    var prefVal = w.delivery_prefix_set ? w.delivery_prefix : '';
+    var prefPlaceholder = w.delivery_prefix_set ? '(empty = no prefix)' : '(default tag)';
+    html += '<div style="display:flex;gap:0.4rem;align-items:center">';
+    html += '<input type="text" id="w-prefix-' + safeID + '" value="' + escapeHtml(prefVal) + '" placeholder="' + prefPlaceholder + '" style="background:#161b22;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;padding:3px 6px;flex:1">';
+    html += '<label style="color:#8b949e;font-size:0.78rem;display:flex;align-items:center;gap:0.3rem"><input type="checkbox" id="w-prefix-set-' + safeID + '"' + (w.delivery_prefix_set ? ' checked' : '') + '> override</label>';
+    html += '</div>';
+
+    html += '</div>';
+
+    if (w.last_result_body) {
+      html += '<details style="margin-top:0.5rem"><summary style="cursor:pointer;color:#8b949e;font-size:0.78rem">cached response (' + (w.last_result_body.length) + ' chars)</summary>';
+      html += '<pre style="background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;color:#c9d1d9;font-size:0.75rem;max-height:200px;overflow:auto;margin-top:0.3rem">' + escapeHtml(w.last_result_body) + '</pre>';
+      html += '</details>';
+    }
+    if (w.results && w.results.length) {
+      html += '<details style="margin-top:0.3rem"><summary style="cursor:pointer;color:#8b949e;font-size:0.78rem">recent fires (' + w.results.length + ')</summary>';
+      html += '<div style="background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:6px 8px;color:#c9d1d9;font-size:0.75rem;max-height:240px;overflow:auto;margin-top:0.3rem">';
+      var rs = w.results.slice().reverse();
+      for (var k = 0; k < rs.length && k < 20; k++) {
+        var rr = rs[k];
+        html += '<div style="margin-bottom:0.5rem;border-bottom:1px solid #21262d;padding-bottom:0.4rem">';
+        html += '<div style="color:#8b949e;font-size:0.7rem">' + escapeHtml(rr.timestamp||'') + '</div>';
+        if (rr.error) html += '<div style="color:#f85149">ERROR: ' + escapeHtml(rr.error) + '</div>';
+        if (rr.reply) html += '<div style="white-space:pre-wrap">' + escapeHtml(rr.reply) + '</div>';
+        html += '</div>';
+      }
+      html += '</div></details>';
+    }
+
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+function watcherSave(id) {
+  var safeID = id.replace(/[^a-zA-Z0-9_-]/g, '_');
+  var body = {
+    interval_sec:     parseInt(document.getElementById('w-int-' + safeID).value, 10) || 60,
+    action_prompt:    document.getElementById('w-prompt-' + safeID).value,
+    evaluator:        document.getElementById('w-eval-' + safeID).value,
+    evaluator_script: document.getElementById('w-script-' + safeID).value,
+  };
+  var prefSet = document.getElementById('w-prefix-set-' + safeID).checked;
+  var prefVal = document.getElementById('w-prefix-' + safeID).value;
+  if (prefSet) {
+    body.delivery_prefix = prefVal;
+  } else {
+    body.delivery_prefix_unset = true;
+  }
+  fetch('api/watchers?id=' + encodeURIComponent(id), {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  }).then(function(r) {
+    if (!r.ok) {
+      r.text().then(function(t) { alert('Save failed: ' + t); });
+      return;
+    }
+    loadWatchers();
+  });
+}
+
+function watcherToggle(id, enable) {
+  fetch('api/watchers?id=' + encodeURIComponent(id) + '&action=' + (enable ? 'enable' : 'disable'), {
+    method: 'POST',
+  }).then(function(r) {
+    if (!r.ok) {
+      r.text().then(function(t) { alert('Toggle failed: ' + t); });
+      return;
+    }
+    loadWatchers();
+  });
+}
+
+function watcherDelete(id) {
+  if (!confirm('Delete this watcher?')) return;
+  fetch('api/watchers?id=' + encodeURIComponent(id), {
+    method: 'DELETE',
+  }).then(function(r) {
+    if (!r.ok) {
+      r.text().then(function(t) { alert('Delete failed: ' + t); });
+      return;
+    }
+    loadWatchers();
+  });
+}
+
 // --- DB Browser ---
 
 var dbActiveTable = '';
@@ -3284,11 +3526,14 @@ document.addEventListener('DOMContentLoaded', function() {
     loadScheduledTasks();
     loadSecureAPICredentials();
     loadPersistentTools();
+    loadWatchers();
     // Refresh scheduled tasks every 30s so cancelled tasks disappear without reload.
     setInterval(loadScheduledTasks, 30000);
     // Refresh persistent tools every 30s so newly-queued requests
     // appear without a manual reload.
     setInterval(loadPersistentTools, 30000);
+    // Refresh watchers every 30s so fire counts + last_fired_at stay current.
+    setInterval(loadWatchers, 30000);
     // Refresh the cost chart every minute so runs that finish while
     // the admin page is open show up without a manual reload. One
     // small JSON fetch per tick — cheap.

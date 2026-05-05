@@ -33,7 +33,7 @@ func (t *SendStatusTool) Name() string { return "send_status" }
 func (t *SendStatusTool) Caps() []Capability { return nil }
 
 func (t *SendStatusTool) Desc() string {
-	return "Send a brief one-line status to the user mid-turn so they know what you're doing. CALL THIS LIBERALLY — any time you're about to start work that will take more than a few seconds (download_video, delegate, a chain of 3+ tool calls, long web_search + summarize, scheduling a callback, placing a phone call), call send_status FIRST so the user sees forward motion. Also call it again when you switch phases (e.g. 'Got the search results, building the comparison now.'). Examples: 'One moment, looking it up.' / 'Downloading the video now.' / 'Reaching the API — should be a few seconds.' / 'Placing the call now, will follow up when it ends.' Status messages do NOT replace your final reply — keep producing the actual answer when ready."
+	return "Send a brief one-line status mid-turn so the user sees forward motion. CALL THIS when upcoming work will take >5 seconds (downloads, multi-step tool chains, slow APIs, callbacks) and again when you switch phases. Status messages do NOT replace your final reply — keep producing the answer when ready."
 }
 
 func (t *SendStatusTool) Params() map[string]ToolParam {

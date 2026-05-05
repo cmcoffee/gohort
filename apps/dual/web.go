@@ -169,42 +169,10 @@ func (T *DualAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// --- list_servitor_sessions tool: checks active Servitor probe sessions ---
-	listAgentsTool := AgentToolDef{
-		Tool: Tool{
-			Name:        "list_servitor_sessions",
-			Description: "List active or recently completed Servitor probe sessions. Use this to check whether a mapping run is still in progress or has finished.",
-			Parameters:  map[string]ToolParam{},
-			Required:    []string{},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			all := AllLiveSessions()
-			var probes []LiveEntry
-			for _, s := range all {
-				if s.App == "Servitor" {
-					probes = append(probes, s)
-				}
-			}
-			if len(probes) == 0 {
-				return "No active Servitor sessions.", nil
-			}
-			var sb strings.Builder
-			sb.WriteString(fmt.Sprintf("%d active Servitor session(s):\n", len(probes)))
-			for _, s := range probes {
-				status := s.Status
-				if status == "" {
-					status = "running"
-				}
-				fmt.Fprintf(&sb, "  • %s — %s\n", s.Label, status)
-			}
-			return sb.String(), nil
-		},
-	}
-
 	orchestratorSysPrompt := T.SystemPrompt()
 	resp, _, loopErr := T.AppCore.RunAgentLoop(ctx, messages, AgentLoopConfig{
 		SystemPrompt: orchestratorSysPrompt,
-		Tools:        []AgentToolDef{delegateTool, listAgentsTool},
+		Tools:        []AgentToolDef{delegateTool},
 		MaxRounds:    16,
 		ChatOptions:  []ChatOption{WithThink(false), WithMaxTokens(8192)},
 		Stream: func(chunk string) {

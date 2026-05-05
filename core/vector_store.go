@@ -4,8 +4,71 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
+
+// chunkCache holds a snapshot of every EmbeddedChunk row from a single
+// kvlite Database, so SearchChunks/SearchChunksSubstring can scan a Go
+// slice instead of re-deserializing every chunk from kvlite per query.
+// Lazy-loaded on first read; invalidated on every IngestReport /
+// DeleteReportChunks so the next read rebuilds. Keyed by the Database
+// pointer so a future multi-bucket setup just rebuilds when the bucket
+// changes — no correctness risk, only the rebuild cost.
+//
+// At gohort scale (thousands of chunks, low write rate, interactive
+// reads) invalidate-on-write + lazy-rebuild is the right trade: the
+// cost of a write is 1 extra db.Keys walk on the next read, and reads
+// drop from N×JSON-decode to a single slice walk.
+var chunkCache struct {
+	mu     sync.RWMutex
+	db     Database
+	chunks []EmbeddedChunk
+	loaded bool
+}
+
+// loadChunkCache fully (re)builds the cache from db. Caller must hold
+// chunkCache.mu for write.
+func loadChunkCache(db Database) {
+	chunkCache.db = db
+	chunkCache.chunks = chunkCache.chunks[:0]
+	for _, key := range db.Keys(EmbeddedChunks) {
+		var c EmbeddedChunk
+		if db.Get(EmbeddedChunks, key, &c) {
+			chunkCache.chunks = append(chunkCache.chunks, c)
+		}
+	}
+	chunkCache.loaded = true
+}
+
+// snapshotChunks returns the current cached chunk slice for db,
+// rebuilding from kvlite if the cache is empty or pointed at a
+// different Database. The returned slice is owned by the cache —
+// callers must NOT mutate it.
+func snapshotChunks(db Database) []EmbeddedChunk {
+	chunkCache.mu.RLock()
+	if chunkCache.loaded && chunkCache.db == db {
+		out := chunkCache.chunks
+		chunkCache.mu.RUnlock()
+		return out
+	}
+	chunkCache.mu.RUnlock()
+
+	chunkCache.mu.Lock()
+	defer chunkCache.mu.Unlock()
+	if !chunkCache.loaded || chunkCache.db != db {
+		loadChunkCache(db)
+	}
+	return chunkCache.chunks
+}
+
+// invalidateChunkCache marks the cache stale so the next read rebuilds.
+// Cheap: a single bool flip under lock.
+func invalidateChunkCache() {
+	chunkCache.mu.Lock()
+	chunkCache.loaded = false
+	chunkCache.mu.Unlock()
+}
 
 // EmbeddedChunk is a single row in the vector store. One report's
 // text is split into multiple chunks (typically one per `## section`);
@@ -89,6 +152,14 @@ func IngestReport(ctx context.Context, db Database, source, reportID, report str
 	if db == nil || reportID == "" {
 		return
 	}
+	// Defense-in-depth: servitor handles SSH credentials, system facts,
+	// and other sensitive per-appliance data that must never be indexed
+	// into the deployment-wide knowledge store. Refuse the ingest if a
+	// caller ever wires it up by mistake.
+	if source == "servitor" {
+		Debug("[vector] refusing to ingest source=servitor (sensitive data — must stay in app)")
+		return
+	}
 	// Remove any existing chunks for this report — re-ingestion on
 	// resynth should replace, not duplicate.
 	DeleteReportChunks(db, reportID)
@@ -128,6 +199,7 @@ func IngestReport(ctx context.Context, db Database, source, reportID, report str
 		}
 		db.Set(EmbeddedChunks, row.ID, row)
 	}
+	invalidateChunkCache()
 	Debug("[vector] ingested %s/%s: %d chunks (%d embedded, %d empty)", source, reportID, len(chunks), embedded, empty)
 }
 
@@ -138,11 +210,16 @@ func DeleteReportChunks(db Database, reportID string) {
 	if db == nil || reportID == "" {
 		return
 	}
+	removed := false
 	for _, key := range db.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
 		if db.Get(EmbeddedChunks, key, &c) && c.ReportID == reportID {
 			db.Unset(EmbeddedChunks, key)
+			removed = true
 		}
+	}
+	if removed {
+		invalidateChunkCache()
 	}
 }
 
@@ -185,35 +262,6 @@ func VectorStats(db Database) VectorIndexStats {
 	return stats
 }
 
-// EmbeddingBackfiller describes a registered per-package backfill
-// function. Packages that persist reports worth embedding register at
-// init time; the admin UI calls RunAllEmbeddingBackfills to trigger
-// them all. Decouples admin from the individual packages' record
-// types.
-type EmbeddingBackfiller struct {
-	Label string
-	Run   func(ctx context.Context) int // returns records newly ingested
-}
-
-var embeddingBackfillers []EmbeddingBackfiller
-
-// RegisterEmbeddingBackfiller registers a per-package backfill helper.
-// Called from package init() functions.
-func RegisterEmbeddingBackfiller(label string, fn func(ctx context.Context) int) {
-	embeddingBackfillers = append(embeddingBackfillers, EmbeddingBackfiller{Label: label, Run: fn})
-}
-
-// RunAllEmbeddingBackfills invokes every registered backfiller and
-// returns a map of label → records-newly-ingested. Admin UI surfaces
-// this so the operator sees the scope of the first-time embed.
-func RunAllEmbeddingBackfills(ctx context.Context) map[string]int {
-	out := make(map[string]int, len(embeddingBackfillers))
-	for _, b := range embeddingBackfillers {
-		out[b.Label] = b.Run(ctx)
-	}
-	return out
-}
-
 // MaintenanceFunc is a named one-shot repair function registered by a
 // private package at init time. The admin UI can trigger any registered
 // function by key. Returns the number of records modified.
@@ -251,133 +299,25 @@ func RunMaintenanceFunc(ctx context.Context, key string) int {
 	return -1
 }
 
-// BackfillMissing walks every record in the given history table and
-// ingests any whose report text hasn't yet been chunked (detected by
-// absence of any EmbeddedChunk row pointing at the report ID under
-// the given source). Safe to run multiple times — records already
-// ingested are skipped. Intended to be called from an admin endpoint
-// after embeddings are first enabled or after switching models.
-//
-// reportsFor is a caller-supplied function that pulls a (reportID,
-// reportText) pair for each record in the history table. Decouples
-// this helper from the source package's record types.
-//
-// Returns the number of records newly ingested.
-func BackfillMissing(ctx context.Context, db Database, source, historyTable string, reportsFor func(key string) (id, report string, ok bool)) int {
-	if db == nil {
-		return 0
-	}
-	// Build a set of (source, reportID) that already have AT LEAST ONE
-	// chunk with a non-empty vector. Records whose chunks all have
-	// empty vectors (because embedding was down when they were first
-	// ingested) are NOT skipped — the backfill is the retry path.
-	//
-	// We also detect "fallback-only" chunks (Topic/Verdict/Confidence)
-	// that were created before the full report was generated. If the
-	// current text is richer than fallback, the record is NOT marked
-	// ingested so it gets re-embedded with the full content.
-	ingested := make(map[string]bool)
-	fallbackSections := map[string]bool{"Topic": true, "Verdict": true, "Confidence": true}
-	cfg := GetEmbeddingConfig()
-
-	// Collect section names per report ID.
-	type chunkInfo struct {
-		sections    map[string]bool
-		hasValidVec bool
-	}
-	infoByReport := make(map[string]*chunkInfo)
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) || c.Source != source {
-			continue
-		}
-		ci, ok := infoByReport[c.ReportID]
-		if !ok {
-			ci = &chunkInfo{sections: make(map[string]bool)}
-			infoByReport[c.ReportID] = ci
-		}
-		ci.sections[c.Section] = true
-		if len(c.Vector) > 0 && c.Model == cfg.Model {
-			ci.hasValidVec = true
-		}
-	}
-
-	// Mark records as ingested: must have valid vector AND non-fallback sections.
-	for reportID, ci := range infoByReport {
-		if !ci.hasValidVec {
-			continue
-		}
-		hasRealSection := false
-		for s := range ci.sections {
-			if !fallbackSections[s] {
-				hasRealSection = true
-				break
-			}
-		}
-		if hasRealSection && cfg.Enabled {
-			ingested[reportID] = true
-		}
-		// Fallback-only chunks are NOT marked ingested — the per-record
-		// loop below will re-ingest only if the current text is richer.
-	}
-
-	// Fallback helper: check if text looks like fallback (Topic+Verdict+Confidence).
-	isFallbackOnly := func(text string) bool {
-		sections := strings.Split(text, "## ")
-		if len(sections) < 3 {
-			return false
-		}
-		for _, s := range sections[1:] {
-			firstWord := strings.TrimSpace(strings.SplitN(s, "\n", 2)[0])
-			if !fallbackSections[firstWord] {
-				return false
-			}
-		}
-		return true
-	}
-
-	var count, skipped int
-	for _, key := range db.Keys(historyTable) {
-		id, report, ok := reportsFor(key)
-		if !ok || id == "" || strings.TrimSpace(report) == "" {
-			continue
-		}
-		if ingested[id] {
-			skipped++
-			continue
-		}
-		// Record has fallback-only chunks but current text is richer —
-		// re-ingest with the full content.
-		if !isFallbackOnly(report) {
-			IngestReport(ctx, db, source, id, report)
-			count++
-		} else {
-			skipped++
-		}
-	}
-	Debug("[vector] backfill %s: %d ingested, %d already-indexed skipped", source, count, skipped)
-	return count
-}
-
 // SearchChunks returns the top-K chunks by cosine similarity to the
-// query vector. Linear scan over all stored chunks — fine for the
-// gohort scale (hundreds of reports → thousands of chunks at most,
-// search completes in tens of milliseconds). Skips chunks whose
-// dimension doesn't match the query (embedding model mismatch).
+// query vector. Backed by an in-process cache (chunkCache) so each
+// query is a slice scan, not a kvlite re-deserialize. Skips chunks
+// whose dimension doesn't match the query (embedding model mismatch).
+//
+// Scale notes: comfortable to ~50k chunks with the cache; consider a
+// real ANN index (HNSW via coder/hnsw, chromem-go) above that.
 func SearchChunks(db Database, query []float32, k int) []SearchHit {
 	if db == nil || len(query) == 0 || k <= 0 {
 		return nil
 	}
+	chunks := snapshotChunks(db)
 	type scored struct {
 		hit   SearchHit
 		score float32
 	}
 	var all []scored
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
+	for i := range chunks {
+		c := &chunks[i]
 		if len(c.Vector) != len(query) {
 			continue
 		}
@@ -417,12 +357,10 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 		return nil
 	}
 	q := strings.ToLower(query)
+	chunks := snapshotChunks(db)
 	var out []SearchHit
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
+	for i := range chunks {
+		c := &chunks[i]
 		if !strings.Contains(strings.ToLower(c.Section+" "+c.Text), q) {
 			continue
 		}

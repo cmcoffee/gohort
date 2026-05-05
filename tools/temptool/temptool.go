@@ -21,6 +21,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -151,6 +153,13 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		Required:        required,
 		CommandTemplate: cmd,
 	}
+	// Optional StatePath captures "this subdir of the workspace
+	// persists across invocations." Most tools don't need it — they
+	// run their script and produce output, no state. Stateful tools
+	// (counters, accumulating logs, lookup DBs) opt in.
+	if sp := strings.TrimSpace(StringArg(args, "state_path")); sp != "" {
+		tool.StatePath = sp
+	}
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
 	}
@@ -162,17 +171,31 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	persist := BoolArg(args, "persist")
 	if persist {
 		if sess.DB == nil || sess.Username == "" {
-			// Persistence not supported in this app/session (e.g.
-			// phantom, or unauthenticated chat). Tell the LLM clearly
-			// so it doesn't assume the tool will survive — it won't.
 			return fmt.Sprintf("Created temp tool %q for this session. Persistence was requested but is not available in this app/session, so the tool will be discarded when the session ends. Treat it as session-scoped.", name), nil
 		}
+		// Pack the session's current workspace into a tar.gz archive
+		// IFF the command_template references {workspace_dir} (so the
+		// tool actually needs the workspace files). Pure shell tools
+		// like "uname -a" skip this — empty ArchivePath = self-
+		// contained.
+		archiveNote := ""
+		if strings.Contains(cmd, "{workspace_dir}") {
+			if sess.WorkspaceDir == "" {
+				return "", fmt.Errorf("command_template references {workspace_dir} but session has no active workspace — call workspace(action=create) first, write your scripts, then create the persistent tool")
+			}
+			path, size, hash, err := PackToolArchive(sess.WorkspaceDir, sess.Username, name)
+			if err != nil {
+				return "", fmt.Errorf("pack tool archive: %w", err)
+			}
+			tool.ArchivePath = path
+			tool.ArchiveSize = size
+			tool.ArchiveHash = hash
+			archiveNote = fmt.Sprintf(" Workspace packed into %s (%d bytes, sha256=%s).", path, size, hash[:12])
+		}
 		if err := QueuePendingTempTool(sess.DB, sess.Username, *tool, ""); err != nil {
-			// Queue failure isn't fatal — the in-session tool still
-			// works; the LLM just learns persistence didn't take.
 			return fmt.Sprintf("Created temp tool %q for this session. Persistence requested but queueing failed: %v. Tool will be discarded at session end.", name, err), nil
 		}
-		return fmt.Sprintf("Created temp tool %q for this session. Persistence requested — queued for user approval via the admin UI. The user will review the command template before it becomes available in future sessions.", name), nil
+		return fmt.Sprintf("Created temp tool %q for this session.%s Persistence requested — queued for user approval via the admin UI. The user will review the command template (and the packed archive contents) before it becomes available in future sessions.", name, archiveNote), nil
 	}
 	return fmt.Sprintf("Created temp tool %q. It is available in your tool catalog on the next round of this session only.", name), nil
 }
@@ -393,11 +416,50 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 		return dispatchAPIModeTempTool(sess, tt, args)
 	}
 
-	if sess.WorkspaceDir == "" {
-		return "", fmt.Errorf("temp tool %q requires a session with WorkspaceDir set", tt.Name)
+	// Shell-mode dispatch path. Three shapes depending on the tool:
+	//
+	//  (a) ArchivePath set: tool packs its own code. Extract into a
+	//      per-invocation tmpdir, optionally restore state subdir,
+	//      run, save state back, tear tmpdir down. {workspace_dir}
+	//      resolves to the tmpdir.
+	//
+	//  (b) ArchivePath empty + command references {workspace_dir}:
+	//      ad-hoc tool created mid-session (persist=false). Use the
+	//      session's current WorkspaceDir.
+	//
+	//  (c) ArchivePath empty + no {workspace_dir} reference: pure
+	//      shell command (e.g. "uname -a"). Use sess.WorkspaceDir
+	//      as the bwrap bind so the command has SOME cwd, but the
+	//      command itself doesn't depend on workspace contents.
+	var workspaceDir string
+	if tt.ArchivePath != "" {
+		tmp, err := os.MkdirTemp("", "tooldispatch-")
+		if err != nil {
+			return "", fmt.Errorf("mkdtemp: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		if err := UnpackToolArchive(tt.ArchivePath, tmp); err != nil {
+			return "", fmt.Errorf("unpack archive: %w", err)
+		}
+		// Restore persistent state for stateful tools.
+		if tt.StatePath != "" {
+			stateTarget := filepath.Join(tmp, tt.StatePath)
+			if err := os.MkdirAll(stateTarget, 0700); err != nil {
+				return "", fmt.Errorf("mkdir state target: %w", err)
+			}
+			if err := CopyToolStateInto(sess.Username, tt.Name, stateTarget); err != nil {
+				return "", fmt.Errorf("restore state: %w", err)
+			}
+		}
+		workspaceDir = tmp
+	} else {
+		workspaceDir = sess.WorkspaceDir
 	}
-	// Shell mode: substitute with shell-quoted args.
-	cmd, err := substitute(tt.CommandTemplate, tt.Params, args)
+	if workspaceDir == "" {
+		return "", fmt.Errorf("temp tool %q has no workspace context (tool has no archive and session has no WorkspaceDir)", tt.Name)
+	}
+	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
+	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
 		return "", err
 	}
@@ -405,13 +467,19 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
 
-	// Network access defaults to off — temp tools that touch the wire
-	// must be opted in via per-tool flag (future). For now, all temp
-	// tools run with --unshare-net... actually leave network on so
-	// existing tools keep working; the per-tool network flag is the
-	// next pass.
-	res := RunSandboxedShell(ctx, cmd, sess.WorkspaceDir)
+	res := RunSandboxedShell(ctx, cmd, workspaceDir)
 	output := strings.TrimSpace(res.Output)
+
+	// Save state back AFTER successful (or failed — preserve state
+	// either way so state changes during partial runs aren't lost)
+	// dispatch. Best-effort: state-save errors are logged but don't
+	// fail the dispatch itself.
+	if tt.ArchivePath != "" && tt.StatePath != "" {
+		stateTarget := filepath.Join(workspaceDir, tt.StatePath)
+		if err := CopyToolStateBack(sess.Username, tt.Name, stateTarget); err != nil {
+			Debug("[temptool] state save failed for %s: %v", tt.Name, err)
+		}
+	}
 
 	// Telemetry: bump LastUsedAt on the persistent record (if this is
 	// a persistent tool). Best-effort — no-op when the tool isn't

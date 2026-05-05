@@ -674,13 +674,34 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 				path != "/forgot" && path != "/reset" {
 			app_path := "/" + strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
 			if !UserHasAppAccess(r, app_path) {
-				http.Error(w, "forbidden", http.StatusForbidden)
+				writeForbidden(w, r, app_path)
 				return
 			}
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func writeForbidden(w http.ResponseWriter, r *http.Request, app_path string) {
+	if strings.Contains(strings.ToLower(r.URL.Path), "/api/") ||
+		strings.Contains(r.Header.Get("Accept"), "application/json") {
+		http.Error(w, "forbidden: no access to "+app_path, http.StatusForbidden)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><title>Access denied</title>`+
+		`<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,sans-serif;`+
+		`background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;`+
+		`min-height:100vh;margin:0}.box{max-width:520px;padding:32px;background:#161b22;`+
+		`border:1px solid #30363d;border-radius:10px;text-align:center}h1{color:#f85149;`+
+		`font-size:22px;margin:0 0 12px}p{margin:8px 0;line-height:1.5}a{color:#58a6ff}`+
+		`code{background:#0d1117;padding:2px 6px;border-radius:4px}</style></head><body>`+
+		`<div class="box"><h1>Access denied</h1>`+
+		`<p>Your account does not have access to <code>%s</code>.</p>`+
+		`<p>Contact an administrator if you need access.</p>`+
+		`<p><a href="/">Return to dashboard</a></p></div></body></html>`, app_path)
 }
 
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {

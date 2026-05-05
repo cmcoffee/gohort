@@ -25,6 +25,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/videodl"
 	_ "github.com/cmcoffee/gohort/tools/watcher"
 	_ "github.com/cmcoffee/gohort/tools/websearch"
+	_ "github.com/cmcoffee/gohort/tools/workspace"
 )
 
 // wireToolDB is set during initialization to connect tools to their database

@@ -10,6 +10,7 @@
 package watcher
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -31,27 +32,32 @@ func init() {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Create a new polling watcher around a tool call you've already run successfully. Required: name, tool_name (any tool you can call — including secure-API call_<credname> tools), tool_args (the args object you want the watcher to pass each cycle), interval_seconds (>=60), action_prompt (what the worker should do when the result changes). Optional: delivery_prefix (overrides the default tag prepended to delivered messages — pass empty string to suppress the prefix entirely). The watcher invokes tool_name with tool_args every interval, hashes the result, and on change wakes the worker with the diff + your action_prompt. RECOMMENDED FLOW: call the tool once yourself first to confirm it works and returns the data you want — then mint a watcher with the same args.",
+		Description: "Create a polling watcher around a tool call. Required: name, tool_name, tool_args, interval_seconds (>=60). Pick ONE evaluator: \"llm\"+action_prompt (worker LLM analyzes each diff), \"script\"+evaluator_script+evaluator_test (sandboxed python — zero LLM cost), or \"raw\" (current response IS the alert). Call action=\"help\" for the recommended flow + script-writing rules.",
 		Params: map[string]ToolParam{
-			"name":             {Type: "string", Description: "Short identifier for the watcher (snake_case recommended)."},
-			"tool_name":        {Type: "string", Description: "Name of the tool to invoke each cycle. Anything you can call — built-in tools (web_search, fetch_url, etc.), secure-API call_<credname> tools, or runtime-defined tools."},
-			"tool_args":        {Type: "object", Description: "The args object the watcher passes to tool_name every cycle. Use the same args you used when you tested the call."},
-			"interval_seconds": {Type: "integer", Description: "How often to poll, in seconds. Minimum 60."},
-			"action_prompt":    {Type: "string", Description: "What you want the worker to do when a change is detected. Be specific — the worker has no other context besides this + the diff."},
-			"delivery_prefix":  {Type: "string", Description: "Optional. Text prepended to the worker's reply on delivery. Default is a tag like \"[watcher: <name>]\\n\" so recipients know it's an unprompted alert. Set empty string to suppress the prefix when the message body is self-explanatory (e.g. \"AAPL just crossed $250\")."},
+			"name":             {Type: "string", Description: "Short identifier (snake_case)."},
+			"tool_name":        {Type: "string", Description: "Tool to invoke each cycle (built-in, call_<credname>, or runtime-defined)."},
+			"tool_args":        {Type: "object", Description: "Args passed to tool_name every cycle."},
+			"interval_seconds": {Type: "integer", Description: "Poll interval. Minimum 60."},
+			"evaluator":        {Type: "string", Description: "\"llm\" (default), \"script\", or \"raw\"."},
+			"action_prompt":    {Type: "string", Description: "Required for evaluator=llm. What the worker should do when a change is detected."},
+			"evaluator_script": {Type: "string", Description: "Required for evaluator=script. Python reading {\"prior\":str,\"current\":str} on stdin, printing alert to stdout (empty=no alert). Network-less, read-only-FS, 10s limit. See action=\"help\" for script-writing rules."},
+			"evaluator_test":   {Type: "object", Description: "Required for evaluator=script. {\"expected_fields\":[...]} — substrings that MUST appear in the probe response, verified at create time. Optional: synthetic_prior + expected_output_contains for full diff-logic verification."},
+			"delivery_prefix":  {Type: "string", Description: "Optional. Override the default \"[watcher: <name>]\\n\" tag. Empty string suppresses entirely."},
 		},
-		Required:     []string{"name", "tool_name", "tool_args", "interval_seconds", "action_prompt"},
-		Caps:         []Capability{CapNetwork, CapWrite},
+		Required:     []string{"name", "tool_name", "tool_args", "interval_seconds"},
+		Caps:         []Capability{CapNetwork, CapWrite, CapExecute},
 		NeedsConfirm: true,
 		Handler:      handleCreate,
 	})
 
 	gt.AddAction("update", &GroupedToolAction{
-		Description: "Update an existing watcher's action_prompt, interval_seconds, or delivery_prefix. Cannot change the captured tool_name/tool_args (changing what's being watched is structurally a different watcher — delete + create instead). Returns the updated watcher record.",
+		Description: "Update an existing watcher's action_prompt, interval_seconds, evaluator, evaluator_script, or delivery_prefix. Cannot change the captured tool_name/tool_args (changing what's being watched is structurally a different watcher — delete + create instead). Returns the updated watcher record.",
 		Params: map[string]ToolParam{
 			"id":               {Type: "string", Description: "Watcher ID (from list)."},
 			"action_prompt":    {Type: "string", Description: "Optional. New action_prompt. Omit to leave unchanged."},
 			"interval_seconds": {Type: "integer", Description: "Optional. New polling interval (>=60). Omit or 0 to leave unchanged."},
+			"evaluator":        {Type: "string", Description: "Optional. Change the evaluator mode (\"llm\", \"script\", \"raw\"). When switching to \"script\" you must also pass evaluator_script."},
+			"evaluator_script": {Type: "string", Description: "Optional. New python source for evaluator=\"script\". Omit to leave unchanged."},
 			"delivery_prefix":  {Type: "string", Description: "Optional. New delivery prefix. Pass empty string to suppress prefix; pass the literal string \"reset\" to revert to the routing app's default."},
 		},
 		Required: []string{"id"},
@@ -126,8 +132,12 @@ func handleList(args map[string]any, sess *ToolSession) (string, error) {
 	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
 	var b strings.Builder
 	for _, w := range ws {
-		fmt.Fprintf(&b, "- id=%s  name=%q  enabled=%t  fires=%d  tool=%s  interval=%ds",
-			w.ID, w.Name, w.Enabled, w.FireCount, w.ToolName, w.IntervalSec)
+		eval := w.Evaluator
+		if eval == "" {
+			eval = "llm"
+		}
+		fmt.Fprintf(&b, "- id=%s  name=%q  enabled=%t  fires=%d  tool=%s  interval=%ds  evaluator=%s",
+			w.ID, w.Name, w.Enabled, w.FireCount, w.ToolName, w.IntervalSec, eval)
 		if !w.LastFiredAt.IsZero() {
 			fmt.Fprintf(&b, "  last_fired=%s", w.LastFiredAt.UTC().Format(time.RFC3339))
 		}
@@ -143,6 +153,26 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	interval := IntArg(args, "interval_seconds")
 	if interval < 60 {
 		return "", fmt.Errorf("interval_seconds must be >= 60 (you asked for %d)", interval)
+	}
+
+	evaluator := strings.ToLower(strings.TrimSpace(StringArg(args, "evaluator")))
+	if evaluator == "" {
+		evaluator = "llm"
+	}
+	script := StringArg(args, "evaluator_script")
+	switch evaluator {
+	case "llm":
+		if prompt == "" {
+			return "", fmt.Errorf("evaluator=\"llm\" requires action_prompt — describe what you want the worker to do when a change is detected")
+		}
+	case "script":
+		if strings.TrimSpace(script) == "" {
+			return "", fmt.Errorf("evaluator=\"script\" requires evaluator_script — the python source that processes prior/current and prints alert text")
+		}
+	case "raw":
+		// no extras required
+	default:
+		return "", fmt.Errorf("evaluator must be one of \"llm\", \"script\", \"raw\" (you passed %q)", evaluator)
 	}
 
 	toolArgs, err := coerceArgsObject(args["tool_args"])
@@ -175,6 +205,18 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("test invocation of %q returned what looks like an error response (%d bytes): %s — fix the call before creating the watcher (otherwise it will never detect change since the error body is byte-identical every poll)", toolName, len(probe), truncate(probe, 300))
 	}
 
+	// Script-mode validation: expected_fields verification + auto dry-
+	// run + optional synthetic-diff test. Forces the LLM to look at
+	// the actual response shape before committing — catches the
+	// camelCase-vs-snake_case / forgot-to-strip-HTTP-prefix class of
+	// bugs at create time instead of an hour later when "no alert
+	// fires" gets reported.
+	if evaluator == "script" {
+		if err := validateScriptAgainstProbe(args, script, probe); err != nil {
+			return "", err
+		}
+	}
+
 	// The probe response IS the baseline — no point waiting for the
 	// first scheduled poll to seed something we already have.
 	probeBody := probe
@@ -182,18 +224,20 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 		probeBody = probeBody[:4096]
 	}
 	w := Watcher{
-		Name:           name,
-		Owner:          ownerFor(sess),
-		Kind:           "polling",
-		ActionPrompt:   prompt,
-		Enabled:        true,
-		Target:         targetFor(sess),
-		ToolName:       toolName,
-		ToolArgs:       toolArgs,
-		IntervalSec:    interval,
-		LastResultHash: HashWatcherBody(probe),
-		LastResultBody: probeBody,
-		FireCount:      1, // probe counts as the seed; next change triggers the worker
+		Name:            name,
+		Owner:           ownerFor(sess),
+		Kind:            "polling",
+		ActionPrompt:    prompt,
+		Enabled:         true,
+		Target:          targetFor(sess),
+		ToolName:        toolName,
+		ToolArgs:        toolArgs,
+		IntervalSec:     interval,
+		Evaluator:       evaluator,
+		EvaluatorScript: script,
+		LastResultHash:  HashWatcherBody(probe),
+		LastResultBody:  probeBody,
+		FireCount:       1, // probe counts as the seed; next change triggers the worker
 	}
 	// delivery_prefix is opt-in. The "Set" sentinel distinguishes
 	// "use the routing app's default" (false) from "use this exact
@@ -212,8 +256,10 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	for _, candidate := range ListWatchers(w.Owner) {
 		if candidate.Name == name && candidate.ToolName == toolName {
 			SchedulePollNow(candidate)
-			return fmt.Sprintf("Watcher created (id=%s, name=%q, polls %s every %ds). Test invocation returned %d bytes — review the response to confirm it's what you expected; if not, delete the watcher and recreate with corrected args.\n\n--- test response ---\n%s\n--- end test response ---",
-				candidate.ID, candidate.Name, candidate.ToolName, candidate.IntervalSec,
+			Debug("[watcher] created %s (id=%s, tool=%s, interval=%ds, evaluator=%s, owner=%q)",
+				candidate.Name, candidate.ID, candidate.ToolName, candidate.IntervalSec, evaluator, candidate.Owner)
+			return fmt.Sprintf("Watcher created (id=%s, name=%q, polls %s every %ds, evaluator=%s). Test invocation returned %d bytes — review the response to confirm it's what you expected; if not, delete the watcher and recreate with corrected args.\n\n--- test response ---\n%s\n--- end test response ---",
+				candidate.ID, candidate.Name, candidate.ToolName, candidate.IntervalSec, evaluator,
 				len(probe), truncate(probe, 800)), nil
 		}
 	}
@@ -281,6 +327,32 @@ func handleUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 	}
 
+	if v := strings.ToLower(strings.TrimSpace(StringArg(args, "evaluator"))); v != "" {
+		if v != "llm" && v != "script" && v != "raw" {
+			return "", fmt.Errorf("evaluator must be one of \"llm\", \"script\", \"raw\" (you passed %q)", v)
+		}
+		w.Evaluator = v
+		changed = append(changed, "evaluator")
+	}
+	if raw, present := args["evaluator_script"]; present && raw != nil {
+		if s, isStr := raw.(string); isStr {
+			w.EvaluatorScript = s
+			changed = append(changed, "evaluator_script")
+		}
+	}
+	// Cross-validate after applying both: switching to "script" needs
+	// a non-empty script; "llm" needs an action_prompt.
+	switch w.Evaluator {
+	case "script":
+		if strings.TrimSpace(w.EvaluatorScript) == "" {
+			return "", fmt.Errorf("evaluator=\"script\" requires evaluator_script — pass the python source in the same update call")
+		}
+	case "llm":
+		if strings.TrimSpace(w.ActionPrompt) == "" {
+			return "", fmt.Errorf("evaluator=\"llm\" requires action_prompt — pass it in the same update call")
+		}
+	}
+
 	if raw, present := args["delivery_prefix"]; present && raw != nil {
 		if s, isStr := raw.(string); isStr {
 			if s == "reset" {
@@ -324,6 +396,14 @@ func handlePeek(args map[string]any, sess *ToolSession) (string, error) {
 	fmt.Fprintf(&b, "  tool: %s\n", w.ToolName)
 	fmt.Fprintf(&b, "  args: %s\n", argsJSON)
 	fmt.Fprintf(&b, "  interval: %ds  enabled: %t  fires: %d\n", w.IntervalSec, w.Enabled, w.FireCount)
+	eval := w.Evaluator
+	if eval == "" {
+		eval = "llm"
+	}
+	fmt.Fprintf(&b, "  evaluator: %s\n", eval)
+	if w.EvaluatorScript != "" {
+		fmt.Fprintf(&b, "  evaluator_script (%d chars):\n---\n%s\n---\n", len(w.EvaluatorScript), w.EvaluatorScript)
+	}
 	if !w.LastFiredAt.IsZero() {
 		fmt.Fprintf(&b, "  last_fired: %s\n", w.LastFiredAt.UTC().Format(time.RFC3339))
 	}
@@ -425,6 +505,148 @@ func coerceArgsObject(raw any) (map[string]any, error) {
 		return out, nil
 	default:
 		return nil, fmt.Errorf("tool_args must be an object, got %T", raw)
+	}
+}
+
+// validateScriptAgainstProbe enforces the "look before you leap" gate
+// for evaluator=script watchers. Verifies (in order):
+//
+//   1. evaluator_test was provided (with at least expected_fields).
+//   2. Every string in expected_fields appears in the probe response —
+//      catches wrong field-name casing / typos at create time.
+//   3. Auto dry-run with prior="" + current=probe should produce
+//      non-empty output (because everything is "new" relative to the
+//      empty prior). Empty output here means the script can't extract
+//      anything from the response, regardless of its diff logic.
+//   4. Optional synthetic test: if synthetic_prior + expected_output_
+//      contains are provided, run the script with them and verify the
+//      output contains the expected substring. Catches diff-logic
+//      bugs (e.g. comparing wrong field set, off-by-one in slicing).
+//
+// All failures include the actual probe response in the error so the
+// LLM can see exactly what shape it's working with.
+func validateScriptAgainstProbe(args map[string]any, script, probe string) error {
+	testRaw, present := args["evaluator_test"]
+	if !present || testRaw == nil {
+		return fmt.Errorf("evaluator=\"script\" requires evaluator_test — at minimum {\"expected_fields\": [\"<field_name>\", ...]} listing substrings that must appear in the probe response. Probe was: %s", truncate(probe, 600))
+	}
+	test, err := coerceArgsObject(testRaw)
+	if err != nil {
+		return fmt.Errorf("evaluator_test must be an object: %w", err)
+	}
+
+	// 1. expected_fields verification.
+	fieldsRaw, hasFields := test["expected_fields"]
+	if !hasFields || fieldsRaw == nil {
+		return fmt.Errorf("evaluator_test.expected_fields is required — array of substrings that must appear in the probe response. Probe was: %s", truncate(probe, 600))
+	}
+	fields, err := coerceStringArray(fieldsRaw)
+	if err != nil {
+		return fmt.Errorf("evaluator_test.expected_fields: %w", err)
+	}
+	if len(fields) == 0 {
+		return fmt.Errorf("evaluator_test.expected_fields is empty — list at least one substring that must appear in the probe response")
+	}
+	var missing []string
+	for _, f := range fields {
+		if f == "" {
+			continue
+		}
+		if !strings.Contains(probe, f) {
+			missing = append(missing, f)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("evaluator_test.expected_fields not found in probe response: %v. Likely cause: wrong field name casing (camelCase vs snake_case) or typo. Adjust the script to use the actual field names. Probe was: %s",
+			missing, truncate(probe, 600))
+	}
+
+	// 2. Auto dry-run: prior="" + current=probe. Output should be
+	//    non-empty since every observed item is "new" relative to
+	//    the empty prior.
+	dryOut, dryErr := runProbeScript(script, "", probe)
+	if dryErr != nil {
+		return fmt.Errorf("dry-run failed (prior=\"\", current=probe): %w. Script must execute cleanly. Probe was: %s",
+			dryErr, truncate(probe, 600))
+	}
+	if strings.TrimSpace(dryOut) == "" {
+		return fmt.Errorf("dry-run produced no output when called with prior=\"\" and current=probe — script can't extract anything from the response. Common causes: wrong field names, forgot to strip an HTTP status prefix, JSON parse failure swallowed by bare except. Probe was: %s",
+			truncate(probe, 600))
+	}
+
+	// 3. Optional synthetic-diff test.
+	synthPrior := strings.TrimSpace(StringArg(test, "synthetic_prior"))
+	expectContains := strings.TrimSpace(StringArg(test, "expected_output_contains"))
+	if synthPrior != "" && expectContains != "" {
+		synthOut, synthErr := runProbeScript(script, synthPrior, probe)
+		if synthErr != nil {
+			return fmt.Errorf("synthetic-diff test failed: %w", synthErr)
+		}
+		if !strings.Contains(synthOut, expectContains) {
+			return fmt.Errorf("synthetic-diff test: expected output to contain %q, got %q. Diff logic isn't firing for the change you described. Adjust the script's comparison logic.",
+				expectContains, truncate(synthOut, 300))
+		}
+	}
+
+	return nil
+}
+
+// runProbeScript runs the watcher's script with the given prior +
+// current strings, mirroring the runtime invocation. Used at create
+// time for validation tests; never persists state.
+func runProbeScript(script, prior, current string) (string, error) {
+	payload, err := json.Marshal(map[string]string{
+		"prior":   prior,
+		"current": current,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode payload: %w", err)
+	}
+	scriptCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	res := RunSandboxedScript(scriptCtx, "python3", script, string(payload))
+	if res.TimedOut {
+		return "", fmt.Errorf("timed out after 10s")
+	}
+	if res.Err != nil {
+		stderr := strings.TrimSpace(res.Stderr)
+		if stderr == "" {
+			stderr = res.Err.Error()
+		}
+		return "", fmt.Errorf("script error: %s", stderr)
+	}
+	return res.Stdout, nil
+}
+
+// coerceStringArray normalizes whatever the LLM passed for an array-
+// of-strings field into a []string. Tolerates JSON-encoded string
+// inputs (Qwen sometimes hands us the array as a stringified blob).
+func coerceStringArray(raw any) ([]string, error) {
+	switch v := raw.(type) {
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			} else {
+				out = append(out, fmt.Sprint(x))
+			}
+		}
+		return out, nil
+	case []string:
+		return v, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return nil, nil
+		}
+		var out []string
+		if err := json.Unmarshal([]byte(s), &out); err != nil {
+			return nil, fmt.Errorf("could not parse as JSON array of strings: %w", err)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("expected array of strings, got %T", raw)
 	}
 }
 

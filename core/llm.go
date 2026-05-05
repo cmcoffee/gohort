@@ -79,6 +79,12 @@ type Response struct {
 	// the backend doesn't report it; callers can fall back to a
 	// char-ratio estimate from len(Reasoning) / len(Reasoning+Content).
 	ReasoningTokens int
+	// Server-reported pure-throughput numbers. Populated by llama.cpp;
+	// other backends leave these zero. PredictedPerSecond is decode-
+	// only tokens/sec (excludes prefill), matching what llama.cpp's
+	// own web UI displays. PromptPerSecond is prefill throughput.
+	PredictedPerSecond float64
+	PromptPerSecond    float64
 	// Tier reports which LLM tier actually served this response.
 	// Populated by WorkerChat (always WORKER), LeadChat (LEAD on
 	// native success, WORKER when the routing config or fallback
@@ -389,6 +395,14 @@ type ChatConfig struct {
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
 	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
 	MaskDebug    bool   // Suppress request/response content from debug logs (use for sessions with sensitive data).
+	// ReasoningHandler, when non-nil, receives reasoning-channel
+	// chunks as the model emits them — separate from the main
+	// content StreamHandler. UI surfaces (chat web) use this to
+	// render a live "thinking" pane during reasoning so the user
+	// has something to watch during long thinks. Called only on
+	// streaming paths; non-stream Chat() puts the full reasoning
+	// on Response.Reasoning as before.
+	ReasoningHandler StreamHandler
 }
 
 // ChatOption is a functional option for configuring an LLM call.
@@ -397,6 +411,15 @@ type ChatOption func(*ChatConfig)
 // WithModel overrides the default model for this call.
 func WithModel(model string) ChatOption {
 	return func(c *ChatConfig) { c.Model = model }
+}
+
+// WithReasoningStream installs a per-chunk handler for the reasoning
+// channel. When set on a streaming Chat call, the handler receives
+// reasoning text as the model emits it — useful for "live thinking"
+// UI panels. Non-stream callers and backends without a reasoning
+// channel ignore it.
+func WithReasoningStream(h StreamHandler) ChatOption {
+	return func(c *ChatConfig) { c.ReasoningHandler = h }
 }
 
 // WithMaxTokens sets the maximum number of tokens to generate.

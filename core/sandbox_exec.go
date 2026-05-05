@@ -23,6 +23,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -146,6 +147,88 @@ func bwrapArgv(workspaceDir, shellCmd string) []string {
 		"sh", "-c", shellCmd,
 	}
 	return args
+}
+
+// SandboxedScriptResult is what RunSandboxedScript returns.
+type SandboxedScriptResult struct {
+	Stdout   string
+	Stderr   string
+	Err      error
+	Sandbox  bool
+	TimedOut bool
+}
+
+// RunSandboxedScript runs an interpreter (e.g. "python3", "node") with
+// the given script body via `-c`, piping stdinData to its stdin and
+// capturing stdout / stderr separately. Stricter than RunSandboxedShell:
+//
+//   - No writable bind: there's no workspace; the sandbox's only
+//     writable surface is the per-invocation /tmp tmpfs.
+//   - No network: --unshare-net cuts the script off from outbound,
+//     since evaluator scripts already receive the data they need.
+//   - Same read-only system binds (libs, /etc/alternatives, etc.) so
+//     standard interpreters and stdlib work normally.
+//
+// Designed for watcher evaluator scripts: deterministic, fast,
+// stdin-in / stdout-out. Falls back to plain exec when bwrap isn't
+// installed (logs a warning once).
+func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData string) SandboxedScriptResult {
+	bwrap := detectBwrap()
+
+	var c *exec.Cmd
+	sandbox := false
+	if bwrap != "" {
+		args := bwrapScriptArgv(interpreter, script)
+		c = exec.CommandContext(ctx, bwrap, args...)
+		sandbox = true
+	} else {
+		bwrapWarnedOnce.Do(func() {
+			Log("[sandbox] WARNING: bwrap not installed — evaluator scripts run with gohort user permissions. Install bubblewrap to enable real sandboxing.")
+		})
+		c = exec.CommandContext(ctx, interpreter, "-c", script)
+	}
+	c.Env = sandboxEnv()
+	c.Stdin = strings.NewReader(stdinData)
+
+	var stdout, stderr bytes.Buffer
+	c.Stdout = &stdout
+	c.Stderr = &stderr
+	err := c.Run()
+	timedOut := ctx.Err() == context.DeadlineExceeded
+	return SandboxedScriptResult{
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Err:      err,
+		Sandbox:  sandbox,
+		TimedOut: timedOut,
+	}
+}
+
+// bwrapScriptArgv builds bwrap args for a script invocation. Tighter
+// than bwrapArgv (no writable bind, no network).
+func bwrapScriptArgv(interpreter, script string) []string {
+	return []string{
+		"--die-with-parent",
+		"--new-session",
+		"--unshare-pid",
+		"--unshare-uts",
+		"--unshare-ipc",
+		"--unshare-cgroup-try",
+		"--unshare-net", // evaluator scripts don't need outbound; tighter security
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind-try", "/bin", "/bin",
+		"--ro-bind-try", "/sbin", "/sbin",
+		"--ro-bind-try", "/lib", "/lib",
+		"--ro-bind-try", "/lib32", "/lib32",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
+		"--proc", "/proc",
+		"--dev", "/dev",
+		"--tmpfs", "/tmp",
+		"--chdir", "/tmp",
+		"--",
+		interpreter, "-c", script,
+	}
 }
 
 // sandboxEnv returns the environment for sandboxed commands. PATH must

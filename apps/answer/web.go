@@ -1,6 +1,7 @@
 package answer
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -8,7 +9,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/private/research"
 )
 
 func (T *AnswerAgent) WebPath() string { return "/answer" }
@@ -27,6 +27,7 @@ func (T *AnswerAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/history", T.handleHistory)
 	sub.HandleFunc("/api/record/", T.handleRecord)
 	sub.HandleFunc("/api/delete/", T.handleDelete)
+	sub.HandleFunc("/api/followup/", T.handleFollowup)
 	MountSubMux(mux, prefix, sub)
 }
 
@@ -51,27 +52,54 @@ func (T *AnswerAgent) handleAsk(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
+	stopKA := sse.StartKeepalive(10 * time.Second)
+	defer stopKA()
 
 	emit := func(status string) {
 		sse.Send(AnswerEvent{Type: "status", Status: status})
 	}
 
-	result, runErr := research.RunQuickAnswer(r.Context(), &T.AppCore, question, emit)
+	user := AuthCurrentUser(r)
+	udb := userDB(T.DB, r)
+	result, runErr := RunOrchestrator(r.Context(), &T.AppCore, udb, user, question, emit)
 	if runErr != nil {
 		sse.Send(AnswerEvent{Type: "error", Status: runErr.Error()})
 		return
 	}
 
 	id := UUIDv4()
+	now := time.Now().Format(time.RFC3339)
+
+	// Per-user index row — drives the sidebar and follow-ups.
 	rec := AnswerRecord{
+		ID:       id,
+		Question: question,
+		Topic:    result.Topic,
+		Date:     now,
+	}
+	if udb != nil {
+		udb.Set(answerTable, id, rec)
+	}
+
+	// Deployment-wide shared body — keyed by the same ID so
+	// search_knowledge / get_report can resolve it without knowing
+	// which user originated the question.
+	shared := SharedRecord{
 		ID:       id,
 		Question: question,
 		Answer:   result.Answer,
 		Sources:  result.Sources,
-		Date:     time.Now().Format(time.RFC3339),
+		Date:     now,
 	}
-	if T.DB != nil {
-		userDB(T.DB, r).Set(answerTable, id, rec)
+	if SharedDB != nil {
+		SharedDB.Set(SharedTable, id, shared)
+	}
+
+	// Index into the central knowledge vector store so chat's
+	// search_knowledge tool can find this answer. Async — embedding
+	// can take a moment and the client doesn't need to wait.
+	if KnowledgeDB != nil && strings.TrimSpace(result.Answer) != "" {
+		go IngestReport(context.Background(), KnowledgeDB, "answer", id, result.Answer)
 	}
 
 	sse.Send(AnswerEvent{
@@ -126,8 +154,191 @@ func (T *AnswerAgent) handleRecord(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
+	// Body lives in the deployment-wide shared table; merge for the
+	// API response so the UI sees one record shape.
+	var shared SharedRecord
+	if SharedDB != nil {
+		SharedDB.Get(SharedTable, id, &shared)
+	}
+	out := struct {
+		ID        string         `json:"ID"`
+		Question  string         `json:"Question"`
+		Answer    string         `json:"Answer"`
+		Sources   map[int]string `json:"Sources,omitempty"`
+		Topic     string         `json:"Topic,omitempty"`
+		Date      string         `json:"Date"`
+		Archived  bool           `json:"Archived,omitempty"`
+		Followups []FollowupTurn `json:"Followups,omitempty"`
+	}{
+		ID:        rec.ID,
+		Question:  rec.Question,
+		Answer:    shared.Answer,
+		Sources:   shared.Sources,
+		Topic:     rec.Topic,
+		Date:      rec.Date,
+		Archived:  rec.Archived,
+		Followups: rec.Followups,
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rec)
+	json.NewEncoder(w).Encode(out)
+}
+
+// handleFollowup runs a follow-up chat turn against an existing
+// answer record. The original question, answer, sources, topic, and
+// any saved facts are loaded as context. New turns are persisted on
+// the record so the conversation builds across sessions.
+//
+// Streamed via SSE: chunk events for content, done at end.
+func (T *AnswerAgent) handleFollowup(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/followup/")
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	msg := strings.TrimSpace(r.URL.Query().Get("m"))
+	if msg == "" {
+		http.Error(w, "m (message) required", http.StatusBadRequest)
+		return
+	}
+	if T.DB == nil {
+		http.Error(w, "no db", http.StatusInternalServerError)
+		return
+	}
+
+	udb := userDB(T.DB, r)
+	user := AuthCurrentUser(r)
+	var rec AnswerRecord
+	if !udb.Get(answerTable, id, &rec) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	var shared SharedRecord
+	if SharedDB != nil {
+		SharedDB.Get(SharedTable, id, &shared)
+	}
+
+	sse, err := NewSSEWriter(w)
+	if err != nil {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	stopKA := sse.StartKeepalive(10 * time.Second)
+	defer stopKA()
+
+	// Build the context: original Q&A, sources, prior follow-ups.
+	// Facts under the topic come into the system prompt so the
+	// follow-up agent can lean on the orchestrator's prior research.
+	priorFacts := FactsForTopic(udb, user, rec.Topic)
+	systemPrompt := buildFollowupSystem(rec, shared, priorFacts)
+
+	// Replay prior follow-up turns as messages so the agent has the
+	// full conversation history.
+	history := []Message{}
+	for _, t := range rec.Followups {
+		history = append(history, Message{Role: t.Role, Content: t.Content})
+	}
+	history = append(history, Message{Role: "user", Content: msg})
+
+	// Follow-up agent gets the same tool set the orchestrator had:
+	// web_search / fetch_url / browse_page / screenshot_page for
+	// fresh research, plus the fact tool to read/write the topic's
+	// knowledge base. Multi-step follow-ups (search → fetch → cite)
+	// work the same as the initial answer; the agent decides when
+	// the original answer covers it vs. when more digging is needed.
+	tools := orchestratorTools(udb, user, rec.Topic)
+	var fullReply strings.Builder
+	handler := func(chunk string) {
+		fullReply.WriteString(chunk)
+		sse.Send(map[string]string{"type": "chunk", "text": chunk})
+	}
+	resp, _, err := T.AppCore.RunAgentLoop(r.Context(), history, AgentLoopConfig{
+		SystemPrompt: systemPrompt,
+		Tools:        tools,
+		MaxRounds:    16,
+		RouteKey:     "app.answer",
+		Stream:       handler,
+		ChatOptions:  []ChatOption{WithMaxTokens(2048)},
+	})
+	if err != nil {
+		sse.Send(map[string]string{"type": "error", "message": err.Error()})
+		return
+	}
+	reply := strings.TrimSpace(fullReply.String())
+	if reply == "" && resp != nil {
+		reply = strings.TrimSpace(resp.Content)
+	}
+
+	// Persist both the user turn and the assistant reply on the record.
+	now := time.Now().Format(time.RFC3339)
+	rec.Followups = append(rec.Followups,
+		FollowupTurn{Role: "user", Content: msg, Date: now},
+		FollowupTurn{Role: "assistant", Content: reply, Date: now},
+	)
+	udb.Set(answerTable, id, rec)
+
+	sse.Send(map[string]string{"type": "done"})
+}
+
+// buildFollowupSystem renders the system prompt for follow-up chats.
+// Includes the original Q&A, source list, and any topic facts so the
+// follow-up agent has the same context the orchestrator did. The
+// agent has the full research tool set (web_search, fetch_url,
+// browse_page, screenshot_page) plus save_fact, so it can do fresh
+// research when a follow-up needs info beyond the original answer.
+func buildFollowupSystem(rec AnswerRecord, shared SharedRecord, facts []AnswerFact) string {
+	var b strings.Builder
+	b.WriteString("You are a follow-up assistant for a research answer the user already received. Answer questions about the original answer's content, drill into specific details, clarify points, or apply the knowledge to the user's specific situation.\n\n")
+	b.WriteString("WORKFLOW:\n")
+	b.WriteString("1. If the original answer + saved facts already cover the follow-up, answer directly from them. Cite specific sources/facts.\n")
+	b.WriteString("2. If the follow-up needs information NOT in the original answer (a related detail, a more recent update, a specific edge case), use web_search / fetch_url / browse_page to research it. Don't be shy about doing fresh research — that's what these tools are for.\n")
+	b.WriteString("3. As you discover durable, factual additions during follow-up research, call save_fact to record them under this topic. Future questions benefit. Don't save speculation, opinions, or rapidly-changing data.\n")
+	b.WriteString("4. Cite new sources with [N] inline + a short numbered list at the end if you fetched anything new.\n\n")
+	b.WriteString("ORIGINAL QUESTION:\n")
+	b.WriteString(rec.Question)
+	b.WriteString("\n\nORIGINAL ANSWER:\n")
+	b.WriteString(shared.Answer)
+	if len(shared.Sources) > 0 {
+		b.WriteString("\n\nSOURCES:\n")
+		for n, url := range shared.Sources {
+			b.WriteString("[")
+			b.WriteString(itoa(n))
+			b.WriteString("] ")
+			b.WriteString(url)
+			b.WriteString("\n")
+		}
+	}
+	if len(facts) > 0 {
+		b.WriteString("\nKNOWN FACTS UNDER TOPIC \"")
+		b.WriteString(rec.Topic)
+		b.WriteString("\":\n")
+		b.WriteString(FormatFactsForPrompt(facts))
+	} else {
+		b.WriteString("\nKNOWN FACTS: none yet for this topic. Save anything new the conversation surfaces.\n")
+	}
+	return b.String()
+}
+
+func itoa(n int) string {
+	// Avoid pulling strconv just for this.
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 func (T *AnswerAgent) handleDelete(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +352,16 @@ func (T *AnswerAgent) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userDB(T.DB, r).Unset(answerTable, id)
+	// Cascade: drop the shared body and any embedded chunks so the
+	// answer disappears from search_knowledge too. Each user's record
+	// has its own shared partner (no dedupe across users), so the
+	// delete is unconditional — no refcount needed.
+	if SharedDB != nil {
+		SharedDB.Unset(SharedTable, id)
+	}
+	if KnowledgeDB != nil {
+		DeleteReportChunks(KnowledgeDB, id)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -269,6 +490,47 @@ body { background:#0d1117; color:#c9d1d9; font-family:-apple-system,BlinkMacSyst
 .src-ref { color:#58a6ff; text-decoration:none; font-size:0.8em; vertical-align:super; }
 .src-ref:hover { text-decoration:underline; }
 
+/* follow-up chat */
+#followup-section { margin-top:1.5rem; padding-top:1rem; border-top:1px solid #30363d; max-width:820px; }
+#followup-section h4 { font-size:0.82rem; color:#8b949e; margin:0 0 0.6rem; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; }
+#followup-thread { display:flex; flex-direction:column; gap:0.6rem; margin-bottom:0.75rem; }
+.followup-msg { padding:0.5rem 0.75rem; border-radius:8px; font-size:0.88rem; line-height:1.55; }
+.followup-msg.user { background:#1c2128; border:1px solid #30363d; color:#c9d1d9; }
+.followup-msg.assistant { background:#161b22; border:1px solid #30363d; color:#c9d1d9; }
+.followup-msg .role { font-size:0.7rem; text-transform:uppercase; color:#8b949e; letter-spacing:0.05em; margin-bottom:0.3rem; font-weight:600; }
+.followup-msg.user .role { color:#58a6ff; }
+.followup-msg.assistant .role { color:#3fb950; }
+.followup-msg .body { white-space:pre-wrap; }
+.followup-msg .body p { margin:0 0 0.5rem; }
+.followup-msg .body p:last-child { margin-bottom:0; }
+.followup-msg .body.streaming::after {
+  content:''; display:inline-block; width:10px; height:10px; margin-left:0.4rem;
+  border:2px solid #30363d; border-top-color:#388bfd;
+  border-radius:50%; animation:ans-spin 0.7s linear infinite; vertical-align:middle;
+}
+.followup-msg .body.thinking-only {
+  display:flex; align-items:center; gap:0.5rem; color:#8b949e; font-size:0.82rem; font-style:italic;
+}
+.followup-msg .body.thinking-only::before {
+  content:''; display:inline-block; width:12px; height:12px;
+  border:2px solid #30363d; border-top-color:#388bfd;
+  border-radius:50%; animation:ans-spin 0.7s linear infinite;
+}
+#followup-input-row { display:flex; gap:0.5rem; align-items:flex-end; }
+#followup-input {
+  flex:1; background:#0d1117; border:1px solid #30363d; border-radius:8px;
+  color:#c9d1d9; font-size:0.88rem; padding:0.5rem 0.7rem;
+  resize:none; outline:none; font-family:inherit; min-height:36px; max-height:100px;
+}
+#followup-input:focus { border-color:#388bfd; }
+#followup-send {
+  background:#388bfd; color:#fff; border:none; border-radius:8px;
+  padding:0.5rem 0.9rem; font-size:0.85rem; font-weight:600;
+  cursor:pointer; height:36px;
+}
+#followup-send:hover { background:#58a6ff; }
+#followup-send:disabled { opacity:0.45; cursor:not-allowed; }
+
 @media (max-width:640px) {
   #app { flex-direction:column; }
   #sidebar { width:100%; max-width:100%; height:auto; max-height:40vh; border-right:none; border-bottom:1px solid #30363d; }
@@ -288,6 +550,17 @@ function init() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askQuestion(); }
   });
   inp.addEventListener('input', autoGrow);
+  // Follow-up input: Enter sends, Shift+Enter newline. Auto-grow.
+  var fup = document.getElementById('followup-input');
+  if (fup) {
+    fup.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendFollowup(); }
+    });
+    fup.addEventListener('input', function() {
+      fup.style.height = 'auto';
+      fup.style.height = Math.min(fup.scrollHeight, 100) + 'px';
+    });
+  }
   loadHistory();
 }
 
@@ -333,6 +606,8 @@ function askQuestion() {
   document.getElementById('answer-question').textContent = q;
   document.getElementById('answer-body').innerHTML = '';
   document.getElementById('sources-section').style.display = 'none';
+  document.getElementById('followup-section').style.display = 'none';
+  document.getElementById('followup-thread').innerHTML = '';
   setStatus('Searching...', true);
   currentID = '';
 
@@ -389,18 +664,126 @@ function renderAnswer(answer, sources) {
   var list = document.getElementById('sources-list');
   list.innerHTML = '';
   var keys = Object.keys(sources).map(Number).sort(function(a, b) { return a - b; });
-  if (keys.length === 0) { sect.style.display = 'none'; return; }
-  for (var i = 0; i < keys.length; i++) {
-    var n = keys[i];
-    var url = sources[String(n)] || sources[n] || '';
-    if (!url) continue;
-    var domain = url.replace(/^https?:\/\//, '').split('/')[0];
-    var li = document.createElement('li');
-    li.innerHTML = '<span class="src-num">[' + n + ']</span>'
-      + '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(domain) + '</a>';
-    list.appendChild(li);
+  if (keys.length === 0) {
+    sect.style.display = 'none';
+  } else {
+    for (var i = 0; i < keys.length; i++) {
+      var n = keys[i];
+      var url = sources[String(n)] || sources[n] || '';
+      if (!url) continue;
+      var domain = url.replace(/^https?:\/\//, '').split('/')[0];
+      var li = document.createElement('li');
+      li.innerHTML = '<span class="src-num">[' + n + ']</span>'
+        + '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(domain) + '</a>';
+      list.appendChild(li);
+    }
+    sect.style.display = 'block';
   }
-  sect.style.display = 'block';
+  // Show follow-up section once an answer exists. Thread populated
+  // separately by renderFollowups (called when loading an existing
+  // record, or empty for a freshly-asked question).
+  document.getElementById('followup-section').style.display = 'block';
+}
+
+function renderFollowups(turns) {
+  var thread = document.getElementById('followup-thread');
+  thread.innerHTML = '';
+  if (!turns || !turns.length) return;
+  for (var i = 0; i < turns.length; i++) {
+    appendFollowupTurn(turns[i].role, turns[i].content);
+  }
+}
+
+function appendFollowupTurn(role, content) {
+  var thread = document.getElementById('followup-thread');
+  var div = document.createElement('div');
+  div.className = 'followup-msg ' + role;
+  div.innerHTML = '<div class="role">' + (role === 'user' ? 'You' : 'Assistant') + '</div>'
+    + '<div class="body">' + (role === 'assistant' && typeof renderMarkdown === 'function' ? renderMarkdown(content) : escapeHtml(content)) + '</div>';
+  thread.appendChild(div);
+  // Scroll the answer pane to keep the latest message visible.
+  var area = document.getElementById('answer-area');
+  area.scrollTop = area.scrollHeight;
+  return div;
+}
+
+var followupSSE = null;
+
+function sendFollowup() {
+  if (!currentID) {
+    alert('Save an answer first by asking a question.');
+    return;
+  }
+  var inp = document.getElementById('followup-input');
+  var msg = inp.value.trim();
+  if (!msg) return;
+  if (followupSSE) { followupSSE.close(); followupSSE = null; }
+
+  // Append the user turn immediately for snappy feedback. Server will
+  // also persist it; on the next loadRecord call the same turn will
+  // render from the persisted history.
+  appendFollowupTurn('user', msg);
+  inp.value = '';
+  inp.style.height = 'auto';
+
+  // Create an empty assistant bubble with a "thinking..." spinner.
+  // The spinner stays until the first chunk arrives; then we switch
+  // to streaming mode (text + trailing cursor spinner).
+  var assistantEl = appendFollowupTurn('assistant', '');
+  var bodyEl = assistantEl.querySelector('.body');
+  bodyEl.className = 'body thinking-only';
+  bodyEl.textContent = 'thinking…';
+
+  var sendBtn = document.getElementById('followup-send');
+  sendBtn.disabled = true;
+  inp.disabled = true;
+
+  var streamed = '';
+  var firstChunk = true;
+  followupSSE = new EventSource('api/followup/' + encodeURIComponent(currentID) + '?m=' + encodeURIComponent(msg));
+  followupSSE.onmessage = function(e) {
+    var ev = JSON.parse(e.data);
+    if (ev.type === 'chunk') {
+      if (firstChunk) {
+        // First content arrives — swap from "thinking" spinner to
+        // streaming mode (text + small trailing spinner).
+        bodyEl.className = 'body streaming';
+        bodyEl.textContent = '';
+        firstChunk = false;
+      }
+      streamed += ev.text;
+      bodyEl.textContent = streamed;
+      var area = document.getElementById('answer-area');
+      area.scrollTop = area.scrollHeight;
+    } else if (ev.type === 'done') {
+      followupSSE.close(); followupSSE = null;
+      // Drop streaming spinner; final markdown render.
+      bodyEl.className = 'body';
+      if (typeof renderMarkdown === 'function' && streamed) {
+        bodyEl.innerHTML = renderMarkdown(streamed);
+      } else if (!streamed) {
+        // No content ever arrived; show a fallback so the bubble
+        // isn't empty.
+        bodyEl.textContent = '(no response)';
+      }
+      sendBtn.disabled = false;
+      inp.disabled = false;
+      inp.focus();
+    } else if (ev.type === 'error') {
+      followupSSE.close(); followupSSE = null;
+      bodyEl.className = 'body';
+      bodyEl.textContent = '[error] ' + (ev.message || 'unknown error');
+      sendBtn.disabled = false;
+      inp.disabled = false;
+    }
+  };
+  followupSSE.onerror = function() {
+    if (followupSSE) { followupSSE.close(); followupSSE = null; }
+    bodyEl.className = 'body';
+    if (firstChunk) bodyEl.textContent = '[connection lost]';
+    sendBtn.disabled = false;
+    inp.disabled = false;
+  };
 }
 
 function setStatus(msg, active) {
@@ -462,6 +845,7 @@ function loadRecord(id) {
     document.getElementById('answer-content').style.display = 'block';
     document.getElementById('answer-question').textContent = rec.Question;
     renderAnswer(rec.Answer || '', rec.Sources || {});
+    renderFollowups(rec.Followups || []);
     renderHistory();
   });
 }
@@ -511,6 +895,14 @@ const answerHTML = `
         <div id="sources-section" style="display:none">
           <h4>Sources</h4>
           <ul id="sources-list"></ul>
+        </div>
+        <div id="followup-section" style="display:none">
+          <h4>Follow-up</h4>
+          <div id="followup-thread"></div>
+          <div id="followup-input-row">
+            <textarea id="followup-input" placeholder="Ask a follow-up about this answer&#x2026;" rows="1"></textarea>
+            <button id="followup-send" onclick="sendFollowup()">Send</button>
+          </div>
         </div>
       </div>
     </div>

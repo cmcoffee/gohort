@@ -41,13 +41,14 @@ func init() {
 			"description":      {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
 			"mode":             {Type: "string", Description: "\"shell\" for sandboxed shell command, \"api\" for HTTP call against a registered credential."},
 			"params":           {Type: "object", Description: "Object describing the tool's parameters. Each key is a param name, value is {type, description}."},
-			"command_template": {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch."},
+			"command_template": {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch. {workspace_dir} resolves to a workspace path. Use action=\"help\" for the workspace-binding flow when wrapping scripts."},
 			"credential":       {Type: "string", Description: "(api mode) Name of the registered secure-API credential to dispatch through."},
 			"url_template":     {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":           {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":    {Type: "string", Description: "(api mode) JSON body template with {param} placeholders (JSON-encoded at dispatch). Optional for GET; usually required for POST/PUT/PATCH."},
 			"required":         {Type: "array", Description: "Optional list of param names that must be provided by callers. Defaults to all params."},
 			"persist":          {Type: "boolean", Description: "If true, request that this tool be saved across future sessions (queues for admin approval). Default false (session-only)."},
+			"state_path":       {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
 		},
 		Required:     []string{"name", "description", "mode", "params"},
 		Caps:         []Capability{CapExecute, CapNetwork},
@@ -139,6 +140,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if p, ok := args["persist"]; ok {
 			shellArgs["persist"] = p
+		}
+		if v, ok := args["state_path"]; ok {
+			shellArgs["state_path"] = v
 		}
 		t := &CreateTempToolTool{}
 		return t.RunWithSession(shellArgs, sess)

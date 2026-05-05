@@ -163,7 +163,9 @@ func RejectPendingTempTool(db Database, username, name string) error {
 // DeletePersistentTempTool removes an approved tool from the user's
 // persistent pool. Used by the admin UI's "break-glass" delete and by
 // delete_temp_tool when the LLM removes a name that happens to be
-// persisted.
+// persisted. If the deleted tool had a packed archive on disk, the
+// archive is removed too (state dir is preserved — operator can
+// inspect or manually clean if desired).
 func DeletePersistentTempTool(db Database, username, name string) error {
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
@@ -172,18 +174,23 @@ func DeletePersistentTempTool(db Database, username, name string) error {
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	rest := approved[:0]
-	found := false
+	var hadArchive bool
 	for i := range approved {
 		if approved[i].Tool.Name == name {
-			found = true
+			hadArchive = approved[i].Tool.ArchivePath != ""
 			continue
 		}
 		rest = append(rest, approved[i])
 	}
-	if !found {
+	if len(rest) == len(approved) {
 		return errString("no persistent tool named " + name)
 	}
 	db.Set(persistentTempToolsTable, username, rest)
+	if hadArchive {
+		if err := DeleteToolArchive(username, name); err != nil {
+			Log("[temptool] archive cleanup failed for %s/%s: %v", username, name, err)
+		}
+	}
 	return nil
 }
 

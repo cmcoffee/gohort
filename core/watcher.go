@@ -65,6 +65,19 @@ type Watcher struct {
 	Enabled      bool   `json:"enabled"`
 	Target       string `json:"target"` // "log" (default) — others added later
 
+	// Evaluator controls how a detected change becomes an alert message.
+	//   "llm"    — worker LLM analyzes the diff with ActionPrompt (default
+	//              when unset, preserves original behavior). Flexible but
+	//              expensive: every fire pays an LLM round-trip.
+	//   "script" — EvaluatorScript runs sandboxed (bwrap + no network +
+	//              read-only fs). stdin = JSON {"prior":...,"current":...},
+	//              stdout = alert text (empty stdout = no alert this fire).
+	//              Deterministic, milliseconds, zero LLM cost.
+	//   "raw"    — current response body is the alert verbatim, no
+	//              evaluation. Cheapest, no analysis at all.
+	Evaluator       string `json:"evaluator,omitempty"`
+	EvaluatorScript string `json:"evaluator_script,omitempty"` // python source for evaluator="script"
+
 	// DeliveryPrefix is prepended to the worker's reply text on
 	// delivery (only matters when Target routes to a user-visible
 	// channel like phantom). The routing app supplies a default
@@ -374,11 +387,18 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 		w.Name, w.ToolName, len(body), hash[:12])
 	Trace("[watcher] %s: response body=%q", w.Name, truncateForTrigger(body))
 	if hash == w.LastResultHash {
-		Debug("[watcher] %s: no change (hash matches), skipping worker", w.Name)
+		Debug("[watcher] %s: no change (hash matches), nothing to do", w.Name)
 		return
 	}
 
-	trigger := buildTriggerContext(w.LastResultBody, body)
+	// Capture the prior body BEFORE we overwrite it on the watcher
+	// record — the evaluator (especially script mode) needs the
+	// actual prior state, not the post-update copy. Earlier code
+	// passed w.LastResultBody after the assignment below, which
+	// silently fed (current, current) to the script and produced
+	// false-empty alerts.
+	priorBody := w.LastResultBody
+	trigger := buildTriggerContext(priorBody, body)
 
 	// Update hash + cached body BEFORE running the worker so a slow
 	// worker call doesn't cause us to re-fire on the same change.
@@ -392,9 +412,20 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 	w.FireCount++
 	_ = SaveWatcher(w)
 
-	Debug("[watcher] %s: change detected, dispatching worker (fire #%d)", w.Name, w.FireCount)
+	Debug("[watcher] %s: change detected, dispatching evaluator=%s (fire #%d)",
+		w.Name, evaluatorOrDefault(w), w.FireCount)
 
-	reply, runErr := runWatcherWorker(ctx, w, trigger)
+	reply, runErr := runWatcherEvaluator(ctx, w, priorBody, body, trigger)
+
+	// Empty reply with no error means the evaluator decided this change
+	// isn't worth surfacing (script returned nothing, raw mode skipped,
+	// LLM produced empty output). Skip both result-log and routing —
+	// no point recording "nothing happened" entries.
+	if runErr == nil && strings.TrimSpace(reply) == "" {
+		Debug("[watcher] %s: evaluator returned empty — no alert this fire", w.Name)
+		return
+	}
+
 	res := WatcherResult{
 		Timestamp: time.Now(),
 		Trigger:   trigger,
@@ -405,6 +436,78 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 	}
 	appendWatcherResult(w.ID, res)
 	dispatchWatcherResult(w, reply, runErr)
+}
+
+// evaluatorOrDefault returns the watcher's evaluator mode, treating
+// empty as "llm" so existing watchers continue to behave as before.
+func evaluatorOrDefault(w Watcher) string {
+	if w.Evaluator == "" {
+		return "llm"
+	}
+	return w.Evaluator
+}
+
+// runWatcherEvaluator dispatches to the configured evaluator and returns
+// the alert text (empty = "no alert"). The prior + current bodies are
+// the raw responses; trigger is a pre-built diff context useful for the
+// LLM evaluator. Script and raw evaluators ignore trigger and use the
+// raw bodies directly.
+func runWatcherEvaluator(ctx context.Context, w Watcher, prior, current, trigger string) (string, error) {
+	switch evaluatorOrDefault(w) {
+	case "raw":
+		return current, nil
+	case "script":
+		return runWatcherScript(ctx, w, prior, current)
+	case "llm":
+		return runWatcherWorker(ctx, w, trigger)
+	default:
+		return "", fmt.Errorf("watcher %q: unknown evaluator mode %q", w.Name, w.Evaluator)
+	}
+}
+
+// runWatcherScript runs the watcher's python evaluator under bwrap with
+// {"prior":...,"current":...} on stdin. stdout is the alert text;
+// empty stdout means "no alert this fire." Errors and stderr are
+// surfaced so a broken script is visible in the result log without
+// silently dropping fires.
+func runWatcherScript(ctx context.Context, w Watcher, prior, current string) (string, error) {
+	if strings.TrimSpace(w.EvaluatorScript) == "" {
+		return "", fmt.Errorf("evaluator=script but evaluator_script is empty")
+	}
+	payload, err := json.Marshal(map[string]string{
+		"prior":   prior,
+		"current": current,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode payload: %w", err)
+	}
+	Trace("[watcher] %s: script stdin payload=%s", w.Name, truncateForTrigger(string(payload)))
+	scriptCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	res := RunSandboxedScript(scriptCtx, "python3", w.EvaluatorScript, string(payload))
+	Trace("[watcher] %s: script result sandbox=%t exit_err=%v stdout=%q stderr=%q",
+		w.Name, res.Sandbox, res.Err, res.Stdout, res.Stderr)
+	if res.TimedOut {
+		return "", fmt.Errorf("evaluator script timed out after 10s")
+	}
+	if res.Err != nil {
+		stderr := strings.TrimSpace(res.Stderr)
+		if stderr == "" {
+			stderr = res.Err.Error()
+		}
+		return "", fmt.Errorf("evaluator script failed: %s", stderr)
+	}
+	out := strings.TrimSpace(res.Stdout)
+	if out == "" && strings.TrimSpace(res.Stderr) != "" {
+		// Script ran cleanly but printed nothing on stdout while
+		// emitting stderr — usually a debug-print or a logic path
+		// the author didn't realize wasn't surfacing as an alert.
+		// Worth an explicit Debug so "why didn't I get alerted" is
+		// visible without enabling Trace.
+		Debug("[watcher] %s: script returned empty stdout but wrote to stderr: %q",
+			w.Name, truncateForTrigger(res.Stderr))
+	}
+	return out, nil
 }
 
 // buildTriggerContext formats prior + current body for the worker so

@@ -675,6 +675,20 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		} else if think := RouteThink("chat.respond"); think != nil {
 			opts = append(opts, WithThink(*think))
 		}
+		// Capture per-round start time so we can emit tokens/sec on
+		// the round's done SSE event for the chat UI's stats footer.
+		roundStart := time.Now()
+		// Reasoning stream → SSE thinking_chunk events. Client renders
+		// in a collapsible "thinking" pane that auto-collapses when
+		// the first content chunk arrives. Buffered through the same
+		// muRound + flusher path as content chunks so writes are safe.
+		opts = append(opts, WithReasoningStream(func(rc string) {
+			if rc == "" {
+				return
+			}
+			writeSSEEvent(w, "thinking_chunk", map[string]string{"text": rc})
+			flusher.Flush()
+		}))
 		resp, err := chatLLM.ChatStream(ctx, streamMessages, func(chunk string) {
 			if chunk == "" {
 				return
@@ -730,7 +744,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		if promptTools {
 			if resp == nil {
 				flushNewImages()
-				writeSSEEvent(w, "done", map[string]any{"round": round})
+				writeSSEEvent(w, "done", roundDoneStats(round, resp, roundStart))
 				flusher.Flush()
 				return
 			}
@@ -746,7 +760,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 					flusher.Flush()
 				}
 				flushNewImages()
-				writeSSEEvent(w, "done", map[string]any{"round": round})
+				writeSSEEvent(w, "done", roundDoneStats(round, resp, roundStart))
 				flusher.Flush()
 				return
 			}
@@ -794,7 +808,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 				parseProcedureActions(T.DB, resp.Content)
 			}
 			flushNewImages()
-			writeSSEEvent(w, "done", map[string]any{"round": round})
+			writeSSEEvent(w, "done", roundDoneStats(round, resp, roundStart))
 			flusher.Flush()
 			return
 		}
@@ -878,6 +892,37 @@ func writeSSEEvent(w http.ResponseWriter, eventType string, data any) {
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(body))
 }
 
+// roundDoneStats builds the data payload for a per-round "done" SSE
+// event. Includes timing + token usage so the chat UI can render a
+// stats footer ("12.3 tk/s · 1450 in · 230 out · 187 reasoning ·
+// 18.7s"). Nil-safe — returns just the round number when resp isn't
+// populated (e.g. tool-only rounds where the LLM emitted no usage).
+//
+// tokens_per_sec source priority:
+//   1. resp.PredictedPerSecond (llama.cpp's server-reported pure-decode
+//      throughput — matches what llama.cpp's own web UI displays)
+//   2. fallback: total output tokens / total elapsed (includes prefill
+//      in the denominator; understates true decode rate but works for
+//      backends that don't expose per-phase timings)
+func roundDoneStats(round int, resp *Response, start time.Time) map[string]any {
+	out := map[string]any{"round": round}
+	elapsed := time.Since(start)
+	out["elapsed_ms"] = elapsed.Milliseconds()
+	if resp == nil {
+		return out
+	}
+	out["input_tokens"] = resp.InputTokens
+	out["output_tokens"] = resp.OutputTokens
+	out["reasoning_tokens"] = resp.ReasoningTokens
+	if resp.PredictedPerSecond > 0 {
+		out["tokens_per_sec"] = resp.PredictedPerSecond
+		out["prompt_per_sec"] = resp.PromptPerSecond
+	} else if elapsed > 0 && resp.OutputTokens > 0 {
+		out["tokens_per_sec"] = float64(resp.OutputTokens) / elapsed.Seconds()
+	}
+	return out
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -948,7 +993,6 @@ body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden; }
   width: 14px; height: 14px;
 }
 body.select-mode .session-item .si-check { display: inline-block; }
-body.select-mode .session-item .si-actions { display: none; }
 .session-item.selected { background: rgba(88, 166, 255, 0.18); }
 #sessions-list {
   flex: 1; overflow-y: auto;
@@ -971,17 +1015,6 @@ body.select-mode .session-item .si-actions { display: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .session-item[data-archived="true"] .si-title { color: var(--text-mute); font-style: italic; }
-.session-item .si-actions {
-  display: none; gap: 0.15rem; flex-shrink: 0;
-}
-.session-item:hover .si-actions,
-.session-item.active .si-actions { display: flex; }
-.session-item .si-actions button {
-  background: transparent; border: none; color: var(--text-mute);
-  cursor: pointer; padding: 0.15rem 0.3rem; font-size: 0.8rem;
-  border-radius: 3px;
-}
-.session-item .si-actions button:hover { color: var(--text-hi); background: var(--bg-0); }
 #sessions-empty {
   color: var(--text-mute); font-size: 0.8rem;
   padding: 1rem 0.75rem; text-align: center;
@@ -1134,6 +1167,14 @@ body.select-mode .session-item .si-actions { display: none; }
    work is still happening. */
 .status-note { margin-top: 0.4rem; padding: 0.3rem 0.6rem; background: var(--bg-2); border-left: 3px solid var(--accent, #4f8cff); border-radius: 4px; font-size: 0.8rem; font-style: italic; color: var(--text-mute); }
 .status-note::before { content: '… '; font-style: normal; }
+.stats-footer { margin-top: 0.4rem; font-size: 0.72rem; color: var(--text-mute); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; opacity: 0.7; letter-spacing: 0.02em; }
+.thinking-pane { margin-bottom: 0.4rem; border-left: 2px solid var(--text-mute); padding: 0.2rem 0.5rem; opacity: 0.85; }
+.thinking-pane summary { cursor: pointer; font-size: 0.78rem; color: var(--text-mute); font-style: italic; user-select: none; }
+.thinking-pane summary:hover { color: var(--text-hi); }
+.thinking-pane[open] summary::before { content: '▾ '; }
+.thinking-pane:not([open]) summary::before { content: '▸ '; }
+.thinking-pane summary::-webkit-details-marker { display: none; }
+.thinking-body { margin: 0.3rem 0 0; font-size: 0.78rem; color: var(--text-mute); white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height: 1.4; max-height: 280px; overflow-y: auto; }
 /* Inline images delivered alongside the assistant's reply: screenshots,
    fetched images, generated images. Click opens at full size. */
 .tool-images { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.6rem; }
@@ -1210,7 +1251,7 @@ body.select-mode .session-item .si-actions { display: none; }
 `
 
 const chatBody = `
-<div id="chat-layout">
+<div id="chat-layout" class="sidebar-hidden">
   <aside id="chat-sidebar">
     <div id="sidebar-head">
       <button id="sidebar-new" class="primary" onclick="newChat()">+ New Chat</button>
@@ -1330,10 +1371,6 @@ function renderSessions(sessions) {
     html += '<div class="session-item' + active + isSel + '" data-id="' + escapeHtml(id) + '"' + archAttr + '>'
       + '<input type="checkbox" class="si-check"' + checked + ' aria-label="Select chat">'
       + '<span class="si-title" title="' + escapeHtml(title) + '">' + escapeHtml(title) + '</span>'
-      + '<span class="si-actions">'
-      + '<button class="si-archive" title="' + (s.Archived ? 'Unarchive' : 'Archive') + '">' + (s.Archived ? '↺' : '🗄') + '</button>'
-      + '<button class="si-delete" title="Delete">🗑</button>'
-      + '</span>'
       + '</div>';
   }
   list.innerHTML = html;
@@ -1439,36 +1476,19 @@ function wireSessionItems() {
       var id = it.getAttribute('data-id');
       it.onclick = function(e) {
         // Select-mode: clicking the row toggles selection. Direct
-        // checkbox clicks bubble up here too, so we read its state
-        // post-click rather than flipping a stale value.
+        // checkbox clicks already flip the box themselves; we read
+        // the post-click state and sync the model rather than
+        // flipping again.
         if (selectMode) {
-          if (e.target.closest('.si-actions')) return;
           var cb = it.querySelector('.si-check');
           if (e.target !== cb) {
-            // Row click outside the checkbox — flip the checkbox value.
+            // Row click outside the checkbox — flip the checkbox.
             if (cb) cb.checked = !cb.checked;
           }
           setSessionSelected(id, cb && cb.checked);
           return;
         }
-        if (e.target.closest('.si-actions')) return;
         openSession(id);
-      };
-      var del = it.querySelector('.si-delete');
-      if (del) del.onclick = function(e) {
-        e.stopPropagation();
-        if (!confirm('Delete this chat?')) return;
-        fetch('api/sessions/delete/' + encodeURIComponent(id), {method: 'DELETE'})
-          .then(function(){
-            if (id === currentSessionId) newChat();
-            loadSessions();
-          });
-      };
-      var arch = it.querySelector('.si-archive');
-      if (arch) arch.onclick = function(e) {
-        e.stopPropagation();
-        fetch('api/sessions/archive/' + encodeURIComponent(id), {method: 'POST'})
-          .then(function(){ loadSessions(); });
       };
     })(items[i]);
   }
@@ -1917,6 +1937,81 @@ function appendStatus(msgEl, text) {
   hist.scrollTop = hist.scrollHeight;
 }
 
+// appendThinkingChunk streams reasoning text into a live "thinking"
+// pane on the assistant turn. Created lazily on the first chunk.
+// Stays expanded while the model is reasoning; collapseThinkingPane
+// is called by the chat handler when the first content chunk or
+// tool call arrives.
+function appendThinkingChunk(msgEl, text) {
+  if (!msgEl || !text) return;
+  removeThinkingDots(msgEl);
+  var details = msgEl.querySelector('.thinking-pane');
+  if (!details) {
+    details = document.createElement('details');
+    details.className = 'thinking-pane';
+    details.open = true;
+    var summary = document.createElement('summary');
+    summary.textContent = 'thinking…';
+    details.appendChild(summary);
+    var body = document.createElement('pre');
+    body.className = 'thinking-body';
+    details.appendChild(body);
+    // Insert before .content so reasoning shows above the (eventual)
+    // visible answer.
+    var content = msgEl.querySelector('.content');
+    if (content) {
+      msgEl.insertBefore(details, content);
+    } else {
+      msgEl.appendChild(details);
+    }
+  }
+  var body = details.querySelector('.thinking-body');
+  if (body) {
+    body.textContent += text;
+  }
+  var hist = document.getElementById('chat-history');
+  hist.scrollTop = hist.scrollHeight;
+}
+
+// collapseThinkingPane closes the open thinking-pane and updates its
+// summary text to "thinking (NN chars)" so the user can see at a
+// glance how much reasoning happened, click to expand if curious.
+function collapseThinkingPane(msgEl) {
+  if (!msgEl) return;
+  var details = msgEl.querySelector('.thinking-pane');
+  if (!details || !details.open) return;
+  details.open = false;
+  var body = details.querySelector('.thinking-body');
+  var summary = details.querySelector('summary');
+  if (summary && body) {
+    var n = body.textContent.length;
+    summary.textContent = 'thought (' + n + ' chars)';
+  }
+}
+
+function appendStatsFooter(msgEl, stats) {
+  // Per-round performance footer at the bottom of an assistant turn.
+  // Server emits round + elapsed_ms + input_tokens + output_tokens +
+  // reasoning_tokens + tokens_per_sec on every "done" event. We render
+  // only when at least one meaningful number is present (tool-only
+  // rounds where the LLM didn't produce output get a sparse stats
+  // payload; skip those).
+  if (!msgEl || !stats) return;
+  if (!stats.output_tokens && !stats.input_tokens && !stats.elapsed_ms) return;
+  var parts = [];
+  if (stats.tokens_per_sec) parts.push(stats.tokens_per_sec.toFixed(1) + ' tk/s');
+  if (stats.prompt_per_sec) parts.push(stats.prompt_per_sec.toFixed(0) + ' prefill');
+  if (stats.elapsed_ms) parts.push((stats.elapsed_ms / 1000).toFixed(1) + 's');
+  if (stats.input_tokens) parts.push(stats.input_tokens + ' in');
+  if (stats.output_tokens) parts.push(stats.output_tokens + ' out');
+  if (stats.reasoning_tokens) parts.push(stats.reasoning_tokens + ' think');
+  if (!parts.length) return;
+  var el = document.createElement('div');
+  el.className = 'stats-footer';
+  el.textContent = parts.join(' · ');
+  msgEl.appendChild(el);
+}
+
 function appendError(msgEl, text) {
   if (msgEl) {
     removeThinkingDots(msgEl);
@@ -1970,9 +2065,18 @@ function sendChat(opts) {
         currentSessionId = data.id;
         if (wasNew) loadSessions();
       } else if (eventType === 'chunk' && data.text) {
+        // First content chunk → collapse the live-thinking pane.
+        // The reasoning text stays available behind the <details>
+        // toggle so it can be inspected post-hoc.
+        collapseThinkingPane(assistantEl);
         fullReply += data.text;
         appendChunk(assistantEl, data.text);
+      } else if (eventType === 'thinking_chunk' && data.text) {
+        appendThinkingChunk(assistantEl, data.text);
       } else if (eventType === 'tool_call') {
+        // Tool calls also signal that the thinking phase is over for
+        // this round — collapse the pane just like a content chunk.
+        collapseThinkingPane(assistantEl);
         appendToolCall(assistantEl, data.name, data.args);
       } else if (eventType === 'tool_result') {
         appendToolResult(assistantEl, data.name, data.result);
@@ -1983,6 +2087,7 @@ function sendChat(opts) {
       } else if (eventType === 'status' && data.text) {
         appendStatus(assistantEl, data.text);
       } else if (eventType === 'done') {
+        appendStatsFooter(assistantEl, data);
         finishChat(true);
       } else if (eventType === 'error') {
         appendError(assistantEl, data.message || 'unknown error');

@@ -160,7 +160,7 @@ type WebSearchTool struct{}
 func (t *WebSearchTool) Name() string { return "web_search" }
 func (t *WebSearchTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // search engine API call
 func (t *WebSearchTool) Desc() string {
-	return "Search the live web for information. Returns results with titles, URLs, and snippets. IMPORTANT: if search_knowledge is available, you MUST call it first — only call web_search after search_knowledge has returned no useful results."
+	return "Search the live web for information. Returns results with titles, URLs, and snippets. Use for current state, recent events, and topics where freshness matters."
 }
 
 func (t *WebSearchTool) Params() map[string]ToolParam {

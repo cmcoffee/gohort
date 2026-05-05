@@ -4087,6 +4087,7 @@ body { height: 100vh; display: flex; flex-direction: column; }
 
 
 .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 0.3rem; }
+.spinner-lg { display: inline-block; width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 720px) {
@@ -4138,8 +4139,8 @@ const sshBody = `
         placeholder="Ask about this system… (Enter to send, Shift+Enter for newline)"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
       <button id="chat-send" onclick="sendChat()" disabled>Send</button>
-      <span id="chat-working" style="display:none;font-size:0.78rem;color:var(--text-mute);margin:0 0.5rem;align-self:center"><span class="spinner"></span>Working…</span>
       <button id="chat-cancel" onclick="cancelChat()">Cancel</button>
+      <span id="chat-working" style="display:none;margin:0 0.6rem;align-self:center" title="Working…"><span class="spinner-lg"></span></span>
     </div>
   </div>
   <div id="chat-resizer" onmousedown="startResize(event)"></div>
@@ -5095,6 +5096,12 @@ function openEventStream(sid) {
   closeEventStream();
   activeSessionId = sid;
   pushSessionURL(sid);
+  // A live session means cancel + the working spinner should be
+  // visible. The three submit handlers already do this before the
+  // fetch returns; this redundancy is what gets the resume path
+  // (loadAppliances → ?run=&session=) into the same UI state.
+  document.getElementById('chat-cancel').style.display = 'inline-block';
+  document.getElementById('chat-working').style.display = 'inline-flex';
   activeEventSourceErrors = 0;
   lastEventTime = Date.now();
   activeEventSource = new EventSource('api/events?id=' + encodeURIComponent(sid));

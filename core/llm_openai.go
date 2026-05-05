@@ -333,12 +333,17 @@ type oaiRequest struct {
 	MaxTokens            int                `json:"max_tokens,omitempty"`
 	Temperature          *float64           `json:"temperature,omitempty"`
 	Stream               bool               `json:"stream,omitempty"`
+	StreamOptions        *oaiStreamOptions  `json:"stream_options,omitempty"` // OpenAI-compat: include_usage=true is required for streaming responses to carry a final usage block (input/output/reasoning_tokens). Without it, streamed responses arrive with zero token counts.
 	Tools                []oaiTool          `json:"tools,omitempty"`
 	ResponseFormat       *oaiResponseFormat `json:"response_format,omitempty"`
 	Think                *bool              `json:"think,omitempty"`
 	ThinkingBudgetTokens *int               `json:"thinking_budget_tokens,omitempty"` // llama.cpp: budget when thinking is on; do NOT use 0 to disable (unreliable on Qwen 3.6)
 	ChatTemplateKwargs   map[string]any     `json:"chat_template_kwargs,omitempty"`   // llama.cpp: per-request {"enable_thinking": bool} — works reliably even when launch is --reasoning on
 	Options              map[string]any     `json:"options,omitempty"`                // Ollama-specific options (num_ctx, etc.)
+}
+
+type oaiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage,omitempty"`
 }
 
 // ollamaDefaultCtx is the default context window size for Ollama when not configured.
@@ -564,6 +569,20 @@ type oaiResponse struct {
 			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 		} `json:"completion_tokens_details,omitempty"`
 	} `json:"usage"`
+	// Timings is llama.cpp-specific — pure-decode and pure-prefill
+	// throughput numbers, without the wall-clock-elapsed muddling that
+	// comes from including network round-trip + prefill in the same
+	// metric. Mirrors what llama.cpp's built-in web UI displays.
+	Timings *oaiTimings `json:"timings,omitempty"`
+}
+
+type oaiTimings struct {
+	PromptN            int     `json:"prompt_n,omitempty"`             // prompt tokens
+	PromptMS           float64 `json:"prompt_ms,omitempty"`            // prefill wall-time
+	PromptPerSecond    float64 `json:"prompt_per_second,omitempty"`    // prefill throughput
+	PredictedN         int     `json:"predicted_n,omitempty"`          // generated tokens
+	PredictedMS        float64 `json:"predicted_ms,omitempty"`         // decode wall-time
+	PredictedPerSecond float64 `json:"predicted_per_second,omitempty"` // decode throughput — what llama.cpp's UI displays
 }
 
 type oaiStreamChunk struct {
@@ -584,6 +603,7 @@ type oaiStreamChunk struct {
 			ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 		} `json:"completion_tokens_details,omitempty"`
 	} `json:"usage,omitempty"`
+	Timings *oaiTimings `json:"timings,omitempty"`
 }
 
 type oaiError struct {
@@ -1378,7 +1398,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		return nil, &APIError{Message: fmt.Sprintf("empty LLM response: finish_reason=length after %d output tokens (raise max_tokens or disable thinking for this call)", result.Usage.CompletionTokens), Provider: c.provider()}
 	}
 
-	return &Response{
+	out := &Response{
 		Content:         content,
 		Reasoning:       reasoning,
 		ToolCalls:       toolCalls,
@@ -1386,7 +1406,12 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		InputTokens:     result.Usage.PromptTokens,
 		OutputTokens:    result.Usage.CompletionTokens,
 		ReasoningTokens: reasoningTokens,
-	}, nil
+	}
+	if result.Timings != nil {
+		out.PredictedPerSecond = result.Timings.PredictedPerSecond
+		out.PromptPerSecond = result.Timings.PromptPerSecond
+	}
+	return out, nil
 }
 
 // estimateReasoningTokens approximates the reasoning-channel share of
@@ -1442,12 +1467,13 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	applyVisionDefaults(&cfg, messages)
 	payload := oaiRequest{
-		Model:       cfg.Model,
-		Messages:    c.buildMessages(cfg, messages),
-		MaxTokens:   cfg.MaxTokens,
-		Temperature: cfg.Temperature,
-		Stream:      true,
-		Tools:       buildOAITools(cfg.Tools),
+		Model:         cfg.Model,
+		Messages:      c.buildMessages(cfg, messages),
+		MaxTokens:     cfg.MaxTokens,
+		Temperature:   cfg.Temperature,
+		Stream:        true,
+		StreamOptions: &oaiStreamOptions{IncludeUsage: true},
+		Tools:         buildOAITools(cfg.Tools),
 	}
 	if c.llamacpp {
 		payload.ChatTemplateKwargs = c.llamacppChatTemplateKwargs(cfg)
@@ -1495,6 +1521,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	var reasoning strings.Builder
 	var model string
 	var inputTokens, outputTokens, reasoningTokens int
+	var predictedPerSecond, promptPerSecond float64
 
 	// Accumulate tool call fragments by index.
 	toolCallBuilders := make(map[int]*struct {
@@ -1538,6 +1565,10 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 			outputTokens = chunk.Usage.CompletionTokens
 			reasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
 		}
+		if chunk.Timings != nil {
+			predictedPerSecond = chunk.Timings.PredictedPerSecond
+			promptPerSecond = chunk.Timings.PromptPerSecond
+		}
 
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
@@ -1547,12 +1578,20 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 			// Thinking models (qwen3, deepseek-r1, etc.) emit reasoning in
 			// a separate field. llama.cpp + Qwen 3.6 use reasoning_content;
-			// some other backends use reasoning. Accept both.
+			// some other backends use reasoning. Accept both. When the
+			// caller installed a reasoning handler (via WithReasoningStream),
+			// fan out reasoning chunks to it for live-thinking UI.
 			if delta.ReasoningContent != "" {
 				reasoning.WriteString(delta.ReasoningContent)
+				if cfg.ReasoningHandler != nil {
+					cfg.ReasoningHandler(delta.ReasoningContent)
+				}
 			}
 			if delta.Reasoning != "" {
 				reasoning.WriteString(delta.Reasoning)
+				if cfg.ReasoningHandler != nil {
+					cfg.ReasoningHandler(delta.Reasoning)
+				}
 			}
 
 			if delta.Content != "" {
@@ -1657,12 +1696,14 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	}
 
 	return &Response{
-		Content:         full.String(),
-		Reasoning:       reasoning.String(),
-		ToolCalls:       toolCalls,
-		Model:           model,
-		InputTokens:     inputTokens,
-		OutputTokens:    outputTokens,
-		ReasoningTokens: reasoningTokens,
+		Content:            full.String(),
+		Reasoning:          reasoning.String(),
+		ToolCalls:          toolCalls,
+		Model:              model,
+		InputTokens:        inputTokens,
+		OutputTokens:       outputTokens,
+		ReasoningTokens:    reasoningTokens,
+		PredictedPerSecond: predictedPerSecond,
+		PromptPerSecond:    promptPerSecond,
 	}, nil
 }

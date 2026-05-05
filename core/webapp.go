@@ -442,14 +442,28 @@ func MountSubMux(mux *http.ServeMux, prefix string, sub *http.ServeMux) {
 }
 
 // streamingPaths holds URL suffixes whose handlers hold the connection
-// open for extended periods (SSE event streams, live/reconnect loops).
-// Snapshotting ProcessUsage over a long-lived stream would roll every
-// unrelated LLM call that happened during the hold into this request's
-// report, so we skip reporting entirely for these.
-var streamingPaths = map[string]bool{
-	"/api/events":    true,
-	"/api/live":      true,
-	"/api/reconnect": true,
+// open for extended periods (SSE event streams, websockets, live/
+// reconnect loops). Snapshotting ProcessUsage over a long-lived stream
+// would roll every unrelated LLM call that happened during the hold
+// into this request's report, so we skip reporting entirely for these.
+var streamingPaths = []string{
+	"/api/events",
+	"/api/live",
+	"/api/reconnect",
+	"/api/terminal",
+}
+
+// isStreamingPath reports whether the request path matches any
+// registered long-lived endpoint suffix. Using suffix-match because
+// every per-app endpoint is mounted under a prefix (e.g.
+// "/servitor/api/terminal"), so an exact-match lookup never fires.
+func isStreamingPath(path string) bool {
+	for _, p := range streamingPaths {
+		if path == p || strings.HasSuffix(path, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // usageReportSkipKey identifies the context-stored flag the middleware
@@ -491,7 +505,7 @@ func MarkUsageReportHandled(ctx context.Context) {
 func UsageReportMiddleware(label string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if streamingPaths[r.URL.Path] {
+			if isStreamingPath(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -717,9 +731,7 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(lw, r)
 		// Skip noisy poll endpoints to keep the log readable.
 		path := r.URL.Path
-		if path == "/api/live" || strings.HasSuffix(path, "/api/live") ||
-			strings.HasSuffix(path, "/api/events") || strings.HasSuffix(path, "/api/reconnect") ||
-			strings.HasSuffix(path, "/api/poll") {
+		if isStreamingPath(path) || strings.HasSuffix(path, "/api/poll") {
 			return
 		}
 		ip := clientIP(r)
