@@ -149,6 +149,73 @@ func bwrapArgv(workspaceDir, shellCmd string) []string {
 	return args
 }
 
+// RunSandboxedShellPipe runs `sh -c command` in a tight sandbox with
+// stdinData piped to the command's stdin and combined stdout+stderr
+// returned. Tighter than RunSandboxedShell: no writable bind, no
+// network, /tmp tmpfs only. Designed for response-pipe use cases where
+// the command (jq, awk, sed, grep, etc.) transforms data in-flight
+// without needing filesystem or network access. Falls back to plain
+// `sh -c` (cwd = /tmp) when bwrap isn't installed.
+func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) SandboxedShellResult {
+	bwrap := detectBwrap()
+
+	var c *exec.Cmd
+	sandbox := false
+	if bwrap != "" {
+		args := bwrapPipeArgv(command)
+		c = exec.CommandContext(ctx, bwrap, args...)
+		sandbox = true
+	} else {
+		bwrapWarnedOnce.Do(func() {
+			Log("[sandbox] WARNING: bwrap not installed — response pipes run with gohort user permissions. Install bubblewrap to enable real sandboxing.")
+		})
+		c = exec.CommandContext(ctx, "sh", "-c", command)
+		c.Dir = "/tmp"
+	}
+	c.Env = sandboxEnv()
+	c.Stdin = strings.NewReader(stdinData)
+
+	var buf bytes.Buffer
+	c.Stdout = &buf
+	c.Stderr = &buf
+	err := c.Run()
+	timedOut := ctx.Err() == context.DeadlineExceeded
+	return SandboxedShellResult{
+		Output:   buf.String(),
+		Err:      err,
+		Sandbox:  sandbox,
+		TimedOut: timedOut,
+	}
+}
+
+// bwrapPipeArgv builds bwrap args for a response-pipe invocation.
+// Same shape as bwrapScriptArgv (no writable bind, no network) but
+// runs `sh -c command` so the LLM can chain pipes (jq | head, etc.).
+func bwrapPipeArgv(shellCmd string) []string {
+	return []string{
+		"--die-with-parent",
+		"--new-session",
+		"--unshare-pid",
+		"--unshare-uts",
+		"--unshare-ipc",
+		"--unshare-cgroup-try",
+		"--unshare-net",
+		"--ro-bind", "/usr", "/usr",
+		"--ro-bind-try", "/bin", "/bin",
+		"--ro-bind-try", "/sbin", "/sbin",
+		"--ro-bind-try", "/lib", "/lib",
+		"--ro-bind-try", "/lib32", "/lib32",
+		"--ro-bind-try", "/lib64", "/lib64",
+		"--ro-bind-try", "/etc/alternatives", "/etc/alternatives",
+		"--proc", "/proc",
+		"--dev", "/dev",
+		"--tmpfs", "/tmp",
+		"--chdir", "/tmp",
+		"--",
+		"sh", "-c", shellCmd,
+	}
+}
+
 // SandboxedScriptResult is what RunSandboxedScript returns.
 type SandboxedScriptResult struct {
 	Stdout   string

@@ -24,7 +24,9 @@ func init() {
 		Description:  "List all session-scoped + persistent tools currently available to you. Returns name, mode (shell|api), and a one-line description for each.",
 		Params:       map[string]ToolParam{},
 		Required:     nil,
-		Caps:         []Capability{CapExecute, CapNetwork},
+		// Listing is read-only metadata. No caps required — gating is
+		// done at runtime when a created tool is actually dispatched.
+		Caps:         nil,
 		NeedsConfirm: false,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
@@ -35,7 +37,7 @@ func init() {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description:  "Define a new runtime tool. Required: name, description, mode, params, plus mode-specific fields. mode=\"shell\" needs command_template (with {param} placeholders, shell-quoted at dispatch). mode=\"api\" needs credential, url_template, method, optional body_template (placeholders are URL-encoded for url_template, JSON-encoded for body_template). persist=true queues the tool for human approval and reuse across future sessions.",
+		Description:  "Define a new runtime tool. Required: name, description, mode, params, plus mode-specific fields. mode=\"shell\" needs command_template (with {param} placeholders, shell-quoted at dispatch). mode=\"api\" needs credential, url_template, method, optional body_template (placeholders are URL-encoded for url_template, JSON-encoded for body_template), and an optional response_pipe — a sandboxed sh -c command (jq/awk/sed/grep) that filters the API response before it reaches your context. persist=true queues the tool for human approval and reuse across future sessions.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":      {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
@@ -46,12 +48,17 @@ func init() {
 			"url_template":     {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":           {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":    {Type: "string", Description: "(api mode) JSON body template with {param} placeholders (JSON-encoded at dispatch). Optional for GET; usually required for POST/PUT/PATCH."},
+			"response_pipe":    {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
 			"required":         {Type: "array", Description: "Optional list of param names that must be provided by callers. Defaults to all params."},
 			"persist":          {Type: "boolean", Description: "If true, request that this tool be saved across future sessions (queues for admin approval). Default false (session-only)."},
 			"state_path":       {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
 		},
 		Required:     []string{"name", "description", "mode", "params"},
-		Caps:         []Capability{CapExecute, CapNetwork},
+		// Creating a tool is registry CRUD — it does not execute anything.
+		// The created tool, when invoked, carries its own caps (CapExecute
+		// for shell mode, CapNetwork for api mode) and is filtered at
+		// dispatch time. So this action itself needs no caps to be visible.
+		Caps:         nil,
 		NeedsConfirm: true,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
@@ -67,7 +74,8 @@ func init() {
 			"name": {Type: "string", Description: "Name of the tool to remove."},
 		},
 		Required:     []string{"name"},
-		Caps:         []Capability{CapExecute, CapNetwork},
+		// Deletion is registry CRUD — no caps required.
+		Caps:         nil,
 		NeedsConfirm: false,
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil {
@@ -159,6 +167,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if v, ok := args["body_template"]; ok {
 			apiArgs["body_template"] = v
+		}
+		if v, ok := args["response_pipe"]; ok {
+			apiArgs["response_pipe"] = v
 		}
 		if v, ok := args["required"]; ok {
 			apiArgs["required"] = v

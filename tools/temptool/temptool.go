@@ -160,8 +160,25 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	if sp := strings.TrimSpace(StringArg(args, "state_path")); sp != "" {
 		tool.StatePath = sp
 	}
+	// Allow in-session overwrite: if the LLM is recreating a tool by
+	// the same name (typically because v1 had a schema mistake), drop
+	// the old entry first so AppendTempTool doesn't reject as a
+	// duplicate. Cheaper than forcing the LLM to come up with a v2
+	// name and littering the catalog with deprecated copies.
+	sess.RemoveTempTool(tool.Name)
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
+	}
+	// Session-scoped persistence: save the tool keyed by chat session
+	// ID so it survives across messages within the same chat. Only
+	// applies when persist=false (the persist=true path queues for
+	// admin approval, which lives in a separate pool).
+	saveSessionScoped := func() {
+		if sess.DB != nil && sess.ChatSessionID != "" {
+			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
+				Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
+			}
+		}
 	}
 
 	// Persist request: queue for human approval. The tool is already
@@ -171,6 +188,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	persist := BoolArg(args, "persist")
 	if persist {
 		if sess.DB == nil || sess.Username == "" {
+			saveSessionScoped()
 			return fmt.Sprintf("Created temp tool %q for this session. Persistence was requested but is not available in this app/session, so the tool will be discarded when the session ends. Treat it as session-scoped.", name), nil
 		}
 		// Pack the session's current workspace into a tar.gz archive
@@ -193,10 +211,12 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			archiveNote = fmt.Sprintf(" Workspace packed into %s (%d bytes, sha256=%s).", path, size, hash[:12])
 		}
 		if err := QueuePendingTempTool(sess.DB, sess.Username, *tool, ""); err != nil {
+			saveSessionScoped()
 			return fmt.Sprintf("Created temp tool %q for this session. Persistence requested but queueing failed: %v. Tool will be discarded at session end.", name, err), nil
 		}
 		return fmt.Sprintf("Created temp tool %q for this session.%s Persistence requested — queued for user approval via the admin UI. The user will review the command template (and the packed archive contents) before it becomes available in future sessions.", name, archiveNote), nil
 	}
+	saveSessionScoped()
 	return fmt.Sprintf("Created temp tool %q. It is available in your tool catalog on the next round of this session only.", name), nil
 }
 
@@ -320,6 +340,14 @@ func (t *DeleteTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	}
 	removed := sess.RemoveTempTool(name)
 
+	// Also clear from the per-chat-session pool so the deletion sticks
+	// across messages within this same chat. Independent of the
+	// persistent (admin-approved) pool — a tool can live in either,
+	// both, or neither.
+	if sess.DB != nil && sess.ChatSessionID != "" {
+		RemoveSessionTempTool(sess.DB, sess.ChatSessionID, name)
+	}
+
 	// Also clear from the persistent pool if applicable. The LLM may
 	// be deleting a tool it loaded from persistence at session start,
 	// expecting the deletion to stick across sessions.
@@ -330,16 +358,42 @@ func (t *DeleteTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		}
 	}
 
-	switch {
-	case removed && persistRemoved:
-		return fmt.Sprintf("Removed temp tool %q from this session and from your persistent pool.", name), nil
-	case removed:
-		return fmt.Sprintf("Removed temp tool %q from this session.", name), nil
-	case persistRemoved:
-		return fmt.Sprintf("Removed temp tool %q from your persistent pool. (It wasn't in the current session.)", name), nil
-	default:
-		return "", fmt.Errorf("no temp tool named %q in this session or your persistent pool", name)
+	// Also clear from the pending-approval queue. If the LLM created
+	// a tool with persist=true earlier in this session and now wants
+	// it gone (typo, supersession by a v2, or a flat-out abandonment
+	// of the original idea), the deletion should yank it from the
+	// admin's review queue too — otherwise the user sees a tool the
+	// LLM no longer wants and approving it just adds dead weight.
+	pendingRemoved := false
+	if sess.DB != nil && sess.Username != "" {
+		if err := RejectPendingTempTool(sess.DB, sess.Username, name); err == nil {
+			pendingRemoved = true
+		}
 	}
+
+	parts := []string{}
+	if removed {
+		parts = append(parts, "this session")
+	}
+	if persistRemoved {
+		parts = append(parts, "your persistent pool")
+	}
+	if pendingRemoved {
+		parts = append(parts, "the pending-approval queue")
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("no temp tool named %q in this session, your persistent pool, or the pending-approval queue", name)
+	}
+	var phrase string
+	switch len(parts) {
+	case 1:
+		phrase = parts[0]
+	case 2:
+		phrase = parts[0] + " and " + parts[1]
+	default:
+		phrase = strings.Join(parts[:len(parts)-1], ", ") + ", and " + parts[len(parts)-1]
+	}
+	return fmt.Sprintf("Removed temp tool %q from %s.", name, phrase), nil
 }
 
 // ----------------------------------------------------------------------
@@ -352,12 +406,19 @@ func (t *DeleteTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 // to prevent injection) and runs through RunSandboxedShell.
 func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
 	if sess == nil {
+		Debug("[temptool] BuildAgentToolDefs called with nil session")
 		return nil
 	}
 	tools := sess.CopyTempTools()
 	if len(tools) == 0 {
+		Debug("[temptool] BuildAgentToolDefs: sess.TempTools is empty (no dynamic temp tools to expose to the LLM this round)")
 		return nil
 	}
+	names := make([]string, 0, len(tools))
+	for _, tt := range tools {
+		names = append(names, tt.Name)
+	}
+	Debug("[temptool] BuildAgentToolDefs: producing %d AgentToolDef(s) — %v", len(tools), names)
 	out := make([]AgentToolDef, 0, len(tools))
 	for _, tt := range tools {
 		out = append(out, agentToolFromTemp(sess, tt))
@@ -375,6 +436,11 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	switch tt.Mode {
 	case TempToolModeAPI:
 		caps = []Capability{CapNetwork}
+		// Response pipe runs sandboxed shell on the API result, so the
+		// wrapper needs CapExecute as well as CapNetwork.
+		if tt.ResponsePipe != "" {
+			caps = append(caps, CapExecute)
+		}
 		descSuffix = fmt.Sprintf(" (api tool — wraps credential %q, defined this session via create_api_tool)", tt.Credential)
 	default:
 		caps = []Capability{CapExecute}
@@ -456,7 +522,23 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 		workspaceDir = sess.WorkspaceDir
 	}
 	if workspaceDir == "" {
-		return "", fmt.Errorf("temp tool %q has no workspace context (tool has no archive and session has no WorkspaceDir)", tt.Name)
+		// Last resort: command doesn't reference {workspace_dir} and
+		// the session has no provisioned workspace (e.g. workspace
+		// setup failed at handleSend, or a non-chat caller didn't set
+		// one). The bwrap bind still needs a path, but the command
+		// doesn't need workspace contents — provision an ephemeral
+		// tmpdir for this invocation only. Without this, stateless
+		// shell tools like "echo '{text}' | rev" can't dispatch even
+		// when correctly registered, persisted, and approved.
+		if strings.Contains(tt.CommandTemplate, "{workspace_dir}") {
+			return "", fmt.Errorf("temp tool %q references {workspace_dir} but session has no provisioned workspace", tt.Name)
+		}
+		tmp, err := os.MkdirTemp("", "tooldispatch-stateless-")
+		if err != nil {
+			return "", fmt.Errorf("mkdtemp for stateless dispatch: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		workspaceDir = tmp
 	}
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
@@ -598,6 +680,15 @@ func stringSliceArg(v any) []string {
 // validateTemplate scans cmd for `{name}` placeholders and ensures each
 // one names a known param. Catches the obvious "I forgot to add this
 // to params" mistake before the tool gets registered.
+//
+// Tolerant of literal braces in JSON / shell expressions: only treats
+// `{...}` as a placeholder when the contents look like an identifier
+// (letters, digits, underscores; must start with a letter or
+// underscore). Anything else — `{"key": "value"}`, `${VAR}`, `${1:-x}`,
+// `${array[@]}`, brace expansion `{a,b,c}`, etc. — passes through
+// silently the same way `substitute` does, so api-mode body templates
+// containing literal JSON object braces don't get rejected at
+// validation time.
 func validateTemplate(cmd string, params map[string]ToolParam) error {
 	for i := 0; i < len(cmd); i++ {
 		if cmd[i] != '{' {
@@ -605,11 +696,22 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 		}
 		end := strings.IndexByte(cmd[i+1:], '}')
 		if end < 0 {
-			return fmt.Errorf("unclosed placeholder at offset %d", i)
+			// Unclosed brace is more likely a literal in shell or JSON
+			// than a forgotten placeholder. Don't error — let it
+			// through. (The original strict behavior caused false
+			// positives on api-mode body templates with nested
+			// objects.)
+			return nil
 		}
 		name := cmd[i+1 : i+1+end]
-		if name == "" {
-			return fmt.Errorf("empty placeholder at offset %d", i)
+		if !isPlaceholderIdent(name) {
+			// Not identifier-shaped — treat as a literal brace
+			// expression (JSON, shell parameter expansion, brace
+			// expansion). Skip past the opening brace only; the
+			// closing brace and contents stay in scope so a
+			// genuine placeholder later in the same string still
+			// gets validated.
+			continue
 		}
 		if _, ok := params[name]; !ok {
 			return fmt.Errorf("placeholder {%s} not in params", name)
@@ -617,6 +719,31 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 		i = i + 1 + end
 	}
 	return nil
+}
+
+// isPlaceholderIdent reports whether s is shaped like a Go-style
+// identifier — letters/digits/underscores, must start with a letter
+// or underscore. Mirrors the implicit shape `substitute` uses when
+// it decides whether to honor a `{...}` as a placeholder. Empty
+// strings and JSON-shaped strings (containing spaces, quotes, colons,
+// commas, brackets) return false.
+func isPlaceholderIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_':
+			// always allowed
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // substitute replaces {name} placeholders in cmd with shell-quoted arg
@@ -730,7 +857,7 @@ func (t *CreateAPIToolTool) Params() map[string]ToolParam {
 		},
 		"body_template": {
 			Type:        "string",
-			Description: "Optional JSON body template with {param} placeholders. Placeholders are JSON-encoded at call time. Example: '{\"title\": {title}, \"labels\": {labels}}'. Leave empty for GET requests.",
+			Description: "Optional JSON body template with {param} placeholders. Placeholders are JSON-encoded at call time — strings get wrapped in quotes automatically, numbers/booleans pass through, objects/arrays serialize structurally. DO NOT wrap placeholders in quotation marks yourself: write {prompt} not \"{prompt}\". The substitution layer handles the quoting and any escaping (newlines, embedded quotes) of the runtime value, so a long multi-line system prompt or any unsafe-for-JSON string passed as an arg comes out correctly. Put long literal content (system prompts, instructions) as runtime PARAMS, not baked into the template — that way you don't have to escape it inside the template string itself. Example: '{\"system_prompt\": {prompt}, \"user_message\": {msg}}'. Leave empty for GET requests.",
 		},
 		"params": {
 			Type:        "object",
@@ -739,6 +866,10 @@ func (t *CreateAPIToolTool) Params() map[string]ToolParam {
 		"required": {
 			Type:        "array",
 			Description: "Optional list of param names that must be provided. Defaults to all of them.",
+		},
+		"response_pipe": {
+			Type:        "string",
+			Description: "Optional shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to the output, so the pipe should target only the response body (no `tail -n +2` needed). Pipe is skipped on non-2xx responses so the LLM sees the raw error. Use to pre-filter noisy responses before they reach the LLM context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" or \"jq -c '.[:20]'\". Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) so it can use jq, awk, sed, grep, head, tr, etc. Leave empty if the LLM should see the raw response. Adds an exec dependency to the tool — sessions without execute capability won't be able to dispatch it.",
 		},
 		"persist": {
 			Type:        "boolean",
@@ -791,6 +922,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		method = "GET"
 	}
 	bodyTpl := strings.TrimSpace(StringArg(args, "body_template"))
+	respPipe := strings.TrimSpace(StringArg(args, "response_pipe"))
 
 	params, err := parseParamsArg(args["params"])
 	if err != nil {
@@ -828,21 +960,36 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		Credential:      credName,
 		Method:          method,
 		BodyTemplate:    bodyTpl,
+		ResponsePipe:    respPipe,
 	}
+	// Allow in-session overwrite — see CreateTempToolTool for rationale.
+	sess.RemoveTempTool(tool.Name)
 	if err := sess.AppendTempTool(tool); err != nil {
 		return "", err
+	}
+	// Session-scoped persistence so the tool survives across messages
+	// in the same chat session (see CreateTempToolTool for rationale).
+	saveSessionScoped := func() {
+		if sess.DB != nil && sess.ChatSessionID != "" {
+			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
+				Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
+			}
+		}
 	}
 
 	persist := BoolArg(args, "persist")
 	if persist {
 		if sess.Username == "" {
+			saveSessionScoped()
 			return fmt.Sprintf("Created api tool %q for this session. Persistence not available without an authenticated user.", name), nil
 		}
 		if err := QueuePendingTempTool(sess.DB, sess.Username, *tool, ""); err != nil {
+			saveSessionScoped()
 			return fmt.Sprintf("Created api tool %q for this session. Persistence requested but queueing failed: %v.", name, err), nil
 		}
 		return fmt.Sprintf("Created api tool %q (wraps credential %q). Persistence requested — queued for user approval via admin UI. The credential's allowed-URL pattern is %s; the LLM still cannot see its value.", name, credName, cred.AllowedURLPattern), nil
 	}
+	saveSessionScoped()
 	return fmt.Sprintf("Created api tool %q (wraps credential %q) for this session. Available on the next round; will be discarded at session end.", name, credName), nil
 }
 
@@ -872,11 +1019,113 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		if err != nil {
 			return "", fmt.Errorf("body template: %w", err)
 		}
+		// Validate the substituted body is valid JSON before sending.
+		// Catches template-shape mistakes (mismatched braces, missing
+		// commas, an LLM-baked literal that didn't escape correctly)
+		// before the remote API rejects them with a generic "Expected
+		// ',' or '}' at position N" — which is hard to act on without
+		// seeing the actual body. The error returned to the LLM
+		// includes the produced body so it can inspect what it built
+		// and re-create the tool with a corrected template.
+		var probe any
+		if jerr := json.Unmarshal([]byte(body), &probe); jerr != nil {
+			Debug("[temptool] api tool %q produced invalid JSON body: %s\nTEMPLATE: %s\nBODY: %s", tt.Name, jerr, tt.BodyTemplate, body)
+			return "", fmt.Errorf("body template substitution produced invalid JSON: %w. Template: %s. Substituted body: %s", jerr, tt.BodyTemplate, body)
+		}
+		Debug("[temptool] api tool %q body validated (%d bytes)", tt.Name, len(body))
 	}
 	if sess.DB != nil && sess.Username != "" {
 		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
 	}
-	return Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
+	raw, err := Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
+	if err != nil {
+		return raw, err
+	}
+	if tt.ResponsePipe == "" {
+		return raw, nil
+	}
+	// The raw response from Secure().DispatchToolCall is shaped as:
+	//   HTTP <code> <text>\n<body>
+	// — the status line is there so the LLM can see HTTP errors when
+	// reading the response directly. For the pipe path it's noise: jq
+	// chokes on it, every pipe would need a `tail -n +2` prefix, and
+	// running a filter against an error response (different shape than
+	// a success body) usually produces garbage. Split the line off,
+	// pipe only the body on 2xx, and skip the pipe entirely on non-2xx
+	// so the LLM gets the unfiltered error to act on.
+	statusLine, body := splitStatusLine(raw)
+	if !isStatus2xx(statusLine) {
+		return raw, nil
+	}
+	pipeCtx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	pres := RunSandboxedShellPipe(pipeCtx, tt.ResponsePipe, body)
+	piped := strings.TrimSpace(pres.Output)
+	if pres.TimedOut {
+		notice := fmt.Sprintf("\n[response_pipe TIMED OUT after %s — command killed.]", commandTimeout)
+		if piped == "" {
+			return strings.TrimPrefix(notice, "\n"), nil
+		}
+		return piped + notice, nil
+	}
+	if pres.Err != nil {
+		// Pipe failed (bad jq expression, missing binary, etc.). Surface
+		// the error plus whatever output landed so the LLM can fix the
+		// pipe via delete + recreate. Don't fall through to raw — the
+		// whole point is to keep the raw response out of the LLM context.
+		if piped == "" {
+			return fmt.Sprintf("[response_pipe failed: %v — no output. Pipe: %s]", pres.Err, tt.ResponsePipe), nil
+		}
+		return piped + fmt.Sprintf("\n[response_pipe exit: %v]", pres.Err), nil
+	}
+	if len(piped) > maxOutput {
+		totalLines := strings.Count(piped, "\n") + 1
+		truncated := piped[:maxOutput]
+		shown := strings.Count(truncated, "\n") + 1
+		piped = truncated + fmt.Sprintf(
+			"\n... [TRUNCATED: showing lines 1–%d of %d total (%d chars).]",
+			shown, totalLines, len(piped))
+	}
+	// Re-prepend the status line so the LLM still sees the HTTP code.
+	if statusLine != "" {
+		return statusLine + "\n" + piped, nil
+	}
+	return piped, nil
+}
+
+// splitStatusLine separates the leading "HTTP <code> <text>" line from
+// the response body. Returns ("", raw) when the response doesn't start
+// with an HTTP status line (defensive — should always match for output
+// produced by Secure().dispatch).
+func splitStatusLine(raw string) (status, body string) {
+	if !strings.HasPrefix(raw, "HTTP ") {
+		return "", raw
+	}
+	nl := strings.IndexByte(raw, '\n')
+	if nl < 0 {
+		return raw, ""
+	}
+	return raw[:nl], raw[nl+1:]
+}
+
+// isStatus2xx parses the numeric code out of an "HTTP <code> ..." line
+// and reports whether it's in the 2xx range. Defensive — unparseable
+// status lines fail closed (return false) so we don't pipe what looks
+// like an error response.
+func isStatus2xx(statusLine string) bool {
+	if !strings.HasPrefix(statusLine, "HTTP ") {
+		return false
+	}
+	rest := statusLine[len("HTTP "):]
+	sp := strings.IndexByte(rest, ' ')
+	if sp < 0 {
+		sp = len(rest)
+	}
+	codeStr := rest[:sp]
+	if len(codeStr) != 3 {
+		return false
+	}
+	return codeStr[0] == '2'
 }
 
 // substituteURL replaces {param} placeholders in a URL template with
@@ -934,21 +1183,31 @@ func urlEscape(s string) string {
 // This lets the LLM write JSON body templates like
 // `{"title": {title}, "labels": {labels}}` and have them serialize
 // correctly regardless of the underlying arg type.
+//
+// Quote-wrap tolerance: if the LLM writes the placeholder wrapped in
+// quotes (`"prompt": "{prompt}"`) — the natural JSON shape — strip
+// the surrounding quotes from the output, since json.Marshal will
+// re-add them for string values. Otherwise the result becomes
+// `"prompt": ""hello""` which breaks the JSON. For non-string
+// values (numbers, booleans, objects, arrays) the wrap is also
+// incorrect on the input side, so we treat the strip as the
+// authoritative shape and let json.Marshal produce the right form.
 func substituteJSON(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
 	var b strings.Builder
+	out := []byte{}
 	for i := 0; i < len(tmpl); i++ {
 		if tmpl[i] != '{' {
-			b.WriteByte(tmpl[i])
+			out = append(out, tmpl[i])
 			continue
 		}
 		end := strings.IndexByte(tmpl[i+1:], '}')
 		if end < 0 {
-			b.WriteByte(tmpl[i])
+			out = append(out, tmpl[i])
 			continue
 		}
 		name := tmpl[i+1 : i+1+end]
 		if _, known := params[name]; !known {
-			b.WriteByte(tmpl[i])
+			out = append(out, tmpl[i])
 			continue
 		}
 		val, ok := args[name]
@@ -959,9 +1218,25 @@ func substituteJSON(tmpl string, params map[string]ToolParam, args map[string]an
 		if err != nil {
 			return "", err
 		}
-		b.WriteString(j)
+		// Quote-wrap detection: if `"{name}"` is the surrounding
+		// shape, strip the leading `"` from already-emitted output
+		// and skip the trailing `"` in the template input. The
+		// substituted JSON value (which may itself start with `"`
+		// for strings, or with a non-quote char for numbers/bools/
+		// objects) replaces the wrapped placeholder cleanly either
+		// way.
+		closingQuoteAhead := i+1+end+1 < len(tmpl) && tmpl[i+1+end+1] == '"'
+		openingQuoteBehind := len(out) > 0 && out[len(out)-1] == '"'
+		if openingQuoteBehind && closingQuoteAhead {
+			out = out[:len(out)-1] // drop the leading quote
+			out = append(out, j...)
+			i = i + 1 + end + 1 // skip placeholder + trailing quote
+			continue
+		}
+		out = append(out, j...)
 		i = i + 1 + end
 	}
+	b.Write(out)
 	return b.String(), nil
 }
 

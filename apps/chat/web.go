@@ -50,6 +50,7 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}))
 	})
 	sub.HandleFunc("/api/send", T.handleSend)
+	sub.HandleFunc("/api/cancel", T.handleCancel)
 	sub.HandleFunc("/api/tools", T.handleTools)
 	sub.HandleFunc("/api/sessions", T.handleSessionsList)
 	sub.HandleFunc("/api/sessions/", T.handleSessionGet)
@@ -111,6 +112,50 @@ func (T *ChatAgent) handleSessionDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	DeleteChatSession(T.DB, id)
+	// Drop any session-scoped temp tools that were registered against
+	// this chat session so they don't leak in the DB after the session
+	// they belonged to is gone.
+	DeleteSessionTempTools(T.DB, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleCancel aborts an in-flight chat send by looking up its
+// registered cancel func in inflightCancels and invoking it. The
+// in-flight handleSend's deferred cancel + select on ctx.Done()
+// then unwinds: the LLM request is cancelled, any pending tool
+// dispatch sees the cancelled context, the SSE writer drains, and
+// the client's EventSource closes. POST-only so it can't be
+// triggered by a stray GET. Returns 204 on success, 404 when no
+// send is in flight for the given session.
+func (T *ChatAgent) handleCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	sid := strings.TrimSpace(r.URL.Query().Get("session"))
+	if sid == "" {
+		http.Error(w, "session query param required", http.StatusBadRequest)
+		return
+	}
+	// Ownership check: only let a user cancel sends against their
+	// own chat sessions, so a malicious request can't hammer cancel
+	// for an arbitrary session ID.
+	if s, ok := LoadChatSession(T.DB, sid); ok && s.Username != sessionUsername(r) {
+		http.NotFound(w, r)
+		return
+	}
+	v, ok := inflightCancels.Load(sid)
+	if !ok {
+		http.Error(w, "no in-flight send for this session", http.StatusNotFound)
+		return
+	}
+	cancel, ok := v.(context.CancelFunc)
+	if !ok {
+		http.Error(w, "cancel registry corrupted (unexpected type)", http.StatusInternalServerError)
+		return
+	}
+	cancel()
+	Log("[chat] cancel invoked for session %s by %s", sid, sessionUsername(r))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -156,21 +201,43 @@ func (T *ChatAgent) handleTools(w http.ResponseWriter, r *http.Request) {
 	// Hidden from the picker UI: control-flow tools that are always
 	// auto-loaded so the user shouldn't see / toggle them.
 	hidden := map[string]bool{"keep_going": true}
+	seen := map[string]bool{}
 	var out []toolInfo
+	addStatic := func(t ChatTool) {
+		if hidden[t.Name()] || seen[t.Name()] {
+			return
+		}
+		seen[t.Name()] = true
+		out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+	}
 	if r.URL.Query().Get("private") == "true" {
 		for _, t := range FilterChatToolsPrivate() {
-			if hidden[t.Name()] {
-				continue
-			}
-			out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+			addStatic(t)
 		}
 	} else {
 		for _, t := range allowedTools() {
-			if hidden[t.Name()] {
-				continue
-			}
-			out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+			addStatic(t)
 		}
+	}
+	// Persistent temp tools the user has approved via the admin UI
+	// belong in the picker too — they're real callable tools the LLM
+	// has access to, so the user should see and be able to toggle them
+	// just like the static catalog. Persistent pool is keyed by
+	// username; private mode hides only the InternetTool subset, and
+	// shell-mode persistent tools don't hit the network, so they are
+	// included in both regular and private modes. API-mode persistent
+	// tools are hidden under private mode (they make network calls).
+	username := sessionUsername(r)
+	privateMode := r.URL.Query().Get("private") == "true"
+	for _, p := range LoadPersistentTempTools(T.DB, username) {
+		if hidden[p.Tool.Name] || seen[p.Tool.Name] {
+			continue
+		}
+		if privateMode && p.Tool.Mode == TempToolModeAPI {
+			continue
+		}
+		seen[p.Tool.Name] = true
+		out = append(out, toolInfo{Name: p.Tool.Name, Desc: p.Tool.Description})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
@@ -183,7 +250,10 @@ func (T *ChatAgent) handlePrivateModeGet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	username := sessionUsername(r)
-	mode := AuthGetPrivateMode(T.DB, username)
+	// Auth user records live on the root DB (see AuthSetUser / admin's
+	// a.db = AuthDB()). T.DB is a per-app bucket and would always miss
+	// the user lookup, making the toggle silently non-persistent.
+	mode := AuthGetPrivateMode(AuthDB(), username)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"private_mode": mode})
 }
@@ -202,7 +272,7 @@ func (T *ChatAgent) handlePrivateModeSet(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	username := sessionUsername(r)
-	AuthSetPrivateMode(T.DB, username, req.PrivateMode)
+	AuthSetPrivateMode(AuthDB(), username, req.PrivateMode)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"private_mode": req.PrivateMode})
 }
@@ -214,7 +284,7 @@ func (T *ChatAgent) handleAPIExplorerModeGet(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	username := sessionUsername(r)
-	mode := AuthGetAPIExplorerMode(T.DB, username)
+	mode := AuthGetAPIExplorerMode(AuthDB(), username)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"api_explorer_mode": mode})
 }
@@ -233,7 +303,7 @@ func (T *ChatAgent) handleAPIExplorerModeSet(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	username := sessionUsername(r)
-	AuthSetAPIExplorerMode(T.DB, username, req.APIExplorerMode)
+	AuthSetAPIExplorerMode(AuthDB(), username, req.APIExplorerMode)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{"api_explorer_mode": req.APIExplorerMode})
 }
@@ -269,6 +339,14 @@ var (
 	activeChatsMu sync.Mutex
 	activeChats   = make(map[string]bool)
 )
+
+// inflightCancels maps a chat session ID → cancel func for any send
+// currently being processed against that session. handleSend registers
+// its cancel here on entry and clears it on exit; handleCancel looks
+// up by session ID and invokes the cancel to abort an in-flight send.
+// Sync.Map is fine — keys are short-lived (lifetime of one request)
+// and access is simple Store/Load/Delete with no iteration.
+var inflightCancels sync.Map
 
 func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -379,6 +457,14 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	// Register the cancel func so /api/cancel can abort this in-flight
+	// send on demand (the chat UI's Cancel button POSTs there). Keyed
+	// by the chat session ID — there's only one send per session at
+	// a time (activeChats serializes them per-IP), so the key is
+	// unambiguous. Defer-clear on exit so completed sends don't leave
+	// stale cancel funcs lying around.
+	inflightCancels.Store(session.ID, cancel)
+	defer inflightCancels.Delete(session.ID)
 
 	// Build a per-user tool session with a sandbox workspace so file/exec
 	// tools (read_file, list_directory, write_file, run_local) can resolve
@@ -395,9 +481,32 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// Load any persistent temp tools the user has previously approved
 	// via the admin UI. They become visible to the LLM in this session
 	// alongside any new ones it defines mid-conversation.
-	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+	persistentLoaded := LoadPersistentTempTools(sess.DB, sess.Username)
+	persistentNames := make([]string, 0, len(persistentLoaded))
+	for _, p := range persistentLoaded {
 		t := p.Tool
-		_ = sess.AppendTempTool(&t)
+		if err := sess.AppendTempTool(&t); err != nil {
+			Log("[chat] persistent temp tool %q failed to load into session: %v", t.Name, err)
+			continue
+		}
+		persistentNames = append(persistentNames, t.Name)
+	}
+	if len(persistentLoaded) > 0 {
+		Log("[chat] loaded %d persistent temp tool(s) for %s: %v", len(persistentLoaded), sess.Username, persistentNames)
+	} else {
+		Debug("[chat] no persistent temp tools for %s (LoadPersistentTempTools returned 0)", sess.Username)
+	}
+	// Load session-scoped temp tools — ones the LLM created in a prior
+	// message of THIS chat session via persist=false. Without this load
+	// the LLM forgets its own tools between user turns (each handleSend
+	// builds a fresh ToolSession), defeating the create-then-use flow.
+	sessionLoaded := LoadSessionTempTools(sess.DB, session.ID)
+	for _, t := range sessionLoaded {
+		tool := t
+		_ = sess.AppendTempTool(&tool)
+	}
+	if len(sessionLoaded) > 0 {
+		Log("[chat] loaded %d session-scoped temp tool(s) for chat session %s", len(sessionLoaded), session.ID)
 	}
 	if ws, err := EnsureWorkspaceDir(sessionUsername(r)); err == nil {
 		sess.WorkspaceDir = ws
@@ -411,13 +520,20 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capability gating: by default chat permits CapRead + CapNetwork only.
-	// Tools that declare CapWrite or CapExecute (write_file, run_local,
-	// send_email, etc.) are filtered out before the LLM ever sees the
-	// catalog, so even a hallucinated call by name can't reach the handler.
-	// Opting in to higher tiers per session is future work; for now this is
-	// a hard, always-on baseline.
-	tools = FilterToolsByCaps(tools, []Capability{CapRead, CapNetwork})
+	// Capability gating: chat permits CapRead + CapNetwork + CapExecute.
+	// CapExecute is on so dynamically-created shell-mode temp tools
+	// (registered via tool_def with mode="shell") can dispatch — without
+	// it the LLM creates a tool, gets a confirmation, then can't see it
+	// in the next round because BuildAgentToolDefs stamps shell tools
+	// with CapExecute and the cap filter would strip them.
+	//
+	// The dangerous catalog-level execute tools (run_local, run_command,
+	// write_file, send_email) are independently gated by BlockedTools so
+	// they don't reappear in chat just because CapExecute is on. Created
+	// shell tools dispatch via RunSandboxedShell against the user's
+	// workspace dir, and tool_def(action=create) is NeedsConfirm=true so
+	// each new tool surfaces a confirmation before it can run.
+	tools = FilterToolsByCaps(tools, []Capability{CapRead, CapNetwork, CapExecute})
 
 	// Set up SSE headers — single open response, server pushes events as
 	// the agent loop progresses (chunks, tool calls, tool results, done).
@@ -545,7 +661,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// budget (the LLM needs room to retry against 4xx errors and
 	// land on the right shape) plus an appended directive that
 	// reframes the conversation as a tool-builder workshop.
-	if AuthGetAPIExplorerMode(T.DB, sessionUsername(r)) {
+	if AuthGetAPIExplorerMode(AuthDB(), sessionUsername(r)) {
 		maxRounds = 30
 		systemPrompt += "\n\nAPI EXPLORER MODE — you are operating as a tool-builder. The user's intent is to discover the working shape of an API and SAVE it for future use, not just answer a one-off question.\n" +
 			"- For any non-trivial API call, expect to iterate: try a request, READ the error response carefully (it usually names the wrong field), adjust the body, retry. 2-5 iterations is normal.\n" +
@@ -563,7 +679,12 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// top of each round so newly-defined temp tools become visible
 	// without restarting the loop.
 	staticTools := tools
-	allowedCaps := []Capability{CapRead, CapNetwork}
+	// Must mirror the static-tool filter at the top of handleSend —
+	// dynamically-created shell-mode temp tools carry CapExecute and
+	// would be stripped on each round's rebuild without it, even
+	// though they're correctly added to the active list. The runtime
+	// catalog has to permit the same caps the session was set up with.
+	allowedCaps := []Capability{CapRead, CapNetwork, CapExecute}
 	// Always-on control-flow tools: keep_going lets the LLM request
 	// another round without emitting visible "let me think" text.
 	// Resolved once and merged into every catalog rebuild so it's
@@ -614,6 +735,13 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		// catalog because it goes via WithTools below.
 		activeTools, toolDefs, handlers = rebuildCatalog()
 		_ = activeTools
+		if round == 1 {
+			names := make([]string, 0, len(toolDefs))
+			for _, td := range toolDefs {
+				names = append(names, td.Name)
+			}
+			Log("[chat] round 1 catalog (%d tools sent to LLM): %v", len(names), names)
+		}
 		opts := []ChatOption{}
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
@@ -801,6 +929,59 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 
 		// Native tool path (existing behavior).
 
+		// Native-with-text-fallback: occasionally the model emits a
+		// prompt-style <tool_call><function=...> XML block (or bare
+		// <function=...> tags, or a JSON-shaped tool call) in its
+		// content instead of using the native tool_calls field —
+		// usually when it's been confused by a system prompt that
+		// describes tools in text. Without this fallback the LLM's
+		// intent is dropped and the response is treated as final.
+		// Delegates to core/agent_loop.go's ParseTextToolCall so chat
+		// uses the same canonical parser as RunAgentLoop (handles
+		// XML, bare function tags, and JSON forms; validates required
+		// args; consults handlers + toolDefs to reject hallucinated
+		// names and shapes).
+		if resp != nil && len(resp.ToolCalls) == 0 && resp.Content != "" {
+			if parsed := ParseTextToolCall(resp.Content, handlers, toolDefs); parsed != nil {
+				args_json, _ := json.Marshal(parsed.Args)
+				writeSSEEvent(w, "tool_call", map[string]string{
+					"name": parsed.Name,
+					"args": string(args_json),
+				})
+				flusher.Flush()
+				output, toolErr := handlers[parsed.Name](parsed.Args)
+				var resultText string
+				if toolErr != nil {
+					resultText = fmt.Sprintf("Tool %s returned an error: %s", parsed.Name, toolErr)
+					Log("[chat] tool %q dispatch error (text-fallback): %s", parsed.Name, toolErr.Error())
+				} else {
+					resultText = fmt.Sprintf("Tool result from %s:\n%s", parsed.Name, output)
+				}
+				writeSSEEvent(w, "tool_result", map[string]string{
+					"name":   parsed.Name,
+					"result": truncate(resultText, 2000),
+				})
+				flusher.Flush()
+				// Strip the markup from the content the assistant
+				// turn carries forward, so the next round's history
+				// doesn't contain the XML the model just emitted —
+				// the dispatched tool result is the load-bearing
+				// content now, not the raw markup.
+				cleanContent := StripToolCallMarkup(resp.Content)
+				streamMessages = append(streamMessages, Message{
+					Role:      "assistant",
+					Content:   cleanContent,
+					ToolCalls: []ToolCall{*parsed},
+				})
+				streamMessages = append(streamMessages, Message{
+					Role:    "tool",
+					ToolResults: []ToolResult{{ID: parsed.ID, Content: resultText, IsError: toolErr != nil}},
+				})
+				flushNewImages()
+				continue
+			}
+		}
+
 		// No tool calls → this is the final answer. Send done and exit.
 		if resp == nil || len(resp.ToolCalls) == 0 {
 			// Parse procedure saves/deletes from the streamed response.
@@ -845,6 +1026,9 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 			isErr := toolErr != nil
 			if isErr {
 				result = "ERROR: " + toolErr.Error()
+				Log("[chat] tool %q dispatch error: %s", tc.Name, toolErr.Error())
+			} else {
+				Debug("[chat] tool %q dispatch ok (output %d chars)", tc.Name, len(output))
 			}
 			writeSSEEvent(w, "tool_result", map[string]string{
 				"name":   tc.Name,
@@ -1209,6 +1393,27 @@ body.select-mode .session-item .si-check { display: inline-block; }
 #chat-input:focus { border-color: var(--accent); outline: none; }
 #chat-send { padding: 0 1.25rem; }
 #chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+#chat-cancel { padding: 0 1rem; background: var(--bg-1); color: #f85149; border: 1px solid #f85149; border-radius: 6px; cursor: pointer; }
+#chat-cancel:hover:not(:disabled) { background: rgba(248, 81, 73, 0.12); }
+#chat-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+#chat-working {
+  display: inline-flex;
+  align-items: center;
+  user-select: none;
+}
+#chat-working .thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+#chat-working .thinking-dots span {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  border-radius: 50%;
+  animation: chat-thinking 1.4s infinite ease-in-out both;
+}
+#chat-working .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+#chat-working .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
 #chat-attach {
   padding: 0 0.75rem; font-size: 1.1rem; background: var(--bg-0);
   color: var(--text-mute); border: 1px solid var(--border); border-radius: 6px;
@@ -1274,6 +1479,7 @@ const chatBody = `
     <div id="chat-header">
       <button id="sidebar-toggle" onclick="toggleSidebar(true)" title="Show sessions" aria-label="Show sessions">☰</button>
       <span class="app-title">Chat</span>
+      <span id="chat-working" style="display:none" title="Working…"><span class="thinking-dots"><span></span><span></span><span></span></span></span>
       <h1 id="chat-title" style="display:none">Chat — Tool Tester</h1>
       <button id="private-toggle" title="Toggle private mode (no internet tools)" onclick="togglePrivateMode()">Private</button>
       <button id="explorer-toggle" title="API Explorer mode: 30-round budget + LLM saves working API patterns as persistent tools" onclick="toggleExplorerMode()">Explorer</button>
@@ -1285,6 +1491,7 @@ const chatBody = `
       <input type="file" id="chat-attach-file" style="display:none" onchange="handleAttachFile(event)">
       <button id="chat-attach" title="Attach a text file (log, config, etc.)" onclick="document.getElementById('chat-attach-file').click()">📎</button>
       <textarea id="chat-input" placeholder="Message…" rows="1"></textarea>
+      <button id="chat-cancel" class="danger" onclick="cancelChat()" style="display:none">Cancel</button>
       <button id="chat-send" class="primary" onclick="sendChat()">Send</button>
     </div>
   </div>
@@ -1525,7 +1732,7 @@ function openSession(id) {
       }
     }
     renderedMessageCount = msgs.length;
-    hist.scrollTop = hist.scrollHeight;
+    scrollHistoryToBottom();
     loadSessions();
     // Collapse the sidebar on mobile after pick so the chat is visible.
     if (window.matchMedia && window.matchMedia('(max-width: 600px)').matches) {
@@ -1720,6 +1927,26 @@ function toggleTools() {
   list.style.display = list.style.display === 'block' ? 'none' : 'block';
 }
 
+// scrollHistoryToBottom is the single auto-scroll entry point. By
+// default it only scrolls when the user is already near the bottom
+// of the chat history — if they've manually scrolled up to read
+// earlier content, new chunks/tool results won't yank them back
+// down. Pass force=true when the user themselves just added content
+// (their own send) and we want to jump regardless of where they
+// were scrolled.
+function scrollHistoryToBottom(force) {
+  var hist = document.getElementById('chat-history');
+  if (!hist) return;
+  if (!force) {
+    var distFromBottom = hist.scrollHeight - hist.scrollTop - hist.clientHeight;
+    // ~120px tolerance lets users read the last few lines without
+    // counting as "scrolled away" — covers small wheel scrolls and
+    // bottom-anchored layout drift.
+    if (distFromBottom > 120) return;
+  }
+  hist.scrollTop = hist.scrollHeight;
+}
+
 function appendUserMessage(text) {
   var hist = document.getElementById('chat-history');
   var div = document.createElement('div');
@@ -1736,7 +1963,9 @@ function appendUserMessage(text) {
   actions.innerHTML = '<button type="button" class="act-edit" title="Edit message" onclick="editUserMessage(this)">Edit</button>';
   div.appendChild(actions);
   hist.appendChild(div);
-  hist.scrollTop = hist.scrollHeight;
+  // Force-scroll: the user just sent a message, so they want to see
+  // their own content land at the bottom even if they'd scrolled up.
+  scrollHistoryToBottom(true);
 }
 
 function editUserMessage(btn) {
@@ -1821,7 +2050,7 @@ function createAssistantPlaceholder() {
   div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>'
     + '<pre class="content"></pre><div class="tools"></div>';
   hist.appendChild(div);
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
   return div;
 }
 
@@ -1835,7 +2064,7 @@ function appendChunk(msgEl, text) {
   var pre = msgEl.querySelector('.content');
   pre.textContent += text;
   var hist = document.getElementById('chat-history');
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
 }
 
 function appendToolCall(msgEl, name, args) {
@@ -1851,7 +2080,7 @@ function appendToolCall(msgEl, name, args) {
     + '</div>';
   tools.appendChild(tc);
   var hist = document.getElementById('chat-history');
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
 }
 
 function appendToolResult(msgEl, name, result) {
@@ -1863,7 +2092,7 @@ function appendToolResult(msgEl, name, result) {
       pending[i].querySelector('.tool-status').textContent = '✓';
       pending[i].querySelector('.result').textContent = 'result: ' + result;
       var hist = document.getElementById('chat-history');
-      hist.scrollTop = hist.scrollHeight;
+      scrollHistoryToBottom();
       return;
     }
   }
@@ -1890,7 +2119,7 @@ function appendToolImage(msgEl, b64) {
   });
   imgs.appendChild(img);
   var hist = document.getElementById('chat-history');
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
 }
 
 function appendToolFile(msgEl, name, mimeType, size, b64) {
@@ -1913,7 +2142,7 @@ function appendToolFile(msgEl, name, mimeType, size, b64) {
   link.download = name;
   files.appendChild(link);
   var hist = document.getElementById('chat-history');
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
 }
 
 function humanSize(n) {
@@ -1934,7 +2163,7 @@ function appendStatus(msgEl, text) {
   note.textContent = text;
   msgEl.appendChild(note);
   var hist = document.getElementById('chat-history');
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
 }
 
 // appendThinkingChunk streams reasoning text into a live "thinking"
@@ -1964,13 +2193,34 @@ function appendThinkingChunk(msgEl, text) {
     } else {
       msgEl.appendChild(details);
     }
+    // When the user manually expands a previously-collapsed pane,
+    // jump the inner body to the bottom so they see the latest
+    // reasoning rather than the first 280px of it. Same when they
+    // toggle a still-streaming pane back open.
+    details.addEventListener('toggle', function() {
+      if (!details.open) return;
+      var b = details.querySelector('.thinking-body');
+      // Inner pane jump-to-latest is always intentional — the user
+      // just expanded the pane and wants to read the most recent
+      // reasoning, not the first 280px of it.
+      if (b) b.scrollTop = b.scrollHeight;
+      // Outer chat history follows the same scrolled-away gate as
+      // streaming chunks — if the user expanded a pane while reading
+      // earlier content, don't yank them down. If they were already
+      // at the bottom, this keeps them pinned.
+      scrollHistoryToBottom();
+    });
   }
   var body = details.querySelector('.thinking-body');
   if (body) {
     body.textContent += text;
+    // Follow the inner pane to the bottom as reasoning streams in,
+    // so an expanded pane stays pinned to the latest text instead
+    // of stranding the user 280px behind the cursor.
+    body.scrollTop = body.scrollHeight;
   }
   var hist = document.getElementById('chat-history');
-  hist.scrollTop = hist.scrollHeight;
+  scrollHistoryToBottom();
 }
 
 // collapseThinkingPane closes the open thinking-pane and updates its
@@ -2027,6 +2277,32 @@ function appendError(msgEl, text) {
   }
 }
 
+function setChatSending(on) {
+  sending = on;
+  var send = document.getElementById('chat-send');
+  var cancel = document.getElementById('chat-cancel');
+  var working = document.getElementById('chat-working');
+  if (on) {
+    if (send) send.style.display = 'none';
+    if (cancel) { cancel.style.display = ''; cancel.disabled = false; cancel.textContent = 'Cancel'; }
+    if (working) working.style.display = '';
+  } else {
+    if (send) { send.style.display = ''; send.disabled = false; send.textContent = 'Send'; }
+    if (cancel) cancel.style.display = 'none';
+    if (working) working.style.display = 'none';
+  }
+}
+
+function cancelChat() {
+  if (!sending || !currentSessionId) return;
+  var cancelBtn = document.getElementById('chat-cancel');
+  if (cancelBtn) { cancelBtn.disabled = true; cancelBtn.textContent = 'Cancelling…'; }
+  fetch('api/cancel?session=' + encodeURIComponent(currentSessionId), {method: 'POST'}).catch(function(){});
+  // Don't tear down UI here — the server-side ctx cancel will trigger
+  // the in-flight stream to wind down and emit a done/error event,
+  // which calls setChatSending(false) on its own.
+}
+
 function sendChat(opts) {
   if (sending) return;
   var input = document.getElementById('chat-input');
@@ -2034,10 +2310,8 @@ function sendChat(opts) {
   if (!msg) return;
   input.value = '';
   appendUserMessage(msg);
-  sending = true;
+  setChatSending(true);
   var btn = document.getElementById('chat-send');
-  btn.disabled = true;
-  btn.textContent = 'Thinking…';
 
   var assistantEl = createAssistantPlaceholder();
   var fullReply = '';
@@ -2096,9 +2370,7 @@ function sendChat(opts) {
     }
 
     function finishChat(success) {
-      sending = false;
-      btn.disabled = false;
-      btn.textContent = 'Send';
+      setChatSending(false);
       // Replace the streaming <pre class="content"> with a rendered
       // markdown <div class="content md"> so ## headings, **bold**,
       // lists, and links look like formatted prose instead of raw
@@ -2183,9 +2455,7 @@ function sendChat(opts) {
     }
     return pump();
   }).catch(function(err) {
-    sending = false;
-    btn.disabled = false;
-    btn.textContent = 'Send';
+    setChatSending(false);
     appendError(assistantEl, 'Request failed: ' + err.message);
   });
 }
@@ -2274,7 +2544,7 @@ function pollScheduledUpdates() {
       }
     }
     renderedMessageCount = msgs.length;
-    hist.scrollTop = hist.scrollHeight;
+    scrollHistoryToBottom();
   }).catch(function(){});
 }
 setInterval(pollScheduledUpdates, 30000);

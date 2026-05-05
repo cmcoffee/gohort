@@ -22,9 +22,25 @@ import (
 const (
 	pendingTempToolsTable    = "pending_temp_tools"
 	persistentTempToolsTable = "persistent_temp_tools"
+	sessionTempToolsTable    = "session_temp_tools"
 )
 
 var tempToolPersistMu sync.Mutex
+
+// tempToolStore returns the canonical DB for temp-tool persistence:
+// the process-level RootDB. Temp-tool pools (pending/persistent/
+// session-scoped) MUST live in a single shared store so the chat
+// app's writes and the admin app's reads land at the same key —
+// otherwise chat saves into its bucketed sub-DB and admin's root-DB
+// queries find nothing. Falls back to the caller-supplied db when
+// RootDB is unset (rare, e.g. early-init paths) so the call shape
+// stays compatible. Always RootDB once the dashboard is running.
+func tempToolStore(fallback Database) Database {
+	if RootDB != nil {
+		return RootDB
+	}
+	return fallback
+}
 
 // PendingTempTool is a tool the LLM asked to persist that's waiting on
 // human approval. RequestedAt is when the LLM made the request;
@@ -48,6 +64,7 @@ type PersistentTempTool struct {
 // LoadPendingTempTools returns the pending-approval queue for a user.
 // Empty username returns nil (anonymous sessions can't queue tools).
 func LoadPendingTempTools(db Database, username string) []PendingTempTool {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return nil
 	}
@@ -61,6 +78,7 @@ func LoadPendingTempTools(db Database, username string) []PendingTempTool {
 // LoadPersistentTempTools returns the approved persistent tool pool
 // for a user.
 func LoadPersistentTempTools(db Database, username string) []PersistentTempTool {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return nil
 	}
@@ -76,35 +94,48 @@ func LoadPersistentTempTools(db Database, username string) []PersistentTempTool 
 // silent overwrites — the user should explicitly delete the old one
 // first).
 func QueuePendingTempTool(db Database, username string, t TempTool, sessionID string) error {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("persistence requires an authenticated user")
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
-	pending := LoadPendingTempTools(db, username)
-	for _, p := range pending {
-		if p.Tool.Name == t.Name {
-			return errString("a tool named " + t.Name + " is already pending approval")
-		}
-	}
+	// Persistent-pool conflict is still an error: a tool the admin
+	// has already approved should require an explicit delete before
+	// the LLM can redefine it. Surprise-replacing approved tools
+	// silently is too easy to abuse.
 	approved := LoadPersistentTempTools(db, username)
 	for _, p := range approved {
 		if p.Tool.Name == t.Name {
 			return errString("a tool named " + t.Name + " is already persisted; delete it first to redefine")
 		}
 	}
-	pending = append(pending, PendingTempTool{
+	// Pending-pool conflict is allowed and replaces in place: if the
+	// LLM is iterating on a tool definition pre-approval (typo, bad
+	// schema, missing param), the admin should see the LATEST
+	// version queued for review — not the original mistake. The new
+	// RequestedAt timestamp also bumps the entry to the top of the
+	// queue so the operator notices the update.
+	pending := LoadPendingTempTools(db, username)
+	rest := pending[:0]
+	for _, p := range pending {
+		if p.Tool.Name != t.Name {
+			rest = append(rest, p)
+		}
+	}
+	rest = append(rest, PendingTempTool{
 		Tool:             t,
 		RequestedAt:      time.Now(),
 		RequestedSession: sessionID,
 	})
-	db.Set(pendingTempToolsTable, username, pending)
+	db.Set(pendingTempToolsTable, username, rest)
 	return nil
 }
 
 // ApprovePendingTempTool moves a pending tool into the persistent pool.
 // Returns an error if the named tool isn't actually pending.
 func ApprovePendingTempTool(db Database, username, name string) error {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
@@ -138,6 +169,7 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 // The current session may still use it (it's already in sess.TempTools)
 // but no future session sees it.
 func RejectPendingTempTool(db Database, username, name string) error {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
@@ -167,6 +199,7 @@ func RejectPendingTempTool(db Database, username, name string) error {
 // archive is removed too (state dir is preserved — operator can
 // inspect or manually clean if desired).
 func DeletePersistentTempTool(db Database, username, name string) error {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
@@ -198,6 +231,7 @@ func DeletePersistentTempTool(db Database, username, name string) error {
 // user's pool. Best-effort — silent no-op if the tool isn't found.
 // Used for telemetry in the admin UI ("last used: 3h ago").
 func TouchPersistentTempTool(db Database, username, name string) {
+	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return
 	}
@@ -222,3 +256,94 @@ func TouchPersistentTempTool(db Database, username, name string) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// --- session-scoped temp tools ---
+//
+// Session-scoped tools sit between in-memory ToolSession.tempTools
+// (lost when the HTTP request ends) and persistentTempTools (admin-
+// approved, lifetime survives session boundaries). They live keyed
+// by ChatSessionID so a tool the LLM creates with persist=false in
+// message 1 of a chat is reloaded when message 2 arrives. The chat
+// session deletion path is responsible for clearing them.
+
+// LoadSessionTempTools returns the tools the LLM has registered in
+// this chat session via persist=false creates. Empty chatSessionID
+// returns nil — anonymous sessions can't have session-scoped tools
+// because there's no key to load them by.
+func LoadSessionTempTools(db Database, chatSessionID string) []TempTool {
+	db = tempToolStore(db)
+	if db == nil || chatSessionID == "" {
+		return nil
+	}
+	var out []TempTool
+	if !db.Get(sessionTempToolsTable, chatSessionID, &out) {
+		return nil
+	}
+	return out
+}
+
+// SaveSessionTempTool upserts a session-scoped temp tool by name.
+// Existing entries with the same name are replaced so re-creating a
+// tool (e.g. the LLM iterating on the schema) doesn't accumulate
+// duplicates. Silent no-op when chatSessionID is empty.
+func SaveSessionTempTool(db Database, chatSessionID string, t TempTool) error {
+	db = tempToolStore(db)
+	if db == nil || chatSessionID == "" {
+		return nil
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	existing := LoadSessionTempTools(db, chatSessionID)
+	rest := existing[:0]
+	for i := range existing {
+		if existing[i].Name != t.Name {
+			rest = append(rest, existing[i])
+		}
+	}
+	rest = append(rest, t)
+	db.Set(sessionTempToolsTable, chatSessionID, rest)
+	return nil
+}
+
+// RemoveSessionTempTool drops a tool by name from the session pool.
+// Returns true when a tool was removed, false when the name wasn't
+// found.
+func RemoveSessionTempTool(db Database, chatSessionID, name string) bool {
+	db = tempToolStore(db)
+	if db == nil || chatSessionID == "" || name == "" {
+		return false
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	existing := LoadSessionTempTools(db, chatSessionID)
+	rest := existing[:0]
+	removed := false
+	for i := range existing {
+		if existing[i].Name == name {
+			removed = true
+			continue
+		}
+		rest = append(rest, existing[i])
+	}
+	if removed {
+		if len(rest) == 0 {
+			db.Unset(sessionTempToolsTable, chatSessionID)
+		} else {
+			db.Set(sessionTempToolsTable, chatSessionID, rest)
+		}
+	}
+	return removed
+}
+
+// DeleteSessionTempTools wipes every session-scoped tool for a chat
+// session. Called when the chat session itself is deleted so we
+// don't leak tool definitions for sessions that no longer exist.
+func DeleteSessionTempTools(db Database, chatSessionID string) {
+	db = tempToolStore(db)
+	if db == nil || chatSessionID == "" {
+		return
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	db.Unset(sessionTempToolsTable, chatSessionID)
+}

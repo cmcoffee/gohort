@@ -65,13 +65,23 @@ type SecureCredential struct {
 	ParamName         string `json:"param_name,omitempty"`
 	RequiresConfirm   bool   `json:"requires_confirm"`
 	// Disabled skips this credential from the auto-generated tool
-	// catalog without deleting it. Useful for temporarily revoking
-	// access (suspected misbehavior, vendor outage, etc.) while
-	// keeping the encrypted secret + config intact for re-enabling
-	// later. Inverted (Disabled rather than Enabled) so that records
-	// written before this field was added — which deserialize to the
-	// zero value — keep their default-on behavior.
+	// catalog AND blocks dispatch for any wrapped temp tool that
+	// references it. Use to temporarily revoke access entirely
+	// (suspected misbehavior, vendor outage, etc.) without deleting
+	// the encrypted secret + config. Inverted (Disabled rather than
+	// Enabled) so that records written before this field was added —
+	// which deserialize to the zero value — keep their default-on
+	// behavior.
 	Disabled bool `json:"disabled,omitempty"`
+	// HideFromCatalog skips the auto-generated `call_<name>` direct
+	// tool from the LLM's catalog while leaving the credential
+	// dispatchable for wrapped temp tools that reference it by name.
+	// Use this once specific persistent tools have been approved for
+	// the credential — the LLM can still place_call / get_call_status
+	// via the wrappers but no longer has the wide-open `call_vapi`
+	// to improvise against. Different from Disabled: dispatch keeps
+	// working for approved wrappers; only the catalog entry hides.
+	HideFromCatalog bool `json:"hide_from_catalog,omitempty"`
 	// AllowedMethods restricts which HTTP methods the LLM may use
 	// against this credential. Empty/nil = all methods allowed
 	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
@@ -271,6 +281,26 @@ func (s *SecureAPI) SetDisabled(name string, disabled bool) error {
 	return nil
 }
 
+// SetHideFromCatalog toggles the per-credential HideFromCatalog flag.
+// When true, the credential is dispatchable by wrapped temp tools but
+// no longer produces a `call_<name>` direct tool in the LLM's catalog.
+// Used to "graduate" a credential to specific approved wrappers and
+// remove the wide-open improvisation surface.
+func (s *SecureAPI) SetHideFromCatalog(name string, hide bool) error {
+	if !s.ready() || name == "" {
+		return fmt.Errorf("name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, name, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.HideFromCatalog = hide
+	s.db.Set(secureAPITable, name, c)
+	return nil
+}
+
 // Delete removes both metadata and encrypted secret.
 func (s *SecureAPI) Delete(name string) error {
 	if !s.ready() || name == "" {
@@ -368,6 +398,13 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 			disabledCount++
 			continue
 		}
+		if c.HideFromCatalog {
+			// Credential is active for wrapped tools but hidden as a
+			// direct call_<name> entry. Skip the auto-built tool.
+			// Dispatch via DispatchToolCall (used by api-mode temp
+			// tools) is unaffected.
+			continue
+		}
 		out = append(out, s.agentToolFromCredential(c, sess))
 	}
 	if len(allKeys) > 0 && len(out) == 0 {
@@ -459,6 +496,15 @@ func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method
 func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *ToolSession) (string, error) {
 	if !s.ready() {
 		return "", fmt.Errorf("secure-api store not initialized")
+	}
+	// Fail-closed on Disabled. BuildTools already hides disabled
+	// credentials from the LLM catalog, but pre-existing watchers and
+	// approved api-mode temp tools dispatch through this path
+	// directly and would otherwise keep firing. HideFromCatalog is the
+	// soft variant — it stays dispatchable on purpose so vetted
+	// wrappers keep working — Disabled is the hard kill switch.
+	if c.Disabled {
+		return "", fmt.Errorf("credential %q is disabled", c.Name)
 	}
 	rawURL := strings.TrimSpace(StringArg(args, "url"))
 	if rawURL == "" {

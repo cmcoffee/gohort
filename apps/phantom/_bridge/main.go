@@ -1075,6 +1075,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 	// same sendFileViaMessages path images use. No transcoding —
 	// gohort's downloader prefers mp4 already, and re-encoding here
 	// would burn CPU on the relay machine for no clear win.
+	var videoBytesSent int64
 	for i, b64 := range item.Videos {
 		data, err := base64.StdEncoding.DecodeString(b64)
 		if err != nil {
@@ -1103,11 +1104,28 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			os.Remove(tmpPath)
 		} else {
 			nfo.Log("video %d sent to %s (%s)", i, item.Handle, filepath.Ext(tmpPath))
+			videoBytesSent += int64(len(data))
 			go func(p string) {
 				time.Sleep(15 * time.Second) // longer than images — videos take Messages.app a moment to ingest
 				os.Remove(p)
 			}(tmpPath)
 		}
+	}
+
+	// Give iMessage a head start uploading the video before the text
+	// reply lands. Without this, the bytes-tiny text often arrives on
+	// the recipient device first because it finishes uploading while
+	// the video is still in flight — making the conversation read
+	// "[reply text] [video]" instead of "[video] [reply text]". Scale
+	// with total video size: 2s base + 1s per MB, capped at 15s.
+	if videoBytesSent > 0 && item.Text != "" {
+		mb := videoBytesSent / (1024 * 1024)
+		delay := 2*time.Second + time.Duration(mb)*time.Second
+		if delay > 15*time.Second {
+			delay = 15 * time.Second
+		}
+		nfo.Log("sleeping %s before text reply so video lands first (%d bytes sent)", delay, videoBytesSent)
+		time.Sleep(delay)
 	}
 
 	if item.Text == "" {

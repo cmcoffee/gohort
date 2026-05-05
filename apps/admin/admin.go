@@ -330,8 +330,26 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
+				case "hide":
+					// Lock the credential to wrapped tools only — the
+					// generic call_<name> direct tool stops appearing in
+					// the LLM's catalog. Approved temp tools that
+					// reference the credential by name still dispatch.
+					if err := Secure().SetHideFromCatalog(name, true); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				case "show":
+					// Re-expose the call_<name> direct tool. Used to
+					// undo a "hide" — usually because the LLM needs to
+					// improvise against the API again to discover a new
+					// shape worth wrapping.
+					if err := Secure().SetHideFromCatalog(name, false); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
 				default:
-					http.Error(w, "action must be enable|disable", http.StatusBadRequest)
+					http.Error(w, "action must be enable|disable|hide|show", http.StatusBadRequest)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -1828,75 +1846,86 @@ const adminBody = `
     <div id="secure-api-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
     <div id="secure-api-empty" style="font-size:0.85rem;color:#8b949e">No API credentials registered.</div>
 
-    <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Add credential</h3>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.6rem;margin-top:0.4rem">
-      <div>
-        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Name</label>
-        <input type="text" id="cred-name" placeholder="github_api"
-          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-        <span class="setting-desc">snake_case. Becomes <code>call_&lt;name&gt;</code> in the LLM catalog.</span>
+    <div style="margin-top:0.7rem">
+      <button onclick="showCredModal(null)" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Add credential</button>
+    </div>
+  </div>
+  <div id="cred-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center" onclick="if(event.target===this)hideCredModal()">
+    <div id="cred-modal" style="background:#161b22;border:1px solid #30363d;border-radius:8px;max-width:560px;width:92%;max-height:88vh;overflow-y:auto;padding:1.25rem 1.5rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.6rem;margin-bottom:0.6rem">
+        <div id="cred-modal-title" style="font-weight:600;color:#e6edf3;font-size:1.1rem">Add credential</div>
+        <button onclick="hideCredModal()" style="background:none;border:none;color:#8b949e;font-size:1.4rem;cursor:pointer;line-height:1;padding:0 0.2rem" title="Close">&times;</button>
       </div>
-      <div>
-        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Type</label>
-        <select id="cred-type" onchange="onCredTypeChange()"
-          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-          <option value="bearer">Bearer (Authorization: Bearer ...)</option>
-          <option value="header">Custom header</option>
-          <option value="query">Query param</option>
-          <option value="basic_auth">HTTP Basic (user:pass)</option>
-        </select>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.6rem">
+        <div>
+          <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Name</label>
+          <input type="text" id="cred-name" placeholder="github_api"
+            style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+          <span class="setting-desc">snake_case. Becomes <code>call_&lt;name&gt;</code> in the LLM catalog.</span>
+        </div>
+        <div>
+          <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Type</label>
+          <select id="cred-type" onchange="onCredTypeChange()"
+            style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+            <option value="bearer">Bearer (Authorization: Bearer ...)</option>
+            <option value="header">Custom header</option>
+            <option value="query">Query param</option>
+            <option value="basic_auth">HTTP Basic (user:pass)</option>
+          </select>
+        </div>
       </div>
-      <div id="cred-param-wrap" style="display:none">
+      <div id="cred-param-wrap" style="display:none;margin-top:0.5rem">
         <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Header / Param name</label>
         <input type="text" id="cred-param" placeholder="X-Api-Key or api_key"
           style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
       </div>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Allowed URL pattern</label>
-      <input type="text" id="cred-pattern" placeholder="https://api.github.com/**"
-        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Use <code>*</code> for path-segment wildcards or <code>**</code> for full subtree.</span>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Description (optional)</label>
-      <input type="text" id="cred-desc" placeholder="GitHub personal access token (read-only repo scope)"
-        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Shown to the LLM in the tool description so it knows what this credential is for.</span>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Secret value</label>
-      <input type="password" id="cred-secret" placeholder="paste token / key / user:pass — leave blank to keep existing"
-        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Stored encrypted. The UI never re-displays this value. Leave blank when updating an existing credential to preserve the stored secret — only required on first save.</span>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label class="toggle-label" style="font-size:0.85rem">
-        <input type="checkbox" id="cred-confirm">
-        <span>Require user confirmation per call</span>
-      </label>
-      <span class="setting-desc">For high-blast-radius credentials (write APIs, billing). Each LLM call surfaces an approval prompt.</span>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Allowed HTTP methods</label>
-      <input type="text" id="cred-methods" placeholder="GET, POST, PUT (blank = all allowed)"
-        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Comma-separated. Blank = no method restriction. Use "GET, HEAD" for read-only credentials. Methods outside the list are rejected before any HTTP request fires.</span>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Denied URL patterns</label>
-      <input type="text" id="cred-denied-urls" placeholder="https://api.vapi.ai/billing/**, https://api.vapi.ai/account/**"
-        style="width:100%;max-width:500px;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Comma-separated glob patterns applied AFTER the allowed-URL pattern. Carve out specific endpoints to block (billing, account-management, expensive operations) while leaving the rest of the API accessible.</span>
-    </div>
-    <div style="margin-top:0.5rem">
-      <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Daily call cap</label>
-      <input type="number" id="cred-max-calls" min="0" max="100000" placeholder="0 (unlimited)"
-        style="margin-top:0.1rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem">
-      <span class="setting-desc">Successful calls per rolling 24h. Beyond this the dispatcher rejects with a clear "cap reached" error. 0 = unlimited (legacy default). Useful for cost-incurring APIs (Vapi minutes, paid LLMs, Twilio messages).</span>
-    </div>
-    <div style="margin-top:0.7rem">
-      <button onclick="saveCredential()" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Save credential</button>
+      <div style="margin-top:0.5rem">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Allowed URL pattern</label>
+        <input type="text" id="cred-pattern" placeholder="https://api.github.com/**"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">Use <code>*</code> for path-segment wildcards or <code>**</code> for full subtree.</span>
+      </div>
+      <div style="margin-top:0.5rem">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Description (optional)</label>
+        <input type="text" id="cred-desc" placeholder="GitHub personal access token (read-only repo scope)"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">Shown to the LLM in the tool description so it knows what this credential is for.</span>
+      </div>
+      <div style="margin-top:0.5rem">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Secret value</label>
+        <input type="password" id="cred-secret" placeholder="paste token / key / user:pass — leave blank to keep existing"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">Stored encrypted. The UI never re-displays this value. Leave blank when updating an existing credential to preserve the stored secret — only required on first save.</span>
+      </div>
+      <div style="margin-top:0.5rem">
+        <label class="toggle-label" style="font-size:0.85rem">
+          <input type="checkbox" id="cred-confirm">
+          <span>Require user confirmation per call</span>
+        </label>
+        <span class="setting-desc">For high-blast-radius credentials (write APIs, billing). Each LLM call surfaces an approval prompt.</span>
+      </div>
+      <div style="margin-top:0.5rem">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Allowed HTTP methods</label>
+        <input type="text" id="cred-methods" placeholder="GET, POST, PUT (blank = all allowed)"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">Comma-separated. Blank = no method restriction. Use "GET, HEAD" for read-only credentials. Methods outside the list are rejected before any HTTP request fires.</span>
+      </div>
+      <div style="margin-top:0.5rem">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Denied URL patterns</label>
+        <input type="text" id="cred-denied-urls" placeholder="https://api.vapi.ai/billing/**, https://api.vapi.ai/account/**"
+          style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">Comma-separated glob patterns applied AFTER the allowed-URL pattern. Carve out specific endpoints to block (billing, account-management, expensive operations) while leaving the rest of the API accessible.</span>
+      </div>
+      <div style="margin-top:0.5rem">
+        <label style="font-size:0.85rem;color:#c9d1d9;display:block;margin-bottom:0.2rem">Daily call cap</label>
+        <input type="number" id="cred-max-calls" min="0" max="100000" placeholder="0 (unlimited)"
+          style="margin-top:0.1rem;width:8rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem">
+        <span class="setting-desc">Successful calls per rolling 24h. Beyond this the dispatcher rejects with a clear "cap reached" error. 0 = unlimited (legacy default). Useful for cost-incurring APIs (Vapi minutes, paid LLMs, Twilio messages).</span>
+      </div>
+      <div style="margin-top:0.9rem;display:flex;justify-content:flex-end;gap:0.5rem">
+        <button onclick="hideCredModal()" style="padding:0.45rem 0.9rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem;cursor:pointer">Cancel</button>
+        <button onclick="saveCredential()" style="padding:0.45rem 0.9rem;background:#238636;border:1px solid #2ea043;border-radius:6px;color:#fff;font-size:0.85rem;cursor:pointer">Save credential</button>
+      </div>
     </div>
   </div>
   <div class="section">
@@ -1910,6 +1939,18 @@ const adminBody = `
     <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Active</h3>
     <div id="active-tools-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
     <div id="active-tools-empty" style="font-size:0.85rem;color:#8b949e">No active persistent tools.</div>
+  </div>
+  <div id="tool-modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center" onclick="if(event.target===this)hideToolModal()">
+    <div id="tool-modal" style="background:#161b22;border:1px solid #30363d;border-radius:8px;max-width:760px;width:92%;max-height:88vh;overflow-y:auto;padding:1.25rem 1.5rem">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:0.6rem;margin-bottom:0.6rem">
+        <div>
+          <div id="tool-modal-name" style="font-weight:600;color:#e6edf3;font-size:1.1rem"></div>
+          <div id="tool-modal-meta" style="font-size:0.78rem;color:#8b949e;margin-top:0.25rem"></div>
+        </div>
+        <button onclick="hideToolModal()" style="background:none;border:none;color:#8b949e;font-size:1.4rem;cursor:pointer;line-height:1;padding:0 0.2rem" title="Close">&times;</button>
+      </div>
+      <div id="tool-modal-body" style="font-size:0.85rem;color:#c9d1d9;line-height:1.5"></div>
+    </div>
   </div>
   <div class="section">
     <h2>Watchers</h2>
@@ -2970,14 +3011,53 @@ function saveCredential() {
     body: JSON.stringify(payload)
   }).then(function(r){
     if (!r.ok) return r.text().then(function(t){ alert('save failed: ' + t); });
+    hideCredModal();
+    loadSecureAPICredentials();
+  }).catch(function(e){ alert('save failed: ' + e); });
+}
+
+// showCredModal opens the credential modal in either Add mode (c=null,
+// fields cleared, name editable) or Edit mode (fields populated from
+// the existing record). Same backend POST handles both — the upsert
+// keys on the name field.
+function showCredModal(c) {
+  var overlay = document.getElementById('cred-modal-overlay');
+  var title = document.getElementById('cred-modal-title');
+  if (!overlay || !title) return;
+  if (c) {
+    title.textContent = 'Edit credential — ' + c.name;
+    document.getElementById('cred-name').value = c.name || '';
+    document.getElementById('cred-type').value = c.type || 'bearer';
+    document.getElementById('cred-pattern').value = c.allowed_url_pattern || '';
+    document.getElementById('cred-param').value = c.param_name || '';
+    document.getElementById('cred-desc').value = c.description || '';
+    document.getElementById('cred-confirm').checked = !!c.requires_confirm;
+    document.getElementById('cred-secret').value = '';
+    document.getElementById('cred-methods').value = (c.allowed_methods || []).join(', ');
+    document.getElementById('cred-denied-urls').value = (c.denied_url_patterns || []).join(', ');
+    document.getElementById('cred-max-calls').value = c.max_calls_per_day || 0;
+  } else {
+    title.textContent = 'Add credential';
     document.getElementById('cred-name').value = '';
+    document.getElementById('cred-type').value = 'bearer';
     document.getElementById('cred-pattern').value = '';
     document.getElementById('cred-param').value = '';
     document.getElementById('cred-desc').value = '';
-    document.getElementById('cred-secret').value = '';
     document.getElementById('cred-confirm').checked = false;
-    loadSecureAPICredentials();
-  }).catch(function(e){ alert('save failed: ' + e); });
+    document.getElementById('cred-secret').value = '';
+    document.getElementById('cred-methods').value = '';
+    document.getElementById('cred-denied-urls').value = '';
+    document.getElementById('cred-max-calls').value = '';
+  }
+  onCredTypeChange();
+  overlay.style.display = 'flex';
+  var nameInput = document.getElementById('cred-name');
+  if (nameInput) nameInput.focus();
+}
+
+function hideCredModal() {
+  var overlay = document.getElementById('cred-modal-overlay');
+  if (overlay) overlay.style.display = 'none';
 }
 
 function loadSecureAPICredentials() {
@@ -3010,6 +3090,7 @@ function renderCredentialCard(c) {
   meta.style.cssText = 'font-size:0.75rem;color:#8b949e;margin-top:0.15rem';
   var bits = [c.type];
   if (c.disabled) bits.push('DISABLED');
+  if (c.hide_from_catalog) bits.push('WRAPPER-ONLY');
   if (c.requires_confirm) bits.push('requires confirm');
   if (c.allowed_methods && c.allowed_methods.length) bits.push(c.allowed_methods.join('/'));
   if (c.max_calls_per_day) bits.push('cap ' + c.max_calls_per_day + '/day');
@@ -3037,6 +3118,12 @@ function renderCredentialCard(c) {
   toggleBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + (c.disabled ? '#2ea043' : '#d29922') + ';border-radius:5px;color:' + (c.disabled ? '#56d364' : '#d29922') + ';font-size:0.8rem;cursor:pointer';
   toggleBtn.onclick = function(){ toggleCredential(c.name, c.disabled); };
   btns.appendChild(toggleBtn);
+  var lockBtn = document.createElement('button');
+  lockBtn.textContent = c.hide_from_catalog ? 'Unlock' : 'Lock';
+  lockBtn.title = c.hide_from_catalog ? 'Re-expose call_' + c.name + ' as a direct tool the LLM can improvise against' : 'Hide call_' + c.name + ' from the LLM catalog. Approved wrapped tools that reference this credential keep working.';
+  lockBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + (c.hide_from_catalog ? '#388bfd' : '#8b949e') + ';border-radius:5px;color:' + (c.hide_from_catalog ? '#58a6ff' : '#c9d1d9') + ';font-size:0.8rem;cursor:pointer';
+  lockBtn.onclick = function(){ toggleCredentialHide(c.name, c.hide_from_catalog); };
+  btns.appendChild(lockBtn);
   var auditBtn = document.createElement('button');
   auditBtn.textContent = 'Audit';
   auditBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
@@ -3076,31 +3163,28 @@ function deleteCredential(name) {
 }
 
 function editCredential(c) {
-  // Repopulate the "Add credential" form with the existing record so
-  // the operator can tweak the URL pattern, description, type, or
-  // confirm-on-call flag without re-entering everything. Secret is
-  // intentionally blank — the backend preserves the existing secret
-  // when this field is empty on update; paste a new value here only
-  // when rotating the key.
-  document.getElementById('cred-name').value = c.name || '';
-  document.getElementById('cred-type').value = c.type || 'bearer';
-  document.getElementById('cred-pattern').value = c.allowed_url_pattern || '';
-  document.getElementById('cred-param').value = c.param_name || '';
-  document.getElementById('cred-desc').value = c.description || '';
-  document.getElementById('cred-confirm').checked = !!c.requires_confirm;
-  document.getElementById('cred-secret').value = '';
-  document.getElementById('cred-methods').value = (c.allowed_methods || []).join(', ');
-  document.getElementById('cred-denied-urls').value = (c.denied_url_patterns || []).join(', ');
-  document.getElementById('cred-max-calls').value = c.max_calls_per_day || 0;
-  onCredTypeChange();
-  // Scroll the form into view so the operator sees what they're editing.
-  var anchor = document.getElementById('cred-name');
-  if (anchor && anchor.scrollIntoView) anchor.scrollIntoView({behavior: 'smooth', block: 'center'});
-  anchor.focus();
+  // Edit and Add share the same modal — Edit preloads c, Add passes null.
+  // Secret stays blank on edit; the backend preserves the stored secret
+  // when this field is empty, so the operator only re-types it when
+  // rotating the key.
+  showCredModal(c);
 }
 
 function toggleCredential(name, currentlyDisabled) {
   var action = currentlyDisabled ? 'enable' : 'disable';
+  fetch('api/secure-api?action=' + action + '&name=' + encodeURIComponent(name), {method: 'POST'})
+    .then(function(r){
+      if (!r.ok) return r.text().then(function(t){ alert(action + ' failed: ' + t); });
+      loadSecureAPICredentials();
+    });
+}
+
+// toggleCredentialHide flips HideFromCatalog on the credential —
+// "Lock" hides the auto-generated call_<name> tool from the LLM
+// catalog so only approved wrapped tools (place_call, etc.) can use
+// the credential. "Unlock" re-exposes the direct call_<name> tool.
+function toggleCredentialHide(name, currentlyHidden) {
+  var action = currentlyHidden ? 'show' : 'hide';
   fetch('api/secure-api?action=' + action + '&name=' + encodeURIComponent(name), {method: 'POST'})
     .then(function(r){
       if (!r.ok) return r.text().then(function(t){ alert(action + ' failed: ' + t); });
@@ -3206,6 +3290,11 @@ function renderToolCard(tool, opts) {
     rejectBtn.onclick = function(){ persistentToolAction('reject', tool.name); };
     btns.appendChild(rejectBtn);
   } else {
+    var viewBtn = document.createElement('button');
+    viewBtn.textContent = 'View';
+    viewBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
+    viewBtn.onclick = function(){ showToolModal(tool, opts); };
+    btns.appendChild(viewBtn);
     var delBtn = document.createElement('button');
     delBtn.textContent = 'Delete';
     delBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #f85149;border-radius:5px;color:#f85149;font-size:0.8rem;cursor:pointer';
@@ -3215,26 +3304,55 @@ function renderToolCard(tool, opts) {
   head.appendChild(btns);
   card.appendChild(head);
 
+  // Description stays visible even when the rest of the definition
+  // is collapsed — it's the most useful at-a-glance signal for what
+  // the tool does, more compact than the command template, and
+  // doesn't require a click to read.
   var desc = document.createElement('div');
   desc.style.cssText = 'font-size:0.85rem;color:#c9d1d9;margin-bottom:0.45rem;line-height:1.45';
   desc.textContent = tool.description;
   card.appendChild(desc);
 
+  // Pending tools stay expanded by default — admin needs to read the
+  // command template before approving. Active (already-approved) tools
+  // collapse the rest of the body so the list stays compact, with a
+  // click to expand and inspect command template + params, plus a
+  // "View" button on the head that opens a full-screen modal.
+  var bodyHost;
+  if (opts.pending) {
+    bodyHost = card;
+  } else {
+    var details = document.createElement('details');
+    details.style.cssText = 'margin-top:0.2rem';
+    var summary = document.createElement('summary');
+    summary.style.cssText = 'cursor:pointer;font-size:0.78rem;color:#8b949e;user-select:none;list-style:none';
+    summary.textContent = '▸ Show definition';
+    details.appendChild(summary);
+    details.addEventListener('toggle', function(){
+      summary.textContent = details.open ? '▾ Hide definition' : '▸ Show definition';
+    });
+    var inner = document.createElement('div');
+    inner.style.cssText = 'margin-top:0.4rem';
+    details.appendChild(inner);
+    card.appendChild(details);
+    bodyHost = inner;
+  }
+
   var cmdLabel = document.createElement('div');
   cmdLabel.style.cssText = 'font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.15rem';
   cmdLabel.textContent = 'Command template';
-  card.appendChild(cmdLabel);
+  bodyHost.appendChild(cmdLabel);
 
   var cmd = document.createElement('pre');
   cmd.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:0.4rem 0.6rem;font-family:ui-monospace,Menlo,monospace;font-size:0.8rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;margin:0';
   cmd.textContent = tool.command_template;
-  card.appendChild(cmd);
+  bodyHost.appendChild(cmd);
 
   if (tool.params && Object.keys(tool.params).length) {
     var paramsLabel = document.createElement('div');
     paramsLabel.style.cssText = 'font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em;margin:0.5rem 0 0.15rem';
     paramsLabel.textContent = 'Params';
-    card.appendChild(paramsLabel);
+    bodyHost.appendChild(paramsLabel);
     var pl = document.createElement('div');
     pl.style.cssText = 'font-size:0.78rem;color:#c9d1d9;font-family:ui-monospace,Menlo,monospace;line-height:1.5';
     Object.keys(tool.params).forEach(function(k){
@@ -3243,7 +3361,7 @@ function renderToolCard(tool, opts) {
       line.textContent = k + ' (' + (p.type||'?') + ') — ' + (p.description||'');
       pl.appendChild(line);
     });
-    card.appendChild(pl);
+    bodyHost.appendChild(pl);
   }
   return card;
 }
@@ -3267,6 +3385,84 @@ function deletePersistentTool(name) {
     })
     .catch(function(e){ alert('delete failed: ' + e); });
 }
+
+function showToolModal(tool, opts) {
+  var overlay = document.getElementById('tool-modal-overlay');
+  var nameEl = document.getElementById('tool-modal-name');
+  var metaEl = document.getElementById('tool-modal-meta');
+  var bodyEl = document.getElementById('tool-modal-body');
+  if (!overlay || !nameEl || !bodyEl) return;
+  nameEl.textContent = tool.name;
+  metaEl.textContent = (opts && opts.meta) ? opts.meta : '';
+  bodyEl.innerHTML = '';
+
+  var section = function(label, content, mono){
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-bottom:0.85rem';
+    var lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:0.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.2rem';
+    lbl.textContent = label;
+    wrap.appendChild(lbl);
+    var box = document.createElement('div');
+    if (mono) {
+      box.style.cssText = 'background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:0.5rem 0.65rem;font-family:ui-monospace,Menlo,monospace;font-size:0.8rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-word';
+    } else {
+      box.style.cssText = 'font-size:0.85rem;color:#c9d1d9;line-height:1.5';
+    }
+    box.textContent = content;
+    wrap.appendChild(box);
+    bodyEl.appendChild(wrap);
+  };
+
+  if (tool.description) section('Description', tool.description, false);
+
+  // Mode-aware fields. Shell mode shows command_template + state_path
+  // + archive metadata; api mode shows credential + URL template +
+  // method + body template. Mode comes back from the persistent
+  // store via the JSON struct tag, falling back to "shell" when
+  // missing for legacy records.
+  var mode = tool.mode || 'shell';
+  section('Mode', mode, false);
+
+  if (mode === 'api') {
+    if (tool.credential) section('Credential', tool.credential, true);
+    if (tool.command_template) section('URL template', tool.command_template, true);
+    if (tool.method) section('Method', tool.method, true);
+    if (tool.body_template) section('Body template', tool.body_template, true);
+    if (tool.response_pipe) section('Response pipe', tool.response_pipe, true);
+  } else {
+    section('Command template', tool.command_template || '(empty)', true);
+    if (tool.state_path) section('State path', tool.state_path, true);
+    if (tool.archive_path) section('Archive', tool.archive_path + ' (' + (tool.archive_size || 0) + ' bytes)', true);
+  }
+
+  if (tool.params && Object.keys(tool.params).length) {
+    var lines = Object.keys(tool.params).map(function(k){
+      var p = tool.params[k] || {};
+      var req = (tool.required || []).indexOf(k) >= 0 ? ' [required]' : '';
+      return k + ' (' + (p.type || '?') + ')' + req + (p.description ? ' — ' + p.description : '');
+    }).join('\n');
+    section('Params', lines, true);
+  }
+
+  overlay.style.display = 'flex';
+}
+
+function hideToolModal() {
+  var overlay = document.getElementById('tool-modal-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+// Close the tool modal on Escape so keyboard users don't have to
+// hunt for the X. Bound once at script load; cheap to leave attached.
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Escape') {
+    var toolOverlay = document.getElementById('tool-modal-overlay');
+    if (toolOverlay && toolOverlay.style.display !== 'none') { hideToolModal(); return; }
+    var credOverlay = document.getElementById('cred-modal-overlay');
+    if (credOverlay && credOverlay.style.display !== 'none') hideCredModal();
+  }
+});
 
 function relTime(iso) {
   if (!iso) return 'unknown';

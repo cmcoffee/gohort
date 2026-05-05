@@ -1237,6 +1237,15 @@ type TempTool struct {
 	// BodyTemplate is an optional request body template for api mode.
 	// `{arg_name}` placeholders are JSON-encoded.
 	BodyTemplate string `json:"body_template,omitempty"`
+	// ResponsePipe is an optional shell command for api mode that
+	// receives the raw API response on stdin and emits the LLM-visible
+	// result on stdout. Runs in a tight sandbox (no network, no
+	// writable filesystem, /tmp tmpfs only) so it can use jq, awk,
+	// grep, sed, etc. to filter / reshape responses before they reach
+	// the LLM's context. Empty = LLM sees the raw response unchanged.
+	// Adding a pipe upgrades the wrapper tool's required caps to
+	// include CapExecute.
+	ResponsePipe string `json:"response_pipe,omitempty"`
 	// ArchivePath, when set, points to a tar.gz on disk holding the
 	// tool's code (scripts, helpers, fixtures) at approval time. The
 	// path is relative to WorkspacesDir() — typically

@@ -507,9 +507,9 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// to invoke. Try Content first, then fall back to Reasoning so
 		// those calls don't slip through and render as visible text.
 		if len(resp.ToolCalls) == 0 {
-			parsed := parseTextToolCall(resp.Content, handlers, toolDefs)
+			parsed := ParseTextToolCall(resp.Content, handlers, toolDefs)
 			if parsed == nil && resp.Reasoning != "" && strings.Contains(resp.Reasoning, "<function=") {
-				if reasoningCall := parseTextToolCall(resp.Reasoning, handlers, toolDefs); reasoningCall != nil {
+				if reasoningCall := ParseTextToolCall(resp.Reasoning, handlers, toolDefs); reasoningCall != nil {
 					Debug("[agent_loop] parsed tool call out of reasoning channel: %s", reasoningCall.Name)
 					parsed = reasoningCall
 				}
@@ -523,7 +523,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				// the markup OR any preceding narration to the user. The
 				// real action lives in the dispatched tool now; the text
 				// shouldn't trail along.
-				resp.Content = stripToolCallMarkup(resp.Content)
+				resp.Content = StripToolCallMarkup(resp.Content)
 				history[len(history)-1] = Message{
 					Role:      "assistant",
 					Content:   resp.Content,
@@ -538,7 +538,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				// inject a corrective so the model gets a chance to
 				// retry with the right name.
 				attemptedName, _ := parseFunctionTagToolCall(resp.Content)
-				resp.Content = stripToolCallMarkup(resp.Content)
+				resp.Content = StripToolCallMarkup(resp.Content)
 				history[len(history)-1] = Message{
 					Role:      "assistant",
 					Content:   resp.Content,
@@ -802,7 +802,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	return lastResp, history, nil
 }
 
-// parseTextToolCall attempts to extract a tool call from text content when the
+// ParseTextToolCall attempts to extract a tool call from text content when the
 // model doesn't use structured tool calling. Tries three forms in order:
 //
 //   1. XML-style: <function=name><parameter=key>value</parameter></function>,
@@ -817,7 +817,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 // tool but doesn't emit structured args), it's rejected — better to let the
 // loop count the round as "model produced content but didn't act" than to
 // fire a guaranteed-to-fail tool call and burn a round on the error.
-func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) *ToolCall {
+func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) *ToolCall {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return nil
@@ -871,12 +871,12 @@ func parseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 	return nil
 }
 
-// stripToolCallMarkup removes <tool_call>...</tool_call> blocks and
+// StripToolCallMarkup removes <tool_call>...</tool_call> blocks and
 // bare <function=...>...</function> blocks from text. Used after the
 // agent loop promotes a synthesized tool call so the original markup
 // (and any leading "let me try..." narration) doesn't leak into the
 // user-visible reply.
-func stripToolCallMarkup(s string) string {
+func StripToolCallMarkup(s string) string {
 	// Drop <tool_call>...</tool_call> wrappers first (they may contain
 	// JSON-shape calls or function-tag calls inside).
 	for {
