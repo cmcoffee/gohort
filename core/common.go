@@ -536,6 +536,52 @@ func LoadMailConfig() MailConfig {
 	return MailConfig{}
 }
 
+// VoiceConfig holds voice (STT/TTS) settings. Each backend (whisper, piper)
+// supports two transports:
+//
+//   - HTTP server mode (preferred when *ServerURL is set): gohort POSTs to a
+//     long-running whisper-server / piper-http process, typically on the
+//     llama-server host. Lower per-request latency since the model stays
+//     loaded.
+//   - Shell-out mode (fallback): gohort spawns whisper-cli / piper per
+//     request on the local host. Simpler to set up; pays model-load cost
+//     on every call.
+//
+// Server URL takes precedence when set; binary+model fields are used only
+// when the URL field is blank. This lets the user mix transports per
+// backend (e.g. whisper on llama-server via HTTP, piper local via shell).
+type VoiceConfig struct {
+	Enabled bool // master toggle; when false, /voice/* endpoints return 503
+
+	// Whisper (STT) — HTTP server preferred; binary+model is fallback.
+	WhisperServerURL string // e.g. http://llama:8090 (whisper.cpp's whisper-server)
+	WhisperBin       string // path to whisper.cpp CLI; default "whisper-cli"
+	WhisperModel     string // path to a ggml model file (e.g. ggml-base.en.bin)
+
+	// Piper (TTS) — HTTP server preferred; binary+voice is fallback.
+	PiperServerURL string // e.g. http://llama:5000 (piper.http_server)
+	PiperBin       string // path to piper executable; default "piper"
+	PiperVoice     string // path to a Piper .onnx voice file
+}
+
+// LoadVoiceConfigFunc is set by the application to load voice settings from the database.
+var LoadVoiceConfigFunc func() VoiceConfig
+
+// LoadVoiceConfig returns the stored voice configuration with defaults filled in.
+func LoadVoiceConfig() VoiceConfig {
+	var c VoiceConfig
+	if LoadVoiceConfigFunc != nil {
+		c = LoadVoiceConfigFunc()
+	}
+	if c.WhisperBin == "" {
+		c.WhisperBin = "whisper-cli"
+	}
+	if c.PiperBin == "" {
+		c.PiperBin = "piper"
+	}
+	return c
+}
+
 // GhostConfig holds CMS connection details.
 type GhostConfig struct {
 	URL    string

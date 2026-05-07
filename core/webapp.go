@@ -693,6 +693,11 @@ func ServeDashboard(addr string) error {
 		json.NewEncoder(w).Encode(flags)
 	})
 
+	// Voice endpoints (STT/TTS via whisper.cpp + Piper shell-outs).
+	mux.HandleFunc("/voice/status", VoiceStatusHandler)
+	mux.HandleFunc("/voice/transcribe", VoiceTranscribeHandler)
+	mux.HandleFunc("/voice/speak", VoiceSpeakHandler)
+
 	// Authentication endpoints.
 	if AuthDB != nil {
 		db := AuthDB()

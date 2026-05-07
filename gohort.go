@@ -114,6 +114,11 @@ func main() {
 		return dbcfg.search()
 	}
 
+	// Wire up voice (STT/TTS) config loader.
+	LoadVoiceConfigFunc = func() VoiceConfig {
+		return dbcfg.voice()
+	}
+
 	// Wire up Ollama proxy backend. Returns the base URL and model for the
 	// configured worker LLM when it is Ollama; empty strings otherwise.
 	OllamaBackendFunc = func() (string, string, int) {

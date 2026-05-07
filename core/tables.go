@@ -17,4 +17,5 @@ const (
 	AuthSessionTable = "auth_sessions"
 	AuthResetTable   = "auth_reset_tokens"
 	NetworkTable     = "network_config"
+	VoiceTable       = "voice_config"
 )

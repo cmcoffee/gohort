@@ -163,6 +163,18 @@ func (d dbCFG) search() WebSearchConfig {
 	return c
 }
 
+func (d dbCFG) voice() VoiceConfig {
+	var c VoiceConfig
+	global.db.Get(VoiceTable, "enabled", &c.Enabled)
+	global.db.Get(VoiceTable, "whisper_server_url", &c.WhisperServerURL)
+	global.db.Get(VoiceTable, "whisper_bin", &c.WhisperBin)
+	global.db.Get(VoiceTable, "whisper_model", &c.WhisperModel)
+	global.db.Get(VoiceTable, "piper_server_url", &c.PiperServerURL)
+	global.db.Get(VoiceTable, "piper_bin", &c.PiperBin)
+	global.db.Get(VoiceTable, "piper_voice", &c.PiperVoice)
+	return c
+}
+
 func (d dbCFG) imageProvider() string {
 	var provider string
 	global.db.Get(ImageTable, "provider", &provider)
@@ -483,10 +495,37 @@ func setup_fuzz() {
 		return true
 	})
 
+	// Voice settings (STT via whisper.cpp + TTS via Piper). Each backend
+	// supports HTTP server (preferred) or local shell-out (fallback). The
+	// server URL takes precedence per backend when set.
+	var voiceEnabled bool
+	var voiceWhisperServerURL, voiceWhisperBin, voiceWhisperModel string
+	var voicePiperServerURL, voicePiperBin, voicePiperVoice string
+	global.db.Get(VoiceTable, "enabled", &voiceEnabled)
+	global.db.Get(VoiceTable, "whisper_server_url", &voiceWhisperServerURL)
+	global.db.Get(VoiceTable, "whisper_bin", &voiceWhisperBin)
+	global.db.Get(VoiceTable, "whisper_model", &voiceWhisperModel)
+	global.db.Get(VoiceTable, "piper_server_url", &voicePiperServerURL)
+	global.db.Get(VoiceTable, "piper_bin", &voicePiperBin)
+	global.db.Get(VoiceTable, "piper_voice", &voicePiperVoice)
+	voice := NewOptions(" [Voice (STT/TTS)] ", "(selection or 'q' to return to previous)", 'q')
+	voice.ToggleVar(&voiceEnabled, "Enabled (push-to-talk + speak-aloud)", voiceEnabled)
+	voice.StringVar(&voiceWhisperServerURL, "Whisper Server URL", voiceWhisperServerURL, "whisper.cpp HTTP server (e.g. http://llama:8090). When set, used instead of the local binary.")
+	voice.StringVar(&voiceWhisperBin, "Whisper Binary (fallback)", voiceWhisperBin, "Path/name of whisper.cpp CLI for local shell-out (default: whisper-cli on PATH). Used only when no Server URL is set.")
+	voice.ShowWhen(func() bool { return voiceWhisperServerURL == "" })
+	voice.StringVar(&voiceWhisperModel, "Whisper Model (fallback)", voiceWhisperModel, "Absolute path to a ggml whisper model file (e.g. /opt/whisper/ggml-base.en.bin). Used only when no Server URL is set.")
+	voice.ShowWhen(func() bool { return voiceWhisperServerURL == "" })
+	voice.StringVar(&voicePiperServerURL, "Piper Server URL", voicePiperServerURL, "Piper HTTP server (e.g. http://llama:5000). When set, used instead of the local binary.")
+	voice.StringVar(&voicePiperBin, "Piper Binary (fallback)", voicePiperBin, "Path/name of piper executable for local shell-out (default: piper on PATH). Used only when no Server URL is set.")
+	voice.ShowWhen(func() bool { return voicePiperServerURL == "" })
+	voice.StringVar(&voicePiperVoice, "Piper Voice (fallback)", voicePiperVoice, "Absolute path to a Piper .onnx voice file (e.g. /opt/piper/en_US-amy-medium.onnx). Used only when no Server URL is set.")
+	voice.ShowWhen(func() bool { return voicePiperServerURL == "" })
+
 	services := NewOptions(" [External Services] ", "(selection or 'q' to return to previous)", 'q')
 	services.Options("Web Search", search, false)
 	services.Options("Source Hooks (API, RAG, Paywall)", hooks, false)
 	services.Options("Mail (SMTP)", mail, false)
+	services.Options("Voice (STT/TTS)", voice, false)
 	setup.Options("External Services", services, false)
 
 	// Web Server Settings.
@@ -707,6 +746,15 @@ func setup_fuzz() {
 	if searchAPIKey != "" {
 		global.db.CryptSet(SearchTable, "api_key", searchAPIKey)
 	}
+
+	// Save voice configuration.
+	global.db.Set(VoiceTable, "enabled", voiceEnabled)
+	global.db.Set(VoiceTable, "whisper_server_url", voiceWhisperServerURL)
+	global.db.Set(VoiceTable, "whisper_bin", voiceWhisperBin)
+	global.db.Set(VoiceTable, "whisper_model", voiceWhisperModel)
+	global.db.Set(VoiceTable, "piper_server_url", voicePiperServerURL)
+	global.db.Set(VoiceTable, "piper_bin", voicePiperBin)
+	global.db.Set(VoiceTable, "piper_voice", voicePiperVoice)
 
 	// Save Image Generation configuration.
 	global.db.Set(ImageTable, "provider", imageProvider)
