@@ -33,8 +33,16 @@ import (
 // run_local — long-running commands get killed.
 const commandTimeout = 90 * time.Second
 
-// maxOutput is the per-call output cap, same as run_local.
-const maxOutput = 10000
+// maxOutput is the per-call output cap for shell-mode temp tools and
+// for response_pipe filtered output on api-mode temp tools. Bumped
+// from 10000 (run_local-compatible) to 50000 (~12K tokens) to give
+// pipe projections enough headroom for richer results — a list of
+// 50 records with several fields each would clip at 10K but fits
+// comfortably at 50K, while still being well within a 200K context
+// window. Shell-mode tools also benefit when their output is
+// genuinely structured. run_local stays at 10000 — that's plain
+// shell output where the readability ceiling is lower.
+const maxOutput = 50000
 
 // Individual tools (CreateTempToolTool, ListTempToolsTool,
 // DeleteTempToolTool, CreateAPIToolTool) are no longer registered —
@@ -42,6 +50,42 @@ const maxOutput = 10000
 // covers all four. Their implementations remain so tool_def.go's
 // dispatchers can call them; just dropped from the catalog.
 func init() {}
+
+// formatTempToolSpec renders a just-registered TempTool the same way
+// BuildToolPrompt would describe a static tool: name, description,
+// param list with types and required-flags. Appended to the result
+// of every "Created temp tool" return so the LLM has the full schema
+// in-band the moment it asked to create the tool — no waiting for
+// the next round's catalog to discover the shape, no guessing param
+// names from its own create_temp_tool args. Important when the
+// model creates a tool and immediately wants to use it in the same
+// reply ("created and now calling…").
+func formatTempToolSpec(tt *TempTool) string {
+	if tt == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nTool spec:\n\n")
+	b.WriteString(fmt.Sprintf("### %s\n%s\n", tt.Name, tt.Description))
+	if len(tt.Params) > 0 {
+		b.WriteString("Parameters:\n")
+		// Required-set lookup, single pass, preserves the order the
+		// LLM declared them in (map iteration is randomized but the
+		// info is stable enough — the names matter, not the order).
+		reqSet := make(map[string]bool, len(tt.Required))
+		for _, r := range tt.Required {
+			reqSet[r] = true
+		}
+		for name, p := range tt.Params {
+			req := ""
+			if reqSet[name] {
+				req = " (required)"
+			}
+			b.WriteString(fmt.Sprintf("  - %s (%s%s): %s\n", name, p.Type, req, p.Description))
+		}
+	}
+	return b.String()
+}
 
 // ----------------------------------------------------------------------
 // create_temp_tool
@@ -83,6 +127,14 @@ func (t *CreateTempToolTool) Params() map[string]ToolParam {
 			Type:        "boolean",
 			Description: "If true, request that this tool be saved across future sessions. The tool is registered for the current session immediately, but will only appear in subsequent sessions after the user approves it via the admin UI. Default false (session-only). Use only for tools you expect to reuse next time.",
 		},
+		"script_body": {
+			Type:        "string",
+			Description: "Optional. The full source of a script to ship with the tool — Python, Bash, awk, jq, whatever. Written into the tool's sandbox at registration time as `script_name` (default \"script.py\"). Use this for any tool whose logic is more than a one-liner. Reference it from command_template as {workspace_dir}/<script_name>. Auto-mints a sandbox if none exists; no need to set up a workspace first.",
+		},
+		"script_name": {
+			Type:        "string",
+			Description: "Optional. Filename to write script_body as. Defaults to \"script.py\". Pick a name that matches the script's language (e.g. \"run.sh\" for Bash) so command_template reads naturally.",
+		},
 	}
 }
 
@@ -117,6 +169,39 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	cmd := strings.TrimSpace(StringArg(args, "command_template"))
 	if cmd == "" {
 		return "", fmt.Errorf("command_template is required")
+	}
+
+	// script_body shortcut: auto-mint a sandbox, write the script
+	// into it, and let command_template reference it via
+	// {workspace_dir}/<script_name>. Collapses workspace-create +
+	// file-write + tool-create into one call. The LLM never has to
+	// think about workspaces.
+	scriptBody := StringArg(args, "script_body")
+	scriptName := strings.TrimSpace(StringArg(args, "script_name"))
+	if scriptBody != "" {
+		if scriptName == "" {
+			scriptName = "script.py"
+		}
+		if strings.ContainsAny(scriptName, "/\\") {
+			return "", fmt.Errorf("script_name must be a single filename (no path separators)")
+		}
+		if _, err := EnsureSessionWorkspace(sess); err != nil {
+			return "", fmt.Errorf("auto-mint workspace: %w", err)
+		}
+		scriptPath := filepath.Join(sess.WorkspaceDir, scriptName)
+		if err := os.WriteFile(scriptPath, []byte(scriptBody), 0700); err != nil {
+			return "", fmt.Errorf("write script %q: %w", scriptName, err)
+		}
+		if !strings.Contains(cmd, scriptName) && !strings.Contains(cmd, "{workspace_dir}") {
+			return "", fmt.Errorf("script_body=%q was written to %s but command_template doesn't reference it — add {workspace_dir}/%s to the template", scriptName, scriptPath, scriptName)
+		}
+	} else if strings.Contains(cmd, "{workspace_dir}") {
+		// command_template references {workspace_dir} but no script_body
+		// was supplied. Auto-mint a sandbox so the placeholder resolves;
+		// the LLM is presumably writing the script itself via local(write).
+		if _, err := EnsureSessionWorkspace(sess); err != nil {
+			return "", fmt.Errorf("auto-mint workspace: %w", err)
+		}
 	}
 
 	params, err := parseParamsArg(args["params"])
@@ -185,39 +270,42 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// usable in this session (just registered above); persistence is
 	// what makes it survive into future sessions, and that requires
 	// human review of the command_template.
+	spec := formatTempToolSpec(tool)
+
 	persist := BoolArg(args, "persist")
 	if persist {
 		if sess.DB == nil || sess.Username == "" {
 			saveSessionScoped()
-			return fmt.Sprintf("Created temp tool %q for this session. Persistence was requested but is not available in this app/session, so the tool will be discarded when the session ends. Treat it as session-scoped.", name), nil
+			return fmt.Sprintf("Created temp tool %q for this session. Persistence was requested but is not available in this app/session, so the tool will be discarded when the session ends. Treat it as session-scoped.%s", name, spec), nil
 		}
-		// Pack the session's current workspace into a tar.gz archive
-		// IFF the command_template references {workspace_dir} (so the
-		// tool actually needs the workspace files). Pure shell tools
-		// like "uname -a" skip this — empty ArchivePath = self-
-		// contained.
-		archiveNote := ""
+		// Build a deployment recipe from the session's workspace IFF
+		// the command_template references {workspace_dir} (so the tool
+		// actually needs the workspace files). Pure shell tools like
+		// "uname -a" skip this — empty Recipe = self-contained.
+		//
+		// If script_body was supplied above, the workspace already
+		// holds that one file; the walk picks it up and any other
+		// files the LLM wrote via local(write) before this call.
+		recipeNote := ""
 		if strings.Contains(cmd, "{workspace_dir}") {
 			if sess.WorkspaceDir == "" {
-				return "", fmt.Errorf("command_template references {workspace_dir} but session has no active workspace — call workspace(action=create) first, write your scripts, then create the persistent tool")
+				return "", fmt.Errorf("command_template references {workspace_dir} but session has no sandbox to deploy from — write your script via local(write) or pass script_body, then create the persistent tool")
 			}
-			path, size, hash, err := PackToolArchive(sess.WorkspaceDir, sess.Username, name)
+			recipe, err := BuildRecipeFromWorkspace(sess.WorkspaceDir)
 			if err != nil {
-				return "", fmt.Errorf("pack tool archive: %w", err)
+				return "", fmt.Errorf("build recipe: %w", err)
 			}
-			tool.ArchivePath = path
-			tool.ArchiveSize = size
-			tool.ArchiveHash = hash
-			archiveNote = fmt.Sprintf(" Workspace packed into %s (%d bytes, sha256=%s).", path, size, hash[:12])
+			tool.Recipe = recipe
+			recipeNote = fmt.Sprintf(" Recipe captured (%d files).", len(recipe))
 		}
 		if err := QueuePendingTempTool(sess.DB, sess.Username, *tool, ""); err != nil {
 			saveSessionScoped()
-			return fmt.Sprintf("Created temp tool %q for this session. Persistence requested but queueing failed: %v. Tool will be discarded at session end.", name, err), nil
+			return fmt.Sprintf("Created temp tool %q for this session. Persistence requested but queueing failed: %v. Tool will be discarded at session end.%s", name, err, spec), nil
 		}
-		return fmt.Sprintf("Created temp tool %q for this session.%s Persistence requested — queued for user approval via the admin UI. The user will review the command template (and the packed archive contents) before it becomes available in future sessions.", name, archiveNote), nil
+		return fmt.Sprintf("Created temp tool %q for this session.%s Persistence requested — queued for user approval via the admin UI. The user will review the command template (and the recipe files) before it becomes available in future sessions.%s", name, recipeNote, spec), nil
 	}
 	saveSessionScoped()
-	return fmt.Sprintf("Created temp tool %q. It is available in your tool catalog on the next round of this session only.", name), nil
+	return fmt.Sprintf("Created temp tool %q. It is available in your tool catalog on the next round of this session only.%s", name, spec), nil
 }
 
 // ----------------------------------------------------------------------
@@ -484,28 +572,32 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 
 	// Shell-mode dispatch path. Three shapes depending on the tool:
 	//
-	//  (a) ArchivePath set: tool packs its own code. Extract into a
-	//      per-invocation tmpdir, optionally restore state subdir,
-	//      run, save state back, tear tmpdir down. {workspace_dir}
-	//      resolves to the tmpdir.
+	//  (a) Recipe non-empty: persistent tool with packaged content.
+	//      Mint a fresh per-invocation sandbox, deploy the recipe
+	//      into it, optionally restore state subdir, run, save state
+	//      back, tear down. Each dispatch starts from the same
+	//      declarative manifest — no drift between runs.
 	//
-	//  (b) ArchivePath empty + command references {workspace_dir}:
+	//  (b) Recipe empty + command references {workspace_dir}:
 	//      ad-hoc tool created mid-session (persist=false). Use the
-	//      session's current WorkspaceDir.
+	//      session's current WorkspaceDir as the deploy target so the
+	//      LLM's just-written script is accessible.
 	//
-	//  (c) ArchivePath empty + no {workspace_dir} reference: pure
-	//      shell command (e.g. "uname -a"). Use sess.WorkspaceDir
-	//      as the bwrap bind so the command has SOME cwd, but the
-	//      command itself doesn't depend on workspace contents.
+	//  (c) Recipe empty + no {workspace_dir} reference: pure shell
+	//      command (e.g. "uname -a"). Provision an ephemeral tmpdir
+	//      so bwrap has SOME bind target; the command doesn't depend
+	//      on its contents.
 	var workspaceDir string
-	if tt.ArchivePath != "" {
-		tmp, err := os.MkdirTemp("", "tooldispatch-")
+	var ephemeralDir bool
+	if len(tt.Recipe) > 0 {
+		tmp, err := MintToolDispatchDir("tooldispatch-")
 		if err != nil {
 			return "", fmt.Errorf("mkdtemp: %w", err)
 		}
 		defer func() { _ = os.RemoveAll(tmp) }()
-		if err := UnpackToolArchive(tt.ArchivePath, tmp); err != nil {
-			return "", fmt.Errorf("unpack archive: %w", err)
+		ephemeralDir = true
+		if err := DeployRecipe(tt.Recipe, tmp); err != nil {
+			return "", fmt.Errorf("deploy recipe: %w", err)
 		}
 		// Restore persistent state for stateful tools.
 		if tt.StatePath != "" {
@@ -522,24 +614,23 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 		workspaceDir = sess.WorkspaceDir
 	}
 	if workspaceDir == "" {
-		// Last resort: command doesn't reference {workspace_dir} and
-		// the session has no provisioned workspace (e.g. workspace
-		// setup failed at handleSend, or a non-chat caller didn't set
-		// one). The bwrap bind still needs a path, but the command
-		// doesn't need workspace contents — provision an ephemeral
-		// tmpdir for this invocation only. Without this, stateless
-		// shell tools like "echo '{text}' | rev" can't dispatch even
-		// when correctly registered, persisted, and approved.
+		// Recipe-less, no session workspace. The bwrap bind still
+		// needs a path, but the command doesn't depend on its
+		// contents — provision an ephemeral tmpdir for this
+		// invocation only. Without this, stateless shell tools like
+		// "echo '{text}' | rev" can't dispatch when the session has
+		// no workspace.
 		if strings.Contains(tt.CommandTemplate, "{workspace_dir}") {
-			return "", fmt.Errorf("temp tool %q references {workspace_dir} but session has no provisioned workspace", tt.Name)
+			return "", fmt.Errorf("temp tool %q references {workspace_dir} but has no recipe and the session has no sandbox", tt.Name)
 		}
-		tmp, err := os.MkdirTemp("", "tooldispatch-stateless-")
+		tmp, err := MintToolDispatchDir("tooldispatch-stateless-")
 		if err != nil {
 			return "", fmt.Errorf("mkdtemp for stateless dispatch: %w", err)
 		}
 		defer func() { _ = os.RemoveAll(tmp) }()
 		workspaceDir = tmp
 	}
+	_ = ephemeralDir
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
@@ -556,7 +647,7 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	// either way so state changes during partial runs aren't lost)
 	// dispatch. Best-effort: state-save errors are logged but don't
 	// fail the dispatch itself.
-	if tt.ArchivePath != "" && tt.StatePath != "" {
+	if len(tt.Recipe) > 0 && tt.StatePath != "" {
 		stateTarget := filepath.Join(workspaceDir, tt.StatePath)
 		if err := CopyToolStateBack(sess.Username, tt.Name, stateTarget); err != nil {
 			Debug("[temptool] state save failed for %s: %v", tt.Name, err)
@@ -711,6 +802,13 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 			// closing brace and contents stay in scope so a
 			// genuine placeholder later in the same string still
 			// gets validated.
+			continue
+		}
+		// Reserved placeholders the dispatcher fills in (not user
+		// params): {workspace_dir} resolves to the deployed sandbox
+		// path. Skip param-list lookup for these.
+		if name == "workspace_dir" {
+			i = i + 1 + end
 			continue
 		}
 		if _, ok := params[name]; !ok {
@@ -977,20 +1075,22 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		}
 	}
 
+	spec := formatTempToolSpec(tool)
+
 	persist := BoolArg(args, "persist")
 	if persist {
 		if sess.Username == "" {
 			saveSessionScoped()
-			return fmt.Sprintf("Created api tool %q for this session. Persistence not available without an authenticated user.", name), nil
+			return fmt.Sprintf("Created api tool %q for this session. Persistence not available without an authenticated user.%s", name, spec), nil
 		}
 		if err := QueuePendingTempTool(sess.DB, sess.Username, *tool, ""); err != nil {
 			saveSessionScoped()
-			return fmt.Sprintf("Created api tool %q for this session. Persistence requested but queueing failed: %v.", name, err), nil
+			return fmt.Sprintf("Created api tool %q for this session. Persistence requested but queueing failed: %v.%s", name, err, spec), nil
 		}
-		return fmt.Sprintf("Created api tool %q (wraps credential %q). Persistence requested — queued for user approval via admin UI. The credential's allowed-URL pattern is %s; the LLM still cannot see its value.", name, credName, cred.AllowedURLPattern), nil
+		return fmt.Sprintf("Created api tool %q (wraps credential %q). Persistence requested — queued for user approval via admin UI. The credential's allowed-URL pattern is %s; the LLM still cannot see its value.%s", name, credName, cred.AllowedURLPattern, spec), nil
 	}
 	saveSessionScoped()
-	return fmt.Sprintf("Created api tool %q (wraps credential %q) for this session. Available on the next round; will be discarded at session end.", name, credName), nil
+	return fmt.Sprintf("Created api tool %q (wraps credential %q) for this session. Available on the next round; will be discarded at session end.%s", name, credName, spec), nil
 }
 
 // dispatchAPIModeTempTool handles a TempTool whose Mode is api. The
@@ -1037,7 +1137,17 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if sess.DB != nil && sess.Username != "" {
 		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
 	}
-	raw, err := Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
+	// When a response_pipe is configured, signal the dispatch layer to
+	// read with a higher byte cap and skip the truncation marker —
+	// the pipe will project the body down to a small output that fits
+	// in context. Without this hint, large list-style endpoints get
+	// cut mid-string and jq fails with "Unfinished string at EOF".
+	var raw string
+	if tt.ResponsePipe != "" {
+		raw, err = Secure().DispatchToolCallForPipe(sess, tt.Credential, urlStr, method, body)
+	} else {
+		raw, err = Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
+	}
 	if err != nil {
 		return raw, err
 	}

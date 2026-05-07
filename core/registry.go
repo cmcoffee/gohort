@@ -254,6 +254,7 @@ var BlockedTools = map[string]bool{
 	"send_email":  true, // sends real email
 	"run_local":   true, // sandboxed shell — opt-in only via AllowedCaps[CapExecute]
 	"write_file":  true, // sandboxed file write — opt-in only via AllowedCaps[CapWrite]
+	"workspace":   true, // managed via auto-mint — LLM never needs to think about it
 }
 
 // FilterChatTools returns a copy of tools excluding those whose names are

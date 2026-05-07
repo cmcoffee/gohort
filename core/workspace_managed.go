@@ -101,6 +101,45 @@ func CreateManagedWorkspace(name, owner, sessionID string, pinned bool) (Managed
 	return w, dir, nil
 }
 
+// EnsureSessionWorkspace guarantees the session has an active
+// workspace. If sess.WorkspaceDir is already set, it is returned
+// unchanged. Otherwise an unnamed ephemeral managed workspace is
+// minted, the session's WorkspaceDir/WorkspaceID are populated, and
+// the new dir is returned.
+//
+// Used by tools that need a sandbox to operate in (local read/write/
+// run, tool_def create with mode=shell) so the LLM never has to
+// explicitly mint a workspace before its first useful call.
+//
+// Requires sess.Username to be set — managed workspaces are
+// owner-scoped. ChatSessionID / RoutingTarget are used as the
+// originating session ID when available.
+func EnsureSessionWorkspace(sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("session required")
+	}
+	if sess.WorkspaceDir != "" {
+		return sess.WorkspaceDir, nil
+	}
+	if sess.Username == "" {
+		return "", fmt.Errorf("auto-mint requires an authenticated session (no owner)")
+	}
+	sessionID := ""
+	switch {
+	case sess.ChatSessionID != "":
+		sessionID = "chat:" + sess.ChatSessionID
+	case sess.RoutingTarget != "":
+		sessionID = sess.RoutingTarget
+	}
+	w, dir, err := CreateManagedWorkspace("", sess.Username, sessionID, false)
+	if err != nil {
+		return "", err
+	}
+	sess.WorkspaceDir = dir
+	sess.WorkspaceID = w.ID
+	return dir, nil
+}
+
 // LoadManagedWorkspace fetches a workspace record by ID.
 func LoadManagedWorkspace(id string) (ManagedWorkspace, bool) {
 	db := managedWorkspaceDB()

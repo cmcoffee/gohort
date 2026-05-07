@@ -428,6 +428,12 @@ const followThroughRule = "FOLLOW-THROUGH: if you say 'let me try', 'I'll figure
 
 const learnAndSaveRule = "LEARN-AND-SAVE: as soon as you figure out a working API call (especially after iterating through 4xx errors), IMMEDIATELY wrap it as a persistent tool via create_api_tool with persist=true — hardcode the discovered url_template/method/body_template, expose only the variable bits as params. Pending approval from the operator, but it stops you from re-discovering the same schema next session. The operator notices when they have to teach you the same API twice; it feels broken. Same applies to multi-step shell flows worth saving: create_temp_tool with persist=true."
 
+const freshTurnRule = "FRESH-TURN-EVAL: each `--- NEW MESSAGE` is a separate request — re-read what is actually being asked NOW. Tool intent does NOT carry across turns: if you called download_video on a prior message and the new message is just a photo or a 'thanks', you do NOT call download_video again. If you delegated on a prior turn and the new message is a follow-up clarification, you do NOT delegate again. If you ran web_search on the prior turn and the new message is unrelated, you do NOT search again. Inspect the current message's content + any [CURRENT ATTACHMENT: ...] tag in isolation, then pick the right tool (or no tool) for THIS turn's actual content. Earlier conversation is context, not standing instructions."
+
+const answerFromHistoryRule = "ANSWER-FROM-HISTORY: when the user asks about something you already did in a prior turn, answer from your conversation history — do NOT re-execute the tool to answer the meta-question. If the user asks 'what did you say in that call?' you do NOT place_vapi_call again — you read the prior call's transcript from history. If they ask 'what did the search find?' you do NOT web_search again — you summarize the prior result. If they ask 'did you save that?' you do NOT re-save — you confirm or correct based on what you actually did. If they ask 'what was in that picture earlier?' and the metadata or your prior description doesn't cover it, use look_at_attachment(id=...) to re-examine — do NOT ask them to re-send. The pattern: prior turn = action; new turn asking about it = retrieval, not re-execution. Re-running a tool only to answer a meta-question wastes the tool call and confuses the user (they get a duplicate action instead of an answer)."
+
+const sideEffectGuardRule = "SIDE-EFFECT GUARD — STRICT: any tool that contacts external humans or changes external state (placing phone calls, sending messages/emails/SMS, making payments, posting to feeds, scheduling appointments, anything where another person is on the other end or an irreversible state change happens) is NEVER called a second time on a follow-up turn unless the user EXPLICITLY says 'call them again' / 'send another' / 'try again' / names a different recipient. When in doubt, do NOT call. If the user references a prior side-effect action ('how did the call go?', 'what did they say?', 'did you tell them X?', 'thanks'), those are signals to READ the prior action's outcome from history — NOT to re-execute. Calling someone twice when they only asked once is a real harm (unwanted second contact, burned trust), not a UX nit. Identify which of your tools are side-effect-laden by their descriptions: tools that POST/PUT/DELETE to external services, place calls, or send messages all qualify. If you see one of those tools in your prior-turn tool history for THIS conversation, treat it as 'done' and not safely repeatable. Read-only tools (GET requests, search, fetch) don't trigger this guard — they can be re-called freely."
+
 // phantomWorkspaceID returns a stable, filesystem-safe identifier for
 // the workspace shared across all phantom conversations on this host.
 // Phantom acts as one persona (the device owner), so all convs share
@@ -454,6 +460,36 @@ func phantomWorkspaceID(cfg PhantomConfig) string {
 		}
 	}
 	return b.String()
+}
+
+// phantomToolOwner returns the username that owns this phantom's
+// persistent temp tool pool. Picks the first admin account in the
+// auth table — gohort is single-operator, and that admin is the one
+// approving pending temp tools through the admin UI, so loading
+// under the same name surfaces them here. Empty string when no
+// admin user exists yet (auth table empty); callers treat that as
+// "no persistent tools loaded" without crashing.
+//
+// Reads from RootDB, not the per-app bucket: the auth_config table
+// lives at the process root (same place tempToolStore points to),
+// so passing in phantom's own T.DB would query an empty namespace
+// and silently return no admins. Falls back to the supplied db
+// only when RootDB isn't set yet (early-init), matching the
+// tempToolStore fallback shape.
+func phantomToolOwner(db Database) string {
+	src := RootDB
+	if src == nil {
+		src = db
+	}
+	if src == nil {
+		return ""
+	}
+	for _, u := range AuthListUsers(src) {
+		if u.Admin {
+			return u.Username
+		}
+	}
+	return ""
 }
 
 // ensurePhantomWorkspace provisions and returns the phantom workspace
@@ -549,7 +585,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + answerFromHistoryRule + " " + sideEffectGuardRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}

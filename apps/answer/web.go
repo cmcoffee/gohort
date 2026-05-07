@@ -257,7 +257,7 @@ func (T *AnswerAgent) handleFollowup(w http.ResponseWriter, r *http.Request) {
 		MaxRounds:    16,
 		RouteKey:     "app.answer",
 		Stream:       handler,
-		ChatOptions:  []ChatOption{WithMaxTokens(2048)},
+		ChatOptions:  nil,
 	})
 	if err != nil {
 		sse.Send(map[string]string{"type": "error", "message": err.Error()})

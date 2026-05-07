@@ -213,7 +213,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	messages = append(messages, Message{Role: "user", Content: prompt})
 
 	resp, err := agent.LeadChat(r.Context(), messages,
-		WithSystemPrompt(system_prompt), WithMaxTokens(4096), WithRouteKey("app.codewriter"))
+		WithSystemPrompt(system_prompt), WithRouteKey("app.codewriter"))
 
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)

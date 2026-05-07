@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,36 @@ func stripANSI(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// normalizeTask reduces a probe-tool task description to a content-token
+// signature: lowercase, strip punctuation, drop short and stop words, sort,
+// join. Two paraphrased delegations of the same task ("list mysql tables",
+// "show tables in mysql") collapse to the same signature so the cache
+// catches them as duplicates and the orchestrator stops grinding the
+// same area through paraphrase.
+func normalizeTask(s string) string {
+	stop := map[string]bool{
+		"the": true, "and": true, "for": true, "with": true,
+		"that": true, "this": true, "from": true, "into": true,
+		"are": true, "you": true, "your": true, "any": true,
+		"all": true, "use": true, "via": true, "show": true,
+		"list": true, "find": true, "get": true, "see": true,
+		"check": true, "look": true, "what": true, "which": true,
+		"where": true, "when": true, "how": true,
+	}
+	s = strings.ToLower(s)
+	var words []string
+	for _, w := range strings.FieldsFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	}) {
+		if len(w) < 3 || stop[w] {
+			continue
+		}
+		words = append(words, w)
+	}
+	sort.Strings(words)
+	return strings.Join(words, " ")
+}
+
 // LogEntry describes a single log file discovered on the remote appliance.
 type LogEntry struct {
 	Service string `json:"service"`
@@ -90,10 +121,31 @@ type Appliance struct {
 
 // probeEvent is one event emitted by a running session goroutine.
 type probeEvent struct {
-	Kind   string   `json:"kind"`             // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed
-	Text   string   `json:"text,omitempty"`
-	Reason string   `json:"reason,omitempty"` // destructive reason for confirm events
-	IDs    []string `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
+	Kind   string     `json:"kind"`             // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
+	Text   string     `json:"text,omitempty"`
+	Reason string     `json:"reason,omitempty"` // destructive reason for confirm events
+	IDs    []string   `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
+	Plan   []PlanStep `json:"plan,omitempty"`   // plan_set / plan_step: snapshot of the current plan for the UI to render
+}
+
+// toInt extracts an int from an arbitrary JSON-decoded value. JSON numbers
+// arrive as float64 in Go's stdlib; tool-arg maps may also have int or
+// strings depending on the LLM's serialization. Returns the parsed value
+// and true on success.
+func toInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case float64:
+		return int(x), true
+	case string:
+		var n int
+		_, err := fmt.Sscanf(x, "%d", &n)
+		return n, err == nil
+	}
+	return 0, false
 }
 
 const alwaysAllowTable = "ssh_always_allow"
@@ -1574,6 +1626,8 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 	b.WriteString("3. Each `probe` call has ONE clear goal; the investigator (you) decides the next step based on what it returns\n")
 	b.WriteString("4. Stop when you have: the system's purpose, its full architecture, working DB access for every engine, operational procedures\n\n")
 	b.WriteString("Quality over quantity: 15 focused probes that reveal real configuration beat 40 broad sweeps.\n\n")
+	b.WriteString("## Acronyms\n\n")
+	b.WriteString("Internal acronyms have org-specific meanings that rarely match training-data priors. Treat any acronym as an opaque label until you have verified its meaning from the system itself — a README, comment, config-file annotation, log message, or explicit statement in documentation. If you only know the letters, use the letters. Writing 'GMS (Game Management System)' when nothing on this system explained what GMS stands for is fabrication, even when the expansion 'sounds plausible'. Probe to find the meaning, or leave it unexpanded.\n\n")
 	b.WriteString("## Completion\n\n")
 	b.WriteString("When done, write a concise narrative of your key findings. The structured profile is built from your stored discoveries and facts — focus on recording those.\n")
 	return b.String()
@@ -1596,6 +1650,8 @@ func buildProbeWorkerPrompt(appliance Appliance) string {
 	b.WriteString("- Call `note_lesson` when you hit a dead end future workers should avoid\n")
 	b.WriteString("- Do NOT explore beyond the task — the investigator directs all follow-up\n")
 	b.WriteString("- If a path is blocked (permission denied, not found) after one attempt, report it and stop\n\n")
+	b.WriteString("## Acronyms\n\n")
+	b.WriteString("Do NOT expand acronyms. Internal/organizational acronyms have org-specific meanings that rarely match what your training data suggests. Treat acronyms as opaque labels — quote them character-for-character from the source. Only state an acronym's expansion if you actually saw it spelled out in a comment, README, log message, or explicit documentation on this system. Writing 'GMS (Game Management System)' when you only saw 'GMS' in a path is fabrication. The investigator will probe specifically if an expansion matters.\n\n")
 	b.WriteString("## Report Format\n\n")
 	b.WriteString("After your commands, write a clear findings report:\n")
 	b.WriteString("1. **Found**: exact values, output snippets, what the investigation revealed\n")
@@ -1756,6 +1812,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	b.WriteString("- **No examples from imagination.** Do not write 'for example', 'e.g.', 'such as', or 'like' followed by a specific value you invented. If you need an example, probe the worker to get a real one.\n")
 	b.WriteString("- **No gap-filling.** If a doc has a gap — a missing field, an unknown value, an unanswered question — the correct response is to probe, not to fill it with a plausible-sounding value.\n")
 	b.WriteString("- **Never assume. Never guess.** The words 'likely', 'probably', 'typically', 'should be', 'usually', 'often', 'I assume', 'I believe', 'I expect', and 'I think' are forbidden in final responses. If you are not certain, you do not know — go find out.\n")
+	b.WriteString("- **Do not expand acronyms.** Internal/organizational acronyms have org-specific meanings that rarely match training-data priors. Treat any acronym as an opaque label until you have verified its meaning from the system itself — a README, comment, config-file annotation, log message, or explicit statement in documentation. If you only know the letters, use the letters. Writing 'GMS (Game Management System)' when you saw nothing on this system explaining what GMS stands for is fabrication, even when the expansion 'sounds plausible.' Probe to find the meaning, or leave it unexpanded.\n")
 	b.WriteString("- **Never answer 'I don't know'** without first having probed. If the docs are empty and no probe has run, you do not yet know — go find out.\n")
 	b.WriteString("- Never answer from training knowledge — only from probe findings or your knowledge docs.\n")
 	b.WriteString("- The richer the `context` you give the probe, the more precise its findings will be.\n")
@@ -2154,8 +2211,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	var sessionFailures []sessionFailure
 
 	const loopLimit      = 3
-	const binaryFailBlock = 4  // block a binary after this many nonzero exits
-	const totalFailBlock  = 12 // hard stop after this many total failures
+	// Failure budget removed — sessionFailures still collected for the
+	// post-session summary, but no hard block on binary or global
+	// failure counts. Loop/topic-exhaustion guards (LOOP DETECTED,
+	// probeLoopSignalCount, probeTopicCount) handle runaway behavior;
+	// command failures are signal for the model to interpret, not a
+	// reason to short-circuit the worker.
 
 	// cmdBinary returns the effective binary from a shell command string,
 	// skipping sudo, env, nohup, and env-var assignments so that
@@ -2177,14 +2238,29 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		return cmd
 	}
 
-	// newRunTool returns a fresh run_command tool with its own isolated loop and
-	// failure counters. Each AgentLoopConfig invocation should get its own instance
-	// so that failures in one phase don't poison the budgets of subsequent phases.
+	// Probe-session shared state for loop / failure detection.
+	// Previously these maps lived inside newRunTool() so each invocation
+	// (each orchestrator delegation that spawned a worker session)
+	// started with a fresh slate. That defeated cross-delegation loop
+	// detection: orchestrator could re-delegate "query the database"
+	// 10 times, each worker would run the same `mysql -e ...` once,
+	// and the per-session loopLimit=3 check never fired across the
+	// boundary. Lifting to probe-session scope means after 3 cumulative
+	// runs of the same command — across ANY worker session in this
+	// probe — the LOOP DETECTED message fires and forces the
+	// orchestrator to pivot.
+	//
+	// Trade: phase-boundary "reset" semantics from before are gone.
+	// If you ever want per-phase budgets, wire a reset hook from the
+	// orchestrator side rather than reverting to per-tool maps.
+	cmdCount := make(map[string]int)
+	failCount := make(map[string]int)
+	var failMu sync.Mutex
+
+	// newRunTool returns a run_command tool wired to the probe-session
+	// shared counters above. The tool struct itself is created fresh
+	// per delegation (cheap); the counters persist across delegations.
 	newRunTool := func() AgentToolDef {
-		cmdCount := make(map[string]int)
-		failCount := make(map[string]int)
-		var totalFailCount int
-		var failMu sync.Mutex
 		return AgentToolDef{
 			Tool: Tool{
 				Name:        "run_command",
@@ -2205,22 +2281,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected: %q (%dx)", cmd, cmdCount[cmd]-1)})
 					return msg, nil
 				}
-				// Binary-level and global failure budget checks (pre-run).
 				bin := cmdBinary(cmd)
-				failMu.Lock()
-				binFails := failCount[bin]
-				totalFails := totalFailCount
-				failMu.Unlock()
-				if binFails >= binaryFailBlock {
-					msg := fmt.Sprintf("[APPROACH BLOCKED] '%s' has failed %d times this session and is not working on this system. Do not use it again. Either try a completely different tool or report your current findings.", bin, binFails)
-					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Blocked approach: %s (%d failures)", bin, binFails)})
-					return msg, nil
-				}
-				if totalFails >= totalFailBlock {
-					msg := fmt.Sprintf("[FAILURE BUDGET EXHAUSTED] %d commands have failed this session. Stop running commands now and write your final answer based on what succeeded.", totalFails)
-					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Failure budget exhausted (%d failures)", totalFails)})
-					return msg, nil
-				}
 				emit(id, probeEvent{Kind: "cmd", Text: cmd})
 				destructive, reason := is_destructive(cmd)
 				if destructive {
@@ -2255,7 +2316,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 				termEcho(cmd, result)
 				if strings.Contains(result, "[exit code ") {
-					// Record nonzero exits for the failure summary and binary-level tracking.
+					// Record nonzero exits for the failure summary surfaced
+					// at session end. No hard block — the model decides
+					// when to pivot off a failing approach based on the
+					// error text.
 					reason := result
 					if nl := strings.Index(reason, "\n"); nl > 0 {
 						reason = reason[:nl]
@@ -2266,12 +2330,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					sessionFailures = append(sessionFailures, sessionFailure{Cmd: cmd, Reason: reason})
 					failMu.Lock()
 					failCount[bin]++
-					totalFailCount++
-					newBinFails := failCount[bin]
 					failMu.Unlock()
-					if newBinFails == binaryFailBlock-1 {
-						result += fmt.Sprintf("\n[WARNING] '%s' has failed %d times this section. One more failure and this approach will be blocked. Try a different tool or strategy.", bin, newBinFails)
-					}
 				} else {
 					// Command succeeded — if this binary had prior failures this phase,
 					// the agent just found a working approach after trying multiple things.
@@ -2393,9 +2452,14 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		NeedsConfirm: false,
 	}
 
-	// newRunPtyTool returns a fresh run_pty tool with its own isolated loop counter.
+	// Probe-session shared PTY loop counter — same rationale as
+	// cmdCount above. Per-tool isolation defeated cross-delegation
+	// detection.
+	ptyCount := make(map[string]int)
+
+	// newRunPtyTool returns a run_pty tool wired to the probe-session
+	// shared ptyCount. Tool struct cheap to recreate; counter persists.
 	newRunPtyTool := func() AgentToolDef {
-		ptyCount := make(map[string]int)
 		return AgentToolDef{
 		Tool: Tool{
 			Name:        "run_pty",
@@ -3018,6 +3082,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool,
 		}
 	}
+	// Enforced sanity check — servitor handles sensitive system data and
+	// must never call out to third-party services. assertOnlyAllowedTools
+	// panics if anything outside the local-only allow-list sneaks in.
+	assertOnlyAllowedTools("servitor.worker", workerTools, servitorWorkerToolAllowList)
 
 	var reply string
 	var consolidateFn func() // set by chat mode, fired after reply is emitted
@@ -3038,7 +3106,292 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 
 			// Phase 2: Investigator loop — the investigator decides what to probe,
 			// follows leads, and records discoveries. Workers execute specific tasks.
-			probeCache := make(map[string]string) // normalized task → last result
+			//
+			// probeCache: results keyed by aggressively-normalized task (sorted
+			// content tokens, stop words dropped) so paraphrased re-delegations
+			// hit the cache. "list mysql tables" and "show tables in mysql"
+			// normalize to the same key.
+			//
+			// probeTopicCount: tracks how many times the orchestrator has
+			// delegated tasks sharing a content-token set with prior tasks.
+			// When the same topic gets tried 3+ ways, escalate the response
+			// from "[ALREADY PROBED]" to "[ENOUGH — pivot to a different
+			// topic entirely]" so the orchestrator stops grinding the same
+			// area through paraphrase.
+			probeCache := make(map[string]string)
+			probeTopicCount := make(map[string]int)
+			const probeTopicLimit = 3
+
+			// plan: session-scoped investigation plan. The investigator's
+			// system prompt requires set_plan as the first tool call;
+			// subsequent step lifecycle tools (mark_step_in_progress,
+			// record_step_findings, mark_step_blocked) operate on this
+			// state. Plan events stream to the UI for the left-pane
+			// checklist render.
+			plan := &Plan{}
+			set_plan_tool := AgentToolDef{
+				Tool: Tool{
+					Name: "set_plan",
+					Description: "REQUIRED FIRST CALL — emit a structured investigation plan before any other tool. " +
+						"Each step has a short title (5–10 words) and a what_to_find description (1–3 sentences) explaining what success looks like for that step. " +
+						"Order steps by dependency: foundation/discovery first, then deeper investigation that builds on it. " +
+						"Typically 5–12 steps for a generic system; scale up to 15+ for complex appliances (Kubernetes hosts, multi-tenant DB servers, hosts running many distinct services). " +
+						"Err toward more steps with narrower scopes rather than fewer steps with sprawling scopes — narrow steps produce sharper findings and clearer gap reports. " +
+						"You can revise step status as you go, but the initial plan is your contract — use revise_plan only if findings reveal a step you couldn't have known to include.",
+					Parameters: map[string]ToolParam{
+						"steps": {
+							Type:        "array",
+							Description: "Ordered list of plan steps. Each item must be an object with 'title' (string) and 'what_to_find' (string).",
+						},
+					},
+					Required: []string{"steps"},
+				},
+				Handler: func(args map[string]any) (string, error) {
+					if plan.IsSet() {
+						return "[PLAN ALREADY SET] You may revise specific steps via mark_step_in_progress / record_step_findings / mark_step_blocked. To replace the entire plan, that's not currently supported in this phase.", nil
+					}
+					raw, ok := args["steps"].([]any)
+					if !ok || len(raw) == 0 {
+						return "", fmt.Errorf("steps must be a non-empty array of {title, what_to_find}")
+					}
+					var titles, finds []string
+					for i, s := range raw {
+						m, ok := s.(map[string]any)
+						if !ok {
+							return "", fmt.Errorf("step %d: must be an object with 'title' and 'what_to_find'", i+1)
+						}
+						title, _ := m["title"].(string)
+						find, _ := m["what_to_find"].(string)
+						if strings.TrimSpace(title) == "" {
+							return "", fmt.Errorf("step %d: 'title' is required", i+1)
+						}
+						if strings.TrimSpace(find) == "" {
+							return "", fmt.Errorf("step %d: 'what_to_find' is required", i+1)
+						}
+						titles = append(titles, strings.TrimSpace(title))
+						finds = append(finds, strings.TrimSpace(find))
+					}
+					if err := plan.SetSteps(titles, finds); err != nil {
+						return "", err
+					}
+					emit(id, probeEvent{Kind: "plan_set", Plan: plan.Snapshot()})
+					return fmt.Sprintf("Plan set with %d steps. Begin step 1: mark_step_in_progress with id=1, then probe to investigate, then record_step_findings or mark_step_blocked.", len(titles)), nil
+				},
+			}
+			mark_step_in_progress_tool := AgentToolDef{
+				Tool: Tool{
+					Name:        "mark_step_in_progress",
+					Description: "Mark a plan step as the one you're currently working on. Surfaces in the user-visible plan as the active step. Call before delegating probe(s) for that step.",
+					Parameters: map[string]ToolParam{
+						"step_id": {Type: "integer", Description: "The step ID to mark in_progress (from set_plan)."},
+					},
+					Required: []string{"step_id"},
+				},
+				Handler: func(args map[string]any) (string, error) {
+					if !plan.IsSet() {
+						return "[NO PLAN] Call set_plan first.", nil
+					}
+					stepID, _ := toInt(args["step_id"])
+					if err := plan.SetStatus(stepID, PlanStepInProgress); err != nil {
+						return "", err
+					}
+					emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+					return fmt.Sprintf("Step %d marked in_progress. Delegate probe(s) to investigate.", stepID), nil
+				},
+			}
+			record_step_findings_tool := AgentToolDef{
+				Tool: Tool{
+					Name:        "record_step_findings",
+					Description: "Attach findings to a plan step and mark it done. Findings should be a 1–3 sentence summary of what was learned for this step (NOT the raw worker output — your synthesis of it). Call after the probe(s) for this step return useful results.",
+					Parameters: map[string]ToolParam{
+						"step_id":  {Type: "integer", Description: "The step ID to record findings for."},
+						"findings": {Type: "string", Description: "1–3 sentence summary of what was learned for this step."},
+					},
+					Required: []string{"step_id", "findings"},
+				},
+				Handler: func(args map[string]any) (string, error) {
+					if !plan.IsSet() {
+						return "[NO PLAN] Call set_plan first.", nil
+					}
+					stepID, _ := toInt(args["step_id"])
+					findings, _ := args["findings"].(string)
+					if strings.TrimSpace(findings) == "" {
+						return "", fmt.Errorf("findings is required")
+					}
+					if err := plan.RecordFindings(stepID, strings.TrimSpace(findings)); err != nil {
+						return "", err
+					}
+					emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+					return fmt.Sprintf("Step %d marked done. Move to the next pending step or call mark_step_blocked if no more steps can be completed.", stepID), nil
+				},
+			}
+			mark_step_blocked_tool := AgentToolDef{
+				Tool: Tool{
+					Name:        "mark_step_blocked",
+					Description: "Mark a plan step as blocked when it can't be completed. Use for genuine obstacles: no access (permission denied), required tool missing on the system, target service not running and can't be started, etc. Do NOT use to hide difficulty — only when external constraints prevent the step. The reason will appear in the final report's gap section.",
+					Parameters: map[string]ToolParam{
+						"step_id": {Type: "integer", Description: "The step ID to mark blocked."},
+						"reason":  {Type: "string", Description: "Why the step couldn't be completed (e.g. 'sudo not available', 'mysql user lacks SHOW GRANTS permission', 'logfile rotated, no archive)."},
+					},
+					Required: []string{"step_id", "reason"},
+				},
+				Handler: func(args map[string]any) (string, error) {
+					if !plan.IsSet() {
+						return "[NO PLAN] Call set_plan first.", nil
+					}
+					stepID, _ := toInt(args["step_id"])
+					reason, _ := args["reason"].(string)
+					if strings.TrimSpace(reason) == "" {
+						return "", fmt.Errorf("reason is required")
+					}
+					if err := plan.MarkBlocked(stepID, strings.TrimSpace(reason)); err != nil {
+						return "", err
+					}
+					emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+					return fmt.Sprintf("Step %d marked blocked: %s. Move to the next pending step.", stepID, reason), nil
+				},
+			}
+			revise_plan_tool := AgentToolDef{
+				Tool: Tool{
+					Name: "revise_plan",
+					Description: fmt.Sprintf(
+						"Revise the plan when findings reveal something you couldn't have known to plan for. Three operations, all optional and combinable: add (new steps appended with fresh IDs), remove (drop pending steps that are no longer relevant — done/blocked/in_progress steps are durable history and refused), reorder (full new ordering of remaining step IDs). Capped at %d revisions per session — use deliberately, not reflexively. The plan is your contract; revise only when reality contradicts the contract, not because you'd write it differently in hindsight.",
+						PlanRevisionLimit,
+					),
+					Parameters: map[string]ToolParam{
+						"add": {
+							Type:        "array",
+							Description: "Optional. New steps to append. Each item is an object with 'title' and 'what_to_find', same shape as set_plan.",
+						},
+						"remove": {
+							Type:        "array",
+							Description: "Optional. Step IDs (integers) to drop. Only pending steps can be removed.",
+						},
+						"reorder": {
+							Type:        "array",
+							Description: "Optional. Full new ordering of step IDs (integers). Must be a permutation of all remaining step IDs after add+remove are applied.",
+						},
+						"reason": {
+							Type:        "string",
+							Description: "Brief one-sentence explanation of why this revision is needed. Surfaced in the UI alongside the plan changes.",
+						},
+					},
+					Required: []string{"reason"},
+				},
+				Handler: func(args map[string]any) (string, error) {
+					if !plan.IsSet() {
+						return "[NO PLAN] Call set_plan first.", nil
+					}
+					reason, _ := args["reason"].(string)
+					if strings.TrimSpace(reason) == "" {
+						return "", fmt.Errorf("reason is required to document the revision")
+					}
+					count, atCap := plan.IncrRevision()
+					if atCap && count > PlanRevisionLimit {
+						return fmt.Sprintf("[REVISION LIMIT REACHED] You have already revised the plan %d times this session, the maximum allowed. Work the existing plan to completion; if a step you wanted is missing, mark related blocked steps and call out the gap in your final report.", PlanRevisionLimit), nil
+					}
+					var feedback strings.Builder
+					fmt.Fprintf(&feedback, "Revision %d/%d: %s\n", count, PlanRevisionLimit, reason)
+					// Process remove first so reorder operates on the
+					// final set, then add (appends), then reorder.
+					if rawRem, ok := args["remove"].([]any); ok && len(rawRem) > 0 {
+						var ids []int
+						for _, v := range rawRem {
+							if n, ok := toInt(v); ok {
+								ids = append(ids, n)
+							}
+						}
+						if len(ids) > 0 {
+							removed, refused, _ := plan.RemoveSteps(ids)
+							if len(removed) > 0 {
+								fmt.Fprintf(&feedback, "Removed steps: %v\n", removed)
+							}
+							if len(refused) > 0 {
+								fmt.Fprintf(&feedback, "Refused to remove (status not pending): %v\n", refused)
+							}
+						}
+					}
+					if rawAdd, ok := args["add"].([]any); ok && len(rawAdd) > 0 {
+						var titles, finds []string
+						for i, s := range rawAdd {
+							m, ok := s.(map[string]any)
+							if !ok {
+								return "", fmt.Errorf("add[%d]: must be an object with 'title' and 'what_to_find'", i)
+							}
+							title, _ := m["title"].(string)
+							find, _ := m["what_to_find"].(string)
+							if strings.TrimSpace(title) == "" || strings.TrimSpace(find) == "" {
+								return "", fmt.Errorf("add[%d]: title and what_to_find are both required", i)
+							}
+							titles = append(titles, strings.TrimSpace(title))
+							finds = append(finds, strings.TrimSpace(find))
+						}
+						added, err := plan.AddSteps(titles, finds)
+						if err != nil {
+							return "", err
+						}
+						fmt.Fprintf(&feedback, "Added steps: %v\n", added)
+					}
+					if rawOrd, ok := args["reorder"].([]any); ok && len(rawOrd) > 0 {
+						var order []int
+						for _, v := range rawOrd {
+							if n, ok := toInt(v); ok {
+								order = append(order, n)
+							}
+						}
+						if err := plan.ReorderSteps(order); err != nil {
+							return "", err
+						}
+						feedback.WriteString("Reordered.\n")
+					}
+					emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot(), Reason: reason})
+					return strings.TrimSpace(feedback.String()), nil
+				},
+			}
+			report_gaps_tool := AgentToolDef{
+				Tool: Tool{
+					Name: "report_gaps",
+					Description: "REQUIRED before you write your final answer. Returns a structured summary of every plan step that's blocked or never completed, plus the reasons. You MUST incorporate this into the final report under a clearly-labeled 'What I Couldn't Determine' section so the user sees the gaps explicitly rather than getting an overconfident report that quietly omits unverified things. The user trusts the report only if you're honest about what you couldn't see.",
+					Parameters:  map[string]ToolParam{},
+				},
+				Handler: func(args map[string]any) (string, error) {
+					if !plan.IsSet() {
+						return "[NO PLAN] Call set_plan first.", nil
+					}
+					gaps := plan.MarkGapsReported()
+					emit(id, probeEvent{Kind: "plan_step", Plan: plan.Snapshot()})
+					if len(gaps.Blocked) == 0 && len(gaps.Skipped) == 0 {
+						return "No gaps. Every plan step was completed with findings. Write your final answer now — no 'What I Couldn't Determine' section needed.", nil
+					}
+					var b strings.Builder
+					b.WriteString("Gap report — incorporate the following into a 'What I Couldn't Determine' section in your final answer:\n\n")
+					if len(gaps.Blocked) > 0 {
+						b.WriteString("Blocked:\n")
+						for _, g := range gaps.Blocked {
+							fmt.Fprintf(&b, "  - %s (step %d): %s\n", g.Title, g.ID, g.Reason)
+						}
+					}
+					if len(gaps.Skipped) > 0 {
+						b.WriteString("\nNever completed:\n")
+						for _, g := range gaps.Skipped {
+							fmt.Fprintf(&b, "  - %s (step %d): %s\n", g.Title, g.ID, g.Reason)
+						}
+					}
+					return strings.TrimSpace(b.String()), nil
+				},
+			}
+
+			// probeLoopSignalCount tracks how many delegations have ended
+			// with a worker [LOOP DETECTED] message. The orchestrator is
+			// supposed to read these messages and pivot, but in practice
+			// it often ignores them and re-delegates with paraphrased
+			// task descriptions. Counting at the orchestrator's tool-call
+			// boundary lets us refuse the (N+1)th delegation outright
+			// once the orchestrator has demonstrated it's not reading the
+			// signal — forcing model attention via tool-call refusal
+			// instead of relying on prompt-level guidance.
+			probeLoopSignalCount := 0
+			const probeLoopSignalLimit = 3
 			probe_tool := AgentToolDef{
 				Tool: Tool{
 					Name: "probe",
@@ -3062,8 +3415,24 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					if task == "" {
 						return "", fmt.Errorf("task is required")
 					}
-					cacheKey := strings.ToLower(strings.TrimSpace(task))
+					// Hard refusal: orchestrator has accumulated too many
+					// worker [LOOP DETECTED] signals across prior delegations
+					// without effectively pivoting. Refuse the new delegation
+					// outright before spawning a worker — forces model
+					// attention via tool-call rejection rather than relying
+					// on the orchestrator to read [LOOP DETECTED] strings
+					// it's been ignoring.
+					if probeLoopSignalCount >= probeLoopSignalLimit {
+						emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", probeLoopSignalCount)})
+						return fmt.Sprintf("[DELEGATION REFUSED — your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", probeLoopSignalCount), nil
+					}
+					cacheKey := normalizeTask(task)
 					if cached, ok := probeCache[cacheKey]; ok {
+						probeTopicCount[cacheKey]++
+						if probeTopicCount[cacheKey] >= probeTopicLimit {
+							emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, probeTopicCount[cacheKey])})
+							return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", probeTopicCount[cacheKey], cached), nil
+						}
 						return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
 					}
 					context, _ := args["context"].(string)
@@ -3091,7 +3460,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					if len(short) > 80 {
 						short = short[:80] + "…"
 					}
-					emit(id, probeEvent{Kind: "status", Text: "Probing: " + short})
+					emit(id, probeEvent{Kind: "intent", Text: task, Reason: context})
 					var workerResp *Response
 					var workerErr error
 					withHeartbeat(ctx, id, "Probe: "+short, func() {
@@ -3117,6 +3486,15 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					result := strings.TrimSpace(workerResp.Content)
 					result = parseProbeOutcome(result)
 					probeCache[cacheKey] = result
+					// If the worker hit the cmd loop limit during this
+					// delegation, propagate the signal up to the
+					// orchestrator-level counter so we can refuse future
+					// delegations once the orchestrator has demonstrated
+					// it's not pivoting in response.
+					if strings.Contains(result, "[LOOP DETECTED]") {
+						probeLoopSignalCount++
+						emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", probeLoopSignalCount, probeLoopSignalLimit)})
+					}
 					if len(result) > 12000 {
 						result = result[:12000] + "\n… [truncated]"
 					}
@@ -3151,17 +3529,32 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					invMsg.WriteString("\n\n")
 				}
 			}
-			invMsg.WriteString("Begin your investigation. Use `probe` to dig into what you see in the snapshot. Follow what's interesting.")
+			invMsg.WriteString("Begin your investigation.\n\n")
+			invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps — typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
+			invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
+			invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
+			invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
+			invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
+			invMsg.WriteString("  4. Move to the next pending step\n\n")
+			invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", PlanRevisionLimit))
+			invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
+			invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
 
 			emit(id, probeEvent{Kind: "status", Text: "Investigator starting…"})
 			var invResp *Response
 			var invErr error
+			investigatorTools := []AgentToolDef{
+				set_plan_tool, mark_step_in_progress_tool, record_step_findings_tool, mark_step_blocked_tool,
+				revise_plan_tool, report_gaps_tool,
+				probe_tool, store_fact_tool, record_discovery_tool, record_technique_tool, note_lesson_tool,
+			}
+			assertOnlyAllowedTools("servitor.investigator", investigatorTools, servitorOrchestratorToolAllowList)
 			withHeartbeat(ctx, id, "Investigator", func() {
 				invResp, _, invErr = a.RunAgentLoop(ctx,
 					[]Message{{Role: "user", Content: invMsg.String()}},
 					AgentLoopConfig{
 						SystemPrompt:    buildInvestigatorSystemPrompt(appliance),
-						Tools:           []AgentToolDef{probe_tool, store_fact_tool, record_discovery_tool, record_technique_tool, note_lesson_tool},
+						Tools:           investigatorTools,
 						MaxRounds:       75,
 									RouteKey:        "app.servitor",
 						MaskDebugOutput: true,
@@ -3310,6 +3703,8 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		var lastProbeResult string
 		var allProbeResults []string
 		qaProbeCache := make(map[string]string) // normalized task → last result
+		qaTopicCount := make(map[string]int)
+		const qaTopicLimit = 3
 
 		// probe_tool — targeted investigation at the investigator's direction.
 		probe_tool := AgentToolDef{
@@ -3329,8 +3724,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				if task == "" {
 					return "", fmt.Errorf("task is required")
 				}
-				cacheKey := strings.ToLower(strings.TrimSpace(task))
+				cacheKey := normalizeTask(task)
 				if cached, ok := qaProbeCache[cacheKey]; ok {
+					qaTopicCount[cacheKey]++
+					if qaTopicCount[cacheKey] >= qaTopicLimit {
+						emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, qaTopicCount[cacheKey])})
+						return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", qaTopicCount[cacheKey], cached), nil
+					}
 					return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
 				}
 				context, _ := args["context"].(string)
@@ -3359,11 +3759,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 				msg.WriteString("## Task\n\n")
 				msg.WriteString(task)
-				short := task
-				if len(short) > 80 {
-					short = short[:80] + "…"
-				}
-				emit(id, probeEvent{Kind: "status", Text: "Worker dispatched: " + short})
+				// Surface the orchestrator's intent for this round as a
+				// prominent event so the user can see "what is the brain
+				// trying to do" without needing to read raw reasoning.
+				// task is the orchestrator's user-facing summary; context
+				// is the supporting briefing it passed along.
+				emit(id, probeEvent{Kind: "intent", Text: task, Reason: context})
 				var workerResp *Response
 				var err error
 				withHeartbeat(ctx, id, "Worker: investigating", func() {
@@ -3437,10 +3838,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		var invResp *Response
 		var invHistory []Message
 		var err error
+		docInvestigatorTools := []AgentToolDef{read_doc_tool, update_doc_tool, probe_tool}
+		assertOnlyAllowedTools("servitor.doc_investigator", docInvestigatorTools, servitorOrchestratorToolAllowList)
 		withHeartbeat(ctx, id, "Investigator: working", func() {
 			invResp, invHistory, err = a.RunAgentLoop(ctx, messages, AgentLoopConfig{
 				SystemPrompt:    leadPrompt,
-				Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, probe_tool},
+				Tools:           docInvestigatorTools,
 				MaxRounds:       50,
 					RouteKey:        "app.servitor",
 				MaskDebugOutput: true,
@@ -3490,7 +3893,8 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 					SystemPrompt:    buildConsolidationPrompt(appliance),
 					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, record_technique_tool},
 					MaxRounds:       10,
-							MaskDebugOutput: true,
+					RouteKey:        "app.servitor",
+					MaskDebugOutput: true,
 					ChatOptions:     []ChatOption{WithThink(false)},
 				})
 				emit(id, probeEvent{Kind: "status", Text: "Background: knowledge consolidated."})
@@ -3661,6 +4065,8 @@ func (T *Servitor) handleSaveArticle(w http.ResponseWriter, r *http.Request) {
 		[]Message{{Role: "user", Content: userMsg}},
 		WithSystemPrompt(sysPrompt),
 		WithJSONMode(),
+		WithRouteKey("app.servitor"),
+		WithThink(false),
 	)
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -3721,6 +4127,8 @@ func (T *Servitor) handleSaveSnippet(w http.ResponseWriter, r *http.Request) {
 		[]Message{{Role: "user", Content: userMsg}},
 		WithSystemPrompt(sysPrompt),
 		WithJSONMode(),
+		WithRouteKey("app.servitor"),
+		WithThink(false),
 	)
 	if err != nil {
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
@@ -3895,6 +4303,32 @@ body { height: 100vh; display: flex; flex-direction: column; }
   padding: 0.4rem 0.7rem; margin: 0.2rem 0 0.4rem; font-size: 0.83rem; line-height: 1.5; color: var(--text);
   white-space: pre-wrap; word-break: break-word;
 }
+.chat-msg.plan {
+  background: var(--bg-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0; padding: 0.6rem 0.85rem;
+}
+.chat-msg.plan .plan-label { color: var(--accent); font-weight: 700; font-size: 0.74rem; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.4rem; }
+.chat-msg.plan .plan-steps { list-style: none; margin: 0; padding: 0; }
+.chat-msg.plan .plan-steps li { padding: 0.35rem 0; display: grid; grid-template-columns: 1.2rem 1fr; gap: 0.4rem; align-items: start; border-bottom: 1px dotted var(--border); }
+.chat-msg.plan .plan-steps li:last-child { border-bottom: none; }
+.chat-msg.plan .plan-icon { color: var(--text-mute); text-align: center; line-height: 1.45; }
+.chat-msg.plan .plan-title { color: var(--text-hi); font-weight: 500; line-height: 1.4; }
+.chat-msg.plan .plan-detail { grid-column: 2; color: var(--text-mute); font-size: 0.78rem; line-height: 1.4; margin-top: 0.15rem; }
+.chat-msg.plan .plan-findings { grid-column: 2; color: var(--text); font-size: 0.78rem; line-height: 1.4; margin-top: 0.2rem; padding-left: 0.4rem; border-left: 2px solid var(--bg-1); }
+.chat-msg.plan .plan-blocked-reason { grid-column: 2; color: var(--danger); font-size: 0.78rem; line-height: 1.4; margin-top: 0.2rem; font-style: italic; }
+.chat-msg.plan .plan-active .plan-icon { color: var(--accent); }
+.chat-msg.plan .plan-active .plan-title { color: var(--accent); font-weight: 600; }
+.chat-msg.plan .plan-done .plan-icon { color: #5fb37c; }
+.chat-msg.plan .plan-done .plan-title { color: var(--text); }
+.chat-msg.plan .plan-blocked .plan-icon { color: var(--danger); }
+.chat-msg.plan .plan-blocked .plan-title { color: var(--text); text-decoration: line-through; opacity: 0.7; }
+.chat-msg.intent {
+  background: var(--bg-2); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+}
+.chat-msg.intent .intent-label { color: var(--accent); font-weight: 700; font-size: 0.74rem; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.25rem; }
+.chat-msg.intent .intent-task { color: var(--text-hi); font-weight: 500; }
+.chat-msg.intent .intent-context { color: var(--text-mute); font-size: 0.78rem; margin-top: 0.3rem; font-style: italic; white-space: pre-wrap; word-break: break-word; }
 .ev-error { color: var(--danger); padding: 0.2rem 0; }
 .ev-watch { color: #b45309; padding: 0.2rem 0; }
 .ev-confirm-technique { background:var(--bg-2); border:1px solid var(--accent); border-radius:5px; padding:0.5rem 0.65rem; margin:0.2rem 0; font-size:0.82rem; }
@@ -5187,6 +5621,36 @@ function handleEvent(ev) {
       scrollActivity();
       break;
     }
+    case 'plan_set':
+    case 'plan_step': {
+      // Investigator's plan — render or update the checklist in the
+      // left pane (chat-messages). One container per session, replaced
+      // on each plan event so status updates show in place rather than
+      // appending duplicates.
+      renderPlan(ev.plan || []);
+      break;
+    }
+    case 'intent': {
+      // Orchestrator delegating a probe — render the strategic
+      // narration in the LEFT pane (chat-messages) where it's
+      // visible during investigation, while detailed cmd/output
+      // continues to scroll in the right activity pane. Gives the
+      // user something to read during the bulk of work and turns
+      // the chat history into a strategy timeline that ends with
+      // the final answer.
+      var html = '<div class="intent-label">&#9656; Investigating</div>'
+        + '<div class="intent-task">' + escapeHtml(ev.text || '') + '</div>';
+      if (ev.reason) {
+        html += '<div class="intent-context">' + escapeHtml(ev.reason) + '</div>';
+      }
+      var msgs = document.getElementById('chat-messages');
+      var div = document.createElement('div');
+      div.className = 'chat-msg intent';
+      div.innerHTML = html;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      break;
+    }
     case 'confirm': {
       pendingConfirmSessionId = activeSessionId;
       var sid = activeSessionId;
@@ -5549,6 +6013,49 @@ function runMapApp() {
 }
 
 // --- UI helpers ---
+
+// renderPlan upserts the investigator's plan checklist in the chat-messages
+// pane. Called on plan_set (initial render) and plan_step (status update).
+// One container per session — replaces in place on each event so the
+// checklist updates live without appending duplicates.
+function renderPlan(steps) {
+  var msgs = document.getElementById('chat-messages');
+  if (!msgs) return;
+  var box = document.getElementById('plan-checklist');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'plan-checklist';
+    box.className = 'chat-msg plan';
+    msgs.appendChild(box);
+  }
+  var html = '<div class="plan-label">&#9656; Investigation Plan</div><ul class="plan-steps">';
+  steps.forEach(function(s) {
+    var icon, cls;
+    switch (s.status) {
+      case 'pending':     icon = '&#9675;'; cls = 'plan-pending'; break;     // ○
+      case 'in_progress': icon = '&#9679;'; cls = 'plan-active'; break;      // ●
+      case 'done':        icon = '&#10003;'; cls = 'plan-done'; break;       // ✓
+      case 'blocked':     icon = '&#9888;'; cls = 'plan-blocked'; break;     // ⚠
+      default:            icon = '&middot;'; cls = '';
+    }
+    html += '<li class="' + cls + '">'
+      + '<span class="plan-icon">' + icon + '</span>'
+      + '<span class="plan-title">' + escapeHtml(s.title || '') + '</span>';
+    if (s.what_to_find) {
+      html += '<span class="plan-detail">' + escapeHtml(s.what_to_find) + '</span>';
+    }
+    if (s.findings) {
+      html += '<span class="plan-findings">&#8627; ' + escapeHtml(s.findings) + '</span>';
+    }
+    if (s.blocked_reason) {
+      html += '<span class="plan-blocked-reason">blocked: ' + escapeHtml(s.blocked_reason) + '</span>';
+    }
+    html += '</li>';
+  });
+  html += '</ul>';
+  box.innerHTML = html;
+  msgs.scrollTop = msgs.scrollHeight;
+}
 
 function addChatMsg(role, html, rawText) {
   var div = document.createElement('div');

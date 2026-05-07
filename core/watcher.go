@@ -543,7 +543,7 @@ func runWatcherWorker(ctx context.Context, w Watcher, trigger string) (string, e
 	f := false
 	resp, err := llm.Chat(ctx,
 		[]Message{{Role: "user", Content: userMsg}},
-		WithSystemPrompt(sys), WithThink(f), WithMaxTokens(2048),
+		WithSystemPrompt(sys), WithThink(f),
 	)
 	if err != nil {
 		return "", err

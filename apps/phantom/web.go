@@ -243,7 +243,7 @@ func (T *Phantom) handleProactiveNext(w http.ResponseWriter, r *http.Request) {
 // handleToolList returns all tools available to phantom — both registry tools
 // and session-scoped built-ins — so the UI can render a complete toggleable picker.
 func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := RequireUser(w, r, T.DB)
+	authUser, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -282,9 +282,35 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 	cfg := defaultConfig(T.DB)
 	if cfg.SecureAPIEnabled {
 		// nil session — this endpoint enumerates the catalog for the
-		// admin UI, no save_to dispatch happens here.
+		// admin UI, no save_to dispatch happens here. Restricted
+		// credentials (Restricted=true) are deliberately omitted so
+		// the phantom picker can't expose direct call_<name> for
+		// anything the operator marked Restricted in admin. Wrapped
+		// dispatch through approved api-mode temp tools is unaffected.
 		for _, td := range Secure().BuildTools(nil) {
 			out = append(out, toolInfo{Name: td.Tool.Name, Desc: td.Tool.Description})
+		}
+	}
+	// Persistent temp tools approved for the admin viewing this UI.
+	// These are LLM-defined wrappers admin-approved via the pending-
+	// tool queue and stored under the chat-app auth username (admin
+	// email). Scope the picker to whoever's logged into phantom now
+	// — same identity that approved the tool — so it actually shows
+	// up. Don't use cfg.OwnerHandle here: that's a messaging
+	// identity (phone number), unrelated to tool ownership.
+	if authUser != "" {
+		for _, p := range LoadPersistentTempTools(T.DB, authUser) {
+			desc := strings.TrimSpace(p.Tool.Description)
+			tag := "[wrapper]"
+			if p.Tool.Mode == TempToolModeShell {
+				tag = "[shell]"
+			}
+			if desc == "" {
+				desc = tag + " persistent temp tool"
+			} else {
+				desc = tag + " " + desc
+			}
+			out = append(out, toolInfo{Name: p.Tool.Name, Desc: desc})
 		}
 	}
 	jsonOK(w, out)
@@ -843,11 +869,18 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	Log("[phantom] hook from %s — enabled=%v auto_reply_all=%v conv_auto_reply=%v alias=%v primary=%v active=%s",
 		req.Handle, cfg.Enabled, cfg.AutoReplyAll, autoReply, isAlias, routingResolved && !isAlias, activeChatID)
 	if cfg.Enabled {
-		// Gatekeeper runs for all messages when the feature is enabled.
-		// Owner's own messages (handle="") always bypass the gatekeeper.
-		if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
-			Log("[phantom] gatekeeper blocked message from %s", req.Handle)
-			return
+		// Owner's own messages (handle="" after the OwnerHandle/ChatID-suffix
+		// normalization above) always bypass the gatekeeper — the owner is
+		// talking to their own assistant, no wake-word check makes sense.
+		// Without this bypass, the owner's own messages get evaluated by
+		// the gatekeeper LLM and can be blocked when the wording doesn't
+		// match the configured rule, which is wrong: the rule exists to
+		// filter OTHERS' messages, not the operator's.
+		if req.Handle != "" {
+			if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
+				Log("[phantom] gatekeeper blocked message from %s", req.Handle)
+				return
+			}
 		}
 		if cfg.AutoReplyAll || autoReply {
 			// For self-messages (empty handle), reply to the original sender
@@ -1168,6 +1201,14 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		//      are exposed.
 		var secureAPIByName map[string]AgentToolDef
 		if cfg.SecureAPIEnabled {
+			// BuildTools respects Restricted — when the operator
+			// flips a credential to "Restricted" in admin, it drops
+			// out of phantom's resolvable set here too. Even if a
+			// conv's EnabledTools still names call_<credname>, the
+			// lookup misses and the entry is silently ignored.
+			// LLM-defined api-mode temp tools wrapping the same
+			// credential keep working — admin approval is the trust
+			// gate for those.
 			secureAPI := Secure().BuildTools(sess)
 			secureAPIByName = make(map[string]AgentToolDef, len(secureAPI))
 			for _, td := range secureAPI {
@@ -1203,6 +1244,14 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 					tools = append(tools, td)
 					continue
 				}
+				// Persistent temp tools also aren't in the global
+				// registry — they're loaded later from sess.TempTools.
+				// Skip names that don't resolve here so a single
+				// unknown entry can't cause GetAgentToolsWithSession
+				// to fail-fast and drop the whole registry batch.
+				if _, ok := FindChatTool(n); !ok {
+					continue
+				}
 				registryNames = append(registryNames, n)
 			}
 		}
@@ -1216,18 +1265,24 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	}
 	// Persistent temp tools: tools defined in chat with persist=true
 	// and approved by the admin. They live in sess.TempTools (loaded
-	// at session creation in processReply). We surface API-mode
-	// tools (call_<credname> wrappers) here without needing per-conv
-	// EnabledTools entries — admin approval IS the trust gate.
-	//
-	// Shell-mode temp tools are NOT auto-imported even when admin-
-	// approved — they exec arbitrary commands and the same logic that
-	// keeps run_local out of phantom by default applies here. Operator
-	// can opt a specific shell-mode temp tool into a specific conv by
-	// adding its name to that conv's EnabledTools list, same as run_local.
-	if dyn := temptool.BuildAgentToolDefs(sess); len(dyn) > 0 {
-		var apiOnly []AgentToolDef
-		var shellSkipped []string
+	// at session creation in processReply). Surface them through the
+	// per-conv picker like any other tool — same rule as the rest of
+	// buildConvTools: when EnabledTools is empty (no curation), all
+	// api-mode temp tools fire and all shell-mode ones are skipped
+	// (run_local-style default-deny for arbitrary exec). When
+	// EnabledTools IS curated, the operator's list is authoritative
+	// for both modes — listing a shell-mode temp tool there is the
+	// explicit opt-in for that conv, mirroring how run_local works.
+	dyn := temptool.BuildAgentToolDefs(sess)
+	var dynNames []string
+	for _, d := range dyn {
+		dynNames = append(dynNames, d.Tool.Name)
+	}
+	Log("[phantom] buildConvTools: sess.Username=%q, BuildAgentToolDefs returned %d (%v), conv.EnabledTools curated=%v", sess.Username, len(dyn), dynNames, len(toolNames) > 0)
+	if len(dyn) > 0 {
+		var added []string
+		var skippedNotEnabled []string
+		var skippedShell []string
 		for _, td := range dyn {
 			isShell := false
 			for _, cap := range td.Tool.Caps {
@@ -1236,19 +1291,19 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 					break
 				}
 			}
-			if isShell {
-				shellSkipped = append(shellSkipped, td.Tool.Name)
+			if len(toolNames) > 0 {
+				if !toolEnabled(td.Tool.Name) {
+					skippedNotEnabled = append(skippedNotEnabled, td.Tool.Name)
+					continue
+				}
+			} else if isShell {
+				skippedShell = append(skippedShell, td.Tool.Name)
 				continue
 			}
-			apiOnly = append(apiOnly, td)
+			tools = append(tools, td)
+			added = append(added, td.Tool.Name)
 		}
-		if len(apiOnly) > 0 {
-			tools = append(tools, apiOnly...)
-			Debug("[phantom] %d persistent api-mode temp tools loaded for owner %q", len(apiOnly), sess.Username)
-		}
-		if len(shellSkipped) > 0 {
-			Debug("[phantom] %d persistent shell-mode temp tools skipped (CapExecute not auto-imported to phantom): %v", len(shellSkipped), shellSkipped)
-		}
+		Log("[phantom] persistent temp tools: added=%v, skipped_not_enabled=%v, skipped_shell_default_deny=%v", added, skippedNotEnabled, skippedShell)
 	}
 
 	// Memory tool: accept either the new "memory" name or the legacy
@@ -1265,6 +1320,23 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		tools = append(tools, T.listScheduledToolDef(chatID))
 		tools = append(tools, T.cancelScheduledToolDef(chatID))
 	}
+	// look_at_attachment: lazy-load any prior conversation attachment
+	// by reference ID (image-N / video-N from history annotations).
+	// Always-on; the model uses it only when a follow-up question
+	// requires re-examining an earlier image. fetchHistory captures
+	// the DB at call time so newly-arrived attachments are visible.
+	tools = append(tools, buildLookAtAttachmentTool(
+		func() []PhantomMessage { return recentMessages(T.DB, chatID, 100) },
+		func(b []byte) { sess.AppendViewImage(b) },
+		func(b []byte) {
+			// Video lookup not yet supported — needs frame sampling.
+			// Stash as a single-frame view image so the model at least
+			// gets the first frame; better than nothing for "look at that
+			// video" follow-ups. Future: wire up the same yt-dlp +
+			// sample-frames pipeline used by view_video.
+			sess.AppendViewImage(b)
+		},
+	))
 	return tools
 }
 
@@ -1358,6 +1430,36 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		}
 		msgs = append(msgs, Message{Role: role, Content: content})
 	}
+	// Annotate history user messages that had attachments with stable
+	// per-conversation reference IDs (image-1, video-2, etc) so the
+	// model can call look_at_attachment to re-fetch the bytes when a
+	// follow-up question requires visual detail beyond what its
+	// in-context multimodal recall covers. Counter walks forward
+	// chronologically so IDs match the order things appeared in the
+	// conversation. Attachment metadata (type, size, dimensions if
+	// extractable) goes alongside the ID so the model has enough
+	// signal to decide whether it needs to look or not.
+	imgCounter, vidCounter := 0, 0
+	for i, m := range history {
+		if m.Role != "user" {
+			continue
+		}
+		if len(m.Images) == 0 && len(m.Videos) == 0 {
+			continue
+		}
+		var tags []string
+		for _, b64 := range m.Images {
+			imgCounter++
+			tags = append(tags, fmt.Sprintf("[image-%d | %s]", imgCounter, attachmentMetadata(b64, "image")))
+		}
+		for _, b64 := range m.Videos {
+			vidCounter++
+			tags = append(tags, fmt.Sprintf("[video-%d | %s]", vidCounter, attachmentMetadata(b64, "video")))
+		}
+		if len(tags) > 0 {
+			msgs[i].Content = msgs[i].Content + "\n" + strings.Join(tags, " ")
+		}
+	}
 	// Strip the current message from history (matched by raw text) and re-inject
 	// it as a clearly labelled final turn so the model doesn't treat it as pending.
 	if len(history) > 0 && history[len(history)-1].Role == "user" && history[len(history)-1].Text == text {
@@ -1383,6 +1485,20 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 				}
 			}
 		}
+	}
+	// Annotate the new message text with what's actually attached on
+	// THIS turn so the model doesn't infer attachment type from earlier
+	// conversation context. Without this, history that referenced a
+	// prior video can prime the model to call download_video on a
+	// freshly-arrived image. The tag goes after the header so it's the
+	// first thing the model sees alongside the sender + text.
+	if n := len(newMsg.Images); n > 0 {
+		tag := fmt.Sprintf("\n[CURRENT ATTACHMENT: %d image(s) — already in your context as multimodal content; do NOT call download_video, fetch_image, or find_image for these]\n", n)
+		newMsg.Content = "--- NEW MESSAGE (respond to this) ---" + tag + senderDesc + ": " + cleaned
+	}
+	if n := len(newMsg.Videos); n > 0 {
+		tag := fmt.Sprintf("\n[CURRENT ATTACHMENT: %d video(s) — already sampled into frames in your context; do NOT call download_video for these, the file is already attached]\n", n)
+		newMsg.Content = "--- NEW MESSAGE (respond to this) ---" + tag + senderDesc + ": " + cleaned
 	}
 	msgs = append(msgs, newMsg)
 
@@ -1432,12 +1548,23 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		LeadLLM:      T.LeadLLM,
 		WorkspaceDir: ensurePhantomWorkspace(cfg),
 		DB:           T.DB,
-		// Username scopes persistent temp tools (and any future
-		// per-user features). Set to OwnerHandle so persistent tools
-		// defined + approved via chat (which uses the admin's auth
-		// username) are visible here when OwnerHandle == admin email.
-		// Empty OwnerHandle just disables persistence loading; harmless.
-		Username: cfg.OwnerHandle,
+		// ChatSessionID anchors session-scoped temp tools to this
+		// phantom conversation. Without it, a tool the LLM creates
+		// with persist=false in turn N is gone in turn N+1 — phantom
+		// rebuilds this ToolSession every incoming message, so
+		// session-scoped state has to round-trip through the DB.
+		// Using convChatID keeps a tool the model created in this
+		// conversation visible only to subsequent messages in this
+		// same conversation (won't bleed into other phantom convs).
+		ChatSessionID: convChatID,
+		// Username scopes persistent temp tools. Use the first admin
+		// account — that's the identity that originally approved
+		// pending temp tools via the admin UI, so loading under the
+		// same name surfaces them here. OwnerHandle (a phone number)
+		// is wrong for this; it's a messaging identity, not a tool
+		// owner. Falls back to empty when no admin exists yet, which
+		// just disables persistence loading.
+		Username: phantomToolOwner(T.DB),
 		// RoutingTarget tells generic tools (e.g. watcher) where to
 		// dispatch follow-up payloads back to. Mirrors what the normal
 		// reply path uses: deliverChatID for ChatID + a recipient
@@ -1451,10 +1578,36 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	// Load any persistent temp tools approved for this owner so the
 	// LLM can use them in phantom too. Same pool the chat agent reads
 	// when the admin is logged in as the same email.
-	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+	loaded := LoadPersistentTempTools(sess.DB, sess.Username)
+	loadedNames := make([]string, 0, len(loaded))
+	for _, p := range loaded {
 		t := p.Tool
-		_ = sess.AppendTempTool(&t)
+		if err := sess.AppendTempTool(&t); err != nil {
+			Log("[phantom] AppendTempTool(%q) failed for owner %q: %v", t.Name, sess.Username, err)
+			continue
+		}
+		loadedNames = append(loadedNames, t.Name)
 	}
+	// Session-scoped temp tools — ones the LLM created in a prior
+	// message of THIS phantom conversation via persist=false. Without
+	// this load the model forgets its own tools between user turns
+	// (each processMessage rebuilds the ToolSession), defeating the
+	// create-then-use flow and making list_temp_tools incorrectly
+	// report no session tools after the conversation continues.
+	sessionLoaded := LoadSessionTempTools(sess.DB, sess.ChatSessionID)
+	sessionLoadedNames := make([]string, 0, len(sessionLoaded))
+	for _, t := range sessionLoaded {
+		tool := t
+		if err := sess.AppendTempTool(&tool); err != nil {
+			Log("[phantom] AppendTempTool(%q) failed for conv %q (session-scoped): %v", tool.Name, sess.ChatSessionID, err)
+			continue
+		}
+		sessionLoadedNames = append(sessionLoadedNames, tool.Name)
+	}
+	if len(sessionLoadedNames) > 0 {
+		Log("[phantom] loaded %d session-scoped temp tool(s) for conv %s: %v", len(sessionLoadedNames), sess.ChatSessionID, sessionLoadedNames)
+	}
+	Log("[phantom] persistent temp tools for owner %q: %d loaded → %v", sess.Username, len(loadedNames), loadedNames)
 	// send_status: enqueue an immediate outbox item so the user receives
 	// the status as its own iMessage before the eventual reply. The
 	// outbox is FIFO so order is preserved. We also persist it as an

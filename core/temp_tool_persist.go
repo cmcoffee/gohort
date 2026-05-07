@@ -15,6 +15,7 @@
 package core
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -61,7 +62,10 @@ type PersistentTempTool struct {
 	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
 }
 
-// LoadPendingTempTools returns the pending-approval queue for a user.
+// LoadPendingTempTools returns the pending-approval queue for a user,
+// ordered newest-first by RequestedAt. Newest-first matches reviewer
+// intuition: when checking the queue, the just-requested tool is what
+// the user most recently asked for and is the freshest in their head.
 // Empty username returns nil (anonymous sessions can't queue tools).
 func LoadPendingTempTools(db Database, username string) []PendingTempTool {
 	db = tempToolStore(db)
@@ -72,6 +76,9 @@ func LoadPendingTempTools(db Database, username string) []PendingTempTool {
 	if !db.Get(pendingTempToolsTable, username, &out) {
 		return nil
 	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].RequestedAt.After(out[j].RequestedAt)
+	})
 	return out
 }
 
@@ -207,10 +214,8 @@ func DeletePersistentTempTool(db Database, username, name string) error {
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	rest := approved[:0]
-	var hadArchive bool
 	for i := range approved {
 		if approved[i].Tool.Name == name {
-			hadArchive = approved[i].Tool.ArchivePath != ""
 			continue
 		}
 		rest = append(rest, approved[i])
@@ -219,11 +224,9 @@ func DeletePersistentTempTool(db Database, username, name string) error {
 		return errString("no persistent tool named " + name)
 	}
 	db.Set(persistentTempToolsTable, username, rest)
-	if hadArchive {
-		if err := DeleteToolArchive(username, name); err != nil {
-			Log("[temptool] archive cleanup failed for %s/%s: %v", username, name, err)
-		}
-	}
+	// Recipe content lives inline on the record, so no on-disk
+	// cleanup is needed. State dir (if any) is left in place — the
+	// operator can purge it explicitly via DeleteToolState.
 	return nil
 }
 

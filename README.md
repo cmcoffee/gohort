@@ -13,19 +13,26 @@ A modular agent framework in Go for building LLM-powered applications with web d
 ## Features
 
 - **Self-registering apps** -- add a blank import, get a CLI command and web dashboard
-- **Multi-provider LLM support** -- Anthropic, OpenAI, Google Gemini, Ollama (local models)
+- **Multi-provider LLM support** -- Anthropic, OpenAI, Google Gemini, Ollama, llama.cpp (local models)
 - **Hybrid LLM architecture** -- worker model for volume, precision model for critical decisions, with transparent fallback
-- **Ollama fair-queueing** -- configurable global parallelism cap with round-robin dispatch across caller sessions, so one app can't monopolize the local model
+- **Privacy-aware route stages** -- per-app route registration with `Private:true` hard-locks an app to the worker tier, blocking accidental escalation to cloud providers regardless of admin UI setting
+- **Granular no-think control** -- per-signal toggles for `enable_thinking` kwarg, `thinking_budget_tokens` cap, and `/no_think` placement (system / user prompt) so operators can tune for whichever combination their model honors
+- **Vision + multimodal** -- image and video attachments flow through to vision-capable models with automatic per-call defaults (deterministic temperature, thinking off)
+- **Runtime-defined tools** -- LLM can author shell-mode and api-mode tools mid-conversation; persistence requires admin approval via the pending-tool queue
+- **Tool capability gating** -- per-app `AllowedCaps` filter (read / network / write / execute) prevents tools requiring capabilities the app doesn't grant
+- **Plan-driven agentic investigations** -- structured plan / execute / revise / gap-detect lifecycle for long-running multi-step agents
+- **Local-model fair-queueing** -- configurable global parallelism caps for Ollama and llama.cpp with round-robin dispatch across caller sessions
 - **Session API** -- `CreateSession(WORKER|LEAD)` tags each unit of LLM work with a UUID for scheduler fairness
 - **Web dashboard** -- unified UI with SSE streaming, live session tracking, task queue, and shareable links
 - **Authentication** -- cookie-based login, signup with admin approval, forgot/reset password, per-user app access, auto-lockout
 - **Per-user data isolation** -- each authenticated user gets a namespaced sub-store; admin can reassign or purge an account's data before deletion via registered `UserDataHandler`s
-- **Administrator panel** -- user management, app permissions, default apps, system settings, per-app data footprint
+- **Administrator panel** -- user management, app permissions, default apps, system settings, per-app data footprint, secure-API credential vault, pending-tool approval queue
+- **Encrypted credential store** -- per-credential URL allow-list, audit log, rate limits, no-auth public mode for unauthenticated public APIs
 - **TLS support** -- self-signed certificate generation or explicit cert/key paths
 - **Notifications** -- email alerts for signups, approvals, task completion with configurable service name and links
 - **Persistent queue** -- tasks survive server restarts with notification preferences preserved
 - **Pipeline framework** -- `RunPipelineAsync` / `RestorePipeline` on FuzzAgent for lifecycle management
-- **Agent loop** -- autonomous tool-calling loop with native and prompt-based tool modes
+- **Agent loop** -- autonomous tool-calling loop with native and prompt-based tool modes, dynamic per-round thinking budget, and reasoning-stream callback
 - **Web search** -- DuckDuckGo, Brave, Google, Serper.dev, SearXNG with article fetching and source scoring
 - **HTTP client** -- all outbound connections via snugforge `apiclient` with retries, auth, and rate limiting
 - **Encrypted config** -- AES-CFB encrypted kvlite database with hardware-locked storage
@@ -158,10 +165,14 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 
 | App | Purpose |
 |-----|---------|
-| `admin` | Administrator panel (web only) -- user management, app permissions, system settings |
-| `chat` | Interactive LLM chat with tool access and SSE streaming |
+| `admin` | Administrator panel (web only) -- user management, app permissions, secure-API credentials, pending-tool approval, system settings |
+| `chat` | Interactive LLM chat with tool access, SSE streaming, runtime-defined tool authoring, image/video attachments |
+| `phantom` | iMessage assistant -- gatekeeper, per-conversation curation, attachment lookup, owner bypass, scheduled callbacks |
+| `servitor` | SSH-based system investigator with plan-driven flow (set_plan / execute / revise / gap-detect), persistent technique recording, private-only routing |
 | `techwriter` | Technical documentation co-editor |
 | `codewriter` | Script/query co-author with saved snippets, reusable values, and saved context blocks |
+| `dual` | Side-by-side multi-provider chat for comparison |
+| `answer` | Single-shot answer endpoint for non-interactive integrations |
 
 ## Adding Private Apps
 
@@ -224,16 +235,35 @@ gohort/
 │   ├── editor/              # Shared editor primitives (clipboard, resize, import, diff widget)
 │   └── webui/               # Shared web UI theme + embedded Orbitron wordmark font
 ├── apps/                # Built-in apps
-│   ├── admin/               # Administrator panel (users, settings, status)
-│   ├── chat/                # Tool-tester chat UI
-│   ├── codewriter/          # Script/query co-author with snippets, values, and saved contexts
+│   ├── admin/               # Administrator panel (users, settings, credentials, pending tools)
+│   ├── answer/              # Single-shot answer endpoint
+│   ├── chat/                # LLM chat with tool authoring + multimodal attachments
+│   ├── codewriter/          # Script/query co-author with snippets, values, saved contexts
+│   ├── dual/                # Side-by-side multi-provider comparison
+│   ├── ollama_proxy/        # Ollama-compatible HTTP proxy
+│   ├── phantom/             # iMessage assistant (bridge in apps/phantom/_bridge)
+│   ├── servitor/            # SSH-based system investigator with plan-driven flow
 │   └── techwriter/          # Technical documentation editor
-├── tools/               # Chat tools
-│   ├── calculate/           # Arithmetic
-│   ├── command/             # Shell execution
-│   ├── email/               # SMTP
-│   ├── localtime/           # Current time
-│   └── websearch/           # Search providers + article fetching
+├── tools/               # Chat tools (built-in, registered via init)
+│   ├── attach/              # attach_file: send workspace files to user
+│   ├── browser/             # browse_page, screenshot_page (headless browser)
+│   ├── calculate/           # calculate: arithmetic
+│   ├── comedian/            # get_joke
+│   ├── datemath/            # date_math: diff/add operations
+│   ├── email/               # send_email
+│   ├── files/               # local: sandboxed read/write/run + file metadata
+│   ├── imagefetch/          # fetch_image, find_image, generate_image
+│   ├── keepgoing/           # keep_going: agent-loop continuation
+│   ├── localexec/           # run_local: sandboxed shell exec
+│   ├── localtime/           # get_local_time
+│   ├── orchestrator/        # delegate: hand off multi-step work
+│   ├── silent/              # stay_silent: suppress reply this turn
+│   ├── status/              # send_status: progress notes mid-turn
+│   ├── temptool/            # tool_def: runtime-defined shell + api tools
+│   ├── videodl/             # download_video, view_video (yt-dlp wrapper)
+│   ├── watcher/             # watcher: poll-and-alert framework
+│   ├── websearch/           # web_search, fetch_url + article extraction
+│   └── workspace/           # workspace state primitives
 └── extras/              # Templates and examples
 ```
 

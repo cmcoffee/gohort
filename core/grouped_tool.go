@@ -51,9 +51,19 @@ type GroupedToolAction struct {
 // GroupedTool implements ChatTool + SessionChatTool. Build via
 // NewGroupedTool + AddAction; register normally via RegisterChatTool.
 type GroupedTool struct {
-	name    string
-	brief   string
-	actions map[string]*GroupedToolAction
+	name     string
+	brief    string
+	preamble string
+	actions  map[string]*GroupedToolAction
+}
+
+// SetHelpPreamble attaches a rich text block that is prepended to the
+// auto-generated action listing in formatHelp. Use it when the tool
+// has cross-action concepts (workspace flows, decision matrices,
+// common pitfalls) that don't fit in any single action description.
+// Empty by default.
+func (g *GroupedTool) SetHelpPreamble(text string) {
+	g.preamble = text
 }
 
 // NewGroupedTool creates a new grouped tool with the given catalog name
@@ -184,6 +194,10 @@ func (g *GroupedTool) sortedActionNames() []string {
 func (g *GroupedTool) formatHelp() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s — usage:\n\n", g.name)
+	if g.preamble != "" {
+		b.WriteString(strings.TrimSpace(g.preamble))
+		b.WriteString("\n\n")
+	}
 	for _, name := range g.sortedActionNames() {
 		def := g.actions[name]
 		fmt.Fprintf(&b, "  action=%q — %s\n", name, def.Description)

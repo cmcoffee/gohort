@@ -94,6 +94,23 @@ func (d dbCFG) llm() LLMProviderConfig {
 	global.db.Get(LLMTable, "native_tools", &c.NativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
 	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
+	// No-think signals: load each toggle individually. If the operator
+	// has never configured no-think (no_think_configured key absent),
+	// fall back to defaults that match the empirically-proven combo —
+	// kwarg + budget on, prepends off. Without this fallback, fresh
+	// installs would send no signals at all on no-think calls.
+	var noThinkConfigured bool
+	global.db.Get(LLMTable, "no_think_configured", &noThinkConfigured)
+	if noThinkConfigured {
+		global.db.Get(LLMTable, "no_think_use_kwarg", &c.NoThinkUseKwarg)
+		global.db.Get(LLMTable, "no_think_send_budget", &c.NoThinkSendBudget)
+		global.db.Get(LLMTable, "no_think_prepend_system", &c.NoThinkPrependSystem)
+		global.db.Get(LLMTable, "no_think_prepend_user", &c.NoThinkPrependUser)
+	} else {
+		c.NoThinkUseKwarg = true
+		c.NoThinkSendBudget = true
+	}
+	global.db.Get(LLMTable, "no_think_budget", &c.NoThinkBudget)
 	var timeout_seconds int
 	global.db.Get(LLMTable, "request_timeout_seconds", &timeout_seconds)
 	if timeout_seconds > 0 {
@@ -113,6 +130,18 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	global.db.Get(LeadLLMTable, "native_tools", &c.NativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
 	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
+	var leadNoThinkConfigured bool
+	global.db.Get(LeadLLMTable, "no_think_configured", &leadNoThinkConfigured)
+	if leadNoThinkConfigured {
+		global.db.Get(LeadLLMTable, "no_think_use_kwarg", &c.NoThinkUseKwarg)
+		global.db.Get(LeadLLMTable, "no_think_send_budget", &c.NoThinkSendBudget)
+		global.db.Get(LeadLLMTable, "no_think_prepend_system", &c.NoThinkPrependSystem)
+		global.db.Get(LeadLLMTable, "no_think_prepend_user", &c.NoThinkPrependUser)
+	} else {
+		c.NoThinkUseKwarg = true
+		c.NoThinkSendBudget = true
+	}
+	global.db.Get(LeadLLMTable, "no_think_budget", &c.NoThinkBudget)
 	return c
 }
 
@@ -214,6 +243,25 @@ func setup_fuzz() {
 	if llamacppMaxParallel < 1 {
 		llamacppMaxParallel = 1 // default: strict serial execution through llama.cpp
 	}
+	// No-think individual signal toggles + budget. Defaults are the
+	// proven-working combo (kwarg + budget on, prepends off).
+	var noThinkConfigured bool
+	noThinkUseKwarg := true
+	noThinkSendBudget := true
+	var noThinkPrependSystem bool
+	var noThinkPrependUser bool
+	var noThinkBudget int
+	global.db.Get(LLMTable, "no_think_configured", &noThinkConfigured)
+	if noThinkConfigured {
+		// Once explicitly configured, read all four toggles literally
+		// (so an operator can disable kwarg or budget if they need to).
+		noThinkUseKwarg, noThinkSendBudget = false, false
+		global.db.Get(LLMTable, "no_think_use_kwarg", &noThinkUseKwarg)
+		global.db.Get(LLMTable, "no_think_send_budget", &noThinkSendBudget)
+		global.db.Get(LLMTable, "no_think_prepend_system", &noThinkPrependSystem)
+		global.db.Get(LLMTable, "no_think_prepend_user", &noThinkPrependUser)
+	}
+	global.db.Get(LLMTable, "no_think_budget", &noThinkBudget)
 
 	// Load current Lead LLM values.
 	var leadProvider, leadModel, leadAPIKey, leadEndpoint string
@@ -227,6 +275,21 @@ func setup_fuzz() {
 	global.db.Get(LeadLLMTable, "disable_thinking", &leadDisableThinking)
 	global.db.Get(LeadLLMTable, "thinking_budget", &leadThinkingBudget)
 	global.db.Get(LeadLLMTable, "native_tools", &leadNativeTools)
+	var leadNoThinkConfigured bool
+	leadNoThinkUseKwarg := true
+	leadNoThinkSendBudget := true
+	var leadNoThinkPrependSystem bool
+	var leadNoThinkPrependUser bool
+	var leadNoThinkBudget int
+	global.db.Get(LeadLLMTable, "no_think_configured", &leadNoThinkConfigured)
+	if leadNoThinkConfigured {
+		leadNoThinkUseKwarg, leadNoThinkSendBudget = false, false
+		global.db.Get(LeadLLMTable, "no_think_use_kwarg", &leadNoThinkUseKwarg)
+		global.db.Get(LeadLLMTable, "no_think_send_budget", &leadNoThinkSendBudget)
+		global.db.Get(LeadLLMTable, "no_think_prepend_system", &leadNoThinkPrependSystem)
+		global.db.Get(LeadLLMTable, "no_think_prepend_user", &leadNoThinkPrependUser)
+	}
+	global.db.Get(LeadLLMTable, "no_think_budget", &leadNoThinkBudget)
 	if leadProvider == "" {
 		leadProvider = "(use primary)"
 	}
@@ -259,6 +322,19 @@ func setup_fuzz() {
 	llm.ShowWhen(func() bool { return provider == "ollama" || provider == "gemini" || provider == "llama.cpp" })
 	llm.IntVar(&thinkingBudget, "Thinking Budget (tokens, 0=unlimited)", thinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Lower values reduce latency on simple queries. Only supported by llama.cpp and Gemini.", 0, 131072)
 	llm.ShowWhen(func() bool { return (provider == "gemini" || provider == "llama.cpp") && !disableThinking })
+	// No-Think Settings: dedicated sub-menu so the parent LLM section
+	// stays focused on connection/model basics. Each signal toggles
+	// independently — operators tune for whichever combo their model
+	// honors reliably.
+	noThinkSettings := NewOptions(" [No-Think Settings] ", "(selection or 'q' to return)", 'q')
+	noThinkSettings.ToggleVar(&noThinkUseKwarg, "Send chat_template_kwargs.enable_thinking=false", noThinkUseKwarg)
+	noThinkSettings.ToggleVar(&noThinkSendBudget, "Send thinking_budget_tokens cap", noThinkSendBudget)
+	noThinkSettings.IntVar(&noThinkBudget, "Budget value (tokens)", noThinkBudget, "thinking_budget_tokens when 'send budget' is on. 0 = built-in default (512).", 0, 8192)
+	noThinkSettings.ShowWhen(func() bool { return noThinkSendBudget })
+	noThinkSettings.ToggleVar(&noThinkPrependSystem, "Prepend /no_think to system prompt", noThinkPrependSystem)
+	noThinkSettings.ToggleVar(&noThinkPrependUser, "Prepend /no_think to last user message", noThinkPrependUser)
+	llm.Options("No-Think Settings", noThinkSettings, false)
+	llm.ShowWhen(func() bool { return provider == "llama.cpp" && !disableThinking })
 	llm.ToggleVar(&nativeTools, "Native Tool Calling (disable for models without tool support)", nativeTools)
 	llm.ShowWhen(func() bool { return provider == "ollama" })
 	llm.IntVar(&ollamaMaxParallel, "Max Parallel Ollama Requests", ollamaMaxParallel, "How many concurrent requests Ollama will process. Default 1 (strict serial). Raise only if the host GPU can truly run more in parallel. Requests are fair-queued across caller sessions.", 1, 16)
@@ -286,6 +362,15 @@ func setup_fuzz() {
 	lead.ShowWhen(func() bool { return leadProvider == "ollama" || leadProvider == "gemini" || leadProvider == "llama.cpp" })
 	lead.IntVar(&leadThinkingBudget, "Thinking Budget (tokens, 0=unlimited)", leadThinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Only supported by llama.cpp and Gemini.", 0, 131072)
 	lead.ShowWhen(func() bool { return (leadProvider == "gemini" || leadProvider == "llama.cpp") && !leadDisableThinking })
+	leadNoThinkSettings := NewOptions(" [No-Think Settings (Lead)] ", "(selection or 'q' to return)", 'q')
+	leadNoThinkSettings.ToggleVar(&leadNoThinkUseKwarg, "Send chat_template_kwargs.enable_thinking=false", leadNoThinkUseKwarg)
+	leadNoThinkSettings.ToggleVar(&leadNoThinkSendBudget, "Send thinking_budget_tokens cap", leadNoThinkSendBudget)
+	leadNoThinkSettings.IntVar(&leadNoThinkBudget, "Budget value (tokens)", leadNoThinkBudget, "thinking_budget_tokens when 'send budget' is on. 0 = built-in default (512).", 0, 8192)
+	leadNoThinkSettings.ShowWhen(func() bool { return leadNoThinkSendBudget })
+	leadNoThinkSettings.ToggleVar(&leadNoThinkPrependSystem, "Prepend /no_think to system prompt", leadNoThinkPrependSystem)
+	leadNoThinkSettings.ToggleVar(&leadNoThinkPrependUser, "Prepend /no_think to last user message", leadNoThinkPrependUser)
+	lead.Options("No-Think Settings", leadNoThinkSettings, false)
+	lead.ShowWhen(func() bool { return leadProvider == "llama.cpp" && !leadDisableThinking })
 	lead.ToggleVar(&leadNativeTools, "Native Tool Calling (disable for models without tool support)", leadNativeTools)
 	lead.ShowWhen(func() bool { return leadProvider == "ollama" })
 
@@ -577,6 +662,12 @@ func setup_fuzz() {
 	global.db.Set(LLMTable, "native_tools", nativeTools)
 	global.db.Set(LLMTable, "ollama_max_parallel", ollamaMaxParallel)
 	global.db.Set(LLMTable, "llamacpp_max_parallel", llamacppMaxParallel)
+	global.db.Set(LLMTable, "no_think_configured", true)
+	global.db.Set(LLMTable, "no_think_use_kwarg", noThinkUseKwarg)
+	global.db.Set(LLMTable, "no_think_send_budget", noThinkSendBudget)
+	global.db.Set(LLMTable, "no_think_prepend_system", noThinkPrependSystem)
+	global.db.Set(LLMTable, "no_think_prepend_user", noThinkPrependUser)
+	global.db.Set(LLMTable, "no_think_budget", noThinkBudget)
 	if apiKey != "" {
 		global.db.CryptSet(LLMTable, "api_key", apiKey)
 	}
@@ -591,6 +682,12 @@ func setup_fuzz() {
 	global.db.Set(LeadLLMTable, "disable_thinking", leadDisableThinking)
 	global.db.Set(LeadLLMTable, "thinking_budget", leadThinkingBudget)
 	global.db.Set(LeadLLMTable, "native_tools", leadNativeTools)
+	global.db.Set(LeadLLMTable, "no_think_configured", true)
+	global.db.Set(LeadLLMTable, "no_think_use_kwarg", leadNoThinkUseKwarg)
+	global.db.Set(LeadLLMTable, "no_think_send_budget", leadNoThinkSendBudget)
+	global.db.Set(LeadLLMTable, "no_think_prepend_system", leadNoThinkPrependSystem)
+	global.db.Set(LeadLLMTable, "no_think_prepend_user", leadNoThinkPrependUser)
+	global.db.Set(LeadLLMTable, "no_think_budget", leadNoThinkBudget)
 	if leadAPIKey != "" {
 		global.db.CryptSet(LeadLLMTable, "api_key", leadAPIKey)
 	}

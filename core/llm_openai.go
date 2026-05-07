@@ -28,12 +28,14 @@ const (
 // LLM API clients apply iotimeout.NewReadCloser to every response body using
 // c.api.RequestTimeout as the per-read idle timeout. These defaults give:
 //   - llmConnectTimeout:  dial + TLS handshake cap
-//   - llmRequestTimeout:  response header deadline AND per-read idle timeout
-//                         on body reads. Must be long enough to tolerate
-//                         Ollama cold-load silence and extended thinking.
+//   - llmRequestTimeout:  fallback request timeout used by Gemini / model
+//                         listing endpoints. Chat calls go through
+//                         newLLMAPIClient (in llm.go) which honors the
+//                         operator-configured request_timeout_seconds and
+//                         falls back to 12 min when unset.
 const (
 	llmConnectTimeout = 10 * time.Second
-	llmRequestTimeout = 5 * time.Minute
+	llmRequestTimeout = 12 * time.Minute
 )
 
 const (
@@ -74,11 +76,34 @@ type openAIClient struct {
 	disableThinking  bool // master override forcing think=false / thinking_budget_tokens=0 on every call.
 	nativeTools      bool // When true, send native tool specs. When false, strip them (tools handled via text prompts at agent loop level).
 	thinkingBudget   int  // reserved (unused after Ollama thinking_budget removal).
+	noThinkUseKwarg      bool // llama.cpp: send chat_template_kwargs.enable_thinking=false on no-think calls.
+	noThinkSendBudget    bool // llama.cpp: send thinking_budget_tokens cap on no-think calls.
+	noThinkPrependSystem bool // llama.cpp: prepend "/no_think " to system prompt on no-think calls.
+	noThinkPrependUser   bool // llama.cpp: prepend "/no_think " to last user message on no-think calls.
+	noThinkBudget        int  // llama.cpp: budget value when noThinkSendBudget is true. 0 falls back to llamacppNoThinkDefaultBudget.
 }
+
+// llamacppNoThinkDefaultBudget is the thinking_budget_tokens cap used
+// when WithThink(false) is honored via the budget strategy and the
+// operator hasn't set an explicit NoThinkBudget. Sized to give the
+// model enough runway for short classifier-style prompts (chat title,
+// flip detect, verifier) without ballooning latency.
+const llamacppNoThinkDefaultBudget = 512
 
 // isOllama reports whether this client is talking to an Ollama instance.
 func (c *openAIClient) isOllama() bool {
 	return c.ollama
+}
+
+// isLocal reports whether this client is talking to a local inference
+// server (llama.cpp or Ollama). Used to drop max_tokens caps from the
+// payload — local servers have no per-token billing or rate limit, so
+// caller-supplied caps are almost always defensive/legacy and have a
+// nasty failure mode (clipping structured output mid-string when the
+// caller underestimates the response size). Cloud providers (real
+// OpenAI, Anthropic) keep enforcing the cap as a billing guard.
+func (c *openAIClient) isLocal() bool {
+	return c.llamacpp || c.ollama
 }
 
 // provider returns the log tag for this client.
@@ -89,17 +114,46 @@ func (c *openAIClient) provider() string {
 	return "openai"
 }
 
+// resolveNoThinkBudget returns the thinking_budget_tokens value to send
+// when noThinkSendBudget is true. Explicit operator setting wins;
+// otherwise the package default applies.
+func (c *openAIClient) resolveNoThinkBudget() int {
+	if c.noThinkBudget > 0 {
+		return c.noThinkBudget
+	}
+	return llamacppNoThinkDefaultBudget
+}
+
+// isQwen3Unified reports whether the model name matches a Qwen 3 unified
+// (think + non-think) variant on llama.cpp. The no-think scaffold bug
+// is specific to this family — DeepSeek-R1, Llama, GLM, and Qwen
+// Instruct-only variants (e.g. Qwen3-*-Instruct-2507) are unaffected.
+func isQwen3Unified(model string) bool {
+	m := strings.ToLower(model)
+	if !strings.Contains(m, "qwen3") && !strings.Contains(m, "qwen-3") && !strings.Contains(m, "qwen3.5") && !strings.Contains(m, "qwen3.6") {
+		return false
+	}
+	// Instruct-only variants are non-thinking by training and don't
+	// have the scaffold issue. Treat them as not-unified.
+	if strings.Contains(m, "instruct") {
+		return false
+	}
+	return true
+}
+
 // llamacppThinkBudget returns the thinking_budget_tokens value for a llama.cpp
-// request, or nil to omit. The primary disable path is chat_template_kwargs
-// (reliable on Qwen 3.6+); we still send budget=0 alongside as a fallback for
-// models whose chat templates don't read enable_thinking (e.g. DeepSeek-R1),
-// where a sampler-level cap is the only way to suppress thinking.
+// request, or nil to omit. On no-think calls (cfg.Think=&false), respects
+// the operator-controlled NoThinkSendBudget toggle: when true, sends a
+// hard cap (resolveNoThinkBudget); when false, omits and the model is
+// expected to honor the soft signals (kwarg / directive) instead.
 func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
-	// Explicit per-call disable: also cap budget to 0 as a fallback for
-	// models that don't honor chat_template_kwargs.enable_thinking.
 	if cfg.Think != nil && !*cfg.Think {
-		zero := 0
-		return &zero
+		if c.noThinkSendBudget {
+			b := c.resolveNoThinkBudget()
+			return &b
+		}
+		// Operator turned off the budget cap — fall through to legacy
+		// per-call/global logic so they can still override per-call.
 	}
 	// Per-call budget override takes priority over global config.
 	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
@@ -116,15 +170,125 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 	return nil
 }
 
+// applyDynamicThinkBudget injects a DynamicThinkBudget-derived
+// thinking budget into cfg when:
+//   - the client is llama.cpp (the only provider where our formula is
+//     calibrated and where per-request thinking_budget_tokens is
+//     honored — assuming server's --reasoning-budget is unset)
+//   - thinking is explicitly enabled for this call
+//   - no explicit per-call budget was already set
+//
+// Token estimate covers the FULL prompt (system prompt + all messages
+// + tool definitions) so the formula sees what the model actually
+// sees. Earlier per-caller estimations missed pieces — debaters
+// included sysPrompt, consensus didn't, WorkerChat counted only
+// messages — producing inconsistent and often wrong-sized budgets.
+// Centralizing here means every caller gets identical, correct
+// sizing regardless of which entry point (Chat / ChatStream /
+// Session.ChatStream / WorkerChat / direct llm.Chat) they use.
+//
+// Callers that want a specific budget still pass WithThinkBudget(N)
+// per-call; this function is a no-op when ThinkBudget is already set.
+func (c *openAIClient) applyDynamicThinkBudget(cfg *ChatConfig, messages []Message) {
+	if !c.llamacpp {
+		return
+	}
+	if cfg.Think == nil || !*cfg.Think {
+		return
+	}
+	if cfg.ThinkBudget != nil {
+		return
+	}
+	inputTokens := EstimateTokens(cfg.SystemPrompt) + EstimateMessagesTokens(messages)
+	for _, t := range cfg.Tools {
+		inputTokens += EstimateTokens(t.Name) + EstimateTokens(t.Description)
+		for n, p := range t.Parameters {
+			inputTokens += EstimateTokens(n) + EstimateTokens(p.Description) + EstimateTokens(p.Type)
+		}
+	}
+	budget := DynamicThinkBudget(inputTokens)
+	cfg.ThinkBudget = &budget
+}
+
+// applyNoThinkDirective prepends the `/no_think` soft-switch directive
+// to the system prompt and/or the most recent user message based on
+// the operator-controlled NoThinkPrependSystem and NoThinkPrependUser
+// toggles. Either, both, or neither placement can be enabled. Pairs
+// with the kwarg + budget signals; defaults are off because kwarg +
+// budget alone is sufficient on Qwen 3 unified and Gemma 4. Enable
+// these for models where the kwarg approach is unreliable (or as
+// belt-and-suspenders).
+func (c *openAIClient) applyNoThinkDirective(cfg *ChatConfig, messages []Message) []Message {
+	if c.noThinkPrependSystem && !strings.Contains(cfg.SystemPrompt, "/no_think") {
+		if cfg.SystemPrompt == "" {
+			cfg.SystemPrompt = "/no_think"
+		} else {
+			cfg.SystemPrompt = "/no_think " + strings.TrimLeft(cfg.SystemPrompt, " \n")
+		}
+	}
+	if !c.noThinkPrependUser {
+		return messages
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != "user" {
+			continue
+		}
+		if strings.Contains(messages[i].Content, "/no_think") {
+			return messages
+		}
+		out := make([]Message, len(messages))
+		copy(out, messages)
+		if out[i].Content == "" {
+			out[i].Content = "/no_think"
+		} else {
+			out[i].Content = "/no_think " + strings.TrimLeft(out[i].Content, " \n")
+		}
+		return out
+	}
+	return messages
+}
+
+// shouldApplyNoThinkDirective reports whether the /no_think directive
+// injection should fire. Triggered when either NoThinkPrependSystem or
+// NoThinkPrependUser is enabled — both placements are individually
+// controllable below, this just gates whether to enter the helper.
+func (c *openAIClient) shouldApplyNoThinkDirective(cfg ChatConfig) bool {
+	if !c.llamacpp {
+		return false
+	}
+	if cfg.Think == nil || *cfg.Think {
+		return false
+	}
+	return c.noThinkPrependSystem || c.noThinkPrependUser
+}
+
 // llamacppChatTemplateKwargs returns the chat_template_kwargs map for a
 // llama.cpp request, or nil to omit the field. This is the reliable
 // per-request thinking switch on Qwen 3.6+: setting enable_thinking
 // overrides the launch-time --reasoning flag for this single request.
+//
+// Note: per-request thinking BUDGET is sent via top-level
+// thinking_budget_tokens field (set in payload assembly elsewhere),
+// NOT here. llama.cpp's check is `if (reasoning_budget == -1 &&
+// body.contains("thinking_budget_tokens"))` — meaning the launch-time
+// --reasoning-budget flag must be UNSET (default -1) for the
+// per-request value to apply. See discussion #21445.
 func (c *openAIClient) llamacppChatTemplateKwargs(cfg ChatConfig) map[string]any {
 	if cfg.Think == nil {
 		return nil // let the server's launch default apply
 	}
-	return map[string]any{"enable_thinking": *cfg.Think}
+	// On no-think calls, send enable_thinking=false only if the operator
+	// has NoThinkUseKwarg enabled (default true — proven reliable on
+	// Qwen 3 unified + Gemma 4). Operators on models where the kwarg
+	// causes scaffold breakage can disable it and rely on the budget
+	// cap + optional /no_think prepends instead.
+	if !*cfg.Think {
+		if c.noThinkUseKwarg {
+			return map[string]any{"enable_thinking": false}
+		}
+		return nil
+	}
+	return map[string]any{"enable_thinking": true}
 }
 
 // Ping implements the Pinger interface. For Ollama it issues a bounded
@@ -979,9 +1143,11 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	if cfg.Temperature != nil {
 		options["temperature"] = *cfg.Temperature
 	}
-	if cfg.MaxTokens > 0 {
-		options["num_predict"] = cfg.MaxTokens
-	}
+	// num_predict (Ollama's max_tokens) intentionally omitted — local
+	// inference doesn't need a billing/rate-limit cap, and Ollama's
+	// default of -1 (unlimited) lets EOS terminate naturally. See
+	// isLocal() comment.
+	_ = cfg.MaxTokens
 	payload := nativeOllamaChatRequest{
 		Model:    cfg.Model,
 		Messages: msgs,
@@ -1107,9 +1273,9 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	if cfg.Temperature != nil {
 		options["temperature"] = *cfg.Temperature
 	}
-	if cfg.MaxTokens > 0 {
-		options["num_predict"] = cfg.MaxTokens
-	}
+	// num_predict intentionally omitted for the same reason as the
+	// non-streaming path above — let EOS terminate naturally.
+	_ = cfg.MaxTokens
 	payload := nativeOllamaChatRequest{
 		Model:    cfg.Model,
 		Messages: msgs,
@@ -1280,10 +1446,24 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		cfg.Think = &f
 	}
 	applyVisionDefaults(&cfg, messages)
+	c.applyDynamicThinkBudget(&cfg, messages)
+	if c.shouldApplyNoThinkDirective(cfg) {
+		messages = c.applyNoThinkDirective(&cfg, messages)
+	}
+	// Drop max_tokens for local providers (llama.cpp / Ollama).
+	// Local inference has no per-token billing or rate limit, so
+	// caller-supplied caps are defensive/legacy and have a nasty
+	// failure mode — clipping structured output mid-string when the
+	// caller underestimates response size. Cloud providers keep the
+	// cap as a billing guard.
+	maxTokens := cfg.MaxTokens
+	if c.isLocal() {
+		maxTokens = 0
+	}
 	payload := oaiRequest{
 		Model:       cfg.Model,
 		Messages:    c.buildMessages(cfg, messages),
-		MaxTokens:   cfg.MaxTokens,
+		MaxTokens:   maxTokens,
 		Temperature: cfg.Temperature,
 		Tools:       buildOAITools(cfg.Tools),
 	}
@@ -1357,8 +1537,6 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		finishReason = result.Choices[0].FinishReason
 		toolCalls = parseOAIToolCalls(result.Choices[0].Message.ToolCalls)
 
-		Trace("[%s]: <-- RAW content (%d chars): %s", c.provider(), len(content), content)
-		Trace("[%s]: <-- RAW reasoning (%d chars): %s", c.provider(), len(reasoning), reasoning)
 
 		// Ollama's OpenAI-compatible endpoint embeds <think> blocks
 		// directly in content rather than separating them into reasoning.
@@ -1373,6 +1551,18 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 				reasoning = strings.TrimSpace(content[len("<think>"):])
 				content = ""
 			}
+		}
+		// Defensive cleanup for backends that populate reasoning_content
+		// AND still leak think-block fragments into content (Qwen3 dense
+		// + llama.cpp chat-template variants do this). Strip any full
+		// <think>...</think> blocks, then peel a leading bare </think>
+		// that the model emitted as a closer for content the server
+		// already split off into reasoning_content.
+		if strings.Contains(content, "<think>") {
+			content = strings.TrimSpace(thinkBlockRE.ReplaceAllString(content, ""))
+		}
+		if trimmed := strings.TrimLeft(content, " \t\r\n"); strings.HasPrefix(trimmed, "</think>") {
+			content = strings.TrimSpace(strings.TrimPrefix(trimmed, "</think>"))
 		}
 
 		// Always trace reasoning when present.
@@ -1466,10 +1656,20 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		cfg.Think = &f
 	}
 	applyVisionDefaults(&cfg, messages)
+	c.applyDynamicThinkBudget(&cfg, messages)
+	if c.shouldApplyNoThinkDirective(cfg) {
+		messages = c.applyNoThinkDirective(&cfg, messages)
+	}
+	// Drop max_tokens for local providers — see non-streaming path
+	// above for rationale.
+	streamMaxTokens := cfg.MaxTokens
+	if c.isLocal() {
+		streamMaxTokens = 0
+	}
 	payload := oaiRequest{
 		Model:         cfg.Model,
 		Messages:      c.buildMessages(cfg, messages),
-		MaxTokens:     cfg.MaxTokens,
+		MaxTokens:     streamMaxTokens,
 		Temperature:   cfg.Temperature,
 		Stream:        true,
 		StreamOptions: &oaiStreamOptions{IncludeUsage: true},
@@ -1639,6 +1839,19 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 			reasoning.WriteString(strings.TrimSpace(raw[len("<think>"):]))
 			full.Reset()
 		}
+	}
+	// Defensive cleanup for backends that stream reasoning into a
+	// separate field AND still leak think-block fragments into content
+	// (Qwen3 dense + llama.cpp chat-template variants).
+	if strings.Contains(full.String(), "<think>") {
+		cleaned := strings.TrimSpace(thinkBlockRE.ReplaceAllString(full.String(), ""))
+		full.Reset()
+		full.WriteString(cleaned)
+	}
+	if trimmed := strings.TrimLeft(full.String(), " \t\r\n"); strings.HasPrefix(trimmed, "</think>") {
+		cleaned := strings.TrimSpace(strings.TrimPrefix(trimmed, "</think>"))
+		full.Reset()
+		full.WriteString(cleaned)
 	}
 
 	// Always trace reasoning when present.

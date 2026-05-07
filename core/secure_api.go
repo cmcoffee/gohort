@@ -51,6 +51,13 @@ const (
 	SecureCredHeader    = "header"
 	SecureCredQuery     = "query"
 	SecureCredBasicAuth = "basic_auth"
+	// SecureCredNone is for unauthenticated public APIs (Open-Meteo,
+	// wttr.in, etc.). Carries no secret, injects no auth header, but
+	// still goes through the same allow-list, audit, and rate-limit
+	// machinery as authenticated credentials. Lets the LLM wrap public
+	// HTTPS endpoints as api-mode tools without writing a Python
+	// urllib client around them.
+	SecureCredNone = "none"
 )
 
 // SecureCredential is the public-facing record. Secret is held in a
@@ -73,15 +80,23 @@ type SecureCredential struct {
 	// which deserialize to the zero value — keep their default-on
 	// behavior.
 	Disabled bool `json:"disabled,omitempty"`
-	// HideFromCatalog skips the auto-generated `call_<name>` direct
-	// tool from the LLM's catalog while leaving the credential
-	// dispatchable for wrapped temp tools that reference it by name.
-	// Use this once specific persistent tools have been approved for
-	// the credential — the LLM can still place_call / get_call_status
-	// via the wrappers but no longer has the wide-open `call_vapi`
-	// to improvise against. Different from Disabled: dispatch keeps
-	// working for approved wrappers; only the catalog entry hides.
-	HideFromCatalog bool `json:"hide_from_catalog,omitempty"`
+	// Restricted removes the auto-generated `call_<name>` direct
+	// tool from every agent surface (chat, phantom, anywhere). The
+	// LLM cannot invoke the credential directly under any
+	// circumstance — only admin-approved wrapped temp tools that
+	// reference it by name (place_call, etc.) keep dispatching
+	// through it. Use this once specific wrappers have been approved
+	// so the LLM is forced down a reviewed path instead of
+	// improvising against the raw `call_<name>`. Different from
+	// Disabled: Disabled kills the credential outright (wrappers
+	// fail too); Restricted leaves wrappers working and only removes
+	// the direct route. The inverse state is "Open" — direct
+	// `call_<name>` exposed for the LLM to improvise against.
+	//
+	// Renamed from HideFromCatalog (2026-05); pre-rename gob records
+	// decode into Restricted=false, so any previously-restricted
+	// credential must be re-restricted once after upgrade.
+	Restricted bool `json:"restricted,omitempty"`
 	// AllowedMethods restricts which HTTP methods the LLM may use
 	// against this credential. Empty/nil = all methods allowed
 	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
@@ -120,9 +135,22 @@ type SecureAPIAuditEntry struct {
 
 const (
 	// secureAPIMaxResponseBytes caps response bodies returned to the
-	// LLM as text. Beyond this the body is truncated with a notice.
-	// Prevents a runaway endpoint from blowing the LLM's context.
-	secureAPIMaxResponseBytes = 1 * 1024 * 1024 // 1 MB
+	// LLM as text directly (no pipe). 256KB ≈ ~64K tokens — generous
+	// for most APIs but leaves room for prompt + tool history within
+	// a 200K-class context window. Use save_to for large binary
+	// content; use response_pipe in api-mode tool defs to jq-filter
+	// large JSON down to needed fields before context.
+	secureAPIMaxResponseBytes = 256 * 1024 // 256 KB
+
+	// secureAPIMaxResponseBytesForPipe is the higher input cap used
+	// when the caller has a response_pipe configured. The pipe will
+	// project the response down to a small output, so reading more
+	// of it doesn't bloat the LLM's context. This is what enables
+	// list-style endpoints (Vapi /call?limit=50, etc.) to be safely
+	// jq-filtered to {id, status, cost} projections — without this,
+	// the prior 256KB read cap truncated the JSON mid-string and jq
+	// would fail with "Unfinished string at EOF".
+	secureAPIMaxResponseBytesForPipe = 4 * 1024 * 1024 // 4 MB
 
 	// secureAPIMaxSaveBytes caps response bodies written to the
 	// workspace via save_to. Higher than the text cap because the
@@ -170,8 +198,38 @@ func Secure() *SecureAPI {
 	}
 	if secureAPIInstance.db == nil && AuthDB != nil {
 		secureAPIInstance.db = AuthDB()
+		// Bootstrap the always-on "none" credential the moment we
+		// have a DB. Idempotent — Add upserts on existing records,
+		// and ensureNoneCredential is a no-op when the entry is
+		// already present.
+		secureAPIInstance.ensureNoneCredential()
 	}
 	return secureAPIInstance
+}
+
+// ensureNoneCredential installs a credential literally named "none"
+// with Type=SecureCredNone and a wide-open allow-list, so the LLM
+// can target unauthenticated public APIs as `credential="none"`
+// without the operator having to register anything. The pattern
+// can be tightened later via the admin UI if scope-limiting is
+// desired (e.g. "https://api.open-meteo.com/**").
+func (s *SecureAPI) ensureNoneCredential() {
+	if s == nil || s.db == nil {
+		return
+	}
+	const name = "none"
+	if _, ok := s.Load(name); ok {
+		return
+	}
+	c := SecureCredential{
+		Name:              name,
+		Type:              SecureCredNone,
+		AllowedURLPattern: "https://**",
+		Description:       "Public unauthenticated HTTPS endpoints (Open-Meteo, wttr.in, etc.). No auth header injected; allow-list pattern + audit log + rate limits still apply. Tighten the URL pattern in admin if you want to scope it.",
+	}
+	if err := s.Save(c, ""); err != nil {
+		Debug("[secure_api] bootstrap of \"none\" credential failed: %v", err)
+	}
 }
 
 // ready returns true when the store has a usable DB binding.
@@ -191,9 +249,9 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		return fmt.Errorf("name must be lowercase letters/digits/underscores only")
 	}
 	switch c.Type {
-	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth:
+	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
 	default:
-		return fmt.Errorf("type must be bearer, header, query, or basic_auth")
+		return fmt.Errorf("type must be bearer, header, query, basic_auth, or none")
 	}
 	if (c.Type == SecureCredHeader || c.Type == SecureCredQuery) && strings.TrimSpace(c.ParamName) == "" {
 		return fmt.Errorf("type %q requires a param_name", c.Type)
@@ -214,6 +272,15 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		c.LastUsedAt = existing.LastUsedAt
 	} else {
 		c.CreatedAt = time.Now()
+	}
+	// Type "none" carries no secret. Persist a placeholder so the
+	// dispatch path's loadSecret check still finds something (and
+	// can short-circuit safely), and skip all the secret-required
+	// branching below.
+	if c.Type == SecureCredNone {
+		s.db.Set(secureAPITable, c.Name, c)
+		s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), "(none)")
+		return nil
 	}
 	// Secret is required on first save, optional on update — empty
 	// secret on update means "leave the existing encrypted value in
@@ -281,12 +348,13 @@ func (s *SecureAPI) SetDisabled(name string, disabled bool) error {
 	return nil
 }
 
-// SetHideFromCatalog toggles the per-credential HideFromCatalog flag.
-// When true, the credential is dispatchable by wrapped temp tools but
-// no longer produces a `call_<name>` direct tool in the LLM's catalog.
-// Used to "graduate" a credential to specific approved wrappers and
-// remove the wide-open improvisation surface.
-func (s *SecureAPI) SetHideFromCatalog(name string, hide bool) error {
+// SetRestricted toggles the per-credential Restricted flag. When
+// true, the credential becomes wrapper-only: dispatchable through
+// admin-approved api-mode temp tools but no longer producing a
+// `call_<name>` direct tool in any agent's catalog. Used to
+// "graduate" a credential from Open (improvisation allowed) to
+// Restricted (only reviewed wrappers can use it).
+func (s *SecureAPI) SetRestricted(name string, restricted bool) error {
 	if !s.ready() || name == "" {
 		return fmt.Errorf("name required")
 	}
@@ -296,7 +364,7 @@ func (s *SecureAPI) SetHideFromCatalog(name string, hide bool) error {
 	if !s.db.Get(secureAPITable, name, &c) {
 		return fmt.Errorf("credential %q not found", name)
 	}
-	c.HideFromCatalog = hide
+	c.Restricted = restricted
 	s.db.Set(secureAPITable, name, c)
 	return nil
 }
@@ -385,6 +453,14 @@ func (s *SecureAPI) loadSecret(name string) (string, bool) {
 // sess may be nil for callers that don't have a session (e.g. tool
 // catalog enumeration outside a request). With a nil session, save_to
 // becomes unusable but text-mode responses still work.
+//
+// Respects both Disabled (hard kill) and Restricted (the admin
+// "Restrict" toggle). A restricted credential is unreachable as a
+// direct call_<name> tool from any agent surface — chat, phantom,
+// anywhere — but admin-approved wrapped tools that reference it
+// (api-mode temp tools) still dispatch through DispatchToolCall.
+// That's the whole point: force the LLM through a reviewed wrapper
+// instead of improvising against the raw credential.
 func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	if !s.ready() {
 		return nil
@@ -392,29 +468,22 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	allKeys := s.db.Keys(secureAPITable)
 	creds := s.List()
 	out := make([]AgentToolDef, 0, len(creds))
-	disabledCount := 0
 	for _, c := range creds {
-		if c.Disabled {
-			disabledCount++
-			continue
-		}
-		if c.HideFromCatalog {
-			// Credential is active for wrapped tools but hidden as a
-			// direct call_<name> entry. Skip the auto-built tool.
-			// Dispatch via DispatchToolCall (used by api-mode temp
-			// tools) is unaffected.
+		if c.Disabled || c.Restricted {
+			// Disabled = hard kill; Restricted = wrapper-only. Either
+			// way, no direct call_<name> exposure. Dispatch via
+			// DispatchToolCall (used by api-mode temp tools) is
+			// unaffected by Restricted.
 			continue
 		}
 		out = append(out, s.agentToolFromCredential(c, sess))
 	}
-	if len(allKeys) > 0 && len(out) == 0 {
-		Debug("[secure_api] BuildTools: %d keys in table, %d credentials decoded, %d disabled, 0 enabled — check key names, struct decode, or Disabled flag", len(allKeys), len(creds), disabledCount)
-		for _, k := range allKeys {
-			Debug("[secure_api]   key: %q", k)
-		}
-		for _, c := range creds {
-			Debug("[secure_api]   credential: name=%q type=%q disabled=%v allowed=%q", c.Name, c.Type, c.Disabled, c.AllowedURLPattern)
-		}
+	// Decode-mismatch diagnostic: only fires on the genuine failure
+	// shape — the table has keys but nothing deserialized into a
+	// SecureCredential. Empty-output states caused by Disabled or
+	// Restricted are normal and shouldn't emit noise.
+	if len(allKeys) > 0 && len(creds) == 0 {
+		Debug("[secure_api] BuildTools: %d keys in table but 0 credentials decoded — check struct compat against persisted records", len(allKeys))
 	}
 	return out
 }
@@ -468,6 +537,22 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 // per-credential tool. sess provides workspace context for save_to;
 // nil disables the save_to capability for this call.
 func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, false)
+}
+
+// DispatchToolCallForPipe is identical to DispatchToolCall but signals
+// that the caller will run the response through a sandboxed pipe
+// (jq/awk/sed) before exposing it to the LLM. The internal dispatch
+// reads with a higher byte cap (secureAPIMaxResponseBytesForPipe) and
+// skips the output truncation marker, since the pipe will project the
+// body down to a small output that fits in context. Use only when a
+// pipe is genuinely going to run; calling this without piping leaks
+// the full response into LLM context.
+func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr, method, body string) (string, error) {
+	return s.dispatchToolCall(sess, credName, urlStr, method, body, true)
+}
+
+func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body string, pipeFollowing bool) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
 	}
@@ -481,6 +566,9 @@ func (s *SecureAPI) DispatchToolCall(sess *ToolSession, credName, urlStr, method
 	}
 	if body != "" {
 		args["body"] = body
+	}
+	if pipeFollowing {
+		args["__pipe_following"] = true
 	}
 	return s.dispatch(c, args, sess)
 }
@@ -500,7 +588,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// Fail-closed on Disabled. BuildTools already hides disabled
 	// credentials from the LLM catalog, but pre-existing watchers and
 	// approved api-mode temp tools dispatch through this path
-	// directly and would otherwise keep firing. HideFromCatalog is the
+	// directly and would otherwise keep firing. Restricted is the
 	// soft variant — it stays dispatchable on purpose so vetted
 	// wrappers keep working — Disabled is the hard kill switch.
 	if c.Disabled {
@@ -593,12 +681,20 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		return "", fmt.Errorf("non-https URL not allowed for credential %q", c.Name)
 	}
 
-	secret, ok := s.loadSecret(c.Name)
-	if !ok {
-		return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
-	}
-	if secret == "" {
-		return "", fmt.Errorf("credential %q has empty secret", c.Name)
+	// Type "none" carries no auth — public unauthenticated endpoints.
+	// Skip the secret-load gate; the dispatch switch below also skips
+	// the auth-injection branch for this type. AllowedURLPattern,
+	// audit logging, rate limits, and HTTPS enforcement still apply.
+	var secret string
+	if c.Type != SecureCredNone {
+		var ok bool
+		secret, ok = s.loadSecret(c.Name)
+		if !ok {
+			return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
+		}
+		if secret == "" {
+			return "", fmt.Errorf("credential %q has empty secret", c.Name)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), secureAPIRequestTimeout)
@@ -646,6 +742,8 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		}
 		auth := base64.StdEncoding.EncodeToString([]byte(secret))
 		req.Header.Set("Authorization", "Basic "+auth)
+	case SecureCredNone:
+		// Public unauthenticated endpoint — no auth header injected.
 	default:
 		return "", fmt.Errorf("unknown credential type %q", c.Type)
 	}
@@ -710,7 +808,18 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			resp.StatusCode, http.StatusText(resp.StatusCode), written, saveTo, ct, saveTo), nil
 	}
 
-	limited := io.LimitReader(resp.Body, secureAPIMaxResponseBytes+1)
+	// Read cap is higher when a response_pipe is going to project the
+	// body down before the LLM sees it. Without that hint, we'd cut
+	// large JSON mid-string and the pipe (jq) would fail to parse.
+	// The pipe-output cap (maxOutput in temptool.go) handles the
+	// LLM-visible side, so the pipe path is safe with a larger
+	// upstream read.
+	pipeFollowing, _ := args["__pipe_following"].(bool)
+	readCap := secureAPIMaxResponseBytes
+	if pipeFollowing {
+		readCap = secureAPIMaxResponseBytesForPipe
+	}
+	limited := io.LimitReader(resp.Body, int64(readCap)+1)
 	bodyBytes, err := io.ReadAll(limited)
 	if err != nil {
 		auditEntry.Status = resp.StatusCode
@@ -719,9 +828,15 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		return "", fmt.Errorf("read response: %s", redact(err.Error()))
 	}
 	truncated := false
-	if len(bodyBytes) > secureAPIMaxResponseBytes {
-		bodyBytes = bodyBytes[:secureAPIMaxResponseBytes]
+	if len(bodyBytes) > readCap {
+		bodyBytes = bodyBytes[:readCap]
 		truncated = true
+	}
+	// When piping, suppress the truncation marker — the pipe filters
+	// down anyway, the marker would just contaminate the LLM-visible
+	// projected output. The pipe operates on whatever bytes we read.
+	if pipeFollowing {
+		truncated = false
 	}
 	if redacted := redact(string(bodyBytes)); redacted != string(bodyBytes) {
 		bodyBytes = []byte(redacted)
@@ -741,7 +856,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if pretty, err := json.MarshalIndent(anyVal, "", "  "); err == nil {
 				sb.Write(pretty)
 				if truncated {
-					sb.WriteString("\n... [TRUNCATED — response exceeded 1MB cap]")
+					sb.WriteString("\n... [TRUNCATED — response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
 				}
 				return sb.String(), nil
 			}
@@ -749,7 +864,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	}
 	sb.Write(bodyBytes)
 	if truncated {
-		sb.WriteString("\n... [TRUNCATED — response exceeded 1MB cap]")
+		sb.WriteString("\n... [TRUNCATED — response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
 	}
 	return sb.String(), nil
 }

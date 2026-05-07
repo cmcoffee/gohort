@@ -174,8 +174,8 @@ func (t *WriteFileTool) Run(args map[string]any) (string, error) {
 }
 
 func (t *WriteFileTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
-	if sess == nil || sess.WorkspaceDir == "" {
-		return "", fmt.Errorf("write_file requires a session with WorkspaceDir set")
+	if _, err := EnsureSessionWorkspace(sess); err != nil {
+		return "", fmt.Errorf("write_file: %w", err)
 	}
 	rel, _ := args["path"].(string)
 	content, _ := args["content"].(string)
@@ -229,5 +229,14 @@ func (t *WriteFileTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	default:
 		return "", fmt.Errorf("invalid mode %q (use create | overwrite | append)", mode)
 	}
-	return fmt.Sprintf("wrote %d bytes to %s (mode=%s)", len(content), rel, mode), nil
+	// In-band next-step hint. Kept as plain prose without tool-call
+	// syntax so PromptTools-mode parsers don't mistake the example
+	// for a real call shape and so models like Qwen don't echo the
+	// placeholder back as visible chat content. The bare verbs are
+	// enough — the model already has the catalog and knows the
+	// argument shape; this just nudges intent.
+	return fmt.Sprintf(
+		"wrote %d bytes to %s (mode=%s). If this is executable code, run it to test — or define a reusable tool that wraps it. If it is data or output, no further action is needed.",
+		len(content), rel, mode,
+	), nil
 }

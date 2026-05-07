@@ -730,7 +730,13 @@ func (T *AppCore) WorkerChat(ctx context.Context, messages []Message, opts ...Ch
 	// (e.g. title generation) pass WithThink(false) explicitly.
 	if probe.Think == nil {
 		opts = append(opts, WithThink(true))
+		probe.Think = func() *bool { v := true; return &v }()
 	}
+	// Dynamic think budget is now handled at the LLM client layer
+	// (core/llm_openai.go applyDynamicThinkBudget) so every call
+	// path — Chat, ChatStream, Session.ChatStream, WorkerChat —
+	// gets the same correct sizing without duplicating logic here.
+	// Callers can still override per-call via WithThinkBudget.
 	start := time.Now()
 	resp, err := T.LLM.Chat(ctx, messages, opts...)
 	elapsed := time.Since(start)
@@ -1246,27 +1252,28 @@ type TempTool struct {
 	// Adding a pipe upgrades the wrapper tool's required caps to
 	// include CapExecute.
 	ResponsePipe string `json:"response_pipe,omitempty"`
-	// ArchivePath, when set, points to a tar.gz on disk holding the
-	// tool's code (scripts, helpers, fixtures) at approval time. The
-	// path is relative to WorkspacesDir() — typically
-	// "_tools/<owner>/<name>.tar.gz". On every dispatch, the
-	// dispatcher creates a per-invocation tmpdir, extracts this
-	// archive into it, runs the command, then tears the tmpdir down.
-	// DB stays small; tar files are inspectable + standard-backup-
-	// friendly. Empty for ad-hoc shell tools whose CommandTemplate is
-	// fully self-contained (e.g. "uname -a").
-	ArchivePath string `json:"archive_path,omitempty"`
-	// ArchiveSize and ArchiveHash track the archive's metadata for
-	// integrity / admin display.
-	ArchiveSize int64  `json:"archive_size,omitempty"`
-	ArchiveHash string `json:"archive_hash,omitempty"`
+	// Recipe is a declarative manifest of files that get deployed
+	// into a fresh sandbox dir on every dispatch. Replaces the older
+	// tar.gz-snapshot model: the recipe is human-readable, diffable,
+	// editable, and rebuilds identically every time. Empty for self-
+	// contained shell tools (e.g. "uname -a") whose CommandTemplate
+	// references no files.
+	Recipe []RecipeFile `json:"recipe,omitempty"`
 	// StatePath, when set, names a relative subdirectory inside the
-	// extracted workspace whose contents are preserved across
-	// invocations (rsync'd from a per-tool _state/ dir before each
-	// run, rsync'd back after). Use for tools that legitimately need
-	// runtime state (counters, accumulating logs, cached lookup DBs).
-	// Everything else is rebuilt fresh from the archive each fire.
+	// deployed sandbox whose contents are preserved across dispatches.
+	// Use for tools that legitimately need runtime state (counters,
+	// accumulating logs, cached lookup DBs). Everything else outside
+	// state_path is rebuilt fresh from the recipe each fire.
 	StatePath string `json:"state_path,omitempty"`
+}
+
+// RecipeFile is one file in a TempTool's deployment recipe. Path is
+// relative to the deployed sandbox dir. Mode defaults to 0700 if
+// unset (sufficient for scripts and data files).
+type RecipeFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+	Mode    uint32 `json:"mode,omitempty"`
 }
 
 // AppendTempTool registers a temp tool on the session. Returns an error

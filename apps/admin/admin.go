@@ -330,26 +330,29 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
-				case "hide":
-					// Lock the credential to wrapped tools only — the
-					// generic call_<name> direct tool stops appearing in
-					// the LLM's catalog. Approved temp tools that
-					// reference the credential by name still dispatch.
-					if err := Secure().SetHideFromCatalog(name, true); err != nil {
+				case "restrict", "lock", "hide":
+					// Restrict the credential to wrapped tools only —
+					// the generic call_<name> direct tool stops
+					// appearing in any agent's catalog (chat, phantom,
+					// anywhere). Approved temp tools that reference the
+					// credential by name still dispatch. ("lock"/"hide"
+					// kept as aliases for older clients still POSTing
+					// the old verbs.)
+					if err := Secure().SetRestricted(name, true); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
-				case "show":
+				case "open", "unlock", "show":
 					// Re-expose the call_<name> direct tool. Used to
-					// undo a "hide" — usually because the LLM needs to
-					// improvise against the API again to discover a new
-					// shape worth wrapping.
-					if err := Secure().SetHideFromCatalog(name, false); err != nil {
+					// undo a "restrict" — usually because the LLM
+					// needs to improvise against the API again to
+					// discover a new shape worth wrapping.
+					if err := Secure().SetRestricted(name, false); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
 				default:
-					http.Error(w, "action must be enable|disable|hide|show", http.StatusBadRequest)
+					http.Error(w, "action must be enable|disable|restrict|open", http.StatusBadRequest)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -3090,7 +3093,7 @@ function renderCredentialCard(c) {
   meta.style.cssText = 'font-size:0.75rem;color:#8b949e;margin-top:0.15rem';
   var bits = [c.type];
   if (c.disabled) bits.push('DISABLED');
-  if (c.hide_from_catalog) bits.push('WRAPPER-ONLY');
+  if (c.restricted) bits.push('RESTRICTED');
   if (c.requires_confirm) bits.push('requires confirm');
   if (c.allowed_methods && c.allowed_methods.length) bits.push(c.allowed_methods.join('/'));
   if (c.max_calls_per_day) bits.push('cap ' + c.max_calls_per_day + '/day');
@@ -3118,12 +3121,19 @@ function renderCredentialCard(c) {
   toggleBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + (c.disabled ? '#2ea043' : '#d29922') + ';border-radius:5px;color:' + (c.disabled ? '#56d364' : '#d29922') + ';font-size:0.8rem;cursor:pointer';
   toggleBtn.onclick = function(){ toggleCredential(c.name, c.disabled); };
   btns.appendChild(toggleBtn);
-  var lockBtn = document.createElement('button');
-  lockBtn.textContent = c.hide_from_catalog ? 'Unlock' : 'Lock';
-  lockBtn.title = c.hide_from_catalog ? 'Re-expose call_' + c.name + ' as a direct tool the LLM can improvise against' : 'Hide call_' + c.name + ' from the LLM catalog. Approved wrapped tools that reference this credential keep working.';
-  lockBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + (c.hide_from_catalog ? '#388bfd' : '#8b949e') + ';border-radius:5px;color:' + (c.hide_from_catalog ? '#58a6ff' : '#c9d1d9') + ';font-size:0.8rem;cursor:pointer';
-  lockBtn.onclick = function(){ toggleCredentialHide(c.name, c.hide_from_catalog); };
-  btns.appendChild(lockBtn);
+  var secureBtn = document.createElement('button');
+  // Single-label toggle: text is always "Secure". Color carries the
+  // state — green/active when restricted (no direct call_<name>),
+  // muted grey when open (direct tool exposed). The button action
+  // is "make it more secure" → so the click flips toward restricted
+  // when grey, and back to open when green.
+  secureBtn.textContent = 'Secure';
+  secureBtn.title = c.restricted ? 'Restricted: call_' + c.name + ' is hidden from every agent. Click to re-open it for direct LLM use.' : 'Open: call_' + c.name + ' is exposed as a direct tool. Click to restrict it to approved wrapped tools only.';
+  var borderColor = c.restricted ? '#2ea043' : '#8b949e';
+  var textColor = c.restricted ? '#56d364' : '#8b949e';
+  secureBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid ' + borderColor + ';border-radius:5px;color:' + textColor + ';font-size:0.8rem;cursor:pointer';
+  secureBtn.onclick = function(){ toggleCredentialRestrict(c.name, c.restricted); };
+  btns.appendChild(secureBtn);
   var auditBtn = document.createElement('button');
   auditBtn.textContent = 'Audit';
   auditBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
@@ -3179,12 +3189,12 @@ function toggleCredential(name, currentlyDisabled) {
     });
 }
 
-// toggleCredentialHide flips HideFromCatalog on the credential —
-// "Lock" hides the auto-generated call_<name> tool from the LLM
-// catalog so only approved wrapped tools (place_call, etc.) can use
-// the credential. "Unlock" re-exposes the direct call_<name> tool.
-function toggleCredentialHide(name, currentlyHidden) {
-  var action = currentlyHidden ? 'show' : 'hide';
+// toggleCredentialRestrict flips Restricted on the credential —
+// "Restrict" removes the auto-generated call_<name> tool from every
+// agent catalog so only approved wrapped tools (place_call, etc.)
+// can use the credential. "Open" re-exposes the direct call_<name>.
+function toggleCredentialRestrict(name, currentlyRestricted) {
+  var action = currentlyRestricted ? 'open' : 'restrict';
   fetch('api/secure-api?action=' + action + '&name=' + encodeURIComponent(name), {method: 'POST'})
     .then(function(r){
       if (!r.ok) return r.text().then(function(t){ alert(action + ' failed: ' + t); });
@@ -3433,7 +3443,14 @@ function showToolModal(tool, opts) {
   } else {
     section('Command template', tool.command_template || '(empty)', true);
     if (tool.state_path) section('State path', tool.state_path, true);
-    if (tool.archive_path) section('Archive', tool.archive_path + ' (' + (tool.archive_size || 0) + ' bytes)', true);
+    if (tool.recipe && tool.recipe.length) {
+      var recipeLines = tool.recipe.map(function(f) {
+        var modeStr = f.mode ? (' [' + f.mode.toString(8) + ']') : '';
+        var size = (f.content || '').length;
+        return '── ' + f.path + modeStr + ' (' + size + ' bytes)\n' + (f.content || '');
+      }).join('\n\n');
+      section('Recipe (' + tool.recipe.length + ' file' + (tool.recipe.length === 1 ? '' : 's') + ')', recipeLines, true);
+    }
   }
 
   if (tool.params && Object.keys(tool.params).length) {

@@ -518,6 +518,15 @@ type LLMProviderConfig struct {
 	NativeTools     bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
 	OllamaMaxParallel   int         // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
 	LlamacppMaxParallel int         // llama.cpp only: global concurrency cap. Default 1 (llama.cpp is single-threaded). Raise only when the server supports concurrent requests.
+	// NoThink* fields control individual signals sent to llama.cpp on
+	// WithThink(false) calls. Defaults are what's empirically proven
+	// to work on Qwen 3 unified — kwarg + budget alone is sufficient,
+	// the /no_think prepends are opt-in for models where kwarg fails.
+	NoThinkUseKwarg      bool // llama.cpp: send chat_template_kwargs.enable_thinking=false. Default true (proven reliable disable on Qwen 3 unified + Gemma 4).
+	NoThinkSendBudget    bool // llama.cpp: send thinking_budget_tokens cap. Default true (hard ceiling caught when kwarg slips).
+	NoThinkPrependSystem bool // llama.cpp: prepend "/no_think " to system prompt. Default false (off because kwarg+budget alone works); enable as belt-and-suspenders for models where kwarg unreliable.
+	NoThinkPrependUser   bool // llama.cpp: prepend "/no_think " to last user message. Default false (same reasoning as PrependSystem).
+	NoThinkBudget        int  // llama.cpp: thinking_budget_tokens value when NoThinkSendBudget is true. 0 = llamacppNoThinkDefaultBudget (512).
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -531,6 +540,14 @@ func newLLMAPIClient(cfg LLMProviderConfig) *apiclient.APIClient {
 	}
 	requestTimeout := cfg.RequestTimeout
 	if requestTimeout == 0 {
+		// Fallback when operator hasn't set request_timeout_seconds via
+		// --setup or admin UI. 5 minutes is plenty for typical agentic
+		// rounds on Qwen 27B dense with tightened thinking budgets and
+		// /no_think directives — fail-fast is more diagnostic than
+		// waiting 12 minutes for a hung request. Operators running
+		// deep-thinking workloads (research/debate hitting full
+		// dynamic-budget ceilings) should bump this in --setup to 10+
+		// minutes; the override path is unchanged.
 		requestTimeout = 5 * time.Minute
 	}
 	return &apiclient.APIClient{
@@ -680,21 +697,21 @@ func responseIsUseable(resp *Response) bool {
 //   - timeout errors (thinking is the slow part)
 //   - "empty LLM response" errors (model exhausted budget producing nothing)
 //   - successful but empty responses (model produced only reasoning)
+// shouldRetryEmpty reports whether the inner closure in retryLLM
+// should attempt the "hint then drop thinking" recovery path. That
+// path is meant for a specific model-side failure: a 200 response
+// where finish_reason=stop but content/tool_calls are empty (Qwen
+// occasionally does this when thinking ate the budget). Transport
+// failures (timeout, EOF, connection refused) MUST NOT take this
+// path — appending a hint and disabling thinking can't help when
+// the server is unreachable, and each inner attempt re-pays the
+// HTTP timeout. Those errors fall through to doWithRetry, which
+// handles transient transport with exponential backoff.
 func shouldRetryEmpty(resp *Response, err error) bool {
 	if err != nil {
-		return isTimeoutErr(err) || isEmptyResponseErr(err)
+		return isEmptyResponseErr(err)
 	}
 	return !responseIsUseable(resp)
-}
-
-// isTimeoutErr reports whether err looks like an HTTP timeout. Mirrors the
-// same substring check the agent loop used historically.
-func isTimeoutErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return strings.Contains(s, "timeout") || strings.Contains(s, "deadline exceeded")
 }
 
 // isEmptyResponseErr reports whether err is the "empty LLM response" surfaced
@@ -822,6 +839,11 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc.llamacpp = true
 		oc.llamacppBudget = cfg.ThinkingBudget
 		oc.disableThinking = cfg.DisableThinking
+		oc.noThinkUseKwarg = cfg.NoThinkUseKwarg
+		oc.noThinkSendBudget = cfg.NoThinkSendBudget
+		oc.noThinkPrependSystem = cfg.NoThinkPrependSystem
+		oc.noThinkPrependUser = cfg.NoThinkPrependUser
+		oc.noThinkBudget = cfg.NoThinkBudget
 		oc.contextSize = cfg.ContextSize
 		inner = client
 		// Start the serializer so concurrent callers queue here instead

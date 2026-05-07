@@ -22,6 +22,29 @@ func tempToolDefs(sess *ToolSession) []AgentToolDef {
 	return temptool.BuildAgentToolDefs(sess)
 }
 
+// diffNames returns (added, removed) between two lists of tool names,
+// for compact per-round logging. Order-insensitive; the catalog rebuild
+// can return tools in different orders run-to-run.
+func diffNames(prev, curr []string) (added, removed []string) {
+	prevSet := make(map[string]bool, len(prev))
+	for _, n := range prev {
+		prevSet[n] = true
+	}
+	currSet := make(map[string]bool, len(curr))
+	for _, n := range curr {
+		currSet[n] = true
+		if !prevSet[n] {
+			added = append(added, n)
+		}
+	}
+	for _, n := range prev {
+		if !currSet[n] {
+			removed = append(removed, n)
+		}
+	}
+	return added, removed
+}
+
 func (T *ChatAgent) WebPath() string { return "/chat" }
 func (T *ChatAgent) WebName() string { return "Chat" }
 func (T *ChatAgent) WebDesc() string {
@@ -520,20 +543,30 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capability gating: chat permits CapRead + CapNetwork + CapExecute.
+	// Capability gating: chat permits CapRead + CapNetwork + CapExecute
+	// + CapWrite.
+	//
 	// CapExecute is on so dynamically-created shell-mode temp tools
 	// (registered via tool_def with mode="shell") can dispatch — without
 	// it the LLM creates a tool, gets a confirmation, then can't see it
 	// in the next round because BuildAgentToolDefs stamps shell tools
 	// with CapExecute and the cap filter would strip them.
 	//
-	// The dangerous catalog-level execute tools (run_local, run_command,
-	// write_file, send_email) are independently gated by BlockedTools so
-	// they don't reappear in chat just because CapExecute is on. Created
+	// CapWrite is on so the workspace-bounded file tools — workspace
+	// (mint/use scratch dirs) and local (workspace-sandboxed read/write/
+	// run) — appear in the catalog. These are the on-ramp for the
+	// script-wrapping flow: workspace(create) -> local(write script) ->
+	// tool_def(create, mode=shell). Without CapWrite the LLM can't see
+	// the on-ramp and resorts to embedding scripts inside command_template
+	// (shell-quoting hell) or fetching them via api mode (wrong design).
+	//
+	// The dangerous catalog-level tools (run_local, run_command,
+	// write_file, send_email) are independently gated by BlockedTools
+	// so they don't reappear just because their cap is on. Created
 	// shell tools dispatch via RunSandboxedShell against the user's
 	// workspace dir, and tool_def(action=create) is NeedsConfirm=true so
 	// each new tool surfaces a confirmation before it can run.
-	tools = FilterToolsByCaps(tools, []Capability{CapRead, CapNetwork, CapExecute})
+	tools = FilterToolsByCaps(tools, []Capability{CapRead, CapNetwork, CapExecute, CapWrite})
 
 	// Set up SSE headers — single open response, server pushes events as
 	// the agent loop progresses (chunks, tool calls, tool results, done).
@@ -662,8 +695,9 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// land on the right shape) plus an appended directive that
 	// reframes the conversation as a tool-builder workshop.
 	if AuthGetAPIExplorerMode(AuthDB(), sessionUsername(r)) {
-		maxRounds = 30
+		maxRounds = 60
 		systemPrompt += "\n\nAPI EXPLORER MODE — you are operating as a tool-builder. The user's intent is to discover the working shape of an API and SAVE it for future use, not just answer a one-off question.\n" +
+			"- DOCUMENTATION FIRST. Before sending any request, find the API's reference docs (web_search / fetch_url / browse_page). Look specifically for: the canonical endpoint list, request/response schemas, and at least one concrete example request — a curl line, a SDK snippet, anything that shows exactly which fields go where. Reading docs and a real example is faster than guessing field names from training data and burning iterations on 4xx errors. Only attempt the call once you have either documented schema or a working example to model from.\n" +
 			"- For any non-trivial API call, expect to iterate: try a request, READ the error response carefully (it usually names the wrong field), adjust the body, retry. 2-5 iterations is normal.\n" +
 			"- AS SOON AS you land on a working request (any 2xx response), IMMEDIATELY call create_api_tool with persist=true to save the working shape — name it descriptively, hardcode the URL/method/body template with the working schema, expose only the variable bits as params. Tell the user which tool you saved.\n" +
 			"- Do NOT consider the work done after a single successful call — the SAVING is the deliverable. A successful call without a saved tool means the user has to re-discover next time. Saving is mandatory after success.\n" +
@@ -683,8 +717,10 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	// dynamically-created shell-mode temp tools carry CapExecute and
 	// would be stripped on each round's rebuild without it, even
 	// though they're correctly added to the active list. The runtime
-	// catalog has to permit the same caps the session was set up with.
-	allowedCaps := []Capability{CapRead, CapNetwork, CapExecute}
+	// catalog has to permit the same caps the session was set up
+	// with, including CapWrite for the local + workspace-bounded
+	// file tools.
+	allowedCaps := []Capability{CapRead, CapNetwork, CapExecute, CapWrite}
 	// Always-on control-flow tools: keep_going lets the LLM request
 	// another round without emitting visible "let me think" text.
 	// Resolved once and merged into every catalog rebuild so it's
@@ -720,6 +756,7 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	activeTools, toolDefs, handlers := rebuildCatalog()
+	var prevCatalogNames []string
 
 	// In PromptTools mode, inject tool descriptions into the system prompt.
 	if promptTools && len(activeTools) > 0 {
@@ -733,15 +770,33 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		// case and let prompt-tools sessions stick with their initial
 		// catalog. Native tool-calling (the default) sees the dynamic
 		// catalog because it goes via WithTools below.
-		activeTools, toolDefs, handlers = rebuildCatalog()
-		_ = activeTools
-		if round == 1 {
-			names := make([]string, 0, len(toolDefs))
-			for _, td := range toolDefs {
-				names = append(names, td.Name)
-			}
-			Log("[chat] round 1 catalog (%d tools sent to LLM): %v", len(names), names)
+		// Round 1 reuses the pre-loop rebuild result (the one used to
+		// populate the PromptTools system-prompt injection above) so
+		// BuildAgentToolDefs doesn't fire twice in quick succession on
+		// session start. Rounds 2+ rebuild fresh to pick up tools the
+		// LLM created mid-conversation.
+		if round > 1 {
+			activeTools, toolDefs, handlers = rebuildCatalog()
 		}
+		_ = activeTools
+		// Per-round catalog log: fires every round so a temp tool
+		// defined on round N can be seen entering the catalog on
+		// round N+1 (or, if missing, you can pinpoint where the
+		// rebuild dropped it). Compact diff against the prior round
+		// keeps the noise down — only log changes after the first.
+		names := make([]string, 0, len(toolDefs))
+		for _, td := range toolDefs {
+			names = append(names, td.Name)
+		}
+		if round == 1 {
+			Log("[chat] round 1 catalog (%d tools): %v", len(names), names)
+		} else {
+			added, removed := diffNames(prevCatalogNames, names)
+			if len(added) > 0 || len(removed) > 0 {
+				Log("[chat] round %d catalog changed: +%v -%v (now %d tools)", round, added, removed, len(names))
+			}
+		}
+		prevCatalogNames = names
 		opts := []ChatOption{}
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
@@ -750,7 +805,22 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		if !promptTools && len(toolDefs) > 0 && round < maxRounds {
 			opts = append(opts, WithTools(toolDefs))
 		}
-		opts = append(opts, WithMaxTokens(2048), WithThink(false))
+		// No explicit max_tokens: the worker is local llama.cpp, so
+		// there's no per-token cost or rate limit to defend against.
+		// Let the model generate until EOS or context exhaustion —
+		// any artificial cap here just truncates legitimate work
+		// (notably code generation through local(write), where JSON
+		// encoding doubles every \n and quote). Cloud providers
+		// inherit a sane default from the provider client, so removing
+		// this from chat doesn't blow up if someone swaps in OpenAI
+		// or Anthropic.
+		//
+		// Thinking is intentionally NOT set here so the route-level
+		// configuration (admin UI / route_think table) wins. A
+		// hardcoded WithThink(false) used to live here and was
+		// silently overriding the operator's explicit "think on"
+		// setting for chat — code work benefits from reasoning
+		// before each tool decision.
 
 		// Stream this round's response. In PromptTools mode, stream chunks
 		// to the client but hold back a trailing buffer that could be the
@@ -797,10 +867,11 @@ func (T *ChatAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Route to lead or worker based on routing config. Apply thinking override.
+		// Route key must match the one registered in chat.go (app.chat).
 		chatLLM := agent.LLM
-		if RouteToLead("chat.respond") {
+		if RouteToLead("app.chat") {
 			chatLLM = agent.GetLeadLLM()
-		} else if think := RouteThink("chat.respond"); think != nil {
+		} else if think := RouteThink("app.chat"); think != nil {
 			opts = append(opts, WithThink(*think))
 		}
 		// Capture per-round start time so we can emit tokens/sec on
@@ -1747,6 +1818,8 @@ function renderSavedAssistant(text) {
   var hist = document.getElementById('chat-history');
   var div = document.createElement('div');
   div.className = 'chat-msg assistant';
+  var thread = document.createElement('div');
+  thread.className = 'thread';
   var content;
   if (typeof renderMarkdown === 'function' && text) {
     content = document.createElement('div');
@@ -1757,10 +1830,8 @@ function renderSavedAssistant(text) {
     content.className = 'content';
     content.textContent = text;
   }
-  div.appendChild(content);
-  var tools = document.createElement('div');
-  tools.className = 'tools';
-  div.appendChild(tools);
+  thread.appendChild(content);
+  div.appendChild(thread);
   addAssistantActions(div, text);
   hist.appendChild(div);
 }
@@ -2048,7 +2119,7 @@ function createAssistantPlaceholder() {
   // tool_call event. removeThinkingDots() clears them on any
   // activity in the bubble.
   div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>'
-    + '<pre class="content"></pre><div class="tools"></div>';
+    + '<div class="thread"></div>';
   hist.appendChild(div);
   scrollHistoryToBottom();
   return div;
@@ -2059,17 +2130,41 @@ function removeThinkingDots(msgEl) {
   if (dots) dots.remove();
 }
 
+// activeTextSegment returns the trailing <pre class="content"> in the
+// thread when one is currently open for streaming. Tool events break
+// the segment by clearing the data-active flag so the next chunk
+// starts a fresh <pre> below the tool card. Returns null when no
+// segment is active.
+function activeTextSegment(msgEl) {
+  var thread = msgEl.querySelector('.thread');
+  if (!thread) return null;
+  var segs = thread.querySelectorAll('pre.content[data-active="1"]');
+  return segs.length ? segs[segs.length - 1] : null;
+}
+
+function newTextSegment(msgEl) {
+  var thread = msgEl.querySelector('.thread');
+  var pre = document.createElement('pre');
+  pre.className = 'content';
+  pre.dataset.active = '1';
+  thread.appendChild(pre);
+  return pre;
+}
+
 function appendChunk(msgEl, text) {
   removeThinkingDots(msgEl);
-  var pre = msgEl.querySelector('.content');
+  var pre = activeTextSegment(msgEl) || newTextSegment(msgEl);
   pre.textContent += text;
-  var hist = document.getElementById('chat-history');
   scrollHistoryToBottom();
 }
 
 function appendToolCall(msgEl, name, args) {
   removeThinkingDots(msgEl);
-  var tools = msgEl.querySelector('.tools');
+  // Close the current text segment so the tool card sits on its own
+  // line and any further text streams into a fresh segment beneath it.
+  var open = activeTextSegment(msgEl);
+  if (open) open.dataset.active = '0';
+  var thread = msgEl.querySelector('.thread');
   var tc = document.createElement('details');
   tc.className = 'tool-call pending';
   tc.dataset.name = name;
@@ -2078,20 +2173,19 @@ function appendToolCall(msgEl, name, args) {
     + '<div class="args">args: ' + escapeHtml(args) + '</div>'
     + '<div class="result"></div>'
     + '</div>';
-  tools.appendChild(tc);
-  var hist = document.getElementById('chat-history');
+  thread.appendChild(tc);
   scrollHistoryToBottom();
 }
 
 function appendToolResult(msgEl, name, result) {
-  var tools = msgEl.querySelector('.tools');
-  var pending = tools.querySelectorAll('.tool-call.pending');
+  var thread = msgEl.querySelector('.thread');
+  if (!thread) return;
+  var pending = thread.querySelectorAll('.tool-call.pending');
   for (var i = pending.length - 1; i >= 0; i--) {
     if (pending[i].dataset.name === name) {
       pending[i].classList.remove('pending');
       pending[i].querySelector('.tool-status').textContent = '✓';
       pending[i].querySelector('.result').textContent = 'result: ' + result;
-      var hist = document.getElementById('chat-history');
       scrollHistoryToBottom();
       return;
     }
@@ -2185,11 +2279,11 @@ function appendThinkingChunk(msgEl, text) {
     var body = document.createElement('pre');
     body.className = 'thinking-body';
     details.appendChild(body);
-    // Insert before .content so reasoning shows above the (eventual)
-    // visible answer.
-    var content = msgEl.querySelector('.content');
-    if (content) {
-      msgEl.insertBefore(details, content);
+    // Insert before the streaming thread so reasoning shows above
+    // the (eventual) visible answer + tool cards.
+    var thread = msgEl.querySelector('.thread');
+    if (thread) {
+      msgEl.insertBefore(details, thread);
     } else {
       msgEl.appendChild(details);
     }
@@ -2266,8 +2360,11 @@ function appendError(msgEl, text) {
   if (msgEl) {
     removeThinkingDots(msgEl);
     msgEl.classList.add('error');
-    var pre = msgEl.querySelector('.content');
-    if (pre) pre.textContent += '\n[error] ' + text;
+    // Append the error to the active text segment so it lands at the
+    // bottom of the thread next to whatever streamed last. Falls back
+    // to a fresh segment if no text streamed.
+    var pre = activeTextSegment(msgEl) || newTextSegment(msgEl);
+    pre.textContent += '\n[error] ' + text;
   } else {
     var hist = document.getElementById('chat-history');
     var div = document.createElement('div');
@@ -2379,26 +2476,57 @@ function sendChat(opts) {
       // flicker until the closing token arrives. renderMarkdown is
       // the shared helper loaded from core/webui/static/base.js.
       if (assistantEl) {
-        var pre = assistantEl.querySelector('.content');
-        var finalText = '';
-        if (pre) {
-          finalText = pre.textContent.replace(/\s+$/, '');
-          // Guard against binary / garbled LLM output — treat as empty.
-          if (isGarbageText(finalText)) {
-            finalText = '';
+        // Render every streaming text segment in the thread as
+        // markdown, leaving tool cards untouched. Each segment
+        // becomes its own rendered block, so text→tool→text reads
+        // as three positioned blocks in conversational order.
+        var segs = assistantEl.querySelectorAll('.thread > pre.content');
+        var anyContent = false;
+        for (var si = 0; si < segs.length; si++) {
+          var pre = segs[si];
+          var segText = pre.textContent.replace(/\s+$/, '');
+          if (isGarbageText(segText)) {
+            segText = '';
           }
-          if (typeof renderMarkdown === 'function' && finalText) {
-            var div = document.createElement('div');
-            div.className = 'content md';
-            div.innerHTML = renderMarkdown(finalText);
-            pre.parentNode.replaceChild(div, pre);
-          } else if (finalText) {
-            pre.textContent = finalText;
+          if (segText) {
+            anyContent = true;
+            if (typeof renderMarkdown === 'function') {
+              var div = document.createElement('div');
+              div.className = 'content md';
+              div.innerHTML = renderMarkdown(segText);
+              pre.parentNode.replaceChild(div, pre);
+            } else {
+              pre.textContent = segText;
+              delete pre.dataset.active;
+            }
           } else {
-            pre.textContent = '(empty response)';
-            pre.style.color = 'var(--text-mute)';
-            pre.style.fontStyle = 'italic';
+            // Empty trailing segment after a tool — drop it so we
+            // don't leave a blank box in the thread.
+            pre.parentNode.removeChild(pre);
           }
+        }
+        // No text segments at all — show the empty-response placeholder
+        // in the thread so the message bubble isn't visually empty.
+        if (!anyContent) {
+          var thread = assistantEl.querySelector('.thread');
+          if (thread && !thread.querySelector('.tool-call')) {
+            var ph = document.createElement('div');
+            ph.className = 'content';
+            ph.textContent = '(empty response)';
+            ph.style.color = 'var(--text-mute)';
+            ph.style.fontStyle = 'italic';
+            thread.appendChild(ph);
+          }
+        }
+        // Capture for fullReply replacement (history view): join all
+        // text segments. Used downstream for re-rendering history.
+        var finalText = '';
+        if (anyContent) {
+          var renderedSegs = assistantEl.querySelectorAll('.thread > .content.md, .thread > pre.content');
+          for (var ri = 0; ri < renderedSegs.length; ri++) {
+            finalText += (renderedSegs[ri].textContent || '') + '\n\n';
+          }
+          finalText = finalText.replace(/\s+$/, '');
         }
         if (success && finalText) addAssistantActions(assistantEl, finalText);
       }

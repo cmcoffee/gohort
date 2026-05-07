@@ -1,24 +1,19 @@
-// Persistent shell-mode tool archives. Code that backs a persistent
-// tool (scripts, helpers, fixtures) is captured at create time as a
-// tar.gz under <workspaces-dir>/_tools/<owner>/<name>.tar.gz. The DB
-// holds only a path + size + hash; the canonical content lives on
-// disk where it can be inspected, backed up, and version-controlled
-// using standard tools.
+// Persistent shell-mode tool recipes. A persistent tool's deployable
+// content (scripts, helpers, fixtures) lives inline on the TempTool
+// record as a Recipe — a list of {path, content, mode} entries. At
+// dispatch the runtime mints a fresh sandbox dir, writes each recipe
+// file into it, runs the command, and tears the dir down.
 //
-// At dispatch, the runtime extracts the archive into a per-invocation
-// tmpdir, runs the command with that tmpdir as the workspace, then
-// tears it down. Tools that need persistent runtime state opt into
-// it via TempTool.StatePath, which gets rsync'd between the tmpdir
-// and a per-tool _state/ directory around each run.
+// The recipe is human-readable, diffable in the admin UI, and
+// reproducible: deploying twice always produces the same files.
+//
+// Tools that need state across invocations opt in via TempTool.StatePath
+// — that subdirectory is rsync'd between the per-dispatch sandbox and a
+// per-tool _state/ directory around each run, surviving the wipe.
 
 package core
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -27,13 +22,31 @@ import (
 )
 
 const (
-	toolArchivesSubdir = "_tools"
 	toolStatesSubdir   = "_state"
-	maxToolArchiveSize = 10 * 1024 * 1024 // 10 MB packed
+	toolDispatchSubdir = "_dispatch"
+	maxRecipeFileSize  = 2 * 1024 * 1024  // 2 MB per file
+	maxRecipeTotalSize = 10 * 1024 * 1024 // 10 MB across all files in one recipe
 )
 
+// MintToolDispatchDir creates a fresh per-invocation directory for a
+// tool's recipe deployment. Lives under WorkspacesDir()/_dispatch/
+// rather than /tmp because the sandbox overlays a fresh tmpfs at
+// /tmp — anything we mint there gets shadowed before bwrap can chdir
+// into it. The caller is responsible for os.RemoveAll on cleanup.
+func MintToolDispatchDir(prefix string) (string, error) {
+	base := WorkspacesDir()
+	if base == "" {
+		return "", fmt.Errorf("workspaces dir not configured")
+	}
+	parent := filepath.Join(base, toolDispatchSubdir)
+	if err := os.MkdirAll(parent, 0700); err != nil {
+		return "", fmt.Errorf("mkdir dispatch parent: %w", err)
+	}
+	return os.MkdirTemp(parent, prefix)
+}
+
 // validateToolNameForFS rejects names that would escape the per-owner
-// archive directory. Same rules as workspace IDs — no separators, no
+// state directory. Same rules as workspace IDs — no separators, no
 // `..`, non-empty.
 func validateToolNameForFS(name string) error {
 	if name == "" {
@@ -57,22 +70,6 @@ func validateOwnerForFS(owner string) error {
 	return nil
 }
 
-// ToolArchivePath returns the absolute path to where this tool's
-// archive should live. Does not check whether it exists.
-func ToolArchivePath(owner, name string) (string, error) {
-	if err := validateOwnerForFS(owner); err != nil {
-		return "", err
-	}
-	if err := validateToolNameForFS(name); err != nil {
-		return "", err
-	}
-	base := WorkspacesDir()
-	if base == "" {
-		return "", fmt.Errorf("workspaces dir not configured")
-	}
-	return filepath.Join(base, toolArchivesSubdir, owner, name+".tar.gz"), nil
-}
-
 // ToolStateDir returns the absolute path to where this tool's
 // persistent state lives between invocations. Created on first
 // access. Empty when StatePath isn't set on the tool.
@@ -94,29 +91,21 @@ func ToolStateDir(owner, name string) (string, error) {
 	return dir, nil
 }
 
-// PackToolArchive creates a tar.gz of every regular file under
-// workspaceDir, excluding symlinks (security) and .fetch_cache (LRU
-// cache, not source). Writes the result to ToolArchivePath(owner,name)
-// after verifying it fits under maxToolArchiveSize.
-//
-// Returns absolute archive path, packed size, and sha256 hex of the
-// tarball contents.
-func PackToolArchive(workspaceDir, owner, name string) (string, int64, string, error) {
-	archivePath, err := ToolArchivePath(owner, name)
-	if err != nil {
-		return "", 0, "", err
-	}
+// BuildRecipeFromWorkspace walks workspaceDir and captures every
+// regular file as a RecipeFile entry. Skips symlinks (security) and
+// .fetch_cache (LRU cache, not source). Enforces per-file and total
+// size caps so a runaway workspace can't bloat the persisted record.
+func BuildRecipeFromWorkspace(workspaceDir string) ([]RecipeFile, error) {
 	info, err := os.Stat(workspaceDir)
 	if err != nil {
-		return "", 0, "", fmt.Errorf("workspace stat: %w", err)
+		return nil, fmt.Errorf("workspace stat: %w", err)
 	}
 	if !info.IsDir() {
-		return "", 0, "", fmt.Errorf("workspace %q is not a directory", workspaceDir)
+		return nil, fmt.Errorf("workspace %q is not a directory", workspaceDir)
 	}
 
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
+	var recipe []RecipeFile
+	var total int64
 
 	walkErr := filepath.Walk(workspaceDir, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
@@ -130,7 +119,7 @@ func PackToolArchive(workspaceDir, owner, name string) (string, int64, string, e
 			return nil
 		}
 		// Skip symlinks — refuse to bake host-pointer links into a
-		// portable archive.
+		// portable recipe.
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return nil
 		}
@@ -138,122 +127,70 @@ func PackToolArchive(workspaceDir, owner, name string) (string, int64, string, e
 		if strings.HasPrefix(filepath.ToSlash(rel), ".fetch_cache/") || rel == ".fetch_cache" {
 			return nil
 		}
-		hdr, err := tar.FileInfoHeader(fi, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = filepath.ToSlash(rel)
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
+		// Directories are recreated implicitly when files are written;
+		// no need to record empty dirs.
 		if fi.IsDir() {
 			return nil
 		}
-		f, err := os.Open(path)
+		if fi.Size() > maxRecipeFileSize {
+			return fmt.Errorf("file %q exceeds recipe per-file size cap (%d bytes)", rel, maxRecipeFileSize)
+		}
+		total += fi.Size()
+		if total > maxRecipeTotalSize {
+			return fmt.Errorf("recipe exceeds total size cap (%d bytes) — simplify the tool's workspace or split into multiple tools", maxRecipeTotalSize)
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("read %q: %w", rel, err)
 		}
-		_, copyErr := io.Copy(tw, f)
-		f.Close()
-		if copyErr != nil {
-			return copyErr
+		mode := uint32(fi.Mode().Perm())
+		if mode == 0 {
+			mode = 0700
 		}
-		// Cap check after each file so a runaway loop doesn't blow
-		// up RAM before the size error fires.
-		if buf.Len() > maxToolArchiveSize {
-			return fmt.Errorf("archive exceeds %d bytes — simplify the tool's workspace or split into multiple tools", maxToolArchiveSize)
-		}
+		recipe = append(recipe, RecipeFile{
+			Path:    filepath.ToSlash(rel),
+			Content: string(data),
+			Mode:    mode,
+		})
 		return nil
 	})
 	if walkErr != nil {
-		return "", 0, "", walkErr
+		return nil, walkErr
 	}
-	if err := tw.Close(); err != nil {
-		return "", 0, "", fmt.Errorf("tar close: %w", err)
-	}
-	if err := gz.Close(); err != nil {
-		return "", 0, "", fmt.Errorf("gzip close: %w", err)
-	}
-
-	data := buf.Bytes()
-	if int64(len(data)) > maxToolArchiveSize {
-		return "", 0, "", fmt.Errorf("archive size %d exceeds limit %d", len(data), maxToolArchiveSize)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(archivePath), 0700); err != nil {
-		return "", 0, "", fmt.Errorf("mkdir archive dir: %w", err)
-	}
-	if err := os.WriteFile(archivePath, data, 0600); err != nil {
-		return "", 0, "", fmt.Errorf("write archive: %w", err)
-	}
-	sum := sha256.Sum256(data)
-	return archivePath, int64(len(data)), hex.EncodeToString(sum[:]), nil
+	return recipe, nil
 }
 
-// UnpackToolArchive extracts archivePath into destDir. destDir must
+// DeployRecipe writes every RecipeFile into destDir. destDir must
 // exist (caller mkdir's it). Refuses entries whose paths escape
-// destDir; refuses symlinks; refuses entries larger than
-// maxToolArchiveSize as a tar-bomb guard.
-func UnpackToolArchive(archivePath, destDir string) error {
-	f, err := os.Open(archivePath)
-	if err != nil {
-		return fmt.Errorf("open archive: %w", err)
-	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return fmt.Errorf("gzip reader: %w", err)
-	}
-	defer gz.Close()
-	tr := tar.NewReader(gz)
+// destDir as defense in depth (paths from the recipe are admin-
+// reviewed but the FS boundary still re-checks).
+func DeployRecipe(recipe []RecipeFile, destDir string) error {
 	cleanedRoot := filepath.Clean(destDir)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("tar next: %w", err)
-		}
-		rel := filepath.FromSlash(hdr.Name)
-		// Refuse absolute and traversal entries.
+	for _, f := range recipe {
+		rel := filepath.FromSlash(f.Path)
 		if filepath.IsAbs(rel) || strings.Contains(rel, "..") {
-			return fmt.Errorf("archive contains unsafe path: %q", hdr.Name)
+			return fmt.Errorf("recipe contains unsafe path: %q", f.Path)
 		}
 		target := filepath.Clean(filepath.Join(cleanedRoot, rel))
 		if target != cleanedRoot && !strings.HasPrefix(target, cleanedRoot+string(filepath.Separator)) {
-			return fmt.Errorf("archive entry escapes destDir: %q", hdr.Name)
+			return fmt.Errorf("recipe entry escapes destDir: %q", f.Path)
 		}
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0700); err != nil {
-				return fmt.Errorf("mkdir %q: %w", target, err)
-			}
-		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-				return fmt.Errorf("mkdir parent of %q: %w", target, err)
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0700)
-			if err != nil {
-				return fmt.Errorf("create %q: %w", target, err)
-			}
-			if _, err := io.CopyN(out, tr, maxToolArchiveSize); err != nil && err != io.EOF {
-				out.Close()
-				return fmt.Errorf("write %q: %w", target, err)
-			}
-			out.Close()
-		default:
-			// Skip symlinks, devices, fifos — anything not a regular
-			// file or directory. Defense in depth even though Pack
-			// shouldn't write them.
-			continue
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return fmt.Errorf("mkdir parent of %q: %w", target, err)
+		}
+		mode := os.FileMode(f.Mode) & 0700
+		if mode == 0 {
+			mode = 0700
+		}
+		if err := os.WriteFile(target, []byte(f.Content), mode); err != nil {
+			return fmt.Errorf("write %q: %w", target, err)
 		}
 	}
 	return nil
 }
 
 // CopyToolStateInto copies the persistent state dir for a tool into a
-// subdirectory of the per-invocation workspace. Used at dispatch time
+// subdirectory of the per-invocation sandbox. Used at dispatch time
 // before the command runs. Best-effort — missing state dir is fine
 // (first invocation, or stateless tool that recently added StatePath).
 func CopyToolStateInto(owner, name, destStateDir string) error {
@@ -264,7 +201,7 @@ func CopyToolStateInto(owner, name, destStateDir string) error {
 	return copyTree(src, destStateDir)
 }
 
-// CopyToolStateBack saves the workspace's state subdir back to the
+// CopyToolStateBack saves the sandbox's state subdir back to the
 // persistent state dir. Called after a successful dispatch.
 func CopyToolStateBack(owner, name, srcStateDir string) error {
 	dst, err := ToolStateDir(owner, name)
@@ -282,18 +219,6 @@ func CopyToolStateBack(owner, name, srcStateDir string) error {
 	return copyTree(srcStateDir, dst)
 }
 
-// DeleteToolArchive removes the on-disk archive (idempotent).
-func DeleteToolArchive(owner, name string) error {
-	p, err := ToolArchivePath(owner, name)
-	if err != nil {
-		return err
-	}
-	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
 // DeleteToolState removes the on-disk state dir for a tool. Called
 // when an operator wants to fully purge a stateful tool's history.
 func DeleteToolState(owner, name string) error {
@@ -307,9 +232,9 @@ func DeleteToolState(owner, name string) error {
 	return nil
 }
 
-// copyTree recursively copies src to dst, preserving file modes.
-// Symlinks are skipped. Used for state preservation around dispatch;
-// not a general-purpose util because it's tuned for small state dirs.
+// copyTree recursively copies src into dst. dst is created (or
+// reused). Symlinks are skipped — defense in depth at the FS
+// boundary even though state dirs shouldn't contain them.
 func copyTree(src, dst string) error {
 	info, err := os.Stat(src)
 	if err != nil {

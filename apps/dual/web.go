@@ -148,7 +148,6 @@ func (T *DualAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 				},
 				WithSystemPrompt(workerSysPrompt),
 				WithThink(false),
-				WithMaxTokens(2048),
 			)
 
 			result := strings.TrimSpace(rightBuf.String())
@@ -174,7 +173,7 @@ func (T *DualAgent) handleSend(w http.ResponseWriter, r *http.Request) {
 		SystemPrompt: orchestratorSysPrompt,
 		Tools:        []AgentToolDef{delegateTool},
 		MaxRounds:    16,
-		ChatOptions:  []ChatOption{WithThink(false), WithMaxTokens(8192)},
+		ChatOptions:  []ChatOption{WithThink(false)},
 		Stream: func(chunk string) {
 			send("left_chunk", map[string]any{"text": chunk})
 		},

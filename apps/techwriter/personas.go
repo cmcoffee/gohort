@@ -132,7 +132,7 @@ Write these as RULES a writer should follow. Be specific — "use active voice" 
 Start IMMEDIATELY with the rules. No preamble, no introduction.`,
 			Images: images,
 		},
-	}, WithMaxTokens(4096))
+	})
 
 	if err != nil {
 		http.Error(w, "LLM analysis failed: "+err.Error(), http.StatusInternalServerError)

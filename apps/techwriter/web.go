@@ -271,7 +271,6 @@ These rules prevent the output from reading as AI-generated. They should be part
 	})
 	resp, err := T.AppCore.LeadChat(r.Context(), messages,
 		WithSystemPrompt(system_prompt),
-		WithMaxTokens(4096),
 		WithRouteKey("app.techwriter"))
 
 	if err != nil {
@@ -767,7 +766,6 @@ The merged article must preserve all important facts, data, and claims from both
 	resp, err := T.AppCore.LeadChat(r.Context(), []Message{
 		{Role: "user", Content: merge_prompt},
 	}, WithSystemPrompt(system_prompt),
-		WithMaxTokens(8192),
 		WithRouteKey("app.techwriter"))
 
 	if err != nil {

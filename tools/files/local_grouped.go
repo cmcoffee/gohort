@@ -30,7 +30,7 @@ const (
 
 func init() {
 	gt := NewGroupedTool("local",
-		"Workspace-sandboxed filesystem + shell operations. The workspace is the only writable path; reads/writes/exec outside it are rejected at the resolution layer. Network is allowed inside the sandbox.")
+		"Sandboxed filesystem + shell operations. Read/write files in your sandbox, run shell commands inside it. Use this to draft and test scripts before wrapping them as a tool via tool_def. The sandbox is auto-managed — write/run will mint one for you on first use; the same sandbox persists across calls so you can iterate. The sandbox is the only writable path; reads/writes/exec outside it are rejected.")
 
 	gt.AddAction("read", &GroupedToolAction{
 		Description: "Read a file from your workspace as text. Returns up to 50KB; longer files truncated with a notice.",
@@ -46,7 +46,7 @@ func init() {
 	})
 
 	gt.AddAction("write", &GroupedToolAction{
-		Description: "Write content to a workspace file (creates or overwrites). Pair with attach_file to deliver the result, or with run for executable scripts.",
+		Description: "Write content to a file in your sandbox (creates or overwrites). Auto-mints a sandbox on first call. Use to drop scripts you want to test via local(run) before wrapping them as tools, or to save work product you'll attach later.",
 		Params: map[string]ToolParam{
 			"path":    {Type: "string", Description: "Workspace-relative path."},
 			"content": {Type: "string", Description: "Bytes to write."},
@@ -87,7 +87,7 @@ func init() {
 	})
 
 	gt.AddAction("run", &GroupedToolAction{
-		Description: "Run a shell command in the workspace via the bwrap sandbox (when available). The command sees only the workspace as writable; reads outside the workspace silently fail. Network is allowed. 90s timeout, output capped at 10KB.",
+		Description: "Run a shell command inside your sandbox via bwrap. The sandbox is the only writable path; reads outside silently fail. Use this to test scripts you've written via local(write) before wrapping them as a tool via tool_def. 90s timeout, output capped at 10KB. Auto-mints a sandbox if none exists.",
 		Params: map[string]ToolParam{
 			"command": {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
 		},
@@ -131,8 +131,8 @@ func localDelete(args map[string]any, sess *ToolSession) (string, error) {
 // localRun is a thin wrapper around RunSandboxedShell with the same
 // timeout + output cap as the standalone run_local tool.
 func localRun(args map[string]any, sess *ToolSession) (string, error) {
-	if sess == nil || sess.WorkspaceDir == "" {
-		return "", fmt.Errorf("run requires a session with WorkspaceDir set")
+	if _, err := EnsureSessionWorkspace(sess); err != nil {
+		return "", fmt.Errorf("run: %w", err)
 	}
 	cmd := strings.TrimSpace(StringArg(args, "command"))
 	if cmd == "" {

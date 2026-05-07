@@ -64,6 +64,15 @@ type AgentLoopConfig struct {
 	// through this handler as they arrive. Optional.
 	Stream StreamHandler
 
+	// ReasoningStream, when set, receives reasoning_content chunks (the
+	// model's <think>...</think> stream) as they arrive. Fires only when
+	// the LLM call uses ChatStream (i.e. when Stream is also set), and
+	// only for backends that surface reasoning incrementally (llama.cpp,
+	// Ollama). Use to surface what the model is reasoning about during
+	// long agentic loops — e.g. servitor's investigator panel showing
+	// the orchestrator's thought process as it streams. Optional.
+	ReasoningStream func(chunk string)
+
 	// Confirm is called when a tool with NeedsConfirm is about to execute.
 	// If nil, a default terminal prompt is used (y/n).
 	Confirm ConfirmFunc
@@ -361,7 +370,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// Caller can opt out with cfg.NoDynamicThinkBudget (e.g.
 		// classifier loops where a fixed small budget is correct).
 		if !cfg.NoDynamicThinkBudget && lastResp != nil && lastResp.InputTokens > 0 {
-			opts = append(opts, WithThinkBudget(dynamicThinkBudget(lastResp.InputTokens)))
+			opts = append(opts, WithThinkBudget(DynamicThinkBudget(lastResp.InputTokens)))
 		}
 		// If the previous round produced tool calls and ToolRoundOptions are
 		// configured, use them instead of ChatOptions for this round.
@@ -380,11 +389,26 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if !cfg.PromptTools && len(toolDefs) > 0 && round < maxRounds {
 			opts = append(opts, WithTools(toolDefs))
 		}
+		// Surface reasoning chunks to the caller-supplied handler when set.
+		// Fires only on the streaming path; the non-streaming Chat() call
+		// returns reasoning only as a single block on Response.Reasoning.
+		if cfg.ReasoningStream != nil {
+			opts = append(opts, WithReasoningStream(cfg.ReasoningStream))
+		}
 
 		var resp *Response
 		var err error
-		if cfg.Stream != nil {
-			resp, err = T.ChatStreamWithReport(ctx, history, cfg.Stream, opts...)
+		// If the caller wants reasoning streamed but didn't set a content
+		// stream handler, take the streaming path with a no-op content
+		// callback so the reasoning callback can fire. The reasoning
+		// channel only flows on the streaming path; ChatStreamWithReport
+		// is the only LLM dispatch that pumps it.
+		streamHandler := cfg.Stream
+		if streamHandler == nil && cfg.ReasoningStream != nil {
+			streamHandler = func(string) {}
+		}
+		if streamHandler != nil {
+			resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, opts...)
 		} else {
 			// NoLead redirects all routing to worker — no escalation.
 			useLead := cfg.Tier == LEAD && !T.NoLead
@@ -787,7 +811,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		var wrapOpts []ChatOption
 		wrapOpts = append(wrapOpts, WithSystemPrompt(systemPrompt))
 		f := false
-		wrapOpts = append(wrapOpts, WithThink(f), WithMaxTokens(2048))
+		wrapOpts = append(wrapOpts, WithThink(f))
 		if cfg.RouteKey != "" {
 			wrapOpts = append(wrapOpts, WithRouteKey(cfg.RouteKey))
 		}
@@ -1090,40 +1114,78 @@ func judgeSaysContinue(ctx context.Context, reasoning, content string, toolCalls
 	return verdict == "continue"
 }
 
-// dynamicThinkBudget scales the model's thinking budget based on the
-// prior round's input token count. Short first rounds stay cheap;
-// deep multi-round flows with large accumulated history get enough
-// headroom to integrate the context without truncation.
+// DynamicThinkBudget scales the model's thinking budget based on the
+// input token count. Short queries stay cheap; large/dense inputs get
+// enough headroom to integrate the context without truncation.
 //
 // Formula:
 //   - Below 4K input tokens: base (8K) — small queries don't need much
 //   - Above 4K: linear growth, +1024 budget tokens per 1K input above
 //   - Capped at 32K — past that, more thinking rarely helps Qwen3
 //
-// Tunable knobs are intentionally hardcoded for now; the scaling is
-// universal enough across reasoning models that exposing them as
-// config would be premature optimization. If a specific app needs
-// different scaling, set NoDynamicThinkBudget and pass an explicit
-// WithThinkBudget per-call.
-func dynamicThinkBudget(inputTokens int) int {
+// Used by the agent loop on prior-round input tokens, and exposed for
+// one-shot callers (consensus synthesis, judge calls, etc.) that want
+// the same scaling without rebuilding the formula. Standalone callers
+// that don't have a token count can use EstimateTokens(text) on the
+// raw input string — close enough for budget sizing.
+//
+// Tunable knobs are intentionally hardcoded; the scaling is universal
+// enough across reasoning models that exposing them as config would
+// be premature optimization.
+func DynamicThinkBudget(inputTokens int) int {
 	const (
 		base      = 8192
 		threshold = 4096
 		ceiling   = 32768
-		// scaleNum/scaleDen = 1024/1024 = 1 budget token per 1 input
-		// token above threshold. Kept as a fraction for easy tweaking.
-		scaleNum = 1024
+		// scaleNum/scaleDen = 512/1024 = 0.5 budget tokens per 1 input
+		// token above threshold. Tuned down from 1.0 after observing
+		// late-round debater inputs (23K–26K tokens) routinely
+		// allocating 27K–30K thinking budget — far above what Qwen 3.6
+		// actually consumes on focused tasks (~10–15K typical even on
+		// hard reasoning). 0.5 keeps dynamic scaling but stops the
+		// formula from saturating the ceiling on every large input.
+		// At 26K input the budget now lands ~19K instead of 30K.
+		scaleNum = 512
 		scaleDen = 1024
 	)
+	var budget int
 	if inputTokens <= threshold {
-		return base
+		budget = base
+	} else {
+		extra := (inputTokens - threshold) * scaleNum / scaleDen
+		budget = base + extra
+		if budget > ceiling {
+			budget = ceiling
+		}
 	}
-	extra := (inputTokens - threshold) * scaleNum / scaleDen
-	budget := base + extra
-	if budget > ceiling {
-		return ceiling
-	}
+	Debug("[think_budget] input=%d tokens → budget=%d tokens (base=%d, threshold=%d, ceiling=%d)",
+		inputTokens, budget, base, threshold, ceiling)
 	return budget
+}
+
+// EstimateTokens approximates the token count of a string using the
+// standard ~4-chars-per-token heuristic. Accurate enough for sizing
+// thinking budgets where exact counts don't matter — DynamicThinkBudget
+// caps at 32K and the formula's slope is gradual, so being off by 20%
+// on the input estimate moves the resulting budget by <1K tokens.
+// For per-billing accuracy, use a real tokenizer.
+func EstimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	return len(text) / 4
+}
+
+// EstimateMessagesTokens sums the estimated token count across a slice
+// of Messages. Convenience wrapper for callers sizing think budgets
+// from a chat history. Counts content only — message-role overhead is
+// negligible at the scales DynamicThinkBudget cares about.
+func EstimateMessagesTokens(msgs []Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += len(m.Content) / 4
+	}
+	return total
 }
 
 // nearestToolName returns the registered tool whose name shares the

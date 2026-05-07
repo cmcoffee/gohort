@@ -114,7 +114,6 @@ func (t *LogAnalyzeTool) Run(args map[string]any) (string, error) {
 	resp, err := llm.Chat(context.Background(),
 		[]Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt(analyzeSystemPrompt),
-		WithMaxTokens(2048),
 		WithTemperature(0.2),
 		WithThink(false),
 	)
