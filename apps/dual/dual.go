@@ -25,7 +25,7 @@ func (T DualAgent) Desc() string {
 func (T *DualAgent) Init() error { return T.Flags.Parse() }
 
 func (T *DualAgent) Main() error {
-	Log("Orchestrate is a web-only app. Start with: gohort --web :8080")
+	Log("Orchestrate is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
 }
 

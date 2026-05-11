@@ -57,20 +57,32 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	sub := http.NewServeMux()
 
-	// Main page.
+	// New admin page — framework-rendered, simple sections migrated.
+	// Lives at /admin/ (root). Unmigrated sections still render via
+	// /admin/legacy/ until each is ported.
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
+		a.serveNewAdminPage(w, r)
+	})
+
+	// Legacy admin (full feature set). All the unmigrated sections
+	// still live here while each is incrementally moved to the
+	// framework version above.
+	sub.HandleFunc("/legacy", func(w http.ResponseWriter, r *http.Request) {
 		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-			Title:    "Administrator",
+			Title:    "Administrator (Legacy)",
 			AppName:  "Administrator",
 			Prefix:   prefix,
 			BodyHTML: adminBody,
 			AppCSS:   adminCSS,
 			AppJS:    adminJS,
 		}))
+	})
+	sub.HandleFunc("/legacy/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, prefix+"/legacy", http.StatusMovedPermanently)
 	})
 
 	// API: list users.
@@ -141,6 +153,26 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		switch r.Method {
+		case http.MethodGet:
+			// Return the single-user summary so the framework's
+			// ChipPicker (apps) and any other per-user component can
+			// fetch the current state without scanning the full list.
+			user, ok := AuthGetUser(a.db, username)
+			if !ok {
+				http.Error(w, "user not found", http.StatusNotFound)
+				return
+			}
+			apps := user.Apps
+			if apps == nil {
+				apps = []string{}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"username": user.Username,
+				"admin":    user.Admin,
+				"pending":  user.Pending,
+				"apps":     apps,
+			})
 		case http.MethodPut:
 			a.handleUpdateUser(w, r, username)
 		case http.MethodDelete:
@@ -773,6 +805,19 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			})
 		})
 
+	// API: voice (STT/TTS).
+	sub.HandleFunc("/api/voice", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			a.handleGetVoice(w, r)
+		case http.MethodPost:
+			a.handleUpdateVoice(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	sub.HandleFunc("/api/voice/test", a.handleVoiceTest)
+
 	// API: database browser.
 	sub.HandleFunc("/api/db/tables", a.handleDBTables)
 	sub.HandleFunc("/api/db/keys", a.handleDBKeys)
@@ -1312,6 +1357,104 @@ func (a *AdminApp) handleUpdateUserApps(w http.ResponseWriter, r *http.Request, 
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
+// --- Voice (STT/TTS) ---
+
+func (a *AdminApp) handleGetVoice(w http.ResponseWriter, r *http.Request) {
+	cfg := LoadVoiceConfig()
+	transcribeTransport := "none"
+	if cfg.WhisperServerURL != "" {
+		transcribeTransport = "http"
+	} else if cfg.WhisperBin != "" && cfg.WhisperModel != "" {
+		transcribeTransport = "shell"
+	}
+	speakTransport := "none"
+	if cfg.PiperServerURL != "" {
+		speakTransport = "http"
+	} else if cfg.PiperBin != "" && cfg.PiperVoice != "" {
+		speakTransport = "shell"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"enabled":              cfg.Enabled,
+		"whisper_server_url":   cfg.WhisperServerURL,
+		"whisper_bin":          cfg.WhisperBin,
+		"whisper_model":        cfg.WhisperModel,
+		"piper_server_url":     cfg.PiperServerURL,
+		"piper_bin":            cfg.PiperBin,
+		"piper_voice":          cfg.PiperVoice,
+		"transcribe_transport": transcribeTransport,
+		"speak_transport":      speakTransport,
+	})
+}
+
+func (a *AdminApp) handleUpdateVoice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled          *bool   `json:"enabled,omitempty"`
+		WhisperServerURL *string `json:"whisper_server_url,omitempty"`
+		WhisperBin       *string `json:"whisper_bin,omitempty"`
+		WhisperModel     *string `json:"whisper_model,omitempty"`
+		PiperServerURL   *string `json:"piper_server_url,omitempty"`
+		PiperBin         *string `json:"piper_bin,omitempty"`
+		PiperVoice       *string `json:"piper_voice,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	current := AuthCurrentUser(r)
+	if req.Enabled != nil {
+		a.db.Set(VoiceTable, "enabled", *req.Enabled)
+		Log("[admin] user %q set voice.enabled=%v", current, *req.Enabled)
+	}
+	if req.WhisperServerURL != nil {
+		a.db.Set(VoiceTable, "whisper_server_url", strings.TrimSpace(*req.WhisperServerURL))
+		Log("[admin] user %q set voice.whisper_server_url=%q", current, *req.WhisperServerURL)
+	}
+	if req.WhisperBin != nil {
+		a.db.Set(VoiceTable, "whisper_bin", strings.TrimSpace(*req.WhisperBin))
+	}
+	if req.WhisperModel != nil {
+		a.db.Set(VoiceTable, "whisper_model", strings.TrimSpace(*req.WhisperModel))
+	}
+	if req.PiperServerURL != nil {
+		a.db.Set(VoiceTable, "piper_server_url", strings.TrimSpace(*req.PiperServerURL))
+		Log("[admin] user %q set voice.piper_server_url=%q", current, *req.PiperServerURL)
+	}
+	if req.PiperBin != nil {
+		a.db.Set(VoiceTable, "piper_bin", strings.TrimSpace(*req.PiperBin))
+	}
+	if req.PiperVoice != nil {
+		a.db.Set(VoiceTable, "piper_voice", strings.TrimSpace(*req.PiperVoice))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// handleVoiceTest synthesizes a short canned phrase to verify Piper is
+// reachable and configured correctly. Returns {"ok":true,"bytes":N} on
+// success or {"error":"..."} with 502 when the call fails.
+func (a *AdminApp) handleVoiceTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	backend := r.URL.Query().Get("backend")
+	switch backend {
+	case "speak":
+		wav, err := Speak(r.Context(), "gohort voice synthesis is working.")
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadGateway)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "bytes": len(wav)})
+	default:
+		http.Error(w, "unknown backend (try ?backend=speak)", http.StatusBadRequest)
+	}
+}
+
 // --- DB Browser ---
 
 func (a *AdminApp) handleDBTables(w http.ResponseWriter, r *http.Request) {
@@ -1545,6 +1688,14 @@ const adminCSS = `
   display: block; font-size: 0.8rem; color: #8b949e;
   margin-top: 0.3rem; margin-left: 1.5rem;
 }
+.voice-badge {
+  display: inline-block; margin-left: 0.4rem; padding: 0.05rem 0.4rem;
+  border-radius: 999px; font-size: 0.7rem; font-weight: 600;
+  background: #30363d; color: #8b949e; border: 1px solid #30363d;
+}
+.voice-badge.http { background: #1f3a25; color: #56d364; border-color: #2e5e3a; }
+.voice-badge.shell { background: #2a2218; color: #d29922; border-color: #463b1f; }
+.voice-badge.none { background: #2a1b1b; color: #ff7b72; border-color: #5a2929; }
 .app-chips {
   display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.2rem;
 }
@@ -1817,6 +1968,50 @@ const adminBody = `
         <code id="ollama-proxy-url" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:0.3rem 0.6rem;font-size:0.85rem;color:#79c0ff"></code>
         <button onclick="copyProxyURL()" style="padding:0.3rem 0.6rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.8rem;cursor:pointer">Copy</button>
       </div>
+    </div>
+  </div>
+  <div class="section">
+    <h2>Voice (STT/TTS)</h2>
+    <div class="setting-row">
+      <span class="setting-desc">Configure speech-to-text (whisper.cpp) and text-to-speech (Piper). Each backend supports two transports: <strong>HTTP server URL</strong> (preferred — for whisper-server / piper.http_server running on a remote box like the llama host) and a <strong>shell-out fallback</strong> that invokes a local binary. Setting a server URL takes precedence over the binary fields for that backend. Status badges show which transport will fire on the next call.</span>
+    </div>
+    <div class="setting-row">
+      <label class="toggle-label">
+        <input type="checkbox" id="voice-enabled" onchange="saveVoice()">
+        <span>Enable voice integration</span>
+      </label>
+    </div>
+    <div class="setting-row">
+      <label style="font-size:0.9rem;color:#c9d1d9;display:block;margin-bottom:0.25rem">Whisper (STT) <span id="voice-transcribe-status" class="voice-badge"></span></label>
+      <input type="text" id="voice-whisper-server" placeholder="http://llama.snuglab.local:8090"
+        style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem;margin-bottom:0.4rem"
+        onchange="saveVoice()">
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <input type="text" id="voice-whisper-bin" placeholder="whisper-cli (shell fallback binary)"
+          style="flex:1;min-width:14rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="saveVoice()">
+        <input type="text" id="voice-whisper-model" placeholder="/path/to/ggml-base.en.bin"
+          style="flex:2;min-width:18rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="saveVoice()">
+      </div>
+    </div>
+    <div class="setting-row">
+      <label style="font-size:0.9rem;color:#c9d1d9;display:block;margin-bottom:0.25rem">Piper (TTS) <span id="voice-speak-status" class="voice-badge"></span></label>
+      <input type="text" id="voice-piper-server" placeholder="http://llama.snuglab.local:5000"
+        style="width:100%;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem;margin-bottom:0.4rem"
+        onchange="saveVoice()">
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+        <input type="text" id="voice-piper-bin" placeholder="piper (shell fallback binary)"
+          style="flex:1;min-width:14rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="saveVoice()">
+        <input type="text" id="voice-piper-voice" placeholder="/path/to/en_US-amy-medium.onnx"
+          style="flex:2;min-width:18rem;padding:0.4rem 0.6rem;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem"
+          onchange="saveVoice()">
+      </div>
+    </div>
+    <div class="setting-row" style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+      <button onclick="testVoiceSpeak()" style="padding:0.35rem 0.75rem;background:#21262d;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:0.85rem;cursor:pointer">Test Piper</button>
+      <span id="voice-test-result" style="font-size:0.85rem;color:#8b949e"></span>
     </div>
   </div>
   <div class="section">
@@ -2573,6 +2768,69 @@ function saveRouting(key) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({key: key, value: tier, think_budget: budget}),
+  });
+}
+
+function loadVoice() {
+  fetch('api/voice').then(function(r){ return r.json(); }).then(function(d) {
+    document.getElementById('voice-enabled').checked = !!d.enabled;
+    document.getElementById('voice-whisper-server').value = d.whisper_server_url || '';
+    document.getElementById('voice-whisper-bin').value    = d.whisper_bin || '';
+    document.getElementById('voice-whisper-model').value  = d.whisper_model || '';
+    document.getElementById('voice-piper-server').value   = d.piper_server_url || '';
+    document.getElementById('voice-piper-bin').value      = d.piper_bin || '';
+    document.getElementById('voice-piper-voice').value    = d.piper_voice || '';
+    setVoiceBadge('voice-transcribe-status', d.transcribe_transport);
+    setVoiceBadge('voice-speak-status', d.speak_transport);
+  }).catch(function(){});
+}
+
+function setVoiceBadge(id, transport) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var t = transport || 'none';
+  el.className = 'voice-badge ' + t;
+  el.textContent = t;
+}
+
+function saveVoice() {
+  var body = {
+    enabled:            document.getElementById('voice-enabled').checked,
+    whisper_server_url: document.getElementById('voice-whisper-server').value.trim(),
+    whisper_bin:        document.getElementById('voice-whisper-bin').value.trim(),
+    whisper_model:      document.getElementById('voice-whisper-model').value.trim(),
+    piper_server_url:   document.getElementById('voice-piper-server').value.trim(),
+    piper_bin:          document.getElementById('voice-piper-bin').value.trim(),
+    piper_voice:        document.getElementById('voice-piper-voice').value.trim()
+  };
+  fetch('api/voice', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r){ if (!r.ok) throw new Error('save failed'); return r.json(); })
+    .then(function(){ loadVoice(); })
+    .catch(function(err){
+      var res = document.getElementById('voice-test-result');
+      if (res) { res.textContent = 'Save failed: ' + err.message; res.style.color = '#ff7b72'; }
+    });
+}
+
+function testVoiceSpeak() {
+  var res = document.getElementById('voice-test-result');
+  if (res) { res.textContent = 'Synthesizing test phrase…'; res.style.color = '#8b949e'; }
+  fetch('api/voice/test?backend=speak', {method: 'POST'}).then(function(r){
+    return r.json().then(function(j){ return {ok: r.ok, body: j}; });
+  }).then(function(out){
+    if (!res) return;
+    if (out.ok && out.body.ok) {
+      res.textContent = 'Piper OK — returned ' + out.body.bytes + ' bytes of audio.';
+      res.style.color = '#56d364';
+    } else {
+      res.textContent = 'Piper test failed: ' + (out.body.error || 'unknown');
+      res.style.color = '#ff7b72';
+    }
+  }).catch(function(err){
+    if (res) { res.textContent = 'Piper test error: ' + err.message; res.style.color = '#ff7b72'; }
   });
 }
 
@@ -3733,6 +3991,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadCostHistory();
     loadRouting();
     loadWorkerThinking();
+    loadVoice();
     loadVectorStats();
     loadMaintenanceFuncs();
     loadDBTables();

@@ -42,8 +42,8 @@ func (T *CodeWriterAgent) Init() (err error) {
 	return T.Flags.Parse()
 }
 
-// Main is a no-op -- codewriter only runs as a web app.
+// Main is a no-op -- codewriter only runs inside the dashboard.
 func (T *CodeWriterAgent) Main() (err error) {
-	Log("CodeWriter is a web-only app. Start the dashboard with:\n  gohort --web :8080")
+	Log("CodeWriter is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
 }

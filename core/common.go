@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,7 +67,61 @@ type AppCore struct {
 
 	// tools holds tool names set via SetTools(), resolved at Run() time.
 	tools []string
+
+	// webMux + webPrefix are set by the framework before calling
+	// SimpleWebApp.Routes(). They give the app a pre-wired sub-mux
+	// to register handlers on via T.HandleFunc / T.Handle, without
+	// having to plumb (mux, prefix) through itself. Apps using the
+	// older WebApp.RegisterRoutes(mux, prefix) shape don't need
+	// these — they get nil values and ignore them.
+	webMux    *http.ServeMux
+	webPrefix string
 }
+
+// HandleFunc registers an HTTP handler against the app's pre-wired
+// sub-mux. Call inside SimpleWebApp.Routes(). The pattern is
+// relative to the app's prefix — "/" mounts at e.g. /myapp/, and
+// "/api/foo" at /myapp/api/foo.
+//
+// Panics if called before the framework has wired the mux (i.e.
+// before Routes() fires). Apps using WebApp.RegisterRoutes can
+// ignore this method and keep registering against the supplied
+// mux argument.
+func (T *AppCore) HandleFunc(pattern string, handler http.HandlerFunc) {
+	if T.webMux == nil {
+		panic("AppCore.HandleFunc called before framework wired the mux (only valid inside SimpleWebApp.Routes())")
+	}
+	T.webMux.HandleFunc(pattern, handler)
+}
+
+// Handle is the http.Handler-flavored counterpart to HandleFunc.
+func (T *AppCore) Handle(pattern string, handler http.Handler) {
+	if T.webMux == nil {
+		panic("AppCore.Handle called before framework wired the mux (only valid inside SimpleWebApp.Routes())")
+	}
+	T.webMux.Handle(pattern, handler)
+}
+
+// WebPrefix returns the app's URL prefix — useful when an app
+// needs to build absolute URLs to its own routes (e.g. redirects).
+// Returns "" before the framework has wired it.
+func (T *AppCore) WebPrefix() string { return T.webPrefix }
+
+// SetWebMux is called by the framework before SimpleWebApp.Routes()
+// to wire the sub-mux. Apps don't call this directly.
+func (T *AppCore) SetWebMux(mux *http.ServeMux, prefix string) {
+	T.webMux = mux
+	T.webPrefix = prefix
+}
+
+// RegisterRoutes is a no-op default so AppCore alone satisfies the
+// WebApp interface. SimpleWebApp implementations don't need to
+// write their own RegisterRoutes — the framework dispatches them
+// through Routes() instead and never calls this method.
+//
+// Apps that need the legacy WebApp shape (custom access wrappers,
+// fine-grained mux control) override this method explicitly.
+func (T *AppCore) RegisterRoutes(mux *http.ServeMux, prefix string) {}
 
 // Get returns the AppCore instance itself.
 func (T *AppCore) Get() *AppCore {
@@ -286,22 +341,31 @@ func (s *Session) Chat(ctx context.Context, messages []Message, opts ...ChatOpti
 // skips the trackTokens call that WorkerChat/LeadChat do for us).
 func (s *Session) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	opts = prependCaller(s.CallerID, opts)
+	// servedByLead — true only when a SEPARATE lead LLM is wired
+	// AND this session asked for LEAD. GetLeadLLM() silently falls
+	// back to the worker LLM when no lead is configured; without
+	// this check we'd attribute worker-served tokens as lead calls
+	// (the cost dashboard would show phantom lead activity that
+	// never appears in the [llm] debug log). LeadChat has its
+	// own fellBackToWorker flag for the non-streaming case; this
+	// is the streaming equivalent.
+	servedByLead := s.Tier == LEAD && !s.agent.NoLead && s.agent.LeadLLM != nil
 	var llm LLM
-	if s.Tier == LEAD && !s.agent.NoLead {
-		llm = s.agent.GetLeadLLM()
+	if servedByLead {
+		llm = s.agent.LeadLLM
 	} else {
 		llm = s.agent.LLM
 	}
 	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
-	// Streaming has no fallback path — whatever tier we dispatched to
-	// is what served. Tag the response so downstream attribution
-	// (recordTokens, callers inspecting resp.Tier) doesn't need to
-	// re-derive it from s.Tier.
 	if resp != nil {
-		resp.Tier = s.Tier
+		if servedByLead {
+			resp.Tier = LEAD
+		} else {
+			resp.Tier = WORKER
+		}
 	}
 	s.recordTokens(resp)
-	if s.Tier == LEAD {
+	if servedByLead {
 		s.agent.trackLeadTokens(resp)
 	} else {
 		s.agent.trackTokens(resp)
@@ -1118,6 +1182,20 @@ type Agent interface {
 	SystemPrompt() string
 	Init() error
 	Main() error
+}
+
+// CLIApp is an optional marker interface — opt-in for apps that
+// have a meaningful command-line workflow beyond "use the dashboard."
+// The menu hides every Agent that does NOT implement this from
+// --help, and refuses CLI dispatch with a friendly "use serve"
+// hint. Default is dashboard-only because that's where almost
+// every app lives now; CLI is the exception.
+//
+// Implement as a no-op method on the agent struct:
+//
+//	func (T *MyApp) CLI() {}
+type CLIApp interface {
+	CLI()
 }
 
 // ChatTool defines the interface for chat tools.

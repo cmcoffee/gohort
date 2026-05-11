@@ -541,12 +541,15 @@ func setup_fuzz() {
 	var webServiceName string
 	var webMaxLoginAttempts int
 	var webLockoutMinutes int
-	global.db.Get(WebTable, "addr", &webAddr)
-	global.db.Get(WebTable, "tls_cert", &webTLSCert)
-	global.db.Get(WebTable, "tls_key", &webTLSKey)
-	global.db.Get(WebTable, "tls_self_signed", &webTLSSelfSigned)
-	global.db.Get(WebTable, "max_concurrent", &webMaxConcurrent)
-	global.db.Get(WebTable, "admin_allowed_ips", &webAdminIPs)
+	// Operator-set-once settings live in gohort.ini (with one-time
+	// migration from the kvlite store baked into the helpers). The
+	// remaining DB-only settings stay on the global.db.Get path.
+	webAddr = loadWebString("addr", "")
+	webTLSCert = loadWebString("tls_cert", "")
+	webTLSKey = loadWebString("tls_key", "")
+	webTLSSelfSigned = loadWebBool("tls_self_signed", false)
+	webMaxConcurrent = loadWebInt("max_concurrent", 0)
+	webAdminIPs = loadWebString("admin_allowed_ips", "")
 	global.db.Get(WebTable, "allow_signup", &webAllowSignup)
 	global.db.Get(WebTable, "session_days", &webSessionDays)
 	global.db.Get(WebTable, "api_key", &webAPIKey)
@@ -801,12 +804,20 @@ func setup_fuzz() {
 	ApplyHTTPTimeouts(global.db)
 
 	// Save Web Server configuration.
-	global.db.Set(WebTable, "addr", webAddr)
-	global.db.Set(WebTable, "tls_cert", webTLSCert)
-	global.db.Set(WebTable, "tls_key", webTLSKey)
-	global.db.Set(WebTable, "tls_self_signed", webTLSSelfSigned)
-	global.db.Set(WebTable, "max_concurrent", webMaxConcurrent)
-	global.db.Set(WebTable, "admin_allowed_ips", strings.TrimSpace(webAdminIPs))
+	// Operator-set-once infrastructure (bind addr, TLS, max
+	// concurrency, admin IP allowlist) goes to the INI file so it
+	// can be edited / version-controlled / shipped alongside the
+	// install. saveWebX helpers also mirror to the DB during the
+	// migration window so any code path still reading from kvlite
+	// keeps seeing the latest value.
+	saveWebString("addr", webAddr)
+	saveWebString("tls_cert", webTLSCert)
+	saveWebString("tls_key", webTLSKey)
+	saveWebBool("tls_self_signed", webTLSSelfSigned)
+	saveWebInt("max_concurrent", webMaxConcurrent)
+	saveWebString("admin_allowed_ips", strings.TrimSpace(webAdminIPs))
+	// allow_signup stays in the DB — runtime-toggleable from the
+	// admin UI; not an operator-deploy-time decision.
 	global.db.Set(WebTable, "allow_signup", webAllowSignup)
 	global.db.Set(WebTable, "session_days", webSessionDays)
 	if webAPIKey != "" {
@@ -1117,17 +1128,253 @@ func add_template_hook() {
 	Stdout("Source hook '%s' added.\n", hook.Name)
 }
 
+// Web cfg section name. Same shape used by snugforge/cfg consumers
+// elsewhere — section header + per-key entries; written back via
+// global.cfg.TrimSave when --setup updates a value.
+const cfgWebSection = "web"
+
+// Path cfg section. Holds operator-tuned filesystem locations
+// (data dir, logs dir) so an install can put data on a separate
+// volume / mount without recompiling. Defaults shipped via
+// defaultINITemplate point everything at `<root>/data` and
+// `<root>/logs` so vanilla installs match the historical layout.
+const cfgPathsSection = "paths"
+
+// loadPath reads a path setting from the [paths] section, falling
+// back to defaultPath (typically "<root>/<subdir>") and FormatPath-
+// normalizing the result so trailing slashes / relative segments
+// resolve consistently. Pure read — no DB fallback because path
+// settings are new (never previously stored in kvlite).
+func loadPath(key, defaultPath string) string {
+	if v := global.cfg.Get(cfgPathsSection, key); v != "" {
+		return FormatPath(v)
+	}
+	return FormatPath(defaultPath)
+}
+
+// cfgFilePath returns the absolute path of the operator-tuned INI
+// config file. Defaults to <binary-dir>/<APPNAME>.ini so it ships
+// alongside the install rather than buried in the data directory.
+// Overridable via --config <path> for multi-instance / per-env
+// setups (same binary, different configs).
+func cfgFilePath() string {
+	if global.cfg_path != "" {
+		return FormatPath(global.cfg_path)
+	}
+	return FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME))
+}
+
+// loadWebString reads a web setting, preferring the INI file and
+// falling back to the kvlite store for any value not yet migrated.
+// When a value is found in the DB but missing from the INI, it gets
+// copied to cfg + persisted so subsequent boots skip the DB lookup.
+// Pass an explicit defaultValue to seed fresh installs (returned
+// only when neither store has the key).
+func loadWebString(key, defaultValue string) string {
+	if v := global.cfg.Get(cfgWebSection, key); v != "" {
+		return v
+	}
+	var dbValue string
+	if global.db != nil {
+		global.db.Get(WebTable, key, &dbValue)
+	}
+	if dbValue != "" {
+		// Migrate — write to cfg, persist, leave the DB row untouched
+		// so a downgrade keeps working. Subsequent reads short-circuit
+		// at the cfg.Get above.
+		_ = global.cfg.Set(cfgWebSection, key, dbValue)
+		_ = global.cfg.TrimSave(cfgWebSection)
+		return dbValue
+	}
+	return defaultValue
+}
+
+// loadWebInt is the integer-typed variant of loadWebString. Stored
+// as a decimal string in the INI; the DB still holds the value as a
+// raw int per its native type. Returns defaultValue when the key
+// is missing or unparseable in both stores.
+func loadWebInt(key string, defaultValue int) int {
+	if v := global.cfg.Get(cfgWebSection, key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	var dbValue int
+	if global.db != nil {
+		global.db.Get(WebTable, key, &dbValue)
+	}
+	if dbValue != 0 {
+		_ = global.cfg.Set(cfgWebSection, key, fmt.Sprintf("%d", dbValue))
+		_ = global.cfg.TrimSave(cfgWebSection)
+		return dbValue
+	}
+	return defaultValue
+}
+
+// loadWebBool — bool-typed variant. Stored as "true"/"false" in INI.
+func loadWebBool(key string, defaultValue bool) bool {
+	if global.cfg.Exists(cfgWebSection, key) {
+		switch strings.ToLower(global.cfg.Get(cfgWebSection, key)) {
+		case "true", "yes", "1", "on":
+			return true
+		case "false", "no", "0", "off":
+			return false
+		}
+	}
+	var dbValue bool
+	if global.db != nil {
+		global.db.Get(WebTable, key, &dbValue)
+	}
+	if dbValue {
+		_ = global.cfg.Set(cfgWebSection, key, "true")
+		_ = global.cfg.TrimSave(cfgWebSection)
+		return true
+	}
+	return defaultValue
+}
+
+// saveWebString writes a setting to the INI file. Mirrors the change
+// to the DB-backed mirror so any code path that hasn't been migrated
+// yet still sees the new value during the transition.
+func saveWebString(key, value string) {
+	_ = global.cfg.Set(cfgWebSection, key, value)
+	_ = global.cfg.TrimSave(cfgWebSection)
+	if global.db != nil {
+		global.db.Set(WebTable, key, value)
+	}
+}
+
+func saveWebInt(key string, value int) {
+	_ = global.cfg.Set(cfgWebSection, key, fmt.Sprintf("%d", value))
+	_ = global.cfg.TrimSave(cfgWebSection)
+	if global.db != nil {
+		global.db.Set(WebTable, key, value)
+	}
+}
+
+func saveWebBool(key string, value bool) {
+	if value {
+		_ = global.cfg.Set(cfgWebSection, key, "true")
+	} else {
+		_ = global.cfg.Set(cfgWebSection, key, "false")
+	}
+	_ = global.cfg.TrimSave(cfgWebSection)
+	if global.db != nil {
+		global.db.Set(WebTable, key, value)
+	}
+}
+
+// init_config_file loads the operator-tuned INI config file
+// (<root>/gohort.ini) into global.cfg. Missing-file is not fatal —
+// the cfg.Store still records the path so the next TrimSave creates
+// it on disk. Defaults from defaultINITemplate seed any keys absent
+// from both the file and (later) the kvlite-mirror migration.
+//
+// Settings live in cfg (vs the DB) when they're operator-set-once
+// infrastructure (bind addr, TLS paths, max concurrent slots) rather
+// than user-toggled-at-runtime state (autoblog scheduler, LLM
+// routing, OAuth tokens). The migration helpers in loadWebX copy any
+// pre-existing DB value into cfg and drop the DB row, so upgrades
+// don't lose existing settings and the DB stops shadowing the file.
+func init_config_file() {
+	cfgPath := cfgFilePath()
+	// cfg.File records the target path before attempting to open,
+	// so even when the file is missing the cfg.Store knows where
+	// to write on the next TrimSave. Missing-file is the expected
+	// fresh-install case and is intentionally NOT fatal — only
+	// parse/permission errors are.
+	if err := global.cfg.File(cfgPath); err != nil && !os.IsNotExist(err) {
+		Critical(err)
+	}
+	// Seed any keys not yet set from the shipped template. Defaults
+	// only fills missing entries, so existing values from a parsed
+	// file are preserved.
+	if err := global.cfg.Defaults(defaultINITemplate); err != nil {
+		Critical(err)
+	}
+	// Materialize the file on disk on first startup so operators
+	// have something to inspect / edit without having to run --setup
+	// first. TrimSave is a no-op when the file already exists and
+	// matches the in-memory state, so this is cheap on subsequent
+	// boots. Quiet failure — if the path isn't writable we keep
+	// running on in-memory defaults.
+	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
+		_ = global.cfg.TrimSave()
+	}
+}
+
+// defaultINITemplate seeds a fresh gohort.ini with the operator-tuned
+// settings, each commented so a human editing the file knows what
+// every entry means. Defaults are deliberately empty for paths/IPs
+// (so an unset cert path falls through to self-signed generation)
+// and conservative for capacity (max_concurrent=1).
+const defaultINITemplate = `# gohort configuration file
+#
+# Settings here are operator-set-once infrastructure: bind address,
+# TLS paths, capacity ceilings, IP allowlists. Edit then restart the
+# server, or run --setup for an interactive prompt that writes here.
+#
+# Runtime-toggleable state (autoblog scheduler, LLM routing, OAuth
+# tokens, per-conversation overrides) lives in the kvlite database
+# under data/<APPNAME>.db and is configured from the admin UI.
+
+[web]
+# Bind address for the dashboard. Examples:
+#   :8080               (all interfaces, plain)
+#   127.0.0.1:8181      (loopback only)
+#   0.0.0.0:443         (public, requires TLS)
+addr =
+
+# TLS certificate + private key paths. When both are empty AND
+# tls_self_signed is true, the server auto-generates a 1-year
+# self-signed cert covering localhost + LAN IPs. When both are set,
+# they take precedence regardless of tls_self_signed.
+tls_cert =
+tls_key =
+tls_self_signed = false
+
+# Max simultaneous app runs. Additional submissions queue.
+max_concurrent = 1
+
+# Comma-separated list of CIDRs / IPs allowed to reach the admin
+# panel. Empty disables the IP gate (anyone with admin credentials
+# can access). Example: "10.0.0.0/8, 192.168.1.42"
+admin_allowed_ips =
+
+[paths]
+# Filesystem locations for runtime state. Empty values fall back
+# to the historical layout under the binary's directory:
+#   data_dir → <binary-dir>/data
+#   logs_dir → <binary-dir>/logs
+# Override to put state on a separate volume (e.g. /var/lib/gohort,
+# /var/log/gohort) without symlinks. Sub-directories (images,
+# browser, geocode, workspaces, the kvlite database) live inside
+# data_dir and follow it automatically.
+data_dir =
+logs_dir =
+`
+
 // init_database initializes the application database.
 func init_database() {
 	var err error
 
-	MkDir(fmt.Sprintf("%s/data/", global.root))
-	SetImageDir(fmt.Sprintf("%s/data/images", global.root))
-	SetBrowserDir(fmt.Sprintf("%s/data/browser", global.root))
-	SetGeocodeDir(fmt.Sprintf("%s/data/geocode", global.root))
-	SetWorkspacesDir(fmt.Sprintf("%s/data/workspaces", global.root))
+	// Load operator-tuned cfg before the DB so web bootstrap can
+	// pick up addr/tls overrides from the INI file without
+	// round-tripping through the kvlite store.
+	init_config_file()
 
-	db_filename := FormatPath(fmt.Sprintf("%s/data/%s.db", global.root, APPNAME))
+	// data_dir holds the kvlite database and every per-app
+	// subdirectory (images, browser, geocode, workspaces). Operators
+	// override via [paths] data_dir = ... in gohort.ini to relocate
+	// state onto a dedicated volume.
+	data_dir := loadPath("data_dir", fmt.Sprintf("%s/data", global.root))
+	MkDir(data_dir + "/")
+	SetImageDir(data_dir + "/images")
+	SetBrowserDir(data_dir + "/browser")
+	SetGeocodeDir(data_dir + "/geocode")
+	SetWorkspacesDir(data_dir + "/workspaces")
+
+	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", data_dir, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
 	SetErrTable(global.db.Table("fuzz_errors"))
@@ -1158,14 +1405,10 @@ func init_database() {
 
 // init_logging initializes the logging system.
 func init_logging() {
-	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
+	logs_dir := loadPath("logs_dir", fmt.Sprintf("%s/logs", global.root))
+	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/%s.log", logs_dir, APPNAME)), 10, 10)
 	Critical(err)
 	nfo.SetFile(nfo.STD|nfo.AUX, file)
-	if global.sysmode {
-		nfo.SetOutput(nfo.STD, os.Stderr)
-		nfo.SetOutput(nfo.INFO, os.Stdout)
-		nfo.SetOutput(nfo.AUX|nfo.WARN|nfo.NOTICE, nfo.None)
-	}
 	if global.debug {
 		nfo.SetOutput(nfo.DEBUG, os.Stderr)
 		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))

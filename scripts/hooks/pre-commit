@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# pre-commit: enforce "core/ui/ stays domain-agnostic" by failing the
+# commit when an app name appears as a string literal inside the
+# shared framework. See CLAUDE.md → "Generalization is mandatory in
+# shared code" for the rationale and the right way to extend.
+#
+# To install:
+#   ln -s ../../scripts/hooks/pre-commit .git/hooks/pre-commit
+#
+# Or run scripts/hooks/install.sh from the repo root.
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Files staged in this commit that live under core/ui/. Anything else
+# is allowed to mention apps by name (apps/* obviously can, and
+# top-level config like agents.go has to).
+# Only check files that are *modifications* of already-tracked files
+# (diff-filter=M). First-commit additions of an untracked file (A)
+# would otherwise trip on every pre-existing leak in the file
+# wholesale; those need a manual review pass, not a hook block. Once
+# a file is tracked, the hook protects every subsequent change to it.
+staged=$(git diff --cached --name-only --diff-filter=M | grep -E '^core/ui/.*\.(go|js)$' || true)
+
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# App names live under apps/* and private/*, BUT only directories that
+# actually register an app via core.RegisterApp count. The other dirs
+# under private/ (pipeline, knowledge, investigate, extras, …) are
+# shared utility packages whose names collide with primitive concepts
+# and would generate noise here.
+#
+# Excluded names — these collide with framework primitives that
+# share the same word as an app:
+#   chat — ChatPanel primitive, .ui-chat CSS namespace, chatMode field
+#   dual — Codewriter dual-pane / dual-mode chat
+#   admin — generic admin pages, AdminAgent registry
+# If you add a new app whose name is a common UI noun, add it here
+# rather than weakening the hook.
+excluded="chat dual admin"
+candidate_dirs=$(
+  {
+    ls -d apps/*/ 2>/dev/null || true
+    ls -d private/*/ 2>/dev/null || true
+  } | sed 's:/*$::'
+)
+app_names=""
+for dir in $candidate_dirs; do
+  if ! [ -d "$dir" ]; then continue; fi
+  # Only count it as an app if some .go file in the directory calls
+  # RegisterApp(. Catches the canonical init() registration pattern.
+  if grep -lq 'RegisterApp(' "$dir"/*.go 2>/dev/null; then
+    name=$(basename "$dir" | sed 's/[^a-z0-9_-]//g')
+    if [ -n "$name" ]; then app_names="$app_names $name"; fi
+  fi
+done
+filtered=""
+for name in $app_names; do
+  skip=0
+  for ex in $excluded; do
+    if [ "$name" = "$ex" ]; then skip=1; break; fi
+  done
+  if [ "$skip" = "0" ]; then filtered="$filtered $name"; fi
+done
+app_names=$(echo "$filtered" | tr ' ' '\n' | sort -u | grep -v '^$' || true)
+
+if [ -z "$app_names" ]; then
+  exit 0
+fi
+
+# Build a single alternation regex. Each app name has to appear
+# flanked by a non-identifier character on the left (so it's a
+# distinct token, not buried inside a longer identifier like
+# "phantomActions") AND a non-letter on the right (so prefix-style
+# identifiers like "techwriter_reprocess" still trip the hook —
+# `\b` won't match before "_" because POSIX treats "_" as a word
+# character). Comments are scanned along with everything else; if
+# you need to mention an app by name in a core/ui comment, restate
+# it as "the article editor primitive" rather than "the techwriter
+# app", or split the work so the comment isn't in core/ui.
+pattern=""
+for name in $app_names; do
+  # Skip names too short or too generic to grep meaningfully.
+  case "$name" in
+    [a-z]|[a-z][a-z]) continue ;;
+  esac
+  qmatch="(^|[^a-zA-Z0-9_])${name}([^a-zA-Z]|\$)"
+  if [ -z "$pattern" ]; then pattern="$qmatch"
+  else pattern="${pattern}|${qmatch}"
+  fi
+done
+
+if [ -z "$pattern" ]; then
+  exit 0
+fi
+
+violations=$(
+  for file in $staged; do
+    # Only flag added/modified lines, not full-file content. Diff
+    # output lines starting with "+" are additions; skip the "+++"
+    # file header.
+    git diff --cached --unified=0 -- "$file" \
+      | grep -E '^\+[^+]' \
+      | grep -E -i "${pattern}" \
+      | sed "s|^|${file}: |" || true
+  done
+)
+
+if [ -n "$violations" ]; then
+  echo
+  echo "ERROR: core/ui/ must stay domain-agnostic. The following added/modified lines"
+  echo "mention an app by name:"
+  echo
+  echo "$violations" | head -40
+  echo
+  echo "Move the app-specific behavior to the app's own package via one of the"
+  echo "extension registries documented in core/ui/AUTHORING.md."
+  echo
+  echo "If this is a false positive (e.g. a generic 'chat' field on a component,"
+  echo "not the 'chat' app), bypass with:  git commit --no-verify"
+  echo
+  exit 1
+fi
+
+exit 0

@@ -19,6 +19,14 @@ var (
 	TaggedSrcPattern = regexp.MustCompile(`^\[(\d+)\]\s*\[((?:[^\[\]]|\[[^\]]*\])*)\]\((https?://(?:[^\(\)\n]|\([^\)\n]*\))+)\)`)
 	CiteRefPattern   = regexp.MustCompile(`\[(\d+)\]`)
 	DomainPattern    = regexp.MustCompile(`https?://([^\s/\)\]>"]+)`)
+	// inlineLinkPattern catches markdown links to non-http targets:
+	// TOC anchors `[Setup](#setup)`, relative paths `[Manual](./docs.md)`,
+	// mailto links `[Mail](mailto:foo@bar)`. Runs as a second pass after
+	// MDLinkPattern so external URLs already replaced are skipped (the
+	// HTML they emit has no remaining `[text](url)` shape).
+	// Restricts the URL part to non-paren / non-whitespace chars to
+	// avoid swallowing trailing prose punctuation.
+	inlineLinkPattern = regexp.MustCompile(`\[([^\]\n]+)\]\(([^\s)]+)\)`)
 )
 
 // HTMLEscape escapes special HTML characters.
@@ -69,25 +77,71 @@ func InlineMarkdownToHTML(s string) string {
 		return fmt.Sprintf("\x00HTMLPROTECT%d\x00", idx)
 	})
 	s = HTMLEscape(s)
+	// Auto-links — three forms:
+	//   1) `<https://url>`    → CommonMark angle-bracket auto-link
+	//   2) `<email@host>`    → mailto auto-link
+	//   3) bare `https://url` in prose → GFM-style auto-link
+	// These run BEFORE the [text](url) link parsers so a bare URL
+	// inside a markdown link's text doesn't get double-wrapped.
+	// The regexes look for `&lt;` and `&gt;` because HTMLEscape already
+	// converted any literal `<` / `>`.
+	autolinkAngle := regexp.MustCompile(`&lt;(https?://[^\s&]+)&gt;`)
+	s = autolinkAngle.ReplaceAllString(s,
+		`<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>`)
+	autolinkMailAngle := regexp.MustCompile(`&lt;([^\s@&]+@[^\s&]+)&gt;`)
+	s = autolinkMailAngle.ReplaceAllString(s, `<a href="mailto:$1">$1</a>`)
+	// Bare URL in prose — match http/https URLs that AREN'T already
+	// inside an anchor's href or following the ]( of a markdown link.
+	// Negative lookbehind isn't supported in Go's regexp engine, so
+	// we use a heuristic: only match URLs preceded by whitespace,
+	// a bracket open, or a punctuation-like char that ends a sentence.
+	// (?:^|[\s>(]) — start of string OR a context that's safe.
+	bareURL := regexp.MustCompile(`(^|[\s>(])(https?://[^\s<>"'()]+)`)
+	s = bareURL.ReplaceAllString(s,
+		`$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>`)
+
 	// Markdown links: [text](url) → <a href="url">text</a>.
-	// Run before bold/italic so link text can contain formatting.
-	// Runs BEFORE protected-span restoration so the link loop can't
-	// be tricked by a bracket inside a restored <sup>[12]</sup>
-	// eating its way forward to a real markdown link elsewhere in
-	// the sentence.
-	for {
-		start := strings.Index(s, "[")
-		if start < 0 { break }
-		mid := strings.Index(s[start:], "](")
-		if mid < 0 { break }
-		mid += start
-		end := strings.Index(s[mid+2:], ")")
-		if end < 0 { break }
-		end += mid + 2
-		text := s[start+1 : mid]
-		url := s[mid+2 : end]
-		s = s[:start] + `<a href="` + url + `">` + text + "</a>" + s[end+1:]
-	}
+	// Two passes:
+	//   1) MDLinkPattern handles http/https URLs with one level of
+	//      balanced parens (Wikipedia disambiguation paths, MSDN
+	//      docs, Lancet DOIs). target="_blank" so external links open
+	//      in a new tab without navigating the reader off the page.
+	//   2) inlineLinkPattern catches everything else — TOC anchors
+	//      ([Foo](#foo)), relative paths, mailto:, and crucially
+	//      bare-domain URLs like [Github](github.com/foo) where the
+	//      LLM forgot the scheme. The replacement function classifies
+	//      each URL and:
+	//        - leaves #anchors and /paths alone (no target=_blank)
+	//        - leaves mailto: alone
+	//        - prepends https:// to bare domains and adds target=_blank
+	//      Without classification, bare domains rendered as relative
+	//      paths resolved against the page URL — broken links.
+	s = MDLinkPattern.ReplaceAllString(s,
+		`<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>`)
+	s = inlineLinkPattern.ReplaceAllStringFunc(s, func(match string) string {
+		sub := inlineLinkPattern.FindStringSubmatch(match)
+		if sub == nil {
+			return match
+		}
+		text, url := sub[1], sub[2]
+		switch {
+		case strings.HasPrefix(url, "#"):
+			// Internal anchor — stays in-document.
+			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+		case strings.HasPrefix(url, "/"):
+			// Relative path — leave as-is, same document context.
+			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+		case strings.HasPrefix(url, "mailto:"), strings.HasPrefix(url, "tel:"):
+			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+		case strings.Contains(url, "."):
+			// Bare-domain or scheme-less URL — promote to https://
+			// and treat as external (new tab).
+			return fmt.Sprintf(`<a href="https://%s" target="_blank" rel="noopener noreferrer">%s</a>`, url, text)
+		default:
+			// Unclassifiable — leave verbatim so we don't make it worse.
+			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
+		}
+	})
 	// Bold.
 	for strings.Contains(s, "**") {
 		start := strings.Index(s, "**")
@@ -121,14 +175,167 @@ func InlineMarkdownToHTML(s string) string {
 	return s
 }
 
+// HeadingAnchor turns a heading's text into a slug matching GitHub /
+// GFM exactly (the algorithm every LLM has internalized from training):
+//   - lowercase
+//   - replace each space with a dash
+//   - drop every character that is not [a-z0-9-_]
+//   - do NOT collapse consecutive dashes
+//   - do NOT trim leading/trailing dashes
+//
+// Crucially, runs of dashes ARE preserved — "Distribution & Version"
+// becomes "distribution--version" (space-amp-space → dash-drop-dash).
+// Earlier we collapsed dashes, which produced "distribution-version"
+// while the LLM wrote "distribution--version", and every link broke.
+//
+// Inline markdown (bold/italic/code/link) is stripped before
+// slugifying so `## **Setup** Steps` matches `[Setup Steps](#setup-steps)`.
+func HeadingAnchor(s string) string {
+	s = regexp.MustCompile(`\[([^\]]*)\]\([^\)]*\)`).ReplaceAllString(s, "$1")
+	s = regexp.MustCompile("[`*]").ReplaceAllString(s, "")
+	s = strings.ToLower(s)
+	var out strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			out.WriteRune(r)
+		case r == ' ':
+			out.WriteRune('-')
+		}
+	}
+	return out.String()
+}
+
+// scanHeadingSlugs walks the input markdown once and assigns each
+// heading the canonical GitHub-flavored slug (lowercase, alphanumerics
+// preserved, all other chars become dashes, consecutive dashes
+// collapsed, leading/trailing dashes trimmed). Duplicates get a
+// "-N" disambiguator in document order — same as GitHub.
+//
+// This is the slug algorithm the LLM is told to use in the system
+// prompt, so a `[Section](#slug)` link the LLM writes lands on the
+// correctly-slugged heading without any post-process matching layer.
+type headingSlug struct {
+	Text string // cleaned heading text (no inline markdown)
+	Slug string // GitHub-style slug
+}
+
+func scanHeadingSlugs(md string) []headingSlug {
+	stripInline := regexp.MustCompile("[`*]")
+	stripLink := regexp.MustCompile(`\[([^\]]*)\]\([^\)]*\)`)
+	used := map[string]int{}
+	var out []headingSlug
+	in_code := false
+	for _, line := range strings.Split(md, "\n") {
+		line = strings.TrimSpace(line)
+		// Track fenced code blocks. The renderer skips heading parsing
+		// inside code blocks, so we must too — otherwise a `## foo` line
+		// inside a ``` block adds a phantom slug that the render loop
+		// never pops, shifting every later heading's id by one and
+		// breaking every TOC link past that point.
+		if strings.HasPrefix(line, "```") {
+			in_code = !in_code
+			continue
+		}
+		if in_code {
+			continue
+		}
+		var raw string
+		if strings.HasPrefix(line, "### ") {
+			raw = strings.TrimSpace(line[4:])
+		} else if strings.HasPrefix(line, "## ") {
+			raw = strings.TrimSpace(line[3:])
+		} else if strings.HasPrefix(line, "# ") {
+			raw = strings.TrimSpace(line[2:])
+		} else {
+			continue
+		}
+		clean := stripLink.ReplaceAllString(raw, "$1")
+		clean = stripInline.ReplaceAllString(clean, "")
+		clean = strings.TrimSpace(clean)
+		base := HeadingAnchor(clean)
+		slug := base
+		if n := used[base]; n > 0 {
+			slug = fmt.Sprintf("%s-%d", base, n)
+		}
+		used[base]++
+		out = append(out, headingSlug{Text: clean, Slug: slug})
+	}
+	return out
+}
+
+// resolveReferenceLinks normalizes reference-style links to the
+// inline `[text](url)` form so the rest of the renderer can process
+// them with one code path.
+//
+// Reference definitions look like:    [label]: https://url
+// Reference uses look like:            [text][label]   or   [text][]
+//
+// The shortcut form `[text][]` reuses `text` as the label. Both
+// label keys are case-insensitive per CommonMark. Definition lines
+// are removed from the body so they don't render as literal text.
+//
+// Returns the transformed markdown. When the document contains no
+// reference definitions, the original is returned unchanged.
+func resolveReferenceLinks(md string) string {
+	refDef := regexp.MustCompile(`(?m)^[ \t]*\[([^\]]+)\]:[ \t]+(\S+)(?:[ \t]+"[^"]*")?[ \t]*$`)
+	refs := map[string]string{}
+	md = refDef.ReplaceAllStringFunc(md, func(m string) string {
+		sub := refDef.FindStringSubmatch(m)
+		if sub != nil {
+			refs[strings.ToLower(strings.TrimSpace(sub[1]))] = sub[2]
+		}
+		return "" // drop the definition line
+	})
+	if len(refs) == 0 {
+		return md
+	}
+	// Match [text][label] and [text][] (shortcut). Label is empty or
+	// a non-empty string of non-bracket chars; we look it up in refs
+	// and rewrite to inline-link form for downstream processing.
+	refUse := regexp.MustCompile(`\[([^\]\n]+)\]\[([^\]\n]*)\]`)
+	md = refUse.ReplaceAllStringFunc(md, func(m string) string {
+		sub := refUse.FindStringSubmatch(m)
+		if sub == nil {
+			return m
+		}
+		text, label := sub[1], strings.TrimSpace(sub[2])
+		if label == "" {
+			label = text
+		}
+		if url, ok := refs[strings.ToLower(label)]; ok {
+			return "[" + text + "](" + url + ")"
+		}
+		return m // keep original; unresolved labels render as literal text
+	})
+	// Collapse extra blank lines left behind by stripped definitions.
+	md = regexp.MustCompile(`\n{3,}`).ReplaceAllString(md, "\n\n")
+	return md
+}
+
 // MarkdownToHTML converts markdown text to HTML.
 func MarkdownToHTML(md string) string {
+	md = resolveReferenceLinks(md)
+	headings := scanHeadingSlugs(md)
+	headingIdx := 0
 	var out strings.Builder
 	lines := strings.Split(md, "\n")
 	in_code := false
 	in_list := false
 	in_ol := false
 	in_table := false
+
+	// nextHeadingSlug pops a slug from the pre-scanned list. The
+	// pre-scan order is the same as the render order, so popping in
+	// order keeps slugs aligned with their headings.
+	nextHeadingSlug := func() string {
+		if headingIdx < len(headings) {
+			s := headings[headingIdx].Slug
+			headingIdx++
+			return s
+		}
+		return ""
+	}
 
 	closeBlocks := func() {
 		if in_list { out.WriteString("</ul>\n"); in_list = false }
@@ -205,23 +412,27 @@ func MarkdownToHTML(md string) string {
 			continue
 		}
 
-		// Headers.
+		// Headers — IDs come from the pre-scan slug list so headings
+		// and TOC links share a stable, predictable mapping.
 		if strings.HasPrefix(stripped, "### ") {
 			if in_list { out.WriteString("</ul>\n"); in_list = false }
 			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			fmt.Fprintf(&out, "<h3>%s</h3>\n", InlineMarkdownToHTML(stripped[4:]))
+			text := stripped[4:]
+			fmt.Fprintf(&out, "<h3 id=%q>%s</h3>\n", nextHeadingSlug(), InlineMarkdownToHTML(text))
 			continue
 		}
 		if strings.HasPrefix(stripped, "## ") {
 			if in_list { out.WriteString("</ul>\n"); in_list = false }
 			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			fmt.Fprintf(&out, "<h2>%s</h2>\n", InlineMarkdownToHTML(stripped[3:]))
+			text := stripped[3:]
+			fmt.Fprintf(&out, "<h2 id=%q>%s</h2>\n", nextHeadingSlug(), InlineMarkdownToHTML(text))
 			continue
 		}
 		if strings.HasPrefix(stripped, "# ") {
 			if in_list { out.WriteString("</ul>\n"); in_list = false }
 			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			fmt.Fprintf(&out, "<h1>%s</h1>\n", InlineMarkdownToHTML(stripped[2:]))
+			text := stripped[2:]
+			fmt.Fprintf(&out, "<h1 id=%q>%s</h1>\n", nextHeadingSlug(), InlineMarkdownToHTML(text))
 			continue
 		}
 

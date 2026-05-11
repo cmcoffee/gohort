@@ -103,3 +103,23 @@ func (s *SSEWriter) Send(v interface{}) error {
 	s.flusher.Flush()
 	return nil
 }
+
+// SendNamed writes an SSE event with an explicit event type so the
+// browser-side EventSource (or a manual SSE parser) can route it via
+// addEventListener / a switch on the event name. Required by core/ui's
+// ChatPanel runtime, which dispatches on event name (chunk, done,
+// session, status, error, tool_call, tool_result).
+func (s *SSEWriter) SendNamed(event string, v interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)
+	if err != nil {
+		return err
+	}
+	s.flusher.Flush()
+	return nil
+}

@@ -30,7 +30,7 @@ const (
 
 func init() {
 	gt := NewGroupedTool("local",
-		"Sandboxed filesystem + shell operations. Read/write files in your sandbox, run shell commands inside it. Use this to draft and test scripts before wrapping them as a tool via tool_def. The sandbox is auto-managed — write/run will mint one for you on first use; the same sandbox persists across calls so you can iterate. The sandbox is the only writable path; reads/writes/exec outside it are rejected.")
+		"Sandboxed filesystem + shell ops. ONLY call this when the user explicitly asks to write/run a script, test code in a sandbox, or build a custom tool via tool_def. Do NOT use for general questions, casual conversation, web research, or as a fallback when other tools (web_search, fetch_url, etc.) fit the task — reaching for `local` speculatively is a frequent error. Reads/writes/exec are restricted to an auto-minted per-session sandbox that persists across calls so you can iterate.")
 
 	gt.AddAction("read", &GroupedToolAction{
 		Description: "Read a file from your workspace as text. Returns up to 50KB; longer files truncated with a notice.",

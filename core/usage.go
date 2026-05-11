@@ -56,7 +56,8 @@ func ProcessUsage() *UsageTracker { return processUsage }
 
 // AddWorker records token consumption from a worker-tier LLM call.
 // Safe to call with zero values (no-op when provider didn't report
-// token counts).
+// token counts). Also rolls the diff into the persistent daily-cost
+// log so the admin's Cost History chart reflects every call.
 func (u *UsageTracker) AddWorker(input, output int) {
 	if input == 0 && output == 0 {
 		return
@@ -65,6 +66,7 @@ func (u *UsageTracker) AddWorker(input, output int) {
 	u.workerInput += int64(input)
 	u.workerOutput += int64(output)
 	u.mu.Unlock()
+	recordDailyUsage(UsageDiff{WorkerInput: int64(input), WorkerOutput: int64(output)})
 }
 
 // AddLead records token consumption from a lead-tier LLM call.
@@ -76,6 +78,7 @@ func (u *UsageTracker) AddLead(input, output int) {
 	u.leadInput += int64(input)
 	u.leadOutput += int64(output)
 	u.mu.Unlock()
+	recordDailyUsage(UsageDiff{LeadInput: int64(input), LeadOutput: int64(output)})
 }
 
 // AddSearchCall increments the external search counter. Should fire
@@ -85,6 +88,7 @@ func (u *UsageTracker) AddSearchCall() {
 	u.mu.Lock()
 	u.searchCalls++
 	u.mu.Unlock()
+	recordDailyUsage(UsageDiff{SearchCalls: 1})
 }
 
 // AddImageCall increments the image-generation counter. Fires per
@@ -97,6 +101,7 @@ func (u *UsageTracker) AddImageCall() {
 	u.mu.Lock()
 	u.imageCalls++
 	u.mu.Unlock()
+	recordDailyUsage(UsageDiff{ImageCalls: 1})
 }
 
 // Snapshot returns a consistent read of the current counter values.

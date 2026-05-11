@@ -3,6 +3,7 @@ package servitor
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -360,12 +361,34 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	}
 
-	sub := NewWebUI(T, prefix, AppUIAssets{
-		BodyHTML: sshBody,
-		AppCSS:   sshCSS,
-		AppJS:    sshJS,
-		HeadHTML: sshHeadHTML,
+	// New framework chat page at "/" (Phase 2c of the servitor port).
+	// Legacy hand-rolled UI stays at "/legacy" until the framework
+	// surface is verified end-to-end.
+	sub := NewWebUI(T, prefix, AppUIAssets{})
+	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		T.handleChatPage(w, r)
 	})
+	sub.HandleFunc("/legacy", func(w http.ResponseWriter, r *http.Request) {
+		WriteAppHTML(w, T, prefix, AppUIAssets{
+			BodyHTML: sshBody,
+			AppCSS:   sshCSS,
+			AppJS:    sshJS,
+			HeadHTML: sshHeadHTML,
+		})
+	})
+	// AgentLoopPanel-facing endpoints — translator on top of the
+	// existing probeSessions queue. See chat_bridge.go / chat_page.go.
+	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
+	sub.HandleFunc("/api/chat/v2/confirm", T.handleChatConfirm)
+	sub.HandleFunc("/api/workspace/rename", T.handleWorkspaceRename)
+	sub.HandleFunc("/api/workspace/v2/", T.handleWorkspaceLoad)
+	sub.HandleFunc("/api/profile", T.handleProfile)
+	sub.HandleFunc("/manage", T.handleManagePage)
+	sub.HandleFunc("/manage/", T.handleManagePage)
 	sub.HandleFunc("/api/appliances", T.handleAppliances)
 	sub.HandleFunc("/api/appliance/", T.handleAppliance)
 	sub.HandleFunc("/api/chat", T.handleChat)
@@ -404,17 +427,13 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		for i := range entries {
 			entries[i].App = "Servitor"
 			entries[i].Path = prefix
-			// The servitor page resumes a session via ?run=<applianceID>&session=<sessionID>.
-			// Without ?run, loadAppliances() can't pick the right appliance to attach to.
-			if v, ok := sessionAppliances.Load(entries[i].ID); ok {
-				if applianceID, ok := v.(string); ok && applianceID != "" {
-					entries[i].URL = fmt.Sprintf("%s?run=%s&session=%s",
-						prefix,
-						url.QueryEscape(applianceID),
-						url.QueryEscape(entries[i].ID),
-					)
-				}
-			}
+			// New framework page reconnects via ?reconnect=<sid>;
+			// the runtime taps the chat-events translator stream
+			// for that session id on mount. The appliance picker
+			// re-syncs to the saved active appliance from a
+			// separate flow — no need to thread it through here.
+			entries[i].URL = fmt.Sprintf("%s/?reconnect=%s",
+				prefix, url.QueryEscape(entries[i].ID))
 		}
 		return entries
 	})
@@ -628,9 +647,19 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"history"`
+		// Optional image attachments — base64-encoded payloads from
+		// the paperclip picker. Decoded into Message.Images bytes
+		// and attached to the final user turn so the worker LLM
+		// can see screenshots (e.g. system error dialogs, GUI
+		// state) the user is asking about.
+		Images []string `json:"images"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
-		http.Error(w, "message required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.Message == "" && len(req.Images) == 0 {
+		http.Error(w, "message or image required", http.StatusBadRequest)
 		return
 	}
 	if req.ApplianceID == "" || udb == nil {
@@ -673,7 +702,21 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 		hist = append(hist, Message{Role: h.Role, Content: h.Content})
 	}
-	hist = append(hist, Message{Role: "user", Content: req.Message})
+	// Decode any image attachments — base64 → bytes — and attach to
+	// the final user message so the LLM sees text + images on the
+	// same turn. Skips silently on decode failure so a corrupt
+	// upload doesn't break the whole chat request.
+	var userImages [][]byte
+	for _, b64 := range req.Images {
+		if strings.TrimSpace(b64) == "" {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err == nil && len(raw) > 0 {
+			userImages = append(userImages, raw)
+		}
+	}
+	hist = append(hist, Message{Role: "user", Content: req.Message, Images: userImages})
 
 	// Pre-create the injection queue so /api/inject finds it immediately
 	// (the user could plausibly inject before the worker goroutine even
@@ -1227,6 +1270,21 @@ func (T *Servitor) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// asciiDiagramRule is shared diagram-formatting guidance referenced by
+// every servitor prompt that may produce architecture or topology output.
+// All diagrams should be plain ASCII inside ```text fenced blocks; Mermaid
+// is explicitly forbidden because it renders as raw text in this UI.
+const asciiDiagramRule = "## Diagrams\n\n" +
+	"When the user asks for a diagram, or when a diagram would clarify architecture, network topology, service connections, application dependencies, request flow, or routing, produce a plain ASCII diagram inside a ` ```text ` code block — never Mermaid, PlantUML, or any other DSL.\n\n" +
+	"**Style:**\n" +
+	"- Use `+--...--+` boxes for hosts/services, `[ ]` for inline labels, `-->` / `<--` / `<-->` arrows for directed flow.\n" +
+	"- Label arrows with the protocol or port: `--:3306-->` or `--HTTP:8080-->`.\n" +
+	"- Group nodes into zones with a surrounding box or dashed border and a label in the top-left corner.\n" +
+	"- Align columns so the diagram reads cleanly in a fixed-width font.\n\n" +
+	"**What to avoid:**\n" +
+	"- Mermaid / PlantUML / GraphViz syntax — they will not render correctly in this context and appear as raw text to the reader.\n" +
+	"- Overly dense diagrams — split into multiple focused diagrams (one per tier or function) for complex topologies.\n\n"
+
 // writeInstructions appends the appliance's custom instructions block when present.
 func writeInstructions(b *strings.Builder, appliance Appliance) {
 	if strings.TrimSpace(appliance.Instructions) == "" {
@@ -1524,9 +1582,11 @@ func buildSynthesisSystemPrompt(appliance Appliance) string {
 			"22. Summary and Notable Findings — key architecture insights, security observations, anything unusual\n\n"+
 			"Populate every section from the supplied facts and summaries. Be specific — include version numbers, paths, ports, and credentials where discovered. "+
 			"Sections 9, 12, 14, 17, and 18 are the most valuable — fill them with full detail. "+
-			"If data is genuinely absent for a section, write 'Not investigated in this scan.' — do not fabricate.",
+			"If data is genuinely absent for a section, write 'Not investigated in this scan.' — do not fabricate.\n\n",
 		appliance.Name, appliance.Host,
 	))
+	b.WriteString(asciiDiagramRule)
+	b.WriteString("Apply the diagram rule when producing sections 5 (Network Configuration), 9 (Service Communication Map), 14 (Application Dependency Graph), 17 (Database Access Patterns), and 18 (Routing & Request Handling) — these all benefit from a small ASCII diagram in addition to prose.\n")
 	return b.String()
 }
 
@@ -1717,7 +1777,8 @@ func buildMapSystemPrompt(base string, appliance Appliance) string {
 			"  • `record_technique` — exact working command, e.g. 'MySQL root: mysql -u root (no password, unix socket)'\n" +
 			"  • `store_fact` — key: `mysql_auth` / `postgres_auth` / `redis_auth` / `mongo_auth`, value: exact working command\n" +
 			"This is not optional. These are consulted before every future database access attempt.\n\n" +
-			mapExecutionProtocol)
+			mapExecutionProtocol + "\n\n")
+		b.WriteString(asciiDiagramRule)
 		return b.String()
 	}
 	var b strings.Builder
@@ -1743,6 +1804,7 @@ func buildMapSystemPrompt(base string, appliance Appliance) string {
 		"`record_technique` (exact command) AND `store_fact` (key: `mysql_auth`/`postgres_auth`/`redis_auth`/`mongo_auth`). " +
 		"These are consulted before every future database access attempt so nothing is re-discovered unnecessarily.\n\n" +
 		mapExecutionProtocol + "\n\n")
+	b.WriteString(asciiDiagramRule)
 	b.WriteString(appliance.Profile)
 	if len(appliance.LogMap) > 0 {
 		b.WriteString("\n\n## Previously Discovered Log Files\n\n")
@@ -1820,16 +1882,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	b.WriteString("- `update_doc` is MANDATORY after every `probe` call that yields new information — call it even if findings are sparse.\n")
 	b.WriteString("- Synthesize clearly — do not dump raw command output at the user. Exact verified values only.\n\n")
 
-	b.WriteString("## Diagrams\n\n")
-	b.WriteString("When the user asks for a diagram, or when a diagram would clarify architecture, connections, or data flow, produce a plain ASCII diagram inside a ` ```text ` code block — never Mermaid.\n\n")
-	b.WriteString("**Style:**\n")
-	b.WriteString("- Use `+--...--+` boxes for hosts/services, `[ ]` for inline labels, `-->` / `<--` / `<-->` arrows for directed flow.\n")
-	b.WriteString("- Label arrows with the protocol or port: `--:3306-->` or `--HTTP:8080-->`.\n")
-	b.WriteString("- Group nodes into zones with a surrounding box or dashed border and a label in the top-left corner.\n")
-	b.WriteString("- Align columns so the diagram reads cleanly at a fixed-width font.\n\n")
-	b.WriteString("**What to avoid:**\n")
-	b.WriteString("- Mermaid syntax — it will not render correctly in this context.\n")
-	b.WriteString("- Overly dense diagrams — split into multiple focused diagrams (one per tier or function) for complex topologies.\n\n")
+	b.WriteString(asciiDiagramRule)
 
 	if len(docs) > 0 {
 		b.WriteString("## Current Knowledge Base\n\n")
@@ -2015,6 +2068,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appl
 	}
 
 	cmdCount := make(map[string]int)
+	var cmdMu sync.Mutex // protects cmdCount — agent may issue parallel tool calls
 
 	run_tool := AgentToolDef{
 		Tool: Tool{
@@ -2030,9 +2084,12 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appl
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
 			}
+			cmdMu.Lock()
 			cmdCount[cmd]++
-			if cmdCount[cmd] > 3 {
-				return fmt.Sprintf("[LOOP DETECTED] run_command(%q) called %d times — try a different approach.", cmd, cmdCount[cmd]-1), nil
+			count := cmdCount[cmd]
+			cmdMu.Unlock()
+			if count > 3 {
+				return fmt.Sprintf("[LOOP DETECTED] run_command(%q) called %d times — try a different approach.", cmd, count-1), nil
 			}
 			emit(id, probeEvent{Kind: "cmd", Text: cmd})
 			result, err := execFn(cmd)
@@ -2254,6 +2311,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	// If you ever want per-phase budgets, wire a reset hook from the
 	// orchestrator side rather than reverting to per-tool maps.
 	cmdCount := make(map[string]int)
+	var cmdMu sync.Mutex // protects cmdCount — agent may issue parallel tool calls
 	failCount := make(map[string]int)
 	var failMu sync.Mutex
 
@@ -2275,10 +2333,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				if cmd == "" {
 					return "", fmt.Errorf("command is required")
 				}
+				cmdMu.Lock()
 				cmdCount[cmd]++
-				if cmdCount[cmd] > loopLimit {
-					msg := fmt.Sprintf("[LOOP DETECTED] run_command(%q) has been called %d times in this session. Running it again will not produce a different result. Stop. Choose a different command, different arguments, or a different investigation strategy.", cmd, cmdCount[cmd]-1)
-					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected: %q (%dx)", cmd, cmdCount[cmd]-1)})
+				count := cmdCount[cmd]
+				cmdMu.Unlock()
+				if count > loopLimit {
+					msg := fmt.Sprintf("[LOOP DETECTED] run_command(%q) has been called %d times in this session. Running it again will not produce a different result. Stop. Choose a different command, different arguments, or a different investigation strategy.", cmd, count-1)
+					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected: %q (%dx)", cmd, count-1)})
 					return msg, nil
 				}
 				bin := cmdBinary(cmd)
@@ -4032,7 +4093,8 @@ func (T *Servitor) handleSaveDestinations(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleSaveArticle reformats the given assistant response for TechWriter and saves it.
+// handleSaveArticle saves the given assistant response to TechWriter as-is.
+// Subject is derived from the first heading/line; body is the verbatim text.
 func (T *Servitor) handleSaveArticle(w http.ResponseWriter, r *http.Request) {
 	userID, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -4046,52 +4108,31 @@ func (T *Servitor) handleSaveArticle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "TechWriter not available", http.StatusServiceUnavailable)
 		return
 	}
-	if T.LLM == nil {
-		http.Error(w, "LLM not configured", http.StatusServiceUnavailable)
-		return
-	}
 	var req struct {
-		Text string `json:"text"`
+		Text    string `json:"text"`
+		Subject string `json:"subject"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
 		http.Error(w, "text required", http.StatusBadRequest)
 		return
 	}
-	sysPrompt := "You are a technical writer. Format the provided content as a polished technical document. " +
-		"Respond with a JSON object only — no other text — with two fields: " +
-		`"subject" (a concise document title) and "body" (full markdown content).`
-	userMsg := "Format this for TechWriter:\n\n" + req.Text
-	resp, err := T.LLM.Chat(r.Context(),
-		[]Message{{Role: "user", Content: userMsg}},
-		WithSystemPrompt(sysPrompt),
-		WithJSONMode(),
-		WithRouteKey("app.servitor"),
-		WithThink(false),
-	)
-	if err != nil {
-		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	var out struct {
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
-	}
-	if err := json.Unmarshal([]byte(resp.Content), &out); err != nil || out.Subject == "" {
-		// Fall back: use first line as subject, full text as body.
-		lines := strings.SplitN(strings.TrimSpace(req.Text), "\n", 2)
-		out.Subject = strings.TrimPrefix(strings.TrimSpace(lines[0]), "# ")
-		if out.Subject == "" {
-			out.Subject = "Untitled"
+	subject := strings.TrimSpace(req.Subject)
+	body := req.Text
+	if subject == "" {
+		lines := strings.SplitN(strings.TrimSpace(body), "\n", 2)
+		subject = strings.TrimPrefix(strings.TrimSpace(lines[0]), "# ")
+		subject = strings.TrimPrefix(subject, "## ")
+		if subject == "" {
+			subject = "Untitled"
 		}
-		out.Body = req.Text
 	}
-	id, err := SaveArticleFunc(userID, out.Subject, out.Body)
+	id, err := SaveArticleFunc(userID, subject, body)
 	if err != nil {
 		http.Error(w, "save error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"id": id, "subject": out.Subject})
+	json.NewEncoder(w).Encode(map[string]string{"id": id, "subject": subject})
 }
 
 // handleSaveSnippet reformats the given assistant response for CodeWriter and saves it.
@@ -4572,10 +4613,13 @@ const sshBody = `
       <textarea id="chat-input" rows="2"
         placeholder="Ask about this system… (Enter to send, Shift+Enter for newline)"
         onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+      <input type="file" id="chat-attach-input" accept="image/*" style="display:none" onchange="handleAttachPick(event)">
+      <button id="chat-attach" onclick="document.getElementById('chat-attach-input').click()" title="Attach screenshot (paperclip)">📎</button>
       <button id="chat-send" onclick="sendChat()" disabled>Send</button>
       <button id="chat-cancel" onclick="cancelChat()">Cancel</button>
       <span id="chat-working" style="display:none;margin:0 0.6rem;align-self:center" title="Working…"><span class="spinner-lg"></span></span>
     </div>
+    <div id="chat-attachments" style="display:none;padding:0.3rem 0.6rem;border-top:1px solid var(--border);background:var(--bg-1);font-size:0.78rem;color:var(--text-mute)"></div>
   </div>
   <div id="chat-resizer" onmousedown="startResize(event)"></div>
   <div id="activity-pane">
@@ -5886,11 +5930,63 @@ function deleteInterjection(btn) {
   });
 }
 
+// Pending image attachments — array of {name, dataURL, base64}
+// staged for the next sendChat. Populated by the paperclip → file
+// picker; rendered as small chips above the input. Cleared on send.
+var pendingAttachments = [];
+
+function handleAttachPick(ev) {
+  var files = ev.target.files;
+  if (!files || !files.length) return;
+  for (var i = 0; i < files.length; i++) {
+    (function(f) {
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var dataURL = e.target.result;
+        var base64 = dataURL.indexOf(',') >= 0 ? dataURL.split(',')[1] : dataURL;
+        pendingAttachments.push({name: f.name, dataURL: dataURL, base64: base64});
+        renderAttachments();
+      };
+      reader.readAsDataURL(f);
+    })(files[i]);
+  }
+  // Allow re-picking the same file later.
+  ev.target.value = '';
+}
+
+function renderAttachments() {
+  var bar = document.getElementById('chat-attachments');
+  if (!pendingAttachments.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = '';
+  bar.innerHTML = '';
+  pendingAttachments.forEach(function(a, idx) {
+    var chip = document.createElement('span');
+    chip.style.cssText = 'display:inline-flex;align-items:center;gap:0.35rem;background:var(--bg-2);border:1px solid var(--border);border-radius:999px;padding:0.15rem 0.6rem;margin:0.15rem 0.25rem 0.15rem 0;';
+    var label = document.createElement('span');
+    label.textContent = '🖼️ ' + a.name;
+    label.style.color = 'var(--text)';
+    var rm = document.createElement('button');
+    rm.textContent = '×';
+    rm.style.cssText = 'background:none;border:none;color:var(--danger,#f85149);cursor:pointer;font-size:1rem;padding:0;';
+    rm.onclick = function() {
+      pendingAttachments.splice(idx, 1);
+      renderAttachments();
+    };
+    chip.appendChild(label);
+    chip.appendChild(rm);
+    bar.appendChild(chip);
+  });
+}
+
 function sendChat() {
   if (!currentAppliance) return;
   var input = document.getElementById('chat-input');
   var msg = input.value.trim();
-  if (!msg) return;
+  if (!msg && !pendingAttachments.length) return;
 
   // Mid-flight interjection: a chat session is already running. Push the
   // note onto the orchestrator's queue instead of starting a new turn.
@@ -5920,7 +6016,17 @@ function sendChat() {
 
   input.value = '';
   lastUserQuestion = msg;
-  addChatMsg('user', escapeHtml(msg));
+  // Render the user bubble with inline thumbnails for any attached
+  // images so the user sees what they sent. Saved separately from
+  // chatHistory because history is the text-only conversation
+  // record sent back to the LLM on subsequent turns.
+  var bubbleHTML = escapeHtml(msg);
+  if (pendingAttachments.length) {
+    pendingAttachments.forEach(function(a) {
+      bubbleHTML += '<div style="margin-top:0.4rem"><img src="' + a.dataURL + '" style="max-width:280px;max-height:200px;border-radius:6px;border:1px solid var(--border)"></div>';
+    });
+  }
+  addChatMsg('user', bubbleHTML);
   chatHistory.push({role: 'user', content: msg});
   // Chat sessions stay interjectable, so leave the input enabled and the
   // send button visible — the user may type follow-on notes mid-run.
@@ -5935,6 +6041,12 @@ function sendChat() {
     history: chatHistory.slice(0, -1)
   };
   if (currentWorkspaceId) chatPayload.workspace_id = currentWorkspaceId;
+  if (pendingAttachments.length) {
+    chatPayload.images = pendingAttachments.map(function(a) { return a.base64; });
+  }
+  // Clear pending attachments — they're now part of this turn.
+  pendingAttachments = [];
+  renderAttachments();
   fetch('api/chat', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(chatPayload)

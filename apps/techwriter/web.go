@@ -1,6 +1,7 @@
 package techwriter
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -9,10 +10,12 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/editor"
+	"github.com/cmcoffee/gohort/core/webui"
 )
 
 
@@ -31,17 +34,56 @@ FORMATTING RULES:
 - Keep sentences concise. If a sentence runs longer than ~120 characters, break it into two sentences or restructure as a list. Long sentences in technical docs cause readers to miss critical details.
 - One idea per sentence. Do not chain multiple instructions with "and" or "then" in a single sentence.
 - Use line breaks between distinct steps or concepts. Dense paragraphs are harder to scan than spaced-out steps.
-- TABLE OF CONTENTS: If the article has 4 or more ## sections, add a brief table of contents after the opening paragraph using markdown anchor links:
-  ## Table of Contents
-  - [Prerequisites](#prerequisites)
-  - [Configuration](#configuration)
-  - [Deployment Steps](#deployment-steps)
-  - [Verification](#verification)
-  - [Rollback](#rollback)
-  The TOC should list every ## heading as a link. Heading text becomes lowercase with spaces replaced by dashes for the anchor.
-- When referencing another section of the article, use an anchor link: "See [Rollback](#rollback) if something goes wrong." Do not say "see below" or "see the section above" — link directly.
+- SECTION HEADINGS: Number every ## heading. Format is "## N. Section Title" — for example "## 1. Setup", "## 2. Configuration", "## 3. Deployment Steps". Start at 1 and increment by 1. Sub-sections (### …) and special sections (## Sources, ## References) are NOT numbered.
+- TABLE OF CONTENTS: After the introductory paragraph (and before "## 1. ..."), write a "## Table of Contents" section as a bulleted list of markdown anchor links — one bullet per numbered ## heading. Use the slug rules below. Do NOT include sub-sections or special sections (Sources, References).
+- ANCHOR SLUG ALGORITHM (standard GitHub-flavored markdown — use this exactly for both the TOC and any cross-reference link). Given the FULL heading text after "## ":
+  1. Lowercase.
+  2. Replace each space with a single dash.
+  3. Drop every character that is NOT a-z, 0-9, dash, or underscore.
+  4. Do NOT collapse consecutive dashes. Do NOT trim leading/trailing dashes.
+  Worked examples:
+    "1. Setup"                       → slug: 1-setup
+    "2. Distribution & Version"      → slug: 2-distribution--version    (yes, double dash — space-amp-space)
+    "3. API Keys (sensitive)"        → slug: 3-api-keys-sensitive
+    "4. Configuration: Secrets"      → slug: 4-configuration-secrets
+  TOC entry: "- [1. Setup](#1-setup)" / "- [2. Distribution & Version](#2-distribution--version)"
+- IN-PROSE CROSS-REFERENCES: link by full heading text using the same slug: "See [4. Rollback](#4-rollback) if something goes wrong." Do not say "see below" or "see the section above" — link directly by section title.
 
 IMPORTANT: If the article contains source citations like [1], [2], [N] or a ## Sources section, preserve ALL citations exactly as they appear. Keep every [N] reference in the text and keep the Sources section intact.
+
+ASCII DIAGRAMS — straighten any lines that drift. When the article contains an ASCII diagram (architecture, flow, network topology, etc.), inspect every line of it BEFORE returning your output and fix any line that deviates without reason:
+- Vertical lines (|) must hold the same column from top to bottom. If a "|" character shifts left or right between rows for no semantic reason (it's not a branch, not a corner), realign it to the column its neighbors use.
+- Horizontal lines (-, =) must be continuous within their span. No stray gaps in the middle of a line, no extra dashes that overshoot a corner.
+- Corner / junction characters (+, T, └, ┘, ├, ┤, etc.) must sit at the actual intersection. A "+" floating one column off where the lines meet is a defect — move it.
+- Box widths must be consistent. If a box has 20 dashes on its top edge and 18 on its bottom, the bottom is wrong (or the top is) — pad whichever is shorter.
+- Whitespace inside a box must not change column counts mid-flow. Padding spaces should be uniform so labels left-align with their box edges.
+Treat a wobbly diagram as a bug. The diagram represents a precise relationship; if the rendering doesn't, fix it. Use a fixed-width font mental model — every character is one column, every row is one line. Apply the diagram fix as part of normal "process this article" / rewrite flows; do not announce it, just deliver clean output.
+
+RENDERER CAPABILITIES (what survives the markdown → HTML export):
+The export pipeline supports a defined subset of markdown. Stick to it — anything outside this list will be rendered as plain text or stripped.
+
+  Supported block elements:
+    - Headings: # H1, ## H2, ### H3 (deeper levels are not styled)
+    - Paragraphs (separated by a blank line)
+    - Fenced code blocks: triple-backtick opens, triple-backtick closes (language tag is ignored — no syntax highlighting, but the fence is required for code formatting)
+    - Bullet lists: lines starting with "- " or "* " (single level — nested bullets DO NOT render as nested; keep lists flat)
+    - Numbered lists: "1. ", "2. ", … (single level only)
+    - Blockquotes: lines starting with "> "
+    - Horizontal rule: --- on its own line
+    - Tables: pipe-delimited with a |---|---| separator row after the header. Cells may contain inline markdown.
+
+  Supported inline elements:
+    - **bold**, *italic*, ` + "`inline code`" + `, [link text](https://url)
+    - Citation superscripts via raw HTML are passed through: <sup><a href="...">1</a></sup>
+
+  NOT supported — avoid these, they will not render correctly:
+    - Nested lists (sub-bullets indented under a parent bullet)
+    - Task lists: - [ ] / - [x]
+    - Images: ![alt](url)
+    - Bare/auto-linked URLs (always use [text](url))
+    - Strikethrough ~~text~~, footnotes, definition lists, admonition syntax
+    - HTML beyond the <sup><a> citation pattern
+    - Heading anchor IDs like {#custom-id}
 
 When you produce article content (new or revised), output it as clean markdown that can be directly pasted into the article editor. Start your response with ARTICLE: on its own line if you're providing updated article content, followed by the full article markdown. If you're just answering a question or chatting, respond normally without the ARTICLE: prefix.
 ` + BannedWordsRule
@@ -110,10 +152,32 @@ func (T *TechWriterAgent) WebDesc() string {
 }
 
 func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	sub := NewWebUI(T, prefix, AppUIAssets{
-		BodyHTML: techwriterBody,
-		AppCSS:   editor.DiffCSS() + techwriterCSS,
-		AppJS:    editor.UtilsJS() + editor.DiffJS() + techwriterJS,
+	sub := http.NewServeMux()
+	// New framework-based techwriter at /techwriter/. Same backend
+	// API endpoints as legacy — only the page chrome and main UI
+	// changed.
+	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		T.handleNewTechwriterPage(w, r)
+	})
+	// Legacy techwriter (full feature set: persona, revisions, merge,
+	// export/import, image gen). Kept for parity until each feature
+	// gets ported into the framework version above.
+	sub.HandleFunc("/legacy", func(w http.ResponseWriter, r *http.Request) {
+		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
+			Title:    "TechWriter (Legacy)",
+			AppName:  "TechWriter",
+			Prefix:   prefix,
+			BodyHTML: techwriterBody,
+			AppCSS:   editor.DiffCSS() + techwriterCSS,
+			AppJS:    editor.UtilsJS() + editor.DiffJS() + techwriterJS,
+		}))
+	})
+	sub.HandleFunc("/legacy/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, prefix+"/legacy", http.StatusMovedPermanently)
 	})
 	sub.HandleFunc("/api/chat", T.handleChat)
 	sub.HandleFunc("/api/save", T.handleSave)
@@ -134,6 +198,7 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/save-persona", T.handleSavePersona)
 	sub.HandleFunc("/api/personas", T.handleListPersonas)
 	sub.HandleFunc("/api/persona/", T.handlePersona)
+	sub.HandleFunc("/api/rules", T.handleRules)
 	sub.HandleFunc("/api/generate-image", T.handleGenerateImage)
 
 	RegisterUserDataHandler(&techWriterUserData{agent: T})
@@ -224,7 +289,13 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		article_context = fmt.Sprintf("\n\nArticle subject: %s\n(Article body is empty — this is a new article.)", req.Subject)
 	}
 
-	system_prompt := T.activeDefaultPrompt() + personaPromptSection(T.loadPersonaStyle(udb, req.Persona))
+	// Compose system prompt: base default + persona style (legacy
+	// path, kept for /techwriter/legacy) + per-user Rules. Rules go
+	// LAST so they're closest to the user message and weigh heaviest
+	// on the model's behavior.
+	system_prompt := T.activeDefaultPrompt() +
+		personaPromptSection(T.loadPersonaStyle(udb, req.Persona)) +
+		loadUserRules(udb)
 	if req.PersonaEdit {
 		system_prompt = `You are helping the user edit a writing style persona (a set of rules for how to write). The content in the editor is a persona definition, not an article. When the user asks you to modify it (add rules, remove sections, change tone), apply the change and return the COMPLETE updated persona. Always prefix your output with ARTICLE: followed by the full updated persona text. Do not discuss the change — just make it and return the result.
 
@@ -269,17 +340,95 @@ These rules prevent the output from reading as AI-generated. They should be part
 		Role:    "user",
 		Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context),
 	})
-	resp, err := T.AppCore.LeadChat(r.Context(), messages,
+	// Detach from r.Context() so that an upstream proxy or browser-fetch
+	// abort can't kill the LLM call mid-flight. Articles + history can
+	// produce 50KB+ requests where prompt processing alone takes ~30s
+	// before the first token; previously a 2-minute proxy cap was killing
+	// these. The 10-minute cap below is the hard ceiling for a single
+	// chat turn; the LLM client's own RequestTimeout still bounds header
+	// wait independently.
+	chatCtx, chatCancel := context.WithTimeout(context.WithoutCancel(r.Context()), 10*time.Minute)
+	defer chatCancel()
+
+	// Heartbeat: keep the response connection alive while the LLM works
+	// so reverse proxies (with default 60s/120s response-write caps) don't
+	// drop the request. Writes a single whitespace byte every 25s to the
+	// already-committed JSON response — JSON parsers tolerate leading
+	// whitespace so the client's r.json() still parses correctly.
+	hbCtx, hbCancel := context.WithCancel(context.Background())
+	defer hbCancel()
+	var hbMu sync.Mutex
+	headersCommitted := false
+	flusher, _ := w.(http.Flusher)
+	go func() {
+		// Don't start heartbeat immediately — most errors return fast and
+		// should use http.Error with a non-200 status. Wait long enough
+		// to be confident the call is genuinely in-flight.
+		select {
+		case <-hbCtx.Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+		ticker := time.NewTicker(25 * time.Second)
+		defer ticker.Stop()
+		// First heartbeat commits headers as 200 OK + JSON.
+		hbMu.Lock()
+		if !headersCommitted {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			headersCommitted = true
+		}
+		_, _ = w.Write([]byte(" "))
+		if flusher != nil {
+			flusher.Flush()
+		}
+		hbMu.Unlock()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				hbMu.Lock()
+				_, _ = w.Write([]byte(" "))
+				if flusher != nil {
+					flusher.Flush()
+				}
+				hbMu.Unlock()
+			}
+		}
+	}()
+
+	// Privacy posture: techwriter chat ALWAYS uses the worker LLM
+	// regardless of routing config. The article body is sensitive
+	// (drafts, internal docs, customer data) and shouldn't leak to a
+	// remote provider just because the operator's lead-routing fell
+	// through. Suggest-title already uses WORKER explicitly; this
+	// brings chat in line. Image generation is the only externally-
+	// reachable techwriter feature, opted into per click.
+	resp, err := T.AppCore.WorkerChat(chatCtx, messages,
 		WithSystemPrompt(system_prompt),
 		WithRouteKey("app.techwriter"))
+	hbCancel()
 
+	hbMu.Lock()
+	defer hbMu.Unlock()
 	if err != nil {
+		// If the heartbeat already committed headers, we can't switch
+		// to 500 — encode the error in the JSON body and let the client
+		// surface it via the data.error path.
+		if headersCommitted {
+			json.NewEncoder(w).Encode(map[string]string{"error": "LLM error: " + err.Error()})
+			return
+		}
 		http.Error(w, "LLM error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	text := strings.TrimSpace(ResponseText(resp))
-	w.Header().Set("Content-Type", "application/json")
+	if !headersCommitted {
+		w.Header().Set("Content-Type", "application/json")
+		headersCommitted = true
+	}
 
 	// Parse ARTICLE: prefix. In chat mode, force type=chat even if the
 	// LLM ignored the system-prompt rule and emitted an ARTICLE: body —
@@ -314,9 +463,10 @@ func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID      string `json:"id"`
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
+		ID       string `json:"id"`
+		Subject  string `json:"subject"`
+		Body     string `json:"body"`
+		ImageURL string `json:"image_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -327,10 +477,11 @@ func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().Format(time.RFC3339)
 	udb.Set(HistoryTable, req.ID, ArticleRecord{
-		ID:      req.ID,
-		Subject: req.Subject,
-		Body:    req.Body,
-		Date:    now,
+		ID:       req.ID,
+		Subject:  req.Subject,
+		Body:     req.Body,
+		Date:     now,
+		ImageURL: req.ImageURL,
 	})
 	revID := UUIDv4()
 	udb.Set(revisionTable, revID, ArticleRevision{
@@ -763,7 +914,9 @@ The merged article must preserve all important facts, data, and claims from both
 			return ""
 		}())
 
-	resp, err := T.AppCore.LeadChat(r.Context(), []Message{
+	// Same privacy posture as handleChat — never escalate to lead.
+	// Article bodies stay on the local worker LLM.
+	resp, err := T.AppCore.WorkerChat(r.Context(), []Message{
 		{Role: "user", Content: merge_prompt},
 	}, WithSystemPrompt(system_prompt),
 		WithRouteKey("app.techwriter"))
@@ -876,14 +1029,22 @@ func mergeSourceSections(a, b string) string {
 
 func (T *TechWriterAgent) handlePreview(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Subject string `json:"subject"`
-		Body    string `json:"body"`
+		Subject  string `json:"subject"`
+		Body     string `json:"body"`
+		ImageURL string `json:"image_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Body == "" {
 		http.Error(w, "body required", http.StatusBadRequest)
 		return
 	}
-	html := MarkdownToHTML(req.Body)
+	html := headerImageHTML(req.ImageURL) + MarkdownToHTML(req.Body)
+	// Build a separate "full" markdown for the Copy Markdown button.
+	// The raw req.Body alone is missing things the rendered HTML has:
+	//   - the header image (lives on the article record, not in body)
+	//   - the auto-generated Table of Contents (server-injected)
+	//   - bare-domain URLs need promotion to https:// or Confluence
+	//     won't recognize them as links
+	exportableMD := buildExportableMarkdown(req.Subject, req.Body, req.ImageURL)
 	title := req.Subject
 	if title == "" {
 		title = "Preview"
@@ -901,16 +1062,30 @@ pre { background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 3px; paddin
 code { background: #f4f5f7; padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.9em; }
 pre code { background: none; padding: 0; }
 table { border-collapse: collapse; width: 100%%; margin: 1rem 0; }
-th, td { border: 1px solid #dfe1e6; padding: 0.5rem 0.8rem; text-align: left; }
-th { background: #f4f5f7; font-weight: 600; }
+table { margin: 1rem 0; }              /* left-aligned by default; override the centering some hosts apply */
+th, td { border: 1px solid #dfe1e6; padding: 0.5rem 0.8rem; text-align: left !important; }
+th { background: #f4f5f7; font-weight: 600; text-align: left !important; }
 blockquote { border-left: 3px solid #0052cc; background: #deebff; padding: 0.8rem 1rem; margin: 1rem 0; border-radius: 3px; }
 ul, ol { padding-left: 1.5rem; }
+.header-image { width: 100%%; max-height: 320px; object-fit: cover; border-radius: 8px; margin-bottom: 1.5rem; }
+.auto-toc { background: #f4f5f7; border: 1px solid #dfe1e6; border-radius: 4px; padding: 0.7rem 0.9rem; margin: 1rem 0 1.5rem; }
+.auto-toc-h { font-size: 0.78rem; color: #5e6c84; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+.auto-toc ol { margin: 0; padding-left: 1.4rem; }
+.auto-toc li { margin: 0.2rem 0; }
+.auto-toc a { color: #0052cc; text-decoration: none; }
+.auto-toc a:hover { text-decoration: underline; }
 li { margin: 0.3rem 0; }
 .copy-hint { position: fixed; top: 0; left: 0; right: 0; background: #0052cc; color: white; text-align: center; padding: 0.5rem; font-size: 0.85rem; z-index: 100; }
+/* Anchor jumps land behind the fixed copy-hint bar without this.
+ * 4rem covers the bar plus a little visual breathing room so the
+ * scrolled-to heading sits comfortably below the top edge. */
+h1, h2, h3 { scroll-margin-top: 4rem; }
+html { scroll-padding-top: 4rem; }
 </style></head><body>
 <div class="copy-hint">
-  <button onclick="copyContent()" style="background:white;color:#0052cc;border:none;border-radius:4px;padding:0.3rem 1rem;cursor:pointer;font-weight:600;margin-right:0.5rem">Copy to Clipboard</button>
-  Then paste directly into Confluence editor
+  <button onclick="copyContent()" style="background:white;color:#0052cc;border:none;border-radius:4px;padding:0.3rem 1rem;cursor:pointer;font-weight:600;margin-right:0.5rem">Copy HTML</button>
+  <button onclick="copyMarkdown()" style="background:white;color:#0052cc;border:none;border-radius:4px;padding:0.3rem 1rem;cursor:pointer;font-weight:600;margin-right:0.5rem">Copy Markdown</button>
+  HTML preserves formatting; Markdown survives Confluence's paste sanitizer
 </div>
 <div id="content">
 <h1>%s</h1>
@@ -919,19 +1094,154 @@ li { margin: 0.3rem 0; }
 <script>
 function copyContent() {
   var content = document.getElementById('content');
+  var html = content.innerHTML;
+  var text = content.innerText;
+  var btn = document.querySelector('.copy-hint button');
+  // Modern path: write text/html + text/plain explicitly via the
+  // Clipboard API. Selection-based execCommand('copy') drops images
+  // and external <a> tags in many paste targets (Confluence in
+  // particular — it sees the selection as a "structured fragment"
+  // and runs an aggressive sanitizer). Writing text/html as a
+  // first-class clipboard format preserves <img> and <a> intact.
+  if (navigator.clipboard && window.ClipboardItem) {
+    var item = new ClipboardItem({
+      'text/html':  new Blob([html], {type: 'text/html'}),
+      'text/plain': new Blob([text], {type: 'text/plain'}),
+    });
+    navigator.clipboard.write([item]).then(function() {
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = 'Copy to Clipboard'; }, 2000);
+    }).catch(function() {
+      // Permissions denied or older browser — fall back to selection copy.
+      legacyCopy(content, btn);
+    });
+    return;
+  }
+  legacyCopy(content, btn);
+}
+function legacyCopy(content, btn) {
   var range = document.createRange();
   range.selectNodeContents(content);
   var sel = window.getSelection();
   sel.removeAllRanges();
   sel.addRange(range);
-  document.execCommand('copy');
+  try { document.execCommand('copy'); } catch (e) {}
   sel.removeAllRanges();
-  var btn = document.querySelector('.copy-hint button');
-  btn.textContent = 'Copied!';
+  btn.textContent = 'Copied (legacy)';
   setTimeout(function() { btn.textContent = 'Copy to Clipboard'; }, 2000);
 }
+// Copy the original markdown source. Pastes cleanly into Confluence
+// (and other markdown-aware editors) without the rich-text sanitizer
+// stripping images and external links.
+function copyMarkdown() {
+  var md = document.getElementById('md-source').textContent;
+  var btn = event.target;
+  var orig = btn.textContent;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(md).then(function() {
+      btn.textContent = 'Copied!';
+      setTimeout(function() { btn.textContent = orig; }, 2000);
+    }).catch(function() { btn.textContent = 'Copy failed'; });
+  }
+}
 </script>
-</body></html>`, HTMLEscape(title), HTMLEscape(title), html)
+<pre id="md-source" style="display:none">%s</pre>
+</body></html>`, HTMLEscape(title), HTMLEscape(title), html, HTMLEscape(exportableMD))
+}
+
+// stripMarkdownTOC removes a "## Table of Contents" / "## Contents" /
+// "## TOC" block and everything under it up to the next heading. The
+// match is case-insensitive and tolerates trailing punctuation. Used
+// by the markdown-export path so the LLM-written TOC doesn't paste
+// into Confluence Cloud as broken anchor links — Confluence's `{toc}`
+// macro handles TOCs natively post-paste.
+func stripMarkdownTOC(md string) string {
+	var out []string
+	inTOC := false
+	for _, line := range strings.Split(md, "\n") {
+		trimmed := strings.TrimSpace(line)
+		isHeading := strings.HasPrefix(trimmed, "# ") ||
+			strings.HasPrefix(trimmed, "## ") ||
+			strings.HasPrefix(trimmed, "### ")
+		if isHeading {
+			title := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+			title = strings.TrimRight(title, ":.")
+			tl := strings.ToLower(title)
+			if tl == "table of contents" || tl == "contents" || tl == "toc" {
+				inTOC = true
+				continue
+			}
+			inTOC = false
+		}
+		if inTOC {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// buildExportableMarkdown assembles the markdown blob that the Copy
+// Markdown button hands to the clipboard. It augments the raw editor
+// body with the header image (markdown image reference at the top)
+// and bare-domain URL promotion (so Confluence's pasted-link
+// auto-detector recognizes them as URLs). The LLM-written TOC is
+// stripped on this path because Confluence Cloud kills heading IDs;
+// users add `{toc}` post-paste for a working contents list.
+func buildExportableMarkdown(subject, body, imageURL string) string {
+	var b strings.Builder
+
+	if subject != "" {
+		fmt.Fprintf(&b, "# %s\n\n", subject)
+	}
+	if imageURL = strings.TrimSpace(imageURL); imageURL != "" {
+		alt := subject
+		if alt == "" {
+			alt = "header image"
+		}
+		fmt.Fprintf(&b, "![%s](%s)\n\n", alt, imageURL)
+	}
+
+	// Strip the LLM's title heading (if any) — we already wrote it
+	// as the level-1 heading above, so duplicating it would just
+	// produce two H1s in the pasted output.
+	body = strings.TrimSpace(body)
+	bodyLines := strings.Split(body, "\n")
+	if len(bodyLines) > 0 && strings.HasPrefix(strings.TrimSpace(bodyLines[0]), "# ") {
+		bodyLines = bodyLines[1:]
+		body = strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	}
+
+	// Strip the LLM-written "## Table of Contents" block. Confluence
+	// Cloud strips heading IDs on paste, so the TOC's [text](#anchor)
+	// links would all paste as broken non-resolving links. The user's
+	// next move post-paste is to insert Confluence's `{toc}` macro
+	// (one keystroke: /Table of Contents) which auto-builds a working
+	// TOC from the page's headings. The HTML copy path keeps the TOC
+	// intact for non-Confluence destinations (preview, GitHub, Notion).
+	body = stripMarkdownTOC(body)
+
+	// Normalize bare-domain markdown links: `[text](github.com/foo)` →
+	// `[text](https://github.com/foo)`. Confluence pastes the literal
+	// `(github.com/foo)` URL otherwise, which it can't render as a
+	// link target. The pattern matches text, captures the URL, and
+	// promotes when the URL has no scheme but contains a dot.
+	bareDomainLink := regexp.MustCompile(`\[([^\]\n]+)\]\(([^)\s#/][^)\s]*\.[^)\s]*)\)`)
+	body = bareDomainLink.ReplaceAllStringFunc(body, func(m string) string {
+		sub := bareDomainLink.FindStringSubmatch(m)
+		if sub == nil {
+			return m
+		}
+		text, url := sub[1], sub[2]
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") ||
+			strings.HasPrefix(url, "mailto:") || strings.HasPrefix(url, "tel:") {
+			return m
+		}
+		return "[" + text + "](https://" + url + ")"
+	})
+	b.WriteString(body)
+	b.WriteString("\n")
+	return b.String()
 }
 
 func sanitizeFilename(s string) string {
@@ -978,19 +1288,48 @@ func exportHTML(rec ArticleRecord) string {
   ul, ol { margin: 0.5rem 0 0.5rem 1.5rem; }
   li { margin-bottom: 0.3rem; }
   blockquote { border-left: 3px solid #d0d7de; margin: 1rem 0; padding: 0.5rem 1rem; color: #656d76; }
-  table { border-collapse: collapse; width: 100%%; margin: 1rem 0; }
-  th, td { border: 1px solid #d0d7de; padding: 0.5rem; text-align: left; }
-  th { background: #f6f8fa; }
+  table { border-collapse: collapse; width: auto; margin: 1rem 0; }
+  th, td { border: 1px solid #d0d7de; padding: 0.5rem; text-align: left !important; }
+  th { background: #f6f8fa; text-align: left !important; }
   .note { background: #ddf4ff; border: 1px solid #54aeff; border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0; }
   .warning { background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; padding: 0.75rem 1rem; margin: 1rem 0; }
+  .header-image { width: 100%%; max-height: 320px; object-fit: cover; border-radius: 8px; margin-bottom: 1.5rem; }
+  /* Auto-generated Table of Contents (numbered list of section links). */
+  .auto-toc { background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; padding: 0.8rem 1rem; margin: 1rem 0 2rem; }
+  .auto-toc-h { font-size: 0.78rem; color: #656d76; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; }
+  .auto-toc ol { margin: 0; padding-left: 1.4rem; }
+  .auto-toc li { margin: 0.2rem 0; }
+  .auto-toc a { color: #0969da; text-decoration: none; }
+  .auto-toc a:hover { text-decoration: underline; }
+  /* Anchor jumps get a little headroom so the scrolled-to heading
+   * doesn't sit flush against the top edge of the viewport. */
+  h1, h2, h3 { scroll-margin-top: 1.5rem; }
+  html { scroll-padding-top: 1.5rem; }
 </style>
 </head>
 <body>
-<h1>%s</h1>
+%s<h1>%s</h1>
 <div class="meta"><span>%s</span><span>%d words</span><span>%d min read</span></div>
 %s
 </body>
-</html>`, HTMLEscape(rec.Subject), HTMLEscape(rec.Subject), date, words, read_time, MarkdownToHTML(rec.Body))
+</html>`,
+		HTMLEscape(rec.Subject),
+		headerImageHTML(rec.ImageURL),
+		HTMLEscape(rec.Subject),
+		date, words, read_time,
+		MarkdownToHTML(rec.Body))
+}
+
+// headerImageHTML returns an <img> tag for the article's header image,
+// or empty string when no image is set. Used by both the export and
+// preview renderers so the published artifact and the browser preview
+// always agree.
+func headerImageHTML(url string) string {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return ""
+	}
+	return fmt.Sprintf(`<img class="header-image" src="%s" alt="">`, HTMLEscape(url))
 }
 
 // Use shared functions from core:
@@ -1961,6 +2300,10 @@ function chatAPI(message, mode) {
     if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
     return r.json();
   }).then(function(data) {
+    // Server may return a 200 with {"error": "..."} when the heartbeat
+    // already committed headers and a later LLM error couldn't switch
+    // to a 500 status. Surface it through the same error UI.
+    if (data && data.error) throw new Error(data.error);
     if (thinkingMsg) thinkingMsg.remove();
     document.getElementById('chat-send').disabled = false;
     if (talkBtn) talkBtn.disabled = false;

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,11 +24,13 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	RegisterPublicPath(prefix + "/api/hook")
 	RegisterPublicPath(prefix + "/api/poll")
 
-	sub := NewWebUI(T, prefix, AppUIAssets{
-		BodyHTML: phantomBody,
-		AppCSS:   phantomCSS,
-		AppJS:    phantomJS,
-	})
+	// Phantom now uses the core/ui declarative framework on both
+	// desktop and mobile. The same handler renders both — the page is
+	// laid out responsively (toggle group, persona form, conversations
+	// table) and the framework handles drawer behavior on small
+	// viewports.
+	sub := NewWebUI(T, prefix, AppUIAssets{})
+	sub.HandleFunc("/", T.handleDashboard)
 
 	// Web UI endpoints (session auth).
 	sub.HandleFunc("/api/keys", T.handleKeys)
@@ -42,10 +45,14 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/conv-info/", T.handleConvInfo)
 	sub.HandleFunc("/api/memory/", T.handleMemory)
 	sub.HandleFunc("/api/conversation-clear/", T.handleConversationClear)
+	sub.HandleFunc("/api/personas", T.handlePersonas)
+	sub.HandleFunc("/api/personas/", T.handlePersonas)
+	sub.HandleFunc("/api/persona-assist", T.handlePersonaAssist)
 
-	// Mobile dashboard at /phantom/mobile + its panic-button endpoint.
-	sub.HandleFunc("/mobile", T.handleMobileDashboard)
-	sub.HandleFunc("/mobile/", T.handleMobileDashboard)
+	// Legacy /phantom/mobile alias — same dashboard, kept so any
+	// existing bookmarks keep working.
+	sub.HandleFunc("/mobile", T.handleDashboard)
+	sub.HandleFunc("/mobile/", T.handleDashboard)
 	sub.HandleFunc("/api/mobile/panic", T.handleMobilePanic)
 
 	// Agent endpoints (API key auth, no session needed).
@@ -251,6 +258,10 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Disable browser caching — the persistent-tool list mutates as
+	// the operator approves new tools in admin, and a stale cached
+	// response would hide them from phantom's per-conversation picker.
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	type toolInfo struct {
 		Name string `json:"name"`
 		Desc string `json:"desc"`
@@ -258,14 +269,38 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 	// skip always-on tools and conditionally-available ones — handled below
 	skip := map[string]bool{"stay_silent": true, "keep_going": true, "generate_image": true}
 
+	// Persistent temp tools FIRST so they're visible at the top of
+	// the chip picker without scrolling — these are the operator's
+	// custom wrappers and should be easy to find/toggle.
 	var out []toolInfo
+	if authUser != "" {
+		for _, p := range LoadPersistentTempTools(T.DB, authUser) {
+			desc := strings.TrimSpace(p.Tool.Description)
+			tag := "[wrapper]"
+			if p.Tool.Mode == TempToolModeShell {
+				tag = "[shell]"
+			}
+			if desc == "" {
+				desc = tag + " persistent temp tool"
+			} else {
+				desc = tag + " " + desc
+			}
+			out = append(out, toolInfo{Name: p.Tool.Name, Desc: desc})
+		}
+	}
+
+	// Built-in chat tools (sorted alphabetically).
+	var builtIn []toolInfo
 	for _, t := range RegisteredChatTools() {
 		if skip[t.Name()] {
 			continue
 		}
-		out = append(out, toolInfo{Name: t.Name(), Desc: t.Desc()})
+		builtIn = append(builtIn, toolInfo{Name: t.Name(), Desc: t.Desc()})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sort.Slice(builtIn, func(i, j int) bool { return builtIn[i].Name < builtIn[j].Name })
+	out = append(out, builtIn...)
+
+	// Phantom-only tools and conditionally-available ones.
 	out = append(out,
 		toolInfo{Name: "memory", Desc: "Manage per-conversation memory: save / list / delete saved facts about the person. Call with action=help for usage."},
 		toolInfo{Name: "schedule_callback", Desc: "Schedule a follow-up message at a specified time."},
@@ -291,28 +326,6 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 			out = append(out, toolInfo{Name: td.Tool.Name, Desc: td.Tool.Description})
 		}
 	}
-	// Persistent temp tools approved for the admin viewing this UI.
-	// These are LLM-defined wrappers admin-approved via the pending-
-	// tool queue and stored under the chat-app auth username (admin
-	// email). Scope the picker to whoever's logged into phantom now
-	// — same identity that approved the tool — so it actually shows
-	// up. Don't use cfg.OwnerHandle here: that's a messaging
-	// identity (phone number), unrelated to tool ownership.
-	if authUser != "" {
-		for _, p := range LoadPersistentTempTools(T.DB, authUser) {
-			desc := strings.TrimSpace(p.Tool.Description)
-			tag := "[wrapper]"
-			if p.Tool.Mode == TempToolModeShell {
-				tag = "[shell]"
-			}
-			if desc == "" {
-				desc = tag + " persistent temp tool"
-			} else {
-				desc = tag + " " + desc
-			}
-			out = append(out, toolInfo{Name: p.Tool.Name, Desc: desc})
-		}
-	}
 	jsonOK(w, out)
 }
 
@@ -331,6 +344,16 @@ func (T *Phantom) handleConversations(w http.ResponseWriter, r *http.Request) {
 	for _, k := range T.DB.Keys(conversationTable) {
 		var c Conversation
 		if T.DB.Get(conversationTable, k, &c) && c.AliasOf == "" {
+			// Fall back to handle when DisplayName is unset so the
+			// mobile conversations table doesn't show blank rows for
+			// numbered-only contacts. The mobile Table component
+			// renders the display_name column verbatim.
+			if strings.TrimSpace(c.DisplayName) == "" {
+				c.DisplayName = strings.TrimSpace(c.Handle)
+				if c.DisplayName == "" {
+					c.DisplayName = c.ChatID
+				}
+			}
 			convs = append(convs, c)
 		}
 	}
@@ -450,6 +473,17 @@ func (T *Phantom) handleConversation(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// ?record=1 returns the Conversation record (settings, tools,
+		// persona, etc.) instead of the message history. Used by the
+		// mobile chip-picker so it can read the live enabled_tools list
+		// without going through the conversations index.
+		if r.URL.Query().Get("record") == "1" {
+			var conv Conversation
+			T.DB.Get(conversationTable, chatID, &conv)
+			conv.ChatID = chatID
+			jsonOK(w, conv)
+			return
+		}
 		msgs := recentMessages(T.DB, chatID, 50)
 		if msgs == nil {
 			msgs = []PhantomMessage{}
@@ -683,12 +717,18 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	cfg := defaultConfig(T.DB)
 	if cfg.OwnerHandle != "" && req.Handle == cfg.OwnerHandle {
 		req.Handle = ""
-	} else if cfg.OwnerHandle == "" && req.Handle != "" && strings.HasSuffix(req.ChatID, req.Handle) {
-		// Fallback: if OwnerHandle is not configured, detect owner messages by
-		// checking if the handle matches the chat ID's suffix (works for iMessage
-		// and SMS one-on-ones where chat_id = "iMessage;-;+14155551234").
-		req.Handle = ""
 	}
+	// NOTE: there used to be a fallback here that zeroed req.Handle
+	// when the chat ID's suffix matched req.Handle. That was BACKWARDS
+	// for iMessage 1:1 chats — the chat ID is named after the OTHER
+	// party (chat_id "iMessage;-;+15551234567" where +1555... is the
+	// contact, not the owner). So every message from the contact got
+	// flagged as "from_me", causing the bot to think the other party's
+	// messages were the owner's own. Removed. If OwnerHandle isn't
+	// configured, owner-typed messages will appear with the owner's
+	// raw handle in history rather than normalized to ownerLabel —
+	// minor cosmetic issue, but vastly better than misattributing
+	// every incoming message.
 
 	// Upsert the incoming conversation record (may be an alias).
 	var incomingConv Conversation
@@ -869,18 +909,21 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	Log("[phantom] hook from %s — enabled=%v auto_reply_all=%v conv_auto_reply=%v alias=%v primary=%v active=%s",
 		req.Handle, cfg.Enabled, cfg.AutoReplyAll, autoReply, isAlias, routingResolved && !isAlias, activeChatID)
 	if cfg.Enabled {
-		// Owner's own messages (handle="" after the OwnerHandle/ChatID-suffix
-		// normalization above) always bypass the gatekeeper — the owner is
-		// talking to their own assistant, no wake-word check makes sense.
-		// Without this bypass, the owner's own messages get evaluated by
-		// the gatekeeper LLM and can be blocked when the wording doesn't
-		// match the configured rule, which is wrong: the rule exists to
-		// filter OTHERS' messages, not the operator's.
-		if req.Handle != "" {
-			if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
-				Log("[phantom] gatekeeper blocked message from %s", req.Handle)
-				return
+		// Gatekeeper applies to ALL incoming messages including the
+		// owner's own — gatekeeperAllow's senderLabel resolution
+		// already labels owner-handle messages as the owner, so the
+		// rule can be written to "always allow if from owner" if
+		// that's the desired behavior. Letting the rule decide gives
+		// operators the option to wake-word-gate their own messages
+		// (the original bypass forced an unconditional always-allow
+		// for the owner, which broke wake-word setups).
+		if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
+			senderTag := req.Handle
+			if senderTag == "" {
+				senderTag = "owner"
 			}
+			Log("[phantom] gatekeeper blocked message from %s", senderTag)
+			return
 		}
 		if cfg.AutoReplyAll || autoReply {
 			// For self-messages (empty handle), reply to the original sender
@@ -922,9 +965,53 @@ func (T *Phantom) handlePoll(w http.ResponseWriter, r *http.Request) {
 // gatekeeperAllow runs the configured gatekeeper prompt (if any) and returns
 // true if the message should be processed. No gatekeeper = always allow.
 func (T *Phantom) gatekeeperAllow(cfg PhantomConfig, conv Conversation, chatID, handle, displayName, text string, imageCount int) bool {
-	prompt := conv.GatekeeperPrompt
-	if prompt == "" {
-		prompt = cfg.GatekeeperPrompt
+	// Combine the global gatekeeper rule with the per-conversation
+	// rule. Both must be satisfied — the conv-level rule narrows but
+	// never widens what global allows. This matches operators' mental
+	// model: "global is what I want everywhere; per-conv is what I
+	// want EXTRA for this specific chat."
+	// Merge the master (global) ruleset with the per-conversation
+	// rules into one numbered list. Rules are TRIGGERS for "respond"
+	// — any single rule matching the message is enough to allow it.
+	// Each line of each ruleset becomes its own numbered entry so
+	// the model evaluates them independently and reports which one
+	// (if any) tripped, rather than collapsing the whole list into
+	// one fuzzy criterion.
+	// Section-labeled merge — the rules are a single OR list (any
+	// one match → YES), but rules from each source are grouped under
+	// their own header so the LLM can't skim past the conversation
+	// rules. Numbering continues across sections so each rule has a
+	// unique number the LLM can name in the reason field.
+	enumerateInto := func(b *strings.Builder, body string, startIdx int) int {
+		idx := startIdx
+		for _, ln := range strings.Split(body, "\n") {
+			t := strings.TrimSpace(ln)
+			if t == "" {
+				continue
+			}
+			idx++
+			fmt.Fprintf(b, "  %d. %s\n", idx, t)
+		}
+		return idx
+	}
+	var prompt string
+	if cfg.GatekeeperPrompt != "" || conv.GatekeeperPrompt != "" {
+		var b strings.Builder
+		b.WriteString("Rules — answer YES if the message matches ANY single rule below (rules are alternatives, joined by OR). You MUST evaluate every rule in every section before deciding; do not stop at the first match.\n\n")
+		idx := 0
+		if strings.TrimSpace(cfg.GatekeeperPrompt) != "" {
+			b.WriteString("Master rules (apply to every conversation):\n")
+			idx = enumerateInto(&b, cfg.GatekeeperPrompt, idx)
+			b.WriteString("\n")
+		}
+		if strings.TrimSpace(conv.GatekeeperPrompt) != "" {
+			b.WriteString("Conversation rules (apply only to this conversation — evaluate each one fully):\n")
+			idx = enumerateInto(&b, conv.GatekeeperPrompt, idx)
+			b.WriteString("\n")
+		}
+		if idx > 0 {
+			prompt = b.String()
+		}
 	}
 	if prompt == "" {
 		return true
@@ -1014,12 +1101,37 @@ func (T *Phantom) gatekeeperAllow(cfg PhantomConfig, conv Conversation, chatID, 
 
 	sysPrompt := `You are a message filter. Reply with ONLY a JSON object — no other text:
 {"answer": "YES", "reason": "one sentence"}
-answer is YES if the message matches the rule, NO if it does not. reason is a single sentence explaining your decision.`
+
+The rules are TRIGGERS connected by OR — each numbered rule describes a condition under which the AI should respond. answer is YES if the message satisfies AT LEAST ONE rule, NO if it satisfies NONE.
+
+The rules may be split into "Master rules" and "Conversation rules" sections. EVERY rule in EVERY section must be evaluated against the message before you decide. Walk the list from rule 1 to the last rule explicitly — do not stop early, do not skip the Conversation rules, do not collapse multiple rules into a single criterion. The reason field should name the rule number that actually fired (or, if none fire, identify what was missing).
+
+Apply each rule literally to every message, regardless of who sent it — including messages from the phone owner themselves. Do not grant any sender an implicit exception based on identity, role, or familiarity. If a rule wants the owner auto-allowed, it will say so explicitly.`
+	// Tag the owner explicitly so a rule that wants to differentiate
+	// "the owner vs. an outside contact" has the signal to do so. The
+	// strong sysPrompt above prevents the model from implicitly
+	// allowing owner messages without the rule actually saying it.
+	displaySender := senderLabel
+	if handle == "" {
+		displaySender = senderLabel + " (phone owner)"
+	}
+	// Resolve the persona's display name so rules like "answer only
+	// when the user calls me by name" actually work. Per-conversation
+	// PersonaName overrides the global cfg.PersonaName; falls back to
+	// "the assistant" so rules don't get a literal "you" placeholder.
+	gkPersonaName := cfg.PersonaName
+	if conv.PersonaName != "" {
+		gkPersonaName = conv.PersonaName
+	}
+	if gkPersonaName == "" {
+		gkPersonaName = "the assistant"
+	}
+	identity := fmt.Sprintf("Your name in this conversation is \"%s\". When a rule refers to \"you\", \"the AI\", \"the assistant\", or asks whether the sender mentioned you by name, treat that as referring to \"%s\" — including common nicknames or obvious typos of that name.\n\n", gkPersonaName, gkPersonaName)
 	var userMsg string
 	if contextBlock != "" {
-		userMsg = fmt.Sprintf("Rule:\n%s\n\nRecent exchange (context only):\n%s\n\nNew message to evaluate:\nFrom: %s\nText: %s\n\nDoes the new message meet the rule on its own, OR is it a natural follow-up to the recent AI exchange above?", prompt, strings.TrimSpace(contextBlock), senderLabel, msgDesc)
+		userMsg = fmt.Sprintf("%sRules:\n%s\n\nRecent exchange (context only):\n%s\n\nNew message to evaluate:\nFrom: %s\nText: %s\n\nDoes the new message satisfy every rule on its own, OR is it a natural follow-up to the recent AI exchange above?", identity, prompt, strings.TrimSpace(contextBlock), displaySender, msgDesc)
 	} else {
-		userMsg = fmt.Sprintf("Rule:\n%s\n\nNew message to evaluate:\nFrom: %s\nText: %s", prompt, senderLabel, msgDesc)
+		userMsg = fmt.Sprintf("%sRules:\n%s\n\nNew message to evaluate:\nFrom: %s\nText: %s", identity, prompt, displaySender, msgDesc)
 	}
 
 	// Run cleanMessageText on the log preview only — the gatekeeper LLM
@@ -1358,13 +1470,33 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	cfg := defaultConfig(T.DB)
 	isGroup := len(conv.Members) > 1
 
+	// labelHandle wraps a raw iMessage handle with a kind hint so the
+	// LLM knows what it's looking at. Phone numbers (+15551234567)
+	// become "phone: +15551234567"; emails become "email: x@y". Without
+	// the label the model treats the parenthetical as opaque metadata
+	// and won't recall it when asked "what's their phone number?".
+	labelHandle := func(h string) string {
+		h = strings.TrimSpace(h)
+		if h == "" {
+			return ""
+		}
+		if strings.Contains(h, "@") {
+			return "email: " + h
+		}
+		if strings.HasPrefix(h, "+") || (len(h) > 0 && h[0] >= '0' && h[0] <= '9') {
+			return "phone: " + h
+		}
+		return h
+	}
+
 	var senderDesc string
 	if handle == "" {
 		senderDesc = cfg.ownerLabel()
 	} else {
-		senderDesc = handle
+		labeled := labelHandle(handle)
+		senderDesc = labeled
 		if conv.DisplayName != "" && !isGroup {
-			senderDesc = fmt.Sprintf("%s (%s)", conv.DisplayName, handle)
+			senderDesc = fmt.Sprintf("%s (%s)", conv.DisplayName, labeled)
 		}
 		for _, m := range conv.Members {
 			matched := m.Handle == handle
@@ -1377,7 +1509,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 				}
 			}
 			if matched && m.Name != "" {
-				senderDesc = fmt.Sprintf("%s (%s)", m.Name, handle)
+				senderDesc = fmt.Sprintf("%s (%s)", m.Name, labeled)
 				break
 			}
 		}
@@ -1409,13 +1541,18 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		}
 		return m.Handle
 	}
-	// fmtMsgTime parses an RFC3339 timestamp and returns a short bracket prefix.
+	// fmtMsgTime parses an RFC3339 timestamp and returns a short bracket
+	// prefix in relative form: "[2h ago] ", "[just now] ", "[3d ago] ".
+	// Relative beats absolute for an LLM — the model can reason about
+	// "how long has it been since the last reply" without doing date
+	// math, which is what actually matters for messaging-conversation
+	// pacing decisions.
 	fmtMsgTime := func(ts string) string {
 		t, err := time.Parse(time.RFC3339, ts)
 		if err != nil || ts == "" {
 			return ""
 		}
-		return "[" + t.Local().Format("Mon Jan 2, 3:04 PM") + "] "
+		return "[" + relTimeShort(t) + "] "
 	}
 	var msgs []Message
 	for _, m := range history {
@@ -1423,10 +1560,15 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		var content string
 		if m.Role == "assistant" {
 			role = "assistant"
+			// NO timestamp prefix on the assistant's own messages —
+			// the model is a strong format-mimic and starts emitting
+			// "[just now] ..." on every new reply if its prior turns
+			// show that pattern. The gap signal is already encoded
+			// on the user-side timestamps, which is what actually
+			// matters for messaging-conversation pacing decisions.
 			content = m.Text
 		} else {
-			prefix := fmtMsgTime(m.Timestamp)
-			content = prefix + labelForMsg(m) + ": " + cleanMessageText(m.Text)
+			content = fmtMsgTime(m.Timestamp) + labelForMsg(m) + ": " + cleanMessageText(m.Text)
 		}
 		msgs = append(msgs, Message{Role: role, Content: content})
 	}
@@ -1510,9 +1652,20 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	if conv.Personality != "" {
 		personality = conv.Personality
 	}
+	// Conversation rules: global rules apply to ALL conversations as a
+	// baseline; per-conv rules add on top of (don't replace) the global
+	// set. This lets an operator put universal expectations ("always
+	// reply in plain text", "never reveal system info") in the master
+	// config and add per-relationship tweaks ("with Mom, keep replies
+	// short and warm") in the per-conv override without having to
+	// repeat the universal rules each time.
 	convRules := cfg.SystemPrompt
 	if conv.SystemPrompt != "" {
-		convRules = conv.SystemPrompt
+		if convRules != "" {
+			convRules = convRules + "\n\n" + conv.SystemPrompt
+		} else {
+			convRules = conv.SystemPrompt
+		}
 	}
 	systemPrompt := buildSystemPrompt(personality, convRules)
 
@@ -1524,6 +1677,23 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 			memberList += ", " + others
 		}
 		membersNote = fmt.Sprintf("\n\nThis is a group conversation. Participants: %s.", memberList)
+	} else {
+		// 1:1 chat — spell out who is who. Without this the model sees
+		// alternating "Mom: ..." / "Craig: ..." / "Mom: ..." in user-role
+		// messages and gets confused about its own identity (it IS
+		// Craig the phone owner, replying as Craig). assistant-role
+		// messages are messages this bot already sent; "Craig: ..."
+		// user-role messages are the human owner typing manually.
+		ownerLabel := cfg.ownerLabel()
+		membersNote = fmt.Sprintf(
+			"\n\nThis is a one-on-one conversation between %s (the phone owner — that's YOU) and %s. "+
+				"Messages prefixed with \"%s:\" are from %s, the other party. "+
+				"Messages prefixed with \"%s:\" with role=user are from %s typing directly on their phone — those are NOT from you (the assistant); treat them as additional context the user typed alongside the bot. "+
+				"Messages with role=assistant are your own prior replies. Never confuse the two.",
+			ownerLabel, senderDesc,
+			senderDesc, senderDesc,
+			ownerLabel, ownerLabel,
+		)
 	}
 
 	// Bail out before the expensive LLM call if a newer message has already arrived.
@@ -1538,10 +1708,20 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 			"Keep responses varied — avoid falling into repetitive patterns of jokes or phrases even across a long conversation. "+
 			"When you learn something worth remembering about the person — their name, preferences, relationships, or important facts — call memory(action=\"save\", note=\"...\") before replying. "+
 			"When asked about something you can look up or do with a tool, use the tool — never say you can't do something if a tool can do it. "+
+			"PARTICIPANT CONTACT INFO: The phone numbers and emails of the people in this conversation are listed above as labeled handles (\"phone: +15551234567\", \"email: x@y\"). When the phone owner asks for a participant's number, email, or how to reach them, share the labeled handle directly — that information is theirs to recall, not private data to refuse. \"I don't have their number\" is wrong when the handle is right there in your context. "+
 			"Your text replies must be plain text only — no markdown, no bullet points, no headers. This is a text message conversation.",
 		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"),
 		personaName, senderDesc, systemPrompt, membersNote, memoryBlock(T.DB, chatID),
 	)
+	// Surface the model's last few assistant replies as an explicit
+	// "do NOT repeat these" callout. The history already contains
+	// these messages, but Qwen-class models pattern-match heavily and
+	// will re-use the same joke or phrasing turn-after-turn unless
+	// told otherwise. Calling them out near the end of the system
+	// prompt (closest to generation) raises the signal.
+	if dontRepeat := recentAssistantReplies(history, 4); dontRepeat != "" {
+		sysPrompt += dontRepeat
+	}
 
 	sess := &ToolSession{
 		LLM:          T.LLM,
@@ -1797,6 +1977,81 @@ func upsertMember(members []ConvMember, handle, name string) []ConvMember {
 		}
 	}
 	return append(members, ConvMember{Handle: handle, Name: name})
+}
+
+// relTimeShort renders a time as a compact relative phrase tuned for
+// LLM context — "just now", "5m ago", "3h ago", "2d ago", or an
+// absolute "Mon Jan 2" past 7 days. Compact format keeps token cost
+// low while giving the model the only thing it actually needs:
+// roughly how long since the message went out.
+func relTimeShort(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return t.Local().Format("Mon Jan 2")
+	}
+}
+
+// recentAssistantReplies returns a "DO NOT REPEAT" block built from the
+// last n non-empty assistant messages in history (trimmed to ~200
+// chars each, with relative-age prefix). Returns "" when there are
+// fewer than 2 prior assistant turns — the model can't repeat itself
+// meaningfully on the very first reply.
+//
+// Why this exists: Qwen-class models pattern-match heavily and will
+// re-use the same joke, phrasing, or pivot ("Speaking of which…") for
+// every turn unless told otherwise. The full history is already in
+// context, but a near-prompt callout listing the recent replies gives
+// the strongest signal that they should NOT be reused verbatim.
+func recentAssistantReplies(history []PhantomMessage, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	type pick struct{ ts, text string }
+	var picks []pick
+	for i := len(history) - 1; i >= 0 && len(picks) < n; i-- {
+		m := history[i]
+		if m.Role != "assistant" {
+			continue
+		}
+		c := strings.TrimSpace(m.Text)
+		if c == "" {
+			continue
+		}
+		if len(c) > 200 {
+			c = c[:200] + "…"
+		}
+		var ts string
+		if t, err := time.Parse(time.RFC3339, m.Timestamp); err == nil && m.Timestamp != "" {
+			ts = relTimeShort(t)
+		}
+		picks = append(picks, pick{ts: ts, text: c})
+	}
+	if len(picks) < 2 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nRECENT REPLIES YOU ALREADY SENT — do NOT repeat any of these phrasings, jokes, or openings verbatim, and do not paraphrase them closely. Vary your wording, vary your structure, vary your topic pivots. The other party remembers what you just said:\n")
+	// picks is newest-first; reverse for chronological clarity.
+	for i := len(picks) - 1; i >= 0; i-- {
+		b.WriteString("- ")
+		if picks[i].ts != "" {
+			b.WriteString("(")
+			b.WriteString(picks[i].ts)
+			b.WriteString(") ")
+		}
+		b.WriteString(strconv.Quote(picks[i].text))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // formatMembers returns a compact member list string for injection into the

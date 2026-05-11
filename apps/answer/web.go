@@ -3,12 +3,14 @@ package answer
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/webui"
 )
 
 func (T *AnswerAgent) WebPath() string { return "/answer" }
@@ -18,17 +20,363 @@ func (T *AnswerAgent) WebDesc() string {
 }
 
 func (T *AnswerAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	sub := NewWebUI(T, prefix, AppUIAssets{
-		BodyHTML: answerHTML,
-		AppCSS:   answerCSS,
-		AppJS:    answerJS,
+	sub := http.NewServeMux()
+	// Framework-rendered Answer at /answer/. Same backend records as
+	// legacy — only the page chrome changed. Legacy hand-written UI
+	// stays at /answer/legacy until ChatPanel covers every feature.
+	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		T.handleNewAnswerPage(w, r)
 	})
+	sub.HandleFunc("/legacy", func(w http.ResponseWriter, r *http.Request) {
+		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
+			Title:    "Answer (Legacy)",
+			AppName:  "Answer",
+			Prefix:   prefix,
+			BodyHTML: answerHTML,
+			AppCSS:   answerCSS,
+			AppJS:    answerJS,
+		}))
+	})
+	sub.HandleFunc("/legacy/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, prefix+"/legacy", http.StatusMovedPermanently)
+	})
+	// Legacy API endpoints (still used by /answer/legacy).
 	sub.HandleFunc("/api/ask", T.handleAsk)
 	sub.HandleFunc("/api/history", T.handleHistory)
 	sub.HandleFunc("/api/record/", T.handleRecord)
 	sub.HandleFunc("/api/delete/", T.handleDelete)
 	sub.HandleFunc("/api/followup/", T.handleFollowup)
+	// Framework-API endpoints — backed by the same records, reshaped
+	// into the {sessions,messages,send} contract ChatPanel expects.
+	sub.HandleFunc("/api/sessions", T.handleSessionsList)
+	sub.HandleFunc("/api/sessions/", T.handleSessionGet)
+	sub.HandleFunc("/api/sessions/delete/", T.handleSessionDelete)
+	sub.HandleFunc("/api/send", T.handleChatSend)
 	MountSubMux(mux, prefix, sub)
+}
+
+// answerSessionSummary is the shape ChatPanel's sidebar list expects
+// (with field overrides Question / Date instead of Title / LastAt set
+// in page.go).
+type answerSessionSummary struct {
+	ID       string `json:"ID"`
+	Question string `json:"Question"`
+	Date     string `json:"Date"`
+}
+
+func (T *AnswerAgent) handleSessionsList(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if T.DB == nil {
+		json.NewEncoder(w).Encode([]answerSessionSummary{})
+		return
+	}
+	udb := userDB(T.DB, r)
+	var records []AnswerRecord
+	for _, key := range udb.Keys(answerTable) {
+		var rec AnswerRecord
+		if udb.Get(answerTable, key, &rec) {
+			records = append(records, rec)
+		}
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Date > records[j].Date })
+	out := make([]answerSessionSummary, len(records))
+	for i, rec := range records {
+		out[i] = answerSessionSummary{ID: rec.ID, Question: rec.Question, Date: rec.Date}
+	}
+	json.NewEncoder(w).Encode(out)
+}
+
+// chatPanelMessage is the wire shape for messages inside a session
+// load response — Role + Content, matching what ChatPanel renders.
+type chatPanelMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// handleSessionGet reshapes an AnswerRecord + SharedRecord into the
+// {ID, Question (Title), Date (LastAt), Messages} envelope ChatPanel
+// expects when loading a session. The first user message is the
+// original question; the first assistant message is the answer with
+// any sources appended; followups append in order.
+func (T *AnswerAgent) handleSessionGet(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if id == "" || strings.Contains(id, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	if T.DB == nil {
+		http.Error(w, "no db", http.StatusInternalServerError)
+		return
+	}
+	var rec AnswerRecord
+	if !userDB(T.DB, r).Get(answerTable, id, &rec) {
+		http.NotFound(w, r)
+		return
+	}
+	var shared SharedRecord
+	if SharedDB != nil {
+		SharedDB.Get(SharedTable, id, &shared)
+	}
+	msgs := []chatPanelMessage{
+		{Role: "user", Content: rec.Question},
+		{Role: "assistant", Content: composeAssistantBody(shared.Answer, shared.Sources)},
+	}
+	for _, t := range rec.Followups {
+		msgs = append(msgs, chatPanelMessage{Role: t.Role, Content: t.Content})
+	}
+	out := struct {
+		ID       string             `json:"ID"`
+		Question string             `json:"Question"`
+		Date     string             `json:"Date"`
+		Messages []chatPanelMessage `json:"Messages"`
+	}{
+		ID:       rec.ID,
+		Question: rec.Question,
+		Date:     rec.Date,
+		Messages: msgs,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+// shortArgs renders a tool-call argument map as a one-line string for
+// the UI's tool-call pill. Picks the most descriptive single field
+// (query, url, path) when present; otherwise concatenates everything
+// up to a length cap so the pill stays readable.
+func shortArgs(args map[string]any) string {
+	for _, key := range []string{"query", "url", "path", "expression", "term", "topic"} {
+		if v, ok := args[key]; ok {
+			s := strings.TrimSpace(fmt.Sprintf("%v", v))
+			if s != "" {
+				return clip(s, 120)
+			}
+		}
+	}
+	parts := make([]string, 0, len(args))
+	for k, v := range args {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+	}
+	return clip(strings.Join(parts, ", "), 120)
+}
+
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-1] + "…"
+}
+
+// composeAssistantBody appends a numbered Sources block to the answer
+// text so ChatPanel renders sources inline (no separate component).
+// Any LLM-written `## Sources` section is stripped first so the
+// orchestrator's structured Sources map is the single source of truth
+// — otherwise both render and the user sees the same citations twice.
+func composeAssistantBody(answer string, sources map[int]string) string {
+	answer = strings.TrimSpace(StripSourcesSection(answer))
+	if len(sources) == 0 {
+		return answer
+	}
+	var b strings.Builder
+	b.WriteString(answer)
+	b.WriteString("\n\n## Sources\n")
+	// Stable order by citation number.
+	keys := make([]int, 0, len(sources))
+	for n := range sources {
+		keys = append(keys, n)
+	}
+	sort.Ints(keys)
+	for _, n := range keys {
+		b.WriteString("[")
+		b.WriteString(itoa(n))
+		b.WriteString("] ")
+		b.WriteString(sources[n])
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func (T *AnswerAgent) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "DELETE required", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/sessions/delete/")
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if T.DB == nil {
+		http.Error(w, "no db", http.StatusInternalServerError)
+		return
+	}
+	udb := userDB(T.DB, r)
+	var rec AnswerRecord
+	if !udb.Get(answerTable, id, &rec) {
+		http.NotFound(w, r)
+		return
+	}
+	udb.Unset(answerTable, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// chatSendRequest is the body ChatPanel POSTs to SendURL.
+type chatSendRequest struct {
+	SessionID string `json:"session_id"`
+	Message   string `json:"message"`
+}
+
+// handleChatSend is the unified initial+followup endpoint. Empty
+// session_id starts a new orchestrator run (the answer becomes the
+// session's first assistant message). A populated session_id routes to
+// a followup turn against that record.
+//
+// Streamed via SSE in the format ChatPanel parses:
+//   - {type: "session", id} on new-session creation
+//   - {type: "chunk",   text}   for streaming content
+//   - {type: "done"}             at end
+//   - {type: "error",  message} on failure
+func (T *AnswerAgent) handleChatSend(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+	var req chatSendRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	req.Message = strings.TrimSpace(req.Message)
+	if req.Message == "" {
+		http.Error(w, "message required", http.StatusBadRequest)
+		return
+	}
+
+	sse, err := NewSSEWriter(w)
+	if err != nil {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	stopKA := sse.StartKeepalive(10 * time.Second)
+	defer stopKA()
+
+	if req.SessionID == "" {
+		T.runInitialSend(r, sse, req.Message)
+		return
+	}
+	T.runFollowupSend(r, sse, req.SessionID, req.Message)
+}
+
+func (T *AnswerAgent) runInitialSend(r *http.Request, sse *SSEWriter, question string) {
+	user := AuthCurrentUser(r)
+	udb := userDB(T.DB, r)
+	emit := func(status string) {
+		sse.SendNamed("status", map[string]string{"text": status})
+	}
+	// onStep surfaces per-round activity to ChatPanel: each tool the
+	// LLM calls becomes a tool_call pill, then a tool_result line when
+	// the call returns. Without this the user sees only "Researching..."
+	// for the entire orchestrator run, even when it does 8+ tool calls.
+	onStep := func(step StepInfo) {
+		for _, tc := range step.ToolCalls {
+			sse.SendNamed("tool_call", map[string]interface{}{
+				"name": tc.Name,
+				"args": shortArgs(tc.Args),
+			})
+		}
+	}
+	result, runErr := RunOrchestrator(r.Context(), &T.AppCore, udb, user, question, emit, onStep)
+	if runErr != nil {
+		sse.SendNamed("error", map[string]string{"message": runErr.Error()})
+		return
+	}
+
+	id := UUIDv4()
+	now := time.Now().Format(time.RFC3339)
+	rec := AnswerRecord{ID: id, Question: question, Topic: result.Topic, Date: now}
+	if udb != nil {
+		udb.Set(answerTable, id, rec)
+	}
+	shared := SharedRecord{ID: id, Question: question, Answer: result.Answer, Sources: result.Sources, Date: now}
+	if SharedDB != nil {
+		SharedDB.Set(SharedTable, id, shared)
+	}
+	if KnowledgeDB != nil && strings.TrimSpace(result.Answer) != "" {
+		go IngestReport(context.Background(), KnowledgeDB, "answer", id, result.Answer)
+	}
+
+	// session event so ChatPanel's sidebar adopts the new ID.
+	sse.SendNamed("session", map[string]string{"id": id})
+	// Stream the composed answer body as one chunk (orchestrator
+	// returns the full text — no incremental streaming there yet).
+	sse.SendNamed("chunk", map[string]string{"text": composeAssistantBody(result.Answer, result.Sources)})
+	sse.SendNamed("done", map[string]interface{}{})
+}
+
+func (T *AnswerAgent) runFollowupSend(r *http.Request, sse *SSEWriter, id, msg string) {
+	udb := userDB(T.DB, r)
+	user := AuthCurrentUser(r)
+	var rec AnswerRecord
+	if !udb.Get(answerTable, id, &rec) {
+		sse.SendNamed("error", map[string]string{"message": "session not found"})
+		return
+	}
+	var shared SharedRecord
+	if SharedDB != nil {
+		SharedDB.Get(SharedTable, id, &shared)
+	}
+
+	priorFacts := FactsForTopic(udb, user, rec.Topic)
+	systemPrompt := buildFollowupSystem(rec, shared, priorFacts)
+
+	history := []Message{}
+	for _, t := range rec.Followups {
+		history = append(history, Message{Role: t.Role, Content: t.Content})
+	}
+	history = append(history, Message{Role: "user", Content: msg})
+
+	tools := orchestratorTools(udb, user, rec.Topic)
+	var fullReply strings.Builder
+	handler := func(chunk string) {
+		fullReply.WriteString(chunk)
+		sse.SendNamed("chunk", map[string]string{"text": chunk})
+	}
+	onStep := func(step StepInfo) {
+		for _, tc := range step.ToolCalls {
+			sse.SendNamed("tool_call", map[string]interface{}{
+				"name": tc.Name,
+				"args": shortArgs(tc.Args),
+			})
+		}
+	}
+	resp, _, err := T.AppCore.RunAgentLoop(r.Context(), history, AgentLoopConfig{
+		SystemPrompt: systemPrompt,
+		Tools:        tools,
+		MaxRounds:    16,
+		RouteKey:     "app.answer",
+		Stream:       handler,
+		OnStep:       onStep,
+	})
+	if err != nil {
+		sse.SendNamed("error", map[string]string{"message": err.Error()})
+		return
+	}
+	reply := strings.TrimSpace(fullReply.String())
+	if reply == "" && resp != nil {
+		reply = strings.TrimSpace(resp.Content)
+	}
+
+	now := time.Now().Format(time.RFC3339)
+	rec.Followups = append(rec.Followups,
+		FollowupTurn{Role: "user", Content: msg, Date: now},
+		FollowupTurn{Role: "assistant", Content: reply, Date: now},
+	)
+	udb.Set(answerTable, id, rec)
+
+	sse.SendNamed("done", map[string]interface{}{})
 }
 
 // AnswerEvent is streamed to the browser over SSE.
@@ -61,7 +409,7 @@ func (T *AnswerAgent) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	user := AuthCurrentUser(r)
 	udb := userDB(T.DB, r)
-	result, runErr := RunOrchestrator(r.Context(), &T.AppCore, udb, user, question, emit)
+	result, runErr := RunOrchestrator(r.Context(), &T.AppCore, udb, user, question, emit, nil)
 	if runErr != nil {
 		sse.Send(AnswerEvent{Type: "error", Status: runErr.Error()})
 		return

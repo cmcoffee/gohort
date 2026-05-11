@@ -21,6 +21,7 @@ var PDFBranding = "Gohort"
 //	h2   { color: #0550ae; border-bottom: 1px solid #d0d7de; }
 const (
 	pdfPageW      = 210.0 // A4 width in mm
+	pdfPageH      = 297.0 // A4 height in mm
 	pdfMarginL    = 20.0
 	pdfMarginR    = 20.0
 	pdfMarginT    = 20.0
@@ -36,9 +37,16 @@ const (
 // pdfWriter wraps an fpdf.Fpdf instance and provides markdown-aware
 // rendering helpers. All coordinates are in millimeters.
 type pdfWriter struct {
-	pdf      *fpdf.Fpdf
-	bodyW    float64
-	curStyle string // current base font style ("", "B", "I", "BI")
+	pdf       *fpdf.Fpdf
+	bodyW     float64
+	curStyle  string  // current base font style ("", "B", "I", "BI")
+	fontScale float64 // multiplier for all setFont sizes; 1.0 = default
+	// curR/G/B mirror the most recently requested text color. The
+	// footer callback consults these to restore the body color
+	// after rendering its own gray "Page N" text — without this,
+	// mid-paragraph page breaks bled gray into the next page's
+	// content (visible as headings flipping to black mid-flow).
+	curR, curG, curB int
 }
 
 // sanitizeUTF8 replaces smart quotes, em-dashes, and other Unicode
@@ -95,20 +103,40 @@ func formatPDFDate(s string) string {
 // the result to w. title is printed as a cover heading on the first page.
 // date is printed below the title (pass "" to omit).
 func MarkdownToPDF(w io.Writer, title, date, markdown string) error {
+	return MarkdownToPDFScaled(w, title, date, markdown, 1.0)
+}
+
+// MarkdownToPDFScaled renders markdown to PDF with all font sizes
+// multiplied by scale. scale=1.0 is the default look (12pt body);
+// scale=0.85 (~10pt body) reads tighter and fits more on a page,
+// useful for transcript-style exports with many section headers.
+// Layout, colors, and structure are unchanged — only sizes scale.
+func MarkdownToPDFScaled(w io.Writer, title, date, markdown string, scale float64) error {
+	if scale <= 0 {
+		scale = 1.0
+	}
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(pdfMarginL, pdfMarginT, pdfMarginR)
 	pdf.SetAutoPageBreak(true, pdfMarginB)
 	pdf.AddPage()
 
-	// Page numbers in footer.
+	pw := &pdfWriter{pdf: pdf, bodyW: pdfBodyW, fontScale: scale}
+	// Default body color so the first paragraph renders correctly
+	// after the footer fires on the very first page.
+	pw.curR, pw.curG, pw.curB = 36, 41, 47
+
+	// Page numbers in footer. The footer fires on every page break;
+	// auto-pagebreak triggers it mid-paragraph, and we have to
+	// restore the body's text color after — otherwise the first
+	// chunk of text on the new page renders in the footer's gray.
 	pdf.SetFooterFunc(func() {
 		pdf.SetY(-12)
 		pdf.SetFont("Arial", "", 8)
 		pdf.SetTextColor(160, 160, 160)
 		pdf.CellFormat(0, 10, fmt.Sprintf("Page %d", pdf.PageNo()), "", 0, "C", false, 0, "")
+		// Restore the body's color so post-break content is correct.
+		pdf.SetTextColor(pw.curR, pw.curG, pw.curB)
 	})
-
-	pw := &pdfWriter{pdf: pdf, bodyW: pdfBodyW}
 
 	title = sanitizeUTF8(title)
 	date = formatPDFDate(date)
@@ -148,9 +176,42 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 	in_ol := false
 	in_sources := false
 	ol_num := 0
+	// Side-color boxes — `:::for`, `:::against`, `:::verdict`,
+	// `:::accent` open a styled box; `:::` closes it. Used by the
+	// debate transcript exporter to give FOR/AGAINST args a left
+	// border + tinted fill that mirrors the web UI's argument cards.
+	in_box := false
+	boxKind := ""
+	boxLines := []string{}
 
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
+		trimmedLine := strings.TrimSpace(line)
+
+		// Side-color box markers. `:::name` opens, `:::` (or `:::end`)
+		// closes. Recognized kinds: "for", "against", "verdict",
+		// "accent". Other names render as a generic accent box.
+		if strings.HasPrefix(trimmedLine, ":::") {
+			rest := strings.TrimSpace(strings.TrimPrefix(trimmedLine, ":::"))
+			if in_box && (rest == "" || rest == "end") {
+				pw.renderColorBox(boxKind, boxLines)
+				in_box = false
+				boxKind = ""
+				boxLines = nil
+				continue
+			}
+			if !in_box && rest != "" {
+				in_box = true
+				boxKind = rest
+				boxLines = nil
+				continue
+			}
+			// Mismatched marker — fall through and render as normal text.
+		}
+		if in_box {
+			boxLines = append(boxLines, line)
+			continue
+		}
 
 		// Code blocks.
 		if strings.HasPrefix(strings.TrimSpace(line), "```") {
@@ -176,14 +237,17 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		stripped := strings.TrimSpace(line)
 
-		// Blank lines.
+		// Blank lines. Every non-blank paragraph already emits its
+		// own trailing pdfParaGap, so a blank line between two
+		// paragraphs would otherwise stack two gaps and read as
+		// double-spacing. Treat blank lines as a soft no-op (just
+		// reset list state); paragraph-internal pdfParaGap handles
+		// inter-line spacing.
 		if stripped == "" {
 			if in_list { in_list = false }
 			if in_ol { in_ol = false; ol_num = 0 }
 			if in_sources {
 				pw.ln(0.8)
-			} else {
-				pw.ln(pdfParaGap)
 			}
 			continue
 		}
@@ -441,15 +505,145 @@ func (pw *pdfWriter) ln(h float64) {
 	pw.pdf.Ln(h)
 }
 
-// setFont sets the current font and tracks the base style.
+// setFont sets the current font and tracks the base style. When
+// pw.fontScale is non-zero (default 1.0), every requested size is
+// multiplied by the scale — this is how MarkdownToPDFScaled tightens
+// the document for transcripts that pack a lot of section headers.
 func (pw *pdfWriter) setFont(family, style string, size float64) {
 	pw.curStyle = style
-	pw.pdf.SetFont(family, style, size)
+	scale := pw.fontScale
+	if scale == 0 {
+		scale = 1.0
+	}
+	pw.pdf.SetFont(family, style, size*scale)
 }
 
-// setColor sets the text color.
+// setColor sets the text color and remembers it so the footer
+// callback (which sets a gray for the page-number footer) can
+// restore the body color after auto-pagebreak fires mid-render.
 func (pw *pdfWriter) setColor(r, g, b int) {
+	pw.curR, pw.curG, pw.curB = r, g, b
 	pw.pdf.SetTextColor(r, g, b)
+}
+
+// renderColorBox draws a side-color callout: a thin colored vertical
+// stripe on the left, content rendered normally inside with a small
+// indent. No fill — keeps the document looking clean and printable
+// while still distinguishing FOR / AGAINST / verdict sections by
+// edge color. Handles page breaks: if content spans multiple pages,
+// the stripe is drawn segment-by-segment on each page so no portion
+// of the box is missing the colored edge.
+func (pw *pdfWriter) renderColorBox(kind string, lines []string) {
+	var r, g, bl int
+	switch strings.ToLower(kind) {
+	case "for":
+		r, g, bl = 63, 185, 80 // green
+	case "against":
+		r, g, bl = 248, 81, 73 // red
+	case "verdict":
+		r, g, bl = 88, 166, 255 // accent blue
+	default:
+		r, g, bl = 128, 128, 128
+	}
+
+	const stripeW = 1.2 // mm — slightly wider than 1mm so it prints visibly
+	const indent = 6.0  // text indent past stripe (was 3, too tight on verdict)
+	const padTop = 1.0
+	const padBot = 1.0
+
+	pw.ln(0.5) // tiny visual breathing room before the stripe starts
+
+	startY := pw.pdf.GetY()
+	startPage := pw.pdf.PageNo()
+	prevBodyW := pw.bodyW
+	pw.bodyW = prevBodyW - stripeW - indent
+	innerX := pdfMarginL + stripeW + indent
+	// Critical: shift the page's LEFT margin so that wrapped lines
+	// indent past the stripe instead of jumping back to pdfMarginL
+	// (where the stripe lives). pdf.Write wraps to the current page
+	// left-margin, not whatever width we'd like — so we have to push
+	// the margin temporarily and restore it after the box.
+	pw.pdf.SetLeftMargin(innerX)
+	defer pw.pdf.SetLeftMargin(pdfMarginL)
+
+	// Render content. fpdf auto-paginates inside MultiCell; we
+	// detect page transitions and capture per-page Y ranges so the
+	// stripe can be drawn on each page after content lands.
+	type pageRange struct {
+		page int
+		y1   float64
+		y2   float64
+	}
+	currentRange := pageRange{page: startPage, y1: startY}
+	pageRanges := []pageRange{}
+
+	for _, l := range lines {
+		stripped := strings.TrimSpace(l)
+		if stripped == "" {
+			continue
+		}
+		// Snapshot page before render — if it changes, content moved
+		// to a new page. Close out the previous range and start a new
+		// one at the new page's top margin.
+		beforePage := pw.pdf.PageNo()
+		pw.pdf.SetX(innerX)
+		// Headings inside boxes stay full size — the box is just a
+		// side-color marker, not a smaller "card" zone.
+		if strings.HasPrefix(stripped, "### ") {
+			pw.setFont("Arial", "B", 14)
+			pw.setColor(r, g, bl)
+			pw.writeInlineAt(stripped[4:], pw.bodyW)
+			pw.ln(pdfParaGap)
+		} else if strings.HasPrefix(stripped, "## ") {
+			pw.setFont("Arial", "B", 16)
+			pw.setColor(r, g, bl)
+			pw.writeInlineAt(stripped[3:], pw.bodyW)
+			pw.ln(pdfParaGap)
+		} else if strings.HasPrefix(stripped, "- ") || strings.HasPrefix(stripped, "* ") {
+			pw.setFont("Arial", "", 12)
+			pw.setColor(36, 41, 47)
+			pw.pdf.SetX(innerX + 4)
+			pw.pdf.Write(pdfLineH, "-  ")
+			pw.writeInlineAt(stripped[2:], pw.bodyW-6)
+			pw.ln(1.5)
+		} else {
+			pw.setFont("Arial", "", 12)
+			pw.setColor(36, 41, 47)
+			pw.writeInlineAt(stripped, pw.bodyW)
+			pw.ln(pdfParaGap)
+		}
+		afterPage := pw.pdf.PageNo()
+		if afterPage != beforePage {
+			// Content paged. Close out previous range at the bottom
+			// of the previous page, open a new range at the top of
+			// the new page.
+			currentRange.y2 = pdfPageH - pdfMarginB
+			pageRanges = append(pageRanges, currentRange)
+			currentRange = pageRange{page: afterPage, y1: pdfMarginT}
+		}
+	}
+	currentRange.y2 = pw.pdf.GetY()
+	pageRanges = append(pageRanges, currentRange)
+
+	endPage := pw.pdf.PageNo()
+	pw.bodyW = prevBodyW
+
+	// Draw stripe segments per page. Switch pages with SetPage so
+	// each Rect call lands on the right one; restore current page
+	// at the end so subsequent content keeps appending where it
+	// left off.
+	pw.pdf.SetFillColor(r, g, bl)
+	pw.pdf.SetDrawColor(r, g, bl)
+	for _, pr := range pageRanges {
+		if pr.y2 <= pr.y1 {
+			continue
+		}
+		pw.pdf.SetPage(pr.page)
+		pw.pdf.Rect(pdfMarginL, pr.y1-padTop, stripeW, (pr.y2-pr.y1)+padTop+padBot, "F")
+	}
+	pw.pdf.SetPage(endPage)
+
+	pw.ln(pdfParaGap)
 }
 
 // MarkdownToPDFBytes is a convenience wrapper that returns the PDF as bytes.

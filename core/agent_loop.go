@@ -508,6 +508,19 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 		// Native tool path (existing behavior).
 
+		// Strip echoed tool-call markup from content. Some models (Qwen 3
+		// in particular) emit a structured ToolCall AND simultaneously
+		// echo the same call as `<tool_call>...</tool_call>` text in
+		// content. The native dispatch happens via resp.ToolCalls; the
+		// XML echo is just noise and would leak to the user if the loop
+		// exits on this round (MaxRounds, error, rescue path) before the
+		// tool result and a clean follow-up reply come back. Strip
+		// unconditionally — when there's no markup it's a no-op.
+		if len(resp.ToolCalls) > 0 && (strings.Contains(resp.Content, "<tool_call>") || strings.Contains(resp.Content, "<function=")) {
+			Debug("[agent_loop] stripping echoed tool-call markup from content alongside native ToolCalls")
+			resp.Content = StripToolCallMarkup(resp.Content)
+		}
+
 		// Record assistant response.
 		history = append(history, Message{
 			Role:      "assistant",
@@ -642,6 +655,32 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		results := make([]ToolResult, len(resp.ToolCalls))
 		toolErrors := 0
 
+		// stay_silent normalization. Two failure modes from real models
+		// (Qwen 3 in particular):
+		//   1. stay_silent bundled with a real tool — model treats it
+		//      as a "no-reply" flag rather than a turn-closer.
+		//   2. stay_silent called multiple times in one batch — model
+		//      double-emits the closer.
+		// Policy:
+		//   - If the batch contains ONLY stay_silent calls (≥1), keep the
+		//     first one and skip the rest. Silence the turn as intended.
+		//   - If the batch mixes stay_silent with other tools, drop ALL
+		//     stay_silent calls (with an instructive error) and run the
+		//     real tools. The model can re-emit stay_silent alone next
+		//     turn after seeing results.
+		silentCount := 0
+		realCount := 0
+		for _, tc := range resp.ToolCalls {
+			if tc.Name == "stay_silent" {
+				silentCount++
+			} else {
+				realCount++
+			}
+		}
+		dropAllSilent := silentCount > 0 && realCount > 0
+		dedupeSilent := silentCount > 1 && !dropAllSilent
+		silentSeen := false
+
 		// First pass: resolve handlers and handle confirmations serially.
 		type toolWork struct {
 			index   int
@@ -651,6 +690,29 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		var work []toolWork
 
 		for i, tc := range resp.ToolCalls {
+			if tc.Name == "stay_silent" {
+				if dropAllSilent {
+					Debug("[agent_loop] stay_silent dropped — bundled with %d real tool call(s)", realCount)
+					results[i] = ToolResult{
+						ID:      tc.ID,
+						Content: "Error: stay_silent was ignored because it was bundled with other tool calls. stay_silent closes the turn and must be the ONLY tool call in your response. Complete your other tool work first, observe the results, then call stay_silent alone in a later turn.",
+						IsError: true,
+					}
+					toolErrors++
+					continue
+				}
+				if dedupeSilent {
+					if silentSeen {
+						Debug("[agent_loop] duplicate stay_silent dropped (already silenced)")
+						results[i] = ToolResult{
+							ID:      tc.ID,
+							Content: "Acknowledged (duplicate). The turn is already closing silently — only one stay_silent call is needed per turn.",
+						}
+						continue
+					}
+					silentSeen = true
+				}
+			}
 			if cfg.MaskDebugOutput {
 				Debug("[agent_loop] tool call: %s([masked: %d bytes])", tc.Name, len(formatArgs(tc.Args)))
 			} else {
@@ -757,6 +819,18 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				ToolErrors: toolErrors,
 				Done:       false,
 			})
+		}
+
+		// stay_silent closes the turn. The "do not call any more tools"
+		// instruction in the tool result is unreliable — Qwen 3 in
+		// particular keeps emitting stay_silent over and over. Once the
+		// model has called stay_silent successfully, break the agent
+		// loop server-side so no further LLM rounds happen.
+		for _, w := range work {
+			if w.tc.Name == "stay_silent" && !results[w.index].IsError {
+				Debug("[agent_loop] stay_silent fired — closing turn")
+				return resp, history, nil
+			}
 		}
 	}
 

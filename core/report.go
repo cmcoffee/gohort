@@ -65,11 +65,7 @@ func (t *TaskReport) Summary(errors uint32) {
 		first := true
 		log_flag := func(input *eflag.Flag) {
 			switch input.Name {
-			case "repeat":
-				return
 			case "debug":
-				return
-			case "quiet":
 				return
 			}
 			if first {

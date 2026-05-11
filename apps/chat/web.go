@@ -58,19 +58,32 @@ func (T *ChatAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	registerChatScheduledUpdates(T)
 
 	sub := http.NewServeMux()
+	// Framework-rendered chat at /chat/. Stage 1 covers sessions +
+	// streaming thread + input. Heavier features (retry, edit,
+	// attachments, voice convo, mode toggles, tools dropdown,
+	// markdown, stats footer) still live at /chat/legacy/ until each
+	// gets ported in stage 2.
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
+		T.handleNewChatPage(w, r)
+	})
+	// Legacy chat (full feature set). Footer link on /chat/ bounces
+	// here for anything not yet migrated.
+	sub.HandleFunc("/legacy", func(w http.ResponseWriter, r *http.Request) {
 		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-			Title:    "Chat",
+			Title:    "Chat (Legacy)",
 			AppName:  "Chat",
 			Prefix:   prefix,
 			BodyHTML: chatBody,
 			AppCSS:   chatCSS,
 			AppJS:    chatJS,
 		}))
+	})
+	sub.HandleFunc("/legacy/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, prefix+"/legacy", http.StatusMovedPermanently)
 	})
 	sub.HandleFunc("/api/send", T.handleSend)
 	sub.HandleFunc("/api/cancel", T.handleCancel)
@@ -1289,13 +1302,13 @@ body.select-mode .session-item .si-check { display: inline-block; }
 #chat-header h1 { font-size: 1rem; margin: 0; color: var(--text-hi); }
 #tools-summary { color: var(--text-mute); font-size: 0.85rem; margin-left: auto; cursor: pointer; }
 #tools-summary:hover { color: var(--text-hi); }
-#private-toggle, #explorer-toggle {
+#private-toggle, #explorer-toggle, #autospeak-toggle, #convo-toggle {
   background: transparent; border: 1px solid var(--border); color: var(--text-mute);
   font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer;
   white-space: nowrap;
 }
-#private-toggle:hover, #explorer-toggle:hover { color: var(--text-hi); border-color: var(--text-mute); }
-#private-toggle.active, #explorer-toggle.active { color: var(--accent); border-color: var(--accent); }
+#private-toggle:hover, #explorer-toggle:hover, #autospeak-toggle:hover, #convo-toggle:hover { color: var(--text-hi); border-color: var(--text-mute); }
+#private-toggle.active, #explorer-toggle.active, #autospeak-toggle.active, #convo-toggle.active { color: var(--accent); border-color: var(--accent); }
 #tools-list { display: none; padding: 0.5rem 1rem; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--text-mute); max-height: 200px; overflow-y: auto; }
 #tools-list .tool { padding: 0.2rem 0; }
 #tools-list .tool b { color: var(--text); margin-right: 0.5rem; }
@@ -1467,6 +1480,10 @@ body.select-mode .session-item .si-check { display: inline-block; }
 #chat-cancel { padding: 0 1rem; background: var(--bg-1); color: #f85149; border: 1px solid #f85149; border-radius: 6px; cursor: pointer; }
 #chat-cancel:hover:not(:disabled) { background: rgba(248, 81, 73, 0.12); }
 #chat-cancel:disabled { opacity: 0.5; cursor: not-allowed; }
+#chat-mic { padding: 0 0.6rem; user-select: none; }
+#chat-mic.recording { background: var(--danger); color: #fff; border-color: var(--danger); animation: micpulse 1s ease-in-out infinite; }
+@keyframes micpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.6); } 50% { box-shadow: 0 0 0 6px rgba(248,81,73,0); } }
+.act-speak { /* inherits .msg-actions button styling */ }
 #chat-working {
   display: inline-flex;
   align-items: center;
@@ -1554,6 +1571,8 @@ const chatBody = `
       <h1 id="chat-title" style="display:none">Chat — Tool Tester</h1>
       <button id="private-toggle" title="Toggle private mode (no internet tools)" onclick="togglePrivateMode()">Private</button>
       <button id="explorer-toggle" title="API Explorer mode: 30-round budget + LLM saves working API patterns as persistent tools" onclick="toggleExplorerMode()">Explorer</button>
+      <button id="autospeak-toggle" title="Auto-speak assistant replies when they finish" style="display:none" onclick="toggleAutoSpeak()">🔊 Auto</button>
+      <button id="convo-toggle" title="Conversation mode: hands-free back-and-forth — assistant speaks, then mic auto-records your reply, auto-sends on silence" style="display:none" onclick="toggleConvoMode()">💬 Convo</button>
       <span id="tools-summary" onclick="toggleTools()">Loading tools…</span>
     </div>
     <div id="tools-list"></div>
@@ -1561,6 +1580,7 @@ const chatBody = `
     <div id="chat-input-area">
       <input type="file" id="chat-attach-file" style="display:none" onchange="handleAttachFile(event)">
       <button id="chat-attach" title="Attach a text file (log, config, etc.)" onclick="document.getElementById('chat-attach-file').click()">📎</button>
+      <button id="chat-mic" title="Hold to record (push-to-talk). Releases and transcribes into the message box." style="display:none" onmousedown="voiceStartRecord(event)" onmouseup="voiceStopRecord(event)" onmouseleave="voiceStopRecord(event)" ontouchstart="voiceStartRecord(event)" ontouchend="voiceStopRecord(event)">🎤</button>
       <textarea id="chat-input" placeholder="Message…" rows="1"></textarea>
       <button id="chat-cancel" class="danger" onclick="cancelChat()" style="display:none">Cancel</button>
       <button id="chat-send" class="primary" onclick="sendChat()">Send</button>
@@ -1846,7 +1866,8 @@ function addAssistantActions(msgEl, rawText) {
   bar.className = 'msg-actions';
   bar.innerHTML =
     '<button type="button" class="act-copy" title="Copy response" onclick="copyAssistant(this)">Copy</button>' +
-    '<button type="button" class="act-retry" title="Retry this response" onclick="retryAssistant(this)">Retry</button>';
+    '<button type="button" class="act-retry" title="Retry this response" onclick="retryAssistant(this)">Retry</button>' +
+    (voiceSpeakAvailable ? '<button type="button" class="act-speak" title="Speak this response" onclick="voiceSpeakAssistant(this)">🔊 Speak</button>' : '');
   msgEl.appendChild(bar);
 }
 
@@ -2532,11 +2553,19 @@ function sendChat(opts) {
       }
       if (success && fullReply) {
         chatHistory.push({role: 'user', content: msg});
-        chatHistory.push({role: 'assistant', content: fullReply.replace(/\s+$/, '')});
+        var assistantText = fullReply.replace(/\s+$/, '');
+        chatHistory.push({role: 'assistant', content: assistantText});
         // Bump the rendered-message counter so the scheduled-update
         // poller doesn't think the new turns are unrendered and
         // re-paint them.
         renderedMessageCount = chatHistory.length;
+        if (autoSpeakEnabled && voiceSpeakAvailable) {
+          // Fire-and-forget; reuses the per-message Speak button so
+          // its label flips to "Speaking…" while playback is active.
+          var lastMsg = document.querySelector('#chat-history .chat-msg.assistant:last-child');
+          var speakBtn = lastMsg ? lastMsg.querySelector('.act-speak') : null;
+          voiceSpeakText(assistantText, speakBtn);
+        }
       }
       // Refresh the sidebar so a newly-saved session shows up and an
       // updated LastAt reorders existing rows. Schedule a second
@@ -2635,6 +2664,340 @@ function handleAttachFile(event) {
   event.target.value = '';
 }
 
+// Voice integration: push-to-talk transcribe + speak-aloud playback.
+// Both backends are independent — either can be enabled without the
+// other. We probe /voice/status once at startup; the mic button stays
+// hidden when transcribe is unavailable, and the Speak button is
+// omitted from assistant message rows when speak is unavailable.
+var voiceTranscribeAvailable = false;
+var voiceSpeakAvailable = false;
+var voiceRecorder = null;
+var voiceChunks = [];
+var voiceStream = null;
+var voiceCurrentAudio = null;
+var voiceCurrentBtn = null;
+var autoSpeakEnabled = false;
+var convoMode = false;
+// VAD state — populated when voiceStartRecord opens an auto-mode session.
+var voiceVADContext = null;
+var voiceVADAnalyser = null;
+var voiceVADSource = null;
+var voiceVADRaf = null;
+var voiceVADSpeechStarted = false;
+var voiceVADSilenceStartedAt = 0;
+var voiceVADAutoMode = false;
+// VAD tunables — RMS threshold normalized to 0..1, silence-to-stop window
+// in ms. Tuned for typical USB-mic setups; if it cuts off too eagerly,
+// raise VAD_SILENCE_MS; if it never stops, raise VAD_SPEECH_THRESHOLD.
+var VAD_SPEECH_THRESHOLD = 0.025;
+var VAD_SILENCE_MS = 1500;
+var VAD_MAX_RECORD_MS = 30000;
+
+function voiceInit() {
+  // Restore preferences from localStorage so they survive reloads.
+  try { autoSpeakEnabled = localStorage.getItem('chat.autospeak') === '1'; } catch(e) {}
+  try { convoMode        = localStorage.getItem('chat.convo')     === '1'; } catch(e) {}
+  fetch('/voice/status').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+    if (!d) return;
+    voiceTranscribeAvailable = d.transcribe_transport && d.transcribe_transport !== 'none';
+    voiceSpeakAvailable = d.speak_transport && d.speak_transport !== 'none';
+    if (voiceTranscribeAvailable) {
+      var mic = document.getElementById('chat-mic');
+      if (mic) mic.style.display = '';
+    }
+    if (voiceSpeakAvailable) {
+      var as = document.getElementById('autospeak-toggle');
+      if (as) {
+        as.style.display = '';
+        as.classList.toggle('active', autoSpeakEnabled);
+      }
+    }
+    // Conversation mode requires BOTH backends — speak (so the assistant
+    // can talk) AND transcribe (so the user can reply hands-free).
+    if (voiceTranscribeAvailable && voiceSpeakAvailable) {
+      var cv = document.getElementById('convo-toggle');
+      if (cv) {
+        cv.style.display = '';
+        cv.classList.toggle('active', convoMode);
+      }
+    }
+  }).catch(function(){});
+}
+
+function toggleConvoMode() {
+  convoMode = !convoMode;
+  try { localStorage.setItem('chat.convo', convoMode ? '1' : '0'); } catch(e) {}
+  var btn = document.getElementById('convo-toggle');
+  if (btn) btn.classList.toggle('active', convoMode);
+  // Convo mode implies auto-speak; flip it on for free if the user
+  // hasn't already done so.
+  if (convoMode && !autoSpeakEnabled && voiceSpeakAvailable) {
+    autoSpeakEnabled = true;
+    try { localStorage.setItem('chat.autospeak', '1'); } catch(e) {}
+    var as = document.getElementById('autospeak-toggle');
+    if (as) as.classList.add('active');
+  }
+  // Toggling off mid-recording stops the current capture so the user
+  // doesn't get a stale auto-send after disabling the loop.
+  if (!convoMode && voiceVADAutoMode && voiceRecorder && voiceRecorder.state === 'recording') {
+    voiceStopRecord();
+  }
+}
+
+function toggleAutoSpeak() {
+  autoSpeakEnabled = !autoSpeakEnabled;
+  try { localStorage.setItem('chat.autospeak', autoSpeakEnabled ? '1' : '0'); } catch(e) {}
+  var btn = document.getElementById('autospeak-toggle');
+  if (btn) btn.classList.toggle('active', autoSpeakEnabled);
+  // If disabled mid-playback, stop the current audio so the user gets
+  // immediate feedback that the toggle actually did something.
+  if (!autoSpeakEnabled && voiceCurrentAudio && !voiceCurrentAudio.paused) {
+    voiceCurrentAudio.pause();
+    if (voiceCurrentBtn) voiceCurrentBtn.textContent = '🔊 Speak';
+    voiceCurrentAudio = null;
+    voiceCurrentBtn = null;
+  }
+}
+
+// voiceStartRecord opens the mic. opts.auto enables VAD-driven auto-stop
+// (used by conversation mode); when omitted, the caller is expected to
+// invoke voiceStopRecord manually (push-to-talk via mouse/touch).
+function voiceStartRecord(ev, opts) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  if (!voiceTranscribeAvailable || voiceRecorder) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    appendError(null, 'Microphone not available in this browser.');
+    return;
+  }
+  var auto = !!(opts && opts.auto);
+  voiceVADAutoMode = auto;
+  var mic = document.getElementById('chat-mic');
+  if (mic) mic.classList.add('recording');
+  navigator.mediaDevices.getUserMedia({audio: true}).then(function(stream){
+    voiceStream = stream;
+    voiceChunks = [];
+    var rec = new MediaRecorder(stream);
+    voiceRecorder = rec;
+    rec.ondataavailable = function(e){ if (e.data && e.data.size > 0) voiceChunks.push(e.data); };
+    rec.onstop = function(){
+      voiceVADTeardown();
+      var blob = new Blob(voiceChunks, {type: rec.mimeType || 'audio/webm'});
+      voiceChunks = [];
+      if (voiceStream) {
+        voiceStream.getTracks().forEach(function(t){ t.stop(); });
+        voiceStream = null;
+      }
+      var wasAuto = voiceVADAutoMode;
+      voiceVADAutoMode = false;
+      // In auto mode, only send if VAD actually detected speech — guards
+      // against silently auto-sending an empty blob if the loop fires
+      // when no one's there.
+      var sawSpeech = voiceVADSpeechStarted;
+      voiceVADSpeechStarted = false;
+      if (wasAuto && !sawSpeech) {
+        // Discard. Convo mode will re-arm the next time the assistant
+        // finishes speaking.
+        return;
+      }
+      voiceTranscribeBlob(blob, wasAuto);
+    };
+    rec.start();
+    if (auto) voiceVADSetup(stream, rec);
+  }).catch(function(err){
+    if (mic) mic.classList.remove('recording');
+    voiceVADAutoMode = false;
+    appendError(null, 'Microphone error: ' + err.message);
+  });
+}
+
+function voiceStopRecord(ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  var mic = document.getElementById('chat-mic');
+  if (mic) mic.classList.remove('recording');
+  if (voiceRecorder && voiceRecorder.state === 'recording') {
+    voiceRecorder.stop();
+  }
+  voiceRecorder = null;
+}
+
+// voiceVADSetup wires up an AnalyserNode against the live mic stream so
+// we can poll RMS levels each animation frame and decide when to stop
+// recording. Stops on: 1.5s of silence after the user has spoken, OR
+// 30s elapsed (hard cap so a stuck recorder doesn't run forever).
+function voiceVADSetup(stream, rec) {
+  try {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    voiceVADContext = new Ctx();
+    voiceVADSource = voiceVADContext.createMediaStreamSource(stream);
+    voiceVADAnalyser = voiceVADContext.createAnalyser();
+    voiceVADAnalyser.fftSize = 1024;
+    voiceVADSource.connect(voiceVADAnalyser);
+    voiceVADSpeechStarted = false;
+    voiceVADSilenceStartedAt = 0;
+    var startedAt = Date.now();
+    var buf = new Uint8Array(voiceVADAnalyser.fftSize);
+    var tick = function() {
+      if (!voiceRecorder || voiceRecorder.state !== 'recording') return;
+      voiceVADAnalyser.getByteTimeDomainData(buf);
+      // Compute RMS deviation from 128 (silence center for unsigned 8-bit PCM).
+      var sumSq = 0;
+      for (var i = 0; i < buf.length; i++) {
+        var v = (buf[i] - 128) / 128;
+        sumSq += v * v;
+      }
+      var rms = Math.sqrt(sumSq / buf.length);
+      var now = Date.now();
+      if (rms > VAD_SPEECH_THRESHOLD) {
+        voiceVADSpeechStarted = true;
+        voiceVADSilenceStartedAt = 0;
+      } else if (voiceVADSpeechStarted) {
+        if (!voiceVADSilenceStartedAt) voiceVADSilenceStartedAt = now;
+        if (now - voiceVADSilenceStartedAt >= VAD_SILENCE_MS) {
+          voiceStopRecord();
+          return;
+        }
+      }
+      if (now - startedAt >= VAD_MAX_RECORD_MS) {
+        voiceStopRecord();
+        return;
+      }
+      voiceVADRaf = requestAnimationFrame(tick);
+    };
+    voiceVADRaf = requestAnimationFrame(tick);
+  } catch (e) {
+    // VAD setup failed — degrade to a hard 30s cap so the recorder still
+    // closes on its own in conversation mode.
+    setTimeout(function(){
+      if (voiceRecorder && voiceRecorder.state === 'recording') voiceStopRecord();
+    }, VAD_MAX_RECORD_MS);
+  }
+}
+
+function voiceVADTeardown() {
+  if (voiceVADRaf) { cancelAnimationFrame(voiceVADRaf); voiceVADRaf = null; }
+  if (voiceVADSource) { try { voiceVADSource.disconnect(); } catch(e) {} voiceVADSource = null; }
+  voiceVADAnalyser = null;
+  if (voiceVADContext && voiceVADContext.state !== 'closed') {
+    try { voiceVADContext.close(); } catch(e) {}
+  }
+  voiceVADContext = null;
+}
+
+// voicePromptTerms is the vocabulary-bias prompt sent with every
+// transcribe request. Whisper biases its decoder toward these terms,
+// which fixes the phonetic-neighbor problem ("Kay V Lite" instead of
+// "kvlite"). Edit per deployment if your usual jargon differs.
+var voicePromptTerms = 'gohort, kvlite, snugforge, kitebroker, llama.cpp, piper, whisper, servitor, techwriter, codewriter, phantom, kubernetes, postgres, terraform';
+
+function voiceTranscribeBlob(blob, autoSend) {
+  var fd = new FormData();
+  fd.append('audio', blob, 'recording.webm');
+  fd.append('prompt', voicePromptTerms);
+  var input = document.getElementById('chat-input');
+  var prevPlaceholder = input ? input.placeholder : '';
+  if (input) input.placeholder = 'Transcribing…';
+  fetch('/voice/transcribe', {method: 'POST', body: fd}).then(function(r){
+    if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+    return r.json();
+  }).then(function(d){
+    if (input) {
+      input.placeholder = prevPlaceholder;
+      var existing = input.value;
+      input.value = (existing ? existing.replace(/\s+$/, '') + ' ' : '') + (d.text || '');
+      input.focus();
+      // Trigger autoresize if a listener is wired.
+      input.dispatchEvent(new Event('input'));
+    }
+    // Convo-mode auto-send: only fire if VAD actually heard something
+    // and we're not already mid-send. The user can edit the field
+    // before this fires by simply typing (which we don't currently
+    // suppress — it'll just append, then auto-send everything).
+    if (autoSend && convoMode && d.text && d.text.trim()) {
+      sendChat();
+    }
+  }).catch(function(err){
+    if (input) input.placeholder = prevPlaceholder;
+    appendError(null, 'Transcribe failed: ' + err.message);
+  });
+}
+
+function voiceStripMarkdown(text) {
+  return (text || '')
+    .replace(/` + "`" + `{3}[\s\S]*?` + "`" + `{3}/g, ' (code block) ')
+    .replace(/` + "`" + `([^` + "`" + `]+)` + "`" + `/g, '$1')
+    .replace(/!\[[^\]]*\]\([^\)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^\)]*\)/g, '$1')
+    .replace(/[*_#>]/g, '')
+    .trim();
+}
+
+// voiceSpeakText plays TTS for arbitrary text. Optional btn is the
+// Speak button on a message — when present, its label is updated to
+// reflect playback state. Cancels any in-flight playback first so
+// auto-speak on a new turn doesn't pile up over the previous one.
+function voiceSpeakText(text, btn) {
+  if (!voiceSpeakAvailable) return;
+  var spoken = voiceStripMarkdown(text);
+  if (!spoken) return;
+  if (voiceCurrentAudio && !voiceCurrentAudio.paused) {
+    voiceCurrentAudio.pause();
+    if (voiceCurrentBtn) voiceCurrentBtn.textContent = '🔊 Speak';
+    voiceCurrentAudio = null;
+    voiceCurrentBtn = null;
+  }
+  if (btn) btn.textContent = '⏳ Speaking…';
+  // Fetch via blob so a non-200 response surfaces the real error body
+  // instead of the browser's opaque "no supported source" message.
+  fetch('/voice/speak?text=' + encodeURIComponent(spoken)).then(function(r){
+    if (!r.ok) return r.text().then(function(t){ throw new Error('HTTP ' + r.status + ': ' + t); });
+    return r.blob();
+  }).then(function(blob){
+    var objURL = URL.createObjectURL(blob);
+    var audio = new Audio(objURL);
+    voiceCurrentAudio = audio;
+    voiceCurrentBtn = btn || null;
+    audio.onended = function(){
+      if (btn) btn.textContent = '🔊 Speak';
+      URL.revokeObjectURL(objURL);
+      voiceCurrentAudio = null; voiceCurrentBtn = null;
+      // Convo-mode loop: assistant finished talking, hand the mic back.
+      // 250ms delay keeps the tail of the audio from bleeding into the
+      // mic capture (especially on speakers without echo cancellation).
+      if (convoMode && voiceTranscribeAvailable && !sending) {
+        setTimeout(function(){
+          if (convoMode && !sending && !voiceRecorder) voiceStartRecord(null, {auto: true});
+        }, 250);
+      }
+    };
+    audio.onerror = function(){
+      if (btn) btn.textContent = '🔊 Speak';
+      URL.revokeObjectURL(objURL);
+      voiceCurrentAudio = null; voiceCurrentBtn = null;
+      if (btn) appendError(null, 'TTS playback failed (audio could not decode the returned bytes — check Piper server logs).');
+    };
+    return audio.play();
+  }).catch(function(err){
+    if (btn) btn.textContent = '🔊 Speak';
+    voiceCurrentAudio = null; voiceCurrentBtn = null;
+    if (btn) appendError(null, 'TTS error: ' + err.message);
+  });
+}
+
+function voiceSpeakAssistant(btn) {
+  var msgEl = btn.closest('.chat-msg.assistant');
+  if (!msgEl) return;
+  // If this button's audio is currently playing, treat the click as Stop.
+  if (voiceCurrentAudio && voiceCurrentBtn === btn && !voiceCurrentAudio.paused) {
+    voiceCurrentAudio.pause();
+    voiceCurrentAudio = null; voiceCurrentBtn = null;
+    btn.textContent = '🔊 Speak';
+    return;
+  }
+  voiceSpeakText(msgEl.dataset.raw || '', btn);
+}
+
+voiceInit();
 loadPrivateMode();
 loadExplorerMode();
 loadTools();

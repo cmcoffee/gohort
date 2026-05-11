@@ -59,6 +59,6 @@ func (T *ChatAgent) Init() (err error) {
 // Main is a no-op for the chat app — it only runs as a web app.
 // Invoking it from the CLI prints a hint and exits cleanly.
 func (T *ChatAgent) Main() (err error) {
-	Log("Chat is a web-only app. Start the dashboard with:\n  gohort --web :8080")
+	Log("Chat is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
 }

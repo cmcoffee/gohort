@@ -54,15 +54,77 @@ const (
 
 // Transcribe runs whisper on audio bytes. Uses WhisperServerURL when set,
 // shell-out to whisper-cli otherwise. Returns transcript text.
+//
+// Audio is normalized to 16 kHz mono WAV via ffmpeg before being handed
+// to whisper. This is required for two reasons:
+//   - Browser MediaRecorder produces WebM/Opus (Chrome) or MP4/AAC (Safari);
+//     whisper-server's HTTP path only decodes WAV.
+//   - whisper.cpp internally expects 16 kHz mono PCM; downsampling on the
+//     gohort host is cheaper than letting whisper.cpp do it on the GPU box,
+//     and avoids whisper-cli's silent failure mode on unexpected formats.
+//
+// If ffmpeg isn't on PATH and the bytes already start with a "RIFF" header
+// (i.e. caller supplied WAV directly), forward as-is.
 func Transcribe(ctx context.Context, audio []byte) (string, error) {
+	return TranscribeWithPrompt(ctx, audio, "")
+}
+
+// TranscribeWithPrompt is Transcribe with an optional bias prompt.
+// The prompt is a comma- or space-separated list of vocabulary terms
+// that whisper should be biased toward (project names, jargon, hostnames
+// — anything not in whisper's training vocabulary). Forwarded to the
+// HTTP server's "prompt" form field; ignored on the shell-out path
+// because whisper-cli's --prompt arg semantics differ subtly from the
+// server's and aren't worth replicating until someone needs it.
+func TranscribeWithPrompt(ctx context.Context, audio []byte, prompt string) (string, error) {
 	cfg := LoadVoiceConfig()
 	if !cfg.Enabled {
 		return "", fmt.Errorf("voice is disabled in configuration")
 	}
-	if cfg.WhisperServerURL != "" {
-		return transcribeViaServer(ctx, cfg, audio)
+	wav, err := normalizeAudioToWAV(ctx, audio)
+	if err != nil {
+		return "", err
 	}
-	return transcribeViaShell(ctx, cfg, audio)
+	if cfg.WhisperServerURL != "" {
+		return transcribeViaServer(ctx, cfg, wav, prompt)
+	}
+	return transcribeViaShell(ctx, cfg, wav)
+}
+
+// normalizeAudioToWAV pipes the input through ffmpeg to produce 16 kHz
+// mono PCM WAV. Returns the original bytes when they're already RIFF/WAV
+// AND ffmpeg isn't available — best-effort so a missing ffmpeg doesn't
+// block the curl-with-WAV use case.
+func normalizeAudioToWAV(ctx context.Context, audio []byte) ([]byte, error) {
+	isWAV := len(audio) >= 12 && string(audio[0:4]) == "RIFF" && string(audio[8:12]) == "WAVE"
+	ffmpeg, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		if isWAV {
+			return audio, nil
+		}
+		return nil, fmt.Errorf("voice: ffmpeg not found in PATH and input is not WAV (install ffmpeg on the gohort host to accept browser-recorded audio)")
+	}
+	cctx, cancel := context.WithTimeout(ctx, VoiceTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, ffmpeg,
+		"-hide_banner", "-loglevel", "error",
+		"-i", "pipe:0",
+		"-ac", "1", // mono
+		"-ar", "16000", // 16 kHz
+		"-f", "wav",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(audio)
+	var out, errBuf bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("voice: ffmpeg conversion failed: %w (%s)", err, strings.TrimSpace(errBuf.String()))
+	}
+	if out.Len() < 44 {
+		return nil, fmt.Errorf("voice: ffmpeg produced no output")
+	}
+	return out.Bytes(), nil
 }
 
 // Speak runs Piper on text and returns a WAV byte stream. Uses
@@ -87,11 +149,11 @@ func Speak(ctx context.Context, text string) ([]byte, error) {
 
 // --- HTTP server transports ------------------------------------------------
 
-func transcribeViaServer(ctx context.Context, cfg VoiceConfig, audio []byte) (string, error) {
+func transcribeViaServer(ctx context.Context, cfg VoiceConfig, audio []byte, prompt string) (string, error) {
 	endpoint := strings.TrimRight(cfg.WhisperServerURL, "/") + "/inference"
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	fw, err := mw.CreateFormFile("file", "audio")
+	fw, err := mw.CreateFormFile("file", "audio.wav")
 	if err != nil {
 		return "", fmt.Errorf("voice: multipart: %w", err)
 	}
@@ -101,6 +163,14 @@ func transcribeViaServer(ctx context.Context, cfg VoiceConfig, audio []byte) (st
 	// whisper-server reads "response_format" too; default is "json" which
 	// returns {"text": "..."}, exactly what we want.
 	mw.WriteField("response_format", "json")
+	// Optional vocabulary-bias prompt — whisper.cpp's --prompt is honored
+	// at inference time when supplied here. Apps with domain-specific
+	// vocabulary (servitor: sysadmin terms; techwriter: doc terms; chat:
+	// project names) pass these so words like "kvlite" or "gohort" don't
+	// get rewritten to phonetic neighbors.
+	if strings.TrimSpace(prompt) != "" {
+		mw.WriteField("prompt", prompt)
+	}
 	mw.Close()
 
 	cctx, cancel := context.WithTimeout(ctx, VoiceTimeout)
@@ -132,13 +202,21 @@ func transcribeViaServer(ctx context.Context, cfg VoiceConfig, audio []byte) (st
 
 func speakViaServer(ctx context.Context, cfg VoiceConfig, text string) ([]byte, error) {
 	endpoint := strings.TrimRight(cfg.PiperServerURL, "/") + "/"
+	// piper.http_server (>= the version that ships with current piper-tts)
+	// reads the request body as JSON and pulls "text" out of it. Older
+	// builds accepted raw text/plain; we standardize on JSON because that's
+	// what the install-voice.sh-installed version expects.
+	payload, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return nil, fmt.Errorf("voice: marshal piper payload: %w", err)
+	}
 	cctx, cancel := context.WithTimeout(ctx, VoiceTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(cctx, http.MethodPost, endpoint, strings.NewReader(text))
+	req, err := http.NewRequestWithContext(cctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("voice: build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -277,7 +355,8 @@ func VoiceTranscribeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "audio too large", http.StatusRequestEntityTooLarge)
 		return
 	}
-	text, err := Transcribe(r.Context(), audio)
+	prompt := r.FormValue("prompt")
+	text, err := TranscribeWithPrompt(r.Context(), audio, prompt)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -321,11 +400,18 @@ func VoiceSpeakHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 // VoiceStatusHandler reports per-backend readiness and which transport
-// would be used so the UI can label things accurately.
+// would be used so the UI can label things accurately. When voice is
+// disabled in config, transports are reported as "none" so the chat UI
+// (which gates mic/speak/convo buttons on transport != "none") hides
+// everything — disabling voice in admin should hide voice controls.
 func VoiceStatusHandler(w http.ResponseWriter, r *http.Request) {
 	cfg := LoadVoiceConfig()
 	transcribeReady, transcribeTransport := transcribeReadiness(cfg)
 	speakReady, speakTransport := speakReadiness(cfg)
+	if !cfg.Enabled {
+		transcribeTransport = transportNone
+		speakTransport = transportNone
+	}
 	resp := map[string]any{
 		"enabled":              cfg.Enabled,
 		"transcribe":           cfg.Enabled && transcribeReady,

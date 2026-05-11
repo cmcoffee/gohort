@@ -75,6 +75,6 @@ func (T AnswerAgent) Desc() string {
 func (T *AnswerAgent) Init() (err error) { return T.Flags.Parse() }
 
 func (T *AnswerAgent) Main() (err error) {
-	Log("Answer is a web-only app. Start the dashboard with:\n  gohort --web :8080")
+	Log("Answer is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
 }

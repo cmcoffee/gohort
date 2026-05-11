@@ -114,7 +114,7 @@ func (T Phantom) Desc() string { return "Apps: iMessage/Teams AI persona bridge.
 
 func (T *Phantom) Init() error { return T.Flags.Parse() }
 func (T *Phantom) Main() error {
-	Log("Phantom is a web-only app. Start with: gohort --web :8080")
+	Log("Phantom is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
 }
 
@@ -629,8 +629,40 @@ func storeMessage(db Database, m PhantomMessage) {
 }
 
 // enqueueOutbox adds an item to the outbox for the agent to deliver.
+//
+// Special-cased: when an item carries both videos AND text, it's
+// split into two separate outbox entries. The video portion goes
+// immediately (with an empty Text field so the bridge sends only
+// the attachments). The text portion is scheduled to be enqueued
+// 5 seconds later — long enough that iMessage has started uploading
+// the video, so the recipient device sees them in order:
+//
+//     [videos] (5s later) [text reply]
+//
+// This replaces the older "send videos, sleep size-scaled delay,
+// send text in the same RPC" pattern that blocked the bridge's
+// deliver worker. Now the worker frees immediately after each part
+// and the gap is owned by gohort.
 func enqueueOutbox(db Database, item OutboxItem) {
 	if db == nil {
+		return
+	}
+	if len(item.Videos) > 0 && strings.TrimSpace(item.Text) != "" {
+		// Send the video portion now.
+		videosOnly := item
+		videosOnly.Text = ""
+		db.Set(outboxTable, videosOnly.ID, videosOnly)
+		// Schedule the text follow-up. Use a fresh ID so the bridge
+		// treats it as a distinct queued item; otherwise the second
+		// db.Set would overwrite the first under the same key and
+		// the videos would never deliver.
+		textOnly := item
+		textOnly.ID = newID()
+		textOnly.Videos = nil
+		go func() {
+			time.Sleep(5 * time.Second)
+			db.Set(outboxTable, textOnly.ID, textOnly)
+		}()
 		return
 	}
 	db.Set(outboxTable, item.ID, item)
@@ -761,8 +793,17 @@ func cleanMessageText(text string) string {
 		if metaKeySet[p] {
 			continue
 		}
-		// Skip tokens that start with $ or NS (common NSKeyedArchiver prefixes).
-		if len(p) >= 2 && (p[0] == '$' || p[0] == 'N' && len(p) >= 2 && p[1] == 'S') {
+		// Skip tokens that look like NSKeyedArchiver prefix keys —
+		// "$class", "$null", "NSString", "NSKeyedArchiver". Tightened
+		// from a blanket "$ or NS prefix" check because plain text
+		// messages legitimately use dollar amounts ("$5.99", "$100")
+		// and short word-starts that happen to begin with NS would be
+		// caught (rare but possible).
+		//
+		// Match rules:
+		//   - $X — followed entirely by letters (no digits, no punct)
+		//   - NSX — followed by an uppercase letter (PascalCase NS class names)
+		if looksLikeNSKey(p) {
 			continue
 		}
 		// Skip tokens that contain a metadata key as a substring.
@@ -808,6 +849,44 @@ func cleanMessageText(text string) string {
 // bridge extracts text from a message with attribute runs (URLs, dates,
 // data-detector results). Each pattern was observed in the wild on
 // macOS Sonoma+ chat.db when a URL is in the message body.
+// looksLikeNSKey discriminates NSKeyedArchiver / NSAttributedString
+// metadata tokens from real message content. Returns true only for
+// tokens that have the strict shape of a metadata key:
+//   - "$word" where word is one or more letters only ($null, $class,
+//     $objects). NOT $5.99, $100, $1,000.
+//   - "NSWord..." starting with the literal "NS" followed by an
+//     uppercase letter (NSString, NSAttributedString, NSURL).
+//
+// Trailing punctuation (commas, periods at sentence end) is tolerated
+// — "NSString." still counts as metadata. Real prose rarely starts a
+// word with the exact "NS" capitalization pattern.
+func looksLikeNSKey(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	// Strip a single trailing punctuation char so "$null," still matches.
+	if last := s[len(s)-1]; last == ',' || last == '.' || last == ';' || last == ':' {
+		s = s[:len(s)-1]
+	}
+	if len(s) < 2 {
+		return false
+	}
+	if s[0] == '$' {
+		for i := 1; i < len(s); i++ {
+			c := s[i]
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+				return false
+			}
+		}
+		return true
+	}
+	if s[0] == 'N' && s[1] == 'S' && len(s) >= 3 {
+		c := s[2]
+		return c >= 'A' && c <= 'Z'
+	}
+	return false
+}
+
 func looksLikeTypedstreamArtifact(s string) bool {
 	if s == "" {
 		return false

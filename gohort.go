@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
@@ -29,12 +28,11 @@ var global struct {
 	cfg           ConfigStore
 	db            Database
 	cache         Database
-	freq          time.Duration
 	root          string
+	cfg_path      string // override for gohort.ini path; empty = next-to-binary default
 	debug         bool
 	snoop         bool
 	trace         bool
-	sysmode       bool
 	single_thread bool
 }
 
@@ -53,6 +51,30 @@ func get_runtime_info() string {
 	return localExec
 }
 
+// registerModifiers wires the global verbosity / threading toggles
+// onto a flagset. Used by both the top-level parser and the serve
+// sub-command so a user can drop `--debug` / `--trace` / `--snoop`
+// / `--serial` on either side of the command name. Values bind
+// against the same global struct fields, so order doesn't matter:
+//   gohort --debug serve :8080
+//   gohort serve --debug :8080
+// both end with global.debug == true.
+func registerModifiers(set *eflag.EFlagSet) {
+	set.BoolVar(&global.single_thread, "serial", NONE)
+	set.BoolVar(&global.debug, "debug", NONE)
+	set.BoolVar(&global.snoop, "snoop", NONE)
+	set.BoolVar(&global.trace, "trace", NONE)
+	// --config <path> overrides the default <binary-dir>/gohort.ini
+	// lookup. Useful for running multiple instances side-by-side, or
+	// pointing a single binary at different environments. Same
+	// modifier shape as --debug etc. — works on either side of the
+	// subcommand:
+	//   gohort --config /etc/gohort/dev.ini serve :8080
+	//   gohort serve --config /etc/gohort/dev.ini :8080
+	set.StringVar(&global.cfg_path, "config", NONE,
+		"Path to the INI config file (default: <binary-dir>/gohort.ini)")
+}
+
 func main() {
 	AppVersion = VERSION
 	nfo.HideTS()
@@ -66,25 +88,17 @@ func main() {
 
 	get_runtime_info()
 
-	// Initial modifier flags.
+	// Initial modifier flags. Top-level only — command-specific flags
+	// (TLS, max-concurrent) live on the serve sub-command's own
+	// flagset so `gohort --help` doesn't show them on every other
+	// command, and `gohort serve --help` shows the right scope.
 	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
 	version := flags.Bool("version", "")
 	setup := flags.Bool("setup", "Fuzz configuration (LLM, mail, etc).")
-	web := flags.String("web", "", "Start web dashboard on address (e.g. ':8080').")
-	max_concurrent := flags.Int("max_concurrent", 1, "Max simultaneous apps. Others are queued.")
-	tls_cert := flags.String("tls_cert", "", "Path to TLS certificate file (PEM).")
-	tls_key := flags.String("tls_key", "", "Path to TLS private key file (PEM).")
-	tls_self := flags.Bool("tls", "Enable TLS with auto-generated self-signed certificate.")
-	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat agent, 0s = single run.")
-	flags.BoolVar(&global.sysmode, "quiet", "Minimal output for non-interactive processes.")
 
-	flags.Order("repeat", "quiet", "web", "max_concurrent", "tls", "tls_cert", "tls_key")
 	flags.Footer = " "
 
-	flags.BoolVar(&global.single_thread, "serial", NONE)
-	flags.BoolVar(&global.debug, "debug", NONE)
-	flags.BoolVar(&global.snoop, "snoop", NONE)
-	flags.BoolVar(&global.trace, "trace", NONE)
+	registerModifiers(flags)
 
 	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 
@@ -220,21 +234,69 @@ func main() {
 		Exit(0)
 	}
 
-	if *web != "" {
+	// "serve" subcommand — start the long-running dashboard daemon.
+	// Owns its own flagset so TLS / max-concurrent options don't
+	// pollute the top-level help. Bind address is the lone
+	// positional arg: `gohort serve [flags] [addr]` (default :8080).
+	serveArgs := flags.Args()
+	if len(serveArgs) > 0 && serveArgs[0] == "serve" {
+		serveFlags := eflag.NewFlagSet("serve", eflag.ReturnErrorOnly)
+		// AdaptArgs lets flags appear in any position relative to
+		// the bind-address positional, so `gohort serve :9090
+		// --debug` parses identically to `gohort serve --debug
+		// :9090`. Eflag re-orders trailing non-flags after the
+		// flag list before handing it to the underlying parser.
+		serveFlags.AdaptArgs = true
+		max_concurrent := serveFlags.Int("max_concurrent", 1, "Max simultaneous apps. Others are queued.")
+		tls_cert := serveFlags.String("tls_cert", "", "Path to TLS certificate file (PEM).")
+		tls_key := serveFlags.String("tls_key", "", "Path to TLS private key file (PEM).")
+		tls_self := serveFlags.Bool("tls", "Enable TLS with auto-generated self-signed certificate.")
+		serveFlags.Order("tls", "tls_cert", "tls_key", "max_concurrent")
+		// Modifier flags also visible on the sub-command so
+		// `gohort serve --debug :8080` works the same as
+		// `gohort --debug serve :8080`.
+		registerModifiers(serveFlags)
+		serveFlags.Header = fmt.Sprintf("Usage: %s serve [flags] [addr]\n\n  addr defaults to :8080. TLS flags apply only when --tls is set\n  or both tls_cert and tls_key are provided.\n", os.Args[0])
+		if err := serveFlags.Parse(serveArgs[1:]); err != nil {
+			if err != eflag.ErrHelp {
+				Stderr(err)
+				Stderr(NONE)
+			}
+			serveFlags.Usage()
+			if err == eflag.ErrHelp {
+				return
+			}
+			Exit(1)
+		}
+		bindAddr := ":8080"
+		if rest := serveFlags.Args(); len(rest) > 0 && rest[0] != "" {
+			bindAddr = rest[0]
+		}
+		// Re-apply modifier side-effects in case --debug/--trace
+		// landed on the serve sub-command rather than the top-level
+		// (the top-level enable_debug call ran before serveFlags
+		// parsed). Mirrors the kitebroker pattern where each task
+		// re-checks debug/snoop/trace post-parse.
+		if global.debug {
+			enable_debug()
+		}
+		if global.snoop || global.trace {
+			enable_trace()
+		}
 		Log("### %s v%s ###", APPNAME, VERSION)
 		init_database()
 		RootDB = global.db
 		wireToolDB()
 		init_logging()
 
-		// Load saved web config as defaults; CLI flags override.
-		var saved_max int
-		var saved_cert, saved_key string
-		var saved_self_signed bool
-		global.db.Get(WebTable, "max_concurrent", &saved_max)
-		global.db.Get(WebTable, "tls_cert", &saved_cert)
-		global.db.Get(WebTable, "tls_key", &saved_key)
-		global.db.Get(WebTable, "tls_self_signed", &saved_self_signed)
+				// Load saved web config as defaults; CLI flags override.
+		// Values come from the INI file (gohort.ini) with a one-time
+		// fallback to the kvlite-backed mirror so existing installs
+		// don't lose their settings on first boot after this migration.
+		saved_max := loadWebInt("max_concurrent", 1)
+		saved_cert := loadWebString("tls_cert", "")
+		saved_key := loadWebString("tls_key", "")
+		saved_self_signed := loadWebBool("tls_self_signed", false)
 
 		if *max_concurrent != 1 {
 			MaxConcurrentTasks = *max_concurrent
@@ -322,15 +384,14 @@ func main() {
 			return cfg
 		}
 
-		// Wire admin IP allowlist.
+		// Wire admin IP allowlist. Sourced from gohort.ini with a
+		// one-time fallback to the legacy DB-backed value.
 		LoadAdminAllowedIPsFunc = func() string {
-			var val string
-			global.db.Get(WebTable, "admin_allowed_ips", &val)
-			return val
+			return loadWebString("admin_allowed_ips", "")
 		}
 
 		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
-		if err := ServeDashboard(*web); err != nil {
+		if err := ServeDashboard(bindAddr); err != nil {
 			Fatal(err)
 		}
 		Exit(0)
@@ -355,19 +416,11 @@ func main() {
 		Exit(0)
 	}
 
-	if global.sysmode {
-		nfo.Animations = false
-		nfo.SignalCallback(syscall.SIGINT, func() bool {
-			ShutdownApp()
-			return true
-		})
-	} else {
-		nfo.SignalCallback(syscall.SIGINT, func() bool {
-			Log("Application interrupt received. (shutting down)")
-			ShutdownApp()
-			return true
-		})
-	}
+	nfo.SignalCallback(syscall.SIGINT, func() bool {
+		Log("Application interrupt received. (shutting down)")
+		ShutdownApp()
+		return true
+	})
 
 	if f_err != nil {
 		if f_err != eflag.ErrHelp {

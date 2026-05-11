@@ -38,7 +38,12 @@ type OrchestratorResult struct {
 // RunOrchestrator is the new entry point that replaces RunQuickAnswer.
 // Drives an agent loop where the LLM picks tools to research the
 // question, with prior facts pre-loaded as context.
-func RunOrchestrator(ctx context.Context, agent *AppCore, db Database, user, question string, emit func(status string)) (OrchestratorResult, error) {
+//
+// emit is called with short progress messages for the UI (topic, prior
+// facts, "Researching..."). onStep, when non-nil, fires after each
+// agent-loop round and lets the caller surface per-tool-call activity
+// (e.g. as SSE tool_call events). Both are optional.
+func RunOrchestrator(ctx context.Context, agent *AppCore, db Database, user, question string, emit func(status string), onStep StepCallback) (OrchestratorResult, error) {
 	if err := agent.RequireLLM(); err != nil {
 		return OrchestratorResult{}, err
 	}
@@ -74,6 +79,7 @@ func RunOrchestrator(ctx context.Context, agent *AppCore, db Database, user, que
 			MaxRounds:    16,
 			RouteKey:     "app.answer",
 			ChatOptions:  orchestratorThinkOpts(),
+			OnStep:       onStep,
 		},
 	)
 	if err != nil {

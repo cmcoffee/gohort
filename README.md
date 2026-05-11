@@ -61,13 +61,13 @@ Configures LLM settings, external services (search, hooks, mail), web server (TL
 gohort
 
 # Web dashboard
-gohort --web :8080
+gohort serve :8080
 
 # Web dashboard with TLS
-gohort --web :8443 --tls
+gohort serve :8443 --tls
 
 # Run a specific app
-gohort techwriter --web :8080
+gohort techwriter --serve :8080
 ```
 
 ## Architecture
@@ -84,7 +84,7 @@ import . "github.com/cmcoffee/gohort/core"
 func init() { RegisterApp(new(MyApp)) }
 
 type MyApp struct {
-    FuzzAgent
+    AppCore
 }
 
 func (T MyApp) Name() string         { return "myapp" }
@@ -94,7 +94,7 @@ func (T *MyApp) Init() error         { return T.Flags.Parse() }
 func (T *MyApp) Main() error         { return nil }
 ```
 
-Add `WebPath()`, `WebName()`, `WebDesc()`, and `RegisterRoutes()` to get a web dashboard automatically. No separate registration needed.
+Add `WebPath()`, `WebName()`, `WebDesc()`, and `Routes()` to get a web dashboard automatically. No separate registration needed.
 
 ### Optional Interfaces
 
@@ -102,10 +102,12 @@ Apps gain capabilities by implementing optional interfaces:
 
 | Interface | Methods | Purpose |
 |-----------|---------|---------|
-| `WebApp` | `WebPath`, `WebName`, `WebDesc`, `RegisterRoutes` | Web dashboard and HTTP routes |
+| `SimpleWebApp` | `WebPath`, `WebName`, `WebDesc`, `Routes` | Web dashboard with the framework-managed sub-mux (recommended). Register handlers via `T.HandleFunc`. |
+| `WebApp` | `WebPath`, `WebName`, `WebDesc`, `RegisterRoutes(mux, prefix)` | Legacy shape — escape hatch for apps that need direct mux control. |
 | `WebAppOrder` | `WebOrder() int` | Dashboard sort position |
 | `WebAppRestricted` | `WebRestricted(r) bool` | Hide app from unauthorized requests |
 | `WebAppAccess` | `WebAccessKey`, `WebAccessCheck` | Expose access flags to other apps |
+| `CLIApp` | `CLI()` | Opt-in marker — exposes the app on the CLI menu. Default is web-only. |
 
 ### Pipeline Framework
 
@@ -190,17 +192,24 @@ Private apps use the same registration pattern. The framework discovers them at 
 
 ## CLI Flags
 
+Top-level flags (work before or after a subcommand — kitebroker-style):
+
 | Flag | Description |
 |------|-------------|
 | `--setup` | Run configuration wizard |
-| `--web <addr>` | Start web dashboard (e.g., `:8080`) |
+| `--config <path>` | Override the INI lookup (default: `<binary-dir>/gohort.ini`) |
+| `--debug` / `--trace` / `--snoop` / `--serial` | Diagnostic modifiers |
+| `--version` | Show version |
+
+The `serve` subcommand starts the web dashboard and has its own flags:
+
+| Flag | Description |
+|------|-------------|
+| `gohort serve [addr]` | Start the dashboard on the given address (default `:8080`) |
 | `--max_concurrent <n>` | Max simultaneous tasks (default: 1) |
 | `--tls` | Enable TLS with auto-generated self-signed certificate |
 | `--tls_cert <path>` | Path to TLS certificate file (PEM) |
 | `--tls_key <path>` | Path to TLS private key file (PEM) |
-| `--repeat <duration>` | Repeat agent on an interval |
-| `--quiet` | Minimal output for non-interactive use |
-| `--version` | Show version |
 
 ## Project Structure
 

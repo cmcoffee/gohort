@@ -13,16 +13,48 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/ui"
 	"github.com/cmcoffee/gohort/core/webui"
 )
 
+// uiMountRuntime exposes core/ui's MountRuntime under a stable name so
+// the mux setup in ServeDashboard can wire it without forcing every
+// reader to know the package layout.
+func uiMountRuntime(mux *http.ServeMux) { ui.MountRuntime(mux) }
+
 // WebApp is implemented by agents that can serve a web UI.
 // The central web server discovers these and mounts them under their prefix.
+//
+// New apps should consider implementing SimpleWebApp instead — its
+// Routes() method drops the mux/prefix boilerplate. WebApp stays
+// supported indefinitely for apps that need fine-grained control
+// over their sub-mux (e.g. custom access wrappers).
 type WebApp interface {
 	WebPath() string // URL prefix, e.g. "/myapp"
 	WebName() string // Display name for dashboard
 	WebDesc() string // Short description
 	RegisterRoutes(mux *http.ServeMux, prefix string)
+}
+
+// SimpleWebApp is the streamlined alternative to WebApp for apps
+// that don't need direct mux/prefix access. Implementations write:
+//
+//	func (T *MyApp) Routes() {
+//	    T.HandleFunc("/", T.handlePage)
+//	    T.HandleFunc("/api/foo", T.handleFoo)
+//	}
+//
+// The framework handles sub-mux creation, prefix stripping, and
+// MountSubMux automatically. T.HandleFunc / T.Handle on AppCore
+// register against the app's pre-wired sub-mux.
+//
+// SimpleWebApp takes precedence over WebApp when both are
+// implemented — Routes() is called and RegisterRoutes is skipped.
+type SimpleWebApp interface {
+	WebPath() string
+	WebName() string
+	WebDesc() string
+	Routes()
 }
 
 // WebAppOrder is optionally implemented by WebApps to control their
@@ -404,22 +436,46 @@ type AppUIAssets struct {
 // custom gate) so apps with special access-control wrappers can interpose.
 func NewWebUI(app WebApp, prefix string, assets AppUIAssets) *http.ServeMux {
 	sub := http.NewServeMux()
-	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
-			Title:    app.WebName(),
-			AppName:  app.WebName(),
-			Prefix:   prefix,
-			BodyHTML: assets.BodyHTML,
-			AppCSS:   assets.AppCSS,
-			AppJS:    assets.AppJS,
-			HeadHTML: assets.HeadHTML,
-		}))
-	})
+	// If the app uses the legacy hand-rolled body + css + js, mount it
+	// at "/". Apps that have migrated to the core/ui framework leave
+	// BodyHTML empty and register their own "/" handler — the legacy
+	// catch-all would otherwise clash with that registration.
+	if assets.BodyHTML != "" {
+		sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
+				return
+			}
+			webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
+				Title:    app.WebName(),
+				AppName:  app.WebName(),
+				Prefix:   prefix,
+				BodyHTML: assets.BodyHTML,
+				AppCSS:   assets.AppCSS,
+				AppJS:    assets.AppJS,
+				HeadHTML: assets.HeadHTML,
+			}))
+		})
+	}
 	return sub
+}
+
+// WriteAppHTML renders the app's hand-rolled BodyHTML/CSS/JS to w
+// using the same webui.RenderPage path NewWebUI uses for "/", but as
+// a function callable from any handler. Useful when an app needs to
+// serve the legacy hand-rolled UI from a non-root path (e.g.
+// /legacy) alongside a framework-based "/" handler during a phased
+// migration.
+func WriteAppHTML(w http.ResponseWriter, app WebApp, prefix string, assets AppUIAssets) {
+	webui.WriteHTML(w, webui.RenderPage(webui.PageOpts{
+		Title:    app.WebName(),
+		AppName:  app.WebName(),
+		Prefix:   prefix,
+		BodyHTML: assets.BodyHTML,
+		AppCSS:   assets.AppCSS,
+		AppJS:    assets.AppJS,
+		HeadHTML: assets.HeadHTML,
+	}))
 }
 
 // MountSubMux registers a sub-mux under a prefix using StripPrefix.
@@ -605,7 +661,19 @@ func ServeDashboard(addr string) error {
 	// Second pass: register routes now that all agents are ready.
 	for _, wa := range webApps {
 		prefix := wa.WebPath()
-		wa.RegisterRoutes(mux, prefix)
+		// SimpleWebApp path — framework owns the sub-mux + mount.
+		// App's Routes() just registers via T.HandleFunc against
+		// the pre-wired AppCore.webMux.
+		if simple, ok := wa.(SimpleWebApp); ok {
+			sub := NewWebUI(wa, prefix, AppUIAssets{})
+			if a, ok := wa.(interface{ Get() *AppCore }); ok {
+				a.Get().SetWebMux(sub, prefix)
+			}
+			simple.Routes()
+			MountSubMux(mux, prefix, sub)
+		} else {
+			wa.RegisterRoutes(mux, prefix)
+		}
 		// Apps implementing WebHidden get routes but no dashboard card.
 		type hidden interface{ WebHidden() bool }
 		if h, ok := wa.(hidden); ok && h.WebHidden() {
@@ -624,6 +692,13 @@ func ServeDashboard(addr string) error {
 	// All apps are registered — start the global scheduler so handlers added
 	// during RegisterRoutes are in place before any tasks can fire.
 	StartGlobalScheduler(AppContext())
+
+	// One-time backfill of usage_daily from per-app records. Runs
+	// here (not in main) because each app's SetDB fires inside
+	// RegisterRoutes above, and the backfill needs every app's
+	// shared DB to be wired before walking their history tables.
+	// Idempotent — flag in RootDB makes subsequent calls no-ops.
+	RunUsageBackfill()
 
 	// Sort by WebOrder (if implemented), then alphabetically.
 	sort.Slice(apps, func(i, j int) bool {
@@ -697,6 +772,12 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/voice/status", VoiceStatusHandler)
 	mux.HandleFunc("/voice/transcribe", VoiceTranscribeHandler)
 	mux.HandleFunc("/voice/speak", VoiceSpeakHandler)
+
+	// Mount the shared declarative-UI runtime (CSS + JS at /_ui/*).
+	// Apps that render via core/ui depend on these endpoints — register
+	// once here so every app can use ui.Page.ServeHTTP without touching
+	// the mux directly.
+	uiMountRuntime(mux)
 
 	// Authentication endpoints.
 	if AuthDB != nil {

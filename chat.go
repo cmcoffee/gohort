@@ -41,7 +41,7 @@ func agentFlagHelp(entry *menu_elem) string {
 
 	// Collect flag descriptions.
 	var parts []string
-	skip := map[string]bool{"serial": true, "debug": true, "snoop": true, "quiet": true, "repeat": true}
+	skip := map[string]bool{"serial": true, "debug": true, "snoop": true}
 
 	flags.VisitAll(func(f *eflag.Flag) {
 		if skip[f.Name] || f.Usage == "" {

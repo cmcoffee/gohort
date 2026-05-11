@@ -578,6 +578,17 @@ func isTransientError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	// Transport-level "context canceled" (reverse proxy idle-cap,
+	// browser fetch abort that closed our HTTP request, etc.) shows up
+	// as a wrapped *url.Error containing context.Canceled. The string
+	// match is the only reliable signal once Go has serialized it into
+	// the `Post "...": context canceled` form. Treat as transient so
+	// the retry layer gets a chance — caller's own ctx cancellation is
+	// already handled in doWithRetry's <-ctx.Done() guard before each
+	// attempt, so a genuinely-canceled call still bails out immediately.
+	if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+		return true
+	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}

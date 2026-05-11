@@ -66,11 +66,21 @@ func (T *CodeWriterAgent) WebDesc() string {
 }
 
 func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	sub := NewWebUI(T, prefix, AppUIAssets{
-		BodyHTML: cwBody,
-		AppCSS:   editor.DiffCSS() + cwCSS,
-		AppJS:    editor.UtilsJS() + editor.DiffJS() + cwJS,
-	})
+	// Legacy hand-rolled UI lives at /codewriter/legacy until the
+	// framework port (page.go + CodeWriterPanel) covers the chat,
+	// diff, variables, values, and contexts features. The new
+	// framework page is mounted at /codewriter/.
+	sub := NewWebUI(T, prefix, AppUIAssets{})
+	legacyHandler := func(w http.ResponseWriter, r *http.Request) {
+		WriteAppHTML(w, T, prefix, AppUIAssets{
+			BodyHTML: cwBody,
+			AppCSS:   editor.DiffCSS() + cwCSS,
+			AppJS:    editor.UtilsJS() + editor.DiffJS() + cwJS,
+		})
+	}
+	sub.HandleFunc("/legacy", legacyHandler)
+	sub.HandleFunc("/legacy/", legacyHandler)
+	sub.HandleFunc("/", T.handleCodeWriterPage)
 	sub.HandleFunc("/api/chat", T.handleChat)
 	sub.HandleFunc("/api/snippets", T.handleSnippets)
 	sub.HandleFunc("/api/snippet/", T.handleSnippet)

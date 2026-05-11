@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"runtime"
 	"strings"
 	"sync"
 	"text/tabwriter"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 
@@ -175,8 +173,6 @@ func (m *menu) register(name string, t_flag uint, agent Agent) {
 	my_entry.flags.BoolVar(&global.single_thread, "serial", NONE)
 	my_entry.flags.BoolVar(&global.debug, "debug", NONE)
 	my_entry.flags.BoolVar(&global.snoop, "snoop", NONE)
-	my_entry.flags.BoolVar(&global.sysmode, "quiet", NONE)
-	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
 
 	switch t_flag {
 	case _admin_agent:
@@ -190,6 +186,20 @@ func (m *menu) register(name string, t_flag uint, agent Agent) {
 
 // showAgentSection displays a section of agents.
 func (m *menu) showAgentSection(header string, agents []string) {
+	// Pre-filter — agents that don't opt into core.CLIApp are
+	// dashboard-only and stay hidden from --help. If nothing
+	// survives, skip the section header entirely so the output
+	// doesn't end with empty "Apps:" blocks after the opt-in
+	// flip removed everything from the public listing.
+	visible := agents[:0:0]
+	for _, k := range agents {
+		if e, ok := m.entries[k]; ok && e.agent != nil {
+			if _, isCLI := e.agent.(CLIApp); isCLI {
+				visible = append(visible, k)
+			}
+		}
+	}
+	agents = visible
 	if len(agents) == 0 {
 		return
 	}
@@ -245,7 +255,9 @@ func (m *menu) Show() {
 	m.showAgentSection("Apps:\n", m.apps)
 	m.showAgentSection("Admin:\n", m.admin_agents)
 
-	os.Stderr.Write([]byte(fmt.Sprintf("\n  chat .................. \"Interactive AI chat with agent access.\"\n\n")))
+	os.Stderr.Write([]byte("\nCommands:\n"))
+	os.Stderr.Write([]byte("  serve [addr] .......... \"Start the dashboard daemon (default :8080).\"\n"))
+	os.Stderr.Write([]byte("  chat .................. \"Interactive AI chat with agent access.\"\n\n"))
 	os.Stderr.Write([]byte(fmt.Sprintf("For extended help on any command, type %s <command> --help.\n", os.Args[0])))
 }
 
@@ -258,6 +270,23 @@ func get_agentstore(name string) Database {
 func (m *menu) Select(input [][]string) (err error) {
 	for input == nil || len(input) == 0 {
 		return eflag.ErrHelp
+	}
+
+	// Guard — refuse to dispatch an app that hasn't opted into CLI.
+	// Printing a one-line hint is friendlier than spinning up the
+	// database + LLM stack only to land in a no-op Main() that says
+	// "use serve". Apps that DO have a CLI surface implement
+	// core.CLIApp via a no-op CLI() method.
+	for _, args := range input {
+		if len(args) == 0 {
+			continue
+		}
+		if x, ok := m.entries[args[0]]; ok {
+			if _, cli := x.agent.(CLIApp); !cli {
+				Stderr("%s is a dashboard-only app. Start the dashboard with:\n  gohort serve :8080\n", args[0])
+				Exit(1)
+			}
+		}
 	}
 
 	// Initialize selected agent.
@@ -345,9 +374,11 @@ func (m *menu) Select(input [][]string) (err error) {
 	Info("### %s v%s ###", APPNAME, VERSION)
 	Info(NONE)
 
-	// Main agent loop.
-	for {
-		tasks_loop_start := time.Now().Round(time.Millisecond)
+	// Single-shot run — gohort used to support --repeat for cron-
+	// style loops, but the framework's Scheduled Tasks (and the
+	// per-app schedulers) cover that use case now without holding
+	// the CLI process resident.
+	{
 		task_count := len(input) - 1
 		for i, args := range input {
 			m.mutex.RLock()
@@ -389,32 +420,8 @@ func (m *menu) Select(input [][]string) (err error) {
 		}
 
 		PleaseWait.Hide()
-
-		// Stop here if this is non-continuous.
-		if global.freq == 0 {
-			return nil
-		}
-
-		runtime.GC()
-
-		// Agent Loop
-		if ctime := time.Now().Add(time.Duration(tasks_loop_start.Round(time.Second).Sub(time.Now().Round(time.Second)) + global.freq)).Round(time.Second); ctime.Unix() > time.Now().Round(time.Second).Unix() && ctime.Sub(time.Now().Round(time.Second)) >= time.Second {
-			Info(NONE)
-			Info("Next agent cycle will begin at %s.", ctime)
-			for time.Now().Sub(tasks_loop_start) < global.freq {
-				ctime := time.Duration(global.freq - time.Now().Round(time.Second).Sub(tasks_loop_start)).Round(time.Second)
-				Flash("* Agent cycle will restart in %s.", ctime.String())
-				if ctime > time.Second {
-					time.Sleep(time.Duration(time.Second))
-				} else {
-					time.Sleep(ctime)
-					break
-				}
-			}
-		}
-		Info("Restarting agent cycle ... (%s has elapsed since last run.)", time.Now().Round(time.Second).Sub(tasks_loop_start).Round(time.Second))
-		Info(NONE)
 	}
+	return nil
 }
 
 // execAgent sets up and runs an agent from a menu entry, capturing its output.
