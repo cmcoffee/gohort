@@ -1,0 +1,1682 @@
+package websearch
+
+import (
+	"bytes"
+	"compress/zlib"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+	"unicode"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/snugforge/apiclient"
+	"github.com/cmcoffee/gohort/tools/browser"
+	readability "github.com/go-shiori/go-readability"
+)
+
+func init() {
+	RegisterChatTool(new(WebSearchTool))
+	RegisterChatTool(new(FetchURLTool))
+	CrossSearchFunc = CrossProviderSearch
+}
+
+// Source represents a single search result with title, URL, and snippet.
+type Source struct {
+	Title   string `json:"Title"`
+	URL     string `json:"URL"`
+	Snippet string `json:"Snippet,omitempty"`
+}
+
+// ParseSearchResults parses numbered search results into Source structs.
+// Expected format: "N. Title\n   URL\n   Snippet" separated by blank lines.
+func ParseSearchResults(results string) []Source {
+	var sources []Source
+	blocks := strings.Split(results, "\n\n")
+	for _, block := range blocks {
+		lines := strings.Split(strings.TrimSpace(block), "\n")
+		if len(lines) < 2 {
+			continue
+		}
+		title := strings.TrimSpace(lines[0])
+		if idx := strings.Index(title, ". "); idx >= 0 && idx < 4 {
+			title = title[idx+2:]
+		}
+		u := strings.TrimSpace(lines[1])
+		if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			continue
+		}
+		var snippet string
+		if len(lines) > 2 {
+			snippet = strings.TrimSpace(strings.Join(lines[2:], " "))
+		}
+		sources = append(sources, Source{Title: title, URL: u, Snippet: snippet})
+	}
+	return sources
+}
+
+// DomainFromURL extracts the hostname from a URL string, stripping www. prefix.
+func DomainFromURL(u string) string {
+	if parsed, err := url.Parse(u); err == nil {
+		return strings.TrimPrefix(parsed.Hostname(), "www.")
+	}
+	return ""
+}
+
+// isLowValueURL returns true if the URL likely points to a non-article page
+// (profiles, directories, about pages, tag listings, etc.)
+func isLowValueURL(u string) bool {
+	lower := strings.ToLower(u)
+	// Non-article page patterns.
+	for _, seg := range []string{
+		"/fellows/", "/fellow/", "/staff/", "/people/", "/profile/",
+		"/profiles/", "/directory/", "/about/", "/about-us",
+		"/team/", "/author/", "/authors/", "/bio/",
+		"/tag/", "/tags/", "/category/", "/categories/",
+		"/search?", "/login", "/signup", "/subscribe",
+		"/contact", "/careers", "/jobs/",
+	} {
+		if strings.Contains(lower, seg) {
+			return true
+		}
+	}
+	// Product review/affiliate patterns.
+	for _, pattern := range []string{
+		"-reviews-", "/reviews/", "product-review",
+		"affiliate", "discount-code", "coupon",
+		"a-closer-look-at", "honest-review",
+		"buy-now", "order-now", "special-offer",
+		"/friends-forum/topic/", "/forum/topic/",
+	} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// SelectDiverseArticles picks up to n sources, ensuring domain diversity
+// and prioritizing higher-credibility domains.
+func SelectDiverseArticles(sources []Source, n int) []Source {
+	type scored struct {
+		source Source
+		score  int
+	}
+
+	var items []scored
+	for _, s := range sources {
+		if s.URL == "" {
+			continue
+		}
+		if isLowValueURL(s.URL) {
+			continue
+		}
+		domain := DomainFromURL(s.URL)
+		items = append(items, scored{source: s, score: DomainCredibility(domain)})
+	}
+
+	// Sort by credibility score descending.
+	for i := 0; i < len(items); i++ {
+		best := i
+		for j := i + 1; j < len(items); j++ {
+			if items[j].score > items[best].score {
+				best = j
+			}
+		}
+		items[i], items[best] = items[best], items[i]
+	}
+
+	// Pick top n with domain diversity.
+	var selected []Source
+	seen_domains := make(map[string]int)
+	for _, item := range items {
+		if len(selected) >= n {
+			break
+		}
+		domain := DomainFromURL(item.source.URL)
+		if seen_domains[domain] >= 1 {
+			continue
+		}
+		seen_domains[domain]++
+		selected = append(selected, item.source)
+	}
+
+	return selected
+}
+
+// WebSearchTool performs web searches using the configured provider.
+type WebSearchTool struct{}
+
+func (t *WebSearchTool) Name() string { return "web_search" }
+func (t *WebSearchTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // search engine API call
+func (t *WebSearchTool) Desc() string {
+	return "Search the live web for information. Returns results with titles, URLs, and snippets. Use for current state, recent events, and topics where freshness matters."
+}
+
+func (t *WebSearchTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"query": {Type: "string", Description: "The search query."},
+	}
+}
+
+func (t *WebSearchTool) IsInternetTool() bool { return true }
+
+func (t *WebSearchTool) Run(args map[string]any) (string, error) {
+	return t.runWithSession(args, nil)
+}
+
+// RunWithSession is the session-aware entry. Checks the session's
+// network connector before issuing any request — privacy mode blocks.
+func (t *WebSearchTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return t.runWithSession(args, sess)
+}
+
+func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if sess != nil && !sess.NetworkAllowed() {
+		return "", fmt.Errorf("web_search refused: network is blocked for this turn (private mode is on)")
+	}
+	query := StringArg(args, "query")
+	if query == "" {
+		return "", fmt.Errorf("'query' is required")
+	}
+
+	cfg := LoadWebSearchConfig()
+	provider := cfg.Provider
+	if provider == "" {
+		provider = "duckduckgo"
+	}
+
+	result, err := SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+	if err == nil && result != "" && result != "No results found." {
+		Debug("[web_search] results:\n%s", result)
+	}
+	return result, err
+}
+
+// FetchURLTool is the chat tool for reading the full text of a specific
+// URL. Used as the natural follow-up to web_search — the LLM gets
+// snippets from a search, identifies a promising URL, then fetches
+// that page's readable text to answer in detail. Also useful when the
+// user pastes a URL directly and asks for a summary.
+//
+// HTML is stripped; only readable text is returned, capped at 8000
+// characters to keep the chat context manageable. Loopback and private
+// addresses are rejected to prevent SSRF — this tool reaches the live
+// web, not internal infrastructure.
+type FetchURLTool struct{}
+
+func (t *FetchURLTool) Name() string { return "fetch_url" }
+func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP GET against live web
+func (t *FetchURLTool) Desc() string {
+	return "Fetch a URL from the live web. Two modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs without auth, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode."
+}
+
+func (t *FetchURLTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"url": {Type: "string", Description: "The URL to fetch. Must be http:// or https://."},
+		"save_to": {
+			Type:        "string",
+			Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"report.pdf\", \"image.jpg\"). When set, response is streamed straight to disk and the tool result is a short metadata line instead of the body — use for binary content the LLM can't usefully read as text.",
+		},
+	}
+}
+
+func (t *FetchURLTool) IsInternetTool() bool { return true }
+
+// fetchURLMaxSaveBytes caps save_to writes. Mirrors the secure-API
+// save cap so the two paths behave the same: 100MB covers PDFs, audio,
+// short videos. Larger content has to be retrieved by another mechanism.
+const fetchURLMaxSaveBytes = 100 * 1024 * 1024
+
+// fetchURLCacheTTL is how long a cached entry is considered fresh.
+// Repeat fetches within this window skip the network call and serve
+// from disk; older entries trigger a refetch. Mtime is touched on
+// each cache hit so frequently-accessed entries float to the top of
+// the LRU eviction order. Default 10 minutes — tight enough that
+// rapidly-changing content (weather, stock prices) doesn't stick,
+// generous enough that the LLM iterating on a doc within one session
+// gets free re-reads.
+const fetchURLCacheTTL = 10 * time.Minute
+
+func (t *FetchURLTool) Run(args map[string]any) (string, error) {
+	return t.runImpl(args, nil)
+}
+
+// RunWithSession is the session-aware entry point. Required when
+// save_to is used — sess.WorkspaceDir is the only writable destination.
+func (t *FetchURLTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	return t.runImpl(args, sess)
+}
+
+func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, error) {
+	if sess != nil && !sess.NetworkAllowed() {
+		return "", fmt.Errorf("fetch_url refused: network is blocked for this turn (private mode is on)")
+	}
+	target := StringArg(args, "url")
+	if target == "" {
+		return "", fmt.Errorf("'url' is required")
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", fmt.Errorf("'url' must be an http:// or https:// URL")
+	}
+	// SSRF guard: refuse loopback + private-network hosts so the tool
+	// can't be used to probe the server's own internal services.
+	if host := parsed.Hostname(); host != "" {
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
+			}
+		}
+		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
+		}
+	}
+
+	// save_to path — streams raw bytes to workspace. Caller must have
+	// a session with WorkspaceDir set.
+	if saveTo := strings.TrimSpace(StringArg(args, "save_to")); saveTo != "" {
+		if sess == nil || sess.WorkspaceDir == "" {
+			return "", fmt.Errorf("save_to requires a session with WorkspaceDir set")
+		}
+		savePath, err := ResolveWorkspacePath(sess.WorkspaceDir, saveTo)
+		if err != nil {
+			return "", fmt.Errorf("save_to: %w", err)
+		}
+		return fetchURLToFile(target, savePath, saveTo)
+	}
+
+	// Text-extraction path. Peek Content-Type first; binary responses
+	// auto-cache to workspace so the LLM has a path to recover from
+	// (rather than a hard error wasting the round). Text responses
+	// that would be truncated also cache the full content for follow-up
+	// reading via read_file.
+	mime, _ := peekContentType(target)
+	if isBinaryMime(mime) {
+		if sess != nil && sess.WorkspaceDir != "" {
+			cachePath, savedAt, written, err := fetchAndCache(target, sess.WorkspaceDir, mime)
+			if err != nil {
+				return "", fmt.Errorf("response is %q (binary) and auto-cache failed: %w. Retry with save_to=<path>", mime, err)
+			}
+			Debug("[fetch_url] auto-cached %s → %s (%d bytes, %s)", target, cachePath, written, mime)
+			return fmt.Sprintf(
+				"Response is binary (%s, %d bytes). Auto-cached to %s. Use attach_file(%q) to deliver to the user, or read_file/run_local for binary inspection. To choose a friendlier filename, retry with save_to=<name>.",
+				mime, written, savedAt, savedAt), nil
+		}
+		// No session — can't cache, fall back to hard error.
+		return "", fmt.Errorf("response Content-Type is %q (binary). fetch_url can't return binary content as text. Retry with save_to=<workspace-relative path>", mime)
+	}
+
+	text, err := FetchArticle(target, 8000)
+	if err != nil {
+		return "", fmt.Errorf("fetch failed: %w", err)
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "Fetched successfully but the page has no readable text (likely JavaScript-heavy or empty).", nil
+	}
+	// If the article was likely truncated (close to or at the limit),
+	// auto-cache the full text so the LLM can read the rest if needed.
+	// Heuristic: when extracted text is ≥7900 chars (within 100 of the
+	// 8000 cap), assume more content exists and write the full version
+	// (separately fetched without truncation) to the cache.
+	suffix := ""
+	if sess != nil && sess.WorkspaceDir != "" && len(text) >= 7900 {
+		if full, err := FetchArticle(target, 0); err == nil && len(full) > len(text) {
+			if cachePath, savedAt, _, cerr := writeCacheString(target, sess.WorkspaceDir, full, mime); cerr == nil {
+				Debug("[fetch_url] truncated text auto-cached: %s → %s (full %d chars)", target, cachePath, len(full))
+				suffix = fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s. Use read_file with offset to access the rest.]", len(full), savedAt)
+			}
+		}
+	}
+	Debug("[fetch_url] %s → %d chars", target, len(text))
+	return fmt.Sprintf("Fetched %s (%d chars):\n\n%s%s", target, len(text), text, suffix), nil
+}
+
+// fetchAndCache downloads target into the workspace's .fetch_cache dir
+// using a sha256-prefixed filename and a content-type-derived extension.
+// Hits the cache (skipping the network call) when an entry exists
+// and is younger than fetchURLCacheTTL — touches mtime on hit so the
+// LRU evictor sees real access times, not just write times.
+func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, error) {
+	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
+	if err != nil {
+		return "", "", 0, err
+	}
+	// Cache hit + fresh: touch + return. Free re-reads of the same
+	// URL within the TTL window.
+	if info, err := os.Stat(cacheAbs); err == nil && time.Since(info.ModTime()) < fetchURLCacheTTL {
+		now := time.Now()
+		_ = os.Chtimes(cacheAbs, now, now)
+		Debug("[fetch_url] cache hit %s → %s (%d bytes, age %s)", target, cacheRel, info.Size(), time.Since(info.ModTime()).Round(time.Second))
+		return cacheAbs, cacheRel, info.Size(), nil
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
+		return "", "", 0, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return "", "", 0, err
+	}
+	req.Header.Set("User-Agent", "gohort/fetch_url")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", "", 0, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	f, err := os.Create(cacheAbs)
+	if err != nil {
+		return "", "", 0, err
+	}
+	defer f.Close()
+	limited := io.LimitReader(resp.Body, fetchURLMaxSaveBytes+1)
+	written, err := io.Copy(f, limited)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if written > fetchURLMaxSaveBytes {
+		os.Remove(cacheAbs)
+		return "", "", 0, fmt.Errorf("response exceeded %d byte cap", fetchURLMaxSaveBytes)
+	}
+	enforceFetchCacheQuota(workspaceDir)
+	return cacheAbs, cacheRel, written, nil
+}
+
+// writeCacheString writes a string body (truncated text) to the cache
+// directly without re-fetching. Used when FetchArticle has already
+// retrieved the full text body.
+func writeCacheString(target, workspaceDir, body, mime string) (string, string, int64, error) {
+	cacheRel, cacheAbs, err := cachePathForURL(workspaceDir, target, mime)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if err := os.MkdirAll(filepath.Dir(cacheAbs), 0755); err != nil {
+		return "", "", 0, err
+	}
+	if err := os.WriteFile(cacheAbs, []byte(body), 0644); err != nil {
+		return "", "", 0, err
+	}
+	enforceFetchCacheQuota(workspaceDir)
+	return cacheAbs, cacheRel, int64(len(body)), nil
+}
+
+// cachePathForURL builds the workspace-relative + absolute cache path
+// for a URL. Stable across repeat fetches so the same URL hits the
+// same cache file, enabling free re-reads.
+func cachePathForURL(workspaceDir, target, mime string) (string, string, error) {
+	hash := sha256.Sum256([]byte(target))
+	id := hex.EncodeToString(hash[:8])
+	ext := extensionForMime(mime)
+	rel := filepath.Join(".fetch_cache", id+ext)
+	abs, err := ResolveWorkspacePath(workspaceDir, rel)
+	if err != nil {
+		// First-time call for this dir: ResolveWorkspacePath rejects
+		// paths whose parent doesn't exist yet. Create the dir and
+		// retry without symlink validation since we control the path.
+		if err := os.MkdirAll(filepath.Join(workspaceDir, ".fetch_cache"), 0755); err != nil {
+			return "", "", err
+		}
+		abs, err = ResolveWorkspacePath(workspaceDir, rel)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return rel, abs, nil
+}
+
+// extensionForMime maps a Content-Type to a likely file extension. Best-
+// effort — falls back to .bin for unknown binary, .txt for unknown text.
+func extensionForMime(mime string) string {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	switch mime {
+	case "text/html":
+		return ".html"
+	case "text/plain":
+		return ".txt"
+	case "text/css":
+		return ".css"
+	case "text/javascript", "application/javascript":
+		return ".js"
+	case "application/json", "application/ld+json":
+		return ".json"
+	case "application/xml", "text/xml":
+		return ".xml"
+	case "application/pdf":
+		return ".pdf"
+	case "application/zip":
+		return ".zip"
+	case "application/x-tar":
+		return ".tar"
+	case "application/gzip", "application/x-gzip":
+		return ".gz"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/mp4", "audio/aac":
+		return ".m4a"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	}
+	if strings.HasPrefix(mime, "text/") {
+		return ".txt"
+	}
+	return ".bin"
+}
+
+// enforceFetchCacheQuota walks the .fetch_cache dir and evicts oldest
+// files (LRU-by-mtime) until total size is under the configured quota.
+// Best-effort — silent no-op on any error since failure to GC isn't
+// fatal to the calling fetch.
+func enforceFetchCacheQuota(workspaceDir string) {
+	quota := FetchCacheQuotaBytes()
+	if quota <= 0 {
+		return
+	}
+	cacheDir := filepath.Join(workspaceDir, ".fetch_cache")
+	entries, err := os.ReadDir(cacheDir)
+	if err != nil {
+		return
+	}
+	type entry struct {
+		path  string
+		size  int64
+		mtime time.Time
+	}
+	var files []entry
+	var total int64
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, entry{
+			path:  filepath.Join(cacheDir, e.Name()),
+			size:  info.Size(),
+			mtime: info.ModTime(),
+		})
+		total += info.Size()
+	}
+	if total <= quota {
+		return
+	}
+	// Sort by mtime ascending — oldest first.
+	for i := 1; i < len(files); i++ {
+		for j := i; j > 0 && files[j].mtime.Before(files[j-1].mtime); j-- {
+			files[j], files[j-1] = files[j-1], files[j]
+		}
+	}
+	for i := 0; i < len(files) && total > quota; i++ {
+		if err := os.Remove(files[i].path); err == nil {
+			total -= files[i].size
+			Debug("[fetch_url] evicted cache entry %s (%d bytes, mtime %s)", files[i].path, files[i].size, files[i].mtime.Format(time.RFC3339))
+		}
+	}
+}
+
+// fetchURLToFile streams target to absPath, capped at fetchURLMaxSaveBytes.
+// Returns the tool-result message describing what was saved.
+func fetchURLToFile(target, absPath, displayPath string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", "gohort/fetch_url")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("fetch returned HTTP %d", resp.StatusCode)
+	}
+	// Auto-create parent directories. Without this, a save_to path
+	// like "output/data.csv" would fail when output/ doesn't exist
+	// — same friction as workspace(write) before its MkdirAll.
+	if err := os.MkdirAll(filepath.Dir(absPath), 0700); err != nil {
+		return "", fmt.Errorf("create parent dir: %w", err)
+	}
+	f, err := os.Create(absPath)
+	if err != nil {
+		return "", fmt.Errorf("create file: %w", err)
+	}
+	defer f.Close()
+	limited := io.LimitReader(resp.Body, fetchURLMaxSaveBytes+1)
+	written, err := io.Copy(f, limited)
+	if err != nil {
+		return "", fmt.Errorf("write file: %w", err)
+	}
+	if written > fetchURLMaxSaveBytes {
+		return "", fmt.Errorf("response exceeded %d byte cap (got %d, partial write left at %s)", fetchURLMaxSaveBytes, written, displayPath)
+	}
+	mime := resp.Header.Get("Content-Type")
+	Debug("[fetch_url] %s → %d bytes → %s (%s)", target, written, displayPath, mime)
+	return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
+		resp.StatusCode, http.StatusText(resp.StatusCode), written, displayPath, mime, displayPath), nil
+}
+
+// peekContentType issues a tiny GET (range-limited if the server
+// supports it) just to read the Content-Type header. Falls back to
+// silent success on error — the caller treats unknown as "try text".
+func peekContentType(target string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "gohort/fetch_url")
+	req.Header.Set("Range", "bytes=0-0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	// Drain a single byte so the connection can be reused.
+	_, _ = io.CopyN(io.Discard, resp.Body, 1)
+	return resp.Header.Get("Content-Type"), nil
+}
+
+// isBinaryMime returns true for Content-Types that fetch_url's text
+// extraction path will mangle. Conservative — anything not text-like
+// counts as binary.
+func isBinaryMime(mime string) bool {
+	mime = strings.ToLower(strings.TrimSpace(mime))
+	if mime == "" {
+		return false
+	}
+	// Strip parameters: "text/html; charset=utf-8" → "text/html"
+	if i := strings.IndexByte(mime, ';'); i >= 0 {
+		mime = strings.TrimSpace(mime[:i])
+	}
+	switch {
+	case strings.HasPrefix(mime, "text/"):
+		return false
+	case mime == "application/json", mime == "application/xml",
+		mime == "application/xhtml+xml", mime == "application/javascript",
+		mime == "application/ld+json", mime == "application/rss+xml",
+		mime == "application/atom+xml":
+		return false
+	}
+	return true
+}
+
+// SearchWithProvider runs a search query using a specific provider.
+// This is exported so callers can run cross-provider searches.
+func SearchWithProvider(query string, provider string, apiKey string, endpoint string) (string, error) {
+	Debug("[web_search] provider=%s query=%q", provider, query)
+	var result string
+	var err error
+	switch provider {
+	case "duckduckgo":
+		result, err = searchDuckDuckGo(query)
+	case "brave":
+		result, err = searchBrave(query, apiKey)
+	case "google":
+		result, err = searchGoogle(query, apiKey)
+	case "searxng":
+		result, err = searchSearXNG(query, endpoint)
+	case "serper":
+		result, err = searchSerper(query, apiKey)
+	default:
+		return "", fmt.Errorf("unknown search provider: %s", provider)
+	}
+	if err != nil {
+		Debug("[web_search] error: %s", err)
+	} else if result == "" || result == "No results found." {
+		Debug("[web_search] no results")
+	}
+	// Count every actual provider invocation — quota is consumed on
+	// the network call, not on whether useful results came back.
+	// Paid providers (Brave / Google / Serper) bill per call even
+	// when zero results come back; failed/rate-limited calls also
+	// consumed a request slot. Only true cache hits (which never
+	// reach SearchWithProvider) skip the count.
+	ProcessUsage().AddSearchCall()
+	return result, err
+}
+
+// CrossProviderSearch runs a search query using the configured provider.
+func CrossProviderSearch(query string) (string, error) {
+	cfg := LoadWebSearchConfig()
+	provider := cfg.Provider
+	if provider == "" {
+		provider = "duckduckgo"
+	}
+
+	return SearchWithProvider(query, provider, cfg.APIKey, cfg.Endpoint)
+}
+
+// searchDuckDuckGo scrapes DuckDuckGo's lite HTML interface (no API key needed).
+func searchDuckDuckGo(query string) (string, error) {
+	client := &apiclient.APIClient{
+		Server:         "lite.duckduckgo.com",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
+
+	form_data := url.Values{"q": {query}}.Encode()
+
+	req, err := client.NewRequest("POST", "/lite/")
+	if err != nil {
+		return "", fmt.Errorf("duckduckgo request failed: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Body = io.NopCloser(bytes.NewReader([]byte(form_data)))
+	req.ContentLength = int64(len(form_data))
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", fmt.Errorf("duckduckgo request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	return parseDDGLite(string(body)), nil
+}
+
+// parseDDGLite extracts search results from DuckDuckGo Lite HTML.
+func parseDDGLite(html string) string {
+	var results []string
+	count := 0
+
+	// DuckDuckGo lite results are in table rows with class "result-link" for URLs
+	// and "result-snippet" for descriptions. Parse simply by finding patterns.
+	lines := strings.Split(html, "\n")
+	var current_title, current_url, current_snippet string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Extract links: <a rel="nofollow" href="..." class="result-link">Title</a>
+		if strings.Contains(trimmed, "class=\"result-link\"") {
+			if idx := strings.Index(trimmed, "href=\""); idx >= 0 {
+				rest := trimmed[idx+6:]
+				if end := strings.Index(rest, "\""); end >= 0 {
+					current_url = rest[:end]
+				}
+			}
+			// Extract title text between > and </a>
+			if idx := strings.Index(trimmed, ">"); idx >= 0 {
+				rest := trimmed[idx+1:]
+				if end := strings.Index(rest, "</a>"); end >= 0 {
+					current_title = stripTags(rest[:end])
+				}
+			}
+		}
+
+		// Extract snippet: <td class="result-snippet">...</td>
+		if strings.Contains(trimmed, "class=\"result-snippet\"") {
+			if idx := strings.Index(trimmed, ">"); idx >= 0 {
+				rest := trimmed[idx+1:]
+				if end := strings.Index(rest, "</td>"); end >= 0 {
+					current_snippet = stripTags(rest[:end])
+				}
+			}
+
+			if current_title != "" && current_url != "" {
+				results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", count+1, current_title, current_url, current_snippet))
+				count++
+				current_title = ""
+				current_url = ""
+				current_snippet = ""
+				if count >= 8 {
+					break
+				}
+			}
+		}
+	}
+
+	if len(results) == 0 {
+		return "No results found."
+	}
+	return strings.Join(results, "\n\n")
+}
+
+// stripTags removes HTML tags from a string.
+func stripTags(s string) string {
+	var out strings.Builder
+	in_tag := false
+	for _, ch := range s {
+		if ch == '<' {
+			in_tag = true
+		} else if ch == '>' {
+			in_tag = false
+		} else if !in_tag {
+			out.WriteRune(ch)
+		}
+	}
+	return strings.TrimSpace(out.String())
+}
+
+// Brave Search API types.
+type braveResponse struct {
+	Web struct {
+		Results []struct {
+			Title       string `json:"title"`
+			URL         string `json:"url"`
+			Description string `json:"description"`
+		} `json:"results"`
+	} `json:"web"`
+}
+
+// searchBrave uses the Brave Search API.
+func searchBrave(query string, apiKey string) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("brave search requires an API key (configure with --setup)")
+	}
+
+	client := &apiclient.APIClient{
+		Server:         "api.search.brave.com",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
+
+	req, err := client.NewRequest("GET", "/res/v1/web/search?q="+url.QueryEscape(query)+"&count=20")
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-Subscription-Token", apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", fmt.Errorf("brave request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("brave api error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result braveResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("parsing brave response: %w", err)
+	}
+
+	var results []string
+	for i, r := range result.Web.Results {
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.URL, r.Description))
+	}
+
+	if len(results) == 0 {
+		return "No results found.", nil
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+// Serper.dev API types.
+type serperResponse struct {
+	Organic []struct {
+		Title   string `json:"title"`
+		Link    string `json:"link"`
+		Snippet string `json:"snippet"`
+	} `json:"organic"`
+}
+
+// searchSerper uses the Serper.dev Google Search API.
+func searchSerper(query string, apiKey string) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("serper search requires an API key (configure with --setup)")
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"q":   query,
+		"num": 20,
+	})
+
+	client := &apiclient.APIClient{
+		Server:         "google.serper.dev",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
+
+	req, err := client.NewRequest("POST", "/search")
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-API-KEY", apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(bytes.NewReader(payload))
+	req.ContentLength = int64(len(payload))
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", fmt.Errorf("serper request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("serper api error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result serperResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("parsing serper response: %w", err)
+	}
+
+	var results []string
+	for i, r := range result.Organic {
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.Link, r.Snippet))
+	}
+
+	if len(results) == 0 {
+		return "No results found.", nil
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+// Google Custom Search API types.
+type googleResponse struct {
+	Items []struct {
+		Title   string `json:"title"`
+		Link    string `json:"link"`
+		Snippet string `json:"snippet"`
+	} `json:"items"`
+}
+
+// searchGoogle uses the Google Custom Search JSON API.
+// API key format should be "key:cx" (API key and custom search engine ID separated by colon).
+func searchGoogle(query string, apiKey string) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("google search requires an API key in 'key:cx' format (configure with --setup)")
+	}
+
+	parts := strings.SplitN(apiKey, ":", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("google API key must be in 'key:cx' format (API key and search engine ID separated by ':')")
+	}
+	key, cx := parts[0], parts[1]
+
+	client := &apiclient.APIClient{
+		Server:         "www.googleapis.com",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
+
+	path := fmt.Sprintf("/customsearch/v1?key=%s&cx=%s&q=%s&num=10",
+		url.QueryEscape(key), url.QueryEscape(cx), url.QueryEscape(query))
+
+	req, err := client.NewRequest("GET", path)
+	if err != nil {
+		return "", fmt.Errorf("google request failed: %w", err)
+	}
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", fmt.Errorf("google request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("google api error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result googleResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("parsing google response: %w", err)
+	}
+
+	var results []string
+	for i, r := range result.Items {
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.Link, r.Snippet))
+	}
+
+	if len(results) == 0 {
+		return "No results found.", nil
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+// SearXNG response types.
+type searxngResponse struct {
+	Results []struct {
+		Title   string `json:"title"`
+		URL     string `json:"url"`
+		Content string `json:"content"`
+	} `json:"results"`
+}
+
+// searchSearXNG uses a SearXNG instance's JSON API.
+func searchSearXNG(query string, endpoint string) (string, error) {
+	if endpoint == "" {
+		return "", fmt.Errorf("searxng requires an endpoint URL (configure with --setup)")
+	}
+
+	endpoint = strings.TrimSuffix(endpoint, "/")
+
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("invalid searxng endpoint: %w", err)
+	}
+
+	client := &apiclient.APIClient{
+		Server:         parsed.Host,
+		URLScheme:      parsed.Scheme,
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 15 * time.Second,
+	}
+
+	path := fmt.Sprintf("%s/search?q=%s&format=json&categories=general", parsed.Path, url.QueryEscape(query))
+
+	req, err := client.NewRequest("GET", path)
+	if err != nil {
+		return "", fmt.Errorf("searxng request failed: %w", err)
+	}
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", fmt.Errorf("searxng request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("searxng error (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result searxngResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("parsing searxng response: %w", err)
+	}
+
+	var results []string
+	for i, r := range result.Results {
+		if i >= 8 {
+			break
+		}
+		results = append(results, fmt.Sprintf("%d. %s\n   %s\n   %s", i+1, r.Title, r.URL, r.Content))
+	}
+
+	if len(results) == 0 {
+		return "No results found.", nil
+	}
+	return strings.Join(results, "\n\n"), nil
+}
+
+// SourceMeta holds metadata extracted from a fetched article.
+type SourceMeta struct {
+	Title   string // og:title or <title>
+	Author  string // author meta tag
+	Site    string // og:site_name
+	PubDate string // article:published_time, datePublished, etc.
+	Domain  string // hostname extracted from URL
+}
+
+// FetchArticleWithMeta fetches a URL and returns both readable text and metadata.
+func FetchArticleWithMeta(target_url string, max_chars int) (string, SourceMeta, error) {
+	text, meta, err := fetchArticleInternal(target_url, max_chars)
+	return text, meta, err
+}
+
+// FetchArticle fetches a URL and extracts readable text content from the HTML.
+// Returns up to max_chars characters of extracted text.
+func FetchArticle(target_url string, max_chars int) (string, error) {
+	text, _, err := fetchArticleInternal(target_url, max_chars)
+	return text, err
+}
+
+// jsDomains is the set of base domains (www. stripped) that require a real
+// browser to render useful content. Plain HTTP fetches return a JS skeleton.
+var jsDomains = map[string]bool{
+	"reddit.com":    true,
+	"linkedin.com":  true,
+	"x.com":         true,
+	"twitter.com":   true,
+	"instagram.com": true,
+	"facebook.com":  true,
+	"tiktok.com":    true,
+}
+
+func isJSDomain(host string) bool {
+	return jsDomains[strings.TrimPrefix(strings.ToLower(host), "www.")]
+}
+
+func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta, error) {
+	var meta SourceMeta
+	if target_url == "" {
+		return "", meta, fmt.Errorf("empty URL")
+	}
+
+	// Extract domain from URL.
+	if parsed, err := url.Parse(target_url); err == nil {
+		meta.Domain = parsed.Hostname()
+	}
+
+	parsed, err := url.Parse(target_url)
+	if err != nil {
+		return "", meta, fmt.Errorf("parsing URL: %w", err)
+	}
+
+	// Known JS-heavy domains: skip the HTTP path and go straight to the browser.
+	// Fall through to HTTP if the browser fails so the pipeline is never left empty-handed.
+	if isJSDomain(meta.Domain) {
+		text, berr := browser.Fetch(target_url, max_chars)
+		if berr == nil && strings.TrimSpace(text) != "" {
+			Debug("[fetch] browser fetch %s → %d chars", target_url, len(text))
+			return text, meta, nil
+		}
+		Debug("[fetch] browser failed for %s (%v), falling back to HTTP", meta.Domain, berr)
+	}
+
+	client := &apiclient.APIClient{
+		Server:         parsed.Host,
+		URLScheme:      parsed.Scheme,
+		AgentString:    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+		ConnectTimeout: 5 * time.Second,
+		RequestTimeout: 10 * time.Second,
+	}
+
+	req_path := parsed.RequestURI()
+	req, err := client.NewRequest("GET", req_path)
+	if err != nil {
+		return "", meta, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/pdf")
+
+	resp, err := client.SendRawRequest("", req)
+	if err != nil {
+		return "", meta, fmt.Errorf("fetching URL: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", meta, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	// PDFs can be large; allow up to 2MB for PDFs, 512KB for HTML.
+	content_type := resp.Header.Get("Content-Type")
+	is_pdf := strings.Contains(content_type, "application/pdf") || strings.HasSuffix(strings.ToLower(target_url), ".pdf")
+
+	var max_read int64 = 512 * 1024
+	if is_pdf {
+		max_read = 2 * 1024 * 1024
+	}
+
+	limited := io.LimitReader(resp.Body, max_read)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return "", meta, fmt.Errorf("reading body: %w", err)
+	}
+
+	var text string
+	if is_pdf {
+		text = extractPDFText(body)
+	} else {
+		html_str := string(body)
+		meta = extractMeta(html_str, meta)
+		article, rerr := readability.FromReader(strings.NewReader(html_str), parsed)
+		if rerr == nil && strings.TrimSpace(article.TextContent) != "" {
+			text = strings.TrimSpace(article.TextContent)
+			if meta.Title == "" && article.Title != "" {
+				meta.Title = article.Title
+			}
+		} else {
+			text = extractReadableText(html_str)
+		}
+	}
+	if max_chars > 0 && len(text) > max_chars {
+		// Truncate at a word boundary.
+		text = text[:max_chars]
+		if idx := strings.LastIndexByte(text, ' '); idx > max_chars/2 {
+			text = text[:idx]
+		}
+		text += "..."
+	}
+	return text, meta, nil
+}
+
+// extractMetaContent finds a <meta> tag by name or property and returns its content.
+func extractMetaContent(html string, attr string, value string) string {
+	lower := strings.ToLower(html)
+	target := strings.ToLower(attr + "=\"" + value + "\"")
+	idx := strings.Index(lower, target)
+	if idx < 0 {
+		return ""
+	}
+	// Find the enclosing <meta ...> tag.
+	start := strings.LastIndex(lower[:idx], "<meta")
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(lower[start:], ">")
+	if end < 0 {
+		return ""
+	}
+	tag := html[start : start+end+1]
+	// Extract content="..."
+	ci := strings.Index(strings.ToLower(tag), "content=\"")
+	if ci < 0 {
+		return ""
+	}
+	rest := tag[ci+9:]
+	if qi := strings.Index(rest, "\""); qi >= 0 {
+		return strings.TrimSpace(rest[:qi])
+	}
+	return ""
+}
+
+// extractMeta parses HTML meta tags for article metadata.
+func extractMeta(html string, meta SourceMeta) SourceMeta {
+	// Title: og:title > <title>
+	if t := extractMetaContent(html, "property", "og:title"); t != "" {
+		meta.Title = t
+	} else {
+		lower := strings.ToLower(html)
+		if idx := strings.Index(lower, "<title"); idx >= 0 {
+			rest := html[idx:]
+			if gt := strings.Index(rest, ">"); gt >= 0 {
+				rest = rest[gt+1:]
+				if end := strings.Index(strings.ToLower(rest), "</title>"); end >= 0 {
+					meta.Title = strings.TrimSpace(stripTags(rest[:end]))
+				}
+			}
+		}
+	}
+
+	// Author
+	if a := extractMetaContent(html, "name", "author"); a != "" {
+		meta.Author = a
+	} else if a := extractMetaContent(html, "property", "article:author"); a != "" {
+		meta.Author = a
+	}
+
+	// Site name
+	if s := extractMetaContent(html, "property", "og:site_name"); s != "" {
+		meta.Site = s
+	}
+
+	// Publication date: article:published_time > datePublished > date
+	if d := extractMetaContent(html, "property", "article:published_time"); d != "" {
+		meta.PubDate = d
+	} else if d := extractMetaContent(html, "name", "date"); d != "" {
+		meta.PubDate = d
+	} else if d := extractMetaContent(html, "name", "pubdate"); d != "" {
+		meta.PubDate = d
+	} else if d := extractMetaContent(html, "property", "datePublished"); d != "" {
+		meta.PubDate = d
+	}
+
+	return meta
+}
+
+// DomainCredibility returns a score (0-100) estimating source reliability
+// based on the domain. Higher is more credible.
+func DomainCredibility(domain string) int {
+	domain = strings.ToLower(domain)
+
+	// Strip www. prefix for matching.
+	domain = strings.TrimPrefix(domain, "www.")
+
+	// Exact domain matches for high-credibility sources.
+	high_credibility := map[string]int{
+		// Fact-check organizations
+		"snopes.com":         90,
+		"politifact.com":     90,
+		"factcheck.org":      90,
+		"fullfact.org":       85,
+		"apnews.com":         85,
+		"reuters.com":        85,
+		// Major scientific publishers
+		"nature.com":         95,
+		"science.org":        95,
+		"thelancet.com":      95,
+		"nejm.org":           95,
+		"pubmed.ncbi.nlm.nih.gov": 95,
+		"scholar.google.com": 80,
+		// Reference
+		"wikipedia.org":      70,
+		"en.wikipedia.org":   70,
+		"britannica.com":     80,
+		// Major news
+		"bbc.com":            80,
+		"bbc.co.uk":          80,
+		"nytimes.com":        80,
+		"washingtonpost.com": 80,
+		"theguardian.com":    78,
+	}
+
+	if score, ok := high_credibility[domain]; ok {
+		return score
+	}
+
+	// TLD-based scoring.
+	if strings.HasSuffix(domain, ".gov") || strings.HasSuffix(domain, ".gov.uk") {
+		return 90
+	}
+	if strings.HasSuffix(domain, ".edu") || strings.HasSuffix(domain, ".ac.uk") {
+		return 85
+	}
+	if strings.HasSuffix(domain, ".org") {
+		return 60
+	}
+
+	// Check for subdomains of credible domains.
+	for d, score := range high_credibility {
+		if strings.HasSuffix(domain, "."+d) {
+			return score
+		}
+	}
+
+	// Default score for unknown domains.
+	return 40
+}
+
+// CredibilityLabel returns a human-readable credibility rating for the given score.
+func CredibilityLabel(score int) string {
+	if score >= 85 {
+		return "High"
+	} else if score >= 60 {
+		return "Medium"
+	} else if score >= 40 {
+		return "Low"
+	}
+	return "Unknown"
+}
+
+// FormatArticleMeta builds a bracketed metadata line from a SourceMeta, e.g.
+// "[Author: Jane Doe | Published: 2024-03-01 | Source: NYT | Credibility: High]"
+func FormatArticleMeta(meta SourceMeta) string {
+	var parts []string
+	if meta.Author != "" {
+		parts = append(parts, "Author: "+meta.Author)
+	}
+	if meta.PubDate != "" {
+		parts = append(parts, "Published: "+meta.PubDate)
+	}
+	if meta.Site != "" {
+		parts = append(parts, "Source: "+meta.Site)
+	}
+	parts = append(parts, "Credibility: "+CredibilityLabel(DomainCredibility(meta.Domain)))
+	return "[" + strings.Join(parts, " | ") + "]"
+}
+
+// IsBlockedURL returns true for sites that don't yield useful article content
+// (video platforms, social media, etc.).
+func IsBlockedURL(u string) bool {
+	lower := strings.ToLower(u)
+	blocked := []string{
+		"youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
+		"tiktok.com", "twitch.tv", "rumble.com", "bitchute.com",
+		"instagram.com", "facebook.com", "twitter.com", "x.com",
+		"threads.net", "reddit.com", "linkedin.com", "pinterest.com", "quora.com",
+	}
+	for _, d := range blocked {
+		if strings.Contains(lower, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// DomainCategories holds curated authoritative domain lists by topic category.
+// Used by DiscoverDomains to provide topic-specific search guidance.
+var DomainCategories = map[string]string{
+	"legal": "- site:scholar.google.com (case law search)\n- site:courtlistener.com (federal/state court opinions)\n- site:law.justia.com (case law and codes)\n- site:law.cornell.edu (Legal Information Institute)\n- site:supremecourt.gov (Supreme Court opinions)\n- site:casetext.com (case law research)\n- site:congress.gov (legislation and CRS reports)",
+	"medical": "- site:pubmed.ncbi.nlm.nih.gov (medical research)\n- site:pmc.ncbi.nlm.nih.gov (full-text medical articles)\n- site:who.int (World Health Organization)\n- site:cdc.gov (CDC data and guidelines)\n- site:cochranelibrary.com (systematic reviews)\n- site:fda.gov (drug/device regulations)",
+	"economic": "- site:bls.gov (labor statistics)\n- site:census.gov (demographic and economic data)\n- site:nber.org (economic research papers)\n- site:cbo.gov (Congressional Budget Office)\n- site:imf.org (international economic data)\n- site:worldbank.org (global economic data)\n- site:fred.stlouisfed.org (Federal Reserve data)",
+	"scientific": "- site:nature.com (Nature journal)\n- site:science.org (Science journal)\n- site:arxiv.org (preprints)\n- site:pnas.org (Proceedings of the National Academy)\n- site:nih.gov (National Institutes of Health)\n- site:nasa.gov (space/earth science)",
+	"political": "- site:congress.gov (legislation)\n- site:gao.gov (Government Accountability Office)\n- site:brookings.edu (policy research)\n- site:rand.org (policy analysis)\n- site:pewresearch.org (public opinion data)",
+	"criminal_justice": "- site:bjs.ojp.gov (Bureau of Justice Statistics)\n- site:ussc.gov (US Sentencing Commission)\n- site:sentencingproject.org (sentencing data)\n- site:nij.ojp.gov (National Institute of Justice)\n- site:prisonpolicy.org (incarceration data)\n- site:scholar.google.com (case law search)",
+	"environmental": "- site:epa.gov (Environmental Protection Agency)\n- site:ipcc.ch (climate science)\n- site:noaa.gov (atmospheric/oceanic data)\n- site:nature.com (environmental research)\n- site:iea.org (energy data)\n- site:unep.org (UN Environment Programme)",
+	"technology": "- site:arxiv.org (CS/AI preprints)\n- site:acm.org (computing research)\n- site:ieee.org (engineering/technology)\n- site:nist.gov (standards and technology)\n- site:ftc.gov (tech regulation)\n- site:eff.org (digital rights analysis)",
+	"education": "- site:ed.gov (Department of Education)\n- site:nces.ed.gov (education statistics)\n- site:oecd.org (international education data)\n- site:nber.org (education economics)\n- site:rand.org (education policy)",
+	"military": "- site:defense.gov (Department of Defense)\n- site:sipri.org (arms/military spending data)\n- site:rand.org (defense analysis)\n- site:cbo.gov (defense budget analysis)\n- site:iiss.org (strategic studies)",
+}
+
+// DiscoverDomains classifies a topic into research categories and returns
+// curated authoritative domain recommendations. The classify function is called
+// to ask an LLM to pick 1-3 categories from the available set.
+func DiscoverDomains(topic, posFor, posAgainst string, classify func(prompt string) (string, error)) (string, []string) {
+	var categories []string
+	for k := range DomainCategories {
+		categories = append(categories, k)
+	}
+
+	prompt := fmt.Sprintf(`Classify this debate topic into 1-3 research categories.
+
+Topic: "%s"
+FOR: "%s"
+AGAINST: "%s"
+
+Available categories: %s
+
+Strict guidance:
+- "legal" ONLY for case law / specific court rulings / litigation. NOT for policy or laws being passed.
+- "criminal_justice" ONLY for crimes, sentencing, policing, incarceration
+- "military" for warfare, defense, weapons, international security
+- "political" for laws, policy, treaties, regulations, government action
+- "technology" only for civilian tech — military tech goes under "military"
+
+Reply with ONLY a JSON array of 1-3 category names that best fit this topic:
+["category1", "category2"]`, topic, posFor, posAgainst, strings.Join(categories, ", "))
+
+	text, err := classify(prompt)
+	if err != nil {
+		return "", nil
+	}
+
+	text = strings.TrimSpace(text)
+	if start := strings.Index(text, "["); start >= 0 {
+		if end := strings.LastIndex(text, "]"); end > start {
+			text = text[start : end+1]
+		}
+	}
+	var picked []string
+	if json.Unmarshal([]byte(text), &picked) != nil || len(picked) == 0 {
+		return "", nil
+	}
+
+	var sb strings.Builder
+	var validCategories []string
+	seen := make(map[string]bool)
+	for _, cat := range picked {
+		cat = strings.ToLower(strings.TrimSpace(cat))
+		if domains, ok := DomainCategories[cat]; ok {
+			validCategories = append(validCategories, cat)
+			for _, line := range strings.Split(domains, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !seen[line] {
+					seen[line] = true
+					fmt.Fprintln(&sb, line)
+				}
+			}
+		}
+	}
+	return sb.String(), validCategories
+}
+
+// extractReadableText strips HTML and extracts the main text content.
+// It removes script, style, nav, header, and footer elements, then
+// collapses whitespace for a clean readable output.
+func extractReadableText(html string) string {
+	content := html
+
+	// Remove elements that don't contain article content.
+	for _, tag := range []string{"script", "style", "nav", "header", "footer", "noscript", "svg", "iframe"} {
+		for {
+			open := strings.Index(strings.ToLower(content), "<"+tag)
+			if open < 0 || open >= len(content) {
+				break
+			}
+			close_tag := "</" + tag + ">"
+			end := strings.Index(strings.ToLower(content[open:]), close_tag)
+			if end < 0 {
+				if gt := strings.Index(content[open:], ">"); gt >= 0 {
+					content = content[:open] + content[open+gt+1:]
+				} else {
+					break
+				}
+			} else {
+				cut := open + end + len(close_tag)
+				if cut > len(content) {
+					cut = len(content)
+				}
+				content = content[:open] + content[cut:]
+			}
+		}
+	}
+
+	// Try to find main content area.
+	best := content
+	for _, marker := range []string{"<article", "<main", "id=\"content\"", "id=\"article\"", "class=\"article"} {
+		if idx := strings.Index(strings.ToLower(best), marker); idx >= 0 {
+			candidate := best[idx:]
+			if marker == "<article" || marker == "<main" {
+				tag_name := marker[1:]
+				close_tag := "</" + tag_name + ">"
+				if end := strings.Index(strings.ToLower(candidate), close_tag); end >= 0 {
+					candidate = candidate[:end]
+				}
+			}
+			if len(stripTags(candidate)) > 200 {
+				best = candidate
+				break
+			}
+		}
+	}
+
+	text := stripTags(best)
+
+	// Collapse whitespace, preserving paragraph breaks.
+	var out strings.Builder
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		trimmed := collapseSpaces(strings.TrimSpace(line))
+		if trimmed == "" {
+			if out.Len() > 0 {
+				out.WriteString("\n\n")
+			}
+			continue
+		}
+		if out.Len() > 0 && !strings.HasSuffix(out.String(), "\n\n") {
+			out.WriteString(" ")
+		}
+		out.WriteString(trimmed)
+	}
+
+	return strings.TrimSpace(out.String())
+}
+
+// collapseSpaces replaces runs of whitespace with a single space.
+func collapseSpaces(s string) string {
+	var out strings.Builder
+	was_space := false
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			if !was_space {
+				out.WriteRune(' ')
+				was_space = true
+			}
+		} else {
+			out.WriteRune(r)
+			was_space = false
+		}
+	}
+	return out.String()
+}
+
+// extractPDFText extracts readable text from a PDF byte slice.
+// Handles FlateDecode compressed streams and common text operators.
+func extractPDFText(data []byte) string {
+	var all_text strings.Builder
+
+	// Find and decompress all streams in the PDF.
+	for i := 0; i < len(data); {
+		// Find next stream.
+		idx := bytes.Index(data[i:], []byte("stream"))
+		if idx < 0 {
+			break
+		}
+		stream_start := i + idx + len("stream")
+		// Skip \r\n or \n after "stream".
+		if stream_start < len(data) && data[stream_start] == '\r' {
+			stream_start++
+		}
+		if stream_start < len(data) && data[stream_start] == '\n' {
+			stream_start++
+		}
+
+		// Find endstream.
+		end_idx := bytes.Index(data[stream_start:], []byte("endstream"))
+		if end_idx < 0 {
+			break
+		}
+		stream_data := data[stream_start : stream_start+end_idx]
+
+		// Check if this stream's dictionary has FlateDecode.
+		// Look backwards from "stream" for the dictionary.
+		dict_region := data[i : i+idx]
+		is_flate := bytes.Contains(dict_region, []byte("FlateDecode"))
+
+		var decoded []byte
+		if is_flate {
+			r, err := zlib.NewReader(bytes.NewReader(stream_data))
+			if err == nil {
+				decoded, _ = io.ReadAll(io.LimitReader(r, 256*1024))
+				r.Close()
+			}
+		} else {
+			decoded = stream_data
+		}
+
+		if len(decoded) > 0 {
+			text := extractTextFromPDFStream(string(decoded))
+			if text != "" {
+				all_text.WriteString(text)
+				all_text.WriteString("\n")
+			}
+		}
+
+		i = stream_start + end_idx + len("endstream")
+	}
+
+	result := strings.TrimSpace(all_text.String())
+
+	// Clean up: collapse excessive whitespace while preserving paragraphs.
+	var cleaned strings.Builder
+	lines := strings.Split(result, "\n")
+	for _, line := range lines {
+		trimmed := collapseSpaces(strings.TrimSpace(line))
+		if trimmed == "" {
+			if cleaned.Len() > 0 {
+				cleaned.WriteString("\n\n")
+			}
+			continue
+		}
+		if cleaned.Len() > 0 && !strings.HasSuffix(cleaned.String(), "\n\n") {
+			cleaned.WriteString(" ")
+		}
+		cleaned.WriteString(trimmed)
+	}
+
+	return strings.TrimSpace(cleaned.String())
+}
+
+// Regex patterns for PDF text operators.
+var (
+	pdfTjPattern  = regexp.MustCompile(`\(([^)]*)\)\s*Tj`)
+	pdfTJPattern  = regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
+	pdfTJStrings  = regexp.MustCompile(`\(([^)]*)\)`)
+	pdfQuotePattern = regexp.MustCompile(`\(([^)]*)\)\s*['"]\s`)
+)
+
+// extractTextFromPDFStream extracts text from a decompressed PDF content stream
+// by parsing text-showing operators: Tj, TJ, ', ".
+func extractTextFromPDFStream(stream string) string {
+	var out strings.Builder
+
+	// Handle Tj operator: (text) Tj
+	for _, match := range pdfTjPattern.FindAllStringSubmatch(stream, -1) {
+		out.WriteString(decodePDFString(match[1]))
+	}
+
+	// Handle TJ operator: [(text) num (text) ...] TJ
+	for _, match := range pdfTJPattern.FindAllStringSubmatch(stream, -1) {
+		array := match[1]
+		for _, s := range pdfTJStrings.FindAllStringSubmatch(array, -1) {
+			out.WriteString(decodePDFString(s[1]))
+		}
+	}
+
+	// Handle ' and " operators: (text) '
+	for _, match := range pdfQuotePattern.FindAllStringSubmatch(stream, -1) {
+		out.WriteString(decodePDFString(match[1]))
+	}
+
+	// Also look for BT...ET blocks with plain text that might not match operators.
+	// Some PDFs use simple text placement without standard operators.
+
+	return out.String()
+}
+
+// decodePDFString handles basic PDF string escape sequences.
+func decodePDFString(s string) string {
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				out.WriteRune('\n')
+			case 'r':
+				out.WriteRune('\r')
+			case 't':
+				out.WriteRune('\t')
+			case '(':
+				out.WriteRune('(')
+			case ')':
+				out.WriteRune(')')
+			case '\\':
+				out.WriteRune('\\')
+			default:
+				// Octal escape or unknown — skip.
+				if s[i+1] >= '0' && s[i+1] <= '7' {
+					val := int(s[i+1] - '0')
+					j := i + 2
+					for k := 0; k < 2 && j < len(s) && s[j] >= '0' && s[j] <= '7'; k++ {
+						val = val*8 + int(s[j]-'0')
+						j++
+					}
+					if val > 0 && val < 128 {
+						out.WriteByte(byte(val))
+					}
+					i = j
+					continue
+				}
+				out.WriteByte(s[i+1])
+			}
+			i += 2
+		} else {
+			out.WriteByte(s[i])
+			i++
+		}
+	}
+	return out.String()
+}

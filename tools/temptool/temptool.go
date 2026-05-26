@@ -1,0 +1,2188 @@
+// Package temptool provides three meta-tools the LLM can use to define,
+// list, and remove session-scoped tools at runtime:
+//
+//   - create_temp_tool: register a new tool whose body is a shell command
+//     template. Visible to the LLM on the next round and from then on.
+//   - list_temp_tools:   inspect what's currently defined.
+//   - delete_temp_tool:  remove one by name.
+//
+// Temp tools execute through the same sandbox as run_local
+// (RunSandboxedShell), so they inherit the bubblewrap mount-namespace
+// isolation when bwrap is available. They cannot escape the workspace
+// or read files outside it. They CAN make network calls (curl an API,
+// download a font) — gate at the AllowedCaps tier if that's not desired.
+//
+// All three tools require CapExecute. The temp tool a session defines
+// also runs at CapExecute. Runtime tool registration cannot grant the
+// LLM capabilities it didn't already have.
+package temptool
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+// commandTimeout caps wall-clock time per temp-tool invocation. Same as
+// run_local — long-running commands get killed.
+const commandTimeout = 90 * time.Second
+
+// maxOutput is the per-call output cap for shell-mode temp tools and
+// for response_pipe filtered output on api-mode temp tools. Bumped
+// from 10000 (run_local-compatible) to 50000 (~12K tokens) to give
+// pipe projections enough headroom for richer results — a list of
+// 50 records with several fields each would clip at 10K but fits
+// comfortably at 50K, while still being well within a 200K context
+// window. Shell-mode tools also benefit when their output is
+// genuinely structured. run_local stays at 10000 — that's plain
+// shell output where the readability ceiling is lower.
+const maxOutput = 50000
+
+// Individual tools (CreateTempToolTool, ListTempToolsTool,
+// DeleteTempToolTool, CreateAPIToolTool) are no longer registered —
+// the consolidated tool_def grouped tool (registered in tool_def.go)
+// covers all four. Their implementations remain so tool_def.go's
+// dispatchers can call them; just dropped from the catalog.
+func init() {}
+
+// formatTempToolSpec renders a just-registered TempTool the same way
+// BuildToolPrompt would describe a static tool: name, description,
+// param list with types and required-flags. Appended to the result
+// of every "Created temp tool" return so the LLM has the full schema
+// in-band the moment it asked to create the tool — no waiting for
+// the next round's catalog to discover the shape, no guessing param
+// names from its own create_temp_tool args. Important when the
+// model creates a tool and immediately wants to use it in the same
+// reply ("created and now calling…").
+func formatTempToolSpec(tt *TempTool) string {
+	if tt == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nTool spec:\n\n")
+	b.WriteString(fmt.Sprintf("### %s\n%s\n", tt.Name, tt.Description))
+	if len(tt.Params) > 0 {
+		b.WriteString("Parameters:\n")
+		// Required-set lookup, single pass, preserves the order the
+		// LLM declared them in (map iteration is randomized but the
+		// info is stable enough — the names matter, not the order).
+		reqSet := make(map[string]bool, len(tt.Required))
+		for _, r := range tt.Required {
+			reqSet[r] = true
+		}
+		for name, p := range tt.Params {
+			req := ""
+			if reqSet[name] {
+				req = " (required)"
+			}
+			b.WriteString(fmt.Sprintf("  - %s (%s%s): %s\n", name, p.Type, req, p.Description))
+		}
+	}
+	return b.String()
+}
+
+// ----------------------------------------------------------------------
+// create_temp_tool
+// ----------------------------------------------------------------------
+
+type CreateTempToolTool struct{}
+
+func (t *CreateTempToolTool) Name() string         { return "create_temp_tool" }
+func (t *CreateTempToolTool) Caps() []Capability   { return []Capability{CapExecute} }
+func (t *CreateTempToolTool) NeedsConfirm() bool   { return true }
+
+func (t *CreateTempToolTool) Desc() string {
+	return "Define a new tool for this session. The tool runs a shell command template you supply; placeholders like {arg_name} are filled with the caller's arguments (shell-quoted to prevent injection). The tool appears in your catalog on the next round and stays available for the rest of this session. Use this when you find yourself re-issuing the same shell command pattern with different inputs (e.g. resizing many images, batch-converting files, scraping a series of URLs). Runs in the same workspace sandbox as run_local — cannot reach files outside the workspace. Requires user confirmation."
+}
+
+func (t *CreateTempToolTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"name": {
+			Type:        "string",
+			Description: "Tool name (snake_case, must not match an existing tool). E.g. \"resize_image\".",
+		},
+		"description": {
+			Type:        "string",
+			Description: "What the tool does. Shown to you in your future tool catalog so make it clear when to call this tool vs. another.",
+		},
+		"params": {
+			Type:        "object",
+			Description: "Object describing the tool's parameters. Each key is a param name and its value is an object {type, description, [required]}. Type must be \"string\", \"integer\", \"number\", or \"boolean\". E.g. {\"input\": {\"type\": \"string\", \"description\": \"Input file path\"}, \"size\": {\"type\": \"string\", \"description\": \"Target dimensions like 800x600\"}}.",
+		},
+		"command_template": {
+			Type:        "string",
+			Description: "Shell command to run. Use {param_name} placeholders that match keys in `params`. Each placeholder is replaced with the shell-quoted arg value at call time. Standard sh -c semantics. Example: \"convert {input} -resize {size} {input}.resized.png\".",
+		},
+		"required": {
+			Type:        "array",
+			Description: "Optional list of param names that must be provided. Defaults to all of them.",
+		},
+		"persist": {
+			Type:        "boolean",
+			Description: "If true, request that this tool be saved across future sessions. The tool is registered for the current session immediately, but will only appear in subsequent sessions after the user approves it via the admin UI. Default false (session-only). Use only for tools you expect to reuse next time.",
+		},
+		"script_body": {
+			Type:        "string",
+			Description: "Optional. The full source of a script to ship with the tool — Python, Bash, awk, jq, whatever. Written into the tool's sandbox at registration time as `script_name` (default \"script.py\"). Use this for any tool whose logic is more than a one-liner. Reference it from command_template as {workspace_dir}/<script_name>. Auto-mints a sandbox if none exists; no need to set up a workspace first.",
+		},
+		"script_name": {
+			Type:        "string",
+			Description: "Optional. Filename to write script_body as. Defaults to \"script.py\". Pick a name that matches the script's language (e.g. \"run.sh\" for Bash) so command_template reads naturally.",
+		},
+	}
+}
+
+func (t *CreateTempToolTool) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("create_temp_tool requires a session")
+}
+
+func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("create_temp_tool requires a session")
+	}
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if !validToolName(name) {
+		return "", fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
+	}
+	// Reject collisions with the static catalog so the LLM can't
+	// shadow a real tool with a temp one and confuse later dispatch.
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == name {
+			return "", fmt.Errorf("name %q collides with a registered tool — pick another", name)
+		}
+	}
+
+	desc := strings.TrimSpace(StringArg(args, "description"))
+	if desc == "" {
+		return "", fmt.Errorf("description is required")
+	}
+
+	cmd := strings.TrimSpace(StringArg(args, "command_template"))
+	if cmd == "" {
+		return "", fmt.Errorf("command_template is required")
+	}
+
+	// script_body shortcut: auto-mint a sandbox, write the script
+	// into it, and let command_template reference it via
+	// {workspace_dir}/<script_name>. Collapses workspace-create +
+	// file-write + tool-create into one call. The LLM never has to
+	// think about workspaces.
+	scriptBody := StringArg(args, "script_body")
+	scriptName := strings.TrimSpace(StringArg(args, "script_name"))
+	canonicalName := ""
+	if scriptBody != "" {
+		// Keep the LLM's chosen script_name as-is in the tool record
+		// (the LLM-facing name) but ALSO compute a framework-assigned
+		// canonical name for on-disk storage. Names + content hash
+		// guarantee no collision across tools. The dispatcher
+		// translates references at dispatch time, so the LLM never
+		// sees the canonical name in its view of the tool record.
+		if scriptName == "" {
+			scriptName = "script.py"
+		}
+		if strings.ContainsAny(scriptName, "/\\") {
+			return "", fmt.Errorf("script_name must be a single filename (no path separators)")
+		}
+		canonicalName = canonicalScriptName(name, scriptName, scriptBody)
+		if _, err := EnsureSessionWorkspace(sess); err != nil {
+			return "", fmt.Errorf("auto-mint workspace: %w", err)
+		}
+		// Write to disk under the canonical name. The command_template
+		// still references the LLM's preferred name — dispatch will
+		// translate.
+		scriptPath := filepath.Join(sess.WorkspaceDir, canonicalName)
+		if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
+			return "", fmt.Errorf("create parent dir for script %q: %w", canonicalName, err)
+		}
+		if err := os.WriteFile(scriptPath, []byte(scriptBody), 0700); err != nil {
+			return "", fmt.Errorf("write script %q: %w", canonicalName, err)
+		}
+		if !strings.Contains(cmd, scriptName) && !strings.Contains(cmd, "{workspace_dir}") {
+			return "", fmt.Errorf("script_body=%q was written to %s (canonical %s) but command_template doesn't reference it — add {workspace_dir}/%s to the template", scriptName, scriptPath, canonicalName, scriptName)
+		}
+	} else if strings.Contains(cmd, "{workspace_dir}") {
+		// command_template references {workspace_dir} but no script_body
+		// was supplied. Auto-mint a sandbox so the placeholder resolves;
+		// the LLM is presumably writing the script itself via local(write).
+		if _, err := EnsureSessionWorkspace(sess); err != nil {
+			return "", fmt.Errorf("auto-mint workspace: %w", err)
+		}
+	}
+
+	params, err := parseParamsArg(args["params"])
+	if err != nil {
+		return "", fmt.Errorf("params: %w", err)
+	}
+
+	// Validate that every {placeholder} in the template names a real
+	// param. Forgotten placeholders would silently leak literal `{x}`
+	// into the shell, which is a footgun.
+	if err := validateTemplate(cmd, params); err != nil {
+		return "", fmt.Errorf("command_template: %w", err)
+	}
+
+	required := stringSliceArg(args["required"])
+	if len(required) == 0 {
+		// Default to all params required.
+		for k := range params {
+			required = append(required, k)
+		}
+	} else {
+		// Validate all listed required keys exist in params.
+		for _, r := range required {
+			if _, ok := params[r]; !ok {
+				return "", fmt.Errorf("required lists %q which is not in params", r)
+			}
+		}
+	}
+
+	tool := &TempTool{
+		Name:            name,
+		Description:     desc,
+		Params:          params,
+		Required:        required,
+		CommandTemplate: cmd,
+	}
+	// Persist the script content into the tool record so it
+	// survives workspace wipes. At dispatch the framework will
+	// idempotently redeploy this to {workspace_dir}/<CanonicalScriptName>
+	// if the file is missing. Without this, deleting the workspace
+	// dir silently breaks any tool that depends on a script_body
+	// file (the dispatch fails with "no such file or directory").
+	//
+	// ScriptName is the LLM-facing name (what appears in CommandTemplate);
+	// CanonicalScriptName is the framework's collision-proof on-disk
+	// filename ("<tool_name>_<content_hash>.<ext>"). Dispatch translates
+	// references from one to the other.
+	if scriptBody != "" {
+		tool.ScriptBody = scriptBody
+		tool.ScriptName = scriptName
+		tool.CanonicalScriptName = canonicalName
+	}
+	// Optional StatePath captures "this subdir of the workspace
+	// persists across invocations." Most tools don't need it — they
+	// run their script and produce output, no state. Stateful tools
+	// (counters, accumulating logs, lookup DBs) opt in.
+	if sp := strings.TrimSpace(StringArg(args, "state_path")); sp != "" {
+		tool.StatePath = sp
+	}
+	// Allow in-session overwrite: if the LLM is recreating a tool by
+	// the same name (typically because v1 had a schema mistake), drop
+	// the old entry first so AppendTempTool doesn't reject as a
+	// duplicate. Cheaper than forcing the LLM to come up with a v2
+	// name and littering the catalog with deprecated copies.
+	sess.RemoveTempTool(tool.Name)
+	if err := sess.AppendTempTool(tool); err != nil {
+		return "", err
+	}
+	// Session-scoped persistence: save the tool keyed by chat session
+	// ID so it survives across messages within the same chat. Only
+	// applies when persist=false (the persist=true path queues for
+	// admin approval, which lives in a separate pool).
+	saveSessionScoped := func() {
+		if sess.DB != nil && sess.ChatSessionID != "" {
+			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
+				Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
+			}
+		}
+	}
+
+	// Persist request: queue for human approval. The tool is already
+	// usable in this session (just registered above); persistence is
+	// what makes it survive into future sessions, and that requires
+	// human review of the command_template.
+	spec := formatTempToolSpec(tool)
+
+	// Persistence is no longer LLM-driven — the `persist` flag is
+	// silently ignored (kept readable here as a comment instead of a
+	// noisy error so old prompts don't break). Tools always land in
+	// the session-scoped pool; the admin promotes them out of there
+	// via the Tools modal in the chat surface.
+	_ = BoolArg(args, "persist")
+	saveSessionScoped()
+	return fmt.Sprintf("Created temp tool %q. It is available in your tool catalog for the rest of this conversation. The user (admin) can promote it to keep past the session via the Tools modal.%s", name, spec), nil
+}
+
+// ----------------------------------------------------------------------
+// list_temp_tools
+// ----------------------------------------------------------------------
+
+type ListTempToolsTool struct{}
+
+func (t *ListTempToolsTool) Name() string       { return "list_temp_tools" }
+func (t *ListTempToolsTool) Caps() []Capability { return []Capability{CapExecute} }
+
+func (t *ListTempToolsTool) Desc() string {
+	return "List the temp tools currently defined for this session. Returns each tool's name, description, parameters, and command template — useful for reviewing what you've built before deciding whether to add another."
+}
+
+func (t *ListTempToolsTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
+
+func (t *ListTempToolsTool) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("list_temp_tools requires a session")
+}
+
+func (t *ListTempToolsTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("list_temp_tools requires a session")
+	}
+	// Categorize: each in-session tool is either loaded-from-persistent,
+	// pending-approval, or session-only. Look up persistence state by
+	// name once.
+	persistentByName := make(map[string]bool)
+	pendingByName := make(map[string]bool)
+	if sess.DB != nil && sess.Username != "" {
+		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+			persistentByName[p.Tool.Name] = true
+		}
+		for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
+			pendingByName[p.Tool.Name] = true
+		}
+	}
+
+	tools := sess.CopyTempTools()
+	if len(tools) == 0 && len(pendingByName) == 0 {
+		return "No temp tools defined in this session.", nil
+	}
+	var b strings.Builder
+	for i, t := range tools {
+		var tag string
+		switch {
+		case persistentByName[t.Name]:
+			tag = " [persistent]"
+		case pendingByName[t.Name]:
+			tag = " [pending approval]"
+		default:
+			tag = " [session-only]"
+		}
+		fmt.Fprintf(&b, "%d. %s%s — %s\n", i+1, t.Name, tag, t.Description)
+		fmt.Fprintf(&b, "   command: %s\n", t.CommandTemplate)
+		if len(t.Params) > 0 {
+			b.WriteString("   params: ")
+			first := true
+			for k, p := range t.Params {
+				if !first {
+					b.WriteString(", ")
+				}
+				fmt.Fprintf(&b, "%s (%s)", k, p.Type)
+				first = false
+			}
+			b.WriteString("\n")
+		}
+	}
+	// Also list pending tools that aren't currently in the session
+	// (e.g. requested in a prior session, still waiting on approval).
+	var orphanPending []string
+	inSession := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		inSession[t.Name] = true
+	}
+	for name := range pendingByName {
+		if !inSession[name] {
+			orphanPending = append(orphanPending, name)
+		}
+	}
+	if len(orphanPending) > 0 {
+		b.WriteString("\nPending approval (not yet visible to the LLM until approved): ")
+		b.WriteString(strings.Join(orphanPending, ", "))
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
+// ----------------------------------------------------------------------
+// delete_temp_tool
+// ----------------------------------------------------------------------
+
+type DeleteTempToolTool struct{}
+
+func (t *DeleteTempToolTool) Name() string       { return "delete_temp_tool" }
+func (t *DeleteTempToolTool) Caps() []Capability { return []Capability{CapExecute} }
+
+func (t *DeleteTempToolTool) Desc() string {
+	return "Remove a temp tool from this session. Use when a tool you defined is no longer needed or you want to redefine it (delete then create_temp_tool again with the new shape)."
+}
+
+func (t *DeleteTempToolTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"name": {Type: "string", Description: "Name of the temp tool to remove."},
+	}
+}
+
+func (t *DeleteTempToolTool) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("delete_temp_tool requires a session")
+}
+
+func (t *DeleteTempToolTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("delete_temp_tool requires a session")
+	}
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+
+	// Capture the tool's on-disk script filenames BEFORE removing
+	// the record. We check all three pools (session / persistent /
+	// pending) for the tool by name; the first match wins. The
+	// captured names get unlinked after the registry removal so the
+	// workspace doesn't accumulate orphan scripts when tools get
+	// deleted.
+	var scriptFiles []string
+	collectScriptFiles := func(tt *TempTool) {
+		if tt == nil {
+			return
+		}
+		if tt.CanonicalScriptName != "" {
+			scriptFiles = append(scriptFiles, tt.CanonicalScriptName)
+		}
+		if tt.ScriptName != "" && tt.ScriptName != tt.CanonicalScriptName {
+			// Legacy tools may have only ScriptName populated (no
+			// canonical) — try unlinking that too.
+			scriptFiles = append(scriptFiles, tt.ScriptName)
+		}
+	}
+	// Check the session pool first.
+	for _, tt := range sess.TempTools {
+		if tt != nil && tt.Name == name {
+			collectScriptFiles(tt)
+			break
+		}
+	}
+	// Then the persistent pool.
+	if len(scriptFiles) == 0 && sess.DB != nil && sess.Username != "" {
+		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+			if p.Tool.Name == name {
+				collectScriptFiles(&p.Tool)
+				break
+			}
+		}
+	}
+	// Pending pool last.
+	if len(scriptFiles) == 0 && sess.DB != nil && sess.Username != "" {
+		for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
+			if p.Tool.Name == name {
+				collectScriptFiles(&p.Tool)
+				break
+			}
+		}
+	}
+
+	removed := sess.RemoveTempTool(name)
+
+	// Also clear from the per-chat-session pool so the deletion sticks
+	// across messages within this same chat. Independent of the
+	// persistent (admin-approved) pool — a tool can live in either,
+	// both, or neither.
+	if sess.DB != nil && sess.ChatSessionID != "" {
+		RemoveSessionTempTool(sess.DB, sess.ChatSessionID, name)
+	}
+
+	// Also clear from the persistent pool if applicable. The LLM may
+	// be deleting a tool it loaded from persistence at session start,
+	// expecting the deletion to stick across sessions.
+	persistRemoved := false
+	if sess.DB != nil && sess.Username != "" {
+		if err := DeletePersistentTempTool(sess.DB, sess.Username, name); err == nil {
+			persistRemoved = true
+		}
+	}
+
+	// Also clear from the pending-approval queue. If the LLM created
+	// a tool with persist=true earlier in this session and now wants
+	// it gone (typo, supersession by a v2, or a flat-out abandonment
+	// of the original idea), the deletion should yank it from the
+	// admin's review queue too — otherwise the user sees a tool the
+	// LLM no longer wants and approving it just adds dead weight.
+	pendingRemoved := false
+	if sess.DB != nil && sess.Username != "" {
+		if err := RejectPendingTempTool(sess.DB, sess.Username, name); err == nil {
+			pendingRemoved = true
+		}
+	}
+
+	parts := []string{}
+	if removed {
+		parts = append(parts, "this session")
+	}
+	if persistRemoved {
+		parts = append(parts, "your persistent pool")
+	}
+	if pendingRemoved {
+		parts = append(parts, "the pending-approval queue")
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("no temp tool named %q in this session, your persistent pool, or the pending-approval queue", name)
+	}
+
+	// Clean up on-disk script files captured before the registry
+	// removal. Best-effort: an unlink failure logs but doesn't fail
+	// the delete (the tool's already gone from the catalog; a stale
+	// script file is cruft, not a correctness issue). Idempotent
+	// for missing files.
+	if sess.WorkspaceDir != "" {
+		seen := map[string]bool{}
+		for _, f := range scriptFiles {
+			if seen[f] {
+				continue
+			}
+			seen[f] = true
+			abs := filepath.Join(sess.WorkspaceDir, f)
+			if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+				Debug("[temptool] script cleanup: failed to unlink %s: %v", abs, err)
+			} else if err == nil {
+				Debug("[temptool] script cleanup: removed %s for tool %q", abs, name)
+			}
+		}
+	}
+
+	var phrase string
+	switch len(parts) {
+	case 1:
+		phrase = parts[0]
+	case 2:
+		phrase = parts[0] + " and " + parts[1]
+	default:
+		phrase = strings.Join(parts[:len(parts)-1], ", ") + ", and " + parts[len(parts)-1]
+	}
+	return fmt.Sprintf("Removed temp tool %q from %s.", name, phrase), nil
+}
+
+// ----------------------------------------------------------------------
+// Conversion + dispatch
+// ----------------------------------------------------------------------
+
+// BuildAgentToolDefs converts a session's temp tools into AgentToolDefs
+// suitable for AgentLoopConfig.DynamicTools. Each tool's handler
+// substitutes the caller's args into the command template (shell-quoted
+// to prevent injection) and runs through RunSandboxedShell.
+func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
+	if sess == nil {
+		Debug("[temptool] BuildAgentToolDefs called with nil session")
+		return nil
+	}
+	tools := sess.CopyTempTools()
+	if len(tools) == 0 {
+		Debug("[temptool] BuildAgentToolDefs: sess.TempTools is empty (no dynamic temp tools to expose to the LLM this round)")
+		return nil
+	}
+	names := make([]string, 0, len(tools))
+	for _, tt := range tools {
+		names = append(names, tt.Name)
+	}
+	Debug("[temptool] BuildAgentToolDefs: producing %d AgentToolDef(s) — %v", len(tools), names)
+	out := make([]AgentToolDef, 0, len(tools))
+	for _, tt := range tools {
+		out = append(out, agentToolFromTemp(sess, tt))
+	}
+	return out
+}
+
+func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
+	// Caps depend on execution mode. Shell mode requires CapExecute
+	// (sandboxed shell), API mode requires CapNetwork (HTTP call via
+	// stored credential). The AllowedCaps filter then hides the tool
+	// from sessions that don't grant the required tier.
+	var caps []Capability
+	descSuffix := " (temp tool — defined this session via create_temp_tool)"
+	switch tt.Mode {
+	case TempToolModeAPI:
+		caps = []Capability{CapNetwork}
+		// Response pipe runs sandboxed shell on the API result, so the
+		// wrapper needs CapExecute as well as CapNetwork.
+		if tt.ResponsePipe != "" {
+			caps = append(caps, CapExecute)
+		}
+		descSuffix = fmt.Sprintf(" (api tool — wraps credential %q, defined this session via create_api_tool)", tt.Credential)
+	default:
+		caps = []Capability{CapExecute}
+	}
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        tt.Name,
+			Description: tt.Description + descSuffix,
+			Parameters:  tt.Params,
+			Required:    tt.Required,
+			Caps:        caps,
+		},
+		// Confirm so each temp-tool invocation goes through the same
+		// approval prompt run_local does. The LLM defined the tool but
+		// the user still sees each call.
+		NeedsConfirm: true,
+		Handler: func(args map[string]any) (string, error) {
+			return dispatchTempTool(sess, tt, args)
+		},
+	}
+}
+
+// DispatchTempToolDirect dispatches a TempTool directly without
+// requiring it to be registered in sess.tempTools. Used by authoring
+// flows (e.g. orchestrate.add_tool) that want to immediately verify a
+// freshly-authored tool with example args without round-tripping
+// through "register, end turn, re-load on next round, dispatch by
+// name". Same dispatch surface dispatchTempTool uses internally —
+// shell vs api vs pipeline routing, sandbox, response_pipe, secure-api
+// allow-list, the works.
+func DispatchTempToolDirect(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	if tt == nil {
+		return "", fmt.Errorf("nil temp tool")
+	}
+	return dispatchTempTool(sess, tt, args)
+}
+
+// lookupArgCI looks up an arg by name with case-insensitive matching.
+// First tries exact match (preserves intent when params have
+// case-sensitive distinctions); falls back to case-folded lookup so
+// "URL"/"url" don't trip required-arg validation against each other.
+func lookupArgCI(args map[string]any, key string) (any, bool) {
+	if v, ok := args[key]; ok {
+		return v, true
+	}
+	keyLower := strings.ToLower(key)
+	for k, v := range args {
+		if strings.ToLower(k) == keyLower {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// canonicalizeArgKeys rewrites case-variant keys onto the tool's
+// declared parameter names. So if Required = ["url"] and the LLM
+// emitted args["URL"], the returned map has args["url"]. Downstream
+// template substitution and handler code see the canonical key
+// regardless of what casing the LLM used.
+func canonicalizeArgKeys(args map[string]any, required []string, params map[string]ToolParam) map[string]any {
+	// Build the set of canonical names from required + declared params.
+	canonical := map[string]string{} // lowercase → canonical
+	for _, r := range required {
+		canonical[strings.ToLower(r)] = r
+	}
+	for name := range params {
+		canonical[strings.ToLower(name)] = name
+	}
+	if len(canonical) == 0 {
+		return args
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		if can, ok := canonical[strings.ToLower(k)]; ok {
+			out[can] = v
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// buildEnvArgs converts the temp tool's args map to a string env map
+// suitable for shell pass-through. Scalar values (string/number/bool)
+// stringify naturally; arrays/objects get JSON-encoded so the script
+// can json.loads() them back. Keys with characters illegal in env
+// var names (spaces, hyphens) are sanitized; unhelpful but unlikely
+// since temp tools use snake_case params by convention.
+func buildEnvArgs(args map[string]any) map[string]string {
+	if len(args) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(args))
+	for k, v := range args {
+		if k == "" || !isValidEnvVarName(k) {
+			continue
+		}
+		switch val := v.(type) {
+		case nil:
+			out[k] = ""
+		case string:
+			out[k] = val
+		case bool:
+			if val {
+				out[k] = "true"
+			} else {
+				out[k] = "false"
+			}
+		case float64, float32, int, int64:
+			out[k] = fmt.Sprint(val)
+		default:
+			// Arrays / objects — encode as JSON so the script can
+			// parse if it wants structured data; degenerates to
+			// "null" for unrepresentable values.
+			if b, err := json.Marshal(val); err == nil {
+				out[k] = string(b)
+			} else {
+				out[k] = fmt.Sprint(val)
+			}
+		}
+	}
+	return out
+}
+
+// isValidEnvVarName reports whether the string is a legal POSIX env
+// var name (alpha/underscore start, then alphanumerics/underscores).
+// LLM-authored params follow snake_case so this almost always passes.
+func isValidEnvVarName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if i == 0 {
+			if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+				return false
+			}
+			continue
+		}
+		if !(r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// mapKeys returns the keys of an args map sorted for stable diag
+// output. Used in error messages so the operator can see exactly
+// what the LLM sent vs. what the tool declared.
+func mapKeys(args map[string]any) []string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// dispatchTempTool routes to the right execution path based on the
+// tool's Mode. Shell mode runs through RunSandboxedShell. API mode
+// substitutes URL/body templates and dispatches through the secure-
+// API call path against the named credential.
+func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("temp tool %q requires a session", tt.Name)
+	}
+	// Required-arg check (applies to both modes). Case-insensitive
+	// lookup: LLMs sometimes emit "URL" when the tool defines "url"
+	// (or vice versa), and we'd rather accept the call than block
+	// over a casing mismatch. Empty-string and nil are treated as
+	// missing — those would fail at the template-substitution step
+	// anyway, so reject here with a clearer error.
+	for _, r := range tt.Required {
+		v, ok := lookupArgCI(args, r)
+		if !ok || v == nil {
+			Log("[temptool] %q rejecting call: required %q missing. provided keys: %v", tt.Name, r, mapKeys(args))
+			return "", fmt.Errorf("missing required arg %q (provided: %v)", r, mapKeys(args))
+		}
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+			Log("[temptool] %q rejecting call: required %q is empty string", tt.Name, r)
+			return "", fmt.Errorf("required arg %q is empty (provide a value, not an empty string)", r)
+		}
+	}
+	// Canonicalize keys onto the tool's declared names so case
+	// variants from the LLM ("URL" → "url") feed through to
+	// template substitution + handler code without surprises.
+	args = canonicalizeArgKeys(args, tt.Required, tt.Params)
+
+	if tt.Mode == TempToolModeAPI {
+		return dispatchAPIModeTempTool(sess, tt, args)
+	}
+	if tt.Mode == TempToolModePipeline {
+		return dispatchPipelineModeTempTool(sess, tt, args)
+	}
+	if tt.Mode == TempToolModePersistent {
+		return dispatchPersistentShellTempTool(sess, tt, args)
+	}
+
+	// Shell-mode dispatch path. Three shapes depending on the tool:
+	//
+	//  (a) Recipe non-empty: persistent tool with packaged content.
+	//      Mint a fresh per-invocation sandbox, deploy the recipe
+	//      into it, optionally restore state subdir, run, save state
+	//      back, tear down. Each dispatch starts from the same
+	//      declarative manifest — no drift between runs.
+	//
+	//  (b) Recipe empty + command references {workspace_dir}:
+	//      ad-hoc tool created mid-session (persist=false). Use the
+	//      session's current WorkspaceDir as the deploy target so the
+	//      LLM's just-written script is accessible.
+	//
+	//  (c) Recipe empty + no {workspace_dir} reference: pure shell
+	//      command (e.g. "uname -a"). Provision an ephemeral tmpdir
+	//      so bwrap has SOME bind target; the command doesn't depend
+	//      on its contents.
+	var workspaceDir string
+	var ephemeralDir bool
+	if len(tt.Recipe) > 0 {
+		tmp, err := MintToolDispatchDir("tooldispatch-")
+		if err != nil {
+			return "", fmt.Errorf("mkdtemp: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		ephemeralDir = true
+		if err := DeployRecipe(tt.Recipe, tmp); err != nil {
+			return "", fmt.Errorf("deploy recipe: %w", err)
+		}
+		// Restore persistent state for stateful tools.
+		if tt.StatePath != "" {
+			stateTarget := filepath.Join(tmp, tt.StatePath)
+			if err := os.MkdirAll(stateTarget, 0700); err != nil {
+				return "", fmt.Errorf("mkdir state target: %w", err)
+			}
+			if err := CopyToolStateInto(sess.Username, tt.Name, stateTarget); err != nil {
+				return "", fmt.Errorf("restore state: %w", err)
+			}
+		}
+		workspaceDir = tmp
+	} else {
+		workspaceDir = sess.WorkspaceDir
+	}
+	if workspaceDir == "" {
+		// Recipe-less, no session workspace. The bwrap bind still
+		// needs a path, but the command doesn't depend on its
+		// contents — provision an ephemeral tmpdir for this
+		// invocation only. Without this, stateless shell tools like
+		// "echo '{text}' | rev" can't dispatch when the session has
+		// no workspace.
+		if strings.Contains(tt.CommandTemplate, "{workspace_dir}") {
+			return "", fmt.Errorf("temp tool %q references {workspace_dir} but has no recipe and the session has no sandbox", tt.Name)
+		}
+		tmp, err := MintToolDispatchDir("tooldispatch-stateless-")
+		if err != nil {
+			return "", fmt.Errorf("mkdtemp for stateless dispatch: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(tmp) }()
+		workspaceDir = tmp
+	}
+	_ = ephemeralDir
+	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
+	cmd, err := substitute(cmdTemplate, tt.Params, args)
+	if err != nil {
+		Log("[temptool] %q substitute failed: %v (template=%q args=%v)", tt.Name, err, cmdTemplate, mapKeys(args))
+		return "", err
+	}
+	// Log the rendered command so authors can see whether args
+	// actually made it into the command line. If the LLM passed
+	// first_name but the template lacks {first_name}, the rendered
+	// command will be obviously missing the value — and the script
+	// will (correctly) reject it as "first_name is required".
+	Log("[temptool] %q rendered command: %s", tt.Name, cmd)
+
+	// Redeploy ScriptBody to {workspace_dir}/<CanonicalScriptName>
+	// if missing or stale. Survives workspace wipes — the script
+	// content lives on the tool's DB record, so the very first
+	// dispatch into a fresh workspace rewrites it. Idempotent: if
+	// the file already exists with matching content, no-op.
+	//
+	// We deploy under CanonicalScriptName (the framework's collision-
+	// proof filename) but translate the command's references from
+	// ScriptName (LLM-facing) to CanonicalScriptName afterward, so
+	// the actual shell command resolves to the right file.
+	if tt.ScriptBody != "" {
+		onDiskName := tt.CanonicalScriptName
+		if onDiskName == "" {
+			// Legacy tools authored before canonicalization fall back
+			// to ScriptName as the on-disk filename. Backfill will
+			// populate CanonicalScriptName for them eventually.
+			onDiskName = tt.ScriptName
+		}
+		if onDiskName == "" {
+			return "", fmt.Errorf("tool %q has script_body but no script_name — record is malformed", tt.Name)
+		}
+		if strings.ContainsAny(onDiskName, "/\\") {
+			return "", fmt.Errorf("invalid script filename %q on tool %q (no path separators allowed)", onDiskName, tt.Name)
+		}
+		scriptPath := filepath.Join(workspaceDir, onDiskName)
+		needWrite := true
+		if existing, err := os.ReadFile(scriptPath); err == nil {
+			if string(existing) == tt.ScriptBody {
+				needWrite = false
+			}
+		}
+		if needWrite {
+			if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
+				return "", fmt.Errorf("create parent dir for script %q on tool %q: %w", onDiskName, tt.Name, err)
+			}
+			if err := os.WriteFile(scriptPath, []byte(tt.ScriptBody), 0700); err != nil {
+				return "", fmt.Errorf("redeploy script %q for tool %q: %w", onDiskName, tt.Name, err)
+			}
+			Debug("[temptool] redeployed script_body to %s for tool %q", scriptPath, tt.Name)
+		}
+		// Translate every LLM-facing script_name reference in the
+		// final command to the canonical on-disk filename. Last-
+		// mile rewrite so the shell sees the right path while the
+		// LLM's view of the tool record stays clean.
+		if tt.CanonicalScriptName != "" && tt.ScriptName != "" && tt.CanonicalScriptName != tt.ScriptName {
+			cmd = strings.ReplaceAll(cmd, tt.ScriptName, tt.CanonicalScriptName)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	// Wrap with the session's network connector so the sandbox
+	// applies --unshare-net when the calling turn is in private
+	// mode. No-op when sess has no connector.
+	ctx = sess.ContextWithNetworkConnector(ctx)
+
+	// Pass every declared arg as an env var so scripts can read them
+	// via $name (shell) or os.environ.get("name") (Python) — second
+	// path alongside the {name} command-template substitution. Many
+	// LLM-authored tools use shell-var conventions (`$first_name`),
+	// which used to silently fail because the framework only did
+	// {name} substitution. Both paths now coexist; tools authored
+	// either way work.
+	envArgs := buildEnvArgs(args)
+	res := RunSandboxedShellWithEnv(ctx, cmd, workspaceDir, envArgs)
+	output := strings.TrimSpace(res.Output)
+
+	// Extract attachment markers from stdout and route them to the
+	// session's image/video channels. Lets shell-mode tools emit
+	// binary attachments (e.g. fetch + convert an image, return it
+	// as an attachment) — without the marker, shell tools can only
+	// emit text, which makes use cases like "fetch a meme + convert
+	// to PNG" impossible to express. See extractAttachmentMarkers.
+	output = extractAttachmentMarkers(output, sess)
+
+	// Save state back AFTER successful (or failed — preserve state
+	// either way so state changes during partial runs aren't lost)
+	// dispatch. Best-effort: state-save errors are logged but don't
+	// fail the dispatch itself.
+	if len(tt.Recipe) > 0 && tt.StatePath != "" {
+		stateTarget := filepath.Join(workspaceDir, tt.StatePath)
+		if err := CopyToolStateBack(sess.Username, tt.Name, stateTarget); err != nil {
+			Debug("[temptool] state save failed for %s: %v", tt.Name, err)
+		}
+	}
+
+	// Telemetry: bump LastUsedAt on the persistent record (if this is
+	// a persistent tool). Best-effort — no-op when the tool isn't
+	// persisted or the session lacks DB/Username.
+	if sess.DB != nil && sess.Username != "" {
+		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
+	}
+
+	if len(output) > maxOutput {
+		totalLines := strings.Count(output, "\n") + 1
+		truncated := output[:maxOutput]
+		shown := strings.Count(truncated, "\n") + 1
+		output = truncated + fmt.Sprintf(
+			"\n... [TRUNCATED: showing lines 1–%d of %d total (%d chars).]",
+			shown, totalLines, len(output))
+	}
+
+	if res.TimedOut {
+		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed.]", commandTimeout)
+		if output == "" {
+			return strings.TrimPrefix(notice, "\n"), nil
+		}
+		return output + notice, nil
+	}
+	if res.Err != nil {
+		if output == "" {
+			return fmt.Sprintf("[exit: %v — no output]", res.Err), nil
+		}
+		return output + fmt.Sprintf("\n[exit: %v]", res.Err), nil
+	}
+	return output, nil
+}
+
+// extractAttachmentMarkers scans the tool's stdout for attachment-
+// emit markers and routes each found block to the appropriate session
+// channel (Images / Videos). The markers are stripped from the
+// returned text so the LLM doesn't see (and try to repeat) the raw
+// base64 in its context. Returns the cleaned stdout.
+//
+// Marker format (designed to survive base64 / non-binary stdout):
+//
+//	<<<ATTACH:image/png
+//	<base64 data, can span multiple lines>
+//	ATTACH_END>>>
+//
+// Supported mime prefixes: image/*, video/*, audio/*. Anything else
+// is left in the output as-is (the LLM sees it as text). Multiple
+// markers per stdout are supported; each becomes one attachment.
+//
+// The marker is intentionally verbose to avoid colliding with normal
+// tool output. A script that wanted to LITERALLY print
+// "<<<ATTACH:..." (e.g. discussing the marker syntax in its own
+// stdout) would have to avoid the exact opening sequence — rare
+// enough that we don't bother with escaping.
+func extractAttachmentMarkers(output string, sess *ToolSession) string {
+	const openMarker = "<<<ATTACH:"
+	const closeMarker = "ATTACH_END>>>"
+	if !strings.Contains(output, openMarker) || !strings.Contains(output, closeMarker) {
+		return output
+	}
+	var result strings.Builder
+	remaining := output
+	for {
+		openIdx := strings.Index(remaining, openMarker)
+		if openIdx < 0 {
+			result.WriteString(remaining)
+			break
+		}
+		// Emit everything before the marker as-is.
+		result.WriteString(remaining[:openIdx])
+		// Find the close marker.
+		afterOpen := remaining[openIdx+len(openMarker):]
+		closeIdx := strings.Index(afterOpen, closeMarker)
+		if closeIdx < 0 {
+			// Unterminated marker — emit the rest as-is, don't try
+			// to interpret. Bad authoring, but don't silently swallow.
+			result.WriteString(remaining[openIdx:])
+			break
+		}
+		block := afterOpen[:closeIdx]
+		// Block format: "mime/type\n<base64>\n" (mime ends at first newline).
+		nl := strings.IndexByte(block, '\n')
+		if nl < 0 {
+			// No body — skip silently.
+			remaining = afterOpen[closeIdx+len(closeMarker):]
+			continue
+		}
+		mime := strings.TrimSpace(block[:nl])
+		b64 := strings.TrimSpace(block[nl+1:])
+		// Strip whitespace inside the base64 (multi-line OK).
+		var clean strings.Builder
+		for _, r := range b64 {
+			if r == '\n' || r == '\r' || r == ' ' || r == '\t' {
+				continue
+			}
+			clean.WriteRune(r)
+		}
+		b64 = clean.String()
+		if b64 != "" && sess != nil {
+			switch {
+			case strings.HasPrefix(mime, "image/"):
+				sess.AppendImage(b64)
+				Log("[temptool.attach] image attached via marker (mime=%s, b64_chars=%d)", mime, len(b64))
+			case strings.HasPrefix(mime, "video/"), strings.HasPrefix(mime, "audio/"):
+				sess.AppendVideo(b64)
+				Log("[temptool.attach] media attached via marker (mime=%s, b64_chars=%d)", mime, len(b64))
+			default:
+				Log("[temptool.attach] unsupported marker mime %q — discarding block", mime)
+			}
+		}
+		remaining = afterOpen[closeIdx+len(closeMarker):]
+	}
+	return strings.TrimSpace(result.String())
+}
+
+// ----------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------
+
+// validToolName: lowercase letters, digits, underscores only. Length
+// 1-64. Mirrors the snake_case convention in the rest of the codebase.
+func validToolName(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= '0' && r <= '9':
+		case r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// parseParamsArg accepts the LLM's `params` object and converts it to
+// our typed ToolParam map. Tolerates two shapes the LLM commonly emits:
+// a real JSON object, or a JSON-encoded string of one.
+func parseParamsArg(v any) (map[string]ToolParam, error) {
+	if v == nil {
+		return nil, fmt.Errorf("required")
+	}
+	// Re-marshal whatever we got and unmarshal into our typed map. This
+	// handles both the native object form and the stringified form the
+	// LLM might produce when it emits a JSON blob.
+	var raw any
+	if s, ok := v.(string); ok {
+		if err := json.Unmarshal([]byte(s), &raw); err != nil {
+			return nil, fmt.Errorf("could not parse params JSON: %w", err)
+		}
+	} else {
+		raw = v
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("re-marshal failed: %w", err)
+	}
+	out := map[string]ToolParam{}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("must be an object of {name: {type, description}}: %w", err)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("at least one param is required")
+	}
+	for k, p := range out {
+		if !validToolName(k) {
+			return nil, fmt.Errorf("param name %q must be lowercase letters/digits/underscores only", k)
+		}
+		switch p.Type {
+		case "string", "integer", "number", "boolean":
+		case "":
+			return nil, fmt.Errorf("param %q has no type — set type to string/integer/number/boolean", k)
+		default:
+			return nil, fmt.Errorf("param %q type %q not supported (use string/integer/number/boolean)", k, p.Type)
+		}
+	}
+	return out, nil
+}
+
+func stringSliceArg(v any) []string {
+	if v == nil {
+		return nil
+	}
+	if arr, ok := v.([]any); ok {
+		var out []string
+		for _, e := range arr {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// validateTemplate scans cmd for `{name}` placeholders and ensures each
+// one names a known param. Catches the obvious "I forgot to add this
+// to params" mistake before the tool gets registered.
+//
+// Tolerant of literal braces in JSON / shell expressions: only treats
+// `{...}` as a placeholder when the contents look like an identifier
+// (letters, digits, underscores; must start with a letter or
+// underscore). Anything else — `{"key": "value"}`, `${VAR}`, `${1:-x}`,
+// `${array[@]}`, brace expansion `{a,b,c}`, etc. — passes through
+// silently the same way `substitute` does, so api-mode body templates
+// containing literal JSON object braces don't get rejected at
+// validation time.
+func validateTemplate(cmd string, params map[string]ToolParam) error {
+	for i := 0; i < len(cmd); i++ {
+		if cmd[i] != '{' {
+			continue
+		}
+		end := strings.IndexByte(cmd[i+1:], '}')
+		if end < 0 {
+			// Unclosed brace is more likely a literal in shell or JSON
+			// than a forgotten placeholder. Don't error — let it
+			// through. (The original strict behavior caused false
+			// positives on api-mode body templates with nested
+			// objects.)
+			return nil
+		}
+		name := cmd[i+1 : i+1+end]
+		if !isPlaceholderIdent(name) {
+			// Not identifier-shaped — treat as a literal brace
+			// expression (JSON, shell parameter expansion, brace
+			// expansion). Skip past the opening brace only; the
+			// closing brace and contents stay in scope so a
+			// genuine placeholder later in the same string still
+			// gets validated.
+			continue
+		}
+		// Reserved placeholders the dispatcher fills in (not user
+		// params): {workspace_dir} resolves to the deployed sandbox
+		// path. Skip param-list lookup for these.
+		if name == "workspace_dir" {
+			i = i + 1 + end
+			continue
+		}
+		if _, ok := params[name]; !ok {
+			return fmt.Errorf("placeholder {%s} not in params", name)
+		}
+		i = i + 1 + end
+	}
+	return nil
+}
+
+// isPlaceholderIdent reports whether s is shaped like a Go-style
+// identifier — letters/digits/underscores, must start with a letter
+// or underscore. Mirrors the implicit shape `substitute` uses when
+// it decides whether to honor a `{...}` as a placeholder. Empty
+// strings and JSON-shaped strings (containing spaces, quotes, colons,
+// commas, brackets) return false.
+func isPlaceholderIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r == '_':
+			// always allowed
+		case r >= '0' && r <= '9':
+			if i == 0 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// substitute replaces {name} placeholders in cmd with shell-quoted arg
+// values. Unknown args (placeholders without a corresponding key in
+// args) result in an error rather than silent dropping.
+func substitute(cmd string, params map[string]ToolParam, args map[string]any) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(cmd); i++ {
+		if cmd[i] != '{' {
+			b.WriteByte(cmd[i])
+			continue
+		}
+		end := strings.IndexByte(cmd[i+1:], '}')
+		if end < 0 {
+			b.WriteByte(cmd[i])
+			continue
+		}
+		name := cmd[i+1 : i+1+end]
+		if _, known := params[name]; !known {
+			// Not a placeholder we recognize — emit verbatim so the
+			// LLM can use literal braces in its command if needed.
+			b.WriteByte(cmd[i])
+			continue
+		}
+		val, ok := args[name]
+		if !ok {
+			return "", fmt.Errorf("missing arg %q", name)
+		}
+		// Type-aware substitution: numeric and boolean values skip
+		// shell quoting and emit bare values, since their value
+		// space is constrained enough that they can't contain
+		// shell metacharacters by definition. String values still
+		// go through shellQuote so injection-safety is preserved.
+		//
+		// Two paths fire as "skip quoting":
+		//   1. Declared type is integer/number/boolean — the
+		//      author signaled this is constrained data.
+		//   2. The runtime VALUE is a number or bool — even if the
+		//      author declared the param as "string", a value like
+		//      float64(1) or true is safe to emit bare. This
+		//      defends against LLMs that author tools with sloppy
+		//      type declarations (everything typed as "string"),
+		//      where a `count` param then fails the downstream
+		//      script's int() / atoi() because it receives `'1'`
+		//      instead of `1`.
+		skipQuote := false
+		switch params[name].Type {
+		case "integer", "number", "boolean":
+			skipQuote = true
+		}
+		if !skipQuote {
+			switch val.(type) {
+			case float64, float32, int, int64, int32, bool:
+				skipQuote = true
+			}
+		}
+		// Third defense: the value is a STRING but it parses as a
+		// pure number or boolean literal. Worker LLMs often pass
+		// numeric args as JSON strings ("1" instead of 1) when the
+		// param's declared type is "string". Pure number / boolean
+		// strings have no shell metacharacters by definition — safe
+		// to emit bare, and necessary to avoid the int("1") → quoted
+		// → script-side parse failure pattern.
+		if !skipQuote {
+			if s, ok := val.(string); ok {
+				if looksLikeNumberLiteral(s) || looksLikeBoolLiteral(s) {
+					skipQuote = true
+				}
+			}
+		}
+		if skipQuote {
+			b.WriteString(stringify(val))
+		} else {
+			b.WriteString(shellQuote(stringify(val)))
+		}
+		i = i + 1 + end
+	}
+	return b.String(), nil
+}
+
+// canonicalScriptName builds the on-disk filename for a tool's
+// script_body. Format: "<tool_name>_<short_content_hash>.<ext>".
+// The hash is a sha256 prefix (8 hex chars = ~32 bits, 4B unique
+// values — collisions are astronomically unlikely in a single-
+// operator workspace). Combined with the tool name, this gives:
+//   - Readable filename (debug: "see get_meme_a4f2b8e1.py in
+//     workspace, that's the get_meme tool's current script")
+//   - Deterministic per content (same body → same filename, so
+//     redeploy is idempotent: no file = write; matching file =
+//     no-op; different file = different name, no collision)
+//   - Drift detection (if a tool's record shows hash "a4f2b8e1"
+//     but the file on disk hashes differently, content drifted —
+//     redeploy from the record overwrites)
+//   - Re-author safety (delete + recreate a tool with same name
+//     but different script body gets a different filename; old
+//     file isn't touched, no stale-content risk)
+//
+// Extension is derived from (in priority order):
+//   1. The LLM's script_name suffix, if a recognized language ext.
+//   2. A shebang line in script_body ("#!/bin/sh" → .sh, etc.).
+//   3. Default .py (Python is the dominant pattern).
+func canonicalScriptName(toolName, llmHint, body string) string {
+	ext := ".py"
+	// First try the LLM's hint suffix.
+	if i := strings.LastIndexByte(llmHint, '.'); i >= 0 {
+		suffix := strings.ToLower(llmHint[i:])
+		switch suffix {
+		case ".py", ".sh", ".bash", ".jq", ".awk", ".sed", ".pl", ".rb", ".js", ".ts":
+			ext = suffix
+		}
+	}
+	// Shebang as fallback / override when LLM gave no hint.
+	if firstLine := body; firstLine != "" {
+		if nl := strings.IndexByte(firstLine, '\n'); nl >= 0 {
+			firstLine = firstLine[:nl]
+		}
+		switch {
+		case strings.Contains(firstLine, "python"):
+			ext = ".py"
+		case strings.Contains(firstLine, "/sh"), strings.Contains(firstLine, "/bash"):
+			ext = ".sh"
+		case strings.Contains(firstLine, "/jq"):
+			ext = ".jq"
+		}
+	}
+	// Sanitize the tool name for filesystem use. Tool names should
+	// already be snake_case validated, but defense in depth.
+	safe := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, toolName)
+	if safe == "" {
+		safe = "tool"
+	}
+	// Short content hash — sha256 first 8 hex chars. Deterministic
+	// per body content so identical scripts always map to the same
+	// filename; different content forces a different filename and
+	// avoids any chance of a stale on-disk file masking a real
+	// update.
+	sum := sha256.Sum256([]byte(body))
+	hashSuffix := hex.EncodeToString(sum[:4])
+	return safe + "_" + hashSuffix + ext
+}
+
+// looksLikeNumberLiteral returns true when s parses cleanly as a
+// JSON-style number (integer or decimal, optional leading sign). No
+// shell metacharacters by definition; safe to emit bare. Used by
+// substitute() to detect numeric strings the LLM passes in instead
+// of native JSON numbers — common when the tool's param schema
+// declares type="string" but the value is logically numeric.
+func looksLikeNumberLiteral(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	// strconv.ParseFloat accepts the JSON number grammar plus a bit
+	// more (exponent forms, etc.) — all are safe to emit bare.
+	_, err := strconv.ParseFloat(s, 64)
+	return err == nil
+}
+
+// looksLikeBoolLiteral matches the canonical true/false literals.
+// Case-sensitive: matches JSON / Python / Go convention.
+func looksLikeBoolLiteral(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "true" || s == "false" || s == "True" || s == "False"
+}
+
+// stringify renders any JSON-decoded value as a string suitable for
+// shell substitution. Numbers come back as float64 from json — we
+// format them as integers when they're whole, decimals otherwise.
+func stringify(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case bool:
+		if x {
+			return "true"
+		}
+		return "false"
+	case float64:
+		if x == float64(int64(x)) {
+			return fmt.Sprintf("%d", int64(x))
+		}
+		return fmt.Sprintf("%g", x)
+	case nil:
+		return ""
+	default:
+		// Last resort — let json represent it.
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+}
+
+// shellQuote wraps s in single quotes, escaping any embedded single
+// quotes via the standard `'\''` POSIX trick. Suitable for any sh
+// shell. Critical for safety — without this, a placeholder value
+// containing `; rm -rf $HOME` would execute as a command.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ----------------------------------------------------------------------
+// create_api_tool
+// ----------------------------------------------------------------------
+
+// CreateAPIToolTool wraps a registered secure-API credential into a
+// focused, structured tool. Sister of create_temp_tool but the body is
+// a URL template against a credential rather than a shell command —
+// the LLM never sees the credential value.
+type CreateAPIToolTool struct{}
+
+func (t *CreateAPIToolTool) Name() string       { return "create_api_tool" }
+func (t *CreateAPIToolTool) Caps() []Capability { return []Capability{CapNetwork} }
+func (t *CreateAPIToolTool) NeedsConfirm() bool { return true }
+
+func (t *CreateAPIToolTool) Desc() string {
+	return "Define a focused tool that calls a registered API credential. The body is a URL template (with {param} placeholders) targeting a specific credential — the credential's auth is injected server-side, you never see the secret. Use when you've discovered a useful endpoint pattern via call_<credname> and want a structured, reusable shape (e.g. get_github_issue(owner, repo, number) wrapping /repos/{owner}/{repo}/issues/{number}). Set persist=true to queue the tool for human approval and reuse across sessions."
+}
+
+func (t *CreateAPIToolTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"name": {
+			Type:        "string",
+			Description: "Tool name (snake_case, must not match an existing tool). E.g. \"get_github_issue\".",
+		},
+		"description": {
+			Type:        "string",
+			Description: "What the tool does. Include enough detail that you'll know when to call it in future rounds.",
+		},
+		"credential": {
+			Type:        "string",
+			Description: "Name of the registered secure-API credential to use (e.g. \"github_api\"). The credential's allowed-URL pattern is enforced — your URL template must resolve to a URL that matches.",
+		},
+		"url_template": {
+			Type:        "string",
+			Description: "URL template with {param} placeholders. Placeholders are URL-path-encoded at call time. Example: \"https://api.github.com/repos/{owner}/{repo}/issues/{number}\".",
+		},
+		"method": {
+			Type:        "string",
+			Description: "HTTP method. Defaults to GET. Use POST/PUT/PATCH/DELETE for write operations.",
+		},
+		"body_template": {
+			Type:        "string",
+			Description: "Optional JSON body template with {param} placeholders. Placeholders are JSON-encoded at call time — strings get wrapped in quotes automatically, numbers/booleans pass through, objects/arrays serialize structurally. DO NOT wrap placeholders in quotation marks yourself: write {prompt} not \"{prompt}\". The substitution layer handles the quoting and any escaping (newlines, embedded quotes) of the runtime value, so a long multi-line system prompt or any unsafe-for-JSON string passed as an arg comes out correctly. Put long literal content (system prompts, instructions) as runtime PARAMS, not baked into the template — that way you don't have to escape it inside the template string itself. Example: '{\"system_prompt\": {prompt}, \"user_message\": {msg}}'. Leave empty for GET requests.",
+		},
+		"params": {
+			Type:        "object",
+			Description: "Object describing the tool's parameters. Same shape as create_temp_tool. Each key matches a {placeholder} in url_template or body_template.",
+		},
+		"required": {
+			Type:        "array",
+			Description: "Optional list of param names that must be provided. Defaults to all of them.",
+		},
+		"response_pipe": {
+			Type:        "string",
+			Description: "Optional shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to the output, so the pipe should target only the response body (no `tail -n +2` needed). Pipe is skipped on non-2xx responses so the LLM sees the raw error. Use to pre-filter noisy responses before they reach the LLM context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" or \"jq -c '.[:20]'\". Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) so it can use jq, awk, sed, grep, head, tr, etc. Leave empty if the LLM should see the raw response. Adds an exec dependency to the tool — sessions without execute capability won't be able to dispatch it.",
+		},
+		"persist": {
+			Type:        "boolean",
+			Description: "If true, request that this tool be saved across future sessions. Same approval flow as create_temp_tool — the tool works in this session immediately but persists only after human review.",
+		},
+	}
+}
+
+func (t *CreateAPIToolTool) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("create_api_tool requires a session")
+}
+
+func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("create_api_tool requires a session")
+	}
+	if sess.DB == nil {
+		return "", fmt.Errorf("create_api_tool requires a session with DB access")
+	}
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if !validToolName(name) {
+		return "", fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
+	}
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == name {
+			return "", fmt.Errorf("name %q collides with a registered tool", name)
+		}
+	}
+	desc := strings.TrimSpace(StringArg(args, "description"))
+	if desc == "" {
+		return "", fmt.Errorf("description is required")
+	}
+	credName := strings.TrimSpace(StringArg(args, "credential"))
+	if credName == "" {
+		return "", fmt.Errorf("credential is required")
+	}
+	if _, ok := Secure().Load(credName); !ok {
+		return "", fmt.Errorf("credential %q is not registered — register it via the admin UI first", credName)
+	}
+	urlTpl := strings.TrimSpace(StringArg(args, "url_template"))
+	if urlTpl == "" {
+		return "", fmt.Errorf("url_template is required")
+	}
+	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
+	if method == "" {
+		method = "GET"
+	}
+	bodyTpl := strings.TrimSpace(StringArg(args, "body_template"))
+	respPipe := strings.TrimSpace(StringArg(args, "response_pipe"))
+
+	params, err := parseParamsArg(args["params"])
+	if err != nil {
+		return "", fmt.Errorf("params: %w", err)
+	}
+	if err := validateTemplate(urlTpl, params); err != nil {
+		return "", fmt.Errorf("url_template: %w", err)
+	}
+	if bodyTpl != "" {
+		if err := validateTemplate(bodyTpl, params); err != nil {
+			return "", fmt.Errorf("body_template: %w", err)
+		}
+	}
+
+	required := stringSliceArg(args["required"])
+	if len(required) == 0 {
+		for k := range params {
+			required = append(required, k)
+		}
+	} else {
+		for _, r := range required {
+			if _, ok := params[r]; !ok {
+				return "", fmt.Errorf("required lists %q which is not in params", r)
+			}
+		}
+	}
+
+	tool := &TempTool{
+		Name:            name,
+		Description:     desc,
+		Params:          params,
+		Required:        required,
+		CommandTemplate: urlTpl,
+		Mode:            TempToolModeAPI,
+		Credential:      credName,
+		Method:          method,
+		BodyTemplate:    bodyTpl,
+		ResponsePipe:    respPipe,
+	}
+	// Allow in-session overwrite — see CreateTempToolTool for rationale.
+	sess.RemoveTempTool(tool.Name)
+	if err := sess.AppendTempTool(tool); err != nil {
+		return "", err
+	}
+	// Session-scoped persistence so the tool survives across messages
+	// in the same chat session (see CreateTempToolTool for rationale).
+	saveSessionScoped := func() {
+		if sess.DB != nil && sess.ChatSessionID != "" {
+			if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
+				Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
+			}
+		}
+	}
+
+	spec := formatTempToolSpec(tool)
+
+	// Persistence is admin-driven now — silently ignore the `persist`
+	// flag if the LLM still sends it. Tools always land in the
+	// session-scoped pool; the admin promotes via the Tools modal.
+	_ = BoolArg(args, "persist")
+	saveSessionScoped()
+	return fmt.Sprintf("Created api tool %q (wraps credential %q). Available in your tool catalog for the rest of this conversation. The user (admin) can promote it via the Tools modal.%s", name, credName, spec), nil
+}
+
+// dispatchAPIModeTempTool handles a TempTool whose Mode is api. The
+// URL template gets URL-path-encoded args; the optional body template
+// gets JSON-encoded args. The resolved request is then dispatched
+// through DispatchSecureAPICredentialCall, which validates the URL
+// against the credential's allowlist and injects the encrypted secret.
+// dispatchPipelineModeTempTool runs a pipeline-mode TempTool by
+// spawning a sub-agent loop via the host session's SubAgentRunner.
+// Args are substituted into PipelinePrompt as plain-text
+// `{arg_name}` placeholders (it's a system prompt, not a shell or
+// URL — no quoting/encoding rules). The user message handed to the
+// sub-agent is a compact JSON dump of the args, so the sub-agent
+// can also read arg values directly without re-parsing the prompt.
+//
+// Sub-agent's tool catalog is PipelineTools (subset of the parent
+// session's). MaxRounds defaults to 6 when unset.
+func dispatchPipelineModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	// Structured-steps path takes precedence — when the author set
+	// pipeline_steps, run deterministically; no sub-agent, no LLM
+	// per step. Cheaper, faster, predictable.
+	if len(tt.PipelineSteps) > 0 {
+		return dispatchPipelineStepsTempTool(sess, tt, args)
+	}
+	if sess.SubAgentRunner == nil {
+		return "", fmt.Errorf("pipeline tool %q: host app didn't wire SubAgentRunner", tt.Name)
+	}
+	sys := tt.PipelinePrompt
+	for k, v := range args {
+		sys = strings.ReplaceAll(sys, "{"+k+"}", fmt.Sprint(v))
+	}
+	// The substituted system prompt already carries every arg value
+	// in its intended position. Passing the same args AGAIN as a JSON
+	// blob in the user message ("Inputs:\n{...}") was a recurring
+	// foot-gun: smaller sub-agents pattern-matched the JSON-quoted
+	// string values (e.g. "AI 2026") and emitted their downstream
+	// tool calls with the quotes still on, which then read as a
+	// shell-quoted literal by web_search etc. The kickoff message is
+	// just a trigger now — the sub-agent works from the system prompt.
+	userMsg := "Begin."
+	maxRounds := tt.PipelineMaxRounds
+	if maxRounds <= 0 {
+		maxRounds = 6
+	}
+	argsJSON, _ := json.Marshal(args)
+	Log("[temptool.pipeline] dispatch tool=%q inner_tools=%v max_rounds=%d args=%s",
+		tt.Name, tt.PipelineTools, maxRounds, string(argsJSON))
+	// Dump the substituted system prompt for verification when an
+	// author reports "the framework is quoting my values" — the
+	// substitution is plain text (fmt.Sprint + ReplaceAll above) so
+	// any quotes the sub-agent sees come from the author's prompt.
+	debugSys := sys
+	if len(debugSys) > 600 {
+		debugSys = debugSys[:600] + "...[truncated]"
+	}
+	Debug("[temptool.pipeline] tool=%q substituted system prompt: %s", tt.Name, debugSys)
+	out, err := sess.SubAgentRunner(context.Background(), sys, userMsg, tt.PipelineTools, maxRounds)
+	if err != nil {
+		Log("[temptool.pipeline] tool=%q FAILED: %v", tt.Name, err)
+		return "", fmt.Errorf("pipeline tool %q: %v", tt.Name, err)
+	}
+	Log("[temptool.pipeline] tool=%q OK (output=%d chars)", tt.Name, len(out))
+	return out, nil
+}
+
+// dispatchPipelineStepsTempTool executes a structured pipeline step
+// by step, with no inner LLM. Each step's args undergo template
+// substitution against (caller args, prior step outputs) before the
+// step's tool fires. The final step's output is the pipeline's
+// return value.
+//
+// Substitution patterns inside string args:
+//   - {param_name}    → caller's arg value
+//   - $N              → entire string output of step N (1-indexed)
+//   - $N.field.path   → JSON field path into step N's output;
+//                       returns empty string when the output isn't
+//                       JSON or the path doesn't resolve
+//   - $name / $name.field — same as above but referencing a step's
+//                       Name (set by the author for readability)
+//
+// Aborts on the first error (no retry / no on_error policy in V1).
+func dispatchPipelineStepsTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	allowed := map[string]bool{}
+	for _, n := range tt.PipelineTools {
+		allowed[n] = true
+	}
+	// Outputs is indexed two ways: by integer step number (1-based)
+	// stored as the stringified int, AND by the optional step Name.
+	// Both maps point into the same slice via parallel keys.
+	rawOutputs := make([]string, 0, len(tt.PipelineSteps))
+	jsonOutputs := make([]any, 0, len(tt.PipelineSteps))
+	nameIndex := map[string]int{}
+
+	Log("[temptool.pipeline_steps] dispatch tool=%q steps=%d", tt.Name, len(tt.PipelineSteps))
+	for i, step := range tt.PipelineSteps {
+		stepNum := i + 1
+		toolName := strings.TrimSpace(step.Tool)
+		if toolName == "" {
+			return "", fmt.Errorf("step %d: tool name is required", stepNum)
+		}
+		if !allowed[toolName] {
+			return "", fmt.Errorf("step %d: tool %q is not in this pipeline's allowed_tools list %v", stepNum, toolName, tt.PipelineTools)
+		}
+		// Resolve args — walk every value, substitute templates in
+		// strings. Non-string values pass through unchanged so the
+		// LLM can still pass numbers / bools / arrays.
+		resolved := map[string]any{}
+		for k, v := range step.Args {
+			resolved[k] = resolvePipelineArg(v, args, rawOutputs, jsonOutputs, nameIndex)
+		}
+		// Dispatch the tool. The lookup goes through the session-
+		// aware helper so session-scoped temp tools (drafts, inner
+		// pipelines) are reachable.
+		defs, err := GetAgentToolsWithSession(sess, toolName)
+		if err != nil || len(defs) == 0 {
+			return "", fmt.Errorf("step %d: tool %q not found in catalog: %v", stepNum, toolName, err)
+		}
+		out, err := defs[0].Handler(resolved)
+		if err != nil {
+			Log("[temptool.pipeline_steps] tool=%q step %d (%s) FAILED: %v", tt.Name, stepNum, toolName, err)
+			return "", fmt.Errorf("step %d (%s): %v", stepNum, toolName, err)
+		}
+		Log("[temptool.pipeline_steps] tool=%q step %d (%s) OK (output=%d chars)", tt.Name, stepNum, toolName, len(out))
+		rawOutputs = append(rawOutputs, out)
+		// Best-effort JSON parse for later field-path resolution.
+		// nil on parse failure is fine — accessor falls back to raw.
+		var parsed any
+		if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+			parsed = nil
+		}
+		jsonOutputs = append(jsonOutputs, parsed)
+		if name := strings.TrimSpace(step.Name); name != "" {
+			nameIndex[name] = i
+		}
+	}
+	if len(rawOutputs) == 0 {
+		return "", fmt.Errorf("pipeline tool %q: no steps defined", tt.Name)
+	}
+	return rawOutputs[len(rawOutputs)-1], nil
+}
+
+// resolvePipelineArg walks a single arg value applying template
+// substitution rules. Non-string values pass through unchanged so
+// numbers, bools, arrays etc. survive the round trip.
+func resolvePipelineArg(v any, callerArgs map[string]any, rawOutputs []string, jsonOutputs []any, nameIndex map[string]int) any {
+	s, ok := v.(string)
+	if !ok {
+		return v
+	}
+	return substitutePipelineTemplate(s, callerArgs, rawOutputs, jsonOutputs, nameIndex)
+}
+
+// substitutePipelineTemplate applies the three substitution patterns
+// in order: {param}, $N.field, $name.field, $N, $name. Returns the
+// resulting string. Unknown references render as empty string rather
+// than the literal token so a typo doesn't leak template syntax into
+// the next tool's input.
+func substitutePipelineTemplate(s string, callerArgs map[string]any, rawOutputs []string, jsonOutputs []any, nameIndex map[string]int) string {
+	// {param} substitution.
+	for k, v := range callerArgs {
+		s = strings.ReplaceAll(s, "{"+k+"}", fmt.Sprint(v))
+	}
+	// $N / $N.field / $name / $name.field — walk char-by-char to
+	// avoid regex complexity and gracefully handle adjacency.
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] != '$' {
+			out.WriteByte(s[i])
+			i++
+			continue
+		}
+		// Read the identifier (digits or letters/underscores).
+		j := i + 1
+		for j < len(s) && (isIdentChar(s[j])) {
+			j++
+		}
+		ident := s[i+1 : j]
+		if ident == "" {
+			// Lone '$' — emit literally.
+			out.WriteByte('$')
+			i++
+			continue
+		}
+		// Optional dotted path.
+		path := ""
+		k := j
+		if k < len(s) && s[k] == '.' {
+			pathStart := k + 1
+			for k < len(s) && (s[k] == '.' || isIdentChar(s[k])) {
+				k++
+			}
+			path = s[pathStart:k]
+		}
+		// Resolve the identifier to a step index.
+		var stepIdx int = -1
+		if n, err := strconv.Atoi(ident); err == nil {
+			stepIdx = n - 1 // 1-indexed → 0-indexed
+		} else if idx, ok := nameIndex[ident]; ok {
+			stepIdx = idx
+		}
+		if stepIdx < 0 || stepIdx >= len(rawOutputs) {
+			// Unresolved reference — emit empty (silent miss).
+			i = k
+			continue
+		}
+		if path == "" {
+			out.WriteString(rawOutputs[stepIdx])
+		} else {
+			out.WriteString(extractJSONPath(jsonOutputs[stepIdx], path))
+		}
+		i = k
+	}
+	return out.String()
+}
+
+func isIdentChar(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || b == '_'
+}
+
+// extractJSONPath walks a dotted path into a parsed JSON value.
+// Returns the resolved value as a string (json-encoded for objects /
+// arrays, stringified for scalars). Empty string on miss.
+func extractJSONPath(root any, path string) string {
+	if root == nil || path == "" {
+		return ""
+	}
+	cur := root
+	for _, part := range strings.Split(path, ".") {
+		if part == "" {
+			continue
+		}
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return ""
+		}
+		next, ok := m[part]
+		if !ok {
+			return ""
+		}
+		cur = next
+	}
+	switch v := cur.(type) {
+	case string:
+		return v
+	case nil:
+		return ""
+	default:
+		b, _ := json.Marshal(v)
+		return string(b)
+	}
+}
+
+func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	if sess.DB == nil {
+		return "", fmt.Errorf("api tool %q requires a session with DB access", tt.Name)
+	}
+	// Network connector — API-mode is intrinsically network. Refuse
+	// pre-dispatch when the connector blocks rather than letting the
+	// HTTP layer fail with a confusing error. Same framework-floor
+	// guarantee that gates web_search / fetch_url / the sandbox.
+	if !sess.NetworkAllowed() {
+		return "", fmt.Errorf("api tool %q refused: network is blocked for this turn (private mode is on)", tt.Name)
+	}
+	urlStr, err := substituteURL(tt.CommandTemplate, tt.Params, args)
+	if err != nil {
+		return "", fmt.Errorf("url template: %w", err)
+	}
+	method := strings.ToUpper(strings.TrimSpace(tt.Method))
+	if method == "" {
+		method = "GET"
+	}
+	var body string
+	if tt.BodyTemplate != "" {
+		body, err = substituteJSON(tt.BodyTemplate, tt.Params, args)
+		if err != nil {
+			return "", fmt.Errorf("body template: %w", err)
+		}
+		// Validate the substituted body is valid JSON before sending.
+		// Catches template-shape mistakes (mismatched braces, missing
+		// commas, an LLM-baked literal that didn't escape correctly)
+		// before the remote API rejects them with a generic "Expected
+		// ',' or '}' at position N" — which is hard to act on without
+		// seeing the actual body. The error returned to the LLM
+		// includes the produced body so it can inspect what it built
+		// and re-create the tool with a corrected template.
+		var probe any
+		if jerr := json.Unmarshal([]byte(body), &probe); jerr != nil {
+			Debug("[temptool] api tool %q produced invalid JSON body: %s\nTEMPLATE: %s\nBODY: %s", tt.Name, jerr, tt.BodyTemplate, body)
+			return "", fmt.Errorf("body template substitution produced invalid JSON: %w. Template: %s. Substituted body: %s", jerr, tt.BodyTemplate, body)
+		}
+		Debug("[temptool] api tool %q body validated (%d bytes)", tt.Name, len(body))
+	}
+	if sess.DB != nil && sess.Username != "" {
+		TouchPersistentTempTool(sess.DB, sess.Username, tt.Name)
+	}
+	// When a response_pipe is configured, signal the dispatch layer to
+	// read with a higher byte cap and skip the truncation marker —
+	// the pipe will project the body down to a small output that fits
+	// in context. Without this hint, large list-style endpoints get
+	// cut mid-string and jq fails with "Unfinished string at EOF".
+	var raw string
+	if tt.Credential == "" {
+		// Public-API path: no credential → plain HTTP. Same risk
+		// profile as fetch_url (which the LLM can already call
+		// directly). Used for public JSON endpoints (Reddit,
+		// Wikipedia, public data feeds) where requiring a fake
+		// credential just to satisfy the dispatcher would be silly.
+		raw, err = dispatchPublicAPICall(urlStr, method, body)
+	} else if tt.ResponsePipe != "" {
+		raw, err = Secure().DispatchToolCallForPipe(sess, tt.Credential, urlStr, method, body)
+	} else {
+		raw, err = Secure().DispatchToolCall(sess, tt.Credential, urlStr, method, body)
+	}
+	if err != nil {
+		return raw, err
+	}
+	if tt.ResponsePipe == "" {
+		return raw, nil
+	}
+	// The raw response from Secure().DispatchToolCall is shaped as:
+	//   HTTP <code> <text>\n<body>
+	// — the status line is there so the LLM can see HTTP errors when
+	// reading the response directly. For the pipe path it's noise: jq
+	// chokes on it, every pipe would need a `tail -n +2` prefix, and
+	// running a filter against an error response (different shape than
+	// a success body) usually produces garbage. Split the line off,
+	// pipe only the body on 2xx, and skip the pipe entirely on non-2xx
+	// so the LLM gets the unfiltered error to act on.
+	statusLine, body := splitStatusLine(raw)
+	if !isStatus2xx(statusLine) {
+		return raw, nil
+	}
+	pipeCtx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	pres := RunSandboxedShellPipe(pipeCtx, tt.ResponsePipe, body)
+	piped := strings.TrimSpace(pres.Output)
+	if pres.TimedOut {
+		notice := fmt.Sprintf("\n[response_pipe TIMED OUT after %s — command killed.]", commandTimeout)
+		if piped == "" {
+			return strings.TrimPrefix(notice, "\n"), nil
+		}
+		return piped + notice, nil
+	}
+	if pres.Err != nil {
+		// Pipe failed (bad jq expression, missing binary, etc.). Surface
+		// the error plus whatever output landed so the LLM can fix the
+		// pipe via delete + recreate. Don't fall through to raw — the
+		// whole point is to keep the raw response out of the LLM context.
+		if piped == "" {
+			return fmt.Sprintf("[response_pipe failed: %v — no output. Pipe: %s]", pres.Err, tt.ResponsePipe), nil
+		}
+		return piped + fmt.Sprintf("\n[response_pipe exit: %v]", pres.Err), nil
+	}
+	if len(piped) > maxOutput {
+		totalLines := strings.Count(piped, "\n") + 1
+		truncated := piped[:maxOutput]
+		shown := strings.Count(truncated, "\n") + 1
+		piped = truncated + fmt.Sprintf(
+			"\n... [TRUNCATED: showing lines 1–%d of %d total (%d chars).]",
+			shown, totalLines, len(piped))
+	}
+	// Re-prepend the status line so the LLM still sees the HTTP code.
+	if statusLine != "" {
+		return statusLine + "\n" + piped, nil
+	}
+	return piped, nil
+}
+
+// dispatchPublicAPICall makes a plain HTTP call for api-mode tools
+// authored without a credential. Used for public APIs (Reddit JSON,
+// Wikipedia, etc.) where requiring a registered credential just to
+// satisfy the dispatcher would force an awkward pipeline+fetch_url
+// indirection. Same risk profile as fetch_url which the LLM can
+// already call directly.
+//
+// Returns the same "HTTP <code> <text>\n<body>" shape as
+// Secure().DispatchToolCall so downstream response_pipe logic and
+// status-line handling keep working unchanged.
+func dispatchPublicAPICall(urlStr, method, body string) (string, error) {
+	if method == "" {
+		method = "GET"
+	}
+	req, err := http.NewRequest(method, urlStr, strings.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("User-Agent", publicAPIUserAgent)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := &http.Client{Timeout: publicAPITimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("http %s %s: %w", method, urlStr, err)
+	}
+	defer resp.Body.Close()
+	limited := io.LimitReader(resp.Body, publicAPIMaxResponseBytes)
+	bodyBytes, readErr := io.ReadAll(limited)
+	if readErr != nil {
+		return "", fmt.Errorf("read response: %w", readErr)
+	}
+	statusLine := fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+	out := statusLine + "\n" + string(bodyBytes)
+	// Mark truncation explicitly when the body hit the cap so the LLM
+	// can see whether it received the full payload.
+	if int64(len(bodyBytes)) == publicAPIMaxResponseBytes {
+		out += fmt.Sprintf("\n\n[response truncated at %d bytes]", publicAPIMaxResponseBytes)
+	}
+	return out, nil
+}
+
+const (
+	publicAPITimeout          = 30 * time.Second
+	publicAPIMaxResponseBytes = 1 * 1024 * 1024 // 1 MB
+	publicAPIUserAgent        = "gohort-public-api-tool/1.0"
+)
+
+// splitStatusLine separates the leading "HTTP <code> <text>" line from
+// the response body. Returns ("", raw) when the response doesn't start
+// with an HTTP status line (defensive — should always match for output
+// produced by Secure().dispatch).
+func splitStatusLine(raw string) (status, body string) {
+	if !strings.HasPrefix(raw, "HTTP ") {
+		return "", raw
+	}
+	nl := strings.IndexByte(raw, '\n')
+	if nl < 0 {
+		return raw, ""
+	}
+	return raw[:nl], raw[nl+1:]
+}
+
+// isStatus2xx parses the numeric code out of an "HTTP <code> ..." line
+// and reports whether it's in the 2xx range. Defensive — unparseable
+// status lines fail closed (return false) so we don't pipe what looks
+// like an error response.
+func isStatus2xx(statusLine string) bool {
+	if !strings.HasPrefix(statusLine, "HTTP ") {
+		return false
+	}
+	rest := statusLine[len("HTTP "):]
+	sp := strings.IndexByte(rest, ' ')
+	if sp < 0 {
+		sp = len(rest)
+	}
+	codeStr := rest[:sp]
+	if len(codeStr) != 3 {
+		return false
+	}
+	return codeStr[0] == '2'
+}
+
+// substituteURL replaces {param} placeholders in a URL template with
+// URL-path-encoded arg values. Different from shell quoting —
+// placeholders inside path segments must be %-encoded.
+func substituteURL(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
+	var b strings.Builder
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		end := strings.IndexByte(tmpl[i+1:], '}')
+		if end < 0 {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		name := tmpl[i+1 : i+1+end]
+		if _, known := params[name]; !known {
+			b.WriteByte(tmpl[i])
+			continue
+		}
+		val, ok := args[name]
+		if !ok {
+			return "", fmt.Errorf("missing arg %q", name)
+		}
+		b.WriteString(urlEscape(stringify(val)))
+		i = i + 1 + end
+	}
+	return b.String(), nil
+}
+
+// urlEscape percent-encodes a value for safe inclusion in a URL path
+// or query. Encodes everything not in the unreserved set (RFC 3986)
+// — conservative, won't double-encode legitimately-encoded values
+// because callers should pass raw param values, not pre-encoded ones.
+func urlEscape(s string) string {
+	const safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if strings.IndexByte(safe, c) >= 0 {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%%%02X", c)
+	}
+	return b.String()
+}
+
+// substituteJSON replaces {param} placeholders in a body template
+// with JSON-encoded arg values. Strings get JSON-quoted; numbers/
+// bools pass through as-is; objects/arrays serialize structurally.
+// This lets the LLM write JSON body templates like
+// `{"title": {title}, "labels": {labels}}` and have them serialize
+// correctly regardless of the underlying arg type.
+//
+// Quote-wrap tolerance: if the LLM writes the placeholder wrapped in
+// quotes (`"prompt": "{prompt}"`) — the natural JSON shape — strip
+// the surrounding quotes from the output, since json.Marshal will
+// re-add them for string values. Otherwise the result becomes
+// `"prompt": ""hello""` which breaks the JSON. For non-string
+// values (numbers, booleans, objects, arrays) the wrap is also
+// incorrect on the input side, so we treat the strip as the
+// authoritative shape and let json.Marshal produce the right form.
+func substituteJSON(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
+	var b strings.Builder
+	out := []byte{}
+	for i := 0; i < len(tmpl); i++ {
+		if tmpl[i] != '{' {
+			out = append(out, tmpl[i])
+			continue
+		}
+		end := strings.IndexByte(tmpl[i+1:], '}')
+		if end < 0 {
+			out = append(out, tmpl[i])
+			continue
+		}
+		name := tmpl[i+1 : i+1+end]
+		if _, known := params[name]; !known {
+			out = append(out, tmpl[i])
+			continue
+		}
+		val, ok := args[name]
+		if !ok {
+			return "", fmt.Errorf("missing arg %q", name)
+		}
+		j, err := jsonMarshal(val)
+		if err != nil {
+			return "", err
+		}
+		// Quote-wrap detection: if `"{name}"` is the surrounding
+		// shape, strip the leading `"` from already-emitted output
+		// and skip the trailing `"` in the template input. The
+		// substituted JSON value (which may itself start with `"`
+		// for strings, or with a non-quote char for numbers/bools/
+		// objects) replaces the wrapped placeholder cleanly either
+		// way.
+		closingQuoteAhead := i+1+end+1 < len(tmpl) && tmpl[i+1+end+1] == '"'
+		openingQuoteBehind := len(out) > 0 && out[len(out)-1] == '"'
+		if openingQuoteBehind && closingQuoteAhead {
+			out = out[:len(out)-1] // drop the leading quote
+			out = append(out, j...)
+			i = i + 1 + end + 1 // skip placeholder + trailing quote
+			continue
+		}
+		out = append(out, j...)
+		i = i + 1 + end
+	}
+	b.Write(out)
+	return b.String(), nil
+}
+
+// jsonMarshal is a wrapper around json.Marshal that returns the
+// string form. Inlined to avoid pulling json into substituteJSON's
+// signature.
+func jsonMarshal(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}

@@ -1,0 +1,21 @@
+# Compiled binary
+gohort
+
+# Phantom bridge build artifacts (Mac binary, source lives in apps/phantom/_bridge/)
+apps/phantom/_bridge/agent
+apps/phantom/_bridge/build/
+
+# Data directory
+data/
+
+# Private apps (not tracked in public repo).
+# Both entries needed: "private/" matches a real directory; bare
+# "private" also matches a symlink named private pointing at a
+# private tree elsewhere on disk (dev setup).
+private/
+private
+private.go
+
+# Claude Code local settings
+.claude/
+fuzz

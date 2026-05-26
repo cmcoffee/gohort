@@ -1,0 +1,459 @@
+package main
+
+import (
+	"context"
+	_ "embed"
+	"fmt"
+	"os"
+	"path/filepath"
+	"syscall"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/apps/ollama_proxy"
+
+	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/snugforge/nfo"
+)
+
+// APPNAME is the application name.
+const APPNAME = "gohort"
+
+// VERSION holds the application's version string.
+//
+//go:embed version.txt
+var VERSION string
+
+// global holds application-wide configuration and state.
+var global struct {
+	cfg           ConfigStore
+	db            Database
+	cache         Database
+	root          string
+	cfg_path      string // override for gohort.ini path; empty = next-to-binary default
+	debug         bool
+	snoop         bool
+	trace         bool
+	single_thread bool
+}
+
+// get_runtime_info returns the name of the executable.
+func get_runtime_info() string {
+	exec, err := os.Executable()
+	Critical(err)
+
+	localExec := filepath.Base(exec)
+
+	global.root, err = filepath.Abs(filepath.Dir(exec))
+	Critical(err)
+
+	global.root = GetPath(global.root)
+
+	return localExec
+}
+
+// registerModifiers wires the global verbosity / threading toggles
+// onto a flagset. Used by both the top-level parser and the serve
+// sub-command so a user can drop `--debug` / `--trace` / `--snoop`
+// / `--serial` on either side of the command name. Values bind
+// against the same global struct fields, so order doesn't matter:
+//   gohort --debug serve :8080
+//   gohort serve --debug :8080
+// both end with global.debug == true.
+func registerModifiers(set *eflag.EFlagSet) {
+	set.BoolVar(&global.single_thread, "serial", NONE)
+	set.BoolVar(&global.debug, "debug", NONE)
+	set.BoolVar(&global.snoop, "snoop", NONE)
+	set.BoolVar(&global.trace, "trace", NONE)
+	// --config <path> overrides the default <binary-dir>/gohort.ini
+	// lookup. Useful for running multiple instances side-by-side, or
+	// pointing a single binary at different environments. Same
+	// modifier shape as --debug etc. — works on either side of the
+	// subcommand:
+	//   gohort --config /etc/gohort/dev.ini serve :8080
+	//   gohort serve --config /etc/gohort/dev.ini :8080
+	set.StringVar(&global.cfg_path, "config", NONE,
+		"Path to the INI config file (default: <binary-dir>/gohort.ini)")
+}
+
+func main() {
+	AppVersion = VERSION
+	nfo.HideTS()
+	defer Exit(0)
+
+	// Install the process-lifetime app context. SIGINT handlers below
+	// call ShutdownApp() to cancel it so in-flight LLM streams,
+	// persistent pipelines, and the interactive REPL all wind down
+	// cleanly instead of being killed mid-call on daemon close.
+	InitAppContext(context.Background())
+
+	get_runtime_info()
+
+	// Initial modifier flags. Top-level only — command-specific flags
+	// (TLS, max-concurrent) live on the serve sub-command's own
+	// flagset so `gohort --help` doesn't show them on every other
+	// command, and `gohort serve --help` shows the right scope.
+	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
+	version := flags.Bool("version", "")
+	setup := flags.Bool("setup", "Fuzz configuration (LLM, mail, etc).")
+
+	flags.Footer = " "
+
+	registerModifiers(flags)
+
+	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
+
+	f_err := flags.Parse(os.Args[1:])
+
+	loadAgents()
+	loadTools()
+
+	// Wire up agent-to-agent delegation.
+	RunAgentFunc = func(name string, args []string) (string, error) {
+		command.mutex.RLock()
+		entry, ok := command.entries[name]
+		command.mutex.RUnlock()
+		if !ok {
+			return "", fmt.Errorf("unknown agent: %s", name)
+		}
+		return execAgent(entry, args)
+	}
+
+	// Wire up mail config loader.
+	LoadMailConfigFunc = func() MailConfig {
+		return dbcfg.mail()
+	}
+
+	// Wire up web search config loader.
+	LoadWebSearchConfigFunc = func() WebSearchConfig {
+		return dbcfg.search()
+	}
+
+	// Wire up Ollama proxy backend. Returns the base URL and model for the
+	// configured worker LLM when it is Ollama; empty strings otherwise.
+	OllamaBackendFunc = func() (string, string, int) {
+		cfg := dbcfg.llm()
+		if cfg.Provider != "ollama" {
+			return "", "", 0
+		}
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:11434"
+		}
+		return ep, cfg.Model, cfg.ContextSize
+	}
+	LlamaCppBackendFunc = func() (string, string) {
+		cfg := dbcfg.llm()
+		if cfg.Provider != "llama.cpp" {
+			return "", ""
+		}
+		ep := cfg.Endpoint
+		if ep == "" {
+			ep = "http://localhost:8080/v1"
+		}
+		return ep, cfg.Model
+	}
+	OllamaProxyEnabledFunc = func() bool {
+		var enabled bool
+		global.db.Get(WebTable, "ollama_proxy_enabled", &enabled)
+		return enabled
+	}
+	OllamaProxyPortFunc = func() int {
+		var port int
+		global.db.Get(WebTable, "ollama_proxy_port", &port)
+		return port
+	}
+
+	// Wire up LLM routing lookup. Reads per-stage setting from db.
+	LookupRouteFunc = func(key string) string {
+		var val string
+		global.db.Get(RoutingTable, key, &val)
+		return val
+	}
+	LookupRouteThinkBudgetFunc = func(key string) *int {
+		var n int
+		if global.db.Get(RoutingTable, key+".think_budget", &n) && n > 0 {
+			return &n
+		}
+		return nil
+	}
+
+	// Wire up web agent setup for the central dashboard.
+	// Initialize LLMs once and share across all web apps.
+	var shared_llm, shared_lead_llm LLM
+	var shared_prompt_tools bool
+	SetupWebAgentFunc = func(agent Agent) {
+		set_agent_db(agent, get_agentstore(agent.Name()))
+		if shared_llm == nil {
+			set_agent_llm(agent)
+			T := agent.Get()
+			shared_llm = T.LLM
+			shared_lead_llm = T.LeadLLM
+			shared_prompt_tools = T.PromptTools
+			// Expose to stateless tools that need an inline LLM call
+			// (e.g., the mock-shell tool). Only runs once because the
+			// first-agent branch is gated on shared_llm being nil.
+			SetSharedLLMs(shared_llm, shared_lead_llm)
+		} else {
+			T := agent.Get()
+			T.LLM = shared_llm
+			T.LeadLLM = shared_lead_llm
+			T.PromptTools = shared_prompt_tools
+		}
+	}
+
+	if global.debug {
+		enable_debug()
+	}
+
+	if global.snoop || global.trace {
+		enable_trace()
+	}
+
+	if *version {
+		Stdout(`
+      ____       _                _
+     / ___| ___ | |__   ___  _ __| |_
+    | |  _ / _ \| '_ \ / _ \| '__| __|
+    | |_| | (_) | | | | (_) | |  | |_
+     \____|\___/|_| |_|\___/|_|   \__|
+
+      v%s
+
+      Gohort Agent Framework
+`, VERSION)
+		Exit(0)
+	}
+
+	if *setup {
+		setup_fuzz()
+		Exit(0)
+	}
+
+	// "serve" subcommand — start the long-running dashboard daemon.
+	// Owns its own flagset so TLS / max-concurrent options don't
+	// pollute the top-level help. Bind address is the lone
+	// positional arg: `gohort serve [flags] [addr]` (default :8080).
+	serveArgs := flags.Args()
+	if len(serveArgs) > 0 && serveArgs[0] == "serve" {
+		serveFlags := eflag.NewFlagSet("serve", eflag.ReturnErrorOnly)
+		// AdaptArgs lets flags appear in any position relative to
+		// the bind-address positional, so `gohort serve :9090
+		// --debug` parses identically to `gohort serve --debug
+		// :9090`. Eflag re-orders trailing non-flags after the
+		// flag list before handing it to the underlying parser.
+		serveFlags.AdaptArgs = true
+		max_concurrent := serveFlags.Int("max_concurrent", 1, "Max simultaneous apps. Others are queued.")
+		tls_cert := serveFlags.String("tls_cert", "", "Path to TLS certificate file (PEM).")
+		tls_key := serveFlags.String("tls_key", "", "Path to TLS private key file (PEM).")
+		tls_self := serveFlags.Bool("tls", "Enable TLS with auto-generated self-signed certificate.")
+		serveFlags.Order("tls", "tls_cert", "tls_key", "max_concurrent")
+		// Modifier flags also visible on the sub-command so
+		// `gohort serve --debug :8080` works the same as
+		// `gohort --debug serve :8080`.
+		registerModifiers(serveFlags)
+		serveFlags.Header = fmt.Sprintf("Usage: %s serve [flags] [addr]\n\n  addr defaults to :8080. TLS flags apply only when --tls is set\n  or both tls_cert and tls_key are provided.\n", os.Args[0])
+		if err := serveFlags.Parse(serveArgs[1:]); err != nil {
+			if err != eflag.ErrHelp {
+				Stderr(err)
+				Stderr(NONE)
+			}
+			serveFlags.Usage()
+			if err == eflag.ErrHelp {
+				return
+			}
+			Exit(1)
+		}
+		bindAddr := ":8080"
+		if rest := serveFlags.Args(); len(rest) > 0 && rest[0] != "" {
+			bindAddr = rest[0]
+		}
+		// Re-apply modifier side-effects in case --debug/--trace
+		// landed on the serve sub-command rather than the top-level
+		// (the top-level enable_debug call ran before serveFlags
+		// parsed). Mirrors the kitebroker pattern where each task
+		// re-checks debug/snoop/trace post-parse.
+		if global.debug {
+			enable_debug()
+		}
+		if global.snoop || global.trace {
+			enable_trace()
+		}
+		Log("### %s v%s ###", APPNAME, VERSION)
+		init_database()
+		RootDB = global.db
+		wireToolDB()
+		init_logging()
+
+				// Load saved web config as defaults; CLI flags override.
+		// Values come from the INI file (gohort.ini) with a one-time
+		// fallback to the kvlite-backed mirror so existing installs
+		// don't lose their settings on first boot after this migration.
+		saved_max := loadWebInt("max_concurrent", 1)
+		saved_cert := loadWebString("tls_cert", "")
+		saved_key := loadWebString("tls_key", "")
+		saved_self_signed := loadWebBool("tls_self_signed", false)
+
+		if *max_concurrent != 1 {
+			MaxConcurrentTasks = *max_concurrent
+		} else if saved_max > 0 {
+			MaxConcurrentTasks = saved_max
+		}
+		if *tls_cert != "" {
+			TLSCert = *tls_cert
+		} else {
+			TLSCert = saved_cert
+		}
+		if *tls_key != "" {
+			TLSKey = *tls_key
+		} else {
+			TLSKey = saved_key
+		}
+		if *tls_self {
+			TLSSelfSigned = true
+		} else {
+			TLSSelfSigned = saved_self_signed
+		}
+
+		// Wire auth database.
+		AuthDB = func() Database { return global.db }
+
+		AuthEnabled = func() bool { return AuthHasUsers(global.db) }
+		AuthSignupAllowed = func() bool {
+			var allowed bool
+			global.db.Get(WebTable, "allow_signup", &allowed)
+			return allowed
+		}
+		AuthSessionDays = func() int {
+			var days int
+			global.db.Get(WebTable, "session_days", &days)
+			if days == 0 {
+				days = 7
+			}
+			return days
+		}
+		AuthAPIKey = func() string {
+			var key string
+			global.db.Get(WebTable, "api_key", &key)
+			return key
+		}
+
+		WebBaseURL = func() string {
+			var url string
+			global.db.Get(WebTable, "external_url", &url)
+			return url
+		}
+		ServiceNameFunc = func() string {
+			var name string
+			global.db.Get(WebTable, "service_name", &name)
+			return name
+		}
+		AuthMaxAttempts = func() int {
+			var n int
+			global.db.Get(WebTable, "max_login_attempts", &n)
+			if n == 0 {
+				n = 5
+			}
+			return n
+		}
+		AuthLockoutMinutes = func() int {
+			var n int
+			global.db.Get(WebTable, "lockout_minutes", &n)
+			if n == 0 {
+				n = 15
+			}
+			return n
+		}
+		NotifyFromFunc = func() string {
+			var from string
+			global.db.Get(WebTable, "notify_from", &from)
+			return from
+		}
+
+		// Wire persistent queue.
+		SetQueueDB(func() Database { return global.db })
+
+		// Wire CMS config loader (setup saves to global.db, not per-agent bucket).
+		LoadGhostConfigFunc = func() GhostConfig {
+			var cfg GhostConfig
+			global.db.Get("ghost_config", "url", &cfg.URL)
+			global.db.Get("ghost_config", "api_key", &cfg.APIKey)
+			return cfg
+		}
+
+		// Wire admin IP allowlist. Sourced from gohort.ini with a
+		// one-time fallback to the legacy DB-backed value.
+		LoadAdminAllowedIPsFunc = func() string {
+			return loadWebString("admin_allowed_ips", "")
+		}
+
+		ollama_proxy.StartOllamaServer(OllamaProxyPortFunc())
+		if err := ServeDashboard(bindAddr); err != nil {
+			Fatal(err)
+		}
+		Exit(0)
+	}
+
+	// Check for chat mode before processing other flags.
+	if args := flags.Args(); len(args) > 0 && args[0] == "chat" {
+		if len(args) > 1 && args[1] == "--help" {
+			Stderr("Usage: %s chat [--private]\n\n  --private    Disable internet-facing tools (web_search, browse_page, etc.).", os.Args[0])
+			Exit(0)
+		}
+		privateMode := false
+		for _, a := range args[1:] {
+			if a == "--private" {
+				privateMode = true
+			}
+		}
+		if err := startChat(privateMode); err != nil {
+			Stderr(err)
+			Exit(1)
+		}
+		Exit(0)
+	}
+
+	nfo.SignalCallback(syscall.SIGINT, func() bool {
+		Log("Application interrupt received. (shutting down)")
+		ShutdownApp()
+		return true
+	})
+
+	if f_err != nil {
+		if f_err != eflag.ErrHelp {
+			Stderr(f_err)
+			Stderr(NONE)
+		}
+		flags.Usage()
+		command.Show()
+		return
+	}
+
+	// Read and process CLI arguments.
+	args := flags.Args()
+
+	// No command given — launch interactive chat.
+	if len(args) == 0 {
+		if err := startChat(false); err != nil {
+			Stderr(err)
+			Exit(1)
+		}
+		return
+	}
+
+	var task_args [][]string
+	args = append(args, "cli")
+	task_args = append(task_args, args)
+
+	if err := command.Select(task_args); err != nil {
+		if err != eflag.ErrHelp {
+			Stderr(err)
+		}
+		flags.Usage()
+		command.Show()
+		if err == eflag.ErrHelp {
+			return
+		} else {
+			Exit(1)
+		}
+	}
+}

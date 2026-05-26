@@ -1,0 +1,243 @@
+// Package orchestrate is the Agent Builder. Users define Agents
+// (persona + prompts + plan style + tool surface) and chat with them.
+// Each agent gets its own chat surface — a split-pane AgentLoopPanel
+// showing orchestrator-user conversation on one side and live plan +
+// worker activity on the other.
+//
+// Plan-driven flow per user turn:
+//
+//  1. Orchestrator (thinking LLM) reads the user message + history,
+//     calls plan_set with N step titles.
+//  2. Activity pane renders the plan.
+//  3. For each step: orchestrator delegates to the worker (no-think
+//     LLM); worker output goes to the activity pane; step flips to
+//     done.
+//  4. Orchestrator composes a synthesis reply for the user.
+//
+// Plans auto-confirm — no operator pause between steps in Phase 1.
+//
+// Agents declare an explicit AllowedTools allowlist of worker tool
+// names; empty/nil means "use the default pool" (every non-blocked
+// chat tool with Read or Network capability). Editor checklist drives
+// the allowlist; runner enforces it strictly.
+//
+// Storage layout (all kvlite-backed):
+//
+//	orchestrate_agents              — keyed by agent ID
+//	orchestrate_sessions:<agent_id> — one bucket per agent, keyed by session ID
+//	orchestrate_design_sessions     — Design-with-AI chat history
+//	orchestrate_migrations          — per-user one-time migration markers
+package orchestrate
+
+import (
+	"net/http"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+func init() {
+	RegisterApp(new(OrchestrateApp))
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.orchestrator",
+		Label:   "Agency: Orchestrator (thinking)",
+		Default: "worker (thinking)",
+		Group:   "Agency",
+		Private: true,
+	})
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.worker",
+		Label:   "Agency: Worker (no-think)",
+		Default: "worker",
+		Group:   "Agency",
+		Private: true,
+	})
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.consolidator",
+		Label:   "Agency: Memory consolidator (background)",
+		Default: "worker",
+		Group:   "Agency",
+		Private: true,
+	})
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.gap_check",
+		Label:   "Agency: Gap detection (post-plan review)",
+		Default: "worker (thinking)",
+		Group:   "Agency",
+		Private: true,
+	})
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.suggest",
+		Label:   "Agency: Editor field-suggest",
+		Default: "worker",
+		Group:   "Agency",
+		Private: true,
+	})
+	RegisterRouteStage(RouteStage{
+		Key:     "app.orchestrate.title",
+		Label:   "Agency: Session title summarizer (background)",
+		Default: "worker",
+		Group:   "Agency",
+		Private: true,
+	})
+}
+
+// OrchestrateApp is the entry point. Dashboard-only (no CLI Main).
+type OrchestrateApp struct {
+	AppCore
+}
+
+func (T OrchestrateApp) Name() string         { return "orchestrate" }
+func (T OrchestrateApp) SystemPrompt() string { return "" }
+func (T OrchestrateApp) Desc() string {
+	return "Apps: Agency — define and run plan-driven AI agents."
+}
+
+func (T *OrchestrateApp) Init() error { return T.Flags.Parse() }
+
+func (T *OrchestrateApp) Main() error {
+	Log("Agency is a dashboard-only app. Start with:\n  gohort serve :8080")
+	return nil
+}
+
+func (T *OrchestrateApp) WebPath() string { return "/orchestrate" }
+func (T *OrchestrateApp) WebName() string { return "Agency" }
+func (T *OrchestrateApp) WebDesc() string {
+	return "Build, manage, and dispatch your fleet of AI agents — the workbench where personas, tools, pipelines, and memory all live."
+}
+
+// WebOrder pins Agency to the top of the dashboard card grid above
+// every other app. Lower number = earlier; -1000 leaves room for
+// other future "top-of-list" apps without needing to bump this.
+func (T *OrchestrateApp) WebOrder() int { return -1000 }
+
+// WebRestricted hides Orchestrate from non-admin users on the landing
+// page. Orchestrate is the agent workbench (CRUD, prompts, allowlists,
+// memory pruning); end-users consume the agents an admin builds via
+// the per-agent exposed-app surface. Same pattern as the Admin app.
+func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
+	if T.DB == nil {
+		return true
+	}
+	if !AuthHasUsers(T.DB) {
+		// Single-user / auth-disabled deployment — no admin concept,
+		// so don't gate.
+		return false
+	}
+	return !AuthIsAdmin(T.DB, r)
+}
+
+// Routes wires all of orchestrate's surfaces in one place. The chat
+// page sits at the root with an agent dropdown that drives the active
+// context (servitor's appliance-picker pattern); session URLs carry
+// `agent_id` in their query string so switching the picker re-scopes
+// the conversation rail.
+//
+//	/                          — chat page (agent dropdown)
+//	/agent/new                 — agent editor (new)
+//	/agent/{id}                — agent editor (edit)
+//	/api/agents                — list / create
+//	/api/agents/{id}           — read / update / delete one
+//	/api/agents/{id}/clone     — POST: clone into a new agent
+//	/api/agents/{id}/export    — GET: download the agent as a portable JSON recipe
+//	/api/agents/{id}/facts     — GET/POST: Explicit Memory facts (was /memory)
+//	/api/agents/import         — POST: create a new agent from an uploaded recipe
+//	/api/agents/suggest        — POST: ✨ per-field AI suggestion for the editor
+//	/api/sessions              — list (agent_id query param)
+//	/api/sessions/{sid}        — load / delete (agent_id query param)
+//	/api/send                  — SSE send (agent_id in body)
+//	/api/cancel                — abort in-flight round (agent_id in body)
+//	/api/confirm               — operator confirm (Phase 1 no-op stub)
+//	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
+func (T *OrchestrateApp) Routes() {
+	// Wire the scheduled-update handler before any session runs —
+	// the scheduler fires async so orchRef must be set by the time
+	// the loop ticks.
+	registerOrchestrateScheduledUpdates(T)
+
+	// One-shot Builder shadow migration. Walks every user's store,
+	// finds existing seed-builder shadows, re-writes them with the
+	// current in-code seed (preserving only the shadow's Rules).
+	// Lazy loadAgent already does this overlay at read time; this
+	// just eagerly persists the result so the DB state matches what
+	// callers see. Idempotent — running it twice produces the same
+	// record.
+	T.migrateBuilderShadows()
+
+	// One-shot persistent-tool snapshot migration. Walks every user's
+	// agents and, for any AllowedTools name that resolves only to the
+	// persistent pool (not already in agent.Tools[]), snapshots it
+	// into the agent record. Closes the door on the old reference-by-
+	// name model where admin pool cleanup silently broke agents.
+	T.migrateAgentPersistentTools()
+
+	// One-shot fact-store migration. Walks core_facts rows and
+	// converts the old keyed shape ({Namespace, Key, Value, ...})
+	// to the new flat shape ({Namespace, ID, Note, Created}),
+	// deduping similar entries on the way. Idempotent — flat
+	// rows are skipped. Runs per-user (each user's fact store
+	// lives in their per-user sub-DB).
+	if authDB := AuthDB(); authDB != nil {
+		for _, u := range AuthListUsers(authDB) {
+			if udb := UserDB(T.DB, u.Username); udb != nil {
+				MigrateLegacyFactStore(udb)
+			}
+		}
+	}
+
+	// Wraps every handler with an admin gate. Non-admin requests get
+	// a 403 instead of being silently allowed to a hidden surface —
+	// the WebRestricted check above only hides the landing-page
+	// card; direct URLs need their own gate. WebRestricted is a
+	// LANDING-page concept; handler gating is the actual ACL.
+	g := T.adminGated
+	T.HandleFunc("/", g(T.handleRoot))
+	T.HandleFunc("/agent/", g(T.handleAgentPage))
+
+	T.HandleFunc("/api/agents", g(T.handleAgentList))
+	T.HandleFunc("/api/agents/import", g(T.handleAgentImport))
+	T.HandleFunc("/api/agents/suggest", g(T.handleAgentSuggest))
+	T.HandleFunc("/api/agents/", g(T.handleAgentOne))
+	T.HandleFunc("/api/collections", g(T.handleCollections))
+	// More-specific path wins over /api/collections/ in Go's ServeMux,
+	// so this route serves the pre-create draft endpoint without
+	// colliding with handleCollectionOne's per-id paths.
+	T.HandleFunc("/api/collections/draft-description", g(T.handleCollectionDraftDescription))
+	T.HandleFunc("/api/collections/", g(T.handleCollectionOne))
+	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
+	T.HandleFunc("/api/sessions", g(T.handleSessionList))
+	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))
+	T.HandleFunc("/api/send", g(T.handleSendRouter))
+	T.HandleFunc("/api/cancel", g(T.handleCancelRouter))
+	T.HandleFunc("/api/confirm", g(T.handleConfirmRouter))
+	T.HandleFunc("/api/inject", g(T.handleInject))
+	T.HandleFunc("/api/settings/private", g(T.handlePrivateModeGet))
+	T.HandleFunc("/api/settings/private/set", g(T.handlePrivateModeSet))
+	T.HandleFunc("/api/settings/memory", g(T.handleMemoryModeGet))
+	T.HandleFunc("/api/settings/memory/set", g(T.handleMemoryModeSet))
+}
+
+// adminGated wraps an http.HandlerFunc so non-admin requests get a
+// 403 before the handler ever runs. Single-user / auth-disabled
+// deployments bypass the gate (no admin concept). Matches the
+// WebRestricted policy above so the landing page and direct URL
+// access can't disagree.
+func (T *OrchestrateApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if T.DB != nil && AuthHasUsers(T.DB) && !AuthIsAdmin(T.DB, r) {
+			http.Error(w, "Agency is admin-only", http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
+}
+
+// handleRoot routes the bare prefix (e.g. "/orchestrate/") to the
+// chat page and 404s anything else under "/" that fell through to
+// the catch-all.
+func (T *OrchestrateApp) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	T.handleChatPage(w, r)
+}
