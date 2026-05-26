@@ -3646,6 +3646,22 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				lastInProgressStep = cur
 				return true
 			}
+			// PendingWorkFn lets the agent-loop's wrap-up nudge know
+			// when there are still authorized plan steps queued, so it
+			// reframes "stop exploring" as "finish the current step
+			// and continue down the list." Without this, the worker
+			// reads the default wrap-up as license to skip remaining
+			// steps and write a summary — observed dropping ~5 steps
+			// from longer plans.
+			pendingPlanWork := func() int {
+				n := 0
+				for _, s := range plan.Snapshot() {
+					if s.Status == PlanStepPending || s.Status == PlanStepInProgress {
+						n++
+					}
+				}
+				return n
+			}
 			withHeartbeat(ctx, id, "Investigator", func() {
 				invResp, _, invErr = a.RunAgentLoop(ctx,
 					[]Message{{Role: "user", Content: invMsg.String()}},
@@ -3658,6 +3674,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 						SerialTools:     true,
 						ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
 						OnRoundReset:    stepResetCb,
+						PendingWorkFn:   pendingPlanWork,
 					},
 				)
 			})

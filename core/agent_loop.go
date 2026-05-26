@@ -189,6 +189,21 @@ type AgentLoopConfig struct {
 	// phase change?" and returns true exactly once per phase boundary.
 	OnRoundReset func() bool
 
+	// PendingWorkFn, when set, reports how many authorized work items
+	// (e.g. unfinished plan steps) still remain. The agent-loop's
+	// wrap-up warning uses this to distinguish "stop exploring" (the
+	// default) from "you still have N authorized items to finish — wind
+	// down this item cleanly and continue the list." Without this hook,
+	// the wrap-up nudge tells the model not to start new investigations,
+	// which a plan-driven worker can read as "abort the remaining plan
+	// steps and write a summary" — leading to clean wrap-ups that
+	// silently skip pending steps.
+	//
+	// Return the count of remaining items (pending + in-progress is
+	// usually right). 0 means "no more authorized work, exploration is
+	// up to you" and the default wrap-up text fires.
+	PendingWorkFn func() int
+
 	// DynamicTools, when set, is called at the top of each round to fetch
 	// runtime-defined tools to merge into the catalog. Used by apps that
 	// support session-scoped tools the LLM creates mid-conversation
@@ -516,15 +531,31 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// long-running flows that overrun the cap return whatever was
 		// last accumulated, which often looks "incomplete" to users.
 		// Fires once per session (wrapUpWarningFired flag).
+		//
+		// When PendingWorkFn is wired and reports remaining authorized
+		// items (e.g. plan steps not yet done), swap the message to one
+		// that distinguishes "wind down THIS item" from "wind down the
+		// whole task." Without that, a plan-driven worker reads "Do NOT
+		// start new investigations" as license to skip pending plan
+		// steps and write a summary instead.
 		if !wrapUpWarningFired && wrapUpThreshold > 0 && round >= wrapUpThreshold {
 			remaining := maxRounds - round + 1
 			Debug("[agent_loop] wrap-up warning at round %d/%d (%d remaining)", round, maxRounds, remaining)
-			history = append(history, Message{
-				Role: "user",
-				Content: fmt.Sprintf(
+			pending := 0
+			if cfg.PendingWorkFn != nil {
+				pending = cfg.PendingWorkFn()
+			}
+			var wrapUpMsg string
+			if pending > 0 {
+				wrapUpMsg = fmt.Sprintf(
+					"Budget checkpoint: %d rounds left of a %d-round budget, and %d authorized work item(s) still remain on your list. Finish the current item cleanly with a real result, then move to the next one — do NOT skip the remaining items and do NOT start new exploration outside the list. If you genuinely can't complete an item with the rounds remaining, mark it as such and continue.",
+					remaining, maxRounds, pending)
+			} else {
+				wrapUpMsg = fmt.Sprintf(
 					"You have %d rounds left of a %d-round budget. Stop exploring and produce a final answer NOW with what you've gathered. If the task isn't complete, summarize what you found, what you tried, and what's still open. Do NOT start new investigations — wind down cleanly.",
-					remaining, maxRounds),
-			})
+					remaining, maxRounds)
+			}
+			history = append(history, Message{Role: "user", Content: wrapUpMsg})
 			wrapUpWarningFired = true
 		}
 		// Pull dynamic tools (e.g. temp tools defined by the LLM via
