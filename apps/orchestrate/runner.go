@@ -215,6 +215,25 @@ type chatTurn struct {
 	// set AND surfaced freshly on every round.
 	staticTempToolNames map[string]bool
 
+	// lazyCustomToolNames is the set of custom (temp) tools that take
+	// arguments and are therefore presented to the LLM by name +
+	// description only (in a prompt section), NOT as full tool defs.
+	// They're loaded on demand via load_tool — keeping their verbose
+	// schemas out of the per-turn catalog. Zero-arg custom tools skip
+	// this (name+desc IS their schema, so they stay directly callable).
+	lazyCustomToolNames map[string]bool
+
+	// loadedCustomTools tracks which lazy custom tools the LLM has
+	// pulled in via load_tool this turn. The DynamicTools feed surfaces
+	// a lazy tool's full def only once it's here, so the schema enters
+	// the catalog exactly when the model commits to using it.
+	loadedCustomTools map[string]bool
+
+	// lazyCustomToolDefs maps a lazy custom tool's name to its full
+	// (already activity-wrapped) AgentToolDef, so load_tool can return
+	// the schema + mark it loaded without rebuilding the temp-tool set.
+	lazyCustomToolDefs map[string]AgentToolDef
+
 	// Active orchestrator bubble id — set by runPlan's streamHandler
 	// when text begins, cleared by onStepHandler at the round
 	// boundary. wrapToolsForActivity reads this to attach tool_call
@@ -938,6 +957,53 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	return sess
 }
 
+// loadToolToolDef builds the load_tool meta-tool. Custom (temp) tools
+// that take arguments are presented to the LLM by name + description
+// only (a prompt section), keeping their schemas out of the catalog.
+// load_tool fetches a named custom tool's full schema, marks it loaded
+// (so the DynamicTools feed surfaces it next round), and returns the
+// parameter spec so the LLM can call it correctly.
+func (t *chatTurn) loadToolToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "load_tool",
+			Description: "Load one of your custom tools so you can call it. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass the tool name; this returns its parameters and makes it callable on your next step. Only needed for custom tools shown as needing a load — built-in tools are always ready.",
+			Parameters: map[string]ToolParam{
+				"name": {Type: "string", Description: "Exact name of the custom tool to load (from the \"Your custom tools\" list)."},
+			},
+			Required: []string{"name"},
+			Caps:     nil, // control/meta — no side effects of its own
+		},
+		Handler: func(args map[string]any) (string, error) {
+			name := strings.TrimSpace(stringArg(args, "name"))
+			if name == "" {
+				return "", errors.New("name is required")
+			}
+			td, ok := t.lazyCustomToolDefs[name]
+			if !ok {
+				// Either it's already a directly-callable tool, or the
+				// name is wrong. Tell the LLM plainly so it doesn't loop.
+				if t.staticTempToolNames[name] {
+					return fmt.Sprintf("%q is already loaded — call it directly.", name), nil
+				}
+				return fmt.Sprintf("No custom tool named %q. Check the exact name in the \"Your custom tools\" list, or call find_tools to search.", name), nil
+			}
+			t.loadedCustomTools[name] = true
+			// Return the schema so the LLM can call it correctly this
+			// turn (the def also enters the catalog next round via the
+			// DynamicTools feed).
+			schema := map[string]any{
+				"name":        td.Tool.Name,
+				"description": td.Tool.Description,
+				"parameters":  td.Tool.Parameters,
+				"required":    td.Tool.Required,
+			}
+			b, _ := json.Marshal(schema)
+			return fmt.Sprintf("Loaded %q. It's now callable. Schema:\n%s", name, string(b)), nil
+		},
+	}
+}
+
 // dynamicTempTools returns a DynamicTools callback that exposes the
 // session's loaded temp tools to the agent loop each round. Wraps
 // each one through wrapToolsForActivity so they get the same inline
@@ -968,7 +1034,15 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 		out := make([]AgentToolDef, 0, len(raw))
 		for _, td := range raw {
 			if t.staticTempToolNames[td.Tool.Name] {
-				continue // already in the static catalog this turn
+				continue // zero-arg custom already in the static catalog
+			}
+			// Lazy (has-args) custom tools stay name+desc-only until the
+			// LLM loads them via load_tool — surface the full def only
+			// once loaded, so the schema enters the catalog exactly when
+			// it's needed. Brand-new mid-turn tools (in neither set) fall
+			// through and surface directly, preserving the verify flow.
+			if t.lazyCustomToolNames[td.Tool.Name] && !t.loadedCustomTools[td.Tool.Name] {
+				continue
 			}
 			out = append(out, td)
 		}
@@ -3327,6 +3401,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if ct, ok := LookupChatTool("find_tools"); ok {
 		knowTools = append(knowTools, ChatToolToAgentToolDef(ct))
 	}
+	// load_tool — gateway for the LLM's custom tools, which are
+	// presented by name+desc only (prompt section) to keep their
+	// verbose schemas out of the catalog. Always available; harmless
+	// when the agent has no lazy custom tools (LLM just never calls it).
+	knowTools = append(knowTools, t.loadToolToolDef())
 	// activate_skill — manual override for the classifier when context
 	// implies a skill match that triggers/embedding missed. Gated on
 	// DisableSkills (no tool when the agent has skills off).
@@ -3396,16 +3475,54 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// below knows to skip them (and only surface NEW temp tools
 	// created mid-turn).
 	Debug("[orchestrate.orch] runPlan: building temp tool defs")
-	staticTempTools := temptool.BuildAgentToolDefs(sess)
-	Debug("[orchestrate.orch] runPlan: wrapping %d temp tools", len(staticTempTools))
-	t.wrapToolsForActivity(sess, staticTempTools)
-	t.staticTempToolNames = make(map[string]bool, len(staticTempTools))
-	for _, td := range staticTempTools {
-		t.staticTempToolNames[td.Tool.Name] = true
+	allCustomTools := temptool.BuildAgentToolDefs(sess)
+	Debug("[orchestrate.orch] runPlan: %d custom tool(s)", len(allCustomTools))
+	t.wrapToolsForActivity(sess, allCustomTools)
+	// Custom (temp) tools are the unbounded, per-user, often-verbose
+	// category. Rather than inject every one's full schema into the
+	// catalog each turn (the bulk of a heavy orchestrator prompt), we
+	// present them by name + description in a prompt section and load
+	// the full schema on demand via load_tool. Zero-arg custom tools
+	// are the exception: their name+desc IS their schema, so they stay
+	// directly callable (a lookup would be pure overhead).
+	//
+	//   staticTempToolNames — zero-arg customs that go in the catalog now.
+	//   lazyCustomToolNames — has-args customs presented as name+desc.
+	t.staticTempToolNames = map[string]bool{}
+	t.lazyCustomToolNames = map[string]bool{}
+	t.loadedCustomTools = map[string]bool{}
+	t.lazyCustomToolDefs = map[string]AgentToolDef{}
+	var directCustomTools []AgentToolDef // zero-arg → callable now
+	var lazyCustomTools []AgentToolDef    // has-args → name+desc + load_tool
+	for _, td := range allCustomTools {
+		if len(td.Tool.Parameters) == 0 {
+			directCustomTools = append(directCustomTools, td)
+			t.staticTempToolNames[td.Tool.Name] = true
+		} else {
+			lazyCustomTools = append(lazyCustomTools, td)
+			t.lazyCustomToolNames[td.Tool.Name] = true
+			t.lazyCustomToolDefs[td.Tool.Name] = td
+		}
+	}
+	// Prompt section listing the lazy customs (name + desc). The LLM
+	// sees everything that exists — no discovery miss — and is told to
+	// load_tool before calling.
+	if len(lazyCustomTools) > 0 {
+		var b strings.Builder
+		b.WriteString("\n\n## Your custom tools (load before use)\n")
+		b.WriteString("These tools exist but their full definitions aren't loaded. To use one, call `load_tool(\"<name>\")` first — that returns its parameters and makes it callable. Then call it normally.\n\n")
+		for _, td := range lazyCustomTools {
+			desc := strings.TrimSpace(td.Tool.Description)
+			if len(desc) > 200 {
+				desc = desc[:200] + "…"
+			}
+			b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
+		}
+		sys += b.String()
 	}
 	allTools := append(controlTools, knowTools...)
 	allTools = append(allTools, workerTools...)
-	allTools = append(allTools, staticTempTools...)
+	allTools = append(allTools, directCustomTools...)
 	// Private-mode backstop for dynamically built AgentToolDefs (the
 	// `agents` grouped tool, temp tools, source-hooked tools, etc.).
 	// resolveWorkerTools only filters tools that exist in the global
