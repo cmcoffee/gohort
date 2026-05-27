@@ -3418,7 +3418,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// explicit knowTools injection is the right path for always-on
 	// framework infrastructure.
 	if ct, ok := LookupChatTool("find_tools"); ok {
-		knowTools = append(knowTools, ChatToolToAgentToolDef(ct))
+		// MUST bind the session — find_tools.RunWithSession searches the
+		// session's catalog; the bare ChatToolToAgentToolDef(ct) wires
+		// Handler=ct.Run, which hard-errors "find_tools requires a session
+		// context". Latent bug: find_tools is rarely called (vector
+		// pre-selection usually surfaces tools), so it only bit when an
+		// agent (Builder, mid-authoring) actually invoked it.
+		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(ct, sess))
 	}
 	// load_tool — gateway for the LLM's custom tools, which are
 	// presented by name+desc only (prompt section) to keep their
