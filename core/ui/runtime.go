@@ -2055,9 +2055,9 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 @media (max-width: 900px) {
   /* Mobile: chat fills the full visible viewport; the page header
-   * (back button) + top bundle (buttons row) sit ABOVE in flow and
-   * scroll out of view on first paint. User reveals them by
-   * scrolling up. Two independent rules combine to make this work:
+   * (title) + top bundle (buttons row) sit ABOVE in flow and scroll
+   * out of view on first paint. User reveals them by scrolling up.
+   * Two independent rules combine to make this work:
    *   - .ui-agent grows past viewport (no height/min-height cap) so
    *     page total = header + bundle + grid > viewport.
    *   - .ui-agent-grid is pinned to one full viewport height so the
@@ -2070,6 +2070,12 @@ body { min-height: 100vh; min-height: 100dvh; }
     height: 100vh;
     height: 100dvh;
   }
+  /* Hide the page back-link on chat-panel pages: the scroll-past
+   * layout is all about maximizing the convo pane, and the back-arrow
+   * is pure navigation chrome that just adds height above the fold
+   * when you scroll up. Browser back still works. Scoped via :has()
+   * so non-chat pages keep their back button. */
+  #ui-root:has(.ui-agent) .ui-back-link { display: none; }
 }
 .ui-agent-topbar {
   display: flex; flex-direction: column;
