@@ -2018,6 +2018,25 @@ func (t *chatTurn) resolveTopic() string {
 	return t.topic
 }
 
+// agentHasCuratedCorpus reports whether the agent has its OWN curated
+// knowledge worth auto-searching at turn start: an explicitly attached
+// collection, or it ingests uploads into its knowledge store
+// (IngestAttachments). When false — a plain chat agent like seed-chat —
+// the turn-start auto-inject is skipped entirely: no Embed call, no
+// chunk walk, and no "default = open" auto-pull of the whole deployment
+// KB into a general agent's context.
+//
+// Gated on DECLARED signals (cheap struct fields), not a chunk-count
+// probe — counting decrypts every chunk, exactly the cost we're
+// avoiding. Trade-off: an agent with docs manually uploaded via the
+// Knowledge modal but no IngestAttachments and no attached collection
+// won't auto-inject; it can still reach them via an explicit
+// knowledge_search. Enable IngestAttachments (or attach a collection)
+// to restore auto-RAG for such an agent.
+func (t *chatTurn) agentHasCuratedCorpus() bool {
+	return len(t.agent.AttachedCollections) > 0 || t.agent.IngestAttachments
+}
+
 // appendSearchOrderGuidance inserts a "knowledge before web" stub
 // into the system prompt when the agent has both a knowledge corpus
 // AND web tools enabled. Without this, most models default to
@@ -3440,6 +3459,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		knowTools = append(knowTools,
 			t.presentBuildPlanToolDef(),
 			t.markStepDoneToolDef(),
+			// pipeline (create / update / run / list / get / delete) —
+			// declarative multi-stage workflow authoring + management.
+			// Builder-only: authoring pipelines is Builder's job, same as
+			// create_agent. OTHER agents RUN pipelines via their attached
+			// run_<pipeline> tools (buildAttachedPipelineToolDefs), not
+			// this management surface — that keeps their catalog lean and
+			// centralizes authoring (no more pipeline-tool clutter +
+			// LLM oscillation on general agents).
+			t.pipelineGroupedToolDef(),
 		)
 	}
 	knowTools = append(knowTools,
@@ -3449,10 +3477,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// tools stay registered for backward compat with agent
 		// records that explicitly name them in AllowedTools.
 		t.agentsGroupedToolDef(),
-		// pipeline (create / run / list / get / delete) — declarative
-		// multi-stage workflows. Lets the LLM author + run reusable
-		// staged pipelines (decompose → stages → synthesize).
-		t.pipelineGroupedToolDef(),
 		// Recurring tasks — background work that posts back into this
 		// session at a fixed interval. Mirror of chat's schedule_chat_update
 		// flow, scoped per-(user, agent).
@@ -3527,6 +3551,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	allTools := append(controlTools, knowTools...)
 	allTools = append(allTools, workerTools...)
 	allTools = append(allTools, directCustomTools...)
+	// Attached pipelines — one callable tool per pipeline bolted onto
+	// this agent (AgentRecord.AttachedPipelines). Curated + tiny schema,
+	// so direct (not lazy load_tool). Wrap for activity so a pipeline run
+	// shows its tool_call / result in the convo + activity pane.
+	if attachedPipes := t.buildAttachedPipelineToolDefs(); len(attachedPipes) > 0 {
+		t.wrapToolsForActivity(sess, attachedPipes)
+		allTools = append(allTools, attachedPipes...)
+		Log("[orchestrate.tools] surfaced %d attached pipeline tool(s) for agent=%s", len(attachedPipes), t.agent.ID)
+	}
 	// Private-mode backstop for dynamically built AgentToolDefs (the
 	// `agents` grouped tool, temp tools, source-hooked tools, etc.).
 	// resolveWorkerTools only filters tools that exist in the global
@@ -3745,12 +3778,19 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		}
 	}
 
-	// Pre-plan retrieval — search the Knowledge layer (uploaded files)
-	// AND, unless Inferred is off, the Reference Memory layer (derived
-	// chunks) against the current user message. Knowledge is always
-	// on; only Inferred is gated. Empty corpus returns empty hits and
-	// the inject block is omitted.
-	{
+	// Pre-plan retrieval — search the agent's OWN curated knowledge
+	// (uploaded files + explicitly attached collections), CURATED-ONLY
+	// (ChunkScopeCuratedOnly), against the user message and inject any
+	// hits into the prompt. Reference Memory (derived chunks) is NOT in
+	// this path — it's pull-only via memory_search; Explicit facts ride
+	// the system prompt. So this is purely the Knowledge-layer RAG.
+	//
+	// GATED on agentHasCuratedCorpus(): a plain chat agent with no
+	// corpus skips the whole block — otherwise it pays an Embed + full
+	// chunk-walk every turn (a cold embedding endpoint spiked this to
+	// ~17s on a bare "hello") and, via the "default = open" rule,
+	// auto-pulls the entire deployment KB into a general agent's context.
+	if t.agentHasCuratedCorpus() {
 		if userMsg := lastUserContent(llmMsgs); userMsg != "" {
 			searchCtx, cancelSearch := context.WithTimeout(t.ctx, knowledgeIngestTimeout)
 			// Wider net when skills are active — they bring extra
@@ -3770,7 +3810,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// explicitly calling memory_search; pull-only beats
 			// push-injected for fuzzy/derived material.
 			scope := ChunkScopeCuratedOnly
-			hits := searchAgentKnowledge(searchCtx, t.app.DB, t.user, t.agent.ID, t.resolveTopic(), userMsg, autoInjectK, t.skillsActive, t.agent.AttachedCollections, scope)
+			// NOTE: pass generalTopic, NOT t.resolveTopic(). The topic
+			// slug is dead weight to searchAgentKnowledge — it scopes by
+			// SOURCE predicate (agent-corpus prefix + collections), never
+			// by topic, in both the embedding and substring paths. Calling
+			// resolveTopic() here used to BLOCK the main generation on the
+			// concurrent classify LLM call (~1.5s, up to ~10s if it thinks)
+			// for a value the search throws away. The classify still runs
+			// concurrently for knowledge STORAGE labeling; it just no longer
+			// gates time-to-answer.
+			hits := searchAgentKnowledge(searchCtx, t.app.DB, t.user, t.agent.ID, generalTopic, userMsg, autoInjectK, t.skillsActive, t.agent.AttachedCollections, scope)
 			cancelSearch()
 			// Min-similarity floor — vector search returns top-K
 			// regardless of score, so even a weak match (a chunk from

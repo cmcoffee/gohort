@@ -383,6 +383,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"hidden": {Type: "boolean", Description: "Optional. When true, this agent is hidden from OTHER agents' \"Available agents\" prompt block and the agents(run) dispatch handler refuses to call it — UNLESS a specific caller has it on their allowed_dispatch_targets list. Use for personal agents the user wants to chat with directly but doesn't want the fleet routing to. Default false (public to all callers)."},
 		"allowed_dispatch_targets": {Type: "array", Description: "Optional dispatch allowlist of agent IDs. Empty (default) = this agent can call ANY non-hidden agent in the fleet. Non-empty = restricted: this agent can ONLY call the listed targets (Hidden status of targets is ignored — explicit pick wins, so this also wires through to hidden specialists). Use to scope a specialist agent to only its relevant collaborators.", Items: &ToolParam{Type: "string"}},
 		"attached_collections": {Type: "array", Description: "Optional list of Document Collection IDs to merge into this agent's RAG search. Each attached collection's chunks surface alongside the agent's own knowledge during recall — same many-to-many shape as skills, but bound at the agent layer (no skill activation required). Use to give a topic-narrow agent a curated reference corpus without authoring a skill: one collection of K8s docs, another of internal runbooks, etc. Pass collection IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
+		"attached_pipelines": {Type: "array", Description: "Optional list of pipeline IDs (from pipeline action=list) to bolt onto this agent. Each attached pipeline becomes its OWN callable tool on the agent (named run_<pipeline>), so the agent can run that saved multi-stage workflow on demand without going through the generic pipeline tool. Use to give an agent a repeatable staged capability — e.g. a research agent with a \"decompose → investigate → synthesize\" pipeline always at hand. Pass pipeline IDs; author the pipeline first with the pipeline tool if it doesn't exist yet. Default empty.", Items: &ToolParam{Type: "string"}},
 		"ingest_attachments": {Type: "boolean", Description: "Optional. When true, the extracted text from any paperclip- or intake-form-uploaded document (PDF, DOCX, text) is ALSO ingested into the agent's vector knowledge store under topic=\"attachments\". Future sessions retrieve it via knowledge_search. Set for document-Q&A, resume-reviewer, contract-analyzer style agents where the upload is meant to be referenced repeatedly. Default false."},
 		"intake_form": {
 			Type:        "array",
@@ -391,7 +392,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		},
 		"tools": {
 			Type:        "array",
-			Description: "Optional agent-scoped tools that auto-load whenever this agent runs. Use for bespoke pipelines/shell/api tools tied to THIS agent's job — e.g. a research agent can ship its own \"lookup_company\" pipeline tool without polluting the user-wide tool pool. Each entry is a TempTool object: {name, description, params, mode, command_template, body_template, credential, method, pipeline_prompt, pipeline_tools[], pipeline_max_rounds}. mode is \"shell\" / \"api\" / \"pipeline\"; pick the same way you would for top-level create_temp_tool / create_api_tool / create_pipeline_tool. Two agents can each carry a \"research_company\" with different prompts — agent scope keeps them independent. Don't ALSO add these names to allowed_tools; agent-scoped tools attach automatically.",
+			Description: "Optional agent-scoped tools that auto-load whenever this agent runs. Use for bespoke shell/api tools tied to THIS agent's job — e.g. a research agent can ship its own \"lookup_company\" api tool without polluting the user-wide tool pool. Each entry is a TempTool object: {name, description, params, mode, command_template, body_template, credential, method}. mode is \"shell\" or \"api\". Two agents can each carry a \"lookup_company\" with different configs — agent scope keeps them independent. Don't ALSO add these names to allowed_tools; agent-scoped tools attach automatically. For a multi-stage workflow, don't author a tool — create a declarative pipeline (the pipeline tool) and attach it via attached_pipelines.",
 			Items:       &ToolParam{Type: "object"},
 		},
 		"evals": {
@@ -460,6 +461,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	if _, ok := args["attached_collections"]; ok {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
 	}
+	if _, ok := args["attached_pipelines"]; ok {
+		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")
+	}
 	if v, ok := args["ingest_attachments"].(bool); ok {
 		rec.IngestAttachments = v
 	}
@@ -526,6 +530,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if _, ok := args["attached_collections"]; ok {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
+	}
+	if _, ok := args["attached_pipelines"]; ok {
+		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")
 	}
 	if v, ok := args["ingest_attachments"].(bool); ok {
 		rec.IngestAttachments = v

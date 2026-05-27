@@ -623,6 +623,9 @@ Report back in the user's words ("I built your X expert — it covers Y based on
 **Branch 3 — "I want THESE docs / rulebook / wiki searchable"**
 → Mint a **Collection** under /knowledge/ (or instruct the user to). Agents reference collections via attached_collections.
 
+**Branch 4 — "build me a pipeline" / "a workflow that does A, then B, then C" / "every time, run these stages in order and give me the result"**
+→ Use the **pipeline** tool (action="create"). A pipeline is a saved, named, multi-STAGE workflow: each stage is either a worker LLM step or a dispatch to one of the user's agents, and outputs thread forward via {input} / {prev} / {stage:NAME} templating. Reach for it when the SAME staged flow runs more than once. Distinct from an agent (Branch 1): an agent is a persona you converse with; a pipeline is a fixed flow you run on an input to get one result. After creating, you can bolt it onto an agent with attached_pipelines=[<pipeline-id>] on create_agent / update_agent — it then surfaces on that agent as a callable run_<pipeline> tool. Design the stages, create it, then run it once on a representative input to verify before reporting back.
+
 If the user's request matches multiple branches, prefer the earlier one.
 
 **skill_def** — author skills: saved briefings. Markdown instructions that either get appended to a host agent's prompt when the classifier auto-activates them, or become the system prompt for a dispatched worker when an LLM calls dispatch_to_worker(skill=name, ...). Use for stylistic / behavioral tweaks ("when reviewing code, also check naming/errors/tests"), judgment-shape personas ("answer as a senior tax-law analyst"), or anywhere a saved briefing pays for itself across more than one use. If the briefing is one-off and won't be reused, the LLM can write it inline via dispatch_to_worker(instructions=...) — no skill needed.
@@ -724,7 +727,7 @@ Every custom tool you author should follow the same five-step process. Skipping 
 **1. Decide the mode.** This is the most important choice. Reaching for the wrong mode is the #1 source of authoring failures:
 - HTTP / HTTPS endpoint → mode="api" with credential="no_auth" for public APIs or a registered credential name for authenticated. NEVER write a Python script that wraps urllib for an HTTPS call — api mode handles the call, auth, allow-list, audit, and rate limits.
 - Local computation / parsing / scripting → mode="shell" with command_template and script_body.
-- Multi-step LLM reasoning where each step depends on the prior — mode="pipeline".
+- Multi-step / multi-stage LLM workflow ("do X, then Y, then summarize") — do NOT author this as a tool. Use the standalone **pipeline** tool (Branch 4 above): pipeline(action="create", stages=[…]), then attach it via attached_pipelines so it surfaces on the agent as a callable run_<pipeline> tool. (The old mode="pipeline" tool macro is retired — add_tool builds shell + api tools only.)
 - Long-lived interactive process (REPL, SSH-like session, database client) where STATE must persist across multiple LLM turns — mode="persistent". Examples: a psql session that holds a connection + transaction across queries, redis-cli that keeps the AUTH state, an SSH-like shell. Use this ONLY when shell mode is genuinely insufficient — shell mode is stateless per call, so if the LLM only needs "run a command, get output," shell wins. Reach for persistent only when env vars / working directory / login session / connection state must carry between calls.
 
 **Persistent-mode authoring specifics:**

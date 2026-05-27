@@ -248,6 +248,14 @@ type AgentRecord struct {
 	// surfaces (uploaded knowledge + Reference Memory).
 	AttachedCollections []string `json:"attached_collections,omitempty"`
 
+	// AttachedPipelines lists pipeline def IDs this agent can run as
+	// tools. Each attached pipeline surfaces as a callable tool on the
+	// agent's catalog (lazy-loaded, like custom tools): calling it runs
+	// the pipeline on the supplied input and returns the final output.
+	// Lets a pipeline be a reusable capability bolted onto an agent,
+	// the same way attached_collections bolt on reference corpora.
+	AttachedPipelines []string `json:"attached_pipelines,omitempty"`
+
 	// Hidden controls whether this agent is discoverable / callable
 	// by OTHER agents in the fleet. Default false = public: appears
 	// in every other agent's "Available agents" prompt block and is

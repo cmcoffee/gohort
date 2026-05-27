@@ -152,9 +152,13 @@ func classifyTopicForQuestion(ctx context.Context, app *OrchestrateApp, db Datab
 	sys := "Pick a short topic slug (snake_case, 1-3 words) that best categorizes the user's question for knowledge-base storage. Reuse existing topics when applicable. Reply with ONLY the slug, no explanation." + hint
 	cctx, cancel := context.WithTimeout(ctx, classifyTopicTimeout)
 	defer cancel()
+	// Thinking OFF: picking a snake_case slug is a deterministic
+	// classification, not a reasoning task. Without this the worker
+	// burns its full thinking budget (~10s, up toward classifyTopicTimeout)
+	// deliberating over a 1-3 word label — same waste the ack avoids.
 	resp, err := app.WorkerChat(cctx,
 		[]Message{{Role: "user", Content: question}},
-		WithSystemPrompt(sys), WithMaxTokens(20),
+		WithSystemPrompt(sys), WithMaxTokens(20), WithThink(false),
 	)
 	if err != nil || resp == nil {
 		return generalTopic

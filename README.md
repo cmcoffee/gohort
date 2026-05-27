@@ -20,9 +20,10 @@ Apps register themselves via `init()` and compose framework primitives (`FormPan
 
 ### Authoring surface
 - **Chat-is-authoring** — Builder is the front door. Tell it "make me an agent for X" or "set up a workflow that does Y" and it creates/updates/clones/deletes the right thing. Runtime-enforced exclusivity keeps authoring out of other agents.
-- **Three primitives** to compose: **agents** (persona + tool surface), **skills** (conditional prompt addendums with optional vector corpus that self-trains via post-turn closer), **collections** (RAG-attachable document buckets, deployment-wide or per-user).
+- **Four primitives** to compose: **agents** (persona + tool surface), **skills** (conditional prompt addendums with optional vector corpus that self-trains via post-turn closer), **collections** (RAG-attachable document buckets, deployment-wide or per-user), and **pipelines** (declarative multi-stage workflows — author once, attach to any agent as a callable tool).
+- **Pipelines** — a saved, ordered stage list (each stage a worker LLM step or a dispatch to one of your agents; outputs thread forward via `{input}`/`{prev}`/`{stage:NAME}` templating). Author from chat via Builder, attach to an agent with `attached_pipelines` (it surfaces as a callable `run_<pipeline>` tool), run it, export/import the recipe as portable JSON, and view/delete from the admin panel. The recipe is plain data with no identity baked in, so it travels.
 - **Hidden + allowlist controls** — agents can be hidden from the fleet's `agents(action="run")` dispatch, or restricted to a specific allowlist of callers. Per-(user, agent) memory + knowledge stores keep tenants isolated.
-- **Runtime-defined tools** — LLM can author shell-mode, api-mode, and pipeline-mode tools mid-conversation via Builder; persistence requires admin approval through the pending-tool queue.
+- **Runtime-defined tools** — Builder authors shell-mode and api-mode tools mid-conversation; persistence requires admin approval through the pending-tool queue. Multi-stage work is authored as a declarative **pipeline** (above), not a tool.
 - **Tool groups + classifier-trim** — admin-curated bundles collapse related tools into one expandable catalog entry; the runtime vector-classifier surfaces only the top-K most relevant tools per turn when the catalog gets large.
 
 ### LLM infrastructure
@@ -190,8 +191,8 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 
 | App | Purpose |
 |-----|---------|
-| `admin` | Administrator panel — user management, app permissions, secure-API credentials, pending-tool approval, skills curation, tool groups, **all service config** (LLM, embeddings, STT, image gen, search, SMTP, network, cost rates), maintenance one-shots, scheduled tasks |
-| `orchestrate` | Agency — central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory + knowledge; plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; SSE streaming + interjections |
+| `admin` | Administrator panel — user management, app permissions, secure-API credentials, pending-tool approval, skills curation, tool groups, pipeline view/delete (across all users), **all service config** (LLM, embeddings, STT, image gen, search, SMTP, network, cost rates), maintenance one-shots, scheduled tasks |
+| `orchestrate` | Agency — central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory + knowledge; plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; attachable pipelines surfaced as callable tools; SSE streaming + interjections |
 | `agents` | Public per-agent surface — exposed agents from Agency get individual `/agents/<slug>/` URLs (admins flip Exposed=true; end-users get a chat surface scoped to that one agent) |
 | `knowledge` | Document Collections — shared / per-user RAG buckets agents attach to. Upload PDFs/DOCX/text; autofill from web with optional LLM judge; FilterRules-driven scope |
 | `phantom` | iMessage assistant — gatekeeper, per-conversation curation, chat-scoped vector knowledge, async agent dispatch with SMS-friendly digestion, scheduled callbacks |
@@ -203,7 +204,9 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 
 ## Where it's going
 
-The toolkit composes today around **agents + skills + collections**. The next layer is **pipelines**: a declarative DSL for multi-stage workflows (decomposition → parallel sub-questions → synthesis), plus a **source-hook registry** for pluggable cached upstream APIs and a **multi-agent turn primitive** for parallel-agent stages with synthesis. With those three pieces in place, an end-user could compose a "janky version" of a research / debate / investigation pipeline from chat — Builder picks the shape (agent or pipeline) based on intent, then dispatches to a hidden **Pipeline Builder** sub-agent for multi-stage authoring.
+The toolkit composes today around **agents + skills + collections + pipelines**. Pipelines have landed as a first-class primitive: declarative multi-stage workflows (decompose → stages → synthesize) authored from chat, attached to any agent as a callable `run_<pipeline>` tool, run inline, exported/imported as portable JSON, and governed from the admin panel — Builder picks the shape (agent or pipeline) based on intent.
+
+Still ahead: parallel **fanout** stages (run one stage across N inputs and collect, e.g. one per sub-question), a **source-hook registry** for pluggable cached upstream APIs, and a **multi-agent turn primitive** for parallel-agent stages with synthesis. With those, an end-user could compose a full multi-stage research-style workflow end to end from chat.
 
 The framework's mission: each new app either uses existing primitives or proves a new one needs to exist. The toolkit compounds — the next app is faster to build than the last.
 

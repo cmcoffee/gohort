@@ -183,6 +183,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_knowledge_modal"},
 						{Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
 							Method: "client", URL: "orchestrate_skills_modal"},
+						{Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
+							Method: "client", URL: "orchestrate_pipelines_modal"},
 						{Label: "Rules", Title: "Review and edit the active agent's standing rules",
 							Method: "client", URL: "orchestrate_rules_modal"},
 						{Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",

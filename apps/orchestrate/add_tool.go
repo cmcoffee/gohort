@@ -31,16 +31,19 @@ import (
 // tool by name, list it, or call it — it's structurally bound to
 // Builder's runtime path.
 
-// pipelineAuthoringDisabled gates pipeline-mode tool authoring from
-// the chat surface. Was turned ON when pipeline tools were a recurring
-// loop source — the LLM kept oscillating between authoring surfaces
-// even after many guards. Re-enabling experimentally: pipelines were
-// authored cleanly before the build-plan / focus-slot / two-turn
-// machinery accumulated, and the standalone tool_def path bypasses
-// most of that. If loops resurface, flip back; the standalone
-// tool_def(mode="pipeline", ...) surface is the path to validate
-// first since it skirts the agent-CRUD gates.
-const pipelineAuthoringDisabled = false
+// pipelineAuthoringDisabled retires pipeline-MODE tool authoring from
+// the chat surface. PERMANENTLY on: the declarative `pipeline` tool
+// (core.PipelineDef — author, attach via attached_pipelines, run, export,
+// admin-govern) fully supersedes the old "a tool that wraps a sub-agent"
+// macro. Keeping both alive only bred confusion — agents ended up with a
+// declarative run_<pipeline> tool AND bare-named mode="pipeline" macro
+// tools doing overlapping work, and the LLM oscillated between them.
+//
+// This gates the AUTHORING paths only (add_tool / create_pipeline_tool).
+// The dispatch machinery stays so any EXISTING mode="pipeline" tools keep
+// working; they just can't be authored anew. New multi-stage workflows
+// go through the `pipeline` tool.
+const pipelineAuthoringDisabled = true
 
 type addToolTool struct{}
 
@@ -55,7 +58,7 @@ func (addToolTool) Desc() string {
 	base += "  - mode=\"shell\":    a sandboxed shell command template. Use for deterministic file/data ops (\"count lines\", \"extract emails\").\n" +
 		"  - mode=\"api\":      a single HTTP call against a registered credential. Use for \"look this up in our system\" patterns.\n"
 	if pipelineAuthoringDisabled {
-		base += "\nNOTE: pipeline-mode tool authoring is currently disabled. Use shell or api modes; if a tool genuinely needs LLM reasoning between steps, design the agent without it (use the orchestrator_prompt to instruct the agent to chain primitive tools inline)."
+		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[…]) and attach it to the agent via attached_pipelines — it surfaces as a callable run_<pipeline> tool."
 	}
 	base += "\nRe-calling with the same name overwrites — that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call get_agent or create_agent first."
 	return base
@@ -70,7 +73,7 @@ func (addToolTool) Params() map[string]ToolParam {
 			Type: "string",
 			Description: func() string {
 				if pipelineAuthoringDisabled {
-					return "One of \"shell\", \"api\". Each branch validates the required fields for that mode. (Pipeline mode is currently disabled platform-wide.)"
+					return "One of \"shell\", \"api\". Each branch validates the required fields for that mode. (Pipeline mode is retired — use the `pipeline` tool for multi-stage workflows.)"
 				}
 				return "One of \"pipeline\", \"shell\", \"api\". Each branch validates the required fields for that mode."
 			}(),
@@ -177,7 +180,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	switch mode {
 	case "pipeline":
 		if pipelineAuthoringDisabled {
-			return "", errors.New("pipeline-mode tool authoring is currently disabled for diagnostic testing — author the same logic by combining shell and api tools (mode=\"shell\" or mode=\"api\") and chaining via the agent's orchestrator_prompt instructions. If the work genuinely requires multi-step sub-agent reasoning, finish the agent with shell/api tools for now and the user can author the pipeline manually later via the admin UI")
+			return "", errors.New("pipeline-mode tool authoring is retired. For a multi-step workflow, author a declarative pipeline with the `pipeline` tool (action=\"create\", name=…, stages=[{name, kind:\"worker\"|\"agent\", prompt, agent?}]), then attach it to this agent via attached_pipelines on create_agent/update_agent — it surfaces as a callable run_<pipeline> tool. For single-step work, use mode=\"shell\" or mode=\"api\" here")
 		}
 		prompt := strings.TrimSpace(stringArg(args, "pipeline_prompt"))
 		steps := pipelineStepsFromArgs(args, "pipeline_steps")
@@ -235,7 +238,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		tt.Credential = credential
 		tt.ResponsePipe = stringArg(args, "response_pipe")
 	default:
-		return "", fmt.Errorf("unknown mode %q — must be one of \"shell\", \"api\", \"pipeline\"", mode)
+		return "", fmt.Errorf("unknown mode %q — must be \"shell\" or \"api\" (pipeline mode is retired; use the `pipeline` tool for multi-stage workflows)", mode)
 	}
 
 	// Attach to the focused agent's tools[]. Idempotent replace by name.

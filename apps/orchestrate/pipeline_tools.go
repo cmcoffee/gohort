@@ -136,7 +136,7 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 		},
 		Handler: func(args map[string]any) (string, error) {
 			if pipelineAuthoringDisabled {
-				return "", errors.New("create_pipeline_tool is currently disabled for diagnostic testing — pipeline-mode tool authoring is off across the platform right now. Author the same logic using create_temp_tool (shell) or create_api_tool (api) instead, or hand the design to the user and let them create the pipeline tool manually via the admin UI later")
+				return "", errors.New("create_pipeline_tool is retired — the old 'tool that wraps a sub-agent' macro is superseded by the declarative `pipeline` tool. Author a multi-stage workflow with pipeline(action=\"create\", name=…, stages=[…]) and attach it to the agent via attached_pipelines; it surfaces as a callable run_<pipeline> tool")
 			}
 			name := strings.TrimSpace(stringArg(args, "name"))
 			if name == "" {

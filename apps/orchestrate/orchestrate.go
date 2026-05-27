@@ -203,6 +203,12 @@ func (T *OrchestrateApp) Routes() {
 	// colliding with handleCollectionOne's per-id paths.
 	T.HandleFunc("/api/collections/draft-description", g(T.handleCollectionDraftDescription))
 	T.HandleFunc("/api/collections/", g(T.handleCollectionOne))
+	T.HandleFunc("/api/pipelines", g(T.handlePipelines))
+	// More-specific path wins over /api/pipelines/ in Go's ServeMux, so
+	// import gets its own handler without colliding with the per-id
+	// routes (get/put/delete/export/run) in handlePipelineOne.
+	T.HandleFunc("/api/pipelines/import", g(T.handlePipelineImport))
+	T.HandleFunc("/api/pipelines/", g(T.handlePipelineOne))
 	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
 	T.HandleFunc("/api/sessions", g(T.handleSessionList))
 	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))

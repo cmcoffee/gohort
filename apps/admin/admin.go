@@ -1210,6 +1210,75 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// upserts (id empty = create, present = update) — Builder
 	// authors most of these but the admin UI is the canonical
 	// "list/edit/toggle/delete" surface. DELETE drops one by id.
+	// Pipelines — declarative multi-stage workflows (core.PipelineDef),
+	// stored per-user in orchestrate. Admins see the whole deployment:
+	// the list walks every user's store and attributes each pipeline to
+	// its owner. GET lists; DELETE ?id= removes one (pipeline IDs are
+	// UUIDs, so the owner is resolved by scanning — no owner param needed).
+	// Authoring lives in Agency (the pipeline tool / Builder); this is a
+	// read + prune surface, mirroring the Skills section.
+	sub.HandleFunc("/api/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		// Pipelines are stored in orchestrate's per-app bucket
+		// (get_agentstore("orchestrate") = global.db.Bucket("orchestrate")),
+		// then per-user via UserDB — NOT in RootDB like skills/temp-tools
+		// (those resolve to RootDB internally). So admin must reach into
+		// the same bucket orchestrate writes to; a.db (= global.db / RootDB)
+		// alone misses them. This couples admin to orchestrate's app name,
+		// which is acceptable: admin is the deployment console.
+		orchestrateBase := a.db.Bucket("orchestrate")
+		switch r.Method {
+		case http.MethodGet:
+			type wire struct {
+				ID          string      `json:"id"`
+				Owner       string      `json:"owner"`
+				Name        string      `json:"name"`
+				Description string      `json:"description"`
+				Stages      int         `json:"stages"`
+				Detail      PipelineDef `json:"detail"`
+			}
+			var out []wire
+			for _, u := range AuthListUsers(a.db) {
+				udb := UserDB(orchestrateBase, u.Username)
+				if udb == nil {
+					continue
+				}
+				for _, d := range ListPipelineDefs(udb, u.Username) {
+					out = append(out, wire{
+						ID: d.ID, Owner: u.Username, Name: d.Name,
+						Description: d.Description, Stages: len(d.Stages), Detail: d,
+					})
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"pipelines": out})
+		case http.MethodDelete:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				http.Error(w, "id required", http.StatusBadRequest)
+				return
+			}
+			for _, u := range AuthListUsers(a.db) {
+				udb := UserDB(orchestrateBase, u.Username)
+				if udb == nil {
+					continue
+				}
+				if _, ok := LoadPipelineDef(udb, u.Username, id); ok {
+					DeletePipelineDef(udb, id)
+					Log("[admin] %q deleted pipeline %s (owner=%q)", AuthCurrentUser(r), id, u.Username)
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{"deleted": id})
+					return
+				}
+			}
+			http.NotFound(w, r)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	sub.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return

@@ -1448,6 +1448,7 @@ const orchestrateWebAssets = `<style>
             : (raw && Array.isArray(raw.sources)) ? raw.sources
             : (raw && Array.isArray(raw.collections)) ? raw.collections
             : (raw && Array.isArray(raw.skills)) ? raw.skills
+            : (raw && Array.isArray(raw.pipelines)) ? raw.pipelines
             : [];
           if (items.length === 0) {
             var emp = document.createElement('div');
@@ -2560,6 +2561,45 @@ const orchestrateWebAssets = `<style>
         };
       });
 
+      // --- Pipelines modal -------------------------------------------
+      // Attach saved pipelines to this agent. Each toggled-on pipeline
+      // becomes a callable run_<pipeline> tool on the agent (see
+      // buildAttachedPipelineToolDefs). Reuses the generic allowlist
+      // picker against /api/pipelines + the attached_pipelines field;
+      // toggling commits immediately via the full-record POST.
+      window.uiRegisterClientAction('orchestrate_pipelines_modal', function() {
+        var id = getAgentID();
+        if (!id) { alert('Pick an agent first.'); return; }
+        var m = openOrchModal('Pipelines');
+        var body = m.body;
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'Attach saved multi-stage pipelines to this agent. Each attached pipeline becomes a callable tool (run_<pipeline>) the agent can run on demand. Author pipelines from chat with the pipeline tool.';
+        body.appendChild(help);
+
+        var pipesWrap = document.createElement('div');
+        var ph = document.createElement('div');
+        ph.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+        ph.textContent = 'Attached pipelines';
+        pipesWrap.appendChild(ph);
+        var pHelp = document.createElement('div');
+        pHelp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
+        pHelp.textContent = 'Toggle to attach or detach. Attached pipelines run synchronously and return their final stage output to the agent.';
+        pipesWrap.appendChild(pHelp);
+        var pipesList = document.createElement('div');
+        pipesList.style.cssText = 'display:flex;flex-direction:column;gap:0.3rem';
+        pipesWrap.appendChild(pipesList);
+        body.appendChild(pipesWrap);
+
+        renderAllowlistPicker({
+          host: pipesList,
+          listURL: 'api/pipelines',
+          agentField: 'attached_pipelines',
+          agentID: id,
+          emptyText: '(no pipelines yet — author one from chat with the pipeline tool)'
+        });
+      });
+
       // --- Skills modal ----------------------------------------------
       // Active skills allowlist for this agent.
       window.uiRegisterClientAction('orchestrate_skills_modal', function() {
@@ -3464,7 +3504,8 @@ const orchestrateWebAssets = `<style>
         else clearIntakeForm();
       }, 500);
 
-      // Relocate the Tools / Memory / Knowledge / Rules buttons into
+      // Relocate the Tools / Memory / Knowledge / Skills / Pipelines /
+      // Rules buttons into
       // the modes row so they sit on the same line as the Private toggle —
       // chat-context affordances live together, leaving the actions
       // bar for record-level operations (New / Edit / Clone / Export /
@@ -3475,7 +3516,7 @@ const orchestrateWebAssets = `<style>
         var actionsBar = document.querySelector('.ui-agent-actions');
         var modesRow = document.querySelector('.ui-agent-modes');
         if (!actionsBar || !modesRow) { setTimeout(relocateContextButtons, 200); return; }
-        var names = {Tools: true, Memory: true, Knowledge: true, Skills: true, Rules: true};
+        var names = {Tools: true, Memory: true, Knowledge: true, Skills: true, Pipelines: true, Rules: true};
         var moved = 0;
         Array.prototype.slice.call(actionsBar.querySelectorAll('.ui-row-btn')).forEach(function(b) {
           var label = b.textContent.replace(/\s*\([^)]*\)\s*$/, '').trim();
@@ -3502,17 +3543,33 @@ const orchestrateWebAssets = `<style>
         }).then(function(list) {
           if (!list) return;
           var prev = sel.value;
-          // listAgents server-side already merges seeds with per-user
-          // shadows so each agent appears exactly once. Sort by name
-          // for stable display.
-          list.sort(function(a, b) {
-            return (a.name || '').localeCompare(b.name || '');
+          // Rebuild WITH the Built-in / Custom optgroups, mirroring the
+          // server-side initial render in page_chat.go. A flat rebuild
+          // here dropped the divisions whenever an agents_changed event
+          // fired (create / clone / delete / Builder authoring), so the
+          // categories "sometimes went away." Keep the same builtInOrder
+          // partition + sort so the rebuilt dropdown matches the first
+          // paint exactly. (listAgents server-side already merges seeds
+          // with per-user shadows, so each agent appears once.)
+          var builtInOrder = {'seed-builder': 0, 'seed-chat': 1, 'seed-research': 2, 'seed-kb': 3};
+          var builtIns = [], customs = [];
+          list.forEach(function(a) {
+            if (a.id in builtInOrder) { builtIns.push(a); }
+            else { customs.push(a); }
           });
+          builtIns.sort(function(a, b) { return builtInOrder[a.id] - builtInOrder[b.id]; });
+          customs.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
           sel.innerHTML = '';
           sel.appendChild(new Option('— select agent —', ''));
-          list.forEach(function(a) {
-            sel.appendChild(new Option(a.name, a.id));
-          });
+          function addAgentGroup(label, rows) {
+            if (!rows.length) return;
+            var og = document.createElement('optgroup');
+            og.label = label;
+            rows.forEach(function(a) { og.appendChild(new Option(a.name, a.id)); });
+            sel.appendChild(og);
+          }
+          addAgentGroup('Built-in', builtIns);
+          addAgentGroup('Custom', customs);
           // Restore selection. If the previously-selected agent
           // was deleted, fall back to seed-chat so the page isn't
           // left in the placeholder state.

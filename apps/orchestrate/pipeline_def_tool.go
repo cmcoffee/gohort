@@ -179,6 +179,22 @@ func (t *chatTurn) pipelineRun(args map[string]any) (string, error) {
 	if input == "" {
 		return "", errors.New("input is required to run a pipeline")
 	}
+	return t.runPipelineDefInline(def, input)
+}
+
+// runPipelineDefInline executes a pipeline def synchronously inside the
+// current turn and returns the final stage's output. Shared by the
+// grouped `pipeline` tool's run action and the per-agent attached-
+// pipeline tools — both want the result inline to continue the turn,
+// with per-stage progress narrated into the activity pane.
+//
+// Agent stages dispatch through RunAgentSync (scoped to this user). Sync
+// (not RunPipelineDefAsync) because the LLM called this inline and needs
+// the answer to keep going; orchestrate has no auto-promotion path to
+// deliver an async result back into the turn, so a fire-and-forget run
+// would strand the output. The per-stage status emits keep the user
+// oriented during the (potentially slow) multi-stage run.
+func (t *chatTurn) runPipelineDefInline(def PipelineDef, input string) (string, error) {
 	dispatch := func(ctx context.Context, agentID, stageInput string) (string, error) {
 		// Agent stages run as the same user; RunAgentSync resolves the
 		// agent from the user's store and dispatches with isolated

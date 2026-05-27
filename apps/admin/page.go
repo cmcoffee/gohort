@@ -901,6 +901,31 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Pipelines",
+				Subtitle: "Declarative multi-stage workflows authored in Agency (the pipeline tool, or via Builder). This surface lists every user's pipelines and lets you inspect the stages or delete a definition. Deleting one also drops it from any agent it was attached to.",
+				Body: ui.Table{
+					Source:       "api/pipelines",
+					RecordsField: "pipelines",
+					RowKey:       "id",
+					Columns: []ui.Col{
+						{Field: "owner", Label: "Owner", Flex: 1, Mute: true},
+						{Field: "name", Label: "Name", Flex: 1},
+						{Field: "description", Label: "Description", Flex: 2, Mute: true},
+						{Field: "stages", Label: "Stages", Flex: 0},
+					},
+					RowActions: []ui.RowAction{
+						ui.Expand("View", ui.JSONView{Field: "detail", Title: "Definition"}),
+						{Type: "button", Label: "Delete",
+							PostTo:     "api/pipelines?id={id}",
+							Method:     "DELETE",
+							Confirm:    "Delete this pipeline definition? It's removed for the owning user and detached from any agent that used it. Authoring it again means re-creating the stages.",
+							Variant:    "danger",
+							Optimistic: true},
+					},
+					EmptyText: "No pipelines defined. They're authored in Agency via the pipeline tool or Builder.",
+				},
+			},
+			{
 				Title:    "Local Model Scheduler",
 				Subtitle: "Concurrent-request caps for local LLM backends. Default 1 (strict serial). Raise only when the backend supports parallel requests. Requires restart to apply.",
 				Body: ui.FormPanel{
