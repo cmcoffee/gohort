@@ -234,6 +234,15 @@ type chatTurn struct {
 	// the schema + mark it loaded without rebuilding the temp-tool set.
 	lazyCustomToolDefs map[string]AgentToolDef
 
+	// builderPinnedTools is the set of Builder's authoring tool names
+	// (create_agent, add_tool, skill_def, …) that must survive the
+	// per-turn classifier-trim. They're appended to the worker pool in
+	// resolveWorkerTools, but without pinning a research-flavored message
+	// would trim them out — leaving Builder unable to author and prone to
+	// delegating via `agents` instead of doing the work itself. Empty for
+	// non-Builder agents. Read by runPlan's classifierTrimTools call.
+	builderPinnedTools map[string]bool
+
 	// Active orchestrator bubble id — set by runPlan's streamHandler
 	// when text begins, cleared by onStepHandler at the round
 	// boundary. wrapToolsForActivity reads this to attach tool_call
@@ -460,7 +469,7 @@ func (t *chatTurn) renderAvailableSkillsBlock() string {
 // matches first; ties get stable ordering by name. Anything below
 // threshold OR beyond k is dropped from THIS turn's catalog but
 // still callable via find_tools.
-func classifierTrimTools(ctx context.Context, msgs []ChatMessage, tools []AgentToolDef, names []string) ([]AgentToolDef, []string) {
+func classifierTrimTools(ctx context.Context, msgs []ChatMessage, tools []AgentToolDef, names []string, alwaysKeep map[string]bool) ([]AgentToolDef, []string) {
 	if len(tools) <= classifierKeepBudget {
 		return tools, names
 	}
@@ -487,7 +496,7 @@ func classifierTrimTools(ctx context.Context, msgs []ChatMessage, tools []AgentT
 		// so they'd never be in `keep` — but they're always-on
 		// safety nets and have to stay in the catalog regardless
 		// of what the classifier matched this turn.
-		if keep[t.Tool.Name] || IsFrameworkToolDef(t) {
+		if keep[t.Tool.Name] || IsFrameworkToolDef(t) || alwaysKeep[t.Tool.Name] {
 			keptTools = append(keptTools, t)
 			if i < len(names) {
 				keptNames = append(keptNames, names[i])
@@ -1205,8 +1214,17 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession) ([]AgentToolDef, []stri
 	if isBuilderAgent(t.agent.ID) {
 		extra := builderInternalTools(sess)
 		tools = append(tools, extra...)
+		// Pin every builder-internal tool past the classifier-trim:
+		// authoring IS Builder's job, so create_agent / add_tool /
+		// skill_def / tool_def / collections / call_<cred> must always
+		// be in its catalog regardless of what this turn's message
+		// happens to match. Without this they get trimmed on a
+		// research-flavored turn and Builder, missing its tools, falls
+		// back to delegating via `agents`.
+		t.builderPinnedTools = make(map[string]bool, len(extra))
 		for _, td := range extra {
 			toolNames = append(toolNames, td.Tool.Name)
+			t.builderPinnedTools[td.Tool.Name] = true
 		}
 	}
 	// Active skills can bring extra tools into the catalog. Resolve
@@ -3382,7 +3400,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// sentinel still short-circuits (nothing to trim).
 	if !isNoToolsSentinel(t.agent.AllowedTools) && len(workerTools) > classifierKeepBudget {
 		before := len(workerTools)
-		workerTools, workerNames = classifierTrimTools(t.ctx, msgs, workerTools, workerNames)
+		workerTools, workerNames = classifierTrimTools(t.ctx, msgs, workerTools, workerNames, t.builderPinnedTools)
 		Log("[orchestrate.orch] classifier-trim: %d worker tools → %d (agent=%s)", before, len(workerTools), t.agent.ID)
 	}
 	workerTools, workerNames = filterToolAuthoringWithoutFocus(workerTools, workerNames, t.session)
