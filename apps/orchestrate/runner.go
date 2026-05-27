@@ -3615,6 +3615,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	var streamedBuf strings.Builder
 	var lastFinalizedID string
 	var lastRoundHadContent bool
+	// shownText accumulates the text of EVERY finalized bubble this
+	// turn. emitCapturedAsBubble checks it so a respond_directly that
+	// repeats text the model already streamed in a prior round doesn't
+	// double-emit (stream answer in round 1 → respond_directly same
+	// text in round 2 → two identical bubbles). lastRoundHadContent
+	// alone misses this because round 2 (tool-only) resets it.
+	var shownText strings.Builder
 	streamHandler := func(chunk string) {
 		if chunk == "" {
 			return
@@ -3683,6 +3690,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return
 		}
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+		shownText.WriteString(cleaned)
+		shownText.WriteString("\n")
 		lastFinalizedID = id
 		lastRoundHadContent = true
 		streamMsgID = ""
@@ -3857,6 +3866,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	}
 	if finalID != "" {
 		t.sse.Send(map[string]any{"kind": "message_done", "id": finalID})
+		if streamedBuf.Len() > 0 {
+			shownText.WriteString(strings.TrimSpace(StripToolCallMarkup(streamedBuf.String())))
+			shownText.WriteString("\n")
+		}
 		lastFinalizedID = finalID
 		lastRoundHadContent = streamedBuf.Len() > 0
 		streamMsgID = ""
@@ -3878,6 +3891,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// bubble the user gets.
 	emitCapturedAsBubble := func(text string) {
 		if text == "" || lastRoundHadContent {
+			return
+		}
+		// Skip if the model already streamed this text in an earlier
+		// round's bubble (stream-then-respond_directly with identical
+		// content). Trimmed-substring match: respond_directly's arg is
+		// usually verbatim what streamed, sometimes with trailing
+		// whitespace differences.
+		if trimmed := strings.TrimSpace(text); trimmed != "" &&
+			strings.Contains(shownText.String(), trimmed) {
 			return
 		}
 		id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
