@@ -20,6 +20,19 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <style>
+/* Mobile: hide the activity + terminal (xterm) panes so the
+   conversation fills the screen. On a phone there's no room for the
+   3-pane investigator layout, and the activity/terminal are
+   observability surfaces the user rarely drives from a phone.
+   Approval prompts render in the conversation pane (not the activity
+   pane), so nothing the user must act on is hidden by this. The
+   convo's flex-grow makes it claim the freed width. */
+@media (max-width: 900px) {
+  .ui-agent-right { display: none !important; }
+  .ui-agent-divider { display: none !important; }
+  .ui-agent-activity-expand { display: none !important; }
+  .ui-agent-convo { flex: 1 1 100% !important; }
+}
 .ui-servitor-intent {
   background: var(--bg-2);
   border-left: 3px solid var(--accent);

@@ -780,7 +780,6 @@ The lessons log is the user's running record of THEIR preferences for how YOU bu
 
 Examples of what belongs in the log:
 - "User prefers terse persona descriptions (3-5 sentences), never paragraphs."
-- "User wants agent names in lowercase_underscore form, never CamelCase."
 - "When user says 'a Y agent', they mean it should ALSO have research tools by default."
 - "User prefers intake forms for document-Q&A agents; chat-first for everything else."
 - "User likes one focused skill over multiple narrow skills."
@@ -1328,6 +1327,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	}
 	if action == "knowledge/auto-inferred" {
 		T.handleAgentKnowledgeAutoInferredWipe(w, r, user, id)
+		return
+	}
+	if action == "knowledge/scaffold-collection" {
+		T.handleAgentKnowledgeScaffoldCollection(w, r, user, udb, id)
 		return
 	}
 	if action == "knowledge/upload" {

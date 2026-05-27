@@ -261,6 +261,65 @@ func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWri
 	}
 }
 
+// handleAgentKnowledgeScaffoldCollection creates an empty Document
+// Collection seeded from the agent's own name + description and
+// attaches it to the agent. Plain reuse — name becomes "<agent>
+// Knowledge", description copies the agent's verbatim. No LLM
+// authoring; the user (or Builder, on request) refines later via
+// the standard Knowledge surface.
+//
+//	POST /api/agents/{id}/knowledge/scaffold-collection
+//	→ {id, name, description}
+func (T *OrchestrateApp) handleAgentKnowledgeScaffoldCollection(w http.ResponseWriter, r *http.Request, user string, udb Database, agentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	a, ok := loadAgent(udb, agentID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if a.Owner != user && a.Owner != seedOwner {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	agentName := strings.TrimSpace(a.Name)
+	if agentName == "" {
+		http.Error(w, "agent has no name", http.StatusBadRequest)
+		return
+	}
+	c := Collection{
+		ID:          UUIDv4(),
+		Owner:       user,
+		Name:        agentName + " Knowledge",
+		Description: strings.TrimSpace(a.Description),
+		Created:     time.Now(),
+	}
+	saveCollection(udb, c)
+
+	already := false
+	for _, cid := range a.AttachedCollections {
+		if cid == c.ID {
+			already = true
+			break
+		}
+	}
+	if !already {
+		a.AttachedCollections = append(a.AttachedCollections, c.ID)
+		if _, serr := saveAgent(udb, a); serr != nil {
+			Log("[orchestrate.knowledge] scaffold-collection: saved collection but failed to attach to agent=%s: %v", agentID, serr)
+		}
+	}
+	Log("[orchestrate.knowledge] user=%q scaffolded collection %q (id=%s) for agent=%s", user, c.Name, c.ID, agentID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"id":          c.ID,
+		"name":        c.Name,
+		"description": c.Description,
+	})
+}
+
 // handleAgentInferredList returns the agent's Reference Memory entries
 // (derived chunks — chunkProvenance=="derived"). Used by the Memory
 // modal to render the prune-able list. Read-only listing; deletion
@@ -1115,8 +1174,8 @@ func (t *chatTurn) saveMemoryToolDef() AgentToolDef {
 			// Default to the turn's classified topic when the LLM omitted
 			// or sent something that collapsed to the fallback. Keeps
 			// namespacing sharp even when the worker skips the arg.
-			if topic == generalTopic && t.topic != "" {
-				topic = t.topic
+			if rt := t.resolveTopic(); topic == generalTopic && rt != "" {
+				topic = rt
 			}
 			subject := strings.TrimSpace(stringArg(args, "subject"))
 			if subject == "" {
@@ -1179,7 +1238,7 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 			// empty string to deliberately broaden to agent-wide.
 			topic := normalizeTopic(stringArg(args, "topic"))
 			if topic == generalTopic {
-				topic = t.topic
+				topic = t.resolveTopic()
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
@@ -1267,7 +1326,7 @@ func (t *chatTurn) searchMemoryToolDef() AgentToolDef {
 			}
 			topic := normalizeTopic(stringArg(args, "topic"))
 			if topic == generalTopic {
-				topic = t.topic
+				topic = t.resolveTopic()
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
@@ -1342,7 +1401,7 @@ func (t *chatTurn) forgetMemoryToolDef() AgentToolDef {
 			}
 			topic := normalizeTopic(stringArg(args, "topic"))
 			if topic == generalTopic {
-				topic = t.topic
+				topic = t.resolveTopic()
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()

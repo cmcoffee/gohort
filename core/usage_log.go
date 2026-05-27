@@ -20,7 +20,30 @@ import (
 
 const usageDailyTable = "usage_daily"
 
-var usageDailyMu sync.Mutex
+// dropLegacyUsageDaily wipes the usage_daily table once per deployment.
+// The original table held pre-DailyCost values (a non-struct shape)
+// that the kvlite layer Fatal-exits on when decoded into the current
+// DailyCost type. Drop-and-start-fresh is right because the chart
+// re-aggregates from the registered scanners on every render and
+// nothing else reads this table — old data was never accessible.
+//
+// Fires via MigrationRunner so the marker shows up in the admin
+// Migrations section ("ran at X, dropped N keys") and never repeats.
+func dropLegacyUsageDaily() {
+	NewMigrationRunner("core", "").Once("drop_legacy_usage_daily:v1", func() int {
+		if RootDB == nil {
+			return 0
+		}
+		n := len(RootDB.Keys(usageDailyTable))
+		RootDB.Drop(usageDailyTable)
+		return n
+	})
+}
+
+var (
+	usageDailyMu       sync.Mutex
+	usageDailyDropOnce sync.Once
+)
 
 // recordDailyUsage rolls a single call's UsageDiff into today's
 // entry. No-op when RootDB is unset (early init, CLI tools without a
@@ -35,6 +58,7 @@ func recordDailyUsage(diff UsageDiff) {
 		diff.SearchCalls == 0 && diff.ImageCalls == 0 {
 		return
 	}
+	usageDailyDropOnce.Do(dropLegacyUsageDaily)
 	day := time.Now().UTC().Format("2006-01-02")
 	usageDailyMu.Lock()
 	defer usageDailyMu.Unlock()
@@ -69,6 +93,7 @@ func scanDailyUsage() []DatedUsage {
 	if RootDB == nil {
 		return nil
 	}
+	usageDailyDropOnce.Do(dropLegacyUsageDaily)
 	usageDailyMu.Lock()
 	defer usageDailyMu.Unlock()
 	var out []DatedUsage

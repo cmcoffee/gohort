@@ -157,127 +157,16 @@ var (
 	confirmChans       sync.Map // session_id -> chan bool
 	pendingCmds        sync.Map // session_id -> command string currently awaiting confirmation
 	termBuffers        sync.Map // "userID:applianceID" -> *termBuffer; persistent command+output log mirrored to any connected terminal WebSocket
-	injectionQueues    sync.Map // session_id -> *injectionQueue (mid-flight user notes for the chat orchestrator)
 	sessionAppliances  sync.Map // session_id -> applianceID (for building resume URLs in the dashboard live-sessions panel)
 )
 
-// maxInjectionQueueDepth caps how many user notes may pile up between
-// orchestrator decision points. Beyond this, the oldest note is dropped
-// and the user is told via a status event.
-const maxInjectionQueueDepth = 5
-
-// injectionNote is a single mid-flight user note awaiting orchestrator pickup.
-// Each note has a stable ID so the user can edit or delete it before it's
-// drained. EditLocked notes are held out of Drain — the user is actively
-// editing them and the orchestrator must not consume the note until the
-// user finishes (commit via Update, or cancel via Unlock).
-type injectionNote struct {
-	ID         string
-	Text       string
-	EditLocked bool
-}
-
-// injectionQueue holds mid-flight user notes for a single chat session.
-// Drained at the top of each orchestrator round; workers never see it.
-type injectionQueue struct {
-	mu    sync.Mutex
-	notes []injectionNote
-}
-
-// Push appends a note and returns its ID. The bool indicates whether the
-// note was added cleanly (true) or whether the oldest entry was dropped to
-// make room because the queue was at capacity (false).
-func (q *injectionQueue) Push(text string) (string, bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	n := injectionNote{ID: UUIDv4(), Text: text}
-	dropped := false
-	if len(q.notes) >= maxInjectionQueueDepth {
-		q.notes = q.notes[1:]
-		dropped = true
-	}
-	q.notes = append(q.notes, n)
-	return n.ID, !dropped
-}
-
-// Update replaces the text of a queued note and clears its edit lock (commit
-// path). Returns false if the note has already been drained or never existed.
-func (q *injectionQueue) Update(id, text string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for i := range q.notes {
-		if q.notes[i].ID == id {
-			q.notes[i].Text = text
-			q.notes[i].EditLocked = false
-			return true
-		}
-	}
-	return false
-}
-
-// Lock marks a note as edit-locked so Drain skips it. Use when the user
-// opens the inline editor on a queued note.
-func (q *injectionQueue) Lock(id string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for i := range q.notes {
-		if q.notes[i].ID == id {
-			q.notes[i].EditLocked = true
-			return true
-		}
-	}
-	return false
-}
-
-// Unlock clears the edit lock without changing the text. Use when the user
-// cancels an in-progress edit so the note becomes drainable again.
-func (q *injectionQueue) Unlock(id string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for i := range q.notes {
-		if q.notes[i].ID == id {
-			q.notes[i].EditLocked = false
-			return true
-		}
-	}
-	return false
-}
-
-// Delete removes a queued note. Returns false if the note has already been
-// drained or never existed.
-func (q *injectionQueue) Delete(id string) bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	for i, n := range q.notes {
-		if n.ID == id {
-			q.notes = append(q.notes[:i], q.notes[i+1:]...)
-			return true
-		}
-	}
-	return false
-}
-
-// Drain returns all unlocked notes and removes them from the queue.
-// Edit-locked notes stay queued — the orchestrator picks them up only after
-// the user commits or cancels the edit.
-func (q *injectionQueue) Drain() []injectionNote {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if len(q.notes) == 0 {
-		return nil
-	}
-	var taken []injectionNote
-	var kept []injectionNote
-	for _, n := range q.notes {
-		if n.EditLocked {
-			kept = append(kept, n)
-		} else {
-			taken = append(taken, n)
-		}
-	}
-	q.notes = kept
-	return taken
-}
+// Mid-flight injection-queue types + registry were lifted into
+// core/injection.go so phantom and orchestrate can share the same
+// machinery. Aliases keep existing call sites in this file terse;
+// the registry helpers (RegisterInjectionQueue / LookupInjectionQueue
+// / ReleaseInjectionQueue) sit on top of a shared sync.Map in core.
+type injectionQueue = InjectionQueue
+type injectionNote = InjectionNote
 
 // termBuffer is the per-(user+appliance) persistent terminal log.
 // Every command + output mirrored from a worker session lands here
@@ -793,8 +682,10 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Pre-create the injection queue so /api/inject finds it immediately
 	// (the user could plausibly inject before the worker goroutine even
-	// installs OnRoundStart).
-	injectionQueues.Store(sid, &injectionQueue{})
+	// installs OnRoundStart). Servitor doesn't gate by owner today —
+	// RequireUser in handleInject confirms the requester is logged in,
+	// no per-queue cross-check — so the registration leaves Owner empty.
+	RegisterInjectionQueue(sid, "", "")
 
 	go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, false, supplements)
 
@@ -831,12 +722,11 @@ func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	v, ok := injectionQueues.Load(req.ID)
-	if !ok {
+	q := LookupInjectionQueue(req.ID)
+	if q == nil {
 		http.Error(w, "session not found or not interjectable", http.StatusNotFound)
 		return
 	}
-	q := v.(*injectionQueue)
 
 	switch r.Method {
 	case http.MethodPost:
@@ -948,18 +838,17 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		// Command-type appliances: map the command's CLI structure.
 		go T.runMapAppSession(ctx, sid, userID, appliance, appliance.Command, ch, udb)
 	} else {
-		var mapMsg string
-		if appliance.Profile != "" {
-			mapMsg = fmt.Sprintf(
-				"Update and extend the existing profile for the Linux appliance at %s (connected as %s). Verify key facts are still current, discover anything new, and produce a complete refreshed profile.",
-				appliance.Host, appliance.User,
-			)
-		} else {
-			mapMsg = fmt.Sprintf(
-				"Perform a complete reconnaissance and profile of the Linux appliance at %s (connected as %s). Be systematic and thorough. Discover all services, configurations, and log file locations.",
-				appliance.Host, appliance.User,
-			)
-		}
+		// Every Map System press does a FULL re-mapping — fresh
+		// reconnaissance regardless of whether a profile already
+		// exists. The previous "update and extend" path on re-runs
+		// produced incremental drift; users hit Map System when they
+		// want a clean re-derivation. Facts (stored separately in
+		// the appliance facts table) survive the re-map; only the
+		// profile blob is overwritten.
+		mapMsg := fmt.Sprintf(
+			"Perform a complete reconnaissance and profile of the Linux appliance at %s (connected as %s). Be systematic and thorough. Discover all services, configurations, and log file locations.",
+			appliance.Host, appliance.User,
+		)
 		hist := []Message{{Role: "user", Content: mapMsg}}
 		go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, true, nil)
 	}
@@ -1741,56 +1630,28 @@ func parseProbeOutcome(result string) string {
 // checks, merge new findings with previous knowledge, and produce a complete
 // refreshed document — not a diff and not a replacement that discards prior data.
 func buildMapSystemPrompt(base string, appliance Appliance) string {
-	if appliance.Profile == "" {
-		var b strings.Builder
-		writePersona(&b, appliance)
-		b.WriteString(base)
-		b.WriteString("\n\n")
-		writeInstructions(&b, appliance)
-		b.WriteString("As you map this system, work through all ten investigation phases completely. " +
-			"Do not skip a phase because you think the system is simple — a minimal system with few services still deserves full log discovery, security posture review, and scheduled job enumeration. " +
-			"After every command that returns a concrete value, call `store_fact` immediately — one fact per call. " +
-			"Work autonomously to completion without pausing.\n\n" +
-			"DATABASE AUTH RULE (mandatory): The first time you successfully authenticate to any database engine, you MUST immediately call BOTH:\n" +
-			"  • `record_technique` — exact working command, e.g. 'MySQL root: mysql -u root (no password, unix socket)'\n" +
-			"  • `store_fact` — key: `mysql_auth` / `postgres_auth` / `redis_auth` / `mongo_auth`, value: exact working command\n" +
-			"This is not optional. These are consulted before every future database access attempt.\n\n" +
-			mapExecutionProtocol + "\n\n")
-		b.WriteString(asciiDiagramRule)
-		return b.String()
-	}
+	// Every Map System run is a fresh, complete reconnaissance — the
+	// previous "update and extend" branch on re-runs left the
+	// investigator anchored to the prior profile (and often the prior
+	// plan), which produced incremental drift instead of the
+	// re-derivation the operator asked for. Facts + techniques +
+	// discoveries from prior runs live in their own tables and
+	// persist across re-maps; only the profile blob is rewritten.
 	var b strings.Builder
 	writePersona(&b, appliance)
 	b.WriteString(base)
 	b.WriteString("\n\n")
 	writeInstructions(&b, appliance)
-	b.WriteString("## Existing Profile (last scanned: ")
-	b.WriteString(appliance.Scanned)
-	b.WriteString(")\n\n")
-	b.WriteString("An existing profile is stored for this appliance. Your task is to UPDATE and EXTEND it:\n\n")
-	b.WriteString("1. Verify key facts are still current (hostname, running services, IPs, open ports).\n")
-	b.WriteString("2. Run targeted checks for anything that may have changed since the last scan.\n")
-	b.WriteString("3. Discover any new services, packages, users, or log files not in the existing profile.\n")
-	b.WriteString("4. PRESERVE all existing knowledge — do not drop sections or entries that are still valid.\n")
-	b.WriteString("5. Note any meaningful changes (e.g. a service that was running is now stopped).\n")
-	b.WriteString("6. As you work through each step, call `store_fact` immediately after each command returns a concrete value — version strings, listening ports, config paths, service statuses, user accounts, network topology. One call per fact, right when you discover it. These facts are pre-injected into every future chat session so questions can be answered without re-running commands.\n\n")
-	b.WriteString("Produce a single complete updated Markdown profile. Do NOT produce a diff — produce the full document.\n")
-	b.WriteString("For any service, config, or log path you did not deeply investigate last time, investigate it fully now. " +
-		"Follow every lead. After each command returning a concrete value, call `store_fact` immediately. " +
+	b.WriteString("As you map this system, work through all ten investigation phases completely. " +
+		"Do not skip a phase because you think the system is simple — a minimal system with few services still deserves full log discovery, security posture review, and scheduled job enumeration. " +
+		"After every command that returns a concrete value, call `store_fact` immediately — one fact per call. " +
 		"Work autonomously to completion without pausing.\n\n" +
-		"DATABASE AUTH RULE (mandatory): When you verify or re-discover a working database auth method, call BOTH " +
-		"`record_technique` (exact command) AND `store_fact` (key: `mysql_auth`/`postgres_auth`/`redis_auth`/`mongo_auth`). " +
-		"These are consulted before every future database access attempt so nothing is re-discovered unnecessarily.\n\n" +
+		"DATABASE AUTH RULE (mandatory): The first time you successfully authenticate to any database engine, you MUST immediately call BOTH:\n" +
+		"  • `record_technique` — exact working command, e.g. 'MySQL root: mysql -u root (no password, unix socket)'\n" +
+		"  • `store_fact` — key: `mysql_auth` / `postgres_auth` / `redis_auth` / `mongo_auth`, value: exact working command\n" +
+		"This is not optional. These are consulted before every future database access attempt.\n\n" +
 		mapExecutionProtocol + "\n\n")
 	b.WriteString(asciiDiagramRule)
-	b.WriteString(appliance.Profile)
-	if len(appliance.LogMap) > 0 {
-		b.WriteString("\n\n## Previously Discovered Log Files\n\n")
-		b.WriteString("These log files were found in the previous scan. Verify they still exist and add any new ones you find.\n\n")
-		for _, e := range appliance.LogMap {
-			b.WriteString(fmt.Sprintf("- **%s** `%s` — %s\n", e.Service, e.Path, e.Desc))
-		}
-	}
 	return b.String()
 }
 
@@ -2191,7 +2052,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	defer func() {
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
-		injectionQueues.Delete(id)
+		ReleaseInjectionQueue(id)
 		sessionAppliances.Delete(id)
 		probeSessions.AppendEvent(id, probeEvent{Kind: "done"}, true)
 		probeSessions.ScheduleCleanup(id)
@@ -3579,6 +3440,18 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			}
 
 			var invMsg strings.Builder
+			// Re-mapping banner — when the appliance already had a
+			// profile coming into this run, the prior facts /
+			// discoveries / techniques below can mislead the
+			// investigator into skipping the plan ("we already know
+			// this system"). Spell out that this is a fresh re-derivation
+			// before listing the prior context so the LLM doesn't read
+			// the prior data as "work is done."
+			if saveProfile && strings.TrimSpace(appliance.Profile) != "" {
+				invMsg.WriteString("## RE-MAPPING (full re-derivation)\n\n")
+				invMsg.WriteString("This system was mapped before — prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
+				invMsg.WriteString("You MUST emit a fresh `set_plan` as your first tool call. The previous plan is gone; treat this run as a clean slate that benefits from prior context, not as a continuation.\n\n")
+			}
 			invMsg.WriteString("## System Snapshot\n\n")
 			if snapshot != "" {
 				invMsg.WriteString(snapshot)
@@ -3662,6 +3535,61 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 				return n
 			}
+			// Per-step stuck detector — when the investigator burns too
+			// many rounds on a single step without advancing, inject a
+			// nudge urging it to mark the step blocked and move on. The
+			// 75-round budget is fleet-wide; without this guard the LLM
+			// can spend 40+ rounds wrestling with one bad path while
+			// every other plan step goes untouched, then hit the
+			// wrap-up nudge with most of the plan still pending.
+			//
+			// Thresholds:
+			//   - Soft nudge at 12 rounds on one step: "consider marking blocked"
+			//   - Firm nudge at 20 rounds: "mark blocked NOW and move on"
+			//
+			// The nudges are one-shot per step transition — when the
+			// LLM advances to a new step, the counter resets and the
+			// flags clear so subsequent steps get the same grace period.
+			stuckTrackedStep := 0
+			stuckRoundCount := 0
+			softNudgeFired := false
+			firmNudgeFired := false
+			stuckMsgFn := func() []Message {
+				curStep := 0
+				stepTitle := ""
+				for _, s := range plan.Snapshot() {
+					if s.Status == PlanStepInProgress {
+						curStep = s.ID
+						stepTitle = s.Title
+						break
+					}
+				}
+				if curStep == 0 {
+					// No step in progress (pre-plan, between steps, or
+					// final wrap-up). Don't count and don't nudge.
+					return nil
+				}
+				if curStep != stuckTrackedStep {
+					stuckTrackedStep = curStep
+					stuckRoundCount = 0
+					softNudgeFired = false
+					firmNudgeFired = false
+				}
+				stuckRoundCount++
+				if stuckRoundCount == 12 && !softNudgeFired {
+					softNudgeFired = true
+					return []Message{{Role: "user", Content: fmt.Sprintf(
+						"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. The skip-and-revisit pattern says — if 2-3 reasonable angles have dead-ended, call mark_step_blocked with a short reason and move to the next step. Coming back fresh after working other steps is faster than continuing to grind. Don't burn more than 8 more rounds here.",
+						curStep, stepTitle)}}
+				}
+				if stuckRoundCount == 20 && !firmNudgeFired {
+					firmNudgeFired = true
+					return []Message{{Role: "user", Content: fmt.Sprintf(
+						"Hard pacing limit: you've spent 20 rounds on step %d (%q). Call mark_step_blocked NOW with whatever reason fits — you can revisit later if other steps reveal a new angle. Then call mark_step_in_progress on the next pending step. Continuing on this step costs the rest of the plan.",
+						curStep, stepTitle)}}
+				}
+				return nil
+			}
 			withHeartbeat(ctx, id, "Investigator", func() {
 				invResp, _, invErr = a.RunAgentLoop(ctx,
 					[]Message{{Role: "user", Content: invMsg.String()}},
@@ -3674,6 +3602,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 						SerialTools:     true,
 						ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
 						OnRoundReset:    stepResetCb,
+						OnRoundStart:    stuckMsgFn,
 						PendingWorkFn:   pendingPlanWork,
 					},
 				)
@@ -3933,10 +3862,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		// Resolve the per-session injection queue so the orchestrator picks
 		// up mid-flight user notes between rounds. Workers don't get the hook
 		// — they finish their current task before the orchestrator sees the note.
-		var injQ *injectionQueue
-		if v, ok := injectionQueues.Load(id); ok {
-			injQ = v.(*injectionQueue)
-		}
+		injQ := LookupInjectionQueue(id)
 		drainInjections := func() []Message {
 			if injQ == nil {
 				return nil
@@ -3971,7 +3897,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				MaskDebugOutput: true,
 				SerialTools:     true,
 				ChatOptions:     append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
-				OnRoundStart:    drainInjections,
+				// InjectionDrain (not OnRoundStart): drainInjections empties
+				// its queue and returns nil when nothing's pending, so the
+				// loop's pre-finalize re-call terminates cleanly. This also
+				// gets the pre-finalize protection — a note that lands during
+				// the final round is picked up before the answer is written.
+				InjectionDrain: drainInjections,
 				OnStep: func(step StepInfo) {
 					if step.Done && strings.TrimSpace(step.Content) != "" {
 						emit(id, probeEvent{Kind: "status", Text: "Investigator: synthesizing answer…"})
@@ -4082,6 +4013,33 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			udb.Set(applianceTable, appliance.ID, existing)
 			extractDocsFromProfile(udb, appliance.ID, reply)
 		}
+		// Mint a workspace for this map run so the user has a place
+		// to follow up — Q&A entries, supplements, synthesis — all
+		// anchored to the snapshot we just captured. The workspace
+		// seed entry pairs the mapping prompt as question and the
+		// freshly produced profile as answer, giving the user
+		// immediate context when they open it.
+		ts := time.Now()
+		dateStr := ts.Format("2006-01-02 15:04")
+		seedQuestion := "Initial mapping of " + appliance.Name
+		if strings.TrimSpace(appliance.Profile) != "" {
+			// appliance.Profile is the BEFORE-run snapshot (parameter
+			// to runSession), so non-empty means this is a re-map.
+			seedQuestion = "Re-mapping of " + appliance.Name
+		}
+		mapWS := DocWorkspace{
+			ID:          UUIDv4(),
+			ApplianceID: appliance.ID,
+			Name:        "Map: " + appliance.Name + " (" + dateStr + ")",
+			Created:     ts.Format(time.RFC3339),
+			Entries: []WorkspaceEntry{{
+				Question:  seedQuestion,
+				Answer:    reply,
+				Timestamp: ts.Format(time.RFC3339),
+			}},
+		}
+		saveWorkspace(udb, mapWS)
+		emit(id, probeEvent{Kind: "status", Text: "Workspace created: " + mapWS.Name})
 	}
 }
 

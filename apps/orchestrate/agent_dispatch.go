@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -188,6 +189,158 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 		return "", errors.New("agent returned no response")
 	}
 	return strings.TrimSpace(resp.Content), nil
+}
+
+// RunAgentSyncContinuing is RunAgentSync's continuation variant —
+// loads prior messages from the named sub-session before running so
+// the target picks up where it left off, and persists the new
+// (user, assistant) exchange back so subsequent calls see it too.
+//
+// Used by callers that promote a previously-dispatched agent into
+// a side-conversation (phantom's processMessage promotion path,
+// orchestrate's handleSend promotion path). The subSessionID picks
+// the storage slot; pass the same ID across promotion turns to get
+// continuity, or a fresh ID for an isolated thread.
+//
+// Optional injectionQueueID — when non-empty, the agent loop drains
+// the named injection queue between rounds (mid-flight user notes
+// arriving while this dispatch is in flight). Pass "" to disable.
+func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string) (string, error) {
+	if T == nil || T.LLM == nil {
+		return "", errors.New("orchestrate runtime not initialized")
+	}
+	if agentOwner == "" {
+		return "", errors.New("agentOwner is required")
+	}
+	if runtimeUser == "" {
+		runtimeUser = agentOwner
+	}
+	if strings.TrimSpace(message) == "" {
+		return "", errors.New("message is required")
+	}
+	ownerDB := UserDB(T.DB, agentOwner)
+	if ownerDB == nil {
+		return "", fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+	}
+	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
+	if !ok {
+		return "", fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+	}
+	runtimeDB := ownerDB
+	if runtimeUser != agentOwner {
+		runtimeDB = UserDB(T.DB, runtimeUser)
+		if runtimeDB == nil {
+			return "", fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+		}
+	}
+	if subSessionID == "" {
+		subSessionID = "external-dispatch:" + runtimeUser + ":" + target.ID
+	}
+	subSess := &ToolSession{
+		LLM:           T.LLM,
+		LeadLLM:       T.LeadLLM,
+		Username:      runtimeUser,
+		DB:            runtimeDB,
+		ChatSessionID: subSessionID,
+	}
+	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
+		subSess.WorkspaceDir = ws
+	}
+	defer clearAuthoringInProgress(runtimeDB, subSessionID)
+	defer DeleteSessionTempTools(runtimeDB, subSessionID)
+	toolNames := target.AllowedTools
+	if len(toolNames) == 0 {
+		for _, td := range RegisteredChatTools() {
+			toolNames = append(toolNames, td.Name())
+		}
+	}
+	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
+	if err != nil {
+		tools = nil
+		for _, n := range toolNames {
+			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
+				tools = append(tools, td[0])
+			}
+		}
+	}
+	if isBuilderAgent(target.ID) {
+		tools = append(tools, builderInternalTools(subSess)...)
+	}
+	subFacts := ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
+	// Load prior session (if any) and build history.
+	priorSession, _ := loadChatSession(runtimeDB, target.ID, subSessionID)
+	if priorSession.ID == "" {
+		priorSession.ID = subSessionID
+		priorSession.AgentID = target.ID
+		priorSession.Created = time.Now()
+	}
+	deliveredMessage := markAsDelegated(message)
+	llmMessages := make([]Message, 0, len(priorSession.Messages)+1)
+	for _, m := range priorSession.Messages {
+		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
+	}
+	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMessage})
+
+	// Optional injection-queue drain hook for mid-flight user notes.
+	// Cheap no-op when the queue isn't registered.
+	var onRoundStart func() []Message
+	if injectionQueueID != "" {
+		onRoundStart = func() []Message {
+			q := LookupInjectionQueue(injectionQueueID)
+			if q == nil {
+				return nil
+			}
+			drained := q.Drain()
+			if len(drained) == 0 {
+				return nil
+			}
+			out := make([]Message, 0, len(drained))
+			for _, n := range drained {
+				out = append(out, Message{
+					Role:    "user",
+					Content: "[MID-FLIGHT NOTE — submitted by the user while this run was in progress] " + n.Text,
+				})
+			}
+			return out
+		}
+	}
+
+	f := false
+	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
+		SystemPrompt: sysPrompt,
+		Tools:        tools,
+		MaxRounds:    resolveMaxWorkerRounds(target),
+		Confirm:      func(name, args string) bool { return true },
+		// InjectionDrain (not OnRoundStart): the queue-drain closure
+		// returns nil when empty, so the loop's pre-finalize re-call
+		// terminates. A mid-flight note pushed while this dispatch runs
+		// gets picked up at the next round AND right before finalizing.
+		InjectionDrain: onRoundStart,
+		ChatOptions: []ChatOption{
+			WithRouteKey("app.orchestrate.worker"),
+			WithThink(f),
+		},
+	})
+	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
+		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
+	if runErr != nil {
+		return "", runErr
+	}
+	if resp == nil {
+		return "", errors.New("agent returned no response")
+	}
+	cleanReply := strings.TrimSpace(resp.Content)
+	// Persist the new exchange for the next continuation.
+	now := time.Now()
+	priorSession.Messages = append(priorSession.Messages,
+		ChatMessage{Role: "user", Content: deliveredMessage, Created: now},
+		ChatMessage{Role: "assistant", Content: cleanReply, Created: now},
+	)
+	if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
+		Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
+	}
+	return cleanReply, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

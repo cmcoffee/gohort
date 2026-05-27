@@ -2054,7 +2054,22 @@ body { min-height: 100vh; min-height: 100dvh; }
   height: calc(100vh - 70px);
 }
 @media (max-width: 900px) {
-  .ui-agent { height: calc(100vh - 120px); }
+  /* Mobile: chat fills the full visible viewport; the page header
+   * (back button) + top bundle (buttons row) sit ABOVE in flow and
+   * scroll out of view on first paint. User reveals them by
+   * scrolling up. Two independent rules combine to make this work:
+   *   - .ui-agent grows past viewport (no height/min-height cap) so
+   *     page total = header + bundle + grid > viewport.
+   *   - .ui-agent-grid is pinned to one full viewport height so the
+   *     chat pane + input fill the screen on its own. */
+  .ui-agent {
+    height: auto;
+    min-height: 0;
+  }
+  .ui-agent-grid {
+    height: 100vh;
+    height: 100dvh;
+  }
 }
 .ui-agent-topbar {
   display: flex; flex-direction: column;
@@ -2163,8 +2178,13 @@ body { min-height: 100vh; min-height: 100dvh; }
   box-sizing: border-box;
 }
 .ui-agent.ui-agent-list-top .ui-agent-top-bundle {
-  height: 2.5rem;
-  min-height: 2.5rem;
+  /* Was a fixed 2.5rem when the bundle held a single row; now it
+   * hosts a 2-row buttons table, so let the content drive the
+   * height. min-height sets the bar's overall vertical breathing
+   * room — wider than single-row to read as a substantial top
+   * bar rather than a thin strip. */
+  height: auto;
+  min-height: 3.5rem;
 }
 .ui-agent.ui-agent-list-top .ui-agent-main {
   background: var(--bg-0);
@@ -2875,6 +2895,51 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-agent-mode:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-agent-mode.active {
   color: var(--accent); border-color: var(--accent);
+}
+/* Mode pills riding inside the top bundle — strip the row chrome
+ * (background, border-top, big padding) so they sit cleanly between
+ * the bundle's dividers instead of looking like a band stacked
+ * above. Buttons themselves keep their pill shape. */
+.ui-agent-top-bundle .ui-agent-modes-in-bundle {
+  padding: 0;
+  background: transparent;
+  border-top: 0;
+  gap: 0.3rem;
+  align-items: center;
+  flex: 0 1 auto;
+}
+.ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-agent-mode {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  min-height: 0;
+}
+/* Two-row buttons table inside the top bundle's right column.
+ * Using <table> sidesteps the bundle's CSS-grid layout — rows are
+ * structural HTML rather than flex/grid items that fight the
+ * parent's grid-template-columns. */
+.ui-agent-top-bundle-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.ui-agent-top-bundle-table td {
+  padding: 0.3rem 0.4rem;
+  vertical-align: middle;
+}
+/* Visual gap between row 1 (record actions) and row 2 (mode toggles
+ * + relocated context buttons) — no separator line, just enough
+ * vertical breathing room to read as two logical groups. */
+.ui-agent-top-bundle-table td.ui-agent-top-bundle-row-2 {
+  padding-top: 0.225rem;
+}
+/* When the modes row hosts both pill toggles and app-relocated
+ * rectangular context buttons (.ui-row-btn), keep them on the same
+ * baseline — the .ui-row-btn default styling carries its own padding
+ * that would otherwise tower over the pills. */
+.ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-row-btn {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  min-height: 0;
+  border-radius: 6px;
 }
 .ui-agent-input-row {
   display: flex; gap: 0.4rem; align-items: stretch;
@@ -7912,6 +7977,12 @@ const runtimeJS = `
       side.appendChild(sideSearch);
       side.appendChild(sideList);
 
+      // Mobile top bar carries the hamburger + active session title +
+      // a "+ N" new-session button. The rail header also has a "+ New"
+      // (visible when the drawer is open), but the always-visible
+      // mobile-header button saves the user a drawer round-trip to
+      // start a fresh session — worth the small duplication on a
+      // surface where every tap counts.
       drawer = makeDrawer(side, {
         title:          cfg.new_label || 'New',
         hamburgerTitle: cfg.list_title || 'Sessions',
@@ -8370,7 +8441,22 @@ const runtimeJS = `
               act.onclick({
                 bubble: bubble,
                 getText: function() {
-                  return (bubble && bubble.dataset && bubble.dataset.raw) || (bubble ? bubble.textContent || '' : '');
+                  // Prefer the RAW markdown (msgEls[].rawText) — it
+                  // preserves newlines / paragraph breaks. The bubble's
+                  // textContent is the RENDERED markdown, which collapses
+                  // \n\n into nothing, so exporting from it strips the
+                  // article's structure. Fall back to dataset.raw (set on
+                  // ChatPanel/pipeline bubbles) then textContent.
+                  if (bubble) {
+                    for (var mk in msgEls) {
+                      if (msgEls[mk] && msgEls[mk].bubble === bubble) {
+                        return msgEls[mk].rawText || '';
+                      }
+                    }
+                    if (bubble.dataset && bubble.dataset.raw) return bubble.dataset.raw;
+                    return bubble.textContent || '';
+                  }
+                  return '';
                 },
               });
             } catch (e) { /* isolate */ }
@@ -8571,14 +8657,41 @@ const runtimeJS = `
     // stay in the topbar regardless.
     if (cfg.extra_fields_in_sidebar && side) {
       // Lift the strip OUT of the rail AND pull the action buttons
-      // up alongside it into a single top bar that spans the full
-      // width above gridRow. Layout becomes:
-      //   [Agent: <picker>]  │  [New Edit Clone … Delete]
+      // up alongside it into a top bundle that spans the full width
+      // above gridRow. The picker pins to a rail-width left column;
+      // the right column hosts a 2-row <table> of buttons so the
+      // record actions sit above the mode toggles + relocated
+      // context buttons without fighting the bundle's CSS grid.
+      //
+      //   ┌─────────────────┬──────────────────────────────────┐
+      //   │ Agent: <picker> │ Row 1: New Edit Clone Export … │
+      //   │                 │ Row 2: Private Clean Tools …    │
+      //   └─────────────────┴──────────────────────────────────┘
+      //
+      // Row 1: record-level operations (mint / mutate / export the
+      // agent record). Row 2: per-session affordances (mode toggles
+      // + Tools/Memory/etc., which apps relocate into the modes row
+      // via the standard .ui-agent-actions → .ui-agent-modes hop).
       extrasRow.classList.add('ui-agent-extras-in-side');
       var topBundle = el('div', {class: 'ui-agent-top-bundle'});
       topBundle.appendChild(extrasRow);
-      topBundle.appendChild(el('div', {class: 'ui-agent-top-bundle-divider'}));
-      topBundle.appendChild(actionsBar); // pulled out of chat-pane topbar
+      var bundleTable = el('table', {class: 'ui-agent-top-bundle-table'});
+      var bundleTbody = el('tbody', {});
+      var row1Tr = el('tr', {});
+      var row1Td = el('td', {});
+      row1Td.appendChild(actionsBar);
+      row1Tr.appendChild(row1Td);
+      bundleTbody.appendChild(row1Tr);
+      if ((cfg.modes || []).length > 0) {
+        modesRow.classList.add('ui-agent-modes-in-bundle');
+        var row2Tr = el('tr', {});
+        var row2Td = el('td', {class: 'ui-agent-top-bundle-row-2'});
+        row2Td.appendChild(modesRow);
+        row2Tr.appendChild(row2Td);
+        bundleTbody.appendChild(row2Tr);
+      }
+      bundleTable.appendChild(bundleTbody);
+      topBundle.appendChild(bundleTable);
       wrap.insertBefore(topBundle, wrap.firstChild);
       // Bypass CSS specificity battles by pinning the rail-button
       // dimensions directly on each action button. Color and border
@@ -8595,8 +8708,8 @@ const runtimeJS = `
       });
     } else {
       extrasSlot.appendChild(extrasRow);
+      extrasSlot.appendChild(modesRow);
     }
-    extrasSlot.appendChild(modesRow);
     convoPane.appendChild(inputRow);
     convoPane.appendChild(attachStrip);
 
@@ -9441,8 +9554,14 @@ const runtimeJS = `
         btns.appendChild(b);
       });
       card.appendChild(btns);
-      activityLog.appendChild(card);
-      activityLog.scrollTop = activityLog.scrollHeight;
+      // Render approval prompts in the MAIN conversation pane, not the
+      // activity pane. They're decisions the user must act on — they
+      // belong in the primary reading flow, and this keeps them visible
+      // on surfaces that hide the activity pane (e.g. mobile). Falls
+      // back to the activity log only if the convo pane is somehow
+      // unavailable.
+      (convoLog || activityLog).appendChild(card);
+      scrollConvo(true);
     }
 
     function submitConfirm(id, value, card) {
@@ -9823,6 +9942,29 @@ const runtimeJS = `
           noteBubble.bubble.classList.add('ui-agent-interjection');
           noteBubble.bubble.dataset.sessionId = activeSessionId;
           noteBubble.bubble.dataset.injectUrl = cfg.inject_url;
+          // addMessage appended the note at the very bottom — but an
+          // in-flight assistant bubble (a lazy/empty tool-call bubble,
+          // or one mid-stream) may be sitting just above it. When that
+          // bubble later fills, the response materializes ABOVE the
+          // interjection, which reads as "my message landed above the
+          // answer." Move the note ABOVE the first trailing in-flight
+          // assistant bubble so the response fills in below it.
+          var nb = noteBubble.bubble;
+          var anchor = null;
+          var kids = convoLog.children;
+          for (var ci = 0; ci < kids.length; ci++) {
+            var k = kids[ci];
+            if (k === nb) continue;
+            if (k.classList && k.classList.contains('ui-agent-msg-assistant') &&
+                (k.classList.contains('ui-agent-msg-empty') ||
+                 k.classList.contains('ui-agent-msg-streaming'))) {
+              anchor = k;
+              break;
+            }
+          }
+          if (anchor && anchor !== nb) {
+            convoLog.insertBefore(nb, anchor);
+          }
         }
         inputArea.value = '';
         fetch(cfg.inject_url, {
@@ -10116,6 +10258,13 @@ const runtimeJS = `
               loadSessions();
             } else {
               openSession(sid);
+              // Auto-close the rail drawer after picking a session.
+              // On mobile the rail is a drawer that overlays the chat
+              // pane; staying open after a pick obscures the freshly
+              // loaded conversation. On desktop, closeDrawer() is a
+              // no-op (the .open class isn't used in that layout) so
+              // calling unconditionally is safe.
+              closeDrawer();
             }
           });
           if (!inMode) {
@@ -10171,7 +10320,22 @@ const runtimeJS = `
       });
     }
 
+    // setHeaderTitle updates the mobile drawer header's title text so
+    // it reflects the active session/context instead of staying on the
+    // generic "New" label. No-op when there's no drawer (desktop-only
+    // or no list).
+    function setHeaderTitle(t) {
+      if (drawer && drawer.mobileTitle) {
+        drawer.mobileTitle.textContent = t || (cfg.new_label || 'New');
+      }
+    }
+
     function openSession(sid) {
+      // Any session open / switch / new collapses the mobile drawer —
+      // done at the top so it fires for EVERY entry point (row click,
+      // rail-header "+ New", mobile-top-bar "+", deep link). No-op on
+      // desktop (the .open class isn't used there).
+      closeDrawer();
       // CONTEXT mode — list rows are reference contexts (workspaces,
       // projects, …). Selecting one binds future sends to that id
       // via cfg.list_body_field. Server-side LoadURL still gets
@@ -10188,12 +10352,14 @@ const runtimeJS = `
           emptyMsg = el('div', {class: 'ui-agent-empty'},
             [cfg.empty_text || 'Start typing below.']);
           convoLog.appendChild(emptyMsg);
+          setHeaderTitle('');
           if (hasList) loadSessions();
           return;
         }
         if (cfg.load_url) {
           var url = substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)));
           fetchJSON(url).then(function(rec) {
+            setHeaderTitle(rec && rec[ttlF]);
             var msgs = rec && rec[msgsF];
             if (Array.isArray(msgs)) {
               msgs.forEach(function(m) {
@@ -10223,6 +10389,7 @@ const runtimeJS = `
         emptyMsg = el('div', {class: 'ui-agent-empty'},
           [cfg.empty_text || 'Start typing below.']);
         convoLog.appendChild(emptyMsg);
+        setHeaderTitle('');
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, '');
         if (hasList) loadSessions();
         return;
@@ -10236,6 +10403,7 @@ const runtimeJS = `
       }
       var url = substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)));
       fetchJSON(url).then(function(rec) {
+        setHeaderTitle(rec && rec[ttlF]);
         var msgs = rec && rec[msgsF];
         if (Array.isArray(msgs)) {
           msgs.forEach(function(m) {
@@ -10342,6 +10510,50 @@ const runtimeJS = `
     wrap.appendChild(gridRow);
 
     if (hasList) loadSessions();
+
+    // On mobile, the page header (back button) + top bundle (buttons
+    // row) sit above the chat grid in flow but aren't useful
+    // mid-conversation. Scroll the grid into the top of the viewport
+    // on first paint so chat + input fill the screen; the user
+    // reveals everything above by scrolling up.
+    //
+    // iOS Safari quirk: scrollIntoView is sometimes ignored on first
+    // render before layout settles, AND a separate document.scrollTop
+    // assignment is needed (vs window.scrollTo) on some versions.
+    // Multiple retries + both call shapes hedge against both.
+    if (window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
+      var scrollPastTries = 0;
+      function scrollPastBundle() {
+        if (!wrap.isConnected) {
+          if (scrollPastTries++ < 60) setTimeout(scrollPastBundle, 50);
+          return;
+        }
+        var rect = gridRow.getBoundingClientRect();
+        var target = Math.round(rect.top + (window.scrollY || window.pageYOffset || 0));
+        if (target <= 0) {
+          if (scrollPastTries++ < 60) setTimeout(scrollPastBundle, 50);
+          return;
+        }
+        // Belt-and-suspenders: every scroll API mobile Safari has
+        // honored at some point in its history. Cheap to call all.
+        try { window.scrollTo({top: target, behavior: 'auto'}); } catch (_) {}
+        try { window.scrollTo(0, target); } catch (_) {}
+        if (document.documentElement) document.documentElement.scrollTop = target;
+        if (document.body) document.body.scrollTop = target;
+      }
+      // Multi-tick retry: first attempt on next frame (layout done),
+      // then again after a short delay (font/image loads finalized),
+      // and once more after the typical first-paint settle window.
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(function() {
+          window.requestAnimationFrame(scrollPastBundle);
+        });
+      } else {
+        setTimeout(scrollPastBundle, 0);
+      }
+      setTimeout(scrollPastBundle, 250);
+      setTimeout(scrollPastBundle, 800);
+    }
     return wrap;
   };
 

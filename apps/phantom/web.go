@@ -1590,12 +1590,10 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	// one-line purpose.
 	if len(conv.AllowedAgents) > 0 {
 		if owner := phantomAgentOwner(T.DB); owner != "" {
-			// Async-only by default. The sync sibling
-			// (dispatchAgentInlineToolDef) is kept compiled in for
-			// future re-enablement but not exposed — Phantom's
-			// texting cadence never wants the LLM blocking on a
-			// minutes-long agent run. Flip back on if a specific
-			// chat needs inline-integration semantics.
+			// Async-only. Phantom's texting cadence never wants the
+			// LLM blocking on a minutes-long agent run — the dispatch
+			// runs in the background, the chat stays responsive, and
+			// the answer arrives as a separate message when ready.
 			tools = append(tools,
 				T.dispatchAgentToolDef(T.DB, chatID, handle, conv, owner))
 			// recall_dispatch_result rides alongside dispatch_agent —
@@ -1605,7 +1603,6 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 			// more about that lookup"). Pattern B stores raw results
 			// in side storage; this tool is the retrieval surface.
 			tools = append(tools, buildRecallDispatchResultTool(T.DB, chatID))
-			_ = dispatchAgentInlineToolDef // keep the symbol live
 		}
 	}
 	if toolEnabled("follow_up") {
@@ -1670,6 +1667,150 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		Log("[phantom] processMessage: LLM not configured")
 		return
 	}
+
+	// --- Sub-session routing ---
+	//
+	// Before the main phantom LLM gets the turn, check whether a
+	// dispatched sub-agent should handle this message instead. Three
+	// cases:
+	//   - User typed "/back" or "/phantom": retire all idle sub-sessions
+	//     for this chat and fall through to the main LLM with the
+	//     prefix stripped (deliberate exit from a side-conversation).
+	//   - There's an ACTIVE sub-session (async dispatch in flight):
+	//     push the message into the sub-session's injection queue so
+	//     the running sub-agent picks it up between rounds, and send
+	//     a short ack via the outbox. The main LLM does NOT run for
+	//     this turn.
+	//   - There's an IDLE sub-session within the promotion window:
+	//     route the message synchronously through the sub-agent (load
+	//     prior messages, append, run, persist, deliver reply). The
+	//     main LLM does NOT run for this turn.
+	//
+	// Sub-sessions are minted by dispatch_agent / dispatch_agent_inline
+	// (see tool_dispatch_agent.go). Without a prior dispatch, all
+	// branches fall through to the main LLM as today.
+	//
+	// CRITICAL bypass: synthetic system re-entries (the async dispatch
+	// completion re-triggers processMessage with a "[SYSTEM: …]" input
+	// telling the MAIN LLM to compose a reply from the dispatch result)
+	// must NOT be routed to a sub-agent. By the time that re-entry
+	// fires, the SubSession has just been marked idle — without this
+	// guard, promotion catches the synthetic input and runs the
+	// sub-agent AGAIN, producing a second, duplicate answer (one
+	// persists, one is a transient double). System re-entries always
+	// go straight to the main LLM.
+	isSystemReentry := strings.HasPrefix(strings.TrimSpace(text), "[SYSTEM:")
+	// "/stop" (or "stop" / "cancel" / "never mind" as the whole message)
+	// cancels any running async dispatch for this chat — phantom's
+	// equivalent of orchestrate's Cancel button. Only fires when there's
+	// actually something active; otherwise the words fall through to the
+	// main LLM as normal content. The dispatch goroutine sees
+	// context.Canceled and exits quietly (no failure message), since we
+	// ack here.
+	if !isSystemReentry && isCancelIntent(text) {
+		active := ActiveSubSessionsFor(chatID)
+		if len(active) > 0 {
+			for _, s := range active {
+				cancelDispatch(s.SubSessionID)
+				RetireSubSession(s.SubSessionID, "user_canceled")
+			}
+			if shouldSend() {
+				ack := "Stopped."
+				storeMessage(T.DB, PhantomMessage{
+					ID: now() + "-" + newID(), ChatID: chatID,
+					Role: "assistant", Text: ack, Timestamp: now(),
+				})
+				enqueueOutbox(T.DB, OutboxItem{
+					ID: newID(), ChatID: deliverChatID, Handle: handle,
+					Text: ack, Type: "reply", Created: now(),
+				})
+			}
+			return
+		}
+		// Nothing running — fall through and let the main LLM treat
+		// the message as ordinary content.
+	}
+	if isSystemReentry {
+		// Skip all sub-session routing; fall through to main LLM.
+	} else if cleaned, escaped := StripPromotionEscape(text); escaped {
+		for _, s := range IdleSubSessionsFor(chatID) {
+			RetireSubSession(s.SubSessionID, "explicit")
+		}
+		text = cleaned
+		if text == "" {
+			// User typed just "/back" — silent acknowledgment, no reply.
+			return
+		}
+		// Fall through to main LLM with prefix stripped.
+	} else if sub, action := ResolveDispatchRoute(chatID); action != RouteNone && sub != nil {
+		if !shouldSend() {
+			return
+		}
+		switch action {
+		case RouteInject:
+			q := LookupSubSessionInjectionQueue(sub.SubSessionID)
+			if q != nil {
+				q.Push(text)
+				Log("[phantom] mid-flight injection → sub=%s (%d in queue)", sub.SubSessionID, q.Len())
+			}
+			ack := "Got it, applying that."
+			storeMessage(T.DB, PhantomMessage{
+				ID:        now() + "-" + newID(),
+				ChatID:    chatID,
+				Role:      "assistant",
+				Text:      ack,
+				Timestamp: now(),
+			})
+			enqueueOutbox(T.DB, OutboxItem{
+				ID:      newID(),
+				ChatID:  deliverChatID,
+				Handle:  handle,
+				Text:    ack,
+				Type:    "reply",
+				Created: now(),
+			})
+			return
+		case RoutePromote:
+			orch := findOrchestrate()
+			if orch == nil {
+				// Orchestrate isn't available — fall through to main LLM.
+				Log("[phantom] promotion target sub=%s but orchestrate runtime unavailable — falling back to main LLM", sub.SubSessionID)
+				break
+			}
+			MarkSubSessionActive(sub.SubSessionID)
+			ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentTimeout)
+			out, err := orch.RunAgentSyncContinuing(ctx, sub.OwnerUser, phantomDispatchRuntimeUser(chatID), sub.AgentID, sub.SubSessionID, SubSessionInjectionQueueKey(sub.SubSessionID), text)
+			cancel()
+			if err != nil {
+				RetireSubSession(sub.SubSessionID, "promotion_error")
+				Log("[phantom] promotion sub=%s err=%v — falling back to main LLM", sub.SubSessionID, err)
+				break
+			}
+			reply := strings.TrimSpace(out)
+			if reply == "" {
+				MarkSubSessionIdle(sub.SubSessionID)
+				return
+			}
+			storeMessage(T.DB, PhantomMessage{
+				ID:        now() + "-" + newID(),
+				ChatID:    chatID,
+				Role:      "assistant",
+				Text:      reply,
+				Timestamp: now(),
+			})
+			enqueueOutbox(T.DB, OutboxItem{
+				ID:      newID(),
+				ChatID:  deliverChatID,
+				Handle:  handle,
+				Text:    reply,
+				Type:    "reply",
+				Created: now(),
+			})
+			MarkSubSessionIdle(sub.SubSessionID)
+			return
+		}
+	}
+
 	cfg := defaultConfig(T.DB)
 	isGroup := len(conv.Members) > 1
 

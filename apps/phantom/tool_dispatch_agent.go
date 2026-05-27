@@ -1,21 +1,21 @@
-// dispatch_agent / dispatch_agent_inline — lets the chat's LLM
-// delegate work to an Agency (orchestrate) agent. Two surfaces:
+// dispatch_agent — lets the chat's LLM delegate work to an Agency
+// (orchestrate) agent. Async-only: returns immediately; the agent's
+// answer arrives in the chat as a separate message when it's done.
+// Right for text-message UX — the user gets a quick ack and the
+// answer later, rather than dead air while the agent runs. The chat
+// stays responsive: a follow-up while the dispatch runs is injected
+// into it (RouteInject), a follow-up after it finishes continues the
+// thread (RoutePromote), and "/stop" cancels it mid-flight.
 //
-//   - dispatch_agent (DEFAULT, async): returns immediately; the
-//     agent's answer arrives in the chat as a separate message when
-//     it's done. Right for text-message UX — the user gets a quick
-//     ack and the answer later, rather than dead air while the agent
-//     runs. This is what the LLM should reach for unless it needs
-//     the result inline for its own reply.
-//   - dispatch_agent_inline (sync): blocks the chat reply until the
-//     sub-agent finishes, then returns the synthesized text as the
-//     tool result. Use ONLY when the LLM needs the agent's answer
-//     before writing its OWN reply ("based on the research, X is
-//     true...") — anything else, prefer the async default.
+// There is intentionally no synchronous variant. The "I need the
+// result to write my reply" case is handled by the async completion
+// re-trigger — when the dispatch finishes, the main LLM composes the
+// reply from the result. For texting that's strictly better than
+// blocking: the user sees a quick ack, then the answer.
 //
-// Per-chat allowlist (Conversation.AllowedAgents) gates BOTH surfaces:
+// Per-chat allowlist (Conversation.AllowedAgents) gates dispatch:
 // only agents the admin has explicitly granted to THIS chat are
-// reachable, regardless of which surface the LLM picks.
+// reachable.
 
 package phantom
 
@@ -24,87 +24,68 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
-// dispatchAgentTimeout caps how long the SYNCHRONOUS dispatch can
-// take. Generous-but-bounded so an iMessage reply doesn't sit
+// dispatchAgentTimeout caps the dispatch context used by the
+// promotion path (a follow-up routed synchronously through an idle
+// sub-agent). Generous-but-bounded so a follow-up reply doesn't sit
 // pending forever when an agent gets stuck.
 const dispatchAgentTimeout = 2 * time.Minute
 
 // dispatchAgentAsyncTimeout caps fire-and-forget dispatches. Larger
-// than the sync cap since async work is allowed to be slow — the
-// user isn't waiting on the chat reply. Still bounded so a runaway
-// agent eventually surfaces an error to the chat instead of going
-// silent.
+// than the promotion cap since async work is allowed to be slow —
+// the user isn't waiting on the chat reply. Still bounded so a
+// runaway agent eventually surfaces an error to the chat instead of
+// going silent.
 const dispatchAgentAsyncTimeout = 15 * time.Minute
 
-// dispatchAgentInlineToolDef builds the SYNCHRONOUS dispatch tool —
-// blocks the chat reply until the sub-agent finishes, returns the
-// synthesized text as the tool result. Used only when the chat's
-// LLM needs the agent's answer before writing its own reply. For
-// the default "delegate and get back to me" pattern, use the async
-// dispatchAgentToolDef sibling.
-//
-// ownerUsername scopes the agent LOOKUP (which fleet of agents the
-// chat can address — typically the deployment admin's). The DISPATCH
-// runs as a synthetic per-chat user (phantom:<chat_id>) so memory,
-// facts, knowledge, and workspace state for the dispatched agent
-// stay isolated from the owner's interactive Agency use of the same
-// agent.
-func dispatchAgentInlineToolDef(db Database, conv Conversation, ownerUsername string) AgentToolDef {
-	allowedSummary := summarizeAllowedAgents(db, ownerUsername, conv.AllowedAgents)
-	desc := "INLINE (synchronous) dispatch to an Agency agent. Blocks your reply until the agent finishes. Use ONLY when you need the agent's answer to write YOUR OWN reply — e.g. \"based on the research, my take is...\". For pure delegation (\"go do this and text me when done\") use dispatch_agent instead — it's the default and doesn't block. Capped at 2 minutes."
-	if allowedSummary != "" {
-		desc += "\n\nAgents you can dispatch to in this chat:\n" + allowedSummary
+// inflightDispatchCancels registers the cancel func for each running
+// async dispatch, keyed by SubSessionID. A "/stop" command looks up
+// the chat's active sub-sessions (ActiveSubSessionsFor) and calls
+// each cancel to tear the dispatch down mid-flight — phantom's
+// equivalent of orchestrate's Cancel button. Entries are removed
+// when the goroutine exits.
+var inflightDispatchCancels sync.Map // subSessID -> context.CancelFunc
+
+// cancelDispatch cancels a running dispatch by SubSessionID. Returns
+// true if a live dispatch was found and canceled.
+func cancelDispatch(subSessID string) bool {
+	if v, ok := inflightDispatchCancels.Load(subSessID); ok {
+		if cancel, ok := v.(context.CancelFunc); ok {
+			cancel()
+			return true
+		}
 	}
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "dispatch_agent_inline",
-			Description: desc,
-			Parameters: map[string]ToolParam{
-				"agent": {
-					Type:        "string",
-					Description: "Name (or id) of the agent to dispatch to. Must match one of the agents listed in the description.",
-				},
-				"brief": {
-					Type:        "string",
-					Description: "What you want the agent to do, phrased as if the user were asking it directly. The agent doesn't see this chat's history — be self-contained.",
-				},
-			},
-			Required: []string{"agent", "brief"},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			key := strings.TrimSpace(StringArg(args, "agent"))
-			brief := strings.TrimSpace(StringArg(args, "brief"))
-			if key == "" || brief == "" {
-				return "", errors.New("agent and brief are required")
-			}
-			if ownerUsername == "" {
-				return "", errors.New("dispatch is disabled: no admin user found in AuthDB")
-			}
-			if !isAgentAllowed(db, ownerUsername, conv.AllowedAgents, key) {
-				return "", fmt.Errorf("agent %q is not in this chat's allowlist — only the agents listed in the tool description are reachable here", key)
-			}
-			orch := findOrchestrate()
-			if orch == nil {
-				return "", errors.New("orchestrate runtime not available")
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentTimeout)
-			defer cancel()
-			runtimeUser := phantomDispatchRuntimeUser(conv.ChatID)
-			Log("[phantom/dispatch_agent_inline] chat=%s owner=%s runtime=%s → agent=%q brief_chars=%d",
-				conv.ChatID, ownerUsername, runtimeUser, key, len(brief))
-			out, err := orch.RunAgentSync(ctx, ownerUsername, runtimeUser, key, brief)
-			if err != nil {
-				return "", fmt.Errorf("dispatch failed: %w", err)
-			}
-			return out, nil
-		},
+	return false
+}
+
+// phantomSubSessionID picks the canonical SubSession storage key for
+// a phantom dispatch. Stable per (chat, target) so repeat dispatches
+// + promotion follow-ups all land on the same lifecycle record and
+// the same persisted message history.
+func phantomSubSessionID(chatID, agentKey string) string {
+	return "phantom-disp:" + chatID + ":" + agentKey
+}
+
+// isCancelIntent reports whether a message should be treated as a
+// request to stop a running dispatch. Matches "/stop" / "/cancel"
+// commands, or a bare "stop" / "cancel" / "never mind" sent as the
+// entire message. Caller only acts on it when a dispatch is actually
+// active — otherwise these words fall through as normal content (so
+// "stop by the store on the way home" doesn't trip it: it's only the
+// whole-message forms that count).
+func isCancelIntent(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	switch t {
+	case "/stop", "/cancel", "stop", "cancel", "never mind", "nevermind", "stop it", "cancel that":
+		return true
 	}
+	return false
 }
 
 // dispatchAgentToolDef is the DEFAULT (async, fire-and-forget)
@@ -119,9 +100,10 @@ func dispatchAgentInlineToolDef(db Database, conv Conversation, ownerUsername st
 // lands); handle is the recipient for the outbox item. Both come
 // from the active conv at call time.
 //
-// The synchronous sibling lives at dispatchAgentInlineToolDef — pick
-// that one when the chat's LLM needs the agent's answer to write
-// its own reply.
+// Async-only: there's no synchronous sibling. The "I need the result
+// to write my reply" case is covered by the completion re-trigger —
+// when the dispatch finishes, the main LLM composes the reply from
+// the result.
 func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv Conversation, ownerUsername string) AgentToolDef {
 	allowedSummary := summarizeAllowedAgents(db, ownerUsername, conv.AllowedAgents)
 	desc := "When the user asks about something that fits a specialist agent's purpose, USE THIS instead of answering inline. Specialist agents have their own tools, memory, and voice tuned to their specialty — they produce better answers for the work they're built for than the chat persona ad-libbing. Returns immediately; the agent's answer arrives in this chat as a separate message when it's done (right for the texting cadence — user gets a quick ack now, the answer later). The agent doesn't see this chat's history, so make the brief self-contained.\n\nAfter calling this, REPLY TO THE USER WITH A SHORT, NATURAL ACKNOWLEDGMENT — \"On it.\" / \"Looking that up for you.\" / \"Standby — checking now.\" DO NOT recap what tool you called, do not name the agent, do not explain that something is running in the background. Treat it like a text reply where the person just said \"I'll go look\" — they wouldn't narrate the mechanics."
@@ -161,17 +143,56 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 				return "", errors.New("orchestrate runtime not available")
 			}
 			runtimeUser := phantomDispatchRuntimeUser(conv.ChatID)
+			subSessID := phantomSubSessionID(conv.ChatID, key)
+			// Track in SubSession lifecycle. Async — Mint marks active;
+			// the goroutine MarkSubSessionIdle's on completion so the
+			// next user turn can be promoted into the same agent.
+			MintSubSession(SubSession{
+				SubSessionID:  subSessID,
+				HostSessionID: conv.ChatID,
+				HostApp:       "phantom",
+				AgentID:       key,
+				AgentName:     key,
+				OwnerUser:     ownerUsername,
+				Mode:          SubSessionModeAsync,
+				Status:        SubSessionActive,
+			})
+			// Register a per-SubSession injection queue so user
+			// messages arriving while this dispatch is still running
+			// can be pushed in mid-flight (handled by phantom's
+			// processMessage RouteInject branch). Released after the
+			// dispatch finishes — late-arriving notes after MarkIdle
+			// belong on the next promotion turn, not this one.
+			RegisterSubSessionInjectionQueue(subSessID, ownerUsername, key)
 			Log("[phantom/dispatch_agent_async] chat=%s owner=%s runtime=%s → agent=%q brief_chars=%d QUEUED",
 				conv.ChatID, ownerUsername, runtimeUser, key, len(brief))
 			go func(agentKey, briefMsg string) {
 				defer func() {
 					if r := recover(); r != nil {
 						Log("[phantom/dispatch_agent_async] panic dispatching %q: %v", agentKey, r)
+						RetireSubSession(subSessID, "panic")
 					}
+					inflightDispatchCancels.Delete(subSessID)
+					ReleaseSubSessionInjectionQueue(subSessID)
 				}()
 				ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentAsyncTimeout)
 				defer cancel()
-				out, err := orch.RunAgentSync(ctx, ownerUsername, runtimeUser, agentKey, briefMsg)
+				// Register the cancel func so a "/stop" can tear this
+				// dispatch down mid-flight (see processMessage's stop
+				// branch). Removed in the deferred cleanup above.
+				inflightDispatchCancels.Store(subSessID, cancel)
+				out, err := orch.RunAgentSyncContinuing(ctx, ownerUsername, runtimeUser, agentKey, subSessID, SubSessionInjectionQueueKey(subSessID), briefMsg)
+
+				// User-initiated cancel (via /stop) surfaces as a
+				// context.Canceled error. The /stop handler already
+				// acked the user ("Stopped.") and retired the
+				// sub-session, so don't emit the "couldn't complete the
+				// lookup" failure message or re-trigger the chat — just
+				// exit quietly.
+				if err != nil && errors.Is(ctx.Err(), context.Canceled) {
+					Log("[phantom/dispatch_agent_async] agent=%q canceled by user", agentKey)
+					return
+				}
 
 				// Pattern B: store the raw report in side storage,
 				// pass only a worker-LLM-generated SUMMARY back to
@@ -183,11 +204,16 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 				var syntheticInput string
 				if err != nil {
 					Log("[phantom/dispatch_agent_async] agent=%q FAILED: %v", agentKey, err)
+					RetireSubSession(subSessID, "error")
 					syntheticInput = fmt.Sprintf(
 						"[SYSTEM: async dispatch to agent %q failed. Tell the user briefly that you couldn't complete the lookup — don't expose the error details, just say something like \"Couldn't find anything for that\" or \"That lookup didn't work out.\" Error context (for your reference only, don't surface): %v]",
 						agentKey, err,
 					)
 				} else {
+					// Mark idle so the next user message can be
+					// promoted into this sub-agent for a sync
+					// follow-up (no synthetic re-trigger needed).
+					MarkSubSessionIdle(subSessID)
 					raw := strings.TrimSpace(out)
 					if raw == "" {
 						syntheticInput = fmt.Sprintf(

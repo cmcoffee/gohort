@@ -189,6 +189,19 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if target.ID == t.agent.ID {
 		return "", errors.New("agents(run): target is the same agent doing the dispatch — pick a different one or answer directly")
 	}
+	// Cycle guard. The current turn's agent is always considered "in
+	// flight" — combined with dispatchChain (inherited from parent
+	// turns), this catches A→B→A and any longer cycle like A→B→C→A.
+	// Without this, depth resets to 0 on each sub-turn so a cycle
+	// could iterate maxDispatchDepth times per "level" before tripping
+	// the depth cap — observed: Builder→Chat→Builder, where Chat's
+	// "dispatch to Builder on authoring intent" instruction sends the
+	// turn right back into Builder.
+	for _, prior := range t.dispatchChain {
+		if prior == target.ID {
+			return "", fmt.Errorf("agents(run): dispatch cycle — %q is already on the call chain for this turn; pick a different target or answer directly", target.Name)
+		}
+	}
 	// Dispatch gate. Two cases mirror the visibility logic in
 	// renderAvailableAgentsBlock so a target dropped from the block
 	// can't be reached by guessing its name either.
@@ -219,6 +232,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if t.session != nil {
 		parentSessID = t.session.ID
 	}
+	// Deterministic per-(parent, target) sub-session ID so repeat
+	// dispatches to the same target re-thread prior messages (V2
+	// continuity below). Orchestrate does NOT register this in the
+	// SubSession lifecycle index — that index drives async promotion,
+	// which orchestrate doesn't do (dispatch is sync). Registering
+	// here would just leak idle records nobody reads or retires.
 	subSessID := "dispatch:" + parentSessID + ":" + target.ID
 	subSess := &ToolSession{
 		LLM:            t.app.LLM,
@@ -276,8 +295,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		user:    t.user,
 		udb:     t.udb,
 		ctx:     t.ctx, // inherit caller's ctx so NetworkConnector propagates
-		topic:   t.topic,
+		topic:   t.resolveTopic(),
 		network: t.network,
+		// Carry the caller's chain + the caller's own agent ID forward.
+		// The cycle guard above runs against this slice on every
+		// further agents(run) the sub-turn makes.
+		dispatchChain: append(append([]string(nil), t.dispatchChain...), t.agent.ID),
 	}
 	// Knowledge layer — always-on read tool over the target's
 	// corpus + its AttachedCollections + auto-injected deployment

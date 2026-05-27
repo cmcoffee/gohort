@@ -161,10 +161,27 @@ type AgentLoopConfig struct {
 
 	// OnRoundStart, when set, is called at the top of each round AFTER the
 	// ctx-cancellation check and BEFORE the LLM call. Any messages it returns
-	// are appended to history before the call. Use to inject mid-flight user
-	// notes into a long-running orchestrator without interrupting in-flight
-	// worker sub-loops — workers that don't set this hook never see the notes.
+	// are appended to history before the call. Use for per-round content the
+	// model should see every round — budget/pacing notes, status reminders.
+	// MAY return content on every call (e.g. orchestrate's round-counter
+	// pacer always returns a note); do NOT use it for the pre-finalize
+	// injection drain — that's InjectionDrain's job.
 	OnRoundStart func() []Message
+
+	// InjectionDrain, when set, returns any pending mid-flight user
+	// notes (from an injection queue) and REMOVES them from the queue.
+	// Distinct from OnRoundStart in one critical way: it must return
+	// EMPTY when there's nothing pending. The loop calls it both at
+	// round start AND once more right before finalizing — so a note
+	// that lands during the final round still gets picked up and the
+	// agent does another round instead of finishing with the note
+	// unread. Because it empties its queue, the pre-finalize re-call
+	// terminates (returns empty once drained) rather than looping.
+	//
+	// Wire an injection queue's Drain here, NOT OnRoundStart — a hook
+	// that always returns content (like a budget pacer) would make the
+	// pre-finalize check loop forever.
+	InjectionDrain func() []Message
 
 	// StopRound, when set, is called at the top of each round AFTER the
 	// ctx-cancellation check. Returning true breaks the loop cleanly,
@@ -500,12 +517,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				})
 			}
 		}
-		// Drain any mid-flight injections (e.g. user notes interjected into
-		// a running orchestrator). Workers don't set OnRoundStart so they
-		// don't see these — only the orchestrator does, and only between
-		// rounds, so an in-flight worker dispatch finishes uninterrupted.
+		// Per-round content (budget/pacing notes, status reminders).
+		// May return content every round; that's fine here — it's only
+		// called at round start, never in the pre-finalize re-check.
 		if cfg.OnRoundStart != nil {
 			if injected := cfg.OnRoundStart(); len(injected) > 0 {
+				history = append(history, injected...)
+			}
+		}
+		// Drain any mid-flight injections (user notes interjected into a
+		// running orchestrator). Separate from OnRoundStart because the
+		// loop re-calls THIS one before finalizing — so it must empty its
+		// queue and return nil when nothing's pending.
+		if cfg.InjectionDrain != nil {
+			if injected := cfg.InjectionDrain(); len(injected) > 0 {
 				history = append(history, injected...)
 			}
 		}
@@ -663,7 +688,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if cfg.PromptTools {
 			tc, preamble := ParsePromptToolCall(resp.Content, handlers)
 			if tc == nil {
-				// No tool call — LLM is done. Record and return.
+				// No tool call — LLM is done. But first re-drain any
+				// mid-flight injection that landed during this final
+				// round (see the native-path finalize for the full
+				// rationale); continue instead of finishing if there's
+				// pending input. InjectionDrain, not OnRoundStart.
+				if cfg.InjectionDrain != nil && round < maxRounds {
+					if injected := cfg.InjectionDrain(); len(injected) > 0 {
+						Debug("[agent_loop] pre-finalize injection (prompt-tools): %d note(s) — continuing", len(injected))
+						history = append(history, Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning})
+						history = append(history, injected...)
+						continue
+					}
+				}
+				// Record and return.
 				history = append(history, Message{Role: "assistant", Content: resp.Content, Reasoning: resp.Reasoning})
 				if cfg.OnStep != nil {
 					cfg.OnStep(StepInfo{Round: round, Content: resp.Content, Done: true})
@@ -860,6 +898,22 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				continue
 			}
 
+			// Pre-finalize injection drain. Mid-flight user notes are
+			// normally picked up at round start, but a note that lands
+			// DURING this final round would otherwise be lost — the loop
+			// is about to return. Re-drain here: if anything is pending,
+			// append it and do another round instead of finishing.
+			// Uses InjectionDrain (NOT OnRoundStart) — InjectionDrain
+			// empties its queue and returns nil when nothing's pending,
+			// so this re-call terminates. OnRoundStart may return content
+			// every call (budget pacer) and would loop forever here.
+			if cfg.InjectionDrain != nil && round < maxRounds {
+				if injected := cfg.InjectionDrain(); len(injected) > 0 {
+					Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round — continuing instead of finishing", len(injected))
+					history = append(history, injected...)
+					continue
+				}
+			}
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{
 					Round:   round,

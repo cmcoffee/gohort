@@ -195,11 +195,18 @@ type chatTurn struct {
 	// topic is the snake_case slug classified from this turn's user
 	// message. Scopes knowledge save/search to a per-subject bucket
 	// so retrieval stays sharp as the agent accumulates findings
-	// across unrelated topics. Set once in handleSend before runPlan;
-	// read by the knowledge tool handlers (default arg), pre-plan
-	// auto-search, and consolidation. Empty when classification
-	// short-circuits (no LLM available, missing app handle).
-	topic string
+	// across unrelated topics. Read by the knowledge tool handlers
+	// (default arg), pre-plan auto-search, and consolidation, ALWAYS
+	// via resolveTopic() — never the field directly — because the
+	// classify call now runs CONCURRENTLY with round-1 planning
+	// (handleSend launches it into topicCh) rather than blocking
+	// before the response. resolveTopic blocks on topicCh exactly
+	// once, the first time a caller actually needs the topic; by
+	// then the classify worker call has almost always finished, so
+	// it adds no perceptible latency. Empty → generalTopic fallback.
+	topic         string
+	topicCh       chan string
+	topicOnce     sync.Once
 
 	// staticTempToolNames is the set of persistent temp tool names
 	// that were included in the orchestrator's static catalog at
@@ -235,6 +242,15 @@ type chatTurn struct {
 	// pipelines compose tools, dispatch fans out to named specialists.
 	// Both are capped to prevent runaway recursive chains.
 	dispatchDepth int
+
+	// dispatchChain carries the IDs of agents already invoked higher
+	// up in this dispatch chain. agentsRunAction refuses to dispatch
+	// to an agent already in the chain — catches cycles like A→B→A
+	// that depth alone misses (depth resets to 0 on each sub-turn,
+	// so A→B→A→B→… would have looked depth-fine for a long time
+	// before the cap tripped). Includes the current turn's agent ID
+	// when propagated to a sub-turn.
+	dispatchChain []string
 
 	// explorerMode is flipped by the enter_explorer_mode tool when
 	// AllowExplorer is set on the agent. While true, the worker
@@ -1869,6 +1885,65 @@ func (t *chatTurn) emitStatus(text string) {
 	})
 }
 
+// ackTimeout bounds the fast acknowledgment call. Short — the ack
+// is only useful if it lands while the user is staring at dead air;
+// a slow ack is worse than none.
+const ackTimeout = 8 * time.Second
+
+// emitAck fires a fast, no-think worker call that produces a short
+// natural acknowledgment ("On it — checking that now.") and streams
+// it as a status the moment it returns. Runs as a goroutine launched
+// at turn start so it overlaps round-1 planning — the orchestrator's
+// first round uses thinking mode, which delays its first visible
+// output by seconds; this fills that gap with a contextual ack
+// instead of a bare "Thinking…".
+//
+// The ack call itself decides whether an ack is warranted: greetings,
+// thanks, and instantly-answerable questions get "NONE" back and emit
+// nothing, so conversational turns don't get a needless "On it!".
+func (t *chatTurn) emitAck(ctx context.Context, userMsg string) {
+	if t == nil || t.app == nil {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, ackTimeout)
+	defer cancel()
+	sys := "A user just messaged an assistant that may need tools, web search, or sub-agents to answer. In ONE short, natural sentence, acknowledge you're on it (e.g. \"On it — let me look that up.\" / \"Sure, checking now.\" / \"Give me a sec to dig into that.\"). Do NOT answer the request, do NOT ask questions, do NOT name tools or agents. If the message is a greeting, a thanks, or something you'd answer instantly with no lookup, reply with exactly NONE."
+	resp, err := t.app.WorkerChat(cctx,
+		[]Message{{Role: "user", Content: userMsg}},
+		WithSystemPrompt(sys), WithMaxTokens(30), WithThink(false),
+	)
+	if err != nil || resp == nil {
+		return
+	}
+	ack := strings.TrimSpace(resp.Content)
+	if ack == "" || strings.HasPrefix(strings.ToUpper(ack), "NONE") {
+		return
+	}
+	// Strip wrapping quotes the model sometimes adds.
+	ack = strings.Trim(ack, "\"'")
+	t.emitStatus(ack)
+}
+
+// resolveTopic returns the turn's classified knowledge topic,
+// blocking on the concurrent classify (topicCh) the first time a
+// caller needs it. Subsequent calls return the cached value. The
+// classify is launched in handleSend at turn start so it overlaps
+// round-1 planning — by the time a worker step or knowledge tool
+// reads the topic, the slug is almost always already in the
+// channel, so this resolves instantly. Falls back to generalTopic
+// when classification was never started or returned empty.
+func (t *chatTurn) resolveTopic() string {
+	t.topicOnce.Do(func() {
+		if t.topicCh != nil {
+			t.topic = <-t.topicCh
+		}
+		if t.topic == "" {
+			t.topic = generalTopic
+		}
+	})
+	return t.topic
+}
+
 // appendSearchOrderGuidance inserts a "knowledge before web" stub
 // into the system prompt when the agent has both a knowledge corpus
 // AND web tools enabled. Without this, most models default to
@@ -2591,12 +2666,38 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		sess.AuthoringAgentID = a
 	}
 
-	// Classify the turn's topic before runPlan so the pre-plan
-	// knowledge auto-search and the worker-step save/search tools
-	// can scope to a per-subject bucket instead of the agent's whole
-	// store. Classification is cheap (one short worker call, 20-token
-	// budget) and short-circuits to "general" on any error.
-	turn.topic = classifyTopicForQuestion(ctx, T, T.DB, user, agent.ID, req.Message)
+	// Note: orchestrate does NOT auto-promote follow-ups into a prior
+	// sub-agent. Dispatch (agents(run)) is synchronous and one-shot —
+	// its reply is a tool result the orchestrator synthesizes from.
+	// Continued conversation with a sub-agent happens the normal way:
+	// the user keeps chatting (unlimited turns, full session history)
+	// and the LLM re-calls agents(run) when it wants to delegate again
+	// — which re-threads the same sub-session by its deterministic ID.
+	// Auto-promotion was removed: it routed worker-mode dispatches as
+	// conversational replies (producing empty bubbles) and was
+	// redundant with just chatting. Injection/promotion remain a
+	// phantom concern, where async dispatch makes them meaningful.
+
+	// Classify the turn's topic CONCURRENTLY with round-1 planning
+	// rather than blocking before it. The classify is a short worker
+	// call (~20 tokens) but on a cold prompt cache it added a visible
+	// stall before the user saw any response. Launching it into
+	// topicCh lets round 1 start immediately; resolveTopic() blocks
+	// on the result only when a worker step or knowledge tool first
+	// needs the slug, by which point the classify has almost always
+	// finished. Falls back to generalTopic on error.
+	turn.topicCh = make(chan string, 1)
+	go func(msg string) {
+		turn.topicCh <- classifyTopicForQuestion(ctx, T, T.DB, user, agent.ID, msg)
+	}(req.Message)
+
+	// Fire a fast acknowledgment concurrently so the user sees a
+	// contextual "On it…" while round-1 planning (thinking mode)
+	// produces its first real output. Skipped automatically for
+	// greetings / trivial asks (the ack call returns NONE). Promotion
+	// turns already emit their own "Routing follow-up…" status and
+	// returned above, so this only runs on main-LLM turns.
+	go turn.emitAck(ctx, req.Message)
 
 	// --- Orchestrator round 1: respond directly, plan, or ask ---
 	turn.emitStatus("Thinking…")
@@ -3539,7 +3640,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// explicitly calling memory_search; pull-only beats
 			// push-injected for fuzzy/derived material.
 			scope := ChunkScopeCuratedOnly
-			hits := searchAgentKnowledge(searchCtx, t.app.DB, t.user, t.agent.ID, t.topic, userMsg, autoInjectK, t.skillsActive, t.agent.AttachedCollections, scope)
+			hits := searchAgentKnowledge(searchCtx, t.app.DB, t.user, t.agent.ID, t.resolveTopic(), userMsg, autoInjectK, t.skillsActive, t.agent.AttachedCollections, scope)
 			cancelSearch()
 			// Min-similarity floor — vector search returns top-K
 			// regardless of score, so even a weak match (a chunk from

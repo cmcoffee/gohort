@@ -2510,15 +2510,54 @@ const orchestrateWebAssets = `<style>
         var collectionsList = document.createElement('div');
         collectionsList.style.cssText = 'display:flex;flex-direction:column;gap:0.3rem';
         collectionsWrap.appendChild(collectionsList);
+
+        // Scaffold-from-agent action — creates an empty collection
+        // named "<agent> Knowledge" with the agent's description
+        // copied in, attaches it. One-click "give this agent a place
+        // to put its docs" for the common case where the user just
+        // built the agent and wants to start uploading material.
+        var scaffoldRow = document.createElement('div');
+        scaffoldRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem';
+        var scaffoldBtn = document.createElement('button');
+        scaffoldBtn.type = 'button';
+        scaffoldBtn.className = 'ui-row-btn';
+        scaffoldBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:0.8rem';
+        scaffoldBtn.textContent = '+ Create knowledge for this agent';
+        scaffoldBtn.title = 'Create an empty collection named after this agent and attach it. Upload docs to fill it, or rename later under Knowledge.';
+        var scaffoldStatus = document.createElement('span');
+        scaffoldStatus.style.cssText = 'font-size:0.72rem;color:var(--text-mute)';
+        scaffoldRow.appendChild(scaffoldBtn);
+        scaffoldRow.appendChild(scaffoldStatus);
+        collectionsWrap.appendChild(scaffoldRow);
+
         body.appendChild(collectionsWrap);
 
-        renderAllowlistPicker({
+        var pickerOpts = {
           host: collectionsList,
           listURL: 'api/collections',
           agentField: 'attached_collections',
           agentID: id,
-          emptyText: '(no collections yet — author one under Knowledge to attach it here)'
-        });
+          emptyText: '(no collections yet — use + Create knowledge for this agent, or author one under Knowledge)'
+        };
+        renderAllowlistPicker(pickerOpts);
+
+        scaffoldBtn.onclick = function() {
+          scaffoldBtn.disabled = true;
+          scaffoldStatus.style.color = 'var(--text-mute)';
+          scaffoldStatus.textContent = 'Creating…';
+          fetch('api/agents/' + encodeURIComponent(id) + '/knowledge/scaffold-collection', {method: 'POST'})
+            .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); return r.json(); })
+            .then(function(out) {
+              scaffoldStatus.style.color = 'var(--accent,#56d364)';
+              scaffoldStatus.textContent = 'Created "' + (out.name || 'collection') + '"';
+              renderAllowlistPicker(pickerOpts);
+            })
+            .catch(function(err){
+              scaffoldStatus.style.color = 'var(--danger,#ff7b72)';
+              scaffoldStatus.textContent = 'Failed: ' + (err && err.message || err);
+            })
+            .finally(function(){ scaffoldBtn.disabled = false; });
+        };
       });
 
       // --- Skills modal ----------------------------------------------
