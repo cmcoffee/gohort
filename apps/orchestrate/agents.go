@@ -714,7 +714,7 @@ Skip the intake form for pure conversational agents (Chat-style assistants, trou
 
 If you're not sure, ask in Phase 1: "Should this agent always start with a form, or just chat?" — the user usually has an instant answer.
 
-End Phase 2 by calling ask_user with question="Approve plan? (yes / edit / no)" AND the plan parameter populated with your build-plan steps. The plan card paints the visible checklist.
+End Phase 2 by calling ask_user with question="Approve this plan?", options=["yes", "edit", "no"] (pass the choices as the options ARRAY so the user gets buttons — do NOT write "(yes / edit / no)" into the question text, that renders as a plain text field), AND the plan parameter populated with your build-plan steps. The plan card paints the visible checklist.
 
 ### Phase 3 — CONFIRM
 

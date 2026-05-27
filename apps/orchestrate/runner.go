@@ -939,10 +939,39 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// allowed until the user has seen it work).
 	if t.session != nil {
 		drafts := LoadSessionTempTools(t.udb, t.session.ID)
+		// Set of tool names already COMMITTED to any agent the user owns.
+		// A draft whose canonical copy now lives on an agent record is
+		// redundant and gets pruned. This is the Builder fix: Builder
+		// authors tools for OTHER agents (committed to the TARGET's
+		// record), but the session draft is keyed to BUILDER's session —
+		// which never loads the target agent's Tools, so the name-conflict
+		// prune below never caught them. They piled up turn after turn,
+		// growing the "Your custom tools" prompt section (and busting the
+		// prompt cache) for the whole build. Only built when drafts exist,
+		// so the listAgents walk doesn't tax draft-free agents.
+		var committed map[string]bool
+		if len(drafts) > 0 {
+			committed = map[string]bool{}
+			for _, a := range listAgents(t.udb, t.user) {
+				for _, tl := range a.Tools {
+					committed[tl.Name] = true
+				}
+			}
+		}
 		var cleaned int
 		for i := range drafts {
 			tool := drafts[i]
 			if t.privateMode && tool.Mode == TempToolModeAPI {
+				continue
+			}
+			// Already committed to some agent → prune; don't load a stale
+			// duplicate into this session's catalog. (Catches cross-agent
+			// authoring, which the name-conflict path below misses because
+			// the committed copy isn't in THIS session's tool set.)
+			if committed[tool.Name] {
+				RemoveSessionTempTool(t.udb, t.session.ID, tool.Name)
+				cleaned++
+				Debug("[orchestrate.tools] pruned committed session draft %q (now lives on an agent record)", tool.Name)
 				continue
 			}
 			if err := sess.AppendTempTool(&tool); err != nil {
@@ -3269,7 +3298,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				},
 				"options": {
 					Type:        "array",
-					Description: "Optional pre-filled choices the user can pick from. MUST be an array of STRINGS, each being one option label. Concrete example: options=[\"yes\", \"edit\", \"no\"] or options=[\"PDF\", \"HTML\", \"Markdown\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders checkboxes (or radios when multi=false) plus a free-text field. Keep labels short (1-4 words each), 8 max.",
+					Description: "Optional pre-filled choices the user can pick from. MUST be an array of STRINGS, each being one option label. Concrete example: options=[\"yes\", \"edit\", \"no\"] or options=[\"PDF\", \"HTML\", \"Markdown\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders radios (or checkboxes when multi=true) plus a free-text field. PUT THE CHOICES HERE, not in the question text — writing \"(yes / no / edit)\" into the question string gives a plain text field with no buttons; passing them as this array is what produces clickable choices. Keep labels short (1-4 words each), 8 max.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"multi": {
