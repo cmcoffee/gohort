@@ -1497,7 +1497,11 @@ func fetchAutofillURL(ctx context.Context, u string) ([]byte, string, error) {
 	}
 	// Polite UA so servers don't 403 us as a default "Go-http-client".
 	req.Header.Set("User-Agent", "gohort-autofill/1.0 (+https://github.com/cmcoffee/gohort)")
-	resp, err := http.DefaultClient.Do(req)
+	// Bounded client (shared with fetch_url) — ties connect + time-to-
+	// first-byte to the configured Network Timeouts so a dead URL fails
+	// fast instead of stalling autofill for the full autofillPerFetch
+	// window. The 30s fctx above stays the overall body cap.
+	resp, err := NewBoundedHTTPClient().Do(req)
 	if err != nil {
 		return nil, "", err
 	}

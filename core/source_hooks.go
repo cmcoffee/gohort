@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -33,6 +34,34 @@ func ApplyHTTPTimeouts(db Database) {
 	if request_sec > 0 {
 		HTTPRequestTimeout = time.Duration(request_sec) * time.Second
 	}
+}
+
+// NewBoundedHTTPClient builds an HTTP client whose CONNECTION-PHASE
+// timeouts come from the operator-configured Network Timeouts
+// (HTTPConnectTimeout / HTTPRequestTimeout, loaded by ApplyHTTPTimeouts):
+//
+//	dial + TLS handshake  → HTTPConnectTimeout (default 10s)
+//	time-to-first-byte    → HTTPRequestTimeout (default 15s) via ResponseHeaderTimeout
+//
+// It sets NO client-level Timeout — the OVERALL bound stays the caller's
+// request context (context.WithTimeout on the *http.Request), so a slow-
+// but-progressing large body download still gets its time while a dead
+// server (accepts the TCP connection but never sends response headers —
+// the classic hang) fails at the configured request timeout instead of
+// stalling for the full context window.
+//
+// Build PER-CALL (it's cheap — a cloned transport) so it reflects --setup
+// changes that mutate the timeout vars at runtime. Use for fetching
+// arbitrary public URLs (fetch_url, collection autofill) where a dead
+// host must not hang the caller — an agent round, a pipeline stage, an
+// autofill batch. Internal/bounded API calls that already carry an
+// apiclient timeout don't need this.
+func NewBoundedHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.DialContext = (&net.Dialer{Timeout: HTTPConnectTimeout, KeepAlive: 30 * time.Second}).DialContext
+	tr.TLSHandshakeTimeout = HTTPConnectTimeout
+	tr.ResponseHeaderTimeout = HTTPRequestTimeout
+	return &http.Client{Transport: tr}
 }
 
 const sourceHookTable = "source_hooks"

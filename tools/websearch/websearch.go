@@ -248,6 +248,11 @@ const fetchURLMaxSaveBytes = 100 * 1024 * 1024
 // gets free re-reads.
 const fetchURLCacheTTL = 10 * time.Minute
 
+// fetch_url's network calls go through core.NewBoundedHTTPClient(), which
+// ties the connect + time-to-first-byte bounds to the operator-configured
+// Network Timeouts so a dead server fails fast instead of stalling the
+// agent round / pipeline stage behind it (see that helper for details).
+
 func (t *FetchURLTool) Run(args map[string]any) (string, error) {
 	return t.runImpl(args, nil)
 }
@@ -371,7 +376,7 @@ func fetchAndCache(target, workspaceDir, mime string) (string, string, int64, er
 		return "", "", 0, err
 	}
 	req.Header.Set("User-Agent", "gohort/fetch_url")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewBoundedHTTPClient().Do(req)
 	if err != nil {
 		return "", "", 0, err
 	}
@@ -561,7 +566,7 @@ func fetchURLToFile(target, absPath, displayPath string) (string, error) {
 		return "", fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("User-Agent", "gohort/fetch_url")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewBoundedHTTPClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch failed: %w", err)
 	}
@@ -606,7 +611,7 @@ func peekContentType(target string) (string, error) {
 	}
 	req.Header.Set("User-Agent", "gohort/fetch_url")
 	req.Header.Set("Range", "bytes=0-0")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := NewBoundedHTTPClient().Do(req)
 	if err != nil {
 		return "", err
 	}
