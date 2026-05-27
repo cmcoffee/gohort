@@ -3449,6 +3449,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// tools stay registered for backward compat with agent
 		// records that explicitly name them in AllowedTools.
 		t.agentsGroupedToolDef(),
+		// pipeline (create / run / list / get / delete) — declarative
+		// multi-stage workflows. Lets the LLM author + run reusable
+		// staged pipelines (decompose → stages → synthesize).
+		t.pipelineGroupedToolDef(),
 		// Recurring tasks — background work that posts back into this
 		// session at a fixed interval. Mirror of chat's schedule_chat_update
 		// flow, scoped per-(user, agent).
