@@ -230,6 +230,23 @@ type AgentLoopConfig struct {
 	// just means "no extras this round."
 	DynamicTools func() []AgentToolDef
 
+	// RoundToolFilter, when set, is called at the top of each round for
+	// every candidate tool name; returning false drops that tool from the
+	// round's catalog. Use to SUPPRESS a tool mid-turn — e.g. after it has
+	// looped/errored repeatedly — so the model is forced off it. A fixated
+	// model ignores error feedback but physically can't call a tool that
+	// isn't in the catalog. Nil = no filtering (all tools offered).
+	RoundToolFilter func(name string) bool
+
+	// RoundChatOptions, when set, is called at the top of each round; its
+	// options are appended LAST (after route/budget defaults and
+	// ChatOptions/ToolRoundOptions) so they OVERRIDE for that round.
+	// Use for per-round dynamic overrides the static option slices can't
+	// express — e.g. forcing WithThink(false) on the round right after a
+	// control-tool rejection so the model doesn't deliberate itself back
+	// into the same dead end. Nil = no per-round override.
+	RoundChatOptions func() []ChatOption
+
 	// AllowedCaps gates which tools the LLM is offered, by capability tier
 	// (CapRead, CapNetwork, CapWrite, CapExecute). Tools whose declared Caps
 	// aren't all in this set are filtered out before the LLM ever sees the
@@ -587,16 +604,26 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// create_temp_tool earlier this loop) and merge into the catalog
 		// for this round. Filtered through the same caps gate as static
 		// tools so the LLM can't elevate via runtime registration.
-		if cfg.DynamicTools != nil {
-			dyn := filterCaps(cfg.DynamicTools())
-			if len(dyn) > 0 {
-				active := make([]AgentToolDef, 0, len(tools)+len(dyn))
-				active = append(active, tools...)
-				active = append(active, dyn...)
-				rebuildToolMaps(active)
-			} else {
-				rebuildToolMaps(tools)
+		if cfg.DynamicTools != nil || cfg.RoundToolFilter != nil {
+			active := make([]AgentToolDef, 0, len(tools)+4)
+			active = append(active, tools...)
+			if cfg.DynamicTools != nil {
+				active = append(active, filterCaps(cfg.DynamicTools())...)
 			}
+			// Per-round suppression: drop any tool RoundToolFilter rejects
+			// (e.g. plan_set after it loops). Filtered in place — active is
+			// freshly allocated this round, so reusing its backing array is
+			// safe and the dispatch maps below see only the kept set.
+			if cfg.RoundToolFilter != nil {
+				kept := active[:0]
+				for _, td := range active {
+					if cfg.RoundToolFilter(td.Tool.Name) {
+						kept = append(kept, td)
+					}
+				}
+				active = kept
+			}
+			rebuildToolMaps(active)
 		}
 		// Route think is the default; ChatOptions override it. Build route
 		// defaults first so per-call WithThink(true/false) takes precedence.
@@ -623,6 +650,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			roundOpts = cfg.ToolRoundOptions
 		}
 		opts = append(opts, roundOpts...)
+		// Per-round dynamic override, appended after the static option
+		// slices so it wins (e.g. WithThink(false) on the round after a
+		// control-tool rejection).
+		if cfg.RoundChatOptions != nil {
+			opts = append(opts, cfg.RoundChatOptions()...)
+		}
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
 		}

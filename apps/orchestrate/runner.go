@@ -3185,6 +3185,19 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		capturedFormSteps []map[string]any
 		capturedReply     string
 	)
+	// plan_set fixation guard: a Qwen failure mode is re-submitting a
+	// rejected (single-step / vacuous) plan_set round after round,
+	// ignoring the "use respond_directly" feedback. Count rejections;
+	// once we hit planSetDropThreshold, RoundToolFilter drops plan_set
+	// from the catalog for the rest of the turn so the model is FORCED
+	// off it. forceNoThinkAfterReject makes the round right after a
+	// rejection skip thinking — the model was burning 24k-token budgets
+	// deliberating itself back into the same plan_set. Single-threaded
+	// per turn (handler + round hooks run in the loop goroutine), so no
+	// locking needed.
+	var planSetRejects int
+	var forceNoThinkAfterReject bool
+	const planSetDropThreshold = 2
 	orchCtx, cancelOrch := context.WithCancel(t.ctx)
 	defer cancelOrch()
 
@@ -3224,6 +3237,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// the inline tool call directly or author a real
 			// multi-step plan.
 			if len(steps) < 2 {
+				planSetRejects++
+				forceNoThinkAfterReject = true
 				return "", fmt.Errorf("plan_set requires at least 2 steps (got %d). For a single tool call, invoke the tool directly inline — plan_set's planner+worker+synthesis overhead is only worth it for genuinely multi-step work", len(steps))
 			}
 			// Reject vacuous plans — steps whose intent is "just
@@ -3234,6 +3249,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// across multiple workers; if every step is a synthesis
 			// step, the plan adds no value.
 			if vacuous := looksLikeVacuousPlan(steps); vacuous != "" {
+				planSetRejects++
+				forceNoThinkAfterReject = true
 				return "", fmt.Errorf("plan_set rejected: %s. For a turn that needs no tool work, call respond_directly inline with the answer text. plan_set is for genuinely multi-step research / decomposition", vacuous)
 			}
 			capturedSteps = steps
@@ -3886,6 +3903,23 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		Stream:       streamHandler,
 		OnStep:       onStepHandler,
 		OnRoundStart: onRoundStartHandler,
+		// plan_set fixation guard. Once the model has had plan_set
+		// rejected planSetDropThreshold times this turn, drop it from the
+		// catalog so it physically can't keep re-submitting the same
+		// vacuous plan (a real Qwen loop — see planSetRejects above).
+		RoundToolFilter: func(name string) bool {
+			return !(name == "plan_set" && planSetRejects >= planSetDropThreshold)
+		},
+		// The round right after a plan_set rejection skips thinking — the
+		// model was burning huge thinking budgets deliberating itself back
+		// into plan_set. Consume the flag so it applies to exactly one round.
+		RoundChatOptions: func() []ChatOption {
+			if forceNoThinkAfterReject {
+				forceNoThinkAfterReject = false
+				return []ChatOption{WithThink(false)}
+			}
+			return nil
+		},
 		// Cap orchestrator iterations at the agent's worker-rounds
 		// budget. Most chat-style turns need 1-3 rounds; deep
 		// research bumps this naturally via the agent config.
