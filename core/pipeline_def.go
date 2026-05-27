@@ -195,3 +195,40 @@ func DeletePipelineDef(udb Database, id string) {
 	}
 	udb.Unset(PipelineDefsTable, id)
 }
+
+// --- export / import (portable recipe) ------------------------------
+
+// ExportPipeline returns a portable copy of a pipeline def with all
+// storage/identity metadata stripped — the shareable recipe. Marshal
+// the result to JSON for a downloadable artifact. Mirrors the agent-
+// recipe export: identity is reassigned on import, never travels.
+//
+// Note on portability: a recipe whose stages are all kind=worker is
+// fully self-contained. Agent stages reference an agent by id/name;
+// importing such a recipe assumes that agent exists in the target
+// deployment (a future "bundle" export — agent + its tools + its
+// pipelines — closes that gap). Export doesn't rewrite agent refs;
+// it's on the importer to have the referenced agents.
+func ExportPipeline(d PipelineDef) PipelineDef {
+	d.ID = ""
+	d.Owner = ""
+	d.Created = time.Time{}
+	d.Updated = time.Time{}
+	return d
+}
+
+// ImportPipeline takes a recipe (from ExportPipeline or an uploaded
+// JSON file), assigns it to owner with a fresh ID, validates it, and
+// saves it to the user's store. Returns the saved def. The recipe's
+// own ID/Owner/timestamps (if present) are ignored — the importer
+// owns the copy.
+func ImportPipeline(udb Database, owner string, recipe PipelineDef) (PipelineDef, error) {
+	recipe.ID = ""
+	recipe.Owner = owner
+	recipe.Created = time.Time{}
+	recipe.Updated = time.Time{}
+	if err := recipe.Validate(); err != nil {
+		return PipelineDef{}, err
+	}
+	return SavePipelineDef(udb, recipe), nil
+}
