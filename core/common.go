@@ -44,15 +44,15 @@ type FlagSet struct {
 
 // AppCore encapsulates the components required to execute an agent.
 type AppCore struct {
-	Flags   FlagSet
-	DB      Database
-	Cache   Database
-	Report  *TaskReport
-	Limiter LimitGroup
-	LLM          LLM     // Primary (worker) LLM — used for most calls.
-	LeadLLM      LLM     // Lead (judge) LLM — used for high-precision calls. Falls back to LLM if nil.
-	LeadFallback bool    // Set to true if any lead LLM call fell back to the primary during this session.
-	NoLead       bool    // HARD GUARD: when true, LeadChat() redirects to worker and RunAgentLoop ignores LEAD tier.
+	Flags        FlagSet
+	DB           Database
+	Cache        Database
+	Report       *TaskReport
+	Limiter      LimitGroup
+	LLM          LLM  // Primary (worker) LLM — used for most calls.
+	LeadLLM      LLM  // Lead (judge) LLM — used for high-precision calls. Falls back to LLM if nil.
+	LeadFallback bool // Set to true if any lead LLM call fell back to the primary during this session.
+	NoLead       bool // HARD GUARD: when true, LeadChat() redirects to worker and RunAgentLoop ignores LEAD tier.
 
 	// MaxRounds limits how many LLM call rounds Run() will perform.
 	// Set this in Init() or Main(). Default is 10 if unset.
@@ -1449,7 +1449,27 @@ const (
 	TempToolModeAPI        = "api"
 	TempToolModePipeline   = "pipeline"
 	TempToolModePersistent = "persistent" // long-lived shell process; action-dispatched (open/send/read/interrupt/close)
+	TempToolModeToolbox    = "toolbox"    // multi-action wrapper bundling several api-mode endpoints under one tool name; surfaces in the catalog as a GroupedTool with action="<sub>" dispatch
 )
+
+// TempToolAction is one sub-endpoint of a toolbox-mode TempTool.
+// Each action is a single api-mode HTTP endpoint with its own params,
+// URL template, method, optional body template, and optional response
+// pipe. The parent TempTool's Credential is shared across actions —
+// real-world API wrappers almost always have one credential per API,
+// and putting it at the parent level avoids the LLM having to repeat
+// it per action. To call: <toolbox_name>(action="<sub-action name>",
+// <action-specific args>).
+type TempToolAction struct {
+	Name         string               `json:"name"`
+	Description  string               `json:"description"`
+	Params       map[string]ToolParam `json:"params,omitempty"`
+	Required     []string             `json:"required,omitempty"`
+	URLTemplate  string               `json:"url_template"`
+	Method       string               `json:"method,omitempty"`
+	BodyTemplate string               `json:"body_template,omitempty"`
+	ResponsePipe string               `json:"response_pipe,omitempty"`
+}
 
 // TempTool is a runtime-defined tool created via create_temp_tool or
 // create_api_tool. The LLM sees it in its tool catalog like any other
@@ -1542,6 +1562,17 @@ type TempTool struct {
 	// state_path is rebuilt fresh from the recipe each fire.
 	StatePath string `json:"state_path,omitempty"`
 
+	// HookCapabilities lists the SandboxHook methods this tool's
+	// script is allowed to invoke. When non-empty, the dispatcher
+	// starts a per-dispatch UDS hook server inside the workspace,
+	// exposes its path via the GOHORT_HOOK_PATH env var, and the
+	// shipped `gohort_hook.py` helper module lets the script call
+	// back into gohort for those narrow operations (fetch, log, …)
+	// WITHOUT opening the sandbox's network namespace. Empty list
+	// means no hook is wired — zero surface area, same posture as
+	// before the hook existed. Recognized methods: "fetch", "log".
+	HookCapabilities []string `json:"hook_capabilities,omitempty"`
+
 	// --- Pipeline-mode fields (Mode == "pipeline") ----------------------
 	// Pipeline-mode tools are mini-agents exposed as a single tool.
 	// On dispatch the framework spawns a sub-agent loop via the host
@@ -1566,6 +1597,17 @@ type TempTool struct {
 	// PipelineMaxRounds caps the sub-agent loop. Default 6 — enough
 	// for a small multi-step flow without runaway cost.
 	PipelineMaxRounds int `json:"pipeline_max_rounds,omitempty"`
+
+	// Cache, when non-nil, enables persistent memoization of this
+	// tool's result text keyed by the rendered Cache.Key (defaults to
+	// the SHA-256 of all args). The canonical use is wrapping an
+	// expensive remote fetch (download_video, transcribe_audio,
+	// document conversion) so a re-call with the same args returns
+	// the prior result instead of re-spending bandwidth or compute.
+	// Cache entries are stored in RootDB; TTL bounds entry lifetime;
+	// InvalidateWhen lets a side-effect-producing tool say "drop the
+	// cache if the workspace artifact I previously wrote is gone."
+	Cache *TempToolCache `json:"cache,omitempty"`
 
 	// PipelineSteps is the structured alternative to PipelinePrompt.
 	// When non-empty, the pipeline runs DETERMINISTICALLY: each step's
@@ -1606,6 +1648,56 @@ type TempTool struct {
 	// the prompt to reappear before returning with complete=false (the
 	// LLM should call read for more). Default 5s when unset.
 	PersistentSendTimeoutSec int `json:"persistent_send_timeout_sec,omitempty"`
+
+	// --- Toolbox-mode fields (Mode == TempToolModeToolbox) ----------------
+	// Toolbox-mode tools bundle multiple api-mode endpoints under one
+	// tool name. The catalog shows ONE entry; the LLM picks a sub-
+	// endpoint via action="<name>". Same shape as the framework's
+	// built-in grouped tools (tool_def / agents / workspace). Useful
+	// when wrapping an API surface with several related endpoints
+	// (GitHub: get_user / get_repo / list_issues; Stripe: list_charges /
+	// create_invoice / etc.) — keeps the catalog clean and shares one
+	// Credential across all endpoints.
+	Actions []TempToolAction `json:"actions,omitempty"`
+}
+
+// TempToolCache is the declarative memoization spec attached to a
+// TempTool. All fields optional; an empty struct caches everything
+// forever under user scope, which is fine for tools where every
+// argument combination genuinely produces the same result.
+type TempToolCache struct {
+	// Key is a {param}-templated string that produces the cache key.
+	// Empty defaults to a stable hash of all args, so semantically-
+	// identical calls land on the same entry regardless of arg order.
+	Key string `json:"key,omitempty"`
+
+	// TTL is a duration string (e.g. "30d", "12h", "10m"). Empty =
+	// no expiry (entry lives until an InvalidateWhen check drops it
+	// or the table is wiped).
+	TTL string `json:"ttl,omitempty"`
+
+	// Scope determines the cache partition. Choices:
+	//   "user"    — keyed by sess.Username (default; cross-session
+	//               dedup for one user).
+	//   "session" — keyed by sess.ChatSessionID (per-conversation).
+	//   "global"  — shared across all users / sessions (use only
+	//               when the result is content-addressable and
+	//               privacy-safe, e.g. public URL → video bytes).
+	// When the required identifier is missing on the session
+	// (sessionless run, anonymous CLI invocation, etc.) caching is
+	// silently skipped rather than broadening to a less-restrictive
+	// scope.
+	Scope string `json:"scope,omitempty"`
+
+	// InvalidateWhen is a list of post-hit verification checks. Each
+	// string has the form "kind:expression". Today one kind is
+	// supported:
+	//   "file_exists:<path-template>"  — the rendered path must
+	//   exist on disk (templated against args + {workspace_dir}).
+	// Use to keep the cache honest when the tool's side effect (a
+	// workspace file) might have been reaped between the original
+	// run and the hit.
+	InvalidateWhen []string `json:"invalidate_when,omitempty"`
 }
 
 // PipelineStep is one rung of a structured (deterministic) pipeline.
@@ -1615,8 +1707,8 @@ type TempTool struct {
 //   - {param_name}    → value of the caller-supplied parameter
 //   - $N              → full output of step N (1-indexed)
 //   - $N.field.path   → JSON field path into step N's output
-//                       (returns empty string if step N's output isn't
-//                       JSON or the path doesn't resolve)
+//     (returns empty string if step N's output isn't
+//     JSON or the path doesn't resolve)
 //
 // Optional Name lets later steps reference outputs by name instead
 // of by index: $name.field works the same as $N.field. Mostly a

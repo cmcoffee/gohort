@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -119,8 +120,16 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	var buf bytes.Buffer
 	c.Stdout = &buf
 	c.Stderr = &buf
+	// Spawn/exit breadcrumbs: when a dispatch hangs, the gap between
+	// these two lines tells us exec is wedged versus the wrapper code
+	// upstream. argv-count distinguishes "tiny argv → exec failed
+	// early" from "fat argv → bind-mount setup stuck".
+	Debug("[sandbox] spawn: bwrap=%q argv=%d allowNet=%v workspace=%s", bwrap, len(c.Args), allowNetwork, workspaceDir)
+	t0 := time.Now()
 	err := c.Run()
+	dur := time.Since(t0)
 	timedOut := ctx.Err() == context.DeadlineExceeded
+	Debug("[sandbox] exit: err=%v timedOut=%v bytes=%d dur=%s", err, timedOut, buf.Len(), dur)
 	return SandboxedShellResult{
 		Output:   buf.String(),
 		Err:      err,

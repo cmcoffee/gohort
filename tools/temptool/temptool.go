@@ -22,11 +22,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -99,9 +102,9 @@ func formatTempToolSpec(tt *TempTool) string {
 
 type CreateTempToolTool struct{}
 
-func (t *CreateTempToolTool) Name() string         { return "create_temp_tool" }
-func (t *CreateTempToolTool) Caps() []Capability   { return []Capability{CapExecute} }
-func (t *CreateTempToolTool) NeedsConfirm() bool   { return true }
+func (t *CreateTempToolTool) Name() string       { return "create_temp_tool" }
+func (t *CreateTempToolTool) Caps() []Capability { return []Capability{CapExecute} }
+func (t *CreateTempToolTool) NeedsConfirm() bool { return true }
 
 func (t *CreateTempToolTool) Desc() string {
 	return "Define a new tool for this session. The tool runs a shell command template you supply; placeholders like {arg_name} are filled with the caller's arguments (shell-quoted to prevent injection). The tool appears in your catalog on the next round and stays available for the rest of this session. Use this when you find yourself re-issuing the same shell command pattern with different inputs (e.g. resizing many images, batch-converting files, scraping a series of URLs). Runs in the same workspace sandbox as run_local — cannot reach files outside the workspace. Requires user confirmation."
@@ -222,6 +225,20 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		if _, err := EnsureSessionWorkspace(sess); err != nil {
 			return "", fmt.Errorf("auto-mint workspace: %w", err)
 		}
+		// Catch the most common authoring mismatch: LLM wrote the script
+		// via local(action="write", path="X.py") under one name and
+		// gave command_template a DIFFERENT filename
+		// ({workspace_dir}/script.py) — no script_body to redeploy,
+		// so dispatch fails on the first call with "no such file" and
+		// the user sees an invisible deployment. Refuse at create
+		// time so the LLM gets a clear, immediate error instead of a
+		// silently-broken tool. Only checks recognized script
+		// extensions (.py / .sh / .jq / etc.) so command_templates
+		// that reference workspace_dir as a scratch path for output
+		// files (data.json, screenshot.png) aren't false-positives.
+		if missing := missingWorkspaceScriptRefs(cmd, sess.WorkspaceDir); len(missing) > 0 {
+			return "", fmt.Errorf("command_template references script file(s) %v in {workspace_dir} that don't exist on disk. Either (a) pass script_body so the framework ships the script with the tool record (preferred — survives workspace wipes), OR (b) call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") BEFORE this tool_def call, with the path matching what command_template expects", missing)
+		}
 	}
 
 	params, err := parseParamsArg(args["params"])
@@ -280,6 +297,67 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// (counters, accumulating logs, lookup DBs) opt in.
 	if sp := strings.TrimSpace(StringArg(args, "state_path")); sp != "" {
 		tool.StatePath = sp
+	}
+	// Optional HookCapabilities: opens the per-dispatch UDS callback
+	// channel for the listed methods. Empty / unset = no hook, no
+	// extra env, zero surface area. Validate each entry — bare
+	// methods ("fetch", "log") and qualified secret entries
+	// ("secret:<credential_name>") are accepted; bare "secret"
+	// without a name is rejected so the tool record always names
+	// every credential it can read. Other typos fail authoring
+	// rather than silently never being granted at dispatch.
+	if caps := stringSliceArg(args["hook_capabilities"]); len(caps) > 0 {
+		bareKnown := map[string]bool{"fetch": true, "log": true}
+		var bad []string
+		var clean []string
+		seen := map[string]bool{}
+		for _, c := range caps {
+			// Preserve credential name casing in the suffix — credential
+			// names are case-sensitive on the registry side — but
+			// normalize the method prefix to lower.
+			c = strings.TrimSpace(c)
+			if c == "" {
+				continue
+			}
+			if idx := strings.IndexByte(c, ':'); idx >= 0 {
+				method := strings.ToLower(c[:idx])
+				name := strings.TrimSpace(c[idx+1:])
+				if method != "secret" || name == "" {
+					bad = append(bad, c)
+					continue
+				}
+				c = method + ":" + name
+			} else {
+				c = strings.ToLower(c)
+				if c == "secret" {
+					// Bare "secret" is intentionally not honored — every
+					// credential grant must be explicit.
+					return "", fmt.Errorf("hook_capabilities entry %q is too broad — declare specific credentials as %q instead", "secret", "secret:<credential_name>")
+				}
+				if !bareKnown[c] {
+					bad = append(bad, c)
+					continue
+				}
+			}
+			if seen[c] {
+				continue
+			}
+			seen[c] = true
+			clean = append(clean, c)
+		}
+		if len(bad) > 0 {
+			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v — known forms: \"fetch\", \"log\", \"secret:<credential_name>\"", bad)
+		}
+		tool.HookCapabilities = clean
+	}
+	// Optional cache spec — opt-in memoization keyed by rendered
+	// {param} template (default = hash of all args). Validated here
+	// so a bad spec fails authoring instead of silently never
+	// caching at dispatch.
+	if cacheSpec, err := parseCacheArg(args["cache"]); err != nil {
+		return "", fmt.Errorf("cache: %w", err)
+	} else if cacheSpec != nil {
+		tool.Cache = cacheSpec
 	}
 	// Allow in-session overwrite: if the LLM is recreating a tool by
 	// the same name (typically because v1 had a schema mistake), drop
@@ -594,6 +672,43 @@ func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
 }
 
 func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
+	// Toolbox mode is structurally a GroupedTool — bundle of action-
+	// dispatched sub-endpoints. Build it through the framework's
+	// GroupedTool primitive so the LLM-facing schema is identical to
+	// built-in grouped tools (tool_def / agents / workspace): one tool
+	// name in the catalog, action="<sub>" routes to the right
+	// endpoint's params. Each action handler synthesizes a single-
+	// endpoint api-mode TempTool at dispatch time (see
+	// dispatchToolboxModeTempTool — they share the synth-and-reuse
+	// trick).
+	if tt.Mode == TempToolModeToolbox {
+		gtDesc := tt.Description + fmt.Sprintf(" (toolbox — wraps credential %q with %d action(s), defined this session via tool_def)", tt.Credential, len(tt.Actions))
+		gt := NewGroupedTool(tt.Name, gtDesc)
+		for i := range tt.Actions {
+			act := tt.Actions[i] // capture by value for the closure
+			gt.AddAction(act.Name, &GroupedToolAction{
+				Description: act.Description,
+				Params:      act.Params,
+				Required:    act.Required,
+				Caps:        []Capability{CapNetwork, CapExecute}, // api-mode + response_pipe
+				Handler: func(args map[string]any, s *ToolSession) (string, error) {
+					// Re-attach the action key so the toolbox dispatcher
+					// finds its routing handle. The framework's grouped
+					// tool stripped it during routing; we put it back
+					// because dispatchToolboxModeTempTool reads
+					// args["action"] to look up the sub-action.
+					a2 := make(map[string]any, len(args)+1)
+					for k, v := range args {
+						a2[k] = v
+					}
+					a2["action"] = act.Name
+					return dispatchTempTool(s, tt, a2)
+				},
+			})
+		}
+		return ChatToolToAgentToolDefWithSession(gt, sess)
+	}
+
 	// Caps depend on execution mode. Shell mode requires CapExecute
 	// (sandboxed shell), API mode requires CapNetwork (HTTP call via
 	// stored credential). The AllowedCaps filter then hides the tool
@@ -795,6 +910,27 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	// template substitution + handler code without surprises.
 	args = canonicalizeArgKeys(args, tt.Required, tt.Params)
 
+	// Cache lookup, when the tool spec opted into memoization. Wraps
+	// every mode (shell / api / pipeline / persistent) uniformly —
+	// caching is about input→output equivalence, not the backend.
+	if tt.Cache != nil {
+		if hit, ok := lookupTempToolCache(sess, tt, args); ok {
+			Log("[temptool] %q cache hit — skipping exec", tt.Name)
+			return hit, nil
+		}
+	}
+
+	result, err := dispatchTempToolUncached(sess, tt, args)
+	if err == nil && tt.Cache != nil {
+		storeTempToolCache(sess, tt, args, result)
+	}
+	return result, err
+}
+
+// dispatchTempToolUncached is the per-mode dispatch core that
+// dispatchTempTool wraps with cache lookup/store. Required-arg
+// validation and key canonicalization have already happened above.
+func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
 	if tt.Mode == TempToolModeAPI {
 		return dispatchAPIModeTempTool(sess, tt, args)
 	}
@@ -803,6 +939,9 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	}
 	if tt.Mode == TempToolModePersistent {
 		return dispatchPersistentShellTempTool(sess, tt, args)
+	}
+	if tt.Mode == TempToolModeToolbox {
+		return dispatchToolboxModeTempTool(sess, tt, args)
 	}
 
 	// Shell-mode dispatch path. Three shapes depending on the tool:
@@ -878,6 +1017,13 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	// command will be obviously missing the value — and the script
 	// will (correctly) reject it as "first_name is required".
 	Log("[temptool] %q rendered command: %s", tt.Name, cmd)
+	// Deployment state at dispatch time — answers "did the LLM author
+	// this with script_body?" and "does the workspace have the file
+	// the command_template expects?" before we even look at exec.
+	// Critical when a tool hangs / errors and we need to know if the
+	// redeploy block (next) will fire and where it'll write.
+	Debug("[temptool] %q deploy state: script_body=%dB script_name=%q canonical=%q workspace=%s",
+		tt.Name, len(tt.ScriptBody), tt.ScriptName, tt.CanonicalScriptName, workspaceDir)
 
 	// Redeploy ScriptBody to {workspace_dir}/<CanonicalScriptName>
 	// if missing or stale. Survives workspace wipes — the script
@@ -910,6 +1056,7 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 				needWrite = false
 			}
 		}
+		Debug("[temptool] %q redeploy check: path=%s needWrite=%v", tt.Name, scriptPath, needWrite)
 		if needWrite {
 			if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
 				return "", fmt.Errorf("create parent dir for script %q on tool %q: %w", onDiskName, tt.Name, err)
@@ -917,7 +1064,7 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 			if err := os.WriteFile(scriptPath, []byte(tt.ScriptBody), 0700); err != nil {
 				return "", fmt.Errorf("redeploy script %q for tool %q: %w", onDiskName, tt.Name, err)
 			}
-			Debug("[temptool] redeployed script_body to %s for tool %q", scriptPath, tt.Name)
+			Debug("[temptool] redeployed script_body to %s for tool %q (%dB)", scriptPath, tt.Name, len(tt.ScriptBody))
 		}
 		// Translate every LLM-facing script_name reference in the
 		// final command to the canonical on-disk filename. Last-
@@ -925,6 +1072,25 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 		// LLM's view of the tool record stays clean.
 		if tt.CanonicalScriptName != "" && tt.ScriptName != "" && tt.CanonicalScriptName != tt.ScriptName {
 			cmd = strings.ReplaceAll(cmd, tt.ScriptName, tt.CanonicalScriptName)
+		}
+	}
+
+	// Pre-exec validation for legacy tools: when ScriptBody is empty,
+	// the redeploy block above doesn't fire — so a command_template
+	// that references {workspace_dir}/<script>.py relies on the file
+	// already being on disk (either left over from a prior local(write)
+	// or… missing). Without this check the dispatch runs `python3
+	// .../foo.py`, python exits with "can't open file" within ms, and
+	// the agent-loop's retry behavior + SSE buffering make it look
+	// like a hang. Surface the missing script as a directive error
+	// the LLM (or admin) can act on. ScriptBody-bearing tools skip
+	// this — they just redeployed the canonical script above and the
+	// final cmd is translated to its name at line ~957.
+	if tt.ScriptBody == "" {
+		missing := missingWorkspaceScriptRefs(tt.CommandTemplate, workspaceDir)
+		Debug("[temptool] %q legacy-script validation: missing=%v", tt.Name, missing)
+		if len(missing) > 0 {
+			return "", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that don't exist on disk. This is a legacy tool authored before deploy-time validation existed. Re-author it: pass script_body to ship the script with the tool record (preferred — survives workspace wipes), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename that matches what command_template expects before each dispatch", tt.Name, missing)
 		}
 	}
 
@@ -943,7 +1109,54 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	// {name} substitution. Both paths now coexist; tools authored
 	// either way work.
 	envArgs := buildEnvArgs(args)
+
+	// SandboxHook: when the tool declared HookCapabilities, start a
+	// per-dispatch UDS server inside the workspace, deploy the Python
+	// helper module (`gohort_hook.py`) so scripts can `from gohort_hook
+	// import gohort`, and expose the socket path via GOHORT_HOOK_PATH
+	// in the sandbox env. The hook lets the script call back into
+	// gohort for narrow capabilities (HTTP fetch, log) WITHOUT opening
+	// the sandbox's network namespace — gohort proxies on its behalf.
+	// Empty HookCapabilities ⇒ no hook started, no env var set, zero
+	// extra surface area (same posture as a pre-hook tool).
+	hook, hookErr := NewSandboxHook(workspaceDir, tt.HookCapabilities)
+	if hookErr != nil {
+		return "", fmt.Errorf("start sandbox hook: %w", hookErr)
+	}
+	if hook != nil {
+		defer hook.Close()
+		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
+		// Deploy the Python helper module into the workspace
+		// idempotently. Same pattern as ScriptBody redeploy: if a
+		// matching file already exists, no-op; otherwise (re)write.
+		helperPath := filepath.Join(workspaceDir, "gohort_hook.py")
+		needHelperWrite := true
+		if existing, err := os.ReadFile(helperPath); err == nil {
+			if string(existing) == SandboxHookPythonHelper {
+				needHelperWrite = false
+			}
+		}
+		if needHelperWrite {
+			if err := os.WriteFile(helperPath, []byte(SandboxHookPythonHelper), 0600); err != nil {
+				return "", fmt.Errorf("write gohort_hook.py: %w", err)
+			}
+			Debug("[temptool] %q deployed gohort_hook.py helper (%dB) at %s", tt.Name, len(SandboxHookPythonHelper), helperPath)
+		}
+		Debug("[temptool] %q hook attached: %s caps=%v", tt.Name, hook.SocketPath, tt.HookCapabilities)
+	}
+
+	// Entry/exit breadcrumb around the sandbox call. The inner
+	// [sandbox] spawn/exit lines bracket the actual exec; the outer
+	// pair here catches anything wedged in argv setup / network
+	// connector application / etc. between them. If you see this
+	// "enter" but never the next "exit", the hang is inside the
+	// sandbox call itself; if you don't see this "enter", the hang
+	// is upstream (redeploy or legacy-script validation).
+	Debug("[temptool] %q sandbox enter (envArgs=%d hook=%v)", tt.Name, len(envArgs), hook != nil)
+	tExec := time.Now()
 	res := RunSandboxedShellWithEnv(ctx, cmd, workspaceDir, envArgs)
+	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
+		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))
 	output := strings.TrimSpace(res.Output)
 
 	// Extract attachment markers from stdout and route them to the
@@ -1333,9 +1546,9 @@ func substitute(cmd string, params map[string]ToolParam, args map[string]any) (s
 //     file isn't touched, no stale-content risk)
 //
 // Extension is derived from (in priority order):
-//   1. The LLM's script_name suffix, if a recognized language ext.
-//   2. A shebang line in script_body ("#!/bin/sh" → .sh, etc.).
-//   3. Default .py (Python is the dominant pattern).
+//  1. The LLM's script_name suffix, if a recognized language ext.
+//  2. A shebang line in script_body ("#!/bin/sh" → .sh, etc.).
+//  3. Default .py (Python is the dominant pattern).
 func canonicalScriptName(toolName, llmHint, body string) string {
 	ext := ".py"
 	// First try the LLM's hint suffix.
@@ -1379,6 +1592,63 @@ func canonicalScriptName(toolName, llmHint, body string) string {
 	sum := sha256.Sum256([]byte(body))
 	hashSuffix := hex.EncodeToString(sum[:4])
 	return safe + "_" + hashSuffix + ext
+}
+
+// scriptExtensions lists the file suffixes the framework treats as
+// "this is a script" for command_template validation purposes. Used
+// by missingWorkspaceScriptRefs to distinguish script references
+// (where missing → tool will be silently broken) from arbitrary
+// workspace_dir output paths like data.json or screenshot.png
+// (which the command itself produces and shouldn't be expected to
+// pre-exist).
+var scriptExtensions = map[string]bool{
+	".py": true, ".sh": true, ".bash": true, ".jq": true,
+	".awk": true, ".sed": true, ".pl": true, ".rb": true,
+	".js": true, ".ts": true,
+}
+
+// workspaceScriptRefRe captures {workspace_dir}/<path>.<ext>
+// references. The path may contain word chars, hyphens, dots, and
+// slashes (subdirectories allowed). Extension match is checked
+// against scriptExtensions; anything else is treated as a non-script
+// reference and skipped (false-positive avoidance).
+var workspaceScriptRefRe = regexp.MustCompile(`\{workspace_dir\}/([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)`)
+
+// missingWorkspaceScriptRefs scans cmd for {workspace_dir}/<script>
+// patterns and returns the filenames whose extension marks them as
+// scripts AND which do not exist on disk under workspaceDir. Empty
+// workspaceDir or empty cmd returns nil (no validation possible).
+// De-duplicates so a script referenced twice surfaces once in the
+// error message.
+func missingWorkspaceScriptRefs(cmd, workspaceDir string) []string {
+	if cmd == "" || workspaceDir == "" {
+		return nil
+	}
+	matches := workspaceScriptRefRe.FindAllStringSubmatch(cmd, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var missing []string
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		rel := m[1]
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		ext := strings.ToLower(filepath.Ext(rel))
+		if !scriptExtensions[ext] {
+			continue // arbitrary output path, not a script invocation
+		}
+		full := filepath.Join(workspaceDir, rel)
+		if _, err := os.Stat(full); errors.Is(err, fs.ErrNotExist) {
+			missing = append(missing, rel)
+		}
+	}
+	return missing
 }
 
 // looksLikeNumberLiteral returns true when s parses cleanly as a
@@ -1432,7 +1702,7 @@ func stringify(v any) string {
 }
 
 // shellQuote wraps s in single quotes, escaping any embedded single
-// quotes via the standard `'\''` POSIX trick. Suitable for any sh
+// quotes via the standard `'\”` POSIX trick. Suitable for any sh
 // shell. Critical for safety — without this, a placeholder value
 // containing `; rm -rf $HOME` would execute as a command.
 func shellQuote(s string) string {
@@ -1686,10 +1956,10 @@ func dispatchPipelineModeTempTool(sess *ToolSession, tt *TempTool, args map[stri
 //   - {param_name}    → caller's arg value
 //   - $N              → entire string output of step N (1-indexed)
 //   - $N.field.path   → JSON field path into step N's output;
-//                       returns empty string when the output isn't
-//                       JSON or the path doesn't resolve
+//     returns empty string when the output isn't
+//     JSON or the path doesn't resolve
 //   - $name / $name.field — same as above but referencing a step's
-//                       Name (set by the author for readability)
+//     Name (set by the author for readability)
 //
 // Aborts on the first error (no retry / no on_error policy in V1).
 func dispatchPipelineStepsTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
@@ -1862,6 +2132,83 @@ func extractJSONPath(root any, path string) string {
 		b, _ := json.Marshal(v)
 		return string(b)
 	}
+}
+
+// dispatchToolboxModeTempTool routes a toolbox-mode TempTool call to
+// the named sub-action. The caller passes action="<name>" plus the
+// action's own args; we look up the action, synthesize a single-
+// endpoint api-mode TempTool that shares the parent's Credential,
+// and reuse dispatchAPIModeTempTool. This keeps every api-mode
+// concern (allow-list, audit log, response_pipe sandbox, etc.) in
+// one place — toolbox is a packaging primitive, not a separate
+// execution path.
+func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	if len(tt.Actions) == 0 {
+		return "", fmt.Errorf("toolbox tool %q has no actions defined", tt.Name)
+	}
+	actionName := strings.TrimSpace(StringArg(args, "action"))
+	if actionName == "" {
+		names := make([]string, 0, len(tt.Actions))
+		for _, a := range tt.Actions {
+			names = append(names, a.Name)
+		}
+		return "", fmt.Errorf("toolbox tool %q requires action=<name>. available: %v", tt.Name, names)
+	}
+	var act *TempToolAction
+	for i := range tt.Actions {
+		if tt.Actions[i].Name == actionName {
+			act = &tt.Actions[i]
+			break
+		}
+	}
+	if act == nil {
+		names := make([]string, 0, len(tt.Actions))
+		for _, a := range tt.Actions {
+			names = append(names, a.Name)
+		}
+		return "", fmt.Errorf("toolbox %q: no action named %q. available: %v", tt.Name, actionName, names)
+	}
+	// Drop the routing key so the synthetic api-mode tool doesn't see
+	// it (action isn't one of its declared params, and the substitute
+	// step would treat it as noise).
+	inner := make(map[string]any, len(args))
+	for k, v := range args {
+		if k == "action" {
+			continue
+		}
+		inner[k] = v
+	}
+	// Synthesize a single-endpoint api-mode tool. Carries the parent's
+	// Credential + the action's URL/method/body/pipe + the action's
+	// declared params + required list. Name encodes both layers so the
+	// inner machinery's logs (rendered URL, response pipe failures)
+	// stay attributable to the toolbox+action pair.
+	synthetic := TempTool{
+		Name:            tt.Name + "." + act.Name,
+		Description:     act.Description,
+		Params:          act.Params,
+		Required:        act.Required,
+		Mode:            TempToolModeAPI,
+		CommandTemplate: act.URLTemplate,
+		Credential:      tt.Credential,
+		Method:          act.Method,
+		BodyTemplate:    act.BodyTemplate,
+		ResponsePipe:    act.ResponsePipe,
+	}
+	// Required-arg check (mirrors the top-level dispatchTempTool guard
+	// but scoped to the action's params, since the outer toolbox tool
+	// only enforces "action" was provided).
+	for _, r := range synthetic.Required {
+		v, ok := lookupArgCI(inner, r)
+		if !ok || v == nil {
+			return "", fmt.Errorf("toolbox %q action %q: missing required arg %q", tt.Name, act.Name, r)
+		}
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+			return "", fmt.Errorf("toolbox %q action %q: required arg %q is empty", tt.Name, act.Name, r)
+		}
+	}
+	inner = canonicalizeArgKeys(inner, synthetic.Required, synthetic.Params)
+	return dispatchAPIModeTempTool(sess, &synthetic, inner)
 }
 
 func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {

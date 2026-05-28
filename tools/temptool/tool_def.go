@@ -30,9 +30,9 @@ func BuildToolDef() *GroupedTool {
 	gt.SetSingleFirePerBatch(true)
 
 	gt.AddAction("list", &GroupedToolAction{
-		Description:  "List all session-scoped + persistent tools currently available to you. Returns name, mode (shell|api), and a one-line description for each.",
-		Params:       map[string]ToolParam{},
-		Required:     nil,
+		Description: "List all session-scoped + persistent tools currently available to you. Returns name, mode (shell|api), and a one-line description for each.",
+		Params:      map[string]ToolParam{},
+		Required:    nil,
 		// Listing is read-only metadata. No caps required — gating is
 		// done at runtime when a created tool is actually dispatched.
 		Caps:         nil,
@@ -46,11 +46,11 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description:  "Define a new runtime tool for THIS session. CHOOSE MODE FIRST: if the work is calling an HTTPS endpoint use mode=\"api\" (with credential=\"no_auth\" for unauthenticated public APIs like Open-Meteo, wttr.in, etc., or credential=\"<registered name>\" for authenticated ones). If the work is local computation/parsing/scripting use mode=\"shell\". If the work needs multi-step LLM reasoning (search → fetch → summarize, look-up-then-act, chains where each step depends on the previous step's reasoning), use mode=\"pipeline\" with pipeline_prompt + pipeline_tools (adaptive sub-agent) or pipeline_steps (deterministic chain). Do NOT wrap an HTTP endpoint with a Python+urllib script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api mode. Required: name, description, mode, params, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, optional body_template, and optional response_pipe. mode=\"shell\" needs command_template; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus either pipeline_prompt (adaptive) or pipeline_steps (deterministic). Tools you create here live for this conversation only — the user (admin) decides whether to keep them past the session via the Tools modal. Call action=\"help\" for the full spec including examples.",
+		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. Admin approval for cross-session persistence is a SEPARATE downstream gate the framework queues automatically in the background — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor), or with pipeline_prompt + pipeline_tools for adaptive multi-step LLM reasoning. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus either pipeline_prompt (adaptive) or pipeline_steps (deterministic). Tools you create here are immediately callable in this session. The framework auto-queues them for admin review in the background — admin approval governs cross-session persistence ONLY, not whether you can create or call the tool. Call action=\"help\" for the full spec including examples.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":      {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
-			"mode":             {Type: "string", Description: "\"api\" for any HTTPS endpoint (authenticated or public — for public ones pass credential=\"no_auth\"). \"shell\" for local computation, parsing, or stateful scripts. \"pipeline\" for multi-step LLM-driven flows where each step depends on the previous step's reasoning. Pick by the work, not by familiarity — a Python urllib wrapper around an HTTPS endpoint is the wrong answer."},
+			"mode":             {Type: "string", Description: "\"api\" for a single HTTPS endpoint. \"toolbox\" for multiple related endpoints bundled under one tool name (e.g. wrapping a whole API surface — GitHub, Stripe — with several actions sharing one credential). \"shell\" for local computation, parsing, or stateful scripts. \"pipeline\" for multi-step LLM-driven flows. Pick by the work, not by familiarity — a Python urllib wrapper around an HTTPS endpoint is the wrong answer."},
 			"params":           {Type: "object", Description: "Object describing the tool's parameters. Each key is a param name, value is {type, description}. **Use the correct type:** \"integer\" for whole-number args (counts, indexes, ports), \"number\" for floats (rates, percentages), \"boolean\" for flags, \"string\" for text and identifiers. The dispatcher uses type to decide whether to shell-quote the value — a `count` typed as \"string\" gets passed to the script as `'1'` (with quotes) and any downstream int()/atoi() call fails. Default to \"string\" only when the value is genuinely free-form text."},
 			"command_template": {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch. {workspace_dir} resolves to the tool's sandbox path. For multi-line scripts, prefer script_body — it sidesteps shell-quoting entirely."},
 			"script_body":      {Type: "string", Description: "(shell mode, optional) Full source of a script to ship with the tool (Python, Bash, awk, jq, etc.). Written into the sandbox at registration as `script_name` (default \"script.py\"). Reference from command_template as {workspace_dir}/<script_name>. Auto-mints a sandbox; no setup required."},
@@ -62,13 +62,15 @@ func BuildToolDef() *GroupedTool {
 			"response_pipe":    {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
 			"required":         {Type: "array", Description: "Optional list of param names that must be provided by callers. Defaults to all params."},
 			"state_path":       {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
+			"hook_capabilities": {Type: "array", Description: "(shell mode, optional) Grant the script a narrow callback channel back into gohort while the sandbox stays network-isolated. Each entry names a method (and for secrets, a specific credential) the script may invoke; the framework auto-deploys a `gohort_hook` Python module into the workspace, exposes a per-dispatch UNIX socket via $GOHORT_HOOK_PATH, and gohort proxies the operation. Use this INSTEAD of giving a shell tool raw network — same outcome (your script can do HTTP and read tokens) but every call goes through gohort's network stack with logging. Forms: \"fetch\" (HTTP request → returns {status, headers, body}); \"log\" (route a message into gohort's log stream); \"secret:<credential_name>\" (return the decrypted value of a credential registered via the admin UI — grants are per-credential, the tool record lists exactly what it can read). Example: hook_capabilities=[\"fetch\", \"secret:openweather\"]. Usage in script: `from gohort_hook import gohort; key = gohort.secret(\"openweather\"); data = gohort.fetch(f\"https://api.openweathermap.org/...&appid={key}\")`. **Prefer secret:<name> over hard-coding API keys in script_body** — keeps tokens out of the tool record (which lives in the DB and shows up in admin review). Empty / unset = no hook attached, zero surface area."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
-			"pipeline_prompt":    {Type: "string", Description: "(pipeline mode, ADAPTIVE variant) System prompt for an LLM sub-agent that runs the chain with reasoning between steps. Reference inner tools by name; be directive about sequencing. {param_name} placeholders get filled from caller args via plain string substitution — write them BARE (e.g. `for the topic {query}`), NEVER wrap them in quotes (`'{query}'` becomes `'AI 2026'` and the sub-agent will pass the literal quoted string to web_search). Mutually exclusive with pipeline_steps."},
-			"pipeline_steps":     {Type: "array", Description: "(pipeline mode, DETERMINISTIC variant) Ordered list of step objects {tool, args, name?}, executed in sequence with no inner LLM. Args undergo template substitution: {param_name} → caller arg; $N → output of step N (1-indexed); $N.field.path → JSON field path. Mutually exclusive with pipeline_prompt."},
-			"pipeline_tools":     {Type: "array", Description: "(pipeline mode) Names of tools the sub-agent (adaptive) or step executor (deterministic) may call. Must include every tool referenced in pipeline_steps."},
+			"pipeline_prompt":     {Type: "string", Description: "(pipeline mode, ADAPTIVE variant) System prompt for an LLM sub-agent that runs the chain with reasoning between steps. Reference inner tools by name; be directive about sequencing. {param_name} placeholders get filled from caller args via plain string substitution — write them BARE (e.g. `for the topic {query}`), NEVER wrap them in quotes (`'{query}'` becomes `'AI 2026'` and the sub-agent will pass the literal quoted string to web_search). Mutually exclusive with pipeline_steps."},
+			"pipeline_steps":      {Type: "array", Description: "(pipeline mode, DETERMINISTIC variant) Ordered list of step objects {tool, args, name?}, executed in sequence with no inner LLM. Args undergo template substitution: {param_name} → caller arg; $N → output of step N (1-indexed); $N.field.path → JSON field path. Mutually exclusive with pipeline_prompt."},
+			"pipeline_tools":      {Type: "array", Description: "(pipeline mode) Names of tools the sub-agent (adaptive) or step executor (deterministic) may call. Must include every tool referenced in pipeline_steps."},
 			"pipeline_max_rounds": {Type: "integer", Description: "(pipeline mode, adaptive only) Cap on sub-agent LLM rounds. Default 6. Ignored when pipeline_steps is set."},
+			"actions":             {Type: "array", Description: "(toolbox mode) Sub-action endpoints. Array of objects, each shape: {name, description, url_template, params, required?, method?, body_template?, response_pipe?}. Every action is one api-mode endpoint with its own params + URL. Names must be unique within the toolbox; the LLM calls the toolbox as <toolbox_name>(action=\"<sub>\", ...). The toolbox's top-level credential is shared across all actions — APIs almost always have one credential per service. NOT for shell-mode sub-actions (toolbox is api-only today); use mode=\"shell\" for those."},
 		},
-		Required:     []string{"name", "description", "mode", "params"},
+		Required: []string{"name", "description", "mode"},
 		// Creating a tool is registry CRUD — it does not execute anything.
 		// The created tool, when invoked, carries its own caps (CapExecute
 		// for shell mode, CapNetwork for api mode) and is filtered at
@@ -84,11 +86,11 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("delete", &GroupedToolAction{
-		Description:  "Remove a tool by name. Removes from this session AND from your persistent pool if applicable.",
+		Description: "Remove a tool by name. Removes from this session AND from your persistent pool if applicable.",
 		Params: map[string]ToolParam{
 			"name": {Type: "string", Description: "Name of the tool to remove."},
 		},
-		Required:     []string{"name"},
+		Required: []string{"name"},
 		// Deletion is registry CRUD — no caps required.
 		Caps:         nil,
 		NeedsConfirm: false,
@@ -225,6 +227,12 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if v, ok := args["script_name"]; ok {
 			shellArgs["script_name"] = v
 		}
+		if v, ok := args["cache"]; ok {
+			shellArgs["cache"] = v
+		}
+		if v, ok := args["hook_capabilities"]; ok {
+			shellArgs["hook_capabilities"] = v
+		}
 		t := &CreateTempToolTool{}
 		res, err := t.RunWithSession(shellArgs, sess)
 		if err == nil {
@@ -266,9 +274,145 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			queueForReview(sess, strings.TrimSpace(StringArg(args, "name")))
 		}
 		return res, err
+	case TempToolModeToolbox:
+		res, err := createToolboxGrouped(args, sess)
+		if err == nil {
+			queueForReview(sess, strings.TrimSpace(StringArg(args, "name")))
+		}
+		return res, err
 	default:
-		return "", fmt.Errorf("mode must be \"shell\", \"api\", or \"pipeline\" (got %q)", mode)
+		return "", fmt.Errorf("mode must be \"shell\", \"api\", \"pipeline\", or \"toolbox\" (got %q)", mode)
 	}
+}
+
+// createToolboxGrouped builds a toolbox-mode TempTool from the
+// grouped-action arg map. A toolbox bundles multiple api-mode
+// endpoints under one tool name + one shared credential, surfacing
+// in the catalog as a single GroupedTool with action="<sub>"
+// dispatch (same UX as the framework's built-in grouped tools).
+// Use when wrapping an API with several related endpoints (GitHub:
+// get_user / get_repo / list_issues) so the catalog stays clean and
+// the credential is declared once.
+func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("requires a session")
+	}
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if !validToolName(name) {
+		return "", fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
+	}
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == name {
+			return "", fmt.Errorf("name %q collides with a registered tool — pick another", name)
+		}
+	}
+	desc := strings.TrimSpace(StringArg(args, "description"))
+	if desc == "" {
+		return "", fmt.Errorf("description is required")
+	}
+	credential := strings.TrimSpace(StringArg(args, "credential"))
+	if credential == "" {
+		return "", fmt.Errorf("credential is required for toolbox mode — every action shares one credential. Use credential=\"no_auth\" for public unauthenticated APIs")
+	}
+	rawActions, ok := args["actions"]
+	if !ok || rawActions == nil {
+		return "", fmt.Errorf("actions is required for toolbox mode — provide an array of {name, description, url_template, params, ...} sub-action objects")
+	}
+	actionsList, ok := rawActions.([]any)
+	if !ok {
+		return "", fmt.Errorf("actions must be an array (got %T)", rawActions)
+	}
+	if len(actionsList) == 0 {
+		return "", fmt.Errorf("actions must contain at least one sub-action (a toolbox with no actions is just an unbuilt api tool — use mode=\"api\" instead)")
+	}
+	actions := make([]TempToolAction, 0, len(actionsList))
+	seen := make(map[string]bool, len(actionsList))
+	for i, raw := range actionsList {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("actions[%d]: must be an object (got %T)", i, raw)
+		}
+		actName := strings.TrimSpace(StringArg(m, "name"))
+		if actName == "" {
+			return "", fmt.Errorf("actions[%d]: name is required", i)
+		}
+		if !validToolName(actName) {
+			return "", fmt.Errorf("actions[%d].name %q: must be lowercase letters / digits / underscores only", i, actName)
+		}
+		if seen[actName] {
+			return "", fmt.Errorf("actions[%d]: duplicate action name %q (each action must be uniquely named within the toolbox)", i, actName)
+		}
+		seen[actName] = true
+		urlTpl := strings.TrimSpace(StringArg(m, "url_template"))
+		if urlTpl == "" {
+			return "", fmt.Errorf("actions[%d] (%q): url_template is required", i, actName)
+		}
+		actDesc := strings.TrimSpace(StringArg(m, "description"))
+		actParams, err := parseParamsArg(m["params"])
+		if err != nil {
+			return "", fmt.Errorf("actions[%d] (%q): params: %w", i, actName, err)
+		}
+		actRequired := stringSliceArg(m["required"])
+		if len(actRequired) == 0 {
+			// Default to every declared param being required, same as
+			// shell/api mode tools.
+			for k := range actParams {
+				actRequired = append(actRequired, k)
+			}
+		} else {
+			for _, r := range actRequired {
+				if _, ok := actParams[r]; !ok {
+					return "", fmt.Errorf("actions[%d] (%q): required lists %q which is not in params", i, actName, r)
+				}
+			}
+		}
+		method := strings.TrimSpace(StringArg(m, "method"))
+		if method == "" {
+			method = "GET"
+		}
+		actions = append(actions, TempToolAction{
+			Name:         actName,
+			Description:  actDesc,
+			Params:       actParams,
+			Required:     actRequired,
+			URLTemplate:  urlTpl,
+			Method:       method,
+			BodyTemplate: strings.TrimSpace(StringArg(m, "body_template")),
+			ResponsePipe: strings.TrimSpace(StringArg(m, "response_pipe")),
+		})
+	}
+	tool := &TempTool{
+		Name:        name,
+		Description: desc,
+		Mode:        TempToolModeToolbox,
+		Credential:  credential,
+		Actions:     actions,
+	}
+	sess.RemoveTempTool(tool.Name)
+	if err := sess.AppendTempTool(tool); err != nil {
+		return "", err
+	}
+	if sess.DB != nil && sess.ChatSessionID != "" {
+		if err := SaveSessionTempTool(sess.DB, sess.ChatSessionID, *tool); err != nil {
+			Debug("[temptool] session-scoped save failed for %s/%s: %v", sess.ChatSessionID, name, err)
+		}
+	}
+	_ = BoolArg(args, "persist") // ignored — same as other modes
+	return fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...). Available in this session; admin promotes to permanent via the Tools modal.",
+		name, len(actions), actionNames(actions), name), nil
+}
+
+// actionNames returns the sub-action names of a toolbox for log /
+// success-message formatting.
+func actionNames(actions []TempToolAction) []string {
+	out := make([]string, 0, len(actions))
+	for _, a := range actions {
+		out = append(out, a.Name)
+	}
+	return out
 }
 
 // createPipelineGrouped builds a pipeline-mode TempTool from the
@@ -529,42 +673,113 @@ pivot. The shell sandbox will reject those at dispatch time.
 WHEN TO USE WHICH MODE — decide by the work, not by what's familiar
 ================================================================
 
-If the work is an HTTPS request → use api mode.
-If the work is local computation, parsing, or stateful logic → use shell mode.
+**COMPOSE BEFORE YOU BUILD.** Before authoring anything that touches
+the network, check whether an existing framework tool already does
+the fetch step:
 
-That's the rule. The most common mistake is reaching for shell mode
-+ a Python urllib script when the task is just "call this HTTPS
-endpoint and pass the response back." That path has more failure
-modes than the work warrants — invented method names, JSON parsing,
-URL-encoding bugs, even invisible homoglyphs in URLs. api mode
-handles encoding, error responses, redaction, and audit logging
-uniformly, with nothing for the model to get wrong.
+  web_search       — search the web, returns ranked results
+  fetch_url        — GET a URL, returns body
+  find_image       — search for an image and save best match to workspace
+  fetch_image      — download a specific image URL to workspace
+  download_video   — download a video from a supported site to workspace
 
-api mode — for HTTPS endpoints, authenticated or not.
+If one of these covers the fetch, your authoring job is the LOCAL
+PROCESSING ON TOP — write that as a shell-mode tool and chain the two
+via pipeline_steps. Don't reimplement the fetch. The framework's
+versions handle credentials, retries, redirects, content-type sniffing,
+size caps, caching, and observability — none of which a curl-in-shell
+script gets.
+
+Decision tree:
+
+  Network involved?
+    └─ YES — does an existing tool already fetch what you need?
+        ├─ YES → pipeline mode: chain that tool + a shell-mode
+        │        processor you author for the transformation.
+        └─ NO  → api mode (HTTPS endpoint the framework can't
+                  already reach).
+    └─ NO  — purely local computation? → shell mode.
+
+That's the rule. The two most common mistakes:
+  (1) Reaching for shell mode + a Python urllib (or curl) script
+      when the task is "call this HTTPS endpoint and pass the
+      response back." Use api mode. Invented method names, JSON
+      parse bugs, URL-encoding mistakes, even invisible homoglyphs
+      in URLs are all eliminated by api mode.
+  (2) Re-authoring a fetch when fetch_url or web_search already
+      does it. The right shape is pipeline_steps that chains the
+      existing fetch tool with your custom processor — you only
+      author the part that doesn't already exist.
+
+api mode — for HTTPS endpoints the framework doesn't already reach.
   Use when:
-    - The task is to fetch / post against an HTTPS URL. Period.
-    - Authenticated: the operator registered a credential (Bearer,
-      header, query, basic_auth) — pass credential="<name>".
-    - Unauthenticated public API (Open-Meteo, wttr.in, exchange
-      rates, geocoders, etc.): pass credential="no_auth". Same
-      machinery — allow-list pattern, audit log, rate limit — but
-      no auth header injected and no secret required.
-  Do NOT write a Python urllib client around an HTTPS endpoint.
-  Use api mode. There is no situation where a hand-rolled HTTP
-  client in shell mode is the right answer for a public or
-  registered API.
+    - The task is to hit an authenticated HTTPS URL with a
+      registered credential (Bearer, header, query, basic_auth) —
+      pass credential="<name>".
+    - The task is an unauthenticated public API (Open-Meteo,
+      wttr.in, exchange rates, geocoders, etc.) — pass
+      credential="no_auth". Same machinery (allow-list, audit log,
+      rate limit) without an auth header.
+  Do NOT write a Python urllib or curl-in-shell client around an
+  HTTPS endpoint. There is no situation where a hand-rolled HTTP
+  client in shell mode is the right answer.
 
 shell mode — for local computation in a sandbox.
   Use when:
     - You need to parse, transform, or aggregate data with a
-      script (Python, Bash, jq, awk, sed).
-    - You need a multi-step computation that doesn't make sense
-      as a single HTTP call.
+      script (Python, Bash, jq, awk, sed) — and the data is
+      passed in as an arg, NOT fetched by the script itself.
     - You need persistent state across invocations (StatePath).
-  Sandbox: bubblewrap, no network by default, read-only filesystem
-  except for the tool's bound sandbox directory. Constraints
+    - You need a multi-step computation that operates on
+      caller-supplied input only.
+  Sandbox: bubblewrap, network technically reachable but using it
+  for HTTP work is the anti-pattern called out above. Constraints
   documented in the SANDBOX FACT SHEET at the top of this help —
   read that before authoring shell-mode tools.
+
+pipeline mode — for composition (THIS is how "use existing tools").
+  Two variants:
+    pipeline_steps (DETERMINISTIC): each step is one tool call,
+      args templated with {param} (caller args) and $N / $N.field
+      (prior step output). No inner LLM. Cheap, fast, predictable.
+      The right choice for "fetch X then process X" — pair an
+      existing fetch tool with a shell-mode processor you author.
+    pipeline_prompt (ADAPTIVE): a sub-agent LLM runs the chain
+      with reasoning between steps. Use when the chain needs
+      branching ("if the search returns a paper PDF, fetch and
+      summarize; if it returns a webpage, scrape and summarize").
+
+Worked example — fetch a JSON endpoint and project just the fields
+you want, composing fetch_url + a shell processor:
+
+  Step 1 — author the shell processor (works on caller-supplied data):
+    tool_def(action="create", mode="shell",
+             name="project_user_summary",
+             description="Project name + repo count from a GitHub user JSON.",
+             params={"json": {"type": "string", "description": "raw JSON body"}},
+             command_template="echo {json} | jq -c '{login, public_repos, followers}'")
+
+  Step 2 — author the pipeline that chains fetch_url + the processor:
+    tool_def(action="create", mode="pipeline",
+             name="gh_user_summary",
+             description="Get a GitHub user's summary by username.",
+             params={"user": {"type": "string", "description": "GitHub username"}},
+             pipeline_tools=["fetch_url", "project_user_summary"],
+             pipeline_steps=[
+               {tool: "fetch_url", args: {url: "https://api.github.com/users/{user}"}, name: "page"},
+               {tool: "project_user_summary", args: {json: "$page"}}
+             ])
+
+What you DIDN'T have to write: the HTTPS fetch, retry handling,
+content-type sniffing, error formatting, size caps. fetch_url
+already gives you all of that.
+
+When NOT to use pipeline mode:
+  - The whole flow is one HTTPS call: just use api mode directly.
+  - The processing is so trivial it fits in api mode's
+    response_pipe (which is jq / awk on the response body —
+    cheaper than a pipeline_steps chain when nothing else is in
+    the chain).
 
 ================================================================
 WRAPPING A SCRIPT — fast path
@@ -692,8 +907,88 @@ URL placeholders are URL-encoded at dispatch. Body placeholders are
 JSON-encoded. Both are safe against injection.
 
 ================================================================
+toolbox mode — wrap a whole API surface
+================================================================
+
+When the work is "expose several endpoints of one API as tools"
+(GitHub: users + repos + issues; Stripe: charges + invoices +
+customers; an internal service with 5 read endpoints), use mode=
+"toolbox" instead of authoring N separate api-mode tools. A toolbox
+surfaces as ONE catalog entry with action="<sub>" dispatch — the
+same UX as the framework's built-in grouped tools (tool_def itself
+is one). Cleaner for the catalog, one credential shared across
+actions, one approval.
+
+Shape:
+
+    tool_def(action="create", mode="toolbox",
+             name="github",
+             description="Query GitHub: users, repos, issues.",
+             credential="github_api",     # shared across all actions
+             actions=[
+               {name: "get_user",
+                description: "Get a user's public profile.",
+                url_template: "https://api.github.com/users/{username}",
+                method: "GET",
+                params: {"username": {"type": "string",
+                                      "description": "GitHub username"}},
+                response_pipe: "jq -c '{login, name, bio, public_repos, followers}'"},
+               {name: "get_repo",
+                description: "Get a repository's metadata.",
+                url_template: "https://api.github.com/repos/{owner}/{repo}",
+                method: "GET",
+                params: {"owner": {"type": "string"}, "repo": {"type": "string"}},
+                response_pipe: "jq -c '{full_name, description, stars: .stargazers_count, language}'"},
+               {name: "list_issues",
+                description: "List issues on a repo by state.",
+                url_template: "https://api.github.com/repos/{owner}/{repo}/issues?state={state}",
+                method: "GET",
+                params: {"owner": {"type": "string"}, "repo": {"type": "string"},
+                         "state": {"type": "string",
+                                   "description": "open | closed | all"}},
+                response_pipe: "jq -c '[.[] | {number, title, state, user: .user.login}]'"}
+             ])
+
+Called as:
+
+    github(action="get_user", username="octocat")
+    github(action="get_repo", owner="cmcoffee", repo="gohort")
+    github(action="list_issues", owner="cmcoffee", repo="gohort", state="open")
+
+Each action is structurally a single api-mode endpoint — same URL
+template substitution, same method/body_template/response_pipe
+semantics. The toolbox is a packaging primitive on top.
+
+Why toolbox over N api-mode tools:
+  * One catalog entry (the toolbox name) vs N (gh_get_user,
+    gh_get_repo, ...). Much cleaner when the catalog is already
+    busy.
+  * One credential declared at toolbox level vs repeated per tool.
+  * One pending-approval entry vs N — admin reviews "the github
+    toolbox" as one unit.
+  * Adding a new endpoint = adding one entry to actions[], not
+    minting a new tool_def call.
+
+When NOT to use toolbox:
+  * The work is one HTTPS call — mode="api" is leaner.
+  * The endpoints share NOTHING (different APIs, different
+    credentials) — author separate api-mode tools per endpoint.
+  * The "actions" would have wildly different params with no
+    semantic relation — that's usually a sign the work isn't really
+    a wrapper around one API.
+
+================================================================
 persist
 ================================================================
+
+**Your tool_def call is the creation. Stop second-guessing it.**
+There is no separate "register with admin" step you need to ask
+about. The moment tool_def(action="create", ...) returns success,
+your tool is callable in this session AND auto-queued for admin
+review in the background. The admin decides whether to keep it
+past the session; you don't ask, you author. Saying "want me to
+register it now?" after writing a script means you skipped the
+tool_def call — go make it.
 
 persist=false (default): the tool exists only for the current
 session. Disappears at session end. No approval required.
@@ -702,6 +997,74 @@ persist=true: the tool is queued for operator approval. Once
 approved it survives across sessions and shows up in your tool
 catalog every time. Use this for tools you'll reuse; don't use it
 for one-off transformations.
+
+================================================================
+cache (optional)
+================================================================
+
+cache opts a tool into persistent result memoization — the same
+call returns the prior result instead of re-executing. Use for
+tools whose output is expensive AND deterministic given the same
+args:
+
+  - api tools hitting paid or rate-limited endpoints
+  - shell tools that download / convert / process external content
+  - anything where re-running on a follow-up turn would waste
+    bandwidth, money, or wall-time
+
+Shape (all fields optional inside the cache object):
+
+  key             {param}-template that produces the cache key.
+                  Default = hash of all args. Set this when one
+                  arg uniquely identifies the result (a URL, a
+                  document ID) and other args don't affect output.
+  ttl             Duration string: "30d", "12h", "30m", "45s".
+                  Empty = no expiry.
+  scope           "user" (default; dedup per-user across sessions),
+                  "session" (per-conversation), or "global" (shared
+                  across all users — only when the result is
+                  content-addressable AND privacy-safe).
+  invalidate_when Array of post-hit checks. Each entry has the form
+                  "kind:expression". Today one kind:
+                    file_exists:<path-template>
+                  The rendered path must exist on disk or the entry
+                  is dropped and the tool re-runs.
+
+Example — api tool with TTL (current-weather lookup, ~10min fresh):
+
+    create(mode="api",
+           name="current_weather",
+           description="Get current weather for lat/lon.",
+           credential="none",
+           url_template="https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true",
+           method="GET",
+           params={"lat": {"type": "number", "description": "latitude"},
+                   "lon": {"type": "number", "description": "longitude"}},
+           cache={"key": "{lat},{lon}", "ttl": "10m", "scope": "user"})
+
+The same (lat, lon) within 10 minutes returns the prior response
+without re-hitting Open-Meteo.
+
+Example — shell tool with file_exists invalidation (download once):
+
+    create(mode="shell",
+           name="download_url_to_workspace",
+           description="Download a URL into the workspace as out.bin.",
+           command_template="curl -sSL -o {workspace_dir}/out.bin {url}",
+           params={"url": {"type": "string", "description": "source URL"}},
+           cache={"key": "{url}",
+                  "scope": "user",
+                  "invalidate_when": ["file_exists:{workspace_dir}/out.bin"]})
+
+Same URL on a later turn: if the workspace file is still present,
+the cached result string is returned instantly and the file is NOT
+re-fetched. If the workspace was reaped between runs, file_exists
+fails and the tool downloads again.
+
+DO NOT set cache on tools whose output legitimately differs across
+calls (status checks, "fetch latest news", anything time-sensitive
+beyond your TTL). Cache is for input → output determinism, not for
+"make it generally faster."
 
 ================================================================
 common pitfalls
