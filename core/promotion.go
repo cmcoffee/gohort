@@ -138,8 +138,20 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 	// Active sub-sessions take precedence — a user message arriving
 	// while something is running is most-likely additional context
 	// for that running thing.
+	//
+	// EXCEPT when the in-process owner that should be serving this
+	// active record is gone (goroutine died, process restarted with
+	// stale persisted state, etc.). A registered liveness checker
+	// reports false in that case; we retire the orphan and continue
+	// to the idle / no-route checks instead of returning RouteInject
+	// for a record nobody's actually serving — which would ack every
+	// future user message forever.
 	if active := mostRecentActive(hostSessionID); active != nil {
-		return active, RouteInject
+		if subSessionIsLive(active.SubSessionID) {
+			return active, RouteInject
+		}
+		Log("[sub-session] active sub=%s declared dead by liveness checks — retiring as orphan", active.SubSessionID)
+		RetireSubSession(active.SubSessionID, "orphaned_no_goroutine")
 	}
 	idle := IdleSubSessionsFor(hostSessionID)
 	if len(idle) == 0 {

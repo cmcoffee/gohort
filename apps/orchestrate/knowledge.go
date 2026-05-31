@@ -180,17 +180,15 @@ func (T *OrchestrateApp) handleAgentKnowledge(w http.ResponseWriter, r *http.Req
 		http.Error(w, "DB not initialized", http.StatusInternalServerError)
 		return
 	}
-	// Important: use T.DB directly, NOT T.DB.Bucket("knowledge").
-	// The orchestrate runner writes chunks via ingestKnowledgeForTurn
-	// using `t.app.DB` (which IS T.DB) without sub-bucketing, so
-	// reads must match the same scope to find the data.
+	// Chunks live in the dedicated VectorDB now (consolidated shared
+	// store, scoped by Source tag); metadata still lives in T.DB.
 	switch r.Method {
 	case http.MethodGet:
-		n := countAgentKnowledgeChunks(T.DB, user, agentID)
+		n := countAgentKnowledgeChunks(VectorDB, user, agentID)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]int{"chunks": n})
 	case http.MethodDelete:
-		removed := WipeChunksBySourcePrefix(T.DB, agentKnowledgePrefix(user, agentID))
+		removed := WipeChunksBySourcePrefix(VectorDB, agentKnowledgePrefix(user, agentID))
 		Log("[orchestrate.knowledge] user=%q wiped %d chunk(s) for agent=%s",
 			user, removed, agentID)
 		w.Header().Set("Content-Type", "application/json")
@@ -232,9 +230,9 @@ func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWri
 	switch r.Method {
 	case http.MethodGet:
 		n := 0
-		for _, key := range T.DB.Keys(EmbeddedChunks) {
+		for _, key := range VectorDB.Keys(EmbeddedChunks) {
 			var c EmbeddedChunk
-			if !T.DB.Get(EmbeddedChunks, key, &c) {
+			if !VectorDB.Get(EmbeddedChunks, key, &c) {
 				continue
 			}
 			if scope(c) {
@@ -245,13 +243,13 @@ func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWri
 		_ = json.NewEncoder(w).Encode(map[string]int{"chunks": n})
 	case http.MethodDelete:
 		removed := 0
-		for _, key := range T.DB.Keys(EmbeddedChunks) {
+		for _, key := range VectorDB.Keys(EmbeddedChunks) {
 			var c EmbeddedChunk
-			if !T.DB.Get(EmbeddedChunks, key, &c) {
+			if !VectorDB.Get(EmbeddedChunks, key, &c) {
 				continue
 			}
 			if scope(c) {
-				T.DB.Unset(EmbeddedChunks, key)
+				VectorDB.Unset(EmbeddedChunks, key)
 				removed++
 			}
 		}
@@ -351,9 +349,9 @@ func (T *OrchestrateApp) handleAgentInferredList(w http.ResponseWriter, r *http.
 		SourceDoc string `json:"source_doc,omitempty"`
 	}
 	items := make([]row, 0, 32)
-	for _, key := range T.DB.Keys(EmbeddedChunks) {
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
-		if !T.DB.Get(EmbeddedChunks, key, &c) {
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
 		if !strings.HasPrefix(c.Source, prefix) && c.Source != prefix {
@@ -397,9 +395,9 @@ func (T *OrchestrateApp) handleAgentInferredDelete(w http.ResponseWriter, r *htt
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
 	found := false
-	for _, key := range T.DB.Keys(EmbeddedChunks) {
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
-		if !T.DB.Get(EmbeddedChunks, key, &c) {
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
 		if c.ID != chunkID {
@@ -415,7 +413,7 @@ func (T *OrchestrateApp) handleAgentInferredDelete(w http.ResponseWriter, r *htt
 			http.Error(w, "chunk is not a derived Reference Memory entry", http.StatusForbidden)
 			return
 		}
-		T.DB.Unset(EmbeddedChunks, key)
+		VectorDB.Unset(EmbeddedChunks, key)
 		found = true
 		break
 	}
@@ -451,16 +449,16 @@ func invalidateChunkCacheIfPossible() {
 // one of three buckets the user (and the LLM via search results)
 // cares about distinguishing:
 //
-//   "uploaded" — files the user uploaded via the Knowledge button
-//                (orch-upload-*) or autofill-fetched docs in a
-//                collection (autofill-*)
-//   "shared"   — admin-curated docs on the agent (agent-shared:* source)
-//                or chunks under any collection source (always authoritative
-//                because they came from a deliberate ingest)
-//   "derived"  — anything else: synthesis auto-ingests, closer findings,
-//                LLM knowledge_save calls. The LLM's own reasoning
-//                captured at end-of-turn — useful but lower priority
-//                than authoritative material.
+//	"uploaded" — files the user uploaded via the Knowledge button
+//	             (orch-upload-*) or autofill-fetched docs in a
+//	             collection (autofill-*)
+//	"shared"   — admin-curated docs on the agent (agent-shared:* source)
+//	             or chunks under any collection source (always authoritative
+//	             because they came from a deliberate ingest)
+//	"derived"  — anything else: synthesis auto-ingests, closer findings,
+//	             LLM knowledge_save calls. The LLM's own reasoning
+//	             captured at end-of-turn — useful but lower priority
+//	             than authoritative material.
 func chunkProvenance(source, reportID string) string {
 	switch {
 	case strings.HasPrefix(source, "agent-shared:"):
@@ -629,12 +627,13 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	// formats (DOCX, Markdown, plain text) have no useful per-page
 	// locator, so they go through the flat IngestReport path.
 	if isPDFUpload(body.MimeType, name) {
-		IngestPagedReport(r.Context(), T.DB, knowledgeSource(user, agentID, "attachments"), reportID, doc)
+		IngestPagedReport(r.Context(), VectorDB, knowledgeSource(user, agentID, "attachments"), reportID, doc)
 	} else {
-		IngestReport(r.Context(), T.DB, knowledgeSource(user, agentID, "attachments"), reportID, doc)
+		IngestReport(r.Context(), VectorDB, knowledgeSource(user, agentID, "attachments"), reportID, doc)
 	}
+	// recordAgentTopic writes per-agent METADATA (topic list); stays on T.DB.
 	recordAgentTopic(T.DB, user, agentID, "attachments")
-	chunks := countReportChunks(T.DB, reportID)
+	chunks := countReportChunks(VectorDB, reportID)
 	Log("[orchestrate.knowledge] user=%q agent=%s uploaded %q (%d chars → %d chunks) reportID=%s",
 		user, agentID, name, len(text), chunks, reportID)
 	w.Header().Set("Content-Type", "application/json")
@@ -675,9 +674,9 @@ func (T *OrchestrateApp) handleAgentKnowledgeSources(w http.ResponseWriter, r *h
 		latest string
 	}
 	groups := map[string]*group{}
-	for _, key := range T.DB.Keys(EmbeddedChunks) {
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
-		if !T.DB.Get(EmbeddedChunks, key, &c) {
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
 		if !strings.HasPrefix(c.Source, prefix) {
@@ -740,9 +739,9 @@ func (T *OrchestrateApp) handleAgentKnowledgeSourceDelete(w http.ResponseWriter,
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
 	removed := 0
-	for _, key := range T.DB.Keys(EmbeddedChunks) {
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
-		if !T.DB.Get(EmbeddedChunks, key, &c) {
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
 		if c.ReportID != reportID {
@@ -751,7 +750,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeSourceDelete(w http.ResponseWriter,
 		if !strings.HasPrefix(c.Source, prefix) {
 			continue // other agent's chunk with same ID — refuse cross-scope delete
 		}
-		T.DB.Unset(EmbeddedChunks, key)
+		VectorDB.Unset(EmbeddedChunks, key)
 		removed++
 	}
 	Log("[orchestrate.knowledge] user=%q agent=%s removed %d chunk(s) for source=%s",
@@ -825,7 +824,9 @@ func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// IngestReport replaces all chunks under the same reportID.
 	reportID := fmt.Sprintf("orch-know-%s-%s-%d", agentID, user, time.Now().UnixNano())
 	doc := "## " + title + "\n\n" + body
-	IngestReport(ctx, db, knowledgeSource(user, agentID, topic), reportID, doc)
+	// Chunks land in the dedicated shared vector store; recordAgentTopic
+	// writes per-agent metadata which stays on the app's own DB.
+	IngestReport(ctx, VectorDB, knowledgeSource(user, agentID, topic), reportID, doc)
 	if topic != "" {
 		recordAgentTopic(db, user, agentID, topic)
 	}
@@ -834,21 +835,23 @@ func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 // searchAgentKnowledge returns up to k semantically relevant chunks
 // stored under any source the calling agent is allowed to see:
 //   - the agent's own per-(user, agent) corpus (topic-scoped + agent-wide)
-//   - each active skill's self-training corpus ("skill:<id>")
-//   - each collection attached to those active skills ("collection:<id>")
 //   - each collection directly attached to the agent ("collection:<id>")
+//   - each collection attached to an ACTIVE skill ("collection:<id>")
+//   - deployment-scope collections (when the agent has no explicit attachments)
 //
 // Unlike the old cascade-by-source path that early-returned on the
 // first source with hits, this does a UNION search: one vector pass
 // across the entire chunk table, filtered to the allowed-source set,
-// ranked by relevance. This is the right shape for skill collections
-// because the most relevant chunk might live in a skill's reference
-// PDF even when the agent's own corpus has marginally-relevant
-// chunks — we want the vector model picking, not source priority.
+// ranked by relevance. The most relevant chunk might live in a
+// skill-attached PDF even when the agent's own corpus has marginally-
+// relevant chunks — we want the vector model picking, not source
+// priority.
 //
 // activeSkills passes the SkillRecords selected by the classifier
-// this turn; the function reads each one's ID + AttachedCollections.
+// this turn; their AttachedCollections feed the allow predicate.
 // Pass nil/empty when no skills are active (Builder, classifier off).
+// Skill SelfTraining corpus is intentionally NOT a thing — that path
+// compounded drift and was removed. Admin-curated collections only.
 // ChunkScope filters chunks by provenance during a vector search.
 // Lets knowledge_search (curated-only) and memory_search (derived-
 // only) share one ranking pass — the predicate runs before scoring
@@ -873,7 +876,15 @@ const (
 )
 
 func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic, query string, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
-	if db == nil || strings.TrimSpace(query) == "" || k <= 0 {
+	// db is kept in the signature for caller compatibility and acts as
+	// the system-readiness gate. The chunk search itself runs against
+	// VectorDB now (the dedicated shared store, partitioned by Source
+	// tag) — the agent's own corpus AND any deployment-scoped collection
+	// chunks all live there, so the prior two-pass-merge against RootDB
+	// is no longer needed (pass 1 covers everything the allow predicate
+	// matches).
+	_ = db
+	if VectorDB == nil || strings.TrimSpace(query) == "" || k <= 0 {
 		return nil
 	}
 	// The agent's per-(user, agent) corpus uses a PREFIX (sources
@@ -895,11 +906,25 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// longer reachable from RAG; the admin can re-ingest them as a
 	// collection if they still matter.
 	exact := make(map[string]bool, len(agentAttachedCollections)+4)
-	// Agent-attached collections are always in scope. Skills no
-	// longer contribute corpus to the RAG predicate.
+	// Agent-attached collections are always in scope.
 	for _, cid := range agentAttachedCollections {
 		if cid = strings.TrimSpace(cid); cid != "" {
 			exact[collectionSource(cid)] = true
+		}
+	}
+	// Active skills contribute their AttachedCollections — when the
+	// classifier picks a skill this turn, its admin-curated reference
+	// material becomes searchable alongside the agent's own corpus.
+	// When the skill isn't active, its collections stay out of scope,
+	// so heavy reference docs don't leak into unrelated turns. This
+	// is the "skills as behavior + corpus packets" path that pairs
+	// with the new pull-only retrieval model (no auto-inject =
+	// no contamination cost for ride-along docs).
+	for _, sk := range activeSkills {
+		for _, cid := range sk.AttachedCollections {
+			if cid = strings.TrimSpace(cid); cid != "" {
+				exact[collectionSource(cid)] = true
+			}
 		}
 	}
 	// Deployment-scoped collections auto-attach when the agent
@@ -909,17 +934,13 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// leave me alone"). Agents wanting strict isolation set an
 	// explicit AttachedCollections list — even if it's just their
 	// one curated corpus — and the deployment defaults skip them.
-	var deploymentSources []string
 	if len(agentAttachedCollections) == 0 {
 		for _, c := range ListCollections(nil, "") { // empty user → deployment only
 			if IsDeploymentScope(c) {
-				src := collectionSource(c.ID)
-				exact[src] = true
-				deploymentSources = append(deploymentSources, src)
+				exact[collectionSource(c.ID)] = true
 			}
 		}
 	}
-	_ = activeSkills // kept in signature for callers; no corpus contribution today
 	allow := func(c EmbeddedChunk) bool {
 		// Source allow-list (prefix for agent corpus, exact for the rest).
 		inAllowed := false
@@ -960,38 +981,16 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// the calling agent isn't allowed to see, and post-filtering
 	// returns empty even when the agent has perfectly relevant
 	// chunks in its corpus.
+	//
+	// Single pass over VectorDB — agent corpus AND deployment-scoped
+	// collection chunks both live there now, so the allow predicate
+	// (agentPrefix OR exact[c.Source]) covers everything in one ranked
+	// search. The prior RootDB second-pass + merge dance is gone.
 	var hits []SearchHit
 	if len(vec) > 0 {
-		hits = SearchChunksByPredicate(db, allow, vec, k)
+		hits = SearchChunksByPredicate(VectorDB, allow, vec, k)
 	} else {
-		hits = SearchChunksSubstringByPredicate(db, allow, query, k)
-	}
-	// Deployment-collection chunks live in RootDB (research /
-	// debate / answer ingest write there via knowledge.KnowledgeDB =
-	// RootDB). When deployment collections are in scope this turn,
-	// run a second pass against RootDB so those chunks join the
-	// result set. Merged + re-sorted by score, capped at k.
-	if len(deploymentSources) > 0 && RootDB != nil && db != RootDB {
-		deployAllow := func(c EmbeddedChunk) bool {
-			// Only deployment collection sources; the agent's per-
-			// user predicate above already covered everything else.
-			for _, src := range deploymentSources {
-				if c.Source == src {
-					// Reuse the provenance gate from the main allow.
-					return allow(c)
-				}
-			}
-			return false
-		}
-		var rootHits []SearchHit
-		if len(vec) > 0 {
-			rootHits = SearchChunksByPredicate(RootDB, deployAllow, vec, k)
-		} else {
-			rootHits = SearchChunksSubstringByPredicate(RootDB, deployAllow, query, k)
-		}
-		if len(rootHits) > 0 {
-			hits = mergeHitsByScore(hits, rootHits, k)
-		}
+		hits = SearchChunksSubstringByPredicate(VectorDB, allow, query, k)
 	}
 	return hits
 }
@@ -999,40 +998,10 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 // mergeHitsByScore combines two hit slices, dedups by chunk ID,
 // sorts by Score descending, and caps at k. Used to merge per-app
 // + RootDB query results when deployment collections are in scope.
+// mergeHitsByScore delegates to the lifted core primitive; kept as a
+// package-local alias so existing call sites read unchanged.
 func mergeHitsByScore(a, b []SearchHit, k int) []SearchHit {
-	if len(a) == 0 {
-		if len(b) > k {
-			return b[:k]
-		}
-		return b
-	}
-	if len(b) == 0 {
-		if len(a) > k {
-			return a[:k]
-		}
-		return a
-	}
-	merged := make([]SearchHit, 0, len(a)+len(b))
-	seen := make(map[string]bool, len(a)+len(b))
-	for _, h := range a {
-		if seen[h.ID] {
-			continue
-		}
-		seen[h.ID] = true
-		merged = append(merged, h)
-	}
-	for _, h := range b {
-		if seen[h.ID] {
-			continue
-		}
-		seen[h.ID] = true
-		merged = append(merged, h)
-	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
-	if len(merged) > k {
-		merged = merged[:k]
-	}
-	return merged
+	return MergeHitsByScore(a, b, k)
 }
 
 func filterHitsBySource(hits []SearchHit, source string, k int) []SearchHit {
@@ -1049,92 +1018,40 @@ func filterHitsBySource(hits []SearchHit, source string, k int) []SearchHit {
 	return out
 }
 
-// autoInjectMinScore is the cosine-similarity floor for chunks that
-// get auto-injected into the orchestrator's prompt at turn start.
-// Vector search returns top-K matches regardless of relevance score,
-// so weak matches (a chunk from a prior session that's only
-// tangentially related) would otherwise leak into the prompt and pull
-// the LLM toward old context — "the system thought I was running a
-// query from an earlier query." 0.45 is the sweet spot from
-// observation: 0.5+ rejects too many genuinely-relevant chunks (esp.
-// short prior summaries where the embedding signal is thin); 0.4 lets
-// noise through. Manual searches via knowledge_search / memory_search
-// DON'T apply this floor — the LLM asked for them, so it can judge
-// relevance itself.
-const autoInjectMinScore = 0.45
+// knowledgeSearchExcerptMaxChars caps how much chunk body
+// knowledge_search returns per hit. The hit list is a preview pane:
+// LLM scans the excerpts + source attributions, picks which document
+// to read fully via fetch_knowledge_doc, and only then sees the
+// surrounding body. Mirrors web_search → fetch_url ergonomics; cuts
+// per-turn tool-result tokens by ~10x on multi-hit searches.
+const knowledgeSearchExcerptMaxChars = 300
 
-// renderKnowledgePromptSection formats a slice of search hits as a
-// markdown block suitable for prepending to the orchestrator's user
-// prompt. Chunks are grouped by document (by ReportID) so the LLM can
-// tell when hits come from different documents — variants, versions,
-// or potentially-conflicting sources — versus the same document split
-// into multiple chunks. Without this grouping, two variants of K8s
-// API docs from different versions would visually merge into one
-// undifferentiated knowledge blob.
-//
-// Empty input → empty string (callers can concatenate without
-// branching).
-func renderKnowledgePromptSection(hits []SearchHit) string {
-	if len(hits) == 0 {
-		return ""
+// knowledgeSearchExcerpt trims a chunk body to a preview suitable for
+// the knowledge_search result list. Truncates at a word boundary +
+// ellipsis when over the cap; returns the body unchanged when already
+// short enough.
+func knowledgeSearchExcerpt(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= knowledgeSearchExcerptMaxChars {
+		return text
 	}
-	var b strings.Builder
-	b.WriteString("## Possibly-relevant background\n\n")
-	b.WriteString("Auto-retrieved from your own corpus (uploaded docs, attached skill documents, prior findings) based on vector similarity to the current message. **Treat as background context, NOT as established current state.** Apply ONLY if the chunks clearly match what's being asked right now — vector search can surface tangentially-related material from past sessions that has nothing to do with the current intent. If the user's question seems unrelated to these chunks, ignore them entirely and answer the actual question. **Recency: each document below shows its captured-on date. Prefer recent content when it conflicts with older content; cite the as-of date when freshness matters (\"per the docs as of 2024-03…\").** When chunks from DIFFERENT documents DO match and disagree on a specific point, surface the conflict (\"Doc A says X but Doc B says Y\") rather than averaging. If a chunk conflicts with what the user said in THIS turn, the user wins.\n\n")
-	// Group hits by ReportID (document identity), preserving first-seen
-	// order so the highest-scoring document leads.
-	type docGroup struct {
-		name   string
-		hits   []SearchHit
+	cut := text[:knowledgeSearchExcerptMaxChars]
+	if idx := strings.LastIndex(cut, " "); idx > knowledgeSearchExcerptMaxChars/2 {
+		cut = cut[:idx]
 	}
-	groupsByID := map[string]*docGroup{}
-	var order []string
-	for _, h := range hits {
-		key := h.ReportID
-		if key == "" {
-			key = h.ID // fallback: unique per chunk so an empty reportID doesn't merge unrelated chunks
-		}
-		g, ok := groupsByID[key]
-		if !ok {
-			g = &docGroup{name: chunkDocName(h.Section)}
-			groupsByID[key] = g
-			order = append(order, key)
-		}
-		g.hits = append(g.hits, h)
-	}
-	for _, key := range order {
-		g := groupsByID[key]
-		name := g.name
-		if name == "" {
-			name = "(unnamed document)"
-		}
-		// Pull the captured-on date from the first hit in this group
-		// (all chunks of a document share an ingestion timestamp).
-		// Format as YYYY-MM-DD for the prompt; skip silently when
-		// missing (legacy chunks pre-Date field).
-		dateSuffix := ""
-		if len(g.hits) > 0 && g.hits[0].Date != "" {
-			if t, err := time.Parse(time.RFC3339, g.hits[0].Date); err == nil {
-				dateSuffix = "  *(captured " + t.Format("2006-01-02") + ")*"
-			}
-		}
-		fmt.Fprintf(&b, "### From document: %s%s\n\n", name, dateSuffix)
-		for _, h := range g.hits {
-			// Provenance tag — when the chunk came from a tagged
-			// HTML region (comments, related-link rail, author bio),
-			// surface that so the LLM frames the hit appropriately
-			// ("one commenter noted…" vs "the doc says…") rather
-			// than treating it as authoritative.
-			if h.Kind != "" {
-				fmt.Fprintf(&b, "*[%s]* ", h.Kind)
-			}
-			b.WriteString(strings.TrimSpace(h.Text))
-			b.WriteString("\n\n")
-		}
-	}
-	b.WriteString("---\n\n")
-	return b.String()
+	return strings.TrimRight(cut, " \t\n") + "…"
 }
+
+// manualSearchMinScore is the floor applied to knowledge_search and
+// memory_search calls. Vector search returns top-K regardless of
+// score, so weak matches (a chunk that shares surface terms but is
+// tangentially related) would otherwise leak into the response. Qwen-
+// class models treat anything the tool returns as trusted context and
+// incorporate it without sanity-checking the score — the concrete
+// failure was an LVM-shrink query pulling an Nvidia GPU article (low
+// score, shared "Linux"/"reduce" surface terms) which then got woven
+// into a downstream question to a tech-guru agent.
+const manualSearchMinScore = 0.35
 
 // --- Tools the LLM can call directly --------------------------------------
 
@@ -1191,7 +1108,7 @@ func (t *chatTurn) saveMemoryToolDef() AgentToolDef {
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
 			ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
-			return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory_search or get it auto-injected.",
+			return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory_search.",
 				len(content), topic), nil
 		},
 	}
@@ -1207,7 +1124,7 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "knowledge_search",
-			Description: "Search THIS agent's Knowledge layer — the read-only authoritative content the user/admin provided: uploaded documents, shared KB, collections, skill self-training. Returns up to k JSON entries ranked by relevance. Topic-scoped by default: the framework searches within the turn's classified topic first and falls back to the agent's full corpus if nothing matches. Pass an explicit `topic` to query a different bucket. Call when the user asks something that should have a definite answer in the uploaded material.\n\nKnowledge is read-only — you cannot write to it. To save your own findings for later, use `memory_save` (Reference Memory, vector-searchable) or `store_fact` (Explicit Memory, always-in-prompt). Distinct from `memory_search` (your own prior derived findings) and `list_facts` (your pre-injected Explicit Memory entries).",
+			Description: "Search this agent's knowledge corpus (uploaded docs, attached collections, skill self-training). Returns hits with excerpts, source_doc, section, and a doc_id — pass the doc_id to `fetch_knowledge_doc` when an excerpt isn't enough. Below-floor matches are filtered; a 'no strong matches' result means the corpus has nothing confident, not license to speculate. Topic-scoped by default; pass explicit `topic` to query a different bucket. Distinct from `memory_search` (your own prior derived findings) and `list_facts` (Explicit Memory entries already in your prompt).",
 			Parameters: map[string]ToolParam{
 				"query": {
 					Type:        "string",
@@ -1247,44 +1164,219 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
 			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+			rawHits := len(hits)
+			filtered := hits[:0]
+			for _, h := range hits {
+				if h.Score < manualSearchMinScore {
+					continue
+				}
+				filtered = append(filtered, h)
+			}
+			hits = filtered
+			dropped := rawHits - len(hits)
 			if len(hits) == 0 {
+				if dropped > 0 {
+					return fmt.Sprintf("No strong matches. Vector search returned %d chunk(s) but ALL scored below the relevance floor (%.2f) — they would have pulled tangentially-related content (different topic, surface-word matches only) into your context. Do NOT speculate from absent results. Either rephrase the query, widen by passing topic=\"\", or proceed without prior context and acknowledge that the Knowledge layer didn't have a confident answer.", dropped, manualSearchMinScore), nil
+				}
 				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that — try memory_search for the agent's own derived findings, or proceed without prior context.", nil
 			}
-			payload := make([]map[string]any, 0, len(hits))
-			for _, h := range hits {
-				payload = append(payload, map[string]any{
-					"topic":      h.Section,
-					"content":    h.Text,
-					"score":      h.Score,
-					// Provenance lets the LLM weight chunks by trustworthiness:
-					//   "uploaded" — user-curated source (PDF, doc, autofill)
-					//   "shared"   — admin-curated reference KB
-					//   "derived"  — LLM's own prior synthesis (use cautiously;
-					//                may compound errors if cited as ground truth)
-					"provenance": chunkProvenance(h.Source, h.ReportID),
-					// source_doc is the clean document name this chunk
-					// came from — same across all chunks of the same
-					// document. Lets the LLM tell when two chunks are
-					// from DIFFERENT documents (variants, conflicts)
-					// vs. the same one.
-					"source_doc": chunkDocName(h.Section),
-					// date is the captured-on / ingested-at timestamp
-					// (RFC3339). LLM should cite it when freshness
-					// matters and prefer newer content on conflicts.
-					"date": h.Date,
-					// locator is the sub-document citation pointer when
-					// the source supports one (e.g. "page 12" for PDFs).
-					// Empty for sources without a meaningful locator
-					// (plain text, single-page notes, derived chunks).
-					// LLM should cite it inline when present.
-					"locator": h.Locator,
-				})
+			// Mirror web_search's shape: "N. Title\n   URL\n   Snippet"
+			// blocks separated by blank lines. Plain text, no markdown
+			// ornament — the chat surface renders it the same way it
+			// renders web_search results, no escape-sequence noise.
+			// Score is dropped (the LLM trusts the ranking the way it
+			// trusts web_search's ordering); provenance only surfaces
+			// when "derived" (uploaded/shared is the expected default).
+			var b strings.Builder
+			for i, h := range hits {
+				if i > 0 {
+					b.WriteString("\n\n")
+				}
+				docName := chunkDocName(h.Section)
+				if docName == "" {
+					docName = "(unnamed document)"
+				}
+				section := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
+				// Line 1: "N. <source_doc> — <section> (locator) [kind]"
+				fmt.Fprintf(&b, "%d. %s", i+1, docName)
+				if section != "" && section != docName {
+					fmt.Fprintf(&b, " — %s", section)
+				}
+				if h.Locator != "" {
+					fmt.Fprintf(&b, " (%s)", h.Locator)
+				}
+				if h.Kind != "" {
+					fmt.Fprintf(&b, " [%s]", h.Kind)
+				}
+				if chunkProvenance(h.Source, h.ReportID) == "derived" {
+					b.WriteString(" [derived]")
+				}
+				b.WriteString("\n")
+				// Line 2: doc_id (web_search's URL slot).
+				fmt.Fprintf(&b, "   doc_id: %s\n", h.ReportID)
+				// Line 3: excerpt.
+				fmt.Fprintf(&b, "   %s", knowledgeSearchExcerpt(h.Text))
 			}
-			out, err := json.Marshal(payload)
-			if err != nil {
-				return "", err
+			return b.String(), nil
+		},
+	}
+}
+
+// fetchKnowledgeDocDefaultMax caps the output of fetch_knowledge_doc
+// when the LLM doesn't specify max_chars. ~10k chars ≈ 2.5k tokens —
+// enough to read a typical article body without blowing the round's
+// context budget. The hard ceiling is fetchKnowledgeDocCap.
+const fetchKnowledgeDocDefaultMax = 10000
+
+// fetchKnowledgeDocCap is the absolute maximum chars one
+// fetch_knowledge_doc call can return. Caller-supplied max_chars
+// gets clamped to this; for genuinely massive docs the LLM has to
+// use knowledge_search to find the right section rather than
+// re-reading the whole thing.
+const fetchKnowledgeDocCap = 30000
+
+// fetchKnowledgeDocToolDef builds the drill-down tool that
+// reconstructs a document body from its chunks. The LLM passes a
+// doc_id obtained from a knowledge_search hit; the handler walks the
+// vector store for every chunk with that ReportID, gates on the same
+// allow predicate as searchAgentKnowledge (so an agent can only
+// fetch docs from its own corpus + attached collections), and returns
+// the chunks joined in section order. Truncates at max_chars with a
+// pointer back to knowledge_search for finer-grained retrieval.
+func (t *chatTurn) fetchKnowledgeDocToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "fetch_knowledge_doc",
+			Description: "Read the full body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). Gated to your accessible corpus.",
+			Parameters: map[string]ToolParam{
+				"doc_id": {
+					Type:        "string",
+					Description: "doc_id from a knowledge_search hit.",
+				},
+				"max_chars": {
+					Type:        "number",
+					Description: "Optional. Max characters returned (default 10000, ceiling 30000).",
+				},
+			},
+			Required: []string{"doc_id"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			docID := strings.TrimSpace(stringArg(args, "doc_id"))
+			if docID == "" {
+				return "", errors.New("doc_id is required")
 			}
-			return string(out), nil
+			maxChars := fetchKnowledgeDocDefaultMax
+			if v, ok := args["max_chars"].(float64); ok && v > 0 {
+				maxChars = int(v)
+				if maxChars > fetchKnowledgeDocCap {
+					maxChars = fetchKnowledgeDocCap
+				}
+			}
+			// Build the same allow predicate as searchAgentKnowledge so
+			// fetch can never reach across into another agent's or
+			// another user's corpus. Agent-attached collections are
+			// always in scope; active skill collections AND deployment-
+			// scope collections also feed in so a doc_id returned from
+			// knowledge_search via either path actually resolves here.
+			agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+			exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
+			for _, cid := range t.agent.AttachedCollections {
+				if cid = strings.TrimSpace(cid); cid != "" {
+					exact[collectionSource(cid)] = true
+				}
+			}
+			// Active skills contribute their AttachedCollections —
+			// mirrors searchAgentKnowledge so a doc_id surfaced via
+			// a skill's collection resolves here too. Without this,
+			// knowledge_search returns a hit from a skill collection,
+			// the LLM tries fetch_knowledge_doc(doc_id), and gets
+			// "not found" because the predicate disagrees with the
+			// search scope. Same skillsActive list the search used.
+			for _, sk := range t.skillsActive {
+				for _, cid := range sk.AttachedCollections {
+					if cid = strings.TrimSpace(cid); cid != "" {
+						exact[collectionSource(cid)] = true
+					}
+				}
+			}
+			if len(t.agent.AttachedCollections) == 0 {
+				for _, c := range ListCollections(nil, "") {
+					if IsDeploymentScope(c) {
+						exact[collectionSource(c.ID)] = true
+					}
+				}
+			}
+			allowSource := func(src string) bool {
+				if src == agentPrefix || strings.HasPrefix(src, agentPrefix+":") {
+					return true
+				}
+				return exact[src]
+			}
+			if VectorDB == nil {
+				return "", errors.New("vector store unavailable")
+			}
+			var chunks []EmbeddedChunk
+			for _, key := range VectorDB.Keys(EmbeddedChunks) {
+				var c EmbeddedChunk
+				if !VectorDB.Get(EmbeddedChunks, key, &c) {
+					continue
+				}
+				if c.ReportID != docID {
+					continue
+				}
+				if !allowSource(c.Source) {
+					continue
+				}
+				chunks = append(chunks, c)
+			}
+			if len(chunks) == 0 {
+				return fmt.Sprintf("No document found with doc_id=%q in your accessible knowledge corpus. The doc_id either doesn't exist, has been deleted, or belongs to a corpus you can't access. If you got the doc_id from a recent knowledge_search call and the document was deleted between turns, re-run the search.", docID), nil
+			}
+			// Order by Section (alphabetical groups same-section parts
+			// together; (part 1)/(part 2) suffixes preserve order
+			// within a section), then ID for stable tiebreak. Not perfect
+			// for docs whose section order was meaningful, but better
+			// than DB-key order (which is effectively random for UUIDs).
+			sort.Slice(chunks, func(i, j int) bool {
+				if chunks[i].Section != chunks[j].Section {
+					return chunks[i].Section < chunks[j].Section
+				}
+				return chunks[i].ID < chunks[j].ID
+			})
+			docName := chunkDocName(chunks[0].Section)
+			if docName == "" {
+				docName = "(unnamed document)"
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "# %s\n\n", docName)
+			lastSection := ""
+			for _, c := range chunks {
+				section := strings.TrimSpace(strings.TrimPrefix(c.Section, "## "))
+				// Skip the section header on chunks whose Section
+				// equals the doc title (e.g. single-section docs where
+				// chunkDocName(Section) and Section are the same string).
+				if section != lastSection && section != "" && section != docName {
+					fmt.Fprintf(&b, "## %s\n\n", section)
+					lastSection = section
+				}
+				if c.Kind != "" {
+					fmt.Fprintf(&b, "*[%s]* ", c.Kind)
+				}
+				b.WriteString(strings.TrimSpace(c.Text))
+				b.WriteString("\n\n")
+			}
+			out := strings.TrimSpace(b.String())
+			if len(out) > maxChars {
+				truncated := out[:maxChars]
+				// Cut at a paragraph boundary when possible so the
+				// truncation doesn't land mid-sentence.
+				if idx := strings.LastIndex(truncated, "\n\n"); idx > maxChars/2 {
+					truncated = truncated[:idx]
+				}
+				out = truncated + fmt.Sprintf("\n\n[…truncated; full document is %d chars. Pass max_chars=%d to fetch more, or use knowledge_search with a tighter query to find the specific section you need.]", len(out), fetchKnowledgeDocCap)
+			}
+			return out, nil
 		},
 	}
 }
@@ -1298,7 +1390,7 @@ func (t *chatTurn) searchMemoryToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "memory_search",
-			Description: "Search THIS agent's Reference Memory — your accumulated recollections from prior turns (memory_save findings, synthesis auto-ingest). Returns up to k JSON entries ranked by relevance. Topic-scoped by default. **PULL-ONLY**: Reference Memory is no longer auto-injected into your prompt — call this tool explicitly when the current question reminds you of something you previously figured out (an API quirk, a working approach, a prior synthesis). Treat results as fuzzier than knowledge_search — Reference Memory is derived and may have drifted, so verify against curated sources when accuracy matters.\n\nDistinct from `knowledge_search` (read-only over uploaded files — authoritative source-of-truth content, AUTO-injected when relevant) and `list_facts` (your Explicit Memory entries, always pre-injected into your system prompt).",
+			Description: "Search THIS agent's Reference Memory — your accumulated recollections from prior turns (memory_save findings, synthesis auto-ingest). Returns up to k JSON entries ranked by relevance. Topic-scoped by default. Call this tool explicitly when the current question reminds you of something you previously figured out (an API quirk, a working approach, a prior synthesis). Treat results as fuzzier than knowledge_search — Reference Memory is derived and may have drifted, so verify against curated sources when accuracy matters.\n\nDistinct from `knowledge_search` (read-only over uploaded files — authoritative source-of-truth content; pull-only via that tool) and `list_facts` (your Explicit Memory entries, always pre-injected into your system prompt).",
 			Parameters: map[string]ToolParam{
 				"query": {
 					Type:        "string",
@@ -1335,26 +1427,49 @@ func (t *chatTurn) searchMemoryToolDef() AgentToolDef {
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
 			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+			rawHits := len(hits)
+			filtered := hits[:0]
+			for _, h := range hits {
+				if h.Score < manualSearchMinScore {
+					continue
+				}
+				filtered = append(filtered, h)
+			}
+			hits = filtered
+			dropped := rawHits - len(hits)
 			if len(hits) == 0 {
+				if dropped > 0 {
+					return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f) — they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, manualSearchMinScore), nil
+				}
 				return "No matching derived recollections. The Memory layer is empty for this query — try knowledge_search for curated content, or proceed without prior context and call memory_save after you investigate.", nil
 			}
-			payload := make([]map[string]any, 0, len(hits))
-			for _, h := range hits {
-				payload = append(payload, map[string]any{
-					"topic":      h.Section,
-					"content":    h.Text,
-					"score":      h.Score,
-					"provenance": chunkProvenance(h.Source, h.ReportID),
-					"source_doc": chunkDocName(h.Section),
-					"date":       h.Date,
-					"locator":    h.Locator,
-				})
+			// Plain numbered format, same shape as web_search /
+			// knowledge_search. Reference Memory chunks are atomic
+			// findings — no fetch tool, but the mem_id line lets the
+			// LLM target a specific entry with memory_forget(id=...)
+			// when it needs surgical cleanup.
+			var b strings.Builder
+			for i, h := range hits {
+				if i > 0 {
+					b.WriteString("\n\n")
+				}
+				topic := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
+				if topic == "" {
+					topic = "(no topic)"
+				}
+				fmt.Fprintf(&b, "%d. %s", i+1, topic)
+				if h.Date != "" {
+					// Just the date part of the RFC3339 stamp — full
+					// timestamps are visual noise here.
+					if dt, err := time.Parse(time.RFC3339, h.Date); err == nil {
+						fmt.Fprintf(&b, " (%s)", dt.Format("2006-01-02"))
+					}
+				}
+				b.WriteString("\n")
+				fmt.Fprintf(&b, "   mem_id: %s\n   ", h.ID)
+				b.WriteString(strings.ReplaceAll(strings.TrimSpace(h.Text), "\n", "\n   "))
 			}
-			out, err := json.Marshal(payload)
-			if err != nil {
-				return "", err
-			}
-			return string(out), nil
+			return b.String(), nil
 		},
 	}
 }
@@ -1373,29 +1488,78 @@ func (t *chatTurn) forgetMemoryToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "memory_forget",
-			Description: "Delete chunks from THIS agent's Memory layer that are no longer relevant (outdated recollections, retracted claims, schema changes that invalidate prior findings). Searches like memory_search but DELETES matches instead of returning them. Capped at k matches per call (default 3, max 10) so a loose query can't clear the index. Use sparingly and with specific queries — broad queries delete more than you intended.\n\nOperates ONLY on the Memory layer (LLM-derived chunks via memory_save / synthesis ingest). Curated Knowledge content (uploads, shared KB) is admin-managed and cannot be deleted from inside the agent — that's the admin per-agent wipe button in the Memory modal. Distinct from store_fact (where overwriting a key is the normal update path); this is for vector chunks where the only update path is delete-and-re-save.",
+			Description: "Delete chunks from this agent's Reference Memory. Two modes: (a) pass `id` (a mem_id from memory_search) to surgically remove ONE entry — the safe path when you know the exact entry to drop; (b) pass `query` (+ optional `topic` and `k`) to delete top-matching chunks — useful for bulk cleanup but a loose query can wipe more than you intended. When both `id` and `query` are present, `id` wins. Operates ONLY on derived chunks; curated Knowledge (uploads, shared KB) is admin-managed.",
 			Parameters: map[string]ToolParam{
+				"id": {
+					Type:        "string",
+					Description: "The mem_id from a memory_search hit. Deletes exactly that chunk. Preferred when you know which entry you want to drop.",
+				},
 				"query": {
 					Type:        "string",
-					Description: "Natural-language description of WHAT TO FORGET. The system searches with this and deletes the top matches. Be specific — \"Acme API session token rotation policy from before 2025\" deletes the stale claim cleanly; \"Acme\" deletes anything tangentially related and probably wipes context you wanted to keep.",
+					Description: "Natural-language description of what to forget. Used when `id` is not provided. Be specific — \"Acme API session token rotation policy from before 2025\" deletes the stale claim cleanly; \"Acme\" deletes anything tangentially related.",
 				},
 				"topic": {
 					Type:        "string",
-					Description: "Optional snake_case topic slug to scope the deletion. Defaults to the turn's classified topic. Pass an explicit topic when forgetting cross-topic.",
+					Description: "Optional snake_case topic slug to scope query-based deletion. Defaults to the turn's classified topic. Ignored when `id` is passed.",
 				},
 				"k": {
 					Type:        "number",
-					Description: "Max matches to delete (default 3, cap 10). Lower is safer — if the first call deleted too little, you can call again.",
+					Description: "Max matches to delete (default 3, cap 10) for query-based mode. Lower is safer. Ignored when `id` is passed.",
 				},
 			},
-			Required: []string{"query"},
-			Caps:     []Capability{CapWrite},
+			Caps: []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
+			explicitID := strings.TrimSpace(stringArg(args, "id"))
 			query := strings.TrimSpace(stringArg(args, "query"))
-			if query == "" {
-				return "", errors.New("query is required")
+			if explicitID == "" && query == "" {
+				return "", errors.New("either id or query is required")
 			}
+
+			// ID-mode: targeted delete of one chunk. Same allow predicate
+			// as searchAgentKnowledge so an LLM can't pass a mem_id it
+			// found in another context and reach across into someone
+			// else's memory store.
+			if explicitID != "" {
+				if VectorDB == nil {
+					return "", errors.New("vector store unavailable")
+				}
+				var c EmbeddedChunk
+				if !VectorDB.Get(EmbeddedChunks, explicitID, &c) {
+					return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
+				}
+				// Reconstruct allow predicate matching searchAgentKnowledge.
+				agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+				exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
+				for _, cid := range t.agent.AttachedCollections {
+					if cid = strings.TrimSpace(cid); cid != "" {
+						exact[collectionSource(cid)] = true
+					}
+				}
+				if len(t.agent.AttachedCollections) == 0 {
+					for _, col := range ListCollections(nil, "") {
+						if IsDeploymentScope(col) {
+							exact[collectionSource(col.ID)] = true
+						}
+					}
+				}
+				inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
+				if !inScope {
+					return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
+				}
+				// Only derived chunks are LLM-deletable. Curated content
+				// (uploads, shared KB) is admin-managed.
+				if chunkProvenance(c.Source, c.ReportID) != "derived" {
+					return fmt.Sprintf("mem_id=%q points at curated content (uploaded doc / shared KB / collection), not a memory entry. memory_forget only deletes derived chunks. Curated content is admin-managed.", explicitID), nil
+				}
+				topic := strings.TrimSpace(strings.TrimPrefix(c.Section, "## "))
+				DeleteChunksByIDs(t.app.DB, []string{explicitID})
+				Log("[orchestrate.knowledge_forget] user=%q agent=%q deleted by id=%s topic=%q",
+					t.user, t.agent.ID, explicitID, topic)
+				return fmt.Sprintf("Deleted 1 memory entry — mem_id=%s, topic=%q.", explicitID, topic), nil
+			}
+
+			// Query-mode: vector-search delete.
 			k := 3
 			if v, ok := args["k"].(float64); ok && v > 0 {
 				k = int(v)
@@ -1414,31 +1578,24 @@ func (t *chatTurn) forgetMemoryToolDef() AgentToolDef {
 				return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query under this agent.", nil
 			}
 			ids := make([]string, 0, len(hits))
-			deleted := make([]map[string]any, 0, len(hits))
-			for _, h := range hits {
+			var b strings.Builder
+			noun := "entries"
+			if len(hits) == 1 {
+				noun = "entry"
+			}
+			fmt.Fprintf(&b, "Deleted %d memory %s:\n", len(hits), noun)
+			for i, h := range hits {
 				if h.ID == "" {
 					continue
 				}
 				ids = append(ids, h.ID)
-				deleted = append(deleted, map[string]any{
-					"id":      h.ID,
-					"topic":   h.Section,
-					"snippet": truncate(h.Text, 200),
-					"score":   h.Score,
-				})
+				topicLabel := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
+				fmt.Fprintf(&b, "%d. %s — mem_id=%s\n   %s\n", i+1, topicLabel, h.ID, knowledgeSearchExcerpt(h.Text))
 				Log("[orchestrate.knowledge_forget] user=%q agent=%q deleted chunk id=%s topic=%q score=%.3f",
 					t.user, t.agent.ID, h.ID, h.Section, h.Score)
 			}
 			DeleteChunksByIDs(t.app.DB, ids)
-			payload := map[string]any{
-				"deleted": deleted,
-				"count":   len(deleted),
-			}
-			out, err := json.Marshal(payload)
-			if err != nil {
-				return "", err
-			}
-			return string(out), nil
+			return strings.TrimRight(b.String(), "\n"), nil
 		},
 	}
 }

@@ -1,0 +1,179 @@
+<!--
+  First-run configure page. Served by proxy.go whenever
+  cfg.ServerURL() is empty. Asks the user for the gohort server URL,
+  calls window.go.main.App.SaveSettings via Wails Bind, and reloads
+  on success so the proxy picks up the new target.
+
+  Auth is intentionally NOT collected here — gohort serve already
+  renders a /login page; once this form succeeds the webview will
+  navigate to /orchestrate/, gohort's auth middleware will redirect
+  unauthenticated requests to /login, and the user signs in there.
+  The gohort_session cookie persists in the webview cookie store, so
+  subsequent launches skip the login step.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>gohort-desktop — set up</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; }
+    body {
+      font: 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: #1a1a1a; color: #d0d0d0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .card {
+      width: 460px; padding: 1.8rem 2rem 2rem;
+      background: #242424; border: 1px solid #404040; border-radius: 10px;
+    }
+    h1 {
+      margin: 0 0 0.4rem; font-size: 1.1rem; font-weight: 600;
+      color: #f5f5f5;
+    }
+    .sub {
+      margin: 0 0 1.2rem; color: #909090; font-size: 12px; line-height: 1.5;
+    }
+    label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: #b0b0b0; text-transform: uppercase; letter-spacing: 0.04em;
+      margin: 0 0 0.4rem;
+    }
+    input[type="text"] {
+      box-sizing: border-box; width: 100%;
+      background: #1a1a1a; color: #f0f0f0;
+      border: 1px solid #404040; border-radius: 6px;
+      padding: 0.55rem 0.75rem; font: 13px ui-monospace, Menlo, monospace;
+    }
+    input[type="text"]:focus {
+      outline: none; border-color: #3a6ea5; box-shadow: 0 0 0 2px rgba(58,110,165,0.25);
+    }
+    .hint {
+      margin: 0.5rem 0 0; font-size: 11px; color: #888; line-height: 1.5;
+    }
+    .hint code {
+      background: #1a1a1a; padding: 0.1rem 0.4rem; border-radius: 3px;
+      font: 11px ui-monospace, Menlo, monospace; color: #c8c8c8;
+    }
+    .actions {
+      display: flex; gap: 0.6rem; margin-top: 1.4rem;
+      justify-content: flex-end;
+    }
+    button {
+      font: 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      padding: 0.55rem 1.2rem; border-radius: 6px; cursor: pointer;
+      border: 1px solid #555; background: #2e2e2e; color: #e0e0e0;
+    }
+    button.primary {
+      background: #3a6ea5; border-color: #3a6ea5; color: white;
+      font-weight: 500;
+    }
+    button:hover:not(:disabled) { filter: brightness(1.15); }
+    button:disabled { opacity: 0.55; cursor: default; }
+    .error {
+      display: none;
+      margin: 1rem 0 0; padding: 0.6rem 0.75rem;
+      background: #2a1818; border-left: 3px solid #d05050;
+      color: #e8b8b8; font-size: 12px; line-height: 1.4;
+      border-radius: 4px;
+    }
+    .error.show { display: block; }
+    .status {
+      display: none; margin: 1rem 0 0;
+      color: #888; font-size: 12px; line-height: 1.4;
+    }
+    .status.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connect to gohort</h1>
+    <p class="sub">
+      Enter the URL where <code>gohort serve</code> is running. You'll
+      sign in on the next screen using your gohort account.
+    </p>
+
+    <label for="server_url">Server URL</label>
+    <input
+      type="text"
+      id="server_url"
+      placeholder="http://127.0.0.1:8088"
+      autocomplete="off"
+      spellcheck="false"
+      autofocus
+    >
+    <p class="hint">
+      Include scheme + host + port, e.g.
+      <code>http://192.168.1.50:8088</code> or
+      <code>https://gohort.example.com</code>.
+    </p>
+    <p class="hint" style="margin-top:0.8rem;color:#666;">
+      Stuck on the wrong URL later? Navigate to
+      <code>/__desktop/configure</code> to return to this page from
+      any state.
+    </p>
+
+    <div id="error" class="error"></div>
+    <div id="status" class="status">Checking…</div>
+
+    <div class="actions">
+      <button id="save" class="primary" onclick="save_url()">Connect</button>
+    </div>
+  </div>
+
+<script>
+var input = document.getElementById('server_url');
+var save_btn = document.getElementById('save');
+var error_box = document.getElementById('error');
+var status_box = document.getElementById('status');
+
+// Prefill if we already have a value (e.g. user reopened to change).
+if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSettings) {
+  window.go.main.App.GetSettings().then(function(s) {
+    if (s && s.server_url) input.value = s.server_url;
+  });
+}
+
+input.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') save_url();
+});
+
+function set_busy(on) {
+  save_btn.disabled = on;
+  if (on) {
+    status_box.textContent = 'Checking server…';
+    status_box.classList.add('show');
+    error_box.classList.remove('show');
+  } else {
+    status_box.classList.remove('show');
+  }
+}
+
+function show_error(msg) {
+  error_box.textContent = msg;
+  error_box.classList.add('show');
+}
+
+function save_url() {
+  var v = input.value.trim();
+  if (!v) { show_error('Enter a server URL.'); return; }
+
+  set_busy(true);
+  window.go.main.App.SaveSettings(v).then(function(res) {
+    set_busy(false);
+    if (!res.ok) {
+      show_error(res.error || 'Could not save settings.');
+      return;
+    }
+    // Server saved + reachable — reload so the proxy picks it up and
+    // navigates to the landing path. gohort's auth middleware will
+    // then redirect to /login if no session cookie is set.
+    location.replace('/');
+  }).catch(function(err) {
+    set_busy(false);
+    show_error('Save failed: ' + (err && err.message ? err.message : err));
+  });
+}
+</script>
+</body>
+</html>

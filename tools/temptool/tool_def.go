@@ -52,17 +52,18 @@ func BuildToolDef() *GroupedTool {
 			"description":      {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
 			"mode":             {Type: "string", Description: "\"api\" for a single HTTPS endpoint. \"toolbox\" for multiple related endpoints bundled under one tool name (e.g. wrapping a whole API surface — GitHub, Stripe — with several actions sharing one credential). \"shell\" for local computation, parsing, or stateful scripts. \"pipeline\" for multi-step LLM-driven flows. Pick by the work, not by familiarity — a Python urllib wrapper around an HTTPS endpoint is the wrong answer."},
 			"params":           {Type: "object", Description: "Object describing the tool's parameters. Each key is a param name, value is {type, description}. **Use the correct type:** \"integer\" for whole-number args (counts, indexes, ports), \"number\" for floats (rates, percentages), \"boolean\" for flags, \"string\" for text and identifiers. The dispatcher uses type to decide whether to shell-quote the value — a `count` typed as \"string\" gets passed to the script as `'1'` (with quotes) and any downstream int()/atoi() call fails. Default to \"string\" only when the value is genuinely free-form text."},
-			"command_template": {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch. {workspace_dir} resolves to the tool's sandbox path. For multi-line scripts, prefer script_body — it sidesteps shell-quoting entirely."},
-			"script_body":      {Type: "string", Description: "(shell mode, optional) Full source of a script to ship with the tool (Python, Bash, awk, jq, etc.). Written into the sandbox at registration as `script_name` (default \"script.py\"). Reference from command_template as {workspace_dir}/<script_name>. Auto-mints a sandbox; no setup required."},
-			"script_name":      {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\")."},
-			"credential":       {Type: "string", Description: "(api mode) Name of the registered secure-API credential to dispatch through. Use \"none\" for unauthenticated public APIs — same machinery (allow-list, audit, rate limit) but no auth header injected."},
+			"command_template": {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch. {workspace_dir} resolves to the tool's sandbox path. **SHORTCUT**: when you pass script_body with a recognized extension (.py / .sh / .bash / .js / .jq / .rb / .pl) OR a shebang on line 1, you may OMIT command_template entirely — the framework auto-infers `python3 {workspace_dir}/script.py` (no positional args). **Declared params reach the script as ENVIRONMENT VARIABLES, NOT positional argv.** Read them in your script with `os.environ['name']` (Python), `$name` (bash), `process.env.name` (node). This means ordering is a non-question — params are looked up by NAME on both sides. You only need positional args if you're shelling out to a third-party tool that strictly expects argv; in that case supply your own command_template with explicit {placeholders}."},
+			"script_body":      {Type: "string", Description: "(shell mode, optional) Full source of a script to ship with the tool (Python, Bash, awk, jq, etc.). Written into the sandbox at registration as `script_name` (default \"script.py\"). Read declared params with `os.environ['name']` (Python) / `$name` (bash) — they're injected as env vars, not positional argv. Auto-mints a sandbox; no setup required."},
+			"script_name":      {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\") — the extension drives interpreter selection when command_template is omitted."},
+			"credential":       {Type: "string", Description: "(api / toolbox mode, optional) Name of the registered secure-API credential to dispatch through. Defaults to \"no_auth\" when omitted — the bootstrapped open-pattern credential that applies gohort's allow-list/audit/rate-limit but injects no auth header. For authenticated APIs, name the credential the admin registered (\"github\", \"openweather\", etc.); the secret stays server-side and gohort injects the header (Bearer / custom / etc.) at dispatch."},
 			"url_template":     {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":           {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":    {Type: "string", Description: "(api mode) JSON body template with {param} placeholders (JSON-encoded at dispatch). Optional for GET; usually required for POST/PUT/PATCH."},
 			"response_pipe":    {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
 			"required":         {Type: "array", Description: "Optional list of param names that must be provided by callers. Defaults to all params."},
 			"state_path":       {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
-			"hook_capabilities": {Type: "array", Description: "(shell mode, optional) Grant the script a narrow callback channel back into gohort while the sandbox stays network-isolated. Each entry names a method (and for secrets, a specific credential) the script may invoke; the framework auto-deploys a `gohort_hook` Python module into the workspace, exposes a per-dispatch UNIX socket via $GOHORT_HOOK_PATH, and gohort proxies the operation. Use this INSTEAD of giving a shell tool raw network — same outcome (your script can do HTTP and read tokens) but every call goes through gohort's network stack with logging. Forms: \"fetch\" (HTTP request → returns {status, headers, body}); \"log\" (route a message into gohort's log stream); \"secret:<credential_name>\" (return the decrypted value of a credential registered via the admin UI — grants are per-credential, the tool record lists exactly what it can read). Example: hook_capabilities=[\"fetch\", \"secret:openweather\"]. Usage in script: `from gohort_hook import gohort; key = gohort.secret(\"openweather\"); data = gohort.fetch(f\"https://api.openweathermap.org/...&appid={key}\")`. **Prefer secret:<name> over hard-coding API keys in script_body** — keeps tokens out of the tool record (which lives in the DB and shows up in admin review). Empty / unset = no hook attached, zero surface area."},
+			"hook_capabilities": {Type: "array", Description: "(shell mode, OPTIONAL for HTTP; REQUIRED for credentialed access) Grant the script extra callbacks back into gohort. **The bare capabilities — \"fetch\", \"log\", \"browse_page\" — are GRANTED BY DEFAULT for any shell-mode tool with script_body.** You don't need to declare them. Just `from gohort import fetch_url, browse_page, log` and call them — works out of the box. Declare ONLY when you need credentialed access: \"secret:<credential_name>\" (return the decrypted value of a credential registered via the admin UI — script then injects it itself); \"fetch_via:<credential_name>\" (PREFERRED for credentialed or scoped endpoints — gohort routes the request through that credential's Secure.Dispatch: URL allowlist enforced, auth injected server-side, audit logged, script NEVER sees the secret). Example: hook_capabilities=[\"fetch_via:openweather\"]. Usage in script: `from gohort import fetch_via; data = fetch_via(\"openweather\", \"https://api.openweathermap.org/data/2.5/weather?q=Seattle\"); body = data[\"body\"]`. For unauth public endpoints, register a no_auth credential (with the URL pattern scoping reachable endpoints) and use fetch_via:no_auth — same audit + allowlist benefits, no auth header injected. **Prefer fetch_via:<name> over fetch_url + secret:<name>** — the credential machinery does the right thing automatically and the secret stays out of the script's hands."},
+			"raw_network":       {Type: "boolean", Description: "(shell / persistent mode, advanced) When true, the sandbox keeps the host network namespace — raw TCP / UDP / any protocol works from inside. Default false (sandbox runs with --unshare-net). RESERVED for persistent-mode REPLs that connect to non-HTTP protocols (psql, redis-cli, ssh-like sessions) and the small set of legacy tools that haven't been migrated to hook_capabilities. For anything doing HTTP, use hook_capabilities=[\"fetch\"] instead — same outcome (your script can reach the web) but every call goes through gohort's audit log. Setting raw_network=true should be a deliberate exception, not a default."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
 			"pipeline_prompt":     {Type: "string", Description: "(pipeline mode, ADAPTIVE variant) System prompt for an LLM sub-agent that runs the chain with reasoning between steps. Reference inner tools by name; be directive about sequencing. {param_name} placeholders get filled from caller args via plain string substitution — write them BARE (e.g. `for the topic {query}`), NEVER wrap them in quotes (`'{query}'` becomes `'AI 2026'` and the sub-agent will pass the literal quoted string to web_search). Mutually exclusive with pipeline_steps."},
 			"pipeline_steps":      {Type: "array", Description: "(pipeline mode, DETERMINISTIC variant) Ordered list of step objects {tool, args, name?}, executed in sequence with no inner LLM. Args undergo template substitution: {param_name} → caller arg; $N → output of step N (1-indexed); $N.field.path → JSON field path. Mutually exclusive with pipeline_prompt."},
@@ -82,6 +83,22 @@ func BuildToolDef() *GroupedTool {
 				return "", fmt.Errorf("requires a session")
 			}
 			return createGrouped(args, sess)
+		},
+	})
+
+	gt.AddAction("get", &GroupedToolAction{
+		Description: "Return the FULL definition of a tool by name — script_body, command_template, url_template, params, mode-specific fields, hook_capabilities. Read-only inspection: use this to COPY content from an existing tool (e.g. lift a known-good script_body, adapt a params shape) when authoring a new one, OR to inspect what's there before re-authoring with the same name (which overwrites the active entry). Returns a JSON-shaped block with every field set on the record. Pulls from the active pool first, then pending, then session drafts.",
+		Params: map[string]ToolParam{
+			"name": {Type: "string", Description: "Name of the tool to fetch."},
+		},
+		Required:     []string{"name"},
+		Caps:         nil,
+		NeedsConfirm: false,
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			if sess == nil {
+				return "", fmt.Errorf("requires a session")
+			}
+			return getGrouped(args, sess)
 		},
 	})
 
@@ -174,15 +191,54 @@ func modeLabel(mode string) string {
 	return "shell"
 }
 
-// queueForReview queues the named session tool into the user's
-// pending-review pool so an admin can promote it later. Called after
-// any successful tool_def create — agent-bundled tools that should
-// NOT be in the queue get dequeued downstream when create_agent /
-// add_tool claim them (via the auto-copy hook). The brief window of
+// queueForReview routes the named session draft to the right pool
+// after a successful tool_def create:
+//
+//   - If the name is already in the user's ACTIVE pool, the LLM is
+//     iterating on a tool that was approved at some point. Overwrite
+//     the active entry in place (preserving the original ApprovedAt
+//     for the audit trail) so the new version is immediately live
+//     for every other session/agent. NO admin re-approval needed.
+//
+//   - Otherwise, the name is brand-new (or only in pending) — queue
+//     the session draft into the pending-review pool. Admin decides
+//     whether to promote it.
+//
+// Agent-bundled tools (created during a create_agent / add_tool call)
+// get dequeued downstream by the auto-copy hook. The brief window of
 // "pending until claimed" is acceptable since the admin UI isn't
 // poll-refreshed.
+//
+// The in-place update on iteration is the fix for the "Builder
+// updated the tool but the global one didn't change" bug — previously
+// a re-author was a no-op for the persistent pool, so other agents
+// kept seeing the stale version until the admin manually re-approved.
 func queueForReview(sess *ToolSession, toolName string) {
 	if sess == nil || sess.DB == nil || sess.Username == "" || sess.ChatSessionID == "" || toolName == "" {
+		return
+	}
+	// LLM-iteration path: name already lives in the active pool. Find
+	// the fresh session-draft content and overwrite the active entry
+	// in place; skip the queue.
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name != toolName {
+			continue
+		}
+		for _, draft := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
+			if draft.Name != toolName {
+				continue
+			}
+			if UpdatePersistentTempTool(sess.DB, sess.Username, draft) {
+				Log("[temptool.pending] in-place update of active tool %q (LLM iteration; admin re-approval skipped)", toolName)
+				// Session draft is now redundant — the active pool
+				// has the same content canonically. Drop the per-
+				// session record so it doesn't show up as a
+				// duplicate session draft in any UI that walks the
+				// session_temp_tools table.
+				RemoveSessionTempTool(sess.DB, sess.ChatSessionID, toolName)
+			}
+			break
+		}
 		return
 	}
 	for _, t := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
@@ -232,6 +288,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if v, ok := args["hook_capabilities"]; ok {
 			shellArgs["hook_capabilities"] = v
+		}
+		if v, ok := args["raw_network"]; ok {
+			shellArgs["raw_network"] = v
 		}
 		t := &CreateTempToolTool{}
 		res, err := t.RunWithSession(shellArgs, sess)
@@ -315,7 +374,10 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	}
 	credential := strings.TrimSpace(StringArg(args, "credential"))
 	if credential == "" {
-		return "", fmt.Errorf("credential is required for toolbox mode — every action shares one credential. Use credential=\"no_auth\" for public unauthenticated APIs")
+		// Default to no_auth for toolbox mode the same way api mode
+		// does — public APIs are the common case. Admin scopes via
+		// no_auth's AllowedURLPattern if needed.
+		credential = "no_auth"
 	}
 	rawActions, ok := args["actions"]
 	if !ok || rawActions == nil {
@@ -538,6 +600,55 @@ func pipelineStepsFromArg(raw any) []PipelineStep {
 		out = append(out, step)
 	}
 	return out
+}
+
+// getGrouped returns the full definition of a tool by name as a JSON
+// blob the LLM can read directly. Lookup order: active pool first
+// (admin-approved tools), then pending review queue, then session
+// drafts authored this turn. Used by Builder to inspect existing tools
+// when iterating or composing — Builder's executable catalog hides
+// persistent tools by design, so this is its read-access channel.
+func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	if sess == nil || sess.DB == nil || sess.Username == "" {
+		return "", fmt.Errorf("requires a session bound to a user")
+	}
+	// Active pool — most common case for "tool already exists."
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			body, err := json.MarshalIndent(p.Tool, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("marshal tool %q: %w", name, err)
+			}
+			return fmt.Sprintf("source: active (admin-approved)\n%s", string(body)), nil
+		}
+	}
+	// Pending review queue — recently authored by an LLM, awaiting admin.
+	for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			body, err := json.MarshalIndent(p.Tool, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("marshal tool %q: %w", name, err)
+			}
+			return fmt.Sprintf("source: pending (awaiting admin review)\n%s", string(body)), nil
+		}
+	}
+	// Session draft — authored THIS turn but not yet propagated.
+	if sess.ChatSessionID != "" {
+		for _, t := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
+			if t.Name == name {
+				body, err := json.MarshalIndent(t, "", "  ")
+				if err != nil {
+					return "", fmt.Errorf("marshal tool %q: %w", name, err)
+				}
+				return fmt.Sprintf("source: session draft (this turn)\n%s", string(body)), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, and session drafts)", name)
 }
 
 func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
@@ -810,30 +921,160 @@ and the file system handles it correctly. The template only sees
 filenames and {arg} placeholders, which are safe.
 
 ================================================================
-WRAPPING A SCRIPT — iterate-and-test loop
+command_template — placeholders are pre-quoted; DON'T wrap them
 ================================================================
 
-For non-trivial scripts, prove it works before wrapping it:
+Every {param} placeholder in command_template is SHELL-QUOTED by
+the framework at dispatch time. Wrapping a placeholder in quotes
+yourself creates nested quoting and breaks the command.
 
-  1. local(action=write, path="script.py", content="...")
-       Drops the script into the auto-minted sandbox. No setup.
+WRONG (nested quotes — the framework's quote is INSIDE your quote):
+  command_template:  curl '{url}' -H "X-Auth: {token}"
+  → renders to:     curl ''https://...'' -H "X-Auth: 'abc123'"
+  → shell sees doubled and nested quotes, command parses wrong
 
-  2. local(action=run, command="python3 script.py --foo bar")
-       Runs in the same sandbox. Read the output, fix bugs.
+RIGHT (bare placeholders — let the framework do the quoting):
+  command_template:  curl {url} -H X-Auth:\ {token}
+  → renders to:     curl 'https://...' -H X-Auth:\ 'abc123'
+  → values arrive as separate argv entries, correctly quoted
 
-  3. local(action=write, path="script.py", content="...")  # edit
-     local(action=run, command="...")                       # re-run
+When script_body does the heavy lifting (typical case), pass the
+values as bare placeholders and read them positionally in the script:
+  command_template:  python3 {workspace_dir}/run.py {url} {token}
+  Then in run.py:    url, token = sys.argv[1], sys.argv[2]
 
-  4. Once it works, wrap it. Two options:
-     (a) tool_def(action=create, mode="shell", script_body=...,
-                  command_template="python3 {workspace_dir}/script.py {arg}")
-         Re-ships the script into the tool's own sandbox.
-     (b) tool_def(action=create, mode="shell",
-                  command_template="python3 {workspace_dir}/script.py {arg}")
-         Reuses the script you wrote in step 1 — same sandbox.
+The rule: NEVER put a quote character around a {placeholder}, in
+either single or double form. Literal quotes ELSEWHERE in the
+template are fine — only the placeholders are auto-quoted.
 
-Wrapping a script you haven't tested is how you end up with a tool
-that fails on the first real call. Iterate first.
+================================================================
+url_template / body_template — placeholders are URL-encoded; DON'T
+wrap them either
+================================================================
+
+Same rule applies for api-mode and toolbox-mode url_template: the
+framework URL-encodes each {placeholder} value at substitution and
+splices it into the template. Literal quote characters in the
+template (single OR double) survive into the final URL and the
+upstream service sees them in the value.
+
+WRONG (literal quotes survive into the URL):
+  url_template:  https://api.example.com/search?q='{query}'
+  with {query}="Seattle WA":
+  → renders to: https://api.example.com/search?q='Seattle%20WA'
+  → upstream sees q=%27Seattle%20WA%27 (encoded single quotes
+    around the value — usually a 400 / "no results" / wrong match)
+
+RIGHT (bare placeholder):
+  url_template:  https://api.example.com/search?q={query}
+  with {query}="Seattle WA":
+  → renders to: https://api.example.com/search?q=Seattle%20WA
+
+Path segments work the same way:
+  url_template:  https://api.example.com/users/{username}/repos
+  with {username}="cmcoffee":
+  → renders to: https://api.example.com/users/cmcoffee/repos
+
+Same rule for body_template — bare {placeholders}, no wrapping
+quotes. The framework JSON-encodes string values for you (the
+encoder adds its own surrounding quotes), so writing
+  body_template:  {"key":"{value}"}
+double-quotes the value. Write
+  body_template:  {"key":{value}}
+instead and let the encoder handle the JSON quoting.
+
+================================================================
+AUTHORING A SHELL-MODE TOOL — script_body inline is the path
+================================================================
+
+The canonical pattern is ONE call that ships the script content with
+the tool record:
+
+  tool_def(action=create, mode="shell",
+           name="get_weather_by_city",
+           description="Current weather for a US city via wttr.in.",
+           script_name="weather.py",
+           script_body="""
+             import os, sys, urllib.request
+             city = sys.argv[1]; state = sys.argv[2]
+             url = f"https://wttr.in/{city},{state}?format=j1"
+             print(urllib.request.urlopen(url).read().decode())
+           """,
+           command_template="python3 {workspace_dir}/weather.py {city} {state}",
+           params={
+             "city": {"type": "string", "description": "City name"},
+             "state": {"type": "string", "description": "Two-letter state"}
+           },
+           test_args={"city": "Santa Cruz", "state": "CA"})
+
+Why script_body inline:
+  - The script content lives ON the tool record. Survives workspace
+    wipes (e.g. a new chat session) because the framework redeploys
+    it on every dispatch.
+  - One call, not three. Workers don't waste rounds on a
+    write-then-run-then-wrap dance.
+  - test_args runs the freshly-authored tool with concrete inputs
+    and folds the result (or error) into your response — if it
+    errors, fix it inline and re-call tool_def; if it works,
+    you're done.
+
+CRITICAL: command_template must reference the same filename you
+passed as script_name. If script_name="weather.py", command_template
+must say {workspace_dir}/weather.py — NOT {workspace_dir}/script.py
+or any other name. Mismatch → dispatch fails with "no such file."
+
+Iterating-and-testing via local(write) + local(run) BEFORE the
+tool_def call is OPTIONAL — useful when you're debugging a non-
+trivial algorithm interactively. Once it works, copy the verified
+content into script_body and call tool_def ONCE. Do NOT skip
+script_body and hope the workspace file survives — it won't, across
+sessions or after workspace pruning.
+
+================================================================
+NETWORK POLICY — shell sandbox is network-isolated by default
+================================================================
+
+Shell-mode tools run in a bwrap sandbox with --unshare-net. That
+means: urllib.request, socket.connect, curl, wget — ALL FAIL from
+inside the sandbox unless you opt the tool into network access.
+
+For HTTP work (the common case), declare hook_capabilities:
+
+  tool_def(action=create, mode="shell",
+           name="get_weather_by_city",
+           hook_capabilities=["fetch"],     ← grants gohort.fetch()
+           script_body="""
+             from gohort import fetch
+             import sys, json
+             city, state = sys.argv[1], sys.argv[2]
+             data = fetch(f"https://wttr.in/{city},{state}?format=j1")
+             print(data["body"])
+           """,
+           command_template="python3 {workspace_dir}/weather.py {city} {state}",
+           params={...},
+           test_args={"city": "Santa Cruz", "state": "CA"})
+
+Why this shape (vs raw network):
+  - Every outbound call is logged in gohort's audit trail
+  - Secrets stay in the credential store via gohort.secret("name")
+  - Same posture across sessions — no surprises on a fresh workspace
+
+For credentials (API keys), declare them per-credential:
+
+  hook_capabilities=["fetch", "secret:openweather"]
+
+Then in the script:
+
+  key = gohort.secret("openweather")
+  data = gohort.fetch(f"https://api.openweathermap.org/...&appid={key}")
+
+The escape hatch (raw_network=true) is RESERVED for narrow cases:
+  - persistent-mode REPLs over non-HTTP (psql, redis-cli, ssh-like)
+  - shell tools that NEED raw TCP/UDP and can't use the hook
+
+For ordinary HTTP-shaped work, hook_capabilities=["fetch"] is the
+right answer. raw_network=true should be a deliberate exception
+flagged in the description, not a default.
 
 ================================================================
 state_path — for tools that need to remember

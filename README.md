@@ -24,6 +24,8 @@ Apps register themselves via `init()` and compose framework primitives (`FormPan
 - **Pipelines** — a saved, ordered stage list (each stage a worker LLM step or a dispatch to one of your agents; outputs thread forward via `{input}`/`{prev}`/`{stage:NAME}` templating). Author from chat via Builder, attach to an agent with `attached_pipelines` (it surfaces as a callable `run_<pipeline>` tool), run it, export/import the recipe as portable JSON, and view/delete from the admin panel. The recipe is plain data with no identity baked in, so it travels.
 - **Hidden + allowlist controls** — agents can be hidden from the fleet's `agents(action="run")` dispatch, or restricted to a specific allowlist of callers. Per-(user, agent) memory + knowledge stores keep tenants isolated.
 - **Runtime-defined tools** — Builder authors shell-mode and api-mode tools mid-conversation; persistence requires admin approval through the pending-tool queue. Multi-stage work is authored as a declarative **pipeline** (above), not a tool.
+- **Sandboxed shell tools with a narrow gohort hook** — script bodies run in a network-isolated `bwrap` sandbox. The Python shim exposes `gohort.fetch_url`, `gohort.browse_page`, `gohort.log` by default and `gohort.fetch_via("<credential>", url)` / `gohort.secret("<credential>")` when declared. Same names + same behavior as the LLM-callable tools, so a URL the LLM probed with `fetch_url` works identically in a script. Network libraries that can't reach the network (urllib, requests, curl, wget, socket-dialing) are refused at authoring time so the rewrite-to-curl spiral can't happen.
+- **Sandbox-isolated shell tools with a narrow callback** — shell-mode scripts run in a network-isolated `bwrap` sandbox with one capability-gated callback channel back into gohort. The Python shim exposes `gohort.fetch_url` / `gohort.browse_page` / `gohort.log` (default-on for any tool with a `script_body`) and `gohort.fetch_via("<credential>", url)` / `gohort.secret("<credential>")` (explicit declaration required, gated by per-credential allow-list). urllib / requests / curl / wget / socket-dialing are refused at authoring time — the gohort hook is the only network path, and every script-side call uses the same HTTP client, headers, auto-routing, and audit log as the LLM-callable equivalents.
 - **Tool groups + classifier-trim** — admin-curated bundles collapse related tools into one expandable catalog entry; the runtime vector-classifier surfaces only the top-K most relevant tools per turn when the catalog gets large.
 
 ### LLM infrastructure
@@ -43,6 +45,8 @@ Apps register themselves via `init()` and compose framework primitives (`FormPan
 - **TLS + notifications** — self-signed cert generation or explicit paths; email for signups/approvals/task completion.
 
 ### Resilience + ops
+- **Tool-result spill + targeted query actions** — any tool result over ~100 KB spills to `<workspace>/.tool_spill/` with a stub showing first/last samples + path; the LLM follows up with `workspace(action="head"/"tail"/"grep"/"read_lines"/"stat")` for the slice it actually needs. Same shape for large PDF/DOCX attachments (`.attachments/`). Prevents one 2 MB log read or verbose sub-agent transcript from blowing the context window in a single round.
+- **Detached agent runs** — turns survive client disconnect. The HTTP request's context drives only the SSE delivery leg; the agent loop runs against an independent context and tees every frame into a per-run ring buffer. A reconnecting client picks up where it left off via `/api/runs/<id>/stream`. Active runs show a pulsing indicator on their session in the rail.
 - **Pipeline framework** — `RunPipelineAsync` / `RestorePipeline` for long-running tasks: session registration, persistent queue (survives restarts), per-app concurrency cap, completion notifications without duplicates.
 - **Mid-flight interjections** — queue notes via `/api/inject` while a turn is running; drained at per-step boundaries and folded into the next worker brief.
 - **Encrypted config + credentials** — AES-CFB kvlite database with hardware-locked storage; per-credential URL allow-list, audit log, rate limits.
@@ -202,6 +206,12 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 | `hello` | Minimal scaffold app — canonical reference for authoring a new app with the declarative `core/ui` framework |
 | `ollama_proxy` | Ollama-compatible HTTP proxy for clients that expect that API shape |
 
+## Companion clients
+
+| Client | Purpose |
+|--------|---------|
+| `gohort-desktop` | Native macOS host (Wails) that wraps the gohort web UI in an app window and exposes the host's filesystem (read, list, head, tail, grep, range, stat) as `from_client.filesystem.*` tools the connected gohort server can dispatch over a per-user WebSocket. Per-invocation approval modal + auto-approve toggle; in-app log viewer; operator-controlled read-allowlist with native folder picker. See `gohort-desktop/README.md`. |
+
 ## Where it's going
 
 The toolkit composes today around **agents + skills + collections + pipelines**. Pipelines have landed as a first-class primitive: declarative multi-stage workflows (decompose → stages → synthesize) authored from chat, attached to any agent as a callable `run_<pipeline>` tool, run inline, exported/imported as portable JSON, and governed from the admin panel — Builder picks the shape (agent or pipeline) based on intent.
@@ -317,8 +327,9 @@ gohort/
     ├── transcribe/          # transcribe_audio: STT via configured Whisper endpoint
     ├── video/, videodl/, videofind/   # video attach + yt-dlp wrappers
     ├── watcher/             # watcher: poll-and-alert framework
-    ├── websearch/           # web_search, fetch_url + article extraction
-    └── workspace/           # workspace state primitives
+    ├── websearch/           # web_search, fetch_url, fetch_json + article extraction
+    └── workspace/           # workspace state primitives — create/use/ls/cat/write/run + head/tail/grep/read_lines/stat query actions for spilled / large files
+gohort-desktop/         # Native macOS host (Wails) — separate module, see its README
 ```
 
 ## Dependencies

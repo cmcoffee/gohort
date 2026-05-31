@@ -65,14 +65,15 @@ var thinkUnclosedRE = regexp.MustCompile(`(?s)^<think>.*`)
 
 // openAIClient implements the LLM interface for OpenAI-compatible APIs.
 type openAIClient struct {
-	apiKey          string
-	model           string
-	endpoint        string
-	api             *apiclient.APIClient
-	ollama          bool // true when created via NewOllamaLLM
-	llamacpp        bool // true when provider is llama.cpp server
-	llamacppBudget  int  // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
-	contextSize     int  // Ollama num_ctx; 0 uses ollamaDefaultCtx
+	apiKey            string
+	model             string
+	endpoint          string
+	api               *apiclient.APIClient
+	streamIdleTimeout time.Duration // Idle-read deadline for streaming chat calls; zero falls back to DefaultStreamIdleTimeout.
+	ollama            bool          // true when created via NewOllamaLLM
+	llamacpp          bool          // true when provider is llama.cpp server
+	llamacppBudget    int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
+	contextSize       int           // Ollama num_ctx; 0 uses ollamaDefaultCtx
 	disableThinking  bool // master override forcing think=false / thinking_budget_tokens=0 on every call.
 	nativeTools      bool // When true, send native tool specs. When false, strip them (tools handled via text prompts at agent loop level).
 	thinkingBudget   int  // Gemini thinking budget tokens (see llm_gemini.go); ignored by other providers.
@@ -1330,7 +1331,10 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	var inputTokens, outputTokens int
 	var streamedToolCalls []nativeOllamaToolCall
 
-	scanner := bufio.NewScanner(resp.Body)
+	watchdog := newStreamWatchdog(resp.Body, c.streamIdleTimeout, "ollama")
+	defer watchdog.Stop()
+
+	scanner := bufio.NewScanner(watchdog)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		// Check for cancellation on every chunk. When ctx is cancelled,
@@ -1386,6 +1390,9 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	// from the aborted connection.
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if watchdog.Fired() {
+		return nil, fmt.Errorf("%w from ollama (model=%s)", errStreamIdleTimeout, model)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("native stream read error: %w", err)
@@ -1730,7 +1737,16 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		args strings.Builder
 	})
 
-	scanner := bufio.NewScanner(resp.Body)
+	// Idle-read watchdog: if no bytes arrive from the server for
+	// c.streamIdleTimeout (60s default), close the body to abort the
+	// blocking Read. Distinct from iotimeout's per-Read 5-minute
+	// deadline (which is too long to catch stream stalls before the
+	// operator gives up). Catches the "200 OK then silence" pattern
+	// from KV-cache contention, slot deadlock, or upstream hiccups.
+	watchdog := newStreamWatchdog(resp.Body, c.streamIdleTimeout, c.provider())
+	defer watchdog.Stop()
+
+	scanner := bufio.NewScanner(watchdog)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer for thinking models
 	totalLines := 0
 	skipCount := 0
@@ -1863,6 +1879,15 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		Debug("[%s]: reasoning present (%d chars), content=%d chars", c.provider(), reasoning.Len(), full.Len())
 	}
 
+	if watchdog.Fired() {
+		// Idle deadline tripped — body was force-closed under the
+		// scanner. Surface as a transient error (matched on the
+		// streamIdleTimeoutMarker substring by isTransientError) so
+		// the retry layer takes another shot. Include byte/line counts
+		// at the moment of stall for future log-correlation.
+		return nil, fmt.Errorf("%w from %s after %d lines, %d content chunks, %d body chars (model=%s, finish=%s)",
+			errStreamIdleTimeout, c.provider(), totalLines, contentCount, full.Len(), model, finishReason)
+	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("stream read error: %w", err)
 	}

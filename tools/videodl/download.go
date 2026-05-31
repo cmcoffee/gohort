@@ -31,7 +31,25 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "yt-dlp",
-		"-f", "best[ext=mp4]/best",
+		// Format cascade:
+		//   b[ext=mp4]  — a single pre-merged mp4 file when the site has
+		//                 one (YouTube, Twitter, Vimeo direct hosts).
+		//                 Cheap: no ffmpeg merge step.
+		//   bv*+ba      — best video stream + best audio stream, merged
+		//                 client-side via ffmpeg. Required for DASH-only
+		//                 sites (Reddit, modern Instagram, parts of TikTok)
+		//                 where audio and video are NEVER pre-muxed; without
+		//                 this branch yt-dlp errors with "Requested format is
+		//                 not available."
+		//   b           — final catch-all: best single stream of any kind.
+		//                 Picks a video-only or audio-only stream on
+		//                 sites that have no muxable pair; better than
+		//                 failing the whole download.
+		// --merge-output-format mp4 normalizes the DASH-merged container
+		// to mp4 so downstream MIME detection + the "video.<ext>" output
+		// glob both keep working as before.
+		"-f", "b[ext=mp4]/bv*+ba/b",
+		"--merge-output-format", "mp4",
 		"-o", outPattern,
 		"--no-playlist",
 		"--no-warnings",

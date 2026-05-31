@@ -1,0 +1,16 @@
+# Wails build outputs
+build/bin/
+build/darwin/
+build/windows/
+build/linux/
+
+# Frontend dist (we don't use it but Wails generates it)
+frontend/dist/
+node_modules/
+
+# macOS bundle artifacts
+*.app/
+*.dmg
+
+# Local config overrides
+desktop.conf.local

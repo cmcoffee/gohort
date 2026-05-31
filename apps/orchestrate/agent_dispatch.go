@@ -96,6 +96,100 @@ func (T *OrchestrateApp) SaveAgentForUser(user string, rec AgentRecord) (string,
 // against agentOwner's store. Sub-session is torn down on return so
 // transient state (authoring focus, session temp tools) doesn't
 // leak.
+// buildDispatchTurnExtras assembles the per-turn closure tools and the
+// "Available agents" prompt block that the target agent needs to behave
+// the same way it would on its own chat surface — knowledge_search,
+// memory_*, agents grouped tool (so it can dispatch to sub-agents),
+// activate_skill — plus the fleet-awareness block so the LLM knows
+// there's a fleet to delegate to.
+//
+// Without this, an agent dispatched via phantom / external callers ran
+// with only its bare allowed_tools and no peer awareness — the fleet
+// it could reach from the Agency chat UI was invisible. Both
+// RunAgentSync and RunAgentSyncContinuing call this so the experience
+// matches across surfaces.
+func (T *OrchestrateApp) buildDispatchTurnExtras(ctx context.Context, target AgentRecord, runtimeUser string, runtimeDB Database, subSess *ToolSession) (extraTools []AgentToolDef, availableBlock string) {
+	return T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, "", nil)
+}
+
+// buildDispatchTurnExtrasWithOwner is the underlying builder. When
+// ownerUser / ownerDB are non-empty, the dispatched subTurn's fleet
+// view (renderAvailableAgentsBlock + agents(action="run") dispatch
+// resolution) reads from the OWNER's per-user DB instead of the
+// runtime user's. Phantom passes ownerUser=<agentOwner>, ownerDB=
+// UserDB(T.DB, agentOwner) so dispatched agents see and can reach
+// their authored sub-agent fleet — without this, phantom-dispatched
+// OSINT couldn't find "OSINT Family Tracker" etc. because the fleet
+// read hit phantom:<chatID>'s empty DB. Sessions / memory / facts
+// remain on the runtime user's DB regardless.
+func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, target AgentRecord, runtimeUser string, runtimeDB Database, subSess *ToolSession, ownerUser string, ownerDB Database) (extraTools []AgentToolDef, availableBlock string) {
+	// Phantom-dispatched runs accumulate Reference Memory and
+	// Explicit facts under the synthetic per-chat user
+	// (phantom:<chatID>) — a namespace the agent's owner can't see
+	// from Agency (memory queries scope to the LOGGED-IN user). That
+	// hidden state then feeds memory_search on the NEXT dispatch
+	// from the same chat, so a wrong derived chunk compounds across
+	// calls (same self-contamination loop we patched in phantom's
+	// auto-inject layer). Force both layers off for phantom runs —
+	// Knowledge (read-only uploads) stays available, Session
+	// continuity within one phantom chat stays available, but neither
+	// the memory_save / memory_search path nor the store_fact /
+	// list_facts path is offered to the LLM. Stops new contamination
+	// at the source; the phantom-memory surface (handlers below) lets
+	// the operator wipe whatever has already accumulated.
+	if strings.HasPrefix(runtimeUser, "phantom:") {
+		target.DisableInferred = true
+		target.DisableExplicit = true
+	}
+	subTurn := &chatTurn{
+		app:       T,
+		agent:     target,
+		user:      runtimeUser,
+		udb:       runtimeDB,
+		ctx:       ctx,
+		topic:     generalTopic,
+		ownerUser: ownerUser,
+		ownerDB:   ownerDB,
+	}
+	extraTools = append(extraTools, subTurn.searchKnowledgeToolDef())
+	if !subTurn.inferredOff() {
+		extraTools = append(extraTools,
+			subTurn.saveMemoryToolDef(),
+			subTurn.searchMemoryToolDef(),
+			subTurn.forgetMemoryToolDef(),
+		)
+	}
+	if !subTurn.explicitOff() {
+		extraTools = append(extraTools,
+			subTurn.storeFactToolDef(),
+			subTurn.forgetFactToolDef(),
+		)
+	}
+	// agents grouped tool — sub-agents (OwnedBy set) are LEAVES in the
+	// dispatch tree: their job is one focused capability, return result,
+	// done. Stripping the agents tool from sub-agents eliminates depth-
+	// limit cascades (parent → sub → sub-sub-…) and forces hierarchical
+	// composition: if a workflow needs two specialists, they become
+	// siblings under the parent, not chained sub-agents. Builder targets
+	// stay read-only on dispatch (no recursive Builder-from-Builder).
+	// Top-level targets get the full grouped surface so they can reach
+	// their own sub-agents the same way they would from the Agency chat.
+	if target.OwnedBy == "" {
+		extraTools = append(extraTools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
+	}
+	if !target.DisableSkills {
+		extraTools = append(extraTools, subTurn.activateSkillToolDef())
+	}
+	// Sub-agents also skip the Available agents block — no point
+	// telling a leaf about fleet peers it can't dispatch to. Saves
+	// tokens AND removes the "DELEGATE FIRST" nudge that would
+	// otherwise contradict the missing tool.
+	if target.OwnedBy == "" {
+		availableBlock = subTurn.renderAvailableAgentsBlock()
+	}
+	return extraTools, availableBlock
+}
+
 func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUser, agentKey, message string) (string, error) {
 	if T == nil || T.LLM == nil {
 		return "", errors.New("orchestrate runtime not initialized")
@@ -156,32 +250,89 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 	// the sync-dispatch path. Identity-gated against the Builder
 	// seed ID — a non-Builder target never receives the appendage.
 	if isBuilderAgent(target.ID) {
-		tools = append(tools, builderInternalTools(subSess)...)
+		tools = append(tools, builderAuthoringTools(subSess)...)
 	}
+	// Phantom dispatches: pin the local target's posture flags AND
+	// skip the facts-load so prependAgentContext can't inject any
+	// pre-existing phantom-side facts into the prompt. See the
+	// matching block in RunAgentSyncContinuing for the full rationale.
+	isPhantomDispatch := strings.HasPrefix(runtimeUser, "phantom:")
+	if isPhantomDispatch {
+		target.DisableInferred = true
+		target.DisableExplicit = true
+	}
+	// Per-turn closure tools (knowledge_search, memory_*, agents,
+	// activate_skill) + Available agents block. Without these, the
+	// dispatched agent couldn't reach its own knowledge / memory /
+	// peer fleet — the exact gap that hid sub-agents from phantom-
+	// dispatched runs even though they were reachable from the
+	// Agency chat UI.
+	extraTools, availableBlock := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	tools = append(tools, extraTools...)
 	// Facts read from the RUNTIME user's DB, so dispatches from
 	// different phantom chats see isolated state for the same agent
 	// record. First call against a fresh runtimeUser starts clean —
 	// no leakage from the owner's interactive Explicit Memory.
-	subFacts := ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+	// Skipped for phantom runs (no facts in prompt at all).
+	var subFacts []MemoryFact
+	if !isPhantomDispatch {
+		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+	}
 	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
+	sysPrompt += availableBlock
 	// Mark delegated invocations so the target agent knows there's no
 	// human on the other end of ask_user / ask_user_form. Builder
 	// keys off this marker to skip Phase 1 conversation + the Phase 3
 	// confirmation pause; other agents can ignore it.
 	deliveredMessage := markAsDelegated(message)
-	f := false
+	// Resolve thinking the same way the chat surface does so a
+	// dispatched agent runs with the SAME default as if it were
+	// invoked directly from Agency. Base = route default. Target's
+	// explicit Think="on"/"off" wins; empty Think falls through to
+	// the route default rather than getting a different "dispatch-
+	// only" default.
+	think := true
+	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
+		think = *p
+	}
+	switch target.Think {
+	case "on":
+		think = true
+	case "off":
+		think = false
+	}
+	// Telemetry — each RunAgentSync invocation gets its own per-turn
+	// accumulator so pipeline agent stages, external dispatches, and
+	// any other sync sub-agent run leaves a grep-able forensic record
+	// in the log. Without this, pipeline-internal tool calls are a
+	// black box from the parent's perspective.
+	telem := newTurnTelemetry()
 	resp, _, runErr := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: deliveredMessage}}, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
+		OnStep:       func(info StepInfo) { telem.record(info) },
 		Confirm:      func(name, args string) bool { return true },
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
-			WithThink(f),
+			WithThink(think),
 		},
 	})
 	Log("[orchestrate.RunAgentSync] owner=%s runtime=%s target=%s msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, len(message), runErr)
+	// Per-sub-agent telemetry summary — same shape as the orchestrator
+	// and worker step summaries so the same greps work uniformly.
+	softCap := resolveMaxWorkerRounds(target)
+	outLen := 0
+	if resp != nil {
+		outLen = len(resp.Content)
+	}
+	exitReason := classifyWorkerExit(runErr, telem.rounds, softCap, outLen)
+	label := fmt.Sprintf("orchestrate.sub-agent agent=%s", target.Name)
+	Log("%s", telem.summary(label, softCap, softCap, exitReason))
+	if line := telem.toolCallSummary(label); line != "" {
+		Log("%s", line)
+	}
 	if runErr != nil {
 		return "", runErr
 	}
@@ -205,7 +356,15 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 // Optional injectionQueueID — when non-empty, the agent loop drains
 // the named injection queue between rounds (mid-flight user notes
 // arriving while this dispatch is in flight). Pass "" to disable.
-func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string) (string, error) {
+//
+// freshSession=true wipes the prior session at the deterministic ID
+// before loading — the new dispatch runs without any inherited
+// history. Used by callers (phantom's dispatch_agent fresh_session
+// flag) that have semantic evidence the user is on a new thread and
+// don't want compounding context-contamination from accumulated old
+// turns. The wipe is irreversible — older turns are gone, not just
+// hidden from the LLM. Default false preserves the continuity model.
+func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string, freshSession bool) (string, error) {
 	if T == nil || T.LLM == nil {
 		return "", errors.New("orchestrate runtime not initialized")
 	}
@@ -264,10 +423,43 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 		}
 	}
 	if isBuilderAgent(target.ID) {
-		tools = append(tools, builderInternalTools(subSess)...)
+		tools = append(tools, builderAuthoringTools(subSess)...)
 	}
-	subFacts := ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+	// Phantom dispatches: force the sub-agent posture (no memory layer,
+	// no facts layer) on the LOCAL target so prependAgentContext below
+	// doesn't accidentally inject pre-existing phantom-side facts into
+	// the prompt. The earlier in-function flip inside
+	// buildDispatchTurnExtras only affected its local copy; this one
+	// shapes the outer flow. ListMemoryFacts also gets skipped — even
+	// if facts exist under phantom:<chatID>'s namespace from before
+	// these guards landed, they do NOT inject into the dispatched
+	// LLM's prompt. Knowledge (read-only uploads) and session
+	// continuity remain controllable by the LLM via fresh_session.
+	isPhantomDispatch := strings.HasPrefix(runtimeUser, "phantom:")
+	if isPhantomDispatch {
+		target.DisableInferred = true
+		target.DisableExplicit = true
+	}
+	// Per-turn closure tools + Available agents block (mirrors
+	// RunAgentSync — see buildDispatchTurnExtras for rationale).
+	extraTools, availableBlock := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	tools = append(tools, extraTools...)
+	var subFacts []MemoryFact
+	if !isPhantomDispatch {
+		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
+	}
 	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
+	sysPrompt += availableBlock
+	// freshSession wipes the prior session BEFORE the load — caller
+	// (phantom's dispatch_agent fresh_session=true) is signaling a
+	// new thread, so the deterministic-ID session record gets cleared
+	// and the dispatch runs as if it's the first ever. The wipe is
+	// irreversible; older turns are not preserved elsewhere.
+	if freshSession {
+		deleteChatSession(runtimeDB, target.ID, subSessionID)
+		Log("[orchestrate.RunAgentSyncContinuing] fresh_session wipe — runtime=%s target=%s sub=%s",
+			runtimeUser, target.ID, subSessionID)
+	}
 	// Load prior session (if any) and build history.
 	priorSession, _ := loadChatSession(runtimeDB, target.ID, subSessionID)
 	if priorSession.ID == "" {
@@ -306,7 +498,19 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 		}
 	}
 
-	f := false
+	// Resolve thinking the same way the chat surface does — see
+	// RunAgentSync above for the rationale. Empty Think falls through
+	// to the route default, NOT a dispatch-specific override.
+	think := true
+	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
+		think = *p
+	}
+	switch target.Think {
+	case "on":
+		think = true
+	case "off":
+		think = false
+	}
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
@@ -319,7 +523,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 		InjectionDrain: onRoundStart,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
-			WithThink(f),
+			WithThink(think),
 		},
 	})
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",

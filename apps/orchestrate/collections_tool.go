@@ -3,7 +3,7 @@
 // into new agents by ID.
 //
 // NOT globally registered; reaches catalogs only via
-// builderInternalTools when the active agent IS Builder. Read-only
+// builderAuthoringTools when the active agent IS Builder. Read-only
 // — collection authoring (create / upload / autofill / delete)
 // stays on the Knowledge surface; Builder just resolves names →
 // IDs so attached_collections=[...] in create_agent / update_agent
@@ -48,9 +48,9 @@ func collectionsListTool() ChatTool {
 				statsByID[c.ID] = &stats{}
 				seenReports[c.ID] = map[string]bool{}
 			}
-			for _, k := range sess.DB.Keys(EmbeddedChunks) {
+			for _, k := range VectorDB.Keys(EmbeddedChunks) {
 				var ch EmbeddedChunk
-				if !sess.DB.Get(EmbeddedChunks, k, &ch) {
+				if !VectorDB.Get(EmbeddedChunks, k, &ch) {
 					continue
 				}
 				const prefix = "collection:"

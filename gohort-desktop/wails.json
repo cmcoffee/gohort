@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "Gohort",
+  "outputfilename": "Gohort",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "author": {
+    "name": "Craig Coffee"
+  },
+  "info": {
+    "productName": "Gohort",
+    "productVersion": "0.1.0",
+    "companyName": "snuglab",
+    "comments": "Native desktop host for gohort web apps. Phase 1: orchestrate chat with one filesystem bridge."
+  }
+}

@@ -363,12 +363,37 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 // receive sess on each call; stateless tools fall back to Run as usual.
 func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDef, error) {
 	var tools []AgentToolDef
+	var secureCache []AgentToolDef // built lazily, only when a name isn't in the static registry
+	secureBuilt := false
 	for _, name := range names {
-		ct, ok := FindChatTool(name)
-		if !ok {
+		if ct, ok := FindChatTool(name); ok {
+			tools = append(tools, ChatToolToAgentToolDefWithSession(ct, sess))
+			continue
+		}
+		// Fallback: the dynamic secure-API tools (call_<credential>)
+		// are generated per-session by Secure().BuildTools(sess) and
+		// never registered globally. Pipeline steps + other resolvers
+		// that look these up by name would otherwise fail with
+		// "not found in registry" even though the credential exists
+		// and the calling context (e.g. Builder) has the tool in its
+		// effective catalog. Per-caller gating (PipelineTools list,
+		// agent.AllowedTools, etc.) stays the responsibility of the
+		// caller — this is just registry resolution.
+		if !secureBuilt {
+			secureCache = Secure().BuildTools(sess)
+			secureBuilt = true
+		}
+		var found *AgentToolDef
+		for i := range secureCache {
+			if secureCache[i].Tool.Name == name {
+				found = &secureCache[i]
+				break
+			}
+		}
+		if found == nil {
 			return nil, fmt.Errorf("tool %q not found in registry", name)
 		}
-		tools = append(tools, ChatToolToAgentToolDefWithSession(ct, sess))
+		tools = append(tools, *found)
 	}
 	return tools, nil
 }

@@ -392,7 +392,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var sid    = bubble.dataset.sessionId;
       var url    = bubble.dataset.injectUrl || 'api/inject';
       if (!noteID || !sid) {
-        alert('Note has no id yet — try again in a moment.');
+        window.uiAlert('Note has no id yet — try again in a moment.');
         return;
       }
       // Lock first so the orchestrator doesn't drain it mid-edit.
@@ -401,7 +401,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         body: JSON.stringify({id: sid, note_id: noteID, action: 'lock'}),
       }).then(function(r) {
         if (r.status === 410) {
-          alert('Note has already been picked up by the agent.');
+          window.uiAlert('Note has already been picked up by the agent.');
           return null;
         }
         if (!r.ok) { return r.text().then(function(t){ throw new Error(t); }); }
@@ -431,13 +431,13 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             method: 'PATCH', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({id: sid, note_id: noteID, text: newText}),
           }).then(function(r) {
-            if (r.status === 410) { alert('Note already picked up.'); }
+            if (r.status === 410) { window.uiAlert('Note already picked up.'); }
             else if (!r.ok) { throw new Error('save failed'); }
             body.textContent = newText;
             cancel();
           }).catch(function(err) {
             saveBtn.disabled = false;
-            alert('Save failed: ' + (err && err.message || err));
+            window.uiAlert('Save failed: ' + (err && err.message || err));
           });
         };
         var cancelBtn = document.createElement('button');
@@ -459,16 +459,16 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         bubble.appendChild(editRow);
         ta.focus();
       }).catch(function(err) {
-        alert('Lock failed: ' + (err && err.message || err));
+        window.uiAlert('Lock failed: ' + (err && err.message || err));
       });
     }
 
-    function deleteInterjection(bubble) {
+    async function deleteInterjection(bubble) {
       var noteID = bubble.dataset.noteId;
       var sid    = bubble.dataset.sessionId;
       var url    = bubble.dataset.injectUrl || 'api/inject';
       if (!noteID || !sid) return;
-      if (!confirm('Delete this queued note?')) return;
+      if (!(await window.uiConfirm('Delete this queued note?'))) return;
       // Server's handleInject reads from JSON body regardless of
       // method, so DELETE carries the same {id, note_id} shape as
       // the other ops.
@@ -477,11 +477,11 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: sid, note_id: noteID}),
       }).then(function(r) {
-        if (r.status === 410) { alert('Note already picked up by the agent.'); return; }
+        if (r.status === 410) { window.uiAlert('Note already picked up by the agent.'); return; }
         if (!r.ok) { throw new Error('delete failed'); }
         bubble.remove();
       }).catch(function(err) {
-        alert('Delete failed: ' + (err && err.message || err));
+        window.uiAlert('Delete failed: ' + (err && err.message || err));
       });
     }
 
@@ -646,7 +646,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 
     window.uiRegisterClientAction('servitor_open_facts', function() {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
       var listBox = el('div', {class: 'ui-servitor-facts-list'},
         [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
       // Add-fact row at the top — key + value inputs + Add button.
@@ -664,7 +664,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             body: JSON.stringify({appliance_id: aid, key: k, value: v}),
           }).then(function(r) {
             addBtn.disabled = false;
-            if (!r.ok) { alert('Failed to add fact'); return; }
+            if (!r.ok) { window.uiAlert('Failed to add fact'); return; }
             keyIn.value = ''; valIn.value = '';
             refresh();
             refreshFactsBadge();
@@ -691,8 +691,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
               var head = el('div', {class: 'ui-servitor-fact-head'},
                 [el('div', {class: 'ui-servitor-fact-k'}, [f.key || ''])]);
               var delBtn = el('button', {class: 'ui-row-btn danger',
-                onclick: function() {
-                  if (!confirm('Delete fact "' + (f.key || '') + '"?')) return;
+                onclick: async function() {
+                  if (!(await window.uiConfirm('Delete fact "' + (f.key || '') + '"?'))) return;
                   fetch('api/facts?key=' + encodeURIComponent(f.id),
                     {method: 'DELETE'}).then(function() {
                     refresh();
@@ -721,7 +721,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 
     window.uiRegisterClientAction('servitor_open_rules', function() {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
       // Rules are stored as a LIST of records (one rule each), not
       // a single blob. Render a list + an "add new" row.
       var listBox = el('div', {class: 'ui-servitor-rules-list'},
@@ -738,7 +738,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             body: JSON.stringify({appliance_id: aid, rule: text}),
           }).then(function(r) {
             addBtn.disabled = false;
-            if (!r.ok) { alert('Failed to add rule'); return; }
+            if (!r.ok) { window.uiAlert('Failed to add rule'); return; }
             addInput.value = '';
             refresh();
           });
@@ -763,8 +763,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
                 [rec.rule || '']));
               row.appendChild(el('button', {
                 class: 'ui-row-btn danger',
-                onclick: function() {
-                  if (!confirm('Delete this rule?')) return;
+                onclick: async function() {
+                  if (!(await window.uiConfirm('Delete this rule?'))) return;
                   fetch('api/rules/' + encodeURIComponent(rec.id),
                     {method: 'DELETE'}).then(refresh);
                 },
@@ -792,7 +792,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 
     window.uiRegisterClientAction('servitor_open_profile', function() {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
       var body = el('div', {class: 'ui-pl-modal-body'},
         [el('div', {text: 'Loading…'})]);
       var m = openModal('System Profile', body);
@@ -924,16 +924,16 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             persona_name:   personaNameIn.value.trim(),
             persona_prompt: personaPromptIn.value,
           };
-          if (!payload.name) { alert('Name is required'); return; }
-          if (payload.type === 'ssh' && !payload.host) { alert('Host is required'); return; }
-          if (payload.type === 'command' && !payload.command) { alert('Command is required'); return; }
+          if (!payload.name) { window.uiAlert('Name is required'); return; }
+          if (payload.type === 'ssh' && !payload.host) { window.uiAlert('Host is required'); return; }
+          if (payload.type === 'command' && !payload.command) { window.uiAlert('Command is required'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(payload),
           }).then(function(r) {
             saveBtn.disabled = false;
-            if (!r.ok) { return r.text().then(function(t){ alert('Save failed: ' + t); }); }
+            if (!r.ok) { return r.text().then(function(t){ window.uiAlert('Save failed: ' + t); }); }
             m.close();
             // Reload the page so the appliance picker reflects the
             // change. Simpler than threading a refresh callback up
@@ -949,8 +949,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       if (isEdit) {
         var delBtn = el('button', {class: 'ui-row-btn danger',
           style: 'margin-right: auto',
-          onclick: function() {
-            if (!confirm('Delete this appliance? All saved facts, rules, and workspaces will remain but become orphaned.')) return;
+          onclick: async function() {
+            if (!(await window.uiConfirm('Delete this appliance? All saved facts, rules, and workspaces will remain but become orphaned.'))) return;
             fetch('api/appliance/' + encodeURIComponent(rec.id),
               {method: 'DELETE'}).then(function() {
               m.close();
@@ -966,7 +966,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
     });
     window.uiRegisterClientAction('servitor_edit_appliance', function() {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
       fetch('api/appliance/' + encodeURIComponent(aid))
         .then(function(r) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -974,7 +974,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         })
         .then(function(rec) { openApplianceModal(rec); })
         .catch(function(err) {
-          alert('Failed to load appliance: ' + (err && err.message || err));
+          window.uiAlert('Failed to load appliance: ' + (err && err.message || err));
         });
     });
 
@@ -1066,7 +1066,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           // to it and the left rail picks it up.
           var aid = getApplianceID();
           if (!aid) {
-            alert('Pick an appliance first');
+            window.uiAlert('Pick an appliance first');
             wsBtn.disabled = false; wsBtn.textContent = 'Create Workspace';
             return;
           }
@@ -1103,7 +1103,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             window.uiInvalidate('api/workspace/list');
           }).catch(function(err) {
             wsBtn.disabled = false; wsBtn.textContent = 'Create Workspace';
-            alert('Create workspace failed: ' + (err && err.message || err));
+            window.uiAlert('Create workspace failed: ' + (err && err.message || err));
           });
         });
         row.appendChild(wsBtn);
@@ -1158,7 +1158,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         var wsID = qs.get('session') || '';
       } catch (_) { wsID = ''; }
       if (!wsID) {
-        alert('Pick a workspace from the left rail first (or create one with + New workspace).');
+        window.uiAlert('Pick a workspace from the left rail first (or create one with + New workspace).');
         return;
       }
 
@@ -1237,8 +1237,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
                   preview.textContent = rev.body || '';
                 }}, ['Preview']);
               var revertBtn = el('button', {class: 'ui-row-btn primary',
-                onclick: function() {
-                  if (!confirm('Replace the current draft with this revision? The current draft will itself become a revision so this is undoable.')) return;
+                onclick: async function() {
+                  if (!(await window.uiConfirm('Replace the current draft with this revision? The current draft will itself become a revision so this is undoable.'))) return;
                   revertBtn.disabled = true; revertBtn.textContent = 'Reverting…';
                   fetch('api/workspace/revert', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1254,7 +1254,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
                   }).catch(function(err) {
                     revertBtn.disabled = false;
                     revertBtn.textContent = 'Revert';
-                    alert('Revert failed: ' + (err && err.message || err));
+                    window.uiAlert('Revert failed: ' + (err && err.message || err));
                   });
                 }}, ['Revert']);
               row.appendChild(prevBtn);
@@ -1315,7 +1315,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           ctx.subscribe('api/chat/v2/events?id=' + encodeURIComponent(d.session_id));
         }).catch(function(err) {
           genBtn.disabled = false; genBtn.textContent = 'Generate Draft';
-          alert('Synthesis failed: ' + (err && err.message || err));
+          window.uiAlert('Synthesis failed: ' + (err && err.message || err));
         });
       }
 
@@ -1339,8 +1339,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
               [kb + ' KB']));
           }
           var delBtn = el('button', {class: 'ui-row-btn danger',
-            onclick: function() {
-              if (!confirm('Remove "' + s.name + '" from the workspace?')) return;
+            onclick: async function() {
+              if (!(await window.uiConfirm('Remove "' + s.name + '" from the workspace?'))) return;
               fetch('api/workspace/supplement/delete', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({workspace_id: wsID, supplement_id: s.id}),
@@ -1379,7 +1379,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 
       function attachSupplement() {
         if (!fileIn.files || !fileIn.files.length) {
-          alert('Pick a file first.');
+          window.uiAlert('Pick a file first.');
           return;
         }
         attachBtn.disabled = true; attachBtn.textContent = 'Attaching…';
@@ -1399,7 +1399,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           })
           .catch(function(err) {
             attachBtn.disabled = false; attachBtn.textContent = 'Attach Document';
-            alert('Attach failed: ' + (err && err.message || err));
+            window.uiAlert('Attach failed: ' + (err && err.message || err));
           });
       }
     });
@@ -1412,9 +1412,9 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       ctx.clearActivity();
     });
 
-    window.uiRegisterClientAction('servitor_clear_memory', function(ctx) {
+    window.uiRegisterClientAction('servitor_clear_memory', async function(ctx) {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
       var msg = 'Clear all memory for this appliance?\n\n' +
         'This removes:\n' +
         '• System profile (map data)\n' +
@@ -1423,7 +1423,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         '• Notes and techniques\n\n' +
         'The appliance connection settings are kept. Run "Map System" to rebuild.\n\n' +
         'This cannot be undone.';
-      if (!confirm(msg)) return;
+      if (!(await window.uiConfirm(msg))) return;
       fetch('api/memory/clear', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({appliance_id: aid}),
@@ -1434,10 +1434,10 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           // Reload so the Facts badge re-counts to zero.
           setTimeout(function(){ refreshFactsBadge(); }, 100);
         } else {
-          alert('Failed to clear memory');
+          window.uiAlert('Failed to clear memory');
         }
       }).catch(function(err) {
-        alert('Failed: ' + (err && err.message || err));
+        window.uiAlert('Failed: ' + (err && err.message || err));
       });
     });
 
@@ -1447,7 +1447,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
     // the regular Map System uses.
     window.uiRegisterClientAction('servitor_run_mapapp', function(ctx) {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
       var cmdIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'e.g. kubectl, redis-cli, systemctl',
         style: 'width: 100%'});
@@ -1459,7 +1459,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var m = openModal('Map App', body);
       var run = function() {
         var cmd = cmdIn.value.trim();
-        if (!cmd) { alert('Command is required.'); return; }
+        if (!cmd) { window.uiAlert('Command is required.'); return; }
         runBtn.disabled = true;
         fetch('api/mapapp', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1474,7 +1474,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           }
         }).catch(function(err) {
           runBtn.disabled = false;
-          alert('Map App failed: ' + (err && err.message || err));
+          window.uiAlert('Map App failed: ' + (err && err.message || err));
         });
       };
       cmdIn.addEventListener('keydown', function(ev) {
@@ -1485,10 +1485,10 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       m.footer(cancelBtn, runBtn);
     });
 
-    window.uiRegisterClientAction('servitor_run_map', function(ctx) {
+    window.uiRegisterClientAction('servitor_run_map', async function(ctx) {
       var aid = getApplianceID();
-      if (!aid) { alert('Pick an appliance first'); return; }
-      if (!confirm('Run a full system map on this appliance? This may take a few minutes.')) return;
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!(await window.uiConfirm('Run a full system map on this appliance? This may take a few minutes.'))) return;
       fetch('api/map', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({appliance_id: aid}),
@@ -1497,7 +1497,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         return r.json();
       }).then(function(d) {
         if (!d || !d.session_id) {
-          alert('Map did not return a session id');
+          window.uiAlert('Map did not return a session id');
           return;
         }
         // Tap the same event queue the chat uses — status / cmd /
@@ -1507,7 +1507,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         // legacy event kinds to AgentLoopPanel events.
         ctx.subscribe('api/chat/v2/events?id=' + encodeURIComponent(d.session_id));
       }).catch(function(err) {
-        alert('Map failed to start: ' + (err && err.message || err));
+        window.uiAlert('Map failed to start: ' + (err && err.message || err));
       });
     });
 

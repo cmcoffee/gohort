@@ -324,10 +324,14 @@ func RegisteredCostSources() []string {
 // are skipped.
 //
 // When days > 0, returns exactly that many consecutive trailing days
-// ending at today's date (local timezone), including days with zero
-// activity — the chart then shows a continuous timeline instead of
-// skipping empty days. When days <= 0, returns only days that had at
-// least one record (no zero-padding).
+// ending at today's date (UTC — matching the day keys recordDailyUsage
+// writes), including days with zero activity — the chart then shows a
+// continuous timeline instead of skipping empty days. When days <= 0,
+// returns only days that had at least one record (no zero-padding).
+//
+// The window MUST be in the same timezone the records are keyed in (UTC),
+// or on a server behind UTC the evening's records (keyed under the next
+// UTC day) fall outside the local-dated window and silently drop out.
 func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 	rates := GetCostRates()
 	daily := map[string]*DailyCost{}
@@ -356,7 +360,7 @@ func AggregateDailyCost(records []DatedUsage, days int) []DailyCost {
 		// Build a continuous window from (today - days + 1) through
 		// today, filling in zeros for empty days so the chart renders
 		// a proper timeline instead of compressing around active days.
-		today := time.Now()
+		today := time.Now().UTC()
 		out := make([]DailyCost, 0, days)
 		for i := days - 1; i >= 0; i-- {
 			day := today.AddDate(0, 0, -i).Format("2006-01-02")

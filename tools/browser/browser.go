@@ -47,7 +47,15 @@ func clearStaleSingleton(profileDir string) {
 	}
 }
 
-func init() { RegisterChatTool(&BrowsePageTool{}) }
+func init() {
+	RegisterChatTool(&BrowsePageTool{})
+	// Wire the sandbox-hook's raw-text shim so gohort.fetch_url's
+	// JS-heavy auto-route and gohort.browse_page can call Fetch
+	// directly — getting just the page text without the LLM-shaped
+	// "Fetched X via browser (N chars):" preamble that
+	// BrowsePageTool.Run wraps on for the LLM consumer.
+	BrowserFetchFunc = Fetch
+}
 
 // shared is the singleton used by both the LLM tool and the package-level Fetch function.
 var shared = &BrowsePageTool{}
@@ -74,9 +82,14 @@ func (t *BrowsePageTool) Name() string { return "browse_page" }
 func (t *BrowsePageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // headless browser fetch
 func (t *BrowsePageTool) Desc() string {
 	return "Load a URL in a real browser (JavaScript executed, cookies handled) and return " +
-		"the rendered page's readable text. Use when fetch_url returns empty or skeleton " +
-		"content — JS-rendered sites, Reddit, dynamic news pages, aggregators. " +
-		"Slower than fetch_url (5–20s). Returns up to 10000 characters of extracted text."
+		"the rendered page's readable text. Reach for it as fetch_url's recovery path when " +
+		"the simpler tool comes back BLOCKED or USELESS: 403 / captcha challenge page / " +
+		"Cloudflare interstitial / JS-required skeleton / empty body — the headless browser " +
+		"clears most soft blocks because it executes JS and ships normal browser headers. " +
+		"Also right as the FIRST call for sites known to require JS (Reddit, Twitter/X, " +
+		"single-page-app news, aggregators, infinite-scroll feeds). " +
+		"Slower than fetch_url (5–20s) and burns more tokens, so try fetch_url first when " +
+		"the page might be static. Returns up to 10000 characters of extracted text."
 }
 func (t *BrowsePageTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
@@ -129,8 +142,60 @@ func (t *BrowsePageTool) launch() {
 	})
 }
 
-// fetch is the shared implementation used by Run and the package-level Fetch.
+// Timeout scaling for browse_page: every sub-timeout derives from the
+// operator-configured HTTPRequestTimeout (the same knob fetch_url and
+// other source-hook clients honor, set via --setup → Network Timeouts).
+// browse_page does strictly more than fetch_url (launch tab, run JS,
+// wait for idle, extract HTML, parse readability), so its budget scales
+// up from that base:
+//
+//	navTimeout       = 2 × HTTPRequestTimeout  (default 30s)
+//	idleWait         = HTTPRequestTimeout / 2  (default ~7.5s)
+//	totalOuterBudget = 3 × HTTPRequestTimeout  (default 45s)
+//
+// Operator raising HTTPRequestTimeout (slow networks, complex SPAs)
+// stretches browse_page's budgets proportionally without a separate
+// knob — and the previous hardcoded 30s/8s/45s line up exactly with the
+// 15s default so existing deployments don't shift behavior.
+func browsePageNavTimeout() time.Duration {
+	return 2 * HTTPRequestTimeout
+}
+func browsePageIdleWait() time.Duration {
+	return HTTPRequestTimeout / 2
+}
+func browsePageTotalBudget() time.Duration {
+	return 3 * HTTPRequestTimeout
+}
+
+// fetch wraps fetchImpl in an outer-budget guard. On timeout, the
+// goroutine is allowed to leak (it'll complete eventually when rod
+// errors out or the process exits); the caller gets a clear error
+// immediately rather than waiting alongside a hung browser.
 func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
+	budget := browsePageTotalBudget()
+	type result struct {
+		text string
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		text, err := t.fetchImpl(target, maxChars)
+		ch <- result{text: text, err: err}
+	}()
+	select {
+	case r := <-ch:
+		return r.text, r.err
+	case <-time.After(budget):
+		Log("[browse_page] outer budget %v exceeded for %s — Chromium likely wedged (page creation / CDP / idle wait); goroutine leaks until rod errors out", budget, target)
+		return "", fmt.Errorf("browse_page timed out after %v on %s — Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
+	}
+}
+
+// fetchImpl is the real fetch — the outer fetch() bounds its overall
+// runtime via browsePageTotalBudget so rod hangs outside the inner
+// page.Timeout calls (page creation, CDP wedge, etc.) don't outlast
+// the call.
+func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) {
 	parsed, err := url.Parse(target)
 	if err != nil {
 		return "", fmt.Errorf("parsing url: %w", err)
@@ -156,9 +221,9 @@ func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
 	})
 
 	navErr := rod.Try(func() {
-		page.Timeout(30 * time.Second).MustNavigate(target)
+		page.Timeout(browsePageNavTimeout()).MustNavigate(target)
 		// Wait for network to settle; ignore timeout — get whatever rendered so far.
-		_ = page.Timeout(8 * time.Second).WaitIdle(500 * time.Millisecond)
+		_ = page.Timeout(browsePageIdleWait()).WaitIdle(500 * time.Millisecond)
 	})
 	if navErr != nil {
 		// rod.Try returns *TryError, whose .Error() formats with

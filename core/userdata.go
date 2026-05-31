@@ -81,3 +81,53 @@ func RequireUser(w http.ResponseWriter, r *http.Request, base Database) (string,
 	}
 	return uid, UserDB(base, uid), true
 }
+
+// ForeignUsersLister returns the IDs of synthetic per-app users — the
+// "user:phantom:<chatID>" / etc. namespaces that don't exist in the
+// AuthTable but DO have UserDB sub-stores. Apps register a lister at
+// startup so cross-app surfaces (e.g. Agency wanting to find phantom-
+// dispatched sessions for an agent) can enumerate without depending
+// on the originating app's package directly.
+//
+// The function returns canonical usernames you'd pass to UserDB —
+// for phantom, that's "phantom:<chatID>". Empty / nil return when
+// the app has no foreign users.
+type ForeignUsersLister func() []string
+
+var (
+	foreignUsersMu      sync.Mutex
+	foreignUsersListers []ForeignUsersLister
+)
+
+// RegisterForeignUsersLister adds an app's foreign-user enumerator.
+// Idempotent calls are fine; duplicates are tolerated. Typically
+// called once during app init.
+func RegisterForeignUsersLister(fn ForeignUsersLister) {
+	if fn == nil {
+		return
+	}
+	foreignUsersMu.Lock()
+	defer foreignUsersMu.Unlock()
+	foreignUsersListers = append(foreignUsersListers, fn)
+}
+
+// ListForeignUsers returns every foreign-user ID from every registered
+// lister. Used by Agency / admin surfaces that need to enumerate
+// synthetic users across apps. Deduplicates so the same ID isn't
+// returned twice if two apps happen to register the same name.
+func ListForeignUsers() []string {
+	foreignUsersMu.Lock()
+	defer foreignUsersMu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	for _, fn := range foreignUsersListers {
+		for _, u := range fn() {
+			if u == "" || seen[u] {
+				continue
+			}
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	return out
+}

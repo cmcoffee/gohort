@@ -63,6 +63,54 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	T.registerSchedulerHandler()
 	MountSubMux(mux, prefix, sub)
+
+	// Startup sweep: retire any SubSession records left in Active
+	// state by a prior process. Their goroutines died with the
+	// process, no in-memory cancel registry survives a restart, so
+	// the persisted Active status is stale by definition. Without
+	// this, the first message in each affected chat after restart
+	// routes as RouteInject and ack-replies forever ("Got it,
+	// applying that.") since no goroutine exists to consume the
+	// inject queue. Cheap O(N) walk over the table — fine at any
+	// realistic scale, runs once at startup.
+	if n := RetireOrphanedActiveSubSessions(); n > 0 {
+		Log("[phantom] retired %d orphaned-Active sub-session(s) at startup", n)
+	}
+
+	// Register phantom's liveness checker so the routing layer can
+	// detect in-process orphans WITHIN a single process lifetime —
+	// e.g. a goroutine panicked past the deferred RetireSubSession,
+	// or some edge case left the cancel registry empty while the
+	// persisted Status stayed Active. inflightDispatchCancels is
+	// the authoritative "this goroutine is alive RIGHT NOW" signal;
+	// no entry there means no live worker. ResolveDispatchRoute
+	// calls this on every Active hit and retires orphans on the spot.
+	RegisterSubSessionLivenessChecker(func(subSessionID string) bool {
+		_, ok := inflightDispatchCancels.Load(subSessionID)
+		return ok
+	})
+
+	// Register phantom's synthetic-user enumerator so cross-app
+	// surfaces (Agency surfacing phantom-dispatched sessions per
+	// agent) can walk the per-chat sub-stores without depending on
+	// the phantom package directly. Each chat that has been
+	// dispatched-to has a Conversation record keyed by chatID;
+	// dispatched agents run as "phantom:<chatID>" — that's the
+	// canonical ID this lister returns.
+	RegisterForeignUsersLister(func() []string {
+		if T == nil || T.DB == nil {
+			return nil
+		}
+		keys := T.DB.Keys(conversationTable)
+		out := make([]string, 0, len(keys))
+		for _, chatID := range keys {
+			if chatID == "" {
+				continue
+			}
+			out = append(out, phantomDispatchRuntimeUser(chatID))
+		}
+		return out
+	})
 }
 
 // --- API key management ---
@@ -221,7 +269,7 @@ func (T *Phantom) handleProactiveNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type nextFire struct {
-		ChatID  string `json:"chat_id"`
+		ChatID   string `json:"chat_id"`
 		NextFire string `json:"next_fire"` // RFC3339 or empty
 	}
 
@@ -435,6 +483,14 @@ func (T *Phantom) handleAvailableAgents(w http.ResponseWriter, r *http.Request) 
 	if owner := phantomAgentOwner(T.DB); owner != "" {
 		if orch := findOrchestrate(); orch != nil {
 			for _, a := range orch.AgentsForUser(owner) {
+				// Sub-agents are reachable only through their parent —
+				// the parent's "Available agents" block surfaces them at
+				// dispatch time. Showing them in phantom's picker would
+				// let an operator wire a specialist directly to a chat,
+				// bypassing the parent that owns its routing.
+				if a.OwnedBy != "" {
+					continue
+				}
 				out = append(out, agentInfo{Name: a.Name, ID: a.ID, Description: a.Description})
 			}
 		}
@@ -607,19 +663,19 @@ func (T *Phantom) handleConversation(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, msgs)
 	case http.MethodPatch:
 		var req struct {
-			AutoReply           *bool          `json:"auto_reply"`
-			DisplayName         *string        `json:"display_name"`
-			PersonaName         *string        `json:"persona_name"`
-			Personality         *string        `json:"personality"`
-			SystemPrompt        *string        `json:"system_prompt"`
-			EnabledTools        *[]string      `json:"enabled_tools"`
-			GatekeeperPrompt    *string        `json:"gatekeeper_prompt"`
-			Members             *[]ConvMember  `json:"members"`
-			AliasHandles        *[]string      `json:"alias_handles"`
-			ProactiveEnabled    *bool          `json:"proactive_enabled"`
-			AllowedAgents       *[]string      `json:"allowed_agents"`
-			MessageHistoryDepth *int           `json:"message_history_depth"`
-			CompactionEnabled   *bool          `json:"compaction_enabled"`
+			AutoReply           *bool         `json:"auto_reply"`
+			DisplayName         *string       `json:"display_name"`
+			PersonaName         *string       `json:"persona_name"`
+			Personality         *string       `json:"personality"`
+			SystemPrompt        *string       `json:"system_prompt"`
+			EnabledTools        *[]string     `json:"enabled_tools"`
+			GatekeeperPrompt    *string       `json:"gatekeeper_prompt"`
+			Members             *[]ConvMember `json:"members"`
+			AliasHandles        *[]string     `json:"alias_handles"`
+			ProactiveEnabled    *bool         `json:"proactive_enabled"`
+			AllowedAgents       *[]string     `json:"allowed_agents"`
+			MessageHistoryDepth *int          `json:"message_history_depth"`
+			CompactionEnabled   *bool         `json:"compaction_enabled"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
 		var conv Conversation
@@ -1032,15 +1088,20 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	autoReply := conv.AutoReply || (isAlias && incomingConv.AutoReply)
 	Log("[phantom] hook from %s — enabled=%v auto_reply_all=%v conv_auto_reply=%v alias=%v primary=%v active=%s",
 		req.Handle, cfg.Enabled, cfg.AutoReplyAll, autoReply, isAlias, routingResolved && !isAlias, activeChatID)
-	if cfg.Enabled {
-		// Gatekeeper applies to ALL incoming messages including the
-		// owner's own — gatekeeperAllow's senderLabel resolution
-		// already labels owner-handle messages as the owner, so the
-		// rule can be written to "always allow if from owner" if
-		// that's the desired behavior. Letting the rule decide gives
-		// operators the option to wake-word-gate their own messages
-		// (the original bypass forced an unconditional always-allow
-		// for the owner, which broke wake-word setups).
+	// Only run the gatekeeper + LLM processing when phantom is enabled AND
+	// this chat is set to auto-reply. A chat that isn't auto-reply-enabled
+	// won't respond regardless, so running the gatekeeper LLM on its
+	// messages is pure waste — the inbound was already recorded above for
+	// history/recall; we just don't act on it. (Previously the gatekeeper
+	// ran for EVERY incoming message and the auto-reply check only gated
+	// the reply, so a disabled chat still burned a gatekeeper call per
+	// message.)
+	if cfg.Enabled && (cfg.AutoReplyAll || autoReply) {
+		// Gatekeeper applies to all incoming messages for this (enabled)
+		// chat including the owner's own — gatekeeperAllow's senderLabel
+		// resolution labels owner-handle messages as the owner, so the
+		// rule can "always allow if from owner" or wake-word-gate the
+		// owner, operator's choice.
 		Log("[phantom] gatekeeper: calling for handle=%q chatID=%q msg=%q",
 			req.Handle, activeChatID, truncateStr(cleanMessageText(req.Text), 60))
 		if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
@@ -1051,20 +1112,20 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 			Log("[phantom] gatekeeper blocked message from %s", senderTag)
 			return
 		}
-		if cfg.AutoReplyAll || autoReply {
-			// For self-messages (empty handle), reply to the original sender
-			// address rather than the resolved primary — unless the incoming
-			// chat ID uses an unresolvable service (e.g. "any;-;..." for
-			// cross-service threads like Gmail), in which case fall back to
-			// the primary so the reply can actually be delivered.
-			deliverChatID := activeChatID
-			if req.Handle == "" && !strings.HasPrefix(req.ChatID, "any;-;") {
-				deliverChatID = req.ChatID
-			}
-			go func() {
-				T.processCoalesced(activeChatID, deliverChatID, req.Handle, req.Text, conv)
-			}()
+		// For self-messages (empty handle), reply to the original sender
+		// address rather than the resolved primary — unless the incoming
+		// chat ID uses an unresolvable service (e.g. "any;-;..." for
+		// cross-service threads like Gmail), in which case fall back to
+		// the primary so the reply can actually be delivered.
+		deliverChatID := activeChatID
+		if req.Handle == "" && !strings.HasPrefix(req.ChatID, "any;-;") {
+			deliverChatID = req.ChatID
 		}
+		go func() {
+			T.processCoalesced(activeChatID, deliverChatID, req.Handle, req.Text, conv)
+		}()
+	} else if cfg.Enabled {
+		Log("[phantom] chat %s not auto-reply enabled — message recorded, skipping gatekeeper + reply", activeChatID)
 	}
 
 	w.WriteHeader(http.StatusAccepted)
@@ -1613,23 +1674,13 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		tools = append(tools, T.listScheduledToolDef(chatID))
 		tools = append(tools, T.cancelScheduledToolDef(chatID))
 	}
-	// look_at_attachment: lazy-load any prior conversation attachment
-	// by reference ID (image-N / video-N from history annotations).
-	// Always-on; the model uses it only when a follow-up question
-	// requires re-examining an earlier image. fetchHistory captures
-	// the DB at call time so newly-arrived attachments are visible.
-	tools = append(tools, buildLookAtAttachmentTool(
-		func() []PhantomMessage { return recentMessages(T.DB, chatID, 100) },
-		func(b []byte) { sess.AppendViewImage(b) },
-		func(b []byte) {
-			// Video lookup not yet supported — needs frame sampling.
-			// Stash as a single-frame view image so the model at least
-			// gets the first frame; better than nothing for "look at that
-			// video" follow-ups. Future: wire up the same yt-dlp +
-			// sample-frames pipeline used by view_video.
-			sess.AppendViewImage(b)
-		},
-	))
+	// NOTE: look_at_attachment + the per-attachment [image-N|…]/[video-N|…]
+	// history annotations were removed — phantom now handles attachments
+	// the same way the web chat does (current attachment passed as
+	// multimodal content; prior attachments aren't text-referenceable).
+	// The annotation format was being mimicked by the model as if emitting
+	// it delivered a file, leaking bare tags into iMessage. Re-send / "look
+	// at the earlier picture" is handled by persona guidance instead.
 
 	// (dispatch_to_worker temporarily unmounted in phantom too —
 	// matches the orchestrate strip. LLM wasn't reaching for it
@@ -1779,7 +1830,11 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 			}
 			MarkSubSessionActive(sub.SubSessionID)
 			ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentTimeout)
-			out, err := orch.RunAgentSyncContinuing(ctx, sub.OwnerUser, phantomDispatchRuntimeUser(chatID), sub.AgentID, sub.SubSessionID, SubSessionInjectionQueueKey(sub.SubSessionID), text)
+			// Promotion path is always a follow-up by definition (the
+			// user is replying to a sub-agent's last answer), so never
+			// pass freshSession=true here — preserves the continuity
+			// the user is relying on when they say "tell me more".
+			out, err := orch.RunAgentSyncContinuing(ctx, sub.OwnerUser, phantomDispatchRuntimeUser(chatID), sub.AgentID, sub.SubSessionID, SubSessionInjectionQueueKey(sub.SubSessionID), text, false)
 			cancel()
 			if err != nil {
 				RetireSubSession(sub.SubSessionID, "promotion_error")
@@ -1919,36 +1974,13 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		}
 		msgs = append(msgs, Message{Role: role, Content: content})
 	}
-	// Annotate history user messages that had attachments with stable
-	// per-conversation reference IDs (image-1, video-2, etc) so the
-	// model can call look_at_attachment to re-fetch the bytes when a
-	// follow-up question requires visual detail beyond what its
-	// in-context multimodal recall covers. Counter walks forward
-	// chronologically so IDs match the order things appeared in the
-	// conversation. Attachment metadata (type, size, dimensions if
-	// extractable) goes alongside the ID so the model has enough
-	// signal to decide whether it needs to look or not.
-	imgCounter, vidCounter := 0, 0
-	for i, m := range history {
-		if m.Role != "user" {
-			continue
-		}
-		if len(m.Images) == 0 && len(m.Videos) == 0 {
-			continue
-		}
-		var tags []string
-		for _, b64 := range m.Images {
-			imgCounter++
-			tags = append(tags, fmt.Sprintf("[image-%d | %s]", imgCounter, attachmentMetadata(b64, "image")))
-		}
-		for _, b64 := range m.Videos {
-			vidCounter++
-			tags = append(tags, fmt.Sprintf("[video-%d | %s]", vidCounter, attachmentMetadata(b64, "video")))
-		}
-		if len(tags) > 0 {
-			msgs[i].Content = msgs[i].Content + "\n" + strings.Join(tags, " ")
-		}
-	}
+	// NOTE: prior-attachment [image-N|…]/[video-N|…] reference tags were
+	// removed here — they were the source of a structural-token-mimicry
+	// bug (the model reproduced the format as text, leaking bare tags into
+	// iMessage and conflating "emit the tag" with "deliver the file").
+	// Phantom now matches the web chat: the CURRENT attachment is passed
+	// as multimodal content (below); prior attachments aren't text-tagged.
+
 	// Attach a "[your prior reply: <time>]" marker to each user message
 	// whose predecessor in history is an assistant turn. Putting the
 	// time on the FOLLOWING user message (not on the assistant turn
@@ -2119,8 +2151,18 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	// matches — concat-friendly empty-string returns.
 	if chatKnowledgeEnabled(conv, cfg) {
 		knowCtx, knowCancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
-		hits := searchChatKnowledge(knowCtx, T.DB, chatID, text, 5)
+		// Use the tighter auto-inject K (smaller than the explicit-
+		// search default) and drop hits below the similarity floor so
+		// weak matches don't pollute the prompt. autoInjectMinScore +
+		// autoInjectTopK live in phantom/knowledge.go.
+		rawHits := searchChatKnowledge(knowCtx, T.DB, chatID, text, autoInjectTopK)
 		knowCancel()
+		hits := make([]SearchHit, 0, len(rawHits))
+		for _, h := range rawHits {
+			if h.Score >= autoInjectMinScore {
+				hits = append(hits, h)
+			}
+		}
 		if block := renderChatKnowledgePromptSection(hits); block != "" {
 			sysPrompt += block
 			// Log auto-injection so it's grep-able from phantom
@@ -2297,6 +2339,26 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	var reply, reasoning string
 	if resp != nil {
 		reply = strings.TrimSpace(stripEmojis(resp.Content))
+		// Consume any [ATTACH: filename] markers the LLM emitted — each
+		// one queues a workspace file for delivery (same plumbing as
+		// workspace(action="attach")) and disappears from the visible
+		// reply. The marker is phantom's delivery directive: it sidesteps
+		// the tool-call-as-text leak where a model mimics the prose call
+		// syntax it sees in tool descriptions.
+		reply = applyAttachMarkers(sess, reply)
+		// Defensive cleanup of residual literal-prose mimics — when a
+		// model copies workspace(action="attach", ...) out of a tool
+		// description verbatim into its reply, strip it. The real tool
+		// call (if any) already fired through the structured path; this
+		// just stops the prose leak from reaching the user.
+		reply = stripWorkspaceCallProse(reply)
+		// Strip markdown formatting — iMessage renders plain text, so
+		// "**Name**" / "# Title" / "[link](url)" reach the user as
+		// literal punctuation. markdownToPlain preserves every word
+		// while removing the syntax (same stripper watcher_router and
+		// the async dispatch summarizer use; applying it here closes
+		// the gap for the standard reply path).
+		reply = markdownToPlain(reply)
 		reasoning = resp.Reasoning
 	}
 
@@ -2556,7 +2618,6 @@ func truncateStr(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
-
 
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")

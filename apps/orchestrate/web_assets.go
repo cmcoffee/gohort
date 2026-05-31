@@ -674,6 +674,23 @@ const orchestrateWebAssets = `<style>
       };
     });
 
+    // uiOrchAskMd renders the ask-card question through the shared
+    // markdown helper so an LLM that writes **bold**, inline code, or a
+    // bulleted clarification in its question gets formatted output
+    // instead of raw markup. Single-paragraph questions (the common
+    // case) have their sole <p> wrapper stripped so the question keeps
+    // the card's own spacing rather than inheriting <p> margins. Sets
+    // the element's content in place; falls back to plain text if the
+    // helper is unavailable (defensive — it's always present in core/ui).
+    function uiOrchAskMd(elm, text) {
+      text = text || '';
+      if (!window.uiMdToHTML) { elm.textContent = text; return; }
+      var html = window.uiMdToHTML(text);
+      var m = html.match(/^<p>([\s\S]*)<\/p>\s*$/);
+      if (m && m[1].indexOf('<p>') === -1) html = m[1];
+      elm.innerHTML = html;
+    }
+
     // Interactive ask card — orchestrator's ask_user with options.
     // Renders the question + checkbox / radio list + free-text input
     // + Submit button. Submit constructs the user's answer by joining
@@ -682,7 +699,8 @@ const orchestrateWebAssets = `<style>
     // sees it as a regular user message in the next turn.
     window.uiRegisterBlockRenderer('orchestrate_ask', function(d) {
       var wrap = el('div', {class: 'ui-orch-ask'});
-      var q = el('div', {class: 'ui-orch-ask-q'}, [d.question || '']);
+      var q = el('div', {class: 'ui-orch-ask-q'});
+      uiOrchAskMd(q, d.question);
       wrap.appendChild(q);
 
       var opts = (d.options || []).map(function(s) { return String(s || '').trim(); })
@@ -744,18 +762,18 @@ const orchestrateWebAssets = `<style>
         // Fire the answer through the chat panel's input — easiest
         // way to get it into the normal send flow (events stream,
         // session bookkeeping, etc.) without poking at internals.
-        // Suppress the duplicate user bubble: the card itself flips
-        // into a "submitted" state below and visually captures the
-        // pick, so a separate user bubble repeating the same answer
-        // is redundant. The framework reads the flag once per send.
+        // The compiled answer renders as a normal user bubble (no
+        // suppression) so Retry has a role=user anchor to walk back
+        // to. Without that anchor, Retry would skip past the form
+        // submission and replay the conversation from the original
+        // message before the form was ever asked.
         var inputArea = document.querySelector('.ui-agent-input');
         var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
         if (!inputArea || !sendBtn) {
-          alert('Could not find the chat input to submit your answer.');
+          window.uiAlert('Could not find the chat input to submit your answer.');
           return;
         }
         inputArea.value = answer;
-        window.uiSuppressNextUserBubble = true;
         sendBtn.click();
         // Lock the card and reshape into a historical view: mark the
         // picked options so CSS keeps them visible (.picked) while
@@ -838,7 +856,7 @@ const orchestrateWebAssets = `<style>
 
       function renderStep() {
         var step = steps[current];
-        qEl.textContent = (current + 1) + '. ' + step.question;
+        uiOrchAskMd(qEl, (current + 1) + '. ' + step.question);
         optsBox.innerHTML = '';
         var multi = !!step.multi;
         var opts = (step.options || []).map(function(s) { return String(s || '').trim(); })
@@ -893,11 +911,14 @@ const orchestrateWebAssets = `<style>
         var inputArea = document.querySelector('.ui-agent-input');
         var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
         if (!inputArea || !sendBtn) {
-          alert('Could not find the chat input to submit your answers.');
+          window.uiAlert('Could not find the chat input to submit your answers.');
           return;
         }
         inputArea.value = compiled;
-        window.uiSuppressNextUserBubble = true;
+        // No bubble suppression — the compiled answer renders as a
+        // user bubble so Retry has an anchor to walk back to. Without
+        // this, Retry skips past the form submission and replays the
+        // entire conversation from the user's original message.
         sendBtn.click();
         wrap.classList.add('submitted');
         optsBox.querySelectorAll('input').forEach(function(i) { i.disabled = true; });
@@ -958,7 +979,7 @@ const orchestrateWebAssets = `<style>
       var sid    = bubble.dataset.sessionId;
       var url    = bubble.dataset.injectUrl || 'api/inject';
       if (!noteID || !sid) {
-        alert('Note has no id yet — try again in a moment.');
+        window.uiAlert('Note has no id yet — try again in a moment.');
         return;
       }
       // Lock first so the runner doesn't drain it mid-edit.
@@ -967,7 +988,7 @@ const orchestrateWebAssets = `<style>
         body: JSON.stringify({id: sid, note_id: noteID, action: 'lock'}),
       }).then(function(r) {
         if (r.status === 410) {
-          alert('Note has already been picked up by the agent.');
+          window.uiAlert('Note has already been picked up by the agent.');
           return null;
         }
         if (!r.ok) { return r.text().then(function(t){ throw new Error(t); }); }
@@ -997,13 +1018,13 @@ const orchestrateWebAssets = `<style>
             method: 'PATCH', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({id: sid, note_id: noteID, text: newText}),
           }).then(function(r) {
-            if (r.status === 410) { alert('Note already picked up.'); }
+            if (r.status === 410) { window.uiAlert('Note already picked up.'); }
             else if (!r.ok) { throw new Error('save failed'); }
             body.textContent = newText;
             cancel();
           }).catch(function(err) {
             saveBtn.disabled = false;
-            alert('Save failed: ' + (err && err.message || err));
+            window.uiAlert('Save failed: ' + (err && err.message || err));
           });
         };
         var cancelBtn = document.createElement('button');
@@ -1025,25 +1046,25 @@ const orchestrateWebAssets = `<style>
         bubble.appendChild(editRow);
         ta.focus();
       }).catch(function(err) {
-        alert('Lock failed: ' + (err && err.message || err));
+        window.uiAlert('Lock failed: ' + (err && err.message || err));
       });
     }
 
-    function deleteInterjection(bubble) {
+    async function deleteInterjection(bubble) {
       var noteID = bubble.dataset.noteId;
       var sid    = bubble.dataset.sessionId;
       var url    = bubble.dataset.injectUrl || 'api/inject';
       if (!noteID || !sid) return;
-      if (!confirm('Delete this queued note?')) return;
+      if (!(await window.uiConfirm('Delete this queued note?'))) return;
       fetch(url, {
         method: 'DELETE', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: sid, note_id: noteID}),
       }).then(function(r) {
-        if (r.status === 410) { alert('Note already picked up by the agent.'); return; }
+        if (r.status === 410) { window.uiAlert('Note already picked up by the agent.'); return; }
         if (!r.ok) { throw new Error('delete failed'); }
         bubble.remove();
       }).catch(function(err) {
-        alert('Delete failed: ' + (err && err.message || err));
+        window.uiAlert('Delete failed: ' + (err && err.message || err));
       });
     }
 
@@ -1100,6 +1121,202 @@ const orchestrateWebAssets = `<style>
       });
     }
     watchAgentSwitchForNewSession();
+
+    // Contextual sub-agent picker. When the active top-level agent has
+    // owned sub-agents (per ORCH_SUB_AGENTS embedded by page_chat.go),
+    // render a secondary select right under the main agent picker so
+    // the user can chat directly with a specialist for testing without
+    // dispatching from the parent. Empty (default) = chat with the
+    // parent normally; pick a sub-agent = swap the active agent_id to
+    // that sub-agent for the session. Sub-agents are absent from the
+    // main dropdown (Hidden=true via enforceSubAgentPosture); we
+    // transiently inject an option for the picked one so the existing
+    // change-event plumbing (new session, scope swap, refresh) just
+    // works without touching the chat panel internals.
+    function mountSubAgentPicker() {
+      var sel = document.querySelector('.ui-agent-extras select');
+      if (!sel) { setTimeout(mountSubAgentPicker, 200); return; }
+      var subMap = window.ORCH_SUB_AGENTS || {};
+
+      // Track the "parent" the secondary picker is scoped to. When the
+      // active value IS a sub-agent (user picked one earlier and the
+      // page reloaded), find its parent so the secondary picker still
+      // renders correctly.
+      function findParentOf(id) {
+        for (var pid in subMap) {
+          var kids = subMap[pid] || [];
+          for (var i = 0; i < kids.length; i++) {
+            if (kids[i].id === id) return pid;
+          }
+        }
+        return null;
+      }
+
+      // Build the secondary picker DOM, hidden by default. The agent
+      // picker (.ui-agent-extras) lives directly inside
+      // .ui-agent-top-bundle, a CSS GRID with two columns:
+      //   col 1 (rail-width, 260px) = main picker
+      //   col 2 (1fr)               = bundle-table (buttons)
+      // A naked sibling falls into grid auto-flow and lands at col 2
+      // row 1, pushing the bundle-table to col 1 row 2 (the exact
+      // symptom the user reported). Pin the wrap to grid-column: 1
+      // so it lands in col 1 row 2 — directly under the main picker,
+      // leaving the bundle-table untouched at col 2 row 1.
+      //
+      // Theme: native <select> in a dark page needs explicit
+      // background/color/border to look right; the main picker
+      // happens to render fine on systems where the browser honors
+      // color-scheme but that's not reliable. Apply the framework
+      // tokens directly so both pickers match regardless of browser.
+      var host = sel.closest('.ui-agent-extras');
+      if (!host) return;
+      // Put the specialist picker INSIDE the agent-extras container,
+      // stacked vertically below the main picker. Earlier attempts
+      // placed it as a sibling in the bundle grid — but the bundle's
+      // right column (the buttons table) is tall (two button rows), so
+      // the grid's row 2 visually landed below the entire button table,
+      // not directly below the main picker. Putting both pickers in the
+      // SAME grid cell (column 1 of the bundle) and flex-column'ing the
+      // host makes the second picker hug the main picker, and the
+      // buttons in column 2 stay put regardless of how tall the picker
+      // stack gets.
+      host.style.flexDirection = 'column';
+      host.style.alignItems = 'stretch';
+      host.style.gap = '0.25rem';
+      // The framework pads the in-side host symmetrically for a
+      // single-row layout; shift to a bit of vertical breathing room
+      // now that there are two stacked rows.
+      host.style.padding = '0.25rem 0.4rem 0.3rem 0.6rem';
+      var label = document.createElement('label');
+      label.className = 'ui-agent-extras-label ui-orch-subagent-row';
+      var caption = document.createElement('span');
+      caption.textContent = 'Specialist';
+      label.appendChild(caption);
+      var subSel = document.createElement('select');
+      subSel.name = 'orch_sub_agent';
+      // Use the framework's themed-select class — same rule the main
+      // agent picker uses (see core/ui/runtime.go's FormPanel select
+      // render path). One class binds background/color/border/radius/
+      // appearance from the design tokens, so the two pickers always
+      // match without per-element style drift.
+      subSel.className = 'ui-form-select';
+      label.appendChild(subSel);
+      // Append the specialist row inside the SAME host as the main
+      // picker so both share column 1 of the bundle grid.
+      host.appendChild(label);
+
+      // restoreParentOptions — if a prior sub-agent selection rewrote a
+      // top-level option's underlying value, put it back. Used whenever
+      // we change the active parent so the main picker's options carry
+      // their real IDs again. Keyed off the data-original-value
+      // attribute we set when overriding.
+      function restoreParentOptions() {
+        var opts = sel.querySelectorAll('option[data-orch-original-value]');
+        for (var i = 0; i < opts.length; i++) {
+          opts[i].value = opts[i].getAttribute('data-orch-original-value');
+          opts[i].removeAttribute('data-orch-original-value');
+        }
+      }
+
+      // suppressRestoreOnce gates restoreParentOptions on the synthetic
+      // sel.change we dispatch from the specialist picker — without it,
+      // sel.change would immediately revert the override we JUST applied
+      // (sub-agent ID → parent ID), so Edit / Tools / Memory / etc. all
+      // reach for the parent's record. Only real user changes on the
+      // main picker should trigger restoreParentOptions.
+      var suppressRestoreOnce = false;
+
+      // Repopulate subSel based on the given parent's children. Picks
+      // the current sub-agent (if the main picker IS one) as the
+      // selected option. Empty parent → hide the picker entirely so
+      // the chrome doesn't read as "broken" for agents with no
+      // specialists; the row reappears the moment the selected parent
+      // does have sub-agents.
+      function populate(parentID, activeID) {
+        var kids = (parentID && subMap[parentID]) || [];
+        if (!kids.length) {
+          label.style.display = 'none';
+          subSel.innerHTML = '';
+          return;
+        }
+        label.style.display = '';
+        subSel.disabled = false;
+        subSel.innerHTML = '';
+        subSel.appendChild(new Option('— main agent —', ''));
+        kids.forEach(function(k) {
+          subSel.appendChild(new Option(k.name, k.id));
+        });
+        if (activeID && parentID !== activeID) {
+          subSel.value = activeID;
+        } else {
+          subSel.value = '';
+        }
+      }
+
+      // Sync the secondary picker to the main picker's current value.
+      // The main picker's option may have a sub-agent ID stored as its
+      // current value (because we override) — resolve back to the real
+      // parent ID via data-orch-original-value when present so the
+      // specialist list belongs to the right parent.
+      function syncFromMain() {
+        var cur = sel.value;
+        // If the selected option carries a rewritten value, the
+        // real parent ID is its data-orch-original-value.
+        var selOpt = sel.options[sel.selectedIndex];
+        var parentID = selOpt && selOpt.getAttribute('data-orch-original-value');
+        if (!parentID) {
+          parentID = subMap[cur] ? cur : findParentOf(cur);
+        }
+        populate(parentID, cur);
+      }
+      syncFromMain();
+      sel.addEventListener('change', function() {
+        // User picked a different option from the main picker — clear
+        // any prior overrides so the new selection's value is its real
+        // ID, then re-sync the specialist list to the new parent.
+        // EXCEPT when we just dispatched this change ourselves from the
+        // specialist picker; in that case the override is intentional.
+        if (suppressRestoreOnce) {
+          suppressRestoreOnce = false;
+        } else {
+          restoreParentOptions();
+        }
+        syncFromMain();
+      });
+
+      // Picking a sub-agent → rewrite the CURRENTLY SELECTED option's
+      // value to the sub-agent's ID while leaving its label alone. The
+      // main picker visibly keeps showing the parent's name; the form's
+      // agent_id (read from the select's value) carries the sub-agent
+      // ID so all downstream routing (sessions, chat sends, scope
+      // events) targets the specialist. Restoring back to "— main
+      // agent —" reverts the option's value via data-orch-original-value.
+      subSel.addEventListener('change', function() {
+        var picked = subSel.value;
+        var selOpt = sel.options[sel.selectedIndex];
+        if (!selOpt) return;
+        // Remember the parent's real ID once; subsequent flips between
+        // specialists read from the saved attribute.
+        var realParentID = selOpt.getAttribute('data-orch-original-value') || selOpt.value;
+        if (!selOpt.hasAttribute('data-orch-original-value')) {
+          selOpt.setAttribute('data-orch-original-value', realParentID);
+        }
+        var targetID = picked || realParentID;
+        selOpt.value = targetID;
+        sel.value = targetID;
+        // Clean up the override attribute when reverting to the parent
+        // so the option matches the rest of the dropdown's state.
+        if (!picked) {
+          selOpt.removeAttribute('data-orch-original-value');
+        }
+        // Dispatch a change for downstream listeners (session swap,
+        // scope events) but suppress the override-revert in our own
+        // sel.change handler so the override we just applied survives.
+        suppressRestoreOnce = true;
+        sel.dispatchEvent(new Event('change'));
+      });
+    }
+    mountSubAgentPicker();
 
     // Show the active agent's description after a selection. Two
     // shapes depending on whether the agent has an intake form:
@@ -1244,32 +1461,151 @@ const orchestrateWebAssets = `<style>
     if (window.uiRegisterClientAction) {
       window.uiRegisterClientAction('orchestrate_edit_agent', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         window.location.href = 'agent/' + encodeURIComponent(id);
+      });
+
+      // showCreateAgentModal — themed two-choice dialog that matches the
+      // framework's other modals (.ui-form-modal-overlay / .ui-form-modal)
+      // instead of the browser-native confirm(). Resolves with one of
+      // "sub", "top", or null (cancel). Mounted on click, removed on
+      // pick — no persistent DOM.
+      function showCreateAgentModal(parentName, onPick) {
+        var overlay = document.createElement('div');
+        overlay.className = 'ui-form-modal-overlay';
+        overlay.style.display = 'flex';
+        var modal = document.createElement('div');
+        modal.className = 'ui-form-modal';
+        var header = document.createElement('div');
+        header.className = 'ui-form-modal-h';
+        header.textContent = 'Create new agent';
+        var hint = document.createElement('div');
+        hint.className = 'ui-form-modal-hint';
+        hint.textContent = 'Top-level agents show on the main picker with the full surface (publishing, intake form, memory, etc.). Sub-agents are hidden specialists owned by "' + parentName + '" — they reach the chat through the parent\'s specialist picker and skip the surface a standalone agent gets.';
+        var actions = document.createElement('div');
+        actions.className = 'ui-form-modal-actions';
+        actions.style.justifyContent = 'flex-end';
+        actions.style.flexWrap = 'wrap';
+        actions.style.gap = '0.45rem';
+        function close(choice) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          onPick(choice);
+        }
+        function onKey(e) {
+          if (e.key === 'Escape') { e.preventDefault(); close(null); }
+        }
+        function mkBtn(label, primary, onClick) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = primary ? 'ui-form-submit' : 'ui-row-btn';
+          b.textContent = label;
+          // .ui-form-submit ships with margin-top: 1rem (designed for
+          // sitting under a form column), which pushes it down relative
+          // to .ui-row-btn siblings in this row layout. Zero it so all
+          // three buttons share the actions-row baseline.
+          if (primary) b.style.marginTop = '0';
+          b.addEventListener('click', onClick);
+          return b;
+        }
+        var cancelBtn = mkBtn('Cancel', false, function(){ close(null); });
+        var topBtn = mkBtn('Top-level agent', false, function(){ close('top'); });
+        var subBtn = mkBtn('Sub-agent of ' + parentName, true, function(){ close('sub'); });
+        actions.appendChild(cancelBtn);
+        actions.appendChild(topBtn);
+        actions.appendChild(subBtn);
+        modal.appendChild(header);
+        modal.appendChild(hint);
+        modal.appendChild(actions);
+        overlay.appendChild(modal);
+        // Click-outside closes as a cancel. Test against the overlay
+        // (not the modal) so clicks inside the dialog don't dismiss.
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) close(null);
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        // Focus the recommended action for keyboard-driven flows.
+        subBtn.focus();
+      }
+
+      // Create-agent. When a parent agent is currently selected, ask
+      // up front whether the new agent should be a top-level peer or
+      // a sub-agent owned by that parent — the choice gates the form
+      // layout (sub-agents mask publishing / intake form / memory
+      // sections via enforceSubAgentPosture). The active parent is
+      // derived the same way Edit does: prefer the option's
+      // data-orch-original-value (set when a specialist is active) so
+      // creating a sub-agent while in specialist mode parents the new
+      // sub-agent under the TOP-LEVEL agent, not its sibling specialist.
+      // No parent selected → skip the dialog and go straight to a
+      // top-level form.
+      window.uiRegisterClientAction('orchestrate_create_agent', function() {
+        var sel = document.querySelector('.ui-agent-extras select');
+        var opt = sel && sel.options[sel.selectedIndex];
+        if (!opt || !opt.value) {
+          window.location.href = 'agent/new';
+          return;
+        }
+        var parentID = opt.getAttribute('data-orch-original-value') || opt.value;
+        var parentName = (opt.textContent || '').trim() || 'the selected agent';
+        showCreateAgentModal(parentName, function(choice) {
+          if (choice === 'sub') {
+            window.location.href = 'agent/new?owned_by=' + encodeURIComponent(parentID);
+          } else if (choice === 'top') {
+            window.location.href = 'agent/new';
+          }
+          // null = cancel — stay on the chat surface.
+        });
       });
 
       window.uiRegisterClientAction('orchestrate_clone_agent', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
-        fetch('api/agents/' + encodeURIComponent(id) + '/clone', {
-          method: 'POST',
-        }).then(function(r) {
-          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-          return r.json();
-        }).then(function(rec) {
-          if (rec && rec.id) {
-            window.location.href = 'agent/' + encodeURIComponent(rec.id);
-          } else {
-            window.location.reload();
-          }
-        }).catch(function(err) {
-          alert('Clone failed: ' + (err && err.message || err));
-        });
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
+        // Fetch the source first so we know whether it's a sub-agent.
+        // Cloning a sub-agent offers a promotion choice: keep the
+        // parent link (clone stays a hidden specialist), or drop it
+        // (clone becomes a first-class top-level agent — the only
+        // way to surface a Builder-authored specialist on its own).
+        fetch('api/agents/' + encodeURIComponent(id))
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(async function(src) {
+            var promote = false;
+            if (src && src.owned_by) {
+              // confirm() returns true on OK; phrase OK = promote
+              // because that's the action the user usually wants when
+              // they bothered to clone a hidden specialist.
+              promote = await window.uiConfirm(
+                'This is a sub-agent. Clone as a first-class top-level agent?\n\n' +
+                'OK = promote to top-level (will appear in the main picker)\n' +
+                'Cancel = keep as a sub-agent of the same parent (stays hidden)'
+              );
+            }
+            return fetch('api/agents/' + encodeURIComponent(id) + '/clone', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({promote: promote}),
+            });
+          })
+          .then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          })
+          .then(function(rec) {
+            if (rec && rec.id) {
+              window.location.href = 'agent/' + encodeURIComponent(rec.id);
+            } else {
+              window.location.reload();
+            }
+          })
+          .catch(function(err) {
+            window.uiAlert('Clone failed: ' + (err && err.message || err));
+          });
       });
 
       window.uiRegisterClientAction('orchestrate_export_agent', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         // Trigger a download via an invisible link so the Content-
         // Disposition header lands without leaving the page. Direct
         // navigation works too but blanks the chat surface, which is
@@ -1288,9 +1624,9 @@ const orchestrateWebAssets = `<style>
       // AgentLoopPanel runtime when the toolbar action fires.
       window.uiRegisterClientAction('orchestrate_export_session', function(ctx) {
         var agentID = getAgentID();
-        if (!agentID) { alert('Pick an agent first.'); return; }
+        if (!agentID) { window.uiAlert('Pick an agent first.'); return; }
         var sessionID = (ctx && ctx.sessionId) || '';
-        if (!sessionID) { alert('Open a session first — there is nothing to export yet.'); return; }
+        if (!sessionID) { window.uiAlert('Open a session first — there is nothing to export yet.'); return; }
         var url = 'api/sessions/' + encodeURIComponent(sessionID) +
                   '/export?agent_id=' + encodeURIComponent(agentID) +
                   '&format=md';
@@ -1333,11 +1669,11 @@ const orchestrateWebAssets = `<style>
                 window.location.reload();
               }
             }).catch(function(err) {
-              alert('Import failed: ' + (err && err.message || err));
+              window.uiAlert('Import failed: ' + (err && err.message || err));
             });
           };
           reader.onerror = function() {
-            alert('Could not read file: ' + (reader.error && reader.error.message || 'unknown error'));
+            window.uiAlert('Could not read file: ' + (reader.error && reader.error.message || 'unknown error'));
           };
           reader.readAsText(file);
         });
@@ -1509,7 +1845,7 @@ const orchestrateWebAssets = `<style>
               })
                 .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); box.disabled = false; })
                 .catch(function(err){
-                  alert('Save failed: ' + (err && err.message || err));
+                  window.uiAlert('Save failed: ' + (err && err.message || err));
                   // Roll back the visual state since the save didn't
                   // stick. Without this the UI lies until next refresh.
                   box.checked = !box.checked;
@@ -1530,7 +1866,7 @@ const orchestrateWebAssets = `<style>
 
       window.uiRegisterClientAction('orchestrate_tools_modal', function(ctx) {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         // Pull the active session id from the framework's ctx so the
         // modal can list and act on session-scoped temp tools. Empty
         // when nothing's open yet — the section just doesn't render.
@@ -1622,7 +1958,13 @@ const orchestrateWebAssets = `<style>
         }
         fetchAgent(id).then(function(agent) {
           var catalog = window.ORCH_TOOL_CATALOG || [];
-          // allowed_tools state model:
+          // Builder's catalog is fixed by the framework (builderAuthoringTools
+          // / builderAuthoringTools) — the allowed_tools checklist has no
+          // effect. Hide it so the admin isn't presented with a control that
+          // appears actionable but isn't. The Session tools panel below IS
+          // what's useful here (pruning drafts authored by Builder's workers).
+          var isBuilder = (id === 'seed-builder');
+          // allowed_tools state model (non-Builder agents):
           //   []                  → "default pool" (every catalog tool, future ones auto-include)
           //   ["__none__"]        → "explicitly no optional tools" (sentinel; checklist renders all unchecked)
           //   [name1, name2, ...] → exactly these names
@@ -1644,7 +1986,11 @@ const orchestrateWebAssets = `<style>
           var m = openOrchModal('Tools — ' + (agent.name || id));
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
-          help.textContent = "Pick which tools this agent's worker may call. Uncheck everything to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
+          if (isBuilder) {
+            help.textContent = "Builder's tool catalog is fixed by the framework — the per-agent checklist doesn't apply here. Use the Session tools panel below to review and prune the drafts Builder's workers authored mid-conversation.";
+          } else {
+            help.textContent = "Pick which tools this agent's worker may call. Uncheck everything to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
+          }
           m.body.appendChild(help);
 
           // Custom-tools section — authored specifically for this agent
@@ -1723,21 +2069,27 @@ const orchestrateWebAssets = `<style>
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
-              // Remove button — ONLY on seed agents. User-authored
-              // agents were designed with their bundled tools in mind,
-              // so removal is a real authoring decision that should
-              // go through Builder. Seeds, on the other hand, are
-              // shared starting points; users frequently bundle extras
-              // ("attach this tool to my Chat") and need a way to
-              // unbundle without spinning up Builder.
-              if (agent.id && agent.id.indexOf('seed-') === 0) {
+              // Remove button — available on EVERY agent. Previously
+              // gated to seed agents only ("user-authored agents'
+              // bundles are a real authoring decision"), but in
+              // practice that paternalism breaks the common case:
+              // when an LLM re-authors a bundled tool, the new
+              // version sits in the session draft / pending pool
+              // while the OLD agent.Tools[] snapshot keeps running
+              // at dispatch (the load order prefers persistent →
+              // agent.Tools → drafts, and a draft can't override an
+              // existing agent.Tools entry by AppendTempTool's
+              // collision semantics). Operator needs an unbundle
+              // path to clear the stale snapshot so the new version
+              // can take over. Same path for seeds + user-authored.
+              if (true) {
                 var rm = document.createElement('button');
                 rm.className = 'ui-row-btn';
                 rm.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.78rem;padding:0.25rem 0.55rem';
                 rm.textContent = 'Remove';
                 rm.title = 'Unbundle this tool from the agent (seed agents only)';
-                rm.addEventListener('click', function(){
-                  if (!confirm('Unbundle ' + (t.name || 'this tool') + ' from this agent?')) return;
+                rm.addEventListener('click', async function(){
+                  if (!(await window.uiConfirm('Unbundle ' + (t.name || 'this tool') + ' from this agent?'))) return;
                   rm.disabled = true;
                   row.style.opacity = '0.4'; // optimistic: visually dim, restore on fail
                   var trimmed = (agent.tools || []).filter(function(x){ return x.name !== t.name; });
@@ -1755,7 +2107,7 @@ const orchestrateWebAssets = `<style>
                     detailEl.remove();
                     agent.tools = trimmed;
                   }).catch(function(err){
-                    alert('Remove failed: ' + (err && err.message || err));
+                    window.uiAlert('Remove failed: ' + (err && err.message || err));
                     row.style.opacity = '';
                     rm.disabled = false;
                   });
@@ -1912,14 +2264,14 @@ const orchestrateWebAssets = `<style>
                       })
                       .catch(function(err) {
                         persistBtn.disabled = false; dropBtn.disabled = false;
-                        alert(action + ' failed: ' + (err && err.message || err));
+                        window.uiAlert(action + ' failed: ' + (err && err.message || err));
                       });
                   }
                   persistBtn.addEventListener('click', function() {
                     doAction('persist', { global: globalCb.checked });
                   });
-                  dropBtn.addEventListener('click', function() {
-                    if (!confirm('Drop session tool ' + t.name + '?')) return;
+                  dropBtn.addEventListener('click', async function() {
+                    if (!(await window.uiConfirm('Drop session tool ' + t.name + '?'))) return;
                     doAction('drop', null);
                   });
                   // Expand toggle → reveals the full tool definition.
@@ -1951,6 +2303,16 @@ const orchestrateWebAssets = `<style>
           var list = document.createElement('div');
           list.className = 'ui-checklist';
           var checkboxes = [];
+          // Skip the catalog checklist entirely for Builder — its
+          // tool set is code-driven, the checklist has no effect, and
+          // showing it next to the actionable Session tools panel
+          // misleads the admin into thinking they have a knob there.
+          // Custom-tools (agent-bundled) + Session-tools sections
+          // already rendered above this point are the actionable
+          // surfaces for Builder.
+          if (isBuilder) {
+            // Skip group-building entirely. Fall through to footer.
+          } else {
           // Bucket the tools by group so each section can be rendered
           // as a collapsible block with its own master checkbox. Order
           // of first-occurrence is preserved (server-side sort already
@@ -2059,51 +2421,54 @@ const orchestrateWebAssets = `<style>
             }
           }
           m.body.appendChild(list);
+          } // end !isBuilder catalog block
           var cancelBtn = document.createElement('button');
           cancelBtn.className = 'ui-orch-modal-btn';
-          cancelBtn.textContent = 'Cancel';
+          cancelBtn.textContent = isBuilder ? 'Close' : 'Cancel';
           cancelBtn.onclick = m.close;
-          var saveBtn = document.createElement('button');
-          saveBtn.className = 'ui-orch-modal-btn primary';
-          saveBtn.textContent = 'Save';
-          saveBtn.onclick = function() {
-            var picked = [];
-            checkboxes.forEach(function(cb) { if (cb.checked) picked.push(cb.value); });
-            // "All checked"  → empty list (default pool, future tools auto-include).
-            // "None checked" → ["__none__"] sentinel (explicit "no optional tools").
-            //                  Bare empty list would round-trip to default pool which
-            //                  silently undoes the user's intent.
-            // "Some checked" → literal name list.
-            if (picked.length === checkboxes.length) {
-              picked = [];
-            } else if (picked.length === 0) {
-              picked = ['__none__'];
-            }
-            agent.allowed_tools = picked;
-            saveBtn.disabled = true;
-            fetch('api/agents', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify(agent),
-            }).then(function(r) {
-              if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-              m.close();
-              refreshAgentCounts();
-            }).catch(function(err) {
-              saveBtn.disabled = false;
-              alert('Save failed: ' + (err && err.message || err));
-            });
-          };
           m.footer.appendChild(cancelBtn);
-          m.footer.appendChild(saveBtn);
+          if (!isBuilder) {
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'ui-orch-modal-btn primary';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = function() {
+              var picked = [];
+              checkboxes.forEach(function(cb) { if (cb.checked) picked.push(cb.value); });
+              // "All checked"  → empty list (default pool, future tools auto-include).
+              // "None checked" → ["__none__"] sentinel (explicit "no optional tools").
+              //                  Bare empty list would round-trip to default pool which
+              //                  silently undoes the user's intent.
+              // "Some checked" → literal name list.
+              if (picked.length === checkboxes.length) {
+                picked = [];
+              } else if (picked.length === 0) {
+                picked = ['__none__'];
+              }
+              agent.allowed_tools = picked;
+              saveBtn.disabled = true;
+              fetch('api/agents', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(agent),
+              }).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+                m.close();
+                refreshAgentCounts();
+              }).catch(function(err) {
+                saveBtn.disabled = false;
+                window.uiAlert('Save failed: ' + (err && err.message || err));
+              });
+            };
+            m.footer.appendChild(saveBtn);
+          }
         }).catch(function(err) {
-          alert('Failed to load agent: ' + (err && err.message || err));
+          window.uiAlert('Failed to load agent: ' + (err && err.message || err));
         });
       });
 
       window.uiRegisterClientAction('orchestrate_memory_modal', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         // Memory modal now shows two sections:
         //   1. Explicit Memory (always-in-prompt facts via store_fact).
         //      The block header / intro come from the agent's MemoryMode
@@ -2269,8 +2634,8 @@ const orchestrateWebAssets = `<style>
         inferredSection.appendChild(inferredList);
         m.body.appendChild(inferredSection);
 
-        wipeBtn.onclick = function() {
-          if (!confirm('Wipe every Reference Memory entry for this agent (memory_save findings + synthesis auto-ingest). Uploaded files in Knowledge are NOT affected. Continue?')) return;
+        wipeBtn.onclick = async function() {
+          if (!(await window.uiConfirm('Wipe every Reference Memory entry for this agent (memory_save findings + synthesis auto-ingest). Uploaded files in Knowledge are NOT affected. Continue?'))) return;
           wipeBtn.disabled = true;
           fetch(inferredWipeURL, {method: 'DELETE'})
             .then(function(r) { return r.ok ? r.json() : null; })
@@ -2278,7 +2643,7 @@ const orchestrateWebAssets = `<style>
               renderInferred([]);
               if (d) inferredHelp.textContent = 'Wiped ' + (d.removed || 0) + ' entr' + (d.removed === 1 ? 'y' : 'ies') + '. ' + inferredHelp.textContent;
             })
-            .catch(function(err){ alert('Wipe failed: ' + (err && err.message || err)); wipeBtn.disabled = false; });
+            .catch(function(err){ window.uiAlert('Wipe failed: ' + (err && err.message || err)); wipeBtn.disabled = false; });
         };
 
         function renderInferred(items) {
@@ -2323,14 +2688,14 @@ const orchestrateWebAssets = `<style>
             del.type = 'button';
             del.textContent = String.fromCharCode(215);
             del.title = 'Delete this entry';
-            del.onclick = function() {
-              if (!confirm('Delete this Reference Memory entry?')) return;
+            del.onclick = async function() {
+              if (!(await window.uiConfirm('Delete this Reference Memory entry?'))) return;
               fetch(inferredURL + '/' + encodeURIComponent(item.id), {method: 'DELETE'})
                 .then(function(r) {
                   if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status);
                   row.remove();
                 })
-                .catch(function(err) { alert('Delete failed: ' + (err && err.message || err)); });
+                .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
             };
             row.appendChild(body);
             row.appendChild(del);
@@ -2366,7 +2731,7 @@ const orchestrateWebAssets = `<style>
             refreshAgentCounts();
           }).catch(function(err) {
             saveBtn.disabled = false;
-            alert('Save failed: ' + (err && err.message || err));
+            window.uiAlert('Save failed: ' + (err && err.message || err));
           });
         };
         m.footer.appendChild(cancelBtn);
@@ -2375,7 +2740,7 @@ const orchestrateWebAssets = `<style>
 
       window.uiRegisterClientAction('orchestrate_knowledge_modal', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         var privateURL = 'api/agents/' + encodeURIComponent(id) + '/knowledge/sources';
         var privateUploadURL = 'api/agents/' + encodeURIComponent(id) + '/knowledge/upload';
         var corpusURL = 'api/agents/' + encodeURIComponent(id) + '/knowledge';
@@ -2439,12 +2804,12 @@ const orchestrateWebAssets = `<style>
                 var del = document.createElement('button'); del.type = 'button'; del.className = 'ui-row-btn';
                 del.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.74rem;padding:0.2rem 0.5rem';
                 del.textContent = 'Remove';
-                del.onclick = function() {
-                  if (!confirm('Remove ' + nm.textContent + ' from ' + deleteScope + '?')) return;
+                del.onclick = async function() {
+                  if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from ' + deleteScope + '?'))) return;
                   del.disabled = true;
                   fetch(listURL + '/' + encodeURIComponent(s.id), {method: 'DELETE'})
                     .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); refresh(); refreshCorpusCount(); })
-                    .catch(function(err){ del.disabled = false; alert('Remove failed: ' + (err && err.message || err)); });
+                    .catch(function(err){ del.disabled = false; window.uiAlert('Remove failed: ' + (err && err.message || err)); });
                 };
                 row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
                 list.appendChild(row);
@@ -2569,7 +2934,7 @@ const orchestrateWebAssets = `<style>
       // toggling commits immediately via the full-record POST.
       window.uiRegisterClientAction('orchestrate_pipelines_modal', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         var m = openOrchModal('Pipelines');
         var body = m.body;
         var help = document.createElement('div');
@@ -2604,7 +2969,7 @@ const orchestrateWebAssets = `<style>
       // Active skills allowlist for this agent.
       window.uiRegisterClientAction('orchestrate_skills_modal', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         var m = openOrchModal('Skills');
         var body = m.body;
         var help = document.createElement('div');
@@ -2638,7 +3003,7 @@ const orchestrateWebAssets = `<style>
 
       window.uiRegisterClientAction('orchestrate_rules_modal', function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         fetchAgent(id).then(function(agent) {
           var m = openOrchModal('Rules — ' + (agent.name || id));
           var help = document.createElement('div');
@@ -2715,13 +3080,13 @@ const orchestrateWebAssets = `<style>
               refreshAgentCounts();
             }).catch(function(err) {
               saveBtn.disabled = false;
-              alert('Save failed: ' + (err && err.message || err));
+              window.uiAlert('Save failed: ' + (err && err.message || err));
             });
           };
           m.footer.appendChild(cancelBtn);
           m.footer.appendChild(saveBtn);
         }).catch(function(err) {
-          alert('Failed to load agent: ' + (err && err.message || err));
+          window.uiAlert('Failed to load agent: ' + (err && err.message || err));
         });
       });
 
@@ -2759,7 +3124,6 @@ const orchestrateWebAssets = `<style>
         // seed, hide the chrome that would let a user edit it or
         // pollute its structurally-constrained authoring purpose:
         // Edit/Clone/Delete (no point editing a locked seed agent),
-        // Tools (its tool set is implicit, not in AllowedTools),
         // Private and Clean (network is a hard requirement; clean-
         // slate framing doesn't fit authoring). Memory stays exposed
         // because Builder NOW has a "Lessons learned" log the user
@@ -2768,13 +3132,21 @@ const orchestrateWebAssets = `<style>
         // legitimate customization (not accumulated state) and lets
         // an operator shape Builder's authoring rhythm without
         // forking the seed.
+        //
+        // Tools stays VISIBLE for Builder even though its catalog
+        // is implicit (the AllowedTools checklist has no effect):
+        // the same modal surfaces SESSION tools — drafts Builder's
+        // workers authored mid-conversation via tool_def — and
+        // those need an admin remove path. Without this, drafts
+        // accumulate session-by-session with no way to prune them
+        // outside the conversation that authored them.
         var lock = id === 'seed-builder';
         // Match buttons by data attribute regardless of parent —
         // relocateContextButtons moves them between .ui-agent-actions
         // and .ui-agent-modes, so a strict-parent selector misses
         // anything that's been relocated. The label attributes are
         // unique enough to query bare.
-        var lockedActions = ['Edit', 'Clone', 'Delete', 'Tools', 'Knowledge'];
+        var lockedActions = ['Edit', 'Clone', 'Delete', 'Knowledge'];
         lockedActions.forEach(function(label) {
           var nodes = document.querySelectorAll('[data-action-label="' + label + '"]');
           nodes.forEach(function(btn) { btn.style.display = lock ? 'none' : ''; });
@@ -2852,8 +3224,16 @@ const orchestrateWebAssets = `<style>
           var customN = (a.tools || []).filter(function(t){
             return !catalogNamesForCount[t.name];
           }).length;
-          var label = n + ' / ' + cat;
-          if (customN > 0) {
+          // Builder's catalog is code-driven and the AllowedTools
+          // checklist has no effect for it (see the Tools-modal
+          // banner) — the only count that's meaningful for Builder
+          // is the session-tools count (the drafts its workers
+          // authored). Show JUST that on Builder's Tools button so
+          // an idle count of "23 / 45" doesn't suggest there's
+          // something to manage in the catalog when there isn't.
+          var isBuilder = (id === 'seed-builder');
+          var label = isBuilder ? '' : (n + ' / ' + cat);
+          if (!isBuilder && customN > 0) {
             label += ', ' + customN + ' custom';
           }
           // Session tools — drafts authored mid-conversation via
@@ -2865,20 +3245,29 @@ const orchestrateWebAssets = `<style>
           try {
             sid = new URL(window.location.href).searchParams.get('session') || '';
           } catch (_) {}
+          function applySessionCount(n) {
+            if (isBuilder) {
+              // Builder: count is JUST session tools, or no count
+              // parens at all when there's nothing in flight.
+              setCount(tools, n > 0 ? (n + ' session') : null);
+              return;
+            }
+            if (n > 0) {
+              setCount(tools, label + ', ' + n + ' session');
+            } else {
+              setCount(tools, label);
+            }
+          }
           if (sid) {
             fetch('api/sessions/' + encodeURIComponent(sid) +
                   '/tools?agent_id=' + encodeURIComponent(id))
               .then(function(r) { return r.ok ? r.json() : null; })
               .then(function(sessTools) {
-                if (Array.isArray(sessTools) && sessTools.length > 0) {
-                  setCount(tools, label + ', ' + sessTools.length + ' session');
-                } else {
-                  setCount(tools, label);
-                }
+                applySessionCount(Array.isArray(sessTools) ? sessTools.length : 0);
               })
-              .catch(function() { setCount(tools, label); });
+              .catch(function() { applySessionCount(0); });
           } else {
-            setCount(tools, label);
+            applySessionCount(0);
           }
           var rn = (a.rules || '').split('\n').filter(function(s) { return s.trim(); }).length;
           setCount(rules, rn);
@@ -2939,17 +3328,11 @@ const orchestrateWebAssets = `<style>
       function clearIntakeForm() {
         if (intakeWrap && intakeWrap.parentNode) intakeWrap.parentNode.removeChild(intakeWrap);
         intakeWrap = null;
-        setIntakeInputRowHidden(false);
       }
-      // setIntakeInputRowHidden flips the chat-input row off (form
-      // active) or back on (form submitted/cleared). Keeps the user
-      // from bypassing the intake form via the textarea.
-      function setIntakeInputRowHidden(hidden) {
-        var ta = document.querySelector('.ui-agent-input');
-        var rowEl = document.querySelector('.ui-agent-input-row');
-        if (ta) ta.style.display = hidden ? 'none' : '';
-        if (rowEl) rowEl.style.visibility = hidden ? 'hidden' : '';
-      }
+      // (setIntakeInputRowHidden removed: the chat input row stays
+      // visible alongside the intake form so the user can either fill
+      // the form or type a regular message — same agent reached either
+      // way.)
       // buildIntakeFormDOM renders intake fields as a styled block.
       // values is an optional prefill {name: value} map; disabled
       // freezes inputs for the read-only bubble view. Returns the
@@ -3186,7 +3569,7 @@ const orchestrateWebAssets = `<style>
             missing.push(f.label || f.name);
           }
         });
-        if (missing.length > 0) { alert('Please fill in: ' + missing.join(', ')); return null; }
+        if (missing.length > 0) { window.uiAlert('Please fill in: ' + missing.join(', ')); return null; }
         var entries = [];
         fields.forEach(function(f) {
           var entry = inputs[f.name];
@@ -3299,7 +3682,7 @@ const orchestrateWebAssets = `<style>
         submitBtn.addEventListener('click', function() {
           var entries = collectIntake(fields, built.inputs);
           if (!entries) return;
-          if (entries.length === 0) { alert('Fill in at least one field.'); return; }
+          if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
           var values = valuesByNameFromEntries(entries);
           submitBtn.disabled = true;
           stageIntakeFiles(entries).then(function() {
@@ -3325,7 +3708,6 @@ const orchestrateWebAssets = `<style>
         actions.appendChild(submitBtn);
         intakeWrap.appendChild(actions);
         log.appendChild(intakeWrap);
-        setIntakeInputRowHidden(true);
       }
       // Per-bubble Edit override: when the framework's beginUserEdit
       // sees an intake bubble (data-ui-intake='1'), this fires instead
@@ -3359,7 +3741,7 @@ const orchestrateWebAssets = `<style>
             save.addEventListener('click', function() {
               var entries = collectIntake(fields, built.inputs);
               if (!entries) return;
-              if (entries.length === 0) { alert('Fill in at least one field.'); return; }
+              if (entries.length === 0) { window.uiAlert('Fill in at least one field.'); return; }
               save.disabled = true; cancel.disabled = true;
               var newValues = valuesByNameFromEntries(entries);
               stageIntakeFiles(entries).then(function() {
@@ -3378,7 +3760,7 @@ const orchestrateWebAssets = `<style>
                 }, 0);
               }).catch(function(err) {
                 save.disabled = false; cancel.disabled = false;
-                alert('Edit failed: ' + (err && err.message || err));
+                window.uiAlert('Edit failed: ' + (err && err.message || err));
               });
             });
             cancel.addEventListener('click', function() {
@@ -3428,7 +3810,7 @@ const orchestrateWebAssets = `<style>
           title: 'Export this response to Techwriter as a new article',
           onclick: function(ctx) {
             var body = ctx.getText() || '';
-            if (!body.trim()) { alert('Nothing to export — message is empty.'); return; }
+            if (!body.trim()) { window.uiAlert('Nothing to export — message is empty.'); return; }
             // Find the closest preceding user message for the subject.
             var subject = 'Untitled';
             var bub = ctx.bubble;
@@ -3455,10 +3837,10 @@ const orchestrateWebAssets = `<style>
               if (d && d.id) {
                 window.open('/techwriter/?article=' + encodeURIComponent(d.id), '_blank');
               } else {
-                alert('Saved, but Techwriter returned no ID.');
+                window.uiAlert('Saved, but Techwriter returned no ID.');
               }
             }).catch(function(err) {
-              alert('Export failed: ' + (err && err.message || err));
+              window.uiAlert('Export failed: ' + (err && err.message || err));
             });
           },
         });
@@ -3551,12 +3933,25 @@ const orchestrateWebAssets = `<style>
           // partition + sort so the rebuilt dropdown matches the first
           // paint exactly. (listAgents server-side already merges seeds
           // with per-user shadows, so each agent appears once.)
+          //
+          // Sub-agents (owned_by set) are excluded — they appear in the
+          // secondary specialist picker, not the main dropdown.
+          // ORCH_SUB_AGENTS is rebuilt here so a newly-authored sub-agent
+          // shows up in the specialist picker without a page reload.
           var builtInOrder = {'seed-builder': 0, 'seed-chat': 1, 'seed-research': 2, 'seed-kb': 3};
           var builtIns = [], customs = [];
+          var subMap = {};
           list.forEach(function(a) {
+            if (a.owned_by) {
+              if (!subMap[a.owned_by]) subMap[a.owned_by] = [];
+              subMap[a.owned_by].push({id: a.id, name: a.name});
+              return;
+            }
+            if (a.hidden) return;
             if (a.id in builtInOrder) { builtIns.push(a); }
             else { customs.push(a); }
           });
+          window.ORCH_SUB_AGENTS = subMap;
           builtIns.sort(function(a, b) { return builtInOrder[a.id] - builtInOrder[b.id]; });
           customs.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
           sel.innerHTML = '';
@@ -3570,6 +3965,27 @@ const orchestrateWebAssets = `<style>
           }
           addAgentGroup('Built-in', builtIns);
           addAgentGroup('Custom', customs);
+          // If the previously-active value is a sub-agent, find the
+          // parent's option and rewrite its value in-place to the
+          // sub-agent ID (preserving the parent's label). This keeps
+          // the main picker visibly on the parent while routing
+          // targets the specialist — same trick the runtime change
+          // handler uses; we just re-apply it after the dropdown
+          // rebuild wipes the data-orch-original-value attributes.
+          var prevParentID = null;
+          for (var pid in subMap) {
+            for (var i = 0; i < subMap[pid].length; i++) {
+              if (subMap[pid][i].id === prev) { prevParentID = pid; break; }
+            }
+            if (prevParentID) break;
+          }
+          if (prevParentID) {
+            var parentOpt = sel.querySelector('option[value="' + CSS.escape(prevParentID) + '"]');
+            if (parentOpt) {
+              parentOpt.setAttribute('data-orch-original-value', prevParentID);
+              parentOpt.value = prev;
+            }
+          }
           // Restore selection. If the previously-selected agent
           // was deleted, fall back to seed-chat so the page isn't
           // left in the placeholder state.
@@ -3598,15 +4014,15 @@ const orchestrateWebAssets = `<style>
         return typeof id === 'string' && id.indexOf('seed-') === 0;
       }
 
-      window.uiRegisterClientAction('orchestrate_delete_agent', function() {
+      window.uiRegisterClientAction('orchestrate_delete_agent', async function() {
         var id = getAgentID();
-        if (!id) { alert('Pick an agent first.'); return; }
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
         var label = getAgentLabel() || id;
         var seed = isSeedAgentID(id);
         var msg = seed
           ? ('Revert "' + label + '" to framework defaults? Your customizations will be discarded; conversations are kept.')
           : ('Delete agent "' + label + '"? This also removes all of its conversations.');
-        if (!confirm(msg)) return;
+        if (!(await window.uiConfirm(msg))) return;
         fetch('api/agents/' + encodeURIComponent(id), {
           method: 'DELETE',
         }).then(function(r) {
@@ -3616,7 +4032,7 @@ const orchestrateWebAssets = `<style>
           if (!r.ok && r.status !== 204) {
             return r.text().then(function(t) {
               if (seed && r.status === 400 && /nothing to revert/i.test(t)) {
-                alert('Already at framework defaults — nothing to revert.');
+                window.uiAlert('Already at framework defaults — nothing to revert.');
                 return null;
               }
               throw new Error(t || ('HTTP ' + r.status));
@@ -3638,7 +4054,7 @@ const orchestrateWebAssets = `<style>
             window.location.reload();
           }
         }).catch(function(err) {
-          alert('Delete failed: ' + (err && err.message || err));
+          window.uiAlert('Delete failed: ' + (err && err.message || err));
         });
       });
     }

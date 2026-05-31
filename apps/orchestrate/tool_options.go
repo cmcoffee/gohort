@@ -84,6 +84,21 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 				},
 			})
 		}
+		// Client-bridge tools from any connected gohort-desktop.
+		// Surfaced here so they're visible + toggleable per agent
+		// like any other tool. The runtime hook in
+		// resolveWorkerTools also adds them unconditionally as a
+		// safety net (so toggling them off doesn't disable the
+		// bridge mid-conversation), but per-agent presence in this
+		// modal IS the user-facing control surface.
+		for _, lt := range LocalToolsForUser(user) {
+			defs = append(defs, AgentToolDef{
+				Tool: Tool{
+					Name:        lt.Name(),
+					Description: lt.Desc(),
+				},
+			})
+		}
 	}
 
 	// Use group membership to drive the section header so admins see
@@ -109,6 +124,13 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		group := capGroupLabel(d.Tool.Caps)
 		if gName, ok := memberToGroup[d.Tool.Name]; ok {
 			group = gName
+		}
+		// Client-bridge tools (from a connected gohort-desktop) get
+		// their own section. Distinct from the cap-derived groups
+		// so the user can see at a glance what's running on their
+		// machine vs the server.
+		if strings.HasPrefix(d.Tool.Name, "from_client.") {
+			group = "From your client"
 		}
 		opts = append(opts, ui.SelectOption{
 			Value: d.Tool.Name,

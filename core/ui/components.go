@@ -423,6 +423,11 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 //                  FormPanel into grouped chunks (Identity / Persona /
 //                  Memory / Privacy / etc.) without breaking the
 //                  single-save pattern. Field name is ignored.
+//   - "hidden"   — contributes Default to the save payload but renders
+//                  nothing. Use for context-derived values the page
+//                  knows up front (e.g. "owned_by = <parent_id>" on a
+//                  new sub-agent form). Default is seeded into the
+//                  form state immediately so the first save POSTs it.
 type FormField struct {
 	Field       string         `json:"field"`
 	Label       string         `json:"label,omitempty"`
@@ -488,6 +493,14 @@ type FormField struct {
 	// timeout values. Static-only; for dynamic lists (model browser,
 	// user-curated presets) use ChipsSource instead.
 	Presets []FieldPreset `json:"presets,omitempty"`
+
+	// Default seeds the form's local state for this field at render
+	// time. Used by Type="hidden" to bake a context-derived value into
+	// the save payload (e.g. owned_by=<parent_id> on a new sub-agent
+	// form). Visible field types ignore this — they pull their initial
+	// value from the loaded record (Source URL); use intake or a
+	// SuggestURL when you want a default a user can edit.
+	Default string `json:"default,omitempty"`
 }
 
 // FieldPreset is one entry in a FormField.Presets list. Label is the
@@ -541,6 +554,11 @@ type DisplayPair struct {
 	Field  string `json:"field"`
 	Format string `json:"format,omitempty"` // "reltime", "bytes", "duration", "" (plain)
 	Mono   bool   `json:"mono,omitempty"`   // monospace value (for paths, IDs)
+	// Block renders the value as a multi-line <pre> block instead of
+	// an inline <span>. Use for long content that needs to preserve
+	// newlines and scroll horizontally on overflow — script bodies,
+	// pipeline step dumps, full command_templates. Implies Mono.
+	Block bool `json:"block,omitempty"`
 }
 
 // ApiKeyPanel renders a single API-key value with Generate + Copy
@@ -1337,6 +1355,19 @@ type AgentLoopPanel struct {
 	// reload (deep-link or refresh). Server returns the same
 	// event stream the original send is producing.
 	EventsURL string `json:"events_url,omitempty"`
+	// RunsURLBase — optional base path for the run-registry endpoints
+	// added in the agency-runs detach work. When set (e.g.
+	// "api/runs/"), the runtime will:
+	//   - On openSession, GET <base>active?session_id=<sid> to find
+	//     any in-flight run for the loaded session.
+	//   - If found, open EventSource on
+	//     <base><run_id>/stream?since=<received_count> to replay
+	//     missed events and tail live.
+	//   - Cancel button POSTs to <base><run_id>/cancel.
+	// Empty = behaves as before (no reconnect, /api/cancel by sid).
+	// The server's RunRegistry / handleRunsStream / handleRunsCancel
+	// shape this expects.
+	RunsURLBase string `json:"runs_url_base,omitempty"`
 	// DeepLinkParam — when set, the runtime mirrors the active
 	// context id into the URL query string (e.g. ?session=abc).
 	// Reloading the page picks up the parameter and reconnects.
@@ -1576,6 +1607,14 @@ type CodeWriterPanel struct {
 	ValueURL         string `json:"value_url,omitempty"` // GET/PUT/DELETE {id}
 	ContextsListURL  string `json:"contexts_list_url,omitempty"`
 	ContextURL       string `json:"context_url,omitempty"` // GET/PUT/DELETE {id}
+
+	// CollectionsListURL, when set, turns on the reference-collections
+	// picker: a multi-select populated from this endpoint (GET → array
+	// of {id, name}). The IDs the user checks are sent as a "collections"
+	// array on every chat POST, so the handler can RAG-retrieve grounding
+	// from those corpora. Domain-agnostic — collections are a framework
+	// primitive (core.SearchCollections); leave blank to hide the picker.
+	CollectionsListURL string `json:"collections_list_url,omitempty"`
 
 	// Field name mapping — defaults match SnippetRecord.
 	IDField   string `json:"id_field,omitempty"`   // default "id"

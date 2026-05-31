@@ -44,11 +44,13 @@ import (
 // reference inside this file to use the package-qualified form.
 // Phantom + admin + other apps already use the exported names from
 // core directly.
-func collectionSource(id string) string                    { return CollectionSource(id) }
+func collectionSource(id string) string                            { return CollectionSource(id) }
 func loadCollection(udb Database, u, id string) (Collection, bool) { return LoadCollection(udb, u, id) }
 func listCollections(udb Database, u string) []Collection          { return ListCollections(udb, u) }
 func saveCollection(udb Database, c Collection)                    { SaveCollection(udb, c) }
-func deleteCollection(udb, appDB Database, u, id string) int       { return DeleteCollection(udb, appDB, u, id) }
+func deleteCollection(udb, appDB Database, u, id string) int {
+	return DeleteCollection(udb, appDB, u, id)
+}
 
 // Aliases for the old unexported constant names used inside this
 // file (HTTP handler reads, etc.). External callers should use
@@ -59,17 +61,15 @@ const (
 )
 
 // collectionDB returns the database where a collection's vector chunks
-// actually live. Deployment-scoped collections (deployment-knowledge,
-// populated by research / debate ingest) write to RootDB so chunks are
-// reachable across the whole deployment; user-scoped collections write
-// to the app's per-(orchestrate) DB. Every chunk-touching site in this
-// file routes through here so the read / write store stays consistent
-// with the collection's scope.
+// live: the dedicated shared vector store (VectorDB), for both user-
+// and deployment-scoped collections. Partitioning is by the
+// collectionSource(c.ID) tag, not by which physical store — so the
+// scope argument no longer selects the handle. (Collection metadata
+// still lives in T.DB / RootDB; this resolver is the chunk store only.)
+// Every chunk-touching site in this file routes through here so the
+// read / write store stays consistent.
 func (T *OrchestrateApp) collectionDB(c Collection) Database {
-	if IsDeploymentScope(c) && RootDB != nil {
-		return RootDB
-	}
-	return T.DB
+	return VectorDB
 }
 
 // --- HTTP handlers --------------------------------------------------------
@@ -134,16 +134,11 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 				}
 			}
 		}
-		// User-scoped collection chunks live in the app DB (collection
-		// uploads call IngestReport(... T.DB ...)). Deployment-scoped
-		// collection chunks live in RootDB (research / debate write
-		// via knowledge.KnowledgeDB = global.db). Walk both when any
-		// deployment collection is in scope, otherwise skip the second
-		// pass — same fix the knowledge_search path already applies.
-		countChunks(T.DB)
-		if hasDeploymentCol && RootDB != nil && RootDB != T.DB {
-			countChunks(RootDB)
-		}
+		// All collection chunks — user-scoped and deployment-scoped
+		// alike — live in the dedicated shared vector store now,
+		// partitioned by Source tag. One walk suffices.
+		_ = hasDeploymentCol
+		countChunks(VectorDB)
 		results := make([]out, 0, len(cols))
 		for _, c := range cols {
 			s := statsByID[c.ID]
@@ -225,7 +220,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 	case action == "":
 		switch r.Method {
 		case http.MethodGet:
-			docs, chunks := collectionStats(T.DB, c.ID)
+			docs, chunks := collectionStats(VectorDB, c.ID)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":                   c.ID,
@@ -604,7 +599,7 @@ func strconvAtoi(s string) (int, error) {
 
 const (
 	autofillMaxDocs    = 50
-	autofillMaxQueries = 20 // hard ceiling; effective count scales with MaxDocs
+	autofillMaxQueries = 20               // hard ceiling; effective count scales with MaxDocs
 	autofillFetchLimit = 50 * 1024 * 1024 // 50 MB per file
 	autofillTimeout    = 10 * time.Minute
 	autofillPerFetch   = 30 * time.Second

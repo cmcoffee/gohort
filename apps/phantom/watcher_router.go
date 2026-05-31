@@ -71,8 +71,10 @@ func phantomWatcherRouter(target string, w Watcher, reply string, runErr error) 
 	// Compose the message body. If the worker errored with no useful
 	// reply, surface a short diagnostic; otherwise send what the
 	// worker produced. Empty replies are skipped (worker decided
-	// there was nothing meaningful to report).
-	text := strings.TrimSpace(reply)
+	// there was nothing meaningful to report). Strip markdown before
+	// outbox: SMS / voice / mobile bubbles don't render formatting,
+	// asterisks and hashes read literally or visually clutter.
+	text := markdownToPlain(strings.TrimSpace(reply))
 	if runErr != nil && text == "" {
 		text = "[watcher " + w.Name + "] error: " + runErr.Error()
 	}

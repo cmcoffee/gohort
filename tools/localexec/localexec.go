@@ -83,11 +83,25 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 
 	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
 	defer cancel()
-	// Wrap with the session's network connector so the sandbox
-	// applies --unshare-net when the calling turn is in private
-	// mode. No-op when sess has no connector (back-compat default
-	// = allowed).
+	// Wrap with the session's network connector first so Private
+	// mode (allowed=false) is still honored if it's already on.
 	ctx = sess.ContextWithNetworkConnector(ctx)
+	// Strict-net policy for localexec: iterate-and-test scripts get
+	// --unshare-net the same way persisted shell-mode tools do. The
+	// LLM uses local(run) to test logic; "test" should match what
+	// the eventual shipped tool will face. Without this, a worker
+	// can pip install / curl raw during iterate, but the eventual
+	// tool_def-dispatched script can't (its bwrap unshare-nets
+	// per the tool's RawNetwork field). Catching the asymmetry at
+	// localexec keeps the two environments aligned: if iterate
+	// passes, the shipped tool will too. Override layers DOWNWARD
+	// only — if the session connector is already blocking (Private
+	// mode), this is a no-op.
+	ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+
+	// The gohort helper package is bind-mounted RO into the sandbox
+	// from a host-side library dir (see EnsureGohortLibDir, wired in
+	// bwrapArgv). Nothing to deploy into the workspace.
 
 	res := RunSandboxedShell(ctx, cmd, sess.WorkspaceDir)
 	runErr := res.Err

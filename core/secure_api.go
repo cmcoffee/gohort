@@ -809,7 +809,18 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), secureAPIRequestTimeout)
+	// Derive ctx from the session's NetworkConnector so a Private
+	// toggle mid-flight CANCELS this HTTP call (context.Canceled
+	// propagates through client.Do, returning early instead of
+	// completing the request). Layer the per-call timeout on top so
+	// the call still has its own deadline cap.
+	var connector *NetworkConnector
+	if sess != nil {
+		connector = sess.Network
+	}
+	baseCtx, releaseConn := connector.DeriveCancelCtx(context.Background())
+	defer releaseConn()
+	ctx, cancel := context.WithTimeout(baseCtx, secureAPIRequestTimeout)
 	defer cancel()
 
 	var bodyReader io.Reader
@@ -820,6 +831,13 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}
+
+	// Default User-Agent — matches the sandbox hook fetch + fetch_url.
+	// Terse, opaque, no version, no reference URL — slips past the
+	// dumb anti-bot heuristics that trip on "Go-http-client",
+	// "+http://" reference patterns, or words like "hook"/"bot".
+	// Caller-supplied request_headers["User-Agent"] overrides.
+	req.Header.Set("User-Agent", "gohort/call")
 
 	// Caller-supplied headers first; auth applied last so it can't
 	// be overridden.

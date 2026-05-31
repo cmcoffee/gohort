@@ -29,86 +29,128 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// agentsGroupedToolDef builds the per-turn `agents` AgentToolDef.
-// The handler dispatches on the `action` arg.
-func (t *chatTurn) agentsGroupedToolDef() AgentToolDef {
+// agentsGroupedToolDef builds the per-turn `agents` AgentToolDef. The
+// handler dispatches on the `action` arg. When allowRun is false, the
+// schema and handler are stripped of the `run` action — the tool is
+// then read-only (list / get / help). Use the read-only variant for
+// agents that author or compose but should not dispatch into the
+// general fleet: Builder is the canonical case, where allowing run
+// re-introduces the Builder → Chat → Builder cycle (Chat's
+// authoring-intent routing sends control right back here). Builder
+// delegates execution via plan_set workers instead.
+func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
+	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work to a named agent and get its synthesis back). Single entry point for agent operations — pick the action that matches the intent."
+	if !allowRun {
+		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY — dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
+	}
+	params := map[string]ToolParam{
+		"action": {
+			Type:        "string",
+			Description: "One of: list | get | help.",
+		},
+		"id": {
+			Type:        "string",
+			Description: "(get) Agent id (from action=\"list\").",
+		},
+		"full": {
+			Type:        "boolean",
+			Description: "(get) When true, return the COMPLETE record — full orchestrator_prompt / plan_guidance / rules text and full tool definitions. Default false returns a compact view (prose previewed, tools by name) to save context. Use full=true only when you need to READ prose you didn't write this session — e.g. to edit an inherited prompt after clone_agent, or modify an agent from an earlier session. For agents you're authoring fresh, the compact view is enough.",
+		},
+	}
+	caps := []Capability{CapRead}
+	if allowRun {
+		params["action"] = ToolParam{
+			Type:        "string",
+			Description: "One of: list | get | run | help.",
+		}
+		params["agent"] = ToolParam{
+			Type:        "string",
+			Description: "(run) Name or id of the agent to dispatch to.",
+		}
+		params["message"] = ToolParam{
+			Type:        "string",
+			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly — the sub-agent has its own persona and will frame the response.",
+		}
+		// CapNetwork is tagged here even though the bare tool itself
+		// doesn't make HTTP calls: the `run` action dispatches into a
+		// sub-agent whose tools may. Without this cap, Private mode
+		// would strip web_search / fetch_url from the calling agent
+		// but leave `agents` available — the model could then dispatch
+		// to a Research agent that runs web_search and leak the turn.
+		// Tagging it CapNetwork closes that gap via the existing
+		// Private-mode filter. Only relevant when run is permitted.
+		caps = append(caps, CapNetwork)
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "agents",
-			Description: "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work to a named agent and get its synthesis back). Single entry point for agent operations — pick the action that matches the intent.",
-			Parameters: map[string]ToolParam{
-				"action": {
-					Type:        "string",
-					Description: "One of: list | get | run | help.",
-				},
-				"id": {
-					Type:        "string",
-					Description: "(get) Agent id (from action=\"list\").",
-				},
-				"agent": {
-					Type:        "string",
-					Description: "(run) Name or id of the agent to dispatch to.",
-				},
-				"message": {
-					Type:        "string",
-					Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly — the sub-agent has its own persona and will frame the response.",
-				},
-			},
-			Required: []string{"action"},
-			// CapNetwork is tagged here even though the bare tool
-			// itself doesn't make HTTP calls: the `run` action
-			// dispatches into a sub-agent whose tools may. Without
-			// this cap, Private mode would strip web_search /
-			// fetch_url from the calling agent but leave `agents`
-			// available — the model could then dispatch to a Research
-			// agent that runs web_search and leak the turn. Tagging
-			// it CapNetwork closes that gap via the existing
-			// Private-mode filter.
-			Caps:     []Capability{CapRead, CapNetwork},
+			Description: desc,
+			Parameters:  params,
+			Required:    []string{"action"},
+			Caps:        caps,
 		},
 		Handler: func(args map[string]any) (string, error) {
 			action := strings.TrimSpace(stringArg(args, "action"))
 			switch action {
 			case "", "help":
-				return agentsToolHelp(), nil
+				return agentsToolHelp(allowRun), nil
 			case "list":
 				return t.agentsListAction()
 			case "get":
 				return t.agentsGetAction(args)
 			case "run":
+				if !allowRun {
+					return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
+				}
 				return t.agentsRunAction(args)
 			default:
-				return "", fmt.Errorf("unknown action %q for agents tool. valid: list, get, run, help", action)
+				validActions := "list, get, help"
+				if allowRun {
+					validActions = "list, get, run, help"
+				}
+				return "", fmt.Errorf("unknown action %q for agents tool. valid: %s", action, validActions)
 			}
 		},
 	}
 }
 
-func agentsToolHelp() string {
-	return `agents — usage:
+func agentsToolHelp(allowRun bool) string {
+	base := `agents — usage:
 
   action="list"   — return the user's orchestrate agents as a JSON
                     array of {id, name, description, owned}. No
-                    other params. Call before run/get when you don't
+                    other params. Call before get when you don't
                     know what agents exist.
 
   action="get"    — fetch one agent's full record by id AND set it
                     as authoring focus for this session. Required:
                     id (from list).
-
+`
+	if allowRun {
+		base += `
   action="run"    — dispatch work to an agent by name (or id), get
                     its synthesis back as the tool result. The sub-
                     agent runs with its own persona, memory, facts,
                     and tools. Required: agent, message.
-
+`
+	} else {
+		base += `
+  (action="run" is intentionally disabled for this agent — use
+   plan_set with worker steps to execute, or with web_search /
+   fetch_url to consult specialist knowledge during authoring.)
+`
+	}
+	base += `
   action="help"   — show this spec.`
+	return base
 }
 
 // agentsListAction returns the user's agents as JSON. Same shape the
 // legacy list_agents tool produces — kept identical so existing
 // consumers don't have to adapt.
 func (t *chatTurn) agentsListAction() (string, error) {
-	if t.udb == nil || t.user == "" {
+	fleetDB, fleetUser := t.fleetView()
+	if fleetDB == nil || fleetUser == "" {
 		return "", errors.New("agents(list) requires authenticated session")
 	}
 	type row struct {
@@ -117,14 +159,14 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		Description string `json:"description,omitempty"`
 		Owned       bool   `json:"owned"`
 	}
-	all := listAgents(t.udb, t.user)
+	all := listAgents(fleetDB, fleetUser)
 	out := make([]row, 0, len(all))
 	for _, a := range all {
 		out = append(out, row{
 			ID:          a.ID,
 			Name:        a.Name,
 			Description: a.Description,
-			Owned:       a.Owner == t.user,
+			Owned:       a.Owner == fleetUser,
 		})
 	}
 	b, _ := json.Marshal(out)
@@ -143,15 +185,86 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if id == "" {
 		return "", errors.New("id is required for action=get")
 	}
-	a, ok := loadAgent(t.udb, id)
-	if !ok || (a.Owner != t.user && a.Owner != seedOwner) {
+	fleetDB, fleetUser := t.fleetView()
+	a, ok := loadAgent(fleetDB, id)
+	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
 		return "", fmt.Errorf("agent %q not found", id)
 	}
 	if t.session != nil && t.session.ID != "" {
 		saveAuthoringInProgress(t.udb, t.session.ID, a.ID)
 	}
-	b, _ := json.Marshal(a)
-	return string(b), nil
+	// Default to a COMPACT view, not the full record. A full agents(get)
+	// marshals the ~15KB orchestrator_prompt + every agent-scoped tool's
+	// full templates — observed at 64KB per call. Builder re-fetches to
+	// re-evaluate after each edit, so those echoes accumulate and blew a
+	// long authoring session past the 200K context window. Builder rewrites
+	// prose it authored this session wholesale (it already has that text),
+	// so it needs STRUCTURE + previews here.
+	//
+	// full=true returns the complete record — the escape hatch for when
+	// Builder needs to READ prose it did NOT write this session: editing an
+	// inherited prompt after clone_agent, or an agent from a prior session.
+	// See project_long_context_management.
+	if b, ok := args["full"].(bool); ok && b {
+		full, _ := json.Marshal(a)
+		return string(full), nil
+	}
+	return string(slimAgentJSON(a)), nil
+}
+
+// slimAgentJSON renders an AgentRecord for the agents(get) tool result:
+// all structure/flags intact, the heavy prose fields (orchestrator_prompt,
+// plan_guidance, rules) previewed with a length marker, and agent-scoped
+// tools reduced to name/mode/description (their full templates dropped).
+func slimAgentJSON(a AgentRecord) []byte {
+	preview := func(s string, n int) string {
+		s = strings.TrimSpace(s)
+		if len(s) <= n {
+			return s
+		}
+		return s[:n] + fmt.Sprintf("…[%d chars total — previewed; you have the full text you set, re-send it wholesale to change it]", len(s))
+	}
+	type toolSummary struct {
+		Name        string `json:"name"`
+		Mode        string `json:"mode,omitempty"`
+		Description string `json:"description,omitempty"`
+	}
+	tools := make([]toolSummary, 0, len(a.Tools))
+	for _, tl := range a.Tools {
+		tools = append(tools, toolSummary{Name: tl.Name, Mode: tl.Mode, Description: tl.Description})
+	}
+	slim := map[string]any{
+		"id": a.ID, "name": a.Name, "description": a.Description,
+		"orchestrator_prompt":      preview(a.OrchestratorPrompt, 500),
+		"plan_guidance":            preview(a.PlanGuidance, 300),
+		"rules":                    preview(a.Rules, 500),
+		"allowed_tools":            a.AllowedTools,
+		"tools":                    tools,
+		"attached_collections":     a.AttachedCollections,
+		"attached_pipelines":       a.AttachedPipelines,
+		"allowed_skills":           a.AllowedSkills,
+		"allowed_dispatch_targets": a.AllowedDispatchTargets,
+		"max_plan_steps":           a.MaxPlanSteps,
+		"max_worker_rounds":        a.MaxWorkerRounds,
+		"exposed":                  a.Exposed,
+		"public_name":              a.PublicName,
+		"hidden":                   a.Hidden,
+		"force_private":            a.ForcePrivate,
+		"allow_private_mode":       a.AllowPrivateMode,
+		"disable_explicit":         a.DisableExplicit,
+		"disable_inferred":         a.DisableInferred,
+		"disable_skills":           a.DisableSkills,
+		"memory_mode":              a.MemoryMode,
+		"ingest_attachments":       a.IngestAttachments,
+		"allow_explorer":           a.AllowExplorer,
+		"gap_check":                a.GapCheck,
+		"knowledge_model":          a.KnowledgeModel,
+		"evals_count":              len(a.Evals),
+		"intake_form":              a.IntakeForm,
+		"_note":                    "Compact view: orchestrator_prompt / plan_guidance / rules are previewed (full text omitted to save context); tools listed by name+mode. To change a prose field, send the complete new text via update_agent. If you need to READ the full prose you didn't write this session (e.g. to edit an inherited prompt after clone_agent), call agents(action=\"get\", id=…, full=true).",
+	}
+	b, _ := json.Marshal(slim)
+	return b
 }
 
 // agentsRunAction dispatches to the target agent. Two behaviors
@@ -182,12 +295,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if key == "" || msg == "" {
 		return "", errors.New("agent and message are required for action=run")
 	}
-	target, ok := findAgentByNameOrID(t.udb, t.user, key)
+	fleetDB, fleetUser := t.fleetView()
+	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
 	if !ok {
 		return "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
 	}
 	if target.ID == t.agent.ID {
-		return "", errors.New("agents(run): target is the same agent doing the dispatch — pick a different one or answer directly")
+		return "", fmt.Errorf("agents(run, agent=%q) is impossible — you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing — pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
 	}
 	// Cycle guard. The current turn's agent is always considered "in
 	// flight" — combined with dispatchChain (inherited from parent
@@ -211,7 +325,30 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	//      the explicit pick wins both ways).
 	//   2. Default mode — caller's allowlist is empty: any non-Hidden
 	//      target is reachable.
-	if len(t.agent.AllowedDispatchTargets) > 0 {
+	// Sub-agent ownership — implicit dispatch authority. If the target
+	// is owned by the caller (target.OwnedBy == t.agent.ID), the
+	// dispatch is allowed regardless of AllowedDispatchTargets and
+	// regardless of Hidden status. Ownership IS the link. This is the
+	// sub-agent / specialist pattern: a parent agent owns focused
+	// capability sub-agents and can reach them without re-listing each
+	// one in its allowlist.
+	//
+	// Builder override — Builder is the authoring surface that mints
+	// sub-agents on behalf of their eventual parent. To test or debug
+	// a freshly-authored specialist directly, Builder must be able to
+	// reach ANY sub-agent regardless of who owns it (Builder doesn't
+	// own them — the configured parent does). Without this carve-out,
+	// Builder's "verify the persona by dispatching a probe" step
+	// fails on every sub-agent it just authored. Limited to sub-agents
+	// only (target.OwnedBy != "") so the override doesn't unlock
+	// arbitrary fleet access from Builder; just the specialists.
+	if target.OwnedBy == t.agent.ID {
+		// Allowed by ownership; skip the standard checks.
+	} else if isBuilderAgent(t.agent.ID) && target.OwnedBy != "" {
+		// Builder override — allow dispatch to any sub-agent for
+		// post-authoring verification. Logged for audit visibility.
+		Log("[orchestrate.agents.run] Builder override — dispatching to sub-agent %q (owned_by=%q)", target.Name, target.OwnedBy)
+	} else if len(t.agent.AllowedDispatchTargets) > 0 {
 		linked := false
 		for _, id := range t.agent.AllowedDispatchTargets {
 			if id == target.ID {
@@ -275,7 +412,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		}
 	}
 	if isBuilderAgent(target.ID) {
-		tools = append(tools, builderInternalTools(subSess)...)
+		tools = append(tools, builderAuthoringTools(subSess)...)
 	}
 
 	// chatTurn-bound framework tools (knowledge_search, memory_*,
@@ -315,10 +452,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if !subTurn.explicitOff() {
 		tools = append(tools, subTurn.storeFactToolDef(), subTurn.forgetFactToolDef())
 	}
-	// Agents grouped tool — sub-agents can recurse (depth limit
-	// caps the chain). Skills classifier-side handled separately;
-	// activate_skill goes on too when skills are enabled.
-	tools = append(tools, subTurn.agentsGroupedToolDef())
+	// Agents grouped tool — sub-agents (OwnedBy set) are LEAVES and
+	// don't get the dispatch surface (eliminates depth cascades and
+	// forces hierarchical composition: peers under one parent, not
+	// chained sub-agents). Top-level targets keep the full grouped
+	// surface; Builder targets stay read-only on dispatch (same
+	// cycle-prevention as before).
+	if target.OwnedBy == "" {
+		tools = append(tools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
+	}
 	if !target.DisableSkills {
 		tools = append(tools, subTurn.activateSkillToolDef())
 	}
@@ -394,7 +536,22 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 
 	ctx, cancel := context.WithTimeout(t.ctx, knowledgeIngestTimeout*4)
 	defer cancel()
-	f := false
+	// Resolve thinking the same way the chat surface does so a
+	// dispatched agent runs with the SAME default as if it were
+	// invoked directly from Agency. Base = route default (true for
+	// orchestrator stage). Target's explicit Think="on"/"off" wins
+	// over the route default; empty Think falls through to the route
+	// default rather than getting a different "dispatch-only" default.
+	think := true
+	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
+		think = *p
+	}
+	switch target.Think {
+	case "on":
+		think = true
+	case "off":
+		think = false
+	}
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
@@ -403,7 +560,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		OnStep:       stepNotice,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
-			WithThink(f),
+			WithThink(think),
 		},
 	})
 	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s prior_msgs=%d msg_chars=%d err=%v",

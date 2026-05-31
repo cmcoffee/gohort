@@ -130,7 +130,7 @@ func init() {
 	})
 
 	gt.AddAction("cat", &GroupedToolAction{
-		Description: "Read a file from the active workspace as text. Returns up to 64 KB; longer files are truncated with a notice.",
+		Description: "Read a file from the active workspace as text. Returns up to 64 KB; longer files are truncated with a notice. For large files (logs, JSON dumps, spilled tool results) prefer the targeted query actions — head / tail / read_lines / grep / stat — which return only the slice you need rather than the whole file.",
 		Params: map[string]ToolParam{
 			"path": {Type: "string", Description: "Workspace-relative path to read."},
 		},
@@ -138,6 +138,74 @@ func init() {
 		Caps:     []Capability{CapRead},
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			return (&files.ReadFileTool{}).RunWithSession(args, sess)
+		},
+	})
+
+	gt.AddAction("head", &GroupedToolAction{
+		Description: "Return the first N lines of a workspace file (default 50). Cheap targeted slice — use this when you need the start of a log, the header of a CSV, or just want to see the shape of a file without reading the whole thing.",
+		Params: map[string]ToolParam{
+			"path":  {Type: "string", Description: "Workspace-relative path to read."},
+			"lines": {Type: "integer", Description: "Number of lines to return (default 50)."},
+		},
+		Required: []string{"path"},
+		Caps:     []Capability{CapRead},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			return files.HeadFileWS(sess, StringArg(args, "path"), intArgOr(args, "lines", 0))
+		},
+	})
+
+	gt.AddAction("tail", &GroupedToolAction{
+		Description: "Return the last N lines of a workspace file (default 50). Use for log tails, recently-appended output, or the final summary of a tool spill.",
+		Params: map[string]ToolParam{
+			"path":  {Type: "string", Description: "Workspace-relative path to read."},
+			"lines": {Type: "integer", Description: "Number of lines to return (default 50)."},
+		},
+		Required: []string{"path"},
+		Caps:     []Capability{CapRead},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			return files.TailFileWS(sess, StringArg(args, "path"), intArgOr(args, "lines", 0))
+		},
+	})
+
+	gt.AddAction("read_lines", &GroupedToolAction{
+		Description: "Return a specific line range from a workspace file. 1-indexed, inclusive on both ends. Use after stat / grep tells you roughly where to look; lets you pull exactly the slice you need without dragging the rest into context.",
+		Params: map[string]ToolParam{
+			"path":  {Type: "string", Description: "Workspace-relative path to read."},
+			"start": {Type: "integer", Description: "First line to return (1-indexed)."},
+			"end":   {Type: "integer", Description: "Last line to return (inclusive). Capped at start+1000."},
+		},
+		Required: []string{"path", "start"},
+		Caps:     []Capability{CapRead},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			return files.ReadLinesWS(sess, StringArg(args, "path"), intArgOr(args, "start", 0), intArgOr(args, "end", 0))
+		},
+	})
+
+	gt.AddAction("grep", &GroupedToolAction{
+		Description: "Search a workspace file for a regex pattern. Returns matching lines with line numbers; optional `context` includes lines before/after each match (max 5). Right tool for finding specific records inside a spilled log, a large JSON dump, or any text you DON'T want to read end-to-end. Pattern is RE2 (Go's regexp) — no PCRE-only constructs.",
+		Params: map[string]ToolParam{
+			"path":        {Type: "string", Description: "Workspace-relative path to search."},
+			"pattern":     {Type: "string", Description: "RE2 regex to match against each line."},
+			"context":     {Type: "integer", Description: "Lines of context before and after each match (default 0, max 5)."},
+			"max_matches": {Type: "integer", Description: "Stop after this many matches (default 200)."},
+		},
+		Required: []string{"path", "pattern"},
+		Caps:     []Capability{CapRead},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			return files.GrepFileWS(sess, StringArg(args, "path"), StringArg(args, "pattern"),
+				intArgOr(args, "context", 0), intArgOr(args, "max_matches", 0))
+		},
+	})
+
+	gt.AddAction("stat", &GroupedToolAction{
+		Description: "Inspect a workspace file: size, mtime, line count, and a kind hint (json-like / log-lines / csv-like / html / xml-like / text / binary / empty). Call FIRST when you encounter an unfamiliar file (e.g. a spilled tool result) — the kind hint tells you which query action to reach for next (json-like → grep for the field you want; log-lines → tail; csv-like → head for the header).",
+		Params: map[string]ToolParam{
+			"path": {Type: "string", Description: "Workspace-relative path to inspect."},
+		},
+		Required: []string{"path"},
+		Caps:     []Capability{CapRead},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			return files.StatFileWS(sess, StringArg(args, "path"))
 		},
 	})
 
@@ -391,6 +459,30 @@ func sessionIDFor(sess *ToolSession) string {
 	return ""
 }
 
+// intArgOr extracts an integer-valued arg, accepting the common
+// shapes LLMs emit (real int, JSON-decoded float64, stringified
+// digits). Returns def on missing/invalid input.
+func intArgOr(args map[string]any, key string, def int) int {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return def
+	}
+	switch t := v.(type) {
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case float64:
+		return int(t)
+	case string:
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(t), "%d", &n); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
 func boolArg(args map[string]any, key string) bool {
 	v, ok := args[key]
 	if !ok || v == nil {
@@ -444,7 +536,17 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
-	res := RunSandboxedShell(ctx, cmd, sess.WorkspaceDir)
+	// Run with the iterate-and-test hook attached so `from gohort
+	// import fetch` works exactly as it does when this same script
+	// gets dispatched later as a registered shell-mode tool. Without
+	// this the script would raise HookError("GOHORT_HOOK_PATH not
+	// set"), Builder would conclude fetch doesn't work in the shell,
+	// and rewrite the tool wrongly. Capabilities: fetch / log /
+	// browse_page — the common probe surface. secret:* and fetch_via:*
+	// stay explicit so a tool that needs credentials still has to
+	// declare them in its tool record.
+	res := RunSandboxedShellWithHook(ctx, cmd, sess.WorkspaceDir, sess,
+		[]string{"fetch", "log", "browse_page"})
 	output := strings.TrimSpace(res.Output)
 	if len(output) > runMaxOutput {
 		totalLines := strings.Count(output, "\n") + 1
@@ -510,7 +612,18 @@ func handleProbe(args map[string]any, _ *ToolSession) (string, error) {
 // removes the file from the workspace after successful delivery —
 // matches the one-shot lifecycle of producer-tool outputs (find /
 // fetch / generate) where the file is no longer needed.
-func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
+// AttachWorkspaceFile reads a file from the active session workspace,
+// validates it, queues it onto the appropriate delivery channel
+// (sess.Images / sess.Videos / sess.Files based on detected MIME), and
+// optionally deletes the source after a successful queue. Returns a
+// human-readable summary suitable for display in a tool result OR a log
+// line.
+//
+// Shared between workspace(action="attach") and any reply-marker path
+// (e.g. phantom's `[ATTACH: filename]` parser) so the plumbing — size
+// cap, MIME routing, base64 encoding, cleanup semantics — is identical
+// regardless of which surface invoked the attach.
+func AttachWorkspaceFile(sess *ToolSession, relPath, displayName string, cleanup bool) (string, error) {
 	if sess == nil {
 		return "", fmt.Errorf("attach requires a session")
 	}
@@ -518,20 +631,20 @@ func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("session workspace unavailable: %w", err)
 	}
-	rel := strings.TrimSpace(StringArg(args, "path"))
-	if rel == "" {
+	relPath = strings.TrimSpace(relPath)
+	if relPath == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	abs, err := ResolveWorkspacePath(ws, rel)
+	abs, err := ResolveWorkspacePath(ws, relPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
-		return "", fmt.Errorf("stat %q: %w", rel, err)
+		return "", fmt.Errorf("stat %q: %w", relPath, err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("%q is a directory, not a file", rel)
+		return "", fmt.Errorf("%q is a directory, not a file", relPath)
 	}
 	const maxAttach = 20 * 1024 * 1024
 	if info.Size() > maxAttach {
@@ -539,12 +652,12 @@ func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
-		return "", fmt.Errorf("read %q: %w", rel, err)
+		return "", fmt.Errorf("read %q: %w", relPath, err)
 	}
 	mime := http.DetectContentType(data)
-	displayName := strings.TrimSpace(StringArg(args, "name"))
+	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
-		displayName = filepath.Base(rel)
+		displayName = filepath.Base(relPath)
 	}
 	channel := "file"
 	switch {
@@ -562,7 +675,6 @@ func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
 			Size:     len(data),
 		})
 	}
-	cleanup := boolArg(args, "cleanup")
 	var suffix string
 	if cleanup {
 		if err := os.Remove(abs); err != nil {
@@ -573,6 +685,13 @@ func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	return fmt.Sprintf("Attached %q (%s, %s) via %s channel.%s",
 		displayName, mime, humanSize(info.Size()), channel, suffix), nil
+}
+
+func handleAttach(args map[string]any, sess *ToolSession) (string, error) {
+	return AttachWorkspaceFile(sess,
+		StringArg(args, "path"),
+		StringArg(args, "name"),
+		boolArg(args, "cleanup"))
 }
 
 // handleViewImage runs the session LLM with vision on a workspace

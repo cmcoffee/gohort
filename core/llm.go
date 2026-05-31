@@ -540,8 +540,9 @@ type LLMProviderConfig struct {
 	APIKey          string
 	Endpoint        string
 	ContextSize     int           // Context window size (Ollama only); 0 uses default.
-	ConnectTimeout  time.Duration // Dial timeout; defaults to 10s if zero.
-	RequestTimeout  time.Duration // Response header timeout; defaults to 120s if zero.
+	ConnectTimeout    time.Duration // Dial timeout; defaults to 10s if zero.
+	RequestTimeout    time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
+	StreamIdleTimeout time.Duration // Idle-read deadline applied ONLY to streaming chat calls — if no bytes arrive for this long the body is closed and the error reads as transient so the retry layer can take another shot. Defaults to DefaultStreamIdleTimeout (60s) if zero. Tune up if the model legitimately stalls between tokens (heavy thinking budgets, cold prefills on a busy server).
 	DisableThinking bool          // Master override: forces think=false on every call regardless of per-call WithThink(true). Supported for Ollama and Gemini (Flash) providers.
 	ThinkingBudget  int           // Max thinking tokens per call (Gemini and Ollama). 0 = model default. Ignored when DisableThinking is set.
 	NativeTools     bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
@@ -592,8 +593,80 @@ type retryLLM struct {
 	maxRetries int
 }
 
+// ErrContextExceeded is the sentinel returned (via fmt.Errorf "%w") when
+// the LLM provider reports the request exceeded the model's context
+// window. Distinct from generic transient errors because naive retries
+// don't help — the same prompt will fail the same way. Callers that
+// know how to free space (the agent loop's aggressive compactHistory,
+// pipeline interpreters that can drop oldest stage outputs) check for
+// this sentinel and retry-after-trim once; everyone else surfaces it
+// as a clean caller-visible error.
+var ErrContextExceeded = errors.New("llm: context window exceeded")
+
+// IsContextExceededError reports whether err is (or wraps) a context-
+// window-exceeded signal from the LLM provider. Recognizes the major
+// provider patterns so callers don't have to do provider-specific
+// string matching. Wrap with fmt.Errorf("%w: …", ErrContextExceeded,
+// …) on the provider side; downstream code checks via errors.Is.
+//
+// Pattern coverage:
+//   - OpenAI / OpenAI-compatible: "context_length_exceeded" code OR
+//     message containing "maximum context length" / "context length"
+//   - Anthropic: 400 with "input is too long" / "prompt is too long" /
+//     "max_tokens_to_sample" in the body
+//   - llama.cpp: "context size exceeded" / "the prompt is too long" /
+//     "n_ctx" appearing in error string
+//   - Generic substring fallback for any provider not covered above
+//     ("context window" / "context exceeded" / "too many tokens")
+//
+// Conservative on false positives — the substrings chosen rarely
+// appear in unrelated errors. False negatives just mean a recoverable
+// context error gets treated as terminal, which is the safer fail.
+func IsContextExceededError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrContextExceeded) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	// OpenAI explicit code
+	if strings.Contains(msg, "context_length_exceeded") {
+		return true
+	}
+	// Common phrasings across providers
+	needles := []string{
+		"context window",
+		"context length",
+		"context size",
+		"context exceeded",
+		"maximum context",
+		"input is too long",
+		"prompt is too long",
+		"the prompt is too long",
+		"too many tokens",
+		"input tokens exceed",
+		"exceeds the maximum",
+		"n_ctx",
+	}
+	for _, n := range needles {
+		if strings.Contains(msg, n) {
+			return true
+		}
+	}
+	return false
+}
+
 // isTransientError returns true if the error is worth retrying.
 func isTransientError(err error) bool {
+	// Context-exceeded is deterministic — the same prompt will fail the
+	// same way on every retry. Caller (agent loop / pipeline) is
+	// responsible for shrinking the prompt and retrying via the
+	// ErrContextExceeded sentinel path; blind retries here just burn
+	// the budget.
+	if IsContextExceededError(err) {
+		return false
+	}
 	if apiErr, ok := err.(*APIError); ok {
 		switch apiErr.StatusCode {
 		case 429, 500, 502, 503, 529:
@@ -601,11 +674,19 @@ func isTransientError(err error) bool {
 		}
 		return false
 	}
-	// Context deadline exceeded means the request hit its timeout.
-	// Retrying with the same timeout will just timeout again (e.g.
-	// Ollama cold-loading a model). Don't retry.
+	// Context deadline exceeded — historically not retried under the
+	// assumption "retrying with the same budget will just timeout
+	// again." That misses the common case: the LLM got stuck in a
+	// generation loop and ate the whole budget, but a fresh request
+	// (different KV state, different sampling) breaks out and
+	// completes. Treating as transient lets the retry layer take that
+	// shot. Caller's max-attempts cap bounds the worst case (e.g. 3
+	// attempts × 5min = 15min ceiling), and a genuinely-slow workload
+	// signals "raise RequestTimeout" via that ceiling being hit
+	// repeatedly. Operators who want the strict no-retry behavior can
+	// set max_retries=1.
 	if errors.Is(err, context.DeadlineExceeded) {
-		return false
+		return true
 	}
 	// Transport-level "context canceled" (reverse proxy idle-cap,
 	// browser fetch abort that closed our HTTP request, etc.) shows up
@@ -616,6 +697,14 @@ func isTransientError(err error) bool {
 	// already handled in doWithRetry's <-ctx.Done() guard before each
 	// attempt, so a genuinely-canceled call still bails out immediately.
 	if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "context canceled") {
+		return true
+	}
+	// Stream idle deadline tripped — server went silent mid-response.
+	// Almost always recoverable on retry (load shifted, fresh slot,
+	// transient KV pressure cleared). Matching via the marker substring
+	// so wrapped forms (fmt.Errorf("%w from ...", errStreamIdleTimeout))
+	// are still recognized.
+	if IsStreamIdleTimeoutError(err) {
 		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -717,6 +806,19 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		}
 		return resp, err
 	})
+}
+
+// ContextSize forwards the inner LLM's ContextSizer through the retry
+// wrapper. Without it, T.LLM (a *retryLLM) fails the T.LLM.(ContextSizer)
+// type assertion in WorkerContextSize()/LeadContextSize(), which then
+// return 0 — silently disabling every context-size-dependent feature
+// (history compaction, debate context math, …). Returns 0 only when the
+// inner LLM genuinely exposes no window.
+func (r *retryLLM) ContextSize() int {
+	if cs, ok := r.inner.(ContextSizer); ok {
+		return cs.ContextSize()
+	}
+	return 0
 }
 
 // responseIsUseable reports whether resp has actionable output for the caller.
@@ -832,6 +934,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 			model = "gpt-4o"
 		}
 		inner = newOpenAILLM(cfg.APIKey, model, openAIEndpoint, api)
+		inner.(*openAIClient).streamIdleTimeout = cfg.StreamIdleTimeout
 	case "gemini":
 		if cfg.APIKey == "" {
 			return nil, Error("gemini API key is not configured, run --setup")
@@ -856,6 +959,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc.contextSize = cfg.ContextSize
 		oc.disableThinking = cfg.DisableThinking
 		oc.nativeTools = cfg.NativeTools
+		oc.streamIdleTimeout = cfg.StreamIdleTimeout
 		inner = client
 		// Start (or adjust) the global Ollama scheduler so concurrent
 		// sessions get fair-queued. Safe to call multiple times; the
@@ -885,6 +989,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		oc.noThinkPrependUser = cfg.NoThinkPrependUser
 		oc.noThinkBudget = cfg.NoThinkBudget
 		oc.contextSize = cfg.ContextSize
+		oc.streamIdleTimeout = cfg.StreamIdleTimeout
 		inner = client
 		// Start the serializer so concurrent callers queue here instead
 		// of racing to llama.cpp and getting 503s. Default 1 matches

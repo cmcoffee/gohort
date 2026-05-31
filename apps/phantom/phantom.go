@@ -20,10 +20,10 @@ import (
 func init() {
 	RegisterApp(new(Phantom))
 	RegisterRouteStage(RouteStage{
-		Key:           "app.phantom",
-		Label:         "Phantom",
-		Default:       "worker (thinking)",
-		Group:         "Apps",
+		Key:     "app.phantom",
+		Label:   "Phantom",
+		Default: "worker (thinking)",
+		Group:   "Apps",
 	})
 }
 
@@ -32,7 +32,7 @@ func init() {
 type chatPending struct {
 	mu            sync.Mutex
 	active        bool
-	generation    int  // incremented each time a newer message is queued
+	generation    int // incremented each time a newer message is queued
 	handle        string
 	text          string
 	conv          Conversation
@@ -104,7 +104,7 @@ func (T *Phantom) matchesRecentReply(text string) bool {
 	return true
 }
 
-func (T Phantom) Name() string  { return "phantom" }
+func (T Phantom) Name() string    { return "phantom" }
 func (T Phantom) WebPath() string { return "/phantom" }
 func (T Phantom) WebName() string { return "Phantom" }
 func (T Phantom) WebDesc() string {
@@ -112,7 +112,14 @@ func (T Phantom) WebDesc() string {
 }
 func (T Phantom) Desc() string { return "Apps: iMessage/Teams AI persona bridge." }
 
-func (T *Phantom) Init() error { return T.Flags.Parse() }
+func (T *Phantom) Init() error {
+	// Register this instance with the agency-export source (see
+	// agency_export.go) so Agency's /api/sessions can enumerate
+	// phantom-dispatched sessions for the current admin user.
+	// Called from Init so T.DB is already set by the framework.
+	setPhantomForExport(T)
+	return T.Flags.Parse()
+}
 func (T *Phantom) Main() error {
 	Log("Phantom is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
@@ -121,16 +128,16 @@ func (T *Phantom) Main() error {
 // --- DB table constants ---
 
 const (
-	apiKeyTable          = "phantom_apikeys"
-	conversationTable    = "phantom_conversations"
-	messageTable         = "phantom_messages"
-	outboxTable          = "phantom_outbox"
-	configTable          = "phantom_config"
-	sentImagesTable      = "phantom_sent_images"
-	phantomTasksTable    = "phantom_tasks"
-	phantomCountsTable   = "phantom_proactive_counts"
-	proactiveIDsTable    = "phantom_proactive_ids"
-	configKey            = "persona"
+	apiKeyTable        = "phantom_apikeys"
+	conversationTable  = "phantom_conversations"
+	messageTable       = "phantom_messages"
+	outboxTable        = "phantom_outbox"
+	configTable        = "phantom_config"
+	sentImagesTable    = "phantom_sent_images"
+	phantomTasksTable  = "phantom_tasks"
+	phantomCountsTable = "phantom_proactive_counts"
+	proactiveIDsTable  = "phantom_proactive_ids"
+	configKey          = "persona"
 )
 
 // --- Types ---
@@ -138,8 +145,8 @@ const (
 // APIKey authenticates a relay agent (e.g. the Mac bridge binary).
 type APIKey struct {
 	ID       string `json:"id"`
-	Name     string `json:"name"`     // friendly label, e.g. "Craig's MacBook"
-	Key      string `json:"key"`      // the secret token, shown once on creation
+	Name     string `json:"name"` // friendly label, e.g. "Craig's MacBook"
+	Key      string `json:"key"`  // the secret token, shown once on creation
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`
 }
@@ -153,26 +160,26 @@ type ConvMember struct {
 
 // Conversation tracks one chat thread (one contact or group chat).
 type Conversation struct {
-	ChatID              string       `json:"chat_id"`                         // e.g. "iMessage;-;+14155551234"
-	Handle              string       `json:"handle"`                          // phone number or email
-	DisplayName         string       `json:"display_name"`                    // contact name if known
-	Members             []ConvMember `json:"members,omitempty"`               // group chat participants
-	AutoReply           bool         `json:"auto_reply"`
-	PersonaName         string       `json:"persona_name,omitempty"`          // overrides global if set
-	Personality         string       `json:"personality,omitempty"`           // overrides global if set
-	SystemPrompt        string       `json:"system_prompt,omitempty"`         // conversation rules; overrides global if set
-	EnabledTools        []string     `json:"enabled_tools,omitempty"`         // overrides global if non-nil
-	GatekeeperPrompt    string       `json:"gatekeeper_prompt,omitempty"`     // overrides global if set
-	AliasHandles        []string     `json:"alias_handles,omitempty"`         // handles/chat_ids that route into this conversation
-	AliasOf             string       `json:"alias_of,omitempty"`              // cached: this chat_id is an alias of the named primary
-	ProactiveEnabled    bool         `json:"proactive_enabled,omitempty"`     // opt-in to global proactive messaging
+	ChatID           string       `json:"chat_id"`           // e.g. "iMessage;-;+14155551234"
+	Handle           string       `json:"handle"`            // phone number or email
+	DisplayName      string       `json:"display_name"`      // contact name if known
+	Members          []ConvMember `json:"members,omitempty"` // group chat participants
+	AutoReply        bool         `json:"auto_reply"`
+	PersonaName      string       `json:"persona_name,omitempty"`      // overrides global if set
+	Personality      string       `json:"personality,omitempty"`       // overrides global if set
+	SystemPrompt     string       `json:"system_prompt,omitempty"`     // conversation rules; overrides global if set
+	EnabledTools     []string     `json:"enabled_tools,omitempty"`     // overrides global if non-nil
+	GatekeeperPrompt string       `json:"gatekeeper_prompt,omitempty"` // overrides global if set
+	AliasHandles     []string     `json:"alias_handles,omitempty"`     // handles/chat_ids that route into this conversation
+	AliasOf          string       `json:"alias_of,omitempty"`          // cached: this chat_id is an alias of the named primary
+	ProactiveEnabled bool         `json:"proactive_enabled,omitempty"` // opt-in to global proactive messaging
 	// AllowedAgents is the allowlist of Agency agent IDs that the LLM
 	// in THIS chat may dispatch to via the dispatch_agent tool. Empty
 	// disables the surface for this chat — the tool drops out of the
 	// catalog. Names + descriptions for these agents come from the
 	// per-instance DispatchOwnerUsername's agent store.
-	AllowedAgents       []string     `json:"allowed_agents,omitempty"`
-	Updated             string       `json:"updated"`
+	AllowedAgents []string `json:"allowed_agents,omitempty"`
+	Updated       string   `json:"updated"`
 
 	// MessageHistoryDepth overrides the global PhantomConfig depth
 	// for THIS conversation. Lets per-contact tuning: quick contacts
@@ -223,8 +230,8 @@ func effectiveCompactionEnabled(conv Conversation, cfg PhantomConfig) bool {
 type PhantomMessage struct {
 	ID          string   `json:"id"`
 	ChatID      string   `json:"chat_id"`
-	Role        string   `json:"role"`               // "user" | "assistant"
-	Handle      string   `json:"handle,omitempty"`   // sender's phone/email (user messages only)
+	Role        string   `json:"role"`             // "user" | "assistant"
+	Handle      string   `json:"handle,omitempty"` // sender's phone/email (user messages only)
 	DisplayName string   `json:"display_name,omitempty"`
 	Text        string   `json:"text"`
 	Reasoning   string   `json:"reasoning,omitempty"` // thinking content for assistant messages
@@ -237,11 +244,11 @@ type PhantomMessage struct {
 type OutboxItem struct {
 	ID      string   `json:"id"`
 	ChatID  string   `json:"chat_id"`
-	Handle  string   `json:"handle"`  // phone/email the agent sends to
+	Handle  string   `json:"handle"` // phone/email the agent sends to
 	Text    string   `json:"text"`
 	Images  []string `json:"images,omitempty"` // base64-encoded images to send as attachments
 	Videos  []string `json:"videos,omitempty"` // base64-encoded video files to send as attachments
-	Type    string   `json:"type"`    // "reply" | "announce"
+	Type    string   `json:"type"`             // "reply" | "announce"
 	Created string   `json:"created"`
 }
 
@@ -258,12 +265,12 @@ type PhantomTaskRecord struct {
 
 // PhantomConfig is the global persona and behaviour config for this relay.
 type PhantomConfig struct {
-	PersonaName      string   `json:"persona_name"`      // name the AI introduces itself as
-	OwnerName        string   `json:"owner_name"`        // name for the phone owner ("from_me" messages)
-	OwnerHandle      string   `json:"owner_handle"`      // phone number of the device owner; messages from this handle are treated as from_me
-	Personality      string   `json:"personality"`       // who the AI is — prepended to SystemPrompt
-	SystemPrompt     string   `json:"system_prompt"`     // conversation rules
-	AutoReplyAll     bool     `json:"auto_reply_all"`    // if false, enable per-conversation
+	PersonaName      string   `json:"persona_name"`   // name the AI introduces itself as
+	OwnerName        string   `json:"owner_name"`     // name for the phone owner ("from_me" messages)
+	OwnerHandle      string   `json:"owner_handle"`   // phone number of the device owner; messages from this handle are treated as from_me
+	Personality      string   `json:"personality"`    // who the AI is — prepended to SystemPrompt
+	SystemPrompt     string   `json:"system_prompt"`  // conversation rules
+	AutoReplyAll     bool     `json:"auto_reply_all"` // if false, enable per-conversation
 	Enabled          bool     `json:"enabled"`
 	EnabledTools     []string `json:"enabled_tools"`     // tool names to give the persona
 	GatekeeperPrompt string   `json:"gatekeeper_prompt"` // if set, LLM decides whether to respond
@@ -411,7 +418,7 @@ func filterNewVideos(videos []string) []string {
 // conversation, plus the day's target fire count N (used by the slot-based
 // scheduler so every fire across the day uses the same target).
 type proactiveDayCount struct {
-	Date     string `json:"date"`                // local YYYY-MM-DD
+	Date     string `json:"date"` // local YYYY-MM-DD
 	Count    int    `json:"count"`
 	DailyN   int    `json:"daily_n,omitempty"`   // target fire count for the day; 0 = not yet chosen
 	LastFire string `json:"last_fire,omitempty"` // RFC3339 — dedup safety net
@@ -560,7 +567,9 @@ const learnAndSaveRule = "LEARN-AND-SAVE: as soon as you figure out a working AP
 
 const freshTurnRule = "FRESH-TURN-EVAL: each `--- NEW MESSAGE` is a separate request — re-read what is actually being asked NOW. Tool intent does NOT carry across turns: if you called download_video on a prior message and the new message is just a photo or a 'thanks', you do NOT call download_video again. If you delegated on a prior turn and the new message is a follow-up clarification, you do NOT delegate again. If you ran web_search on the prior turn and the new message is unrelated, you do NOT search again. Inspect the current message's content + any [CURRENT ATTACHMENT: ...] tag in isolation, then pick the right tool (or no tool) for THIS turn's actual content. Earlier conversation is context, not standing instructions."
 
-const answerFromHistoryRule = "ANSWER-FROM-HISTORY: when the user asks about something you already did in a prior turn, answer from your conversation history — do NOT re-execute the tool to answer the meta-question. If the user asks 'what did you say in that call?' you do NOT place_vapi_call again — you read the prior call's transcript from history. If they ask 'what did the search find?' you do NOT web_search again — you summarize the prior result. If they ask 'did you save that?' you do NOT re-save — you confirm or correct based on what you actually did. If they ask 'what was in that picture earlier?' and the metadata or your prior description doesn't cover it, use look_at_attachment(id=...) to re-examine — do NOT ask them to re-send. The pattern: prior turn = action; new turn asking about it = retrieval, not re-execution. Re-running a tool only to answer a meta-question wastes the tool call and confuses the user (they get a duplicate action instead of an answer)."
+const answerFromHistoryRule = "ANSWER-FROM-HISTORY: when the user asks about something you already did in a prior turn, answer from your conversation history — do NOT re-execute the tool to answer the meta-question. If the user asks 'what did you say in that call?' you do NOT place_vapi_call again — you read the prior call's transcript from history. If they ask 'what did the search find?' you do NOT web_search again — you summarize the prior result. If they ask 'did you save that?' you do NOT re-save — you confirm or correct based on what you actually did. If they ask 'what was in that picture earlier?', answer from your prior description in history; if that genuinely doesn't cover the detail, ask them to re-send it (you can only see attachments from the current turn). The pattern: prior turn = action; new turn asking about it = retrieval, not re-execution. Re-running a tool only to answer a meta-question wastes the tool call and confuses the user (they get a duplicate action instead of an answer)."
+
+const attachRule = "ATTACH FILES VIA MARKER: when you want to send a file from your workspace to the user (image, video, screenshot, generated picture, document), append a marker on its own line at the END of your reply in this exact form: `[ATTACH: filename.ext]`. Add `, cleanup=true` (e.g. `[ATTACH: meme.jpg, cleanup=true]`) for one-shot files produced by find_image / fetch_image / generate_image / screenshot_page that you don't need to keep around. Use ONE marker per file; multiple markers are fine for multiple files. DO NOT write the tool-call syntax as text (e.g. `workspace(action=\"attach\", ...)`); that is a real tool call, not something to type into your reply. The marker is the canonical way to deliver a file; the framework strips it from the visible message and ships the file."
 
 const sideEffectGuardRule = "SIDE-EFFECT GUARD — STRICT: any tool that contacts external humans or changes external state (placing phone calls, sending messages/emails/SMS, making payments, posting to feeds, scheduling appointments, anything where another person is on the other end or an irreversible state change happens) is NEVER called a second time on a follow-up turn unless the user EXPLICITLY says 'call them again' / 'send another' / 'try again' / names a different recipient. When in doubt, do NOT call. If the user references a prior side-effect action ('how did the call go?', 'what did they say?', 'did you tell them X?', 'thanks'), those are signals to READ the prior action's outcome from history — NOT to re-execute. Calling someone twice when they only asked once is a real harm (unwanted second contact, burned trust), not a UX nit. Identify which of your tools are side-effect-laden by their descriptions: tools that POST/PUT/DELETE to external services, place calls, or send messages all qualify. If you see one of those tools in your prior-turn tool history for THIS conversation, treat it as 'done' and not safely repeatable. Read-only tools (GET requests, search, fetch) don't trigger this guard — they can be re-called freely."
 
@@ -715,7 +724,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + answerFromHistoryRule + " " + sideEffectGuardRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + answerFromHistoryRule + " " + sideEffectGuardRule + " " + attachRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}
@@ -767,7 +776,7 @@ func storeMessage(db Database, m PhantomMessage) {
 // 5 seconds later — long enough that iMessage has started uploading
 // the video, so the recipient device sees them in order:
 //
-//     [videos] (5s later) [text reply]
+//	[videos] (5s later) [text reply]
 //
 // This replaces the older "send videos, sleep size-scaled delay,
 // send text in the same RPC" pattern that blocked the bridge's
@@ -891,7 +900,7 @@ func drainOutbox(db Database) []OutboxItem {
 var metaKeySet = map[string]bool{
 	"$null": true, "$objects": true, "$archiver": true, "$version": true,
 	"$top": true, "$class": true, "root": true, "bplist00": true,
-	"streamtyped": true,
+	"streamtyped":     true,
 	"NSKeyedArchiver": true, "NSAttributedString": true, "NSMutableAttributedString": true,
 	"NSString": true, "NSMutableString": true, "NSObject": true,
 	"NS.string": true, "NS.keys": true, "NS.objects": true,

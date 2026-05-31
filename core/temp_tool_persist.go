@@ -28,6 +28,23 @@ const (
 
 var tempToolPersistMu sync.Mutex
 
+// OnTempToolApproved, when set, fires after a tool transitions into
+// the user's persistent (active) pool — either through admin's
+// ApprovePendingTempTool gate OR through AdminPersistTempTool (direct
+// promotion from a session draft). The callback receives the same DB
+// the approval ran against, the username, and the approved tool's
+// name. Set this from a higher-level app (e.g. orchestrate) to react
+// to approvals — surface the tool on default agents' allowlists,
+// emit a SSE notification, kick a cache invalidation, etc.
+//
+// One subscriber slot (last-writer-wins). Core stays decoupled from
+// orchestrate-specific concerns (agent records, AllowedTools) while
+// still giving orchestrate an immediate-after-write hook.
+//
+// Fires AFTER the persistent pool write commits, so the callback can
+// read the new state via LoadPersistentTempTools and see it.
+var OnTempToolApproved func(db Database, username, toolName string)
+
 // tempToolStore returns the canonical DB for temp-tool persistence:
 // the process-level RootDB. Temp-tool pools (pending/persistent/
 // session-scoped) MUST live in a single shared store so the chat
@@ -164,6 +181,35 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		ApprovedAt: time.Now(),
 	})
 	db.Set(persistentTempToolsTable, username, rest)
+	// Dedupe against the pending queue — the tool was likely also
+	// auto-queued by tool_def(create) when first authored. Without
+	// this, the same name shows in BOTH the pending and active lists
+	// in the admin UI (the user sees a "duplicate") until something
+	// else dequeues. Inline here so every direct-persist call
+	// preserves the "exactly one of pending/active" invariant.
+	pending := LoadPendingTempTools(db, username)
+	prest := pending[:0]
+	dequeued := false
+	for i := range pending {
+		if pending[i].Tool.Name == t.Name {
+			dequeued = true
+			continue
+		}
+		prest = append(prest, pending[i])
+	}
+	if dequeued {
+		db.Set(pendingTempToolsTable, username, prest)
+	}
+	// Eager session-draft cleanup — same rationale as in
+	// ApprovePendingTempTool: prevent the new persistent entry from
+	// being shadowed by any stale draft of the same name in any of
+	// the user's chat sessions.
+	if n := cleanupSessionDraftsByName(db, t.Name); n > 0 {
+		Debug("[temp_tool_persist] persist %q: cleaned %d stale session draft(s)", t.Name, n)
+	}
+	if OnTempToolApproved != nil {
+		OnTempToolApproved(db, username, t.Name)
+	}
 	return nil
 }
 
@@ -195,19 +241,43 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 	if moved == nil {
 		return errString("no pending tool named " + name)
 	}
+	// Replace-by-name when adding to active so re-approves of an
+	// already-approved tool don't append a duplicate. Tools are
+	// keyed by name across the whole pool; a second copy with the
+	// same name and a fresh ApprovedAt is the natural "updated"
+	// shape from an LLM iterating on its own design.
 	approved := LoadPersistentTempTools(db, username)
-	approved = append(approved, PersistentTempTool{
+	deduped := approved[:0]
+	for i := range approved {
+		if approved[i].Tool.Name != name {
+			deduped = append(deduped, approved[i])
+		}
+	}
+	deduped = append(deduped, PersistentTempTool{
 		Tool:       moved.Tool,
 		ApprovedAt: time.Now(),
 	})
 	db.Set(pendingTempToolsTable, username, rest)
-	db.Set(persistentTempToolsTable, username, approved)
+	db.Set(persistentTempToolsTable, username, deduped)
 	// Clean up the originating session draft. The mutex is already
 	// held; RemoveSessionTempTool takes no lock of its own so this
 	// is safe. Quiet on miss — drafts may have been pruned before
 	// approval (session deleted, draft manually dropped).
 	if moved.RequestedSession != "" {
 		RemoveSessionTempTool(db, moved.RequestedSession, name)
+	}
+	// AND scan ALL the user's chat sessions for stale drafts with the
+	// same name — the originating-session cleanup above misses cases
+	// where the LLM re-authored the same tool in a different session
+	// (or where chat itself wrote a draft via add_tool while Builder
+	// also queued one). The lazy filter at handleSessionToolsList
+	// catches these on next modal open, but eager cleanup here makes
+	// the "exactly one of session/persistent" invariant immediate.
+	if n := cleanupSessionDraftsByName(db, name); n > 0 {
+		Debug("[temp_tool_persist] approve %q: cleaned %d stale session draft(s)", name, n)
+	}
+	if OnTempToolApproved != nil {
+		OnTempToolApproved(db, username, name)
 	}
 	return nil
 }
@@ -336,6 +406,88 @@ func cleanupToolGroupMemberRefs(toolName string) {
 			Debug("[tool_groups] failed to drop orphan %q from group %q: %v", toolName, g.Name, err)
 		}
 	}
+}
+
+// cleanupSessionDraftsByName walks every session_temp_tools entry in
+// the given DB and removes any draft whose name matches toolName. Used
+// by the approve / persist paths so a tool that's been promoted to
+// the user-wide persistent pool doesn't linger as a stale duplicate
+// in any chat session's "Session tools" view. The list-time filter
+// in handleSessionToolsList already deduplicates lazily, but it only
+// runs when the modal is opened — eager cleanup here guarantees the
+// invariant immediately, including for any session modal currently
+// open showing cached data. db is expected to be the user's per-user
+// DB (different users live in different DBs); cleanup is naturally
+// scoped to the user.
+//
+// Returns the number of session-draft entries cleaned.
+func cleanupSessionDraftsByName(db Database, toolName string) int {
+	db = tempToolStore(db)
+	if db == nil || toolName == "" {
+		return 0
+	}
+	cleaned := 0
+	for _, sid := range db.Keys(sessionTempToolsTable) {
+		var drafts []TempTool
+		if !db.Get(sessionTempToolsTable, sid, &drafts) {
+			continue
+		}
+		var rest []TempTool
+		removed := false
+		for _, t := range drafts {
+			if t.Name == toolName {
+				removed = true
+				continue
+			}
+			rest = append(rest, t)
+		}
+		if !removed {
+			continue
+		}
+		if len(rest) == 0 {
+			db.Unset(sessionTempToolsTable, sid)
+		} else {
+			db.Set(sessionTempToolsTable, sid, rest)
+		}
+		cleaned++
+	}
+	return cleaned
+}
+
+// UpdatePersistentTempTool replaces an existing active tool's content
+// in place. Used by the LLM-iteration path: when an LLM re-authors a
+// tool whose name is already in the persistent pool (the original was
+// admin-approved at some point), the new version overwrites the
+// active entry directly — admin doesn't need to re-approve every
+// iteration of an already-blessed tool. Preserves the original
+// ApprovedAt so the audit trail shows "first approved at X, last
+// updated at Y."
+//
+// Returns true when a replacement happened, false when no tool by
+// that name was in the persistent pool (caller should fall through
+// to the queue-for-review path in that case).
+func UpdatePersistentTempTool(db Database, username string, t TempTool) bool {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return false
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	approved := LoadPersistentTempTools(db, username)
+	updated := false
+	for i := range approved {
+		if approved[i].Tool.Name == t.Name {
+			approved[i].Tool = t // content + metadata replaced; ApprovedAt preserved
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		return false
+	}
+	db.Set(persistentTempToolsTable, username, approved)
+	Log("[temp_tool_persist] in-place update of active tool %q (LLM iteration; original approval preserved)", t.Name)
+	return true
 }
 
 // TouchPersistentTempTool updates LastUsedAt for the named tool in the

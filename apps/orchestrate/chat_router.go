@@ -52,10 +52,34 @@ func (T *OrchestrateApp) resolveAgent(w http.ResponseWriter, r *http.Request, ud
 	return agent, true
 }
 
+// sessionListItem is the wire shape returned by handleSessionList.
+// Embeds ChatSession for the native rows; the optional Source +
+// ChatID fields carry tagging contributed by external sources (see
+// core/session_sources.go — phantom uses these so its dispatched
+// sessions surface in Agency's rail with a per-chat badge).
+//
+// Running marks a session as currently mid-turn — i.e. the runs
+// registry has an in-flight Run for this session ID. The rail uses
+// this to render an "active" indicator so the user can see, at a
+// glance, which sessions are still working after a disconnect /
+// reconnect. Computed at request time from the run registry, not
+// persisted on the session record.
+type sessionListItem struct {
+	ChatSession
+	Source  string `json:"source,omitempty"`
+	ChatID  string `json:"chat_id,omitempty"`
+	Running bool   `json:"running,omitempty"`
+}
+
 // handleSessionList returns the chat sessions for the active agent.
 // Returns an empty list (not 400) when agent_id is blank so the
 // AgentLoopPanel's first fetch — before the user picks an agent —
 // renders cleanly instead of as an error toast.
+//
+// The response merges native sessions (this user's DB) with rows
+// contributed by any registered ExtraSessionsSource (phantom today).
+// External rows carry source + chat_id tags so the rail can render
+// per-source visual markers.
 func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -68,15 +92,44 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 	id := strings.TrimSpace(r.URL.Query().Get("agent_id"))
 	w.Header().Set("Content-Type", "application/json")
 	if id == "" {
-		_ = json.NewEncoder(w).Encode([]ChatSession{})
+		_ = json.NewEncoder(w).Encode([]sessionListItem{})
 		return
 	}
 	agent, ok := loadAgent(udb, id)
 	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
-		_ = json.NewEncoder(w).Encode([]ChatSession{})
+		_ = json.NewEncoder(w).Encode([]sessionListItem{})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(listChatSessions(udb, agent.ID))
+	native := listChatSessions(udb, agent.ID)
+	out := make([]sessionListItem, 0, len(native))
+	runs := T.runsRegistry()
+	for _, s := range native {
+		item := sessionListItem{ChatSession: s}
+		// Running flag: in-flight Run keyed by session ID. BySession
+		// returns nil for unknown / no-run-active. Cheap map lookup
+		// per session — fine for typical list sizes.
+		if r := runs.BySession(s.ID); r != nil && r.Status() == RunStatusRunning {
+			item.Running = true
+		}
+		out = append(out, item)
+	}
+	for _, ext := range CollectExtraSessions(T.DB, agent.ID, user) {
+		item := sessionListItem{
+			ChatSession: ChatSession{
+				ID:      ext.ID,
+				AgentID: ext.AgentID,
+				Title:   ext.Title,
+				LastAt:  ext.LastAt,
+			},
+			Source: ext.Source,
+			ChatID: ext.ChatID,
+		}
+		if r := runs.BySession(ext.ID); r != nil && r.Status() == RunStatusRunning {
+			item.Running = true
+		}
+		out = append(out, item)
+	}
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // handleSessionOne loads or deletes a session in the active agent's
@@ -139,6 +192,23 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// External-source row (e.g. ?source=phantom&chat_id=…)?
+		// Delegate to the registered source so it can resolve to
+		// the right per-source storage scope. Sources gate user
+		// permission internally; on a false result we serve the
+		// same 404 native misses get, so a leaked source name
+		// can't enumerate other users' rows.
+		if src := strings.TrimSpace(r.URL.Query().Get("source")); src != "" {
+			if source, found := LookupExtraSessionsSource(src); found {
+				if payload, ok := source.LoadSession(T.DB, agent.ID, user, sid, r.URL.Query().Get("chat_id")); ok {
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(payload)
+					return
+				}
+			}
+			http.NotFound(w, r)
+			return
+		}
 		s, ok := loadChatSession(udb, agent.ID, sid)
 		if !ok {
 			http.NotFound(w, r)

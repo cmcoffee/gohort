@@ -34,7 +34,7 @@ func init() {
 	// as Go types but they're invisible to RegisteredChatTools(),
 	// FindChatTool, default-pool enumeration, and every other
 	// registry-traversing path. The Builder seed agent's catalog
-	// assembly imports them by symbol via builderInternalTools() —
+	// assembly imports them by symbol via builderAuthoringTools() —
 	// no other agent can reach them.
 }
 
@@ -310,7 +310,10 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 		return "", errors.New("id is required")
 	}
 	newName := strings.TrimSpace(fmt.Sprint(args["name"]))
-	saved, err := cloneAgent(sess.DB, id, sess.Username, newName)
+	// LLM-initiated clone preserves the source's OwnedBy (no promotion).
+	// Promotion (sub-agent → top-level) is a deliberate user choice
+	// available only via the chat UI's Clone button prompt.
+	saved, err := cloneAgent(sess.DB, id, sess.Username, newName, false)
 	if err != nil {
 		return "", err
 	}
@@ -384,7 +387,9 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"allowed_dispatch_targets": {Type: "array", Description: "Optional dispatch allowlist of agent IDs. Empty (default) = this agent can call ANY non-hidden agent in the fleet. Non-empty = restricted: this agent can ONLY call the listed targets (Hidden status of targets is ignored — explicit pick wins, so this also wires through to hidden specialists). Use to scope a specialist agent to only its relevant collaborators.", Items: &ToolParam{Type: "string"}},
 		"attached_collections": {Type: "array", Description: "Optional list of Document Collection IDs to merge into this agent's RAG search. Each attached collection's chunks surface alongside the agent's own knowledge during recall — same many-to-many shape as skills, but bound at the agent layer (no skill activation required). Use to give a topic-narrow agent a curated reference corpus without authoring a skill: one collection of K8s docs, another of internal runbooks, etc. Pass collection IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
 		"attached_pipelines": {Type: "array", Description: "Optional list of pipeline IDs (from pipeline action=list) to bolt onto this agent. Each attached pipeline becomes its OWN callable tool on the agent (named run_<pipeline>), so the agent can run that saved multi-stage workflow on demand without going through the generic pipeline tool. Use to give an agent a repeatable staged capability — e.g. a research agent with a \"decompose → investigate → synthesize\" pipeline always at hand. Pass pipeline IDs; author the pipeline first with the pipeline tool if it doesn't exist yet. Default empty.", Items: &ToolParam{Type: "string"}},
+		"owned_by":           {Type: "string", Description: "Optional ID of a parent agent that owns this one as a sub-agent. Two effects: (1) when the parent is deleted, this agent is cascade-deleted along with its sessions/memory/knowledge — no orphan sub-agents; (2) the parent can dispatch to this sub-agent via agents(action=\"run\") without needing it in allowed_dispatch_targets — ownership IS the dispatch link. Combine with hidden=true to keep the sub-agent out of the global fleet menu while still reachable from its parent. Use for the sub-agent / specialist pattern: a parent orchestrator agent owns several focused capability sub-agents (e.g. OSINT parent → BusinessResearcher / CourtResearcher sub-agents). Pass the parent agent's ID."},
 		"ingest_attachments": {Type: "boolean", Description: "Optional. When true, the extracted text from any paperclip- or intake-form-uploaded document (PDF, DOCX, text) is ALSO ingested into the agent's vector knowledge store under topic=\"attachments\". Future sessions retrieve it via knowledge_search. Set for document-Q&A, resume-reviewer, contract-analyzer style agents where the upload is meant to be referenced repeatedly. Default false."},
+		"think":              {Type: "string", Description: "Optional reasoning mode override: \"on\", \"off\", or \"auto\". CREATE defaults: top-level agents default \"on\" (reasoning helps planners / synthesizers / conversational agents), sub-agents (owned_by set) default \"off\" (fast focused specialists where reasoning just adds latency). UPDATE preserves the stored value when omitted. Use \"on\" for sub-agents that decompose / plan / synthesize; \"off\" for lookup-shaped specialists, transformers, routers; \"auto\" to let the framework route default decide."},
 		"intake_form": {
 			Type:        "array",
 			Description: "Optional intake form. When set, the chat shows this form on the first turn of every new session, hides the text input while the form is visible, packs the values into a markdown user message, AND uploads any file fields as attachments (PDFs/DOCX get text-extracted server-side, images go to vision). Use for agents that always need structured input up front (\"resume reviewer\" needs the resume PDF, \"marketing copy\" needs company + audience + deadline, \"pick a topic\" needs a button choice). Each entry is an object: {name, label, type, placeholder, help, required, options, allow_other}. type: \"text\" (default), \"textarea\", \"select\", \"checklist\", \"number\", \"file\", \"button\". options: array of strings — for select these are single-choice dropdown choices; for checklist these are multi-pick checkboxes (selected values get joined comma-separated in the packed markdown, e.g. \"**Topics:** ai, healthcare\"); for button these are the buttons rendered (clicking any one submits the form immediately with that label as the value, no separate submit click needed). Use \"select\" when the user picks exactly one from a list; \"checklist\" when the user can pick any combination (\"which topics interest you?\", \"which formats do you want?\"); \"button\" when the user picks from a small set of mutually-exclusive starting points. allow_other (checklist only): when true, render an extra \"Other:\" row with a free-text input — selected + non-empty text gets joined into the same comma list as any picked options (\"**Topics:** ai, healthcare, my own thing\"). Set when the curated list can't cover every reasonable answer and you want the user to be able to add their own. Leave intake_form empty/omit for normal chat-first agents.",
@@ -464,10 +469,48 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	if _, ok := args["attached_pipelines"]; ok {
 		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")
 	}
+	if v, ok := args["owned_by"]; ok && v != nil {
+		rec.OwnedBy = strings.TrimSpace(fmt.Sprint(v))
+	}
 	if v, ok := args["ingest_attachments"].(bool); ok {
 		rec.IngestAttachments = v
 	}
+	// Think tri-state on CREATE: explicit value wins; otherwise pick
+	// the right default based on the agent's role. Top-level agents are
+	// usually conversational / planning surfaces that benefit from
+	// reasoning; sub-agents are usually fast focused specialists where
+	// reasoning adds latency without improving the answer. Author can
+	// override either default by passing think explicitly.
+	rec.Think = parseThinkArg(args, rec.OwnedBy != "")
 	return rec
+}
+
+// parseThinkArg reads the "think" arg as a tri-state ("on" / "off" /
+// "auto") and returns the canonical string to store on the record.
+// When the arg is missing, returns the default for the agent's role:
+// sub-agents (isSubAgent=true) default to "off"; top-level agents
+// default to "on". Returns "" only for explicit "auto" — the empty
+// string is the "let the route decide" signal at the call site.
+func parseThinkArg(args map[string]any, isSubAgent bool) string {
+	v, ok := args["think"]
+	if !ok || v == nil {
+		if isSubAgent {
+			return "off"
+		}
+		return "on"
+	}
+	switch strings.ToLower(strings.TrimSpace(fmt.Sprint(v))) {
+	case "on", "true", "yes", "1":
+		return "on"
+	case "off", "false", "no", "0":
+		return "off"
+	case "auto", "":
+		return ""
+	}
+	if isSubAgent {
+		return "off"
+	}
+	return "on"
 }
 
 // mergeAgentArgs overlays only the fields present in args onto rec.
@@ -534,8 +577,18 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	if _, ok := args["attached_pipelines"]; ok {
 		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")
 	}
+	if v, ok := args["owned_by"]; ok && v != nil {
+		rec.OwnedBy = strings.TrimSpace(fmt.Sprint(v))
+	}
 	if v, ok := args["ingest_attachments"].(bool); ok {
 		rec.IngestAttachments = v
+	}
+	// Think on UPDATE: only touch when the caller passed think
+	// explicitly. Omitted = preserve whatever's stored (the author's
+	// last decision). "auto" still flips to nil — that's the explicit
+	// "go back to route default" intent.
+	if _, ok := args["think"]; ok {
+		rec.Think = parseThinkArg(args, rec.OwnedBy != "")
 	}
 	if _, ok := args["intake_form"]; ok {
 		rec.IntakeForm = intakeFormFromArgs(args)

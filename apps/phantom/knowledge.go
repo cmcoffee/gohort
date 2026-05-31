@@ -42,6 +42,24 @@ import (
 // orchestrate's cap so the two paths feel the same under load.
 const knowledgeIngestTimeout = 45 * time.Second
 
+// autoInjectMinScore is the cosine-similarity floor for chunks
+// pre-injected into the system prompt. Vector search ALWAYS returns
+// the top-K even when nothing is meaningfully close — injecting weak
+// matches gives the LLM "recalled context" that's actually unrelated,
+// which it then anchors to and extends with hallucinated specifics.
+// 0.65 catches the genuine semantic matches our embeddings produce
+// without dragging in low-confidence neighbors. Explicit
+// knowledge_search (action="search") returns hits without this floor —
+// when the LLM asks on purpose, low-confidence hits are still useful.
+const autoInjectMinScore = 0.65
+
+// autoInjectTopK is the cap on auto-injected chunks per turn. Lower
+// than the explicit-search default (5) because pre-injection rides on
+// EVERY turn — tight prompts + fewer anchoring surfaces means less
+// noise for the LLM to incorporate when the question isn't actually
+// recall-shaped.
+const autoInjectTopK = 3
+
 // chatKnowledgeEnabled reports whether the "knowledge" tool is in
 // the conv's effective enabled-tools set. Mirrors the toolEnabled
 // closure in buildConvTools so the prompt-injection and auto-ingest
@@ -140,46 +158,69 @@ func searchChatKnowledge(ctx context.Context, db Database, chatID, query string,
 // renderChatKnowledgePromptSection formats a slice of search hits as
 // a markdown block suitable for prepending to the system prompt.
 // Empty input → empty string so callers can concatenate unconditionally.
+//
+// Framing is deliberately cautious: these are auto-recalled notes that
+// MIGHT be relevant by semantic similarity to the inbound message, not
+// confirmed-relevant facts. Older auto-inject prompts ("Things you
+// recall…") read as authoritative recall, which the LLM would then
+// anchor on and extend with hallucinated specifics. Reframe as
+// "possibly relevant — verify against current message" so the LLM
+// treats them as one source among others, not a fact pile to riff off.
 func renderChatKnowledgePromptSection(hits []SearchHit) string {
 	if len(hits) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\n\nThings you recall from earlier turns in this chat (these are YOUR notes from prior sessions — treat them as recall, NOT as things the user just said):\n\n")
+	b.WriteString("\n\nPossibly relevant notes from earlier turns in this chat (semantic-search hits — VERIFY against the current message before relying on any of them; ignore entries that don't actually fit the current question):\n\n")
 	for _, h := range hits {
 		fmt.Fprintf(&b, "- %s\n", strings.TrimSpace(h.Text))
 	}
 	return b.String()
 }
 
-// autoIngestChatTurn captures one user-message + assistant-reply
-// exchange as a knowledge chunk. Runs at the end of every turn for
-// chats that have knowledge enabled, so the store accrues even when
-// the LLM doesn't call knowledge_save explicitly.
+// autoIngestChatTurn captures the user's message as a knowledge chunk
+// at turn close. Runs for chats that have knowledge enabled, so the
+// store accrues without the LLM having to call knowledge_save
+// explicitly.
 //
-// Short conversational filler is skipped (no recall value). A
-// retention sweep runs piggybacked after a successful ingest so old
-// chunks for this chat get pruned without a background goroutine.
+// **Only the user's message is ingested — NOT the assistant's reply.**
+// Ingesting the reply (the prior behavior) was the compounding-
+// hallucination loop: a wrong answer got embedded as "recall," then
+// surfaced on a later semantically-similar question, and the LLM
+// extended it with growing confidence because it was now in its
+// "memory." Even when the user later corrected it, both versions sat
+// in the store and search returned both — the LLM had to gamble on
+// which to believe. User messages are grounded by definition; the
+// model can't have hallucinated something the user actually typed.
+// For findings worth keeping that came from the assistant, the LLM
+// calls knowledge(action="save") deliberately — that path stays open
+// and is the right shape for curated saves.
+//
+// Short messages are skipped (conversational filler — "hi" / "thanks"
+// won't help future retrieval). A retention sweep runs piggybacked
+// after a successful ingest so old chunks for this chat get pruned
+// without a background goroutine.
 func autoIngestChatTurn(ctx context.Context, db Database, chatID, userMsg, reply string, retentionDays int) {
 	if db == nil || chatID == "" {
 		return
 	}
 	userMsg = strings.TrimSpace(userMsg)
-	reply = strings.TrimSpace(reply)
-	if userMsg == "" || reply == "" {
+	// reply is intentionally unused — see header comment. Kept in the
+	// signature so callers don't have to change.
+	_ = reply
+	if userMsg == "" {
 		return
 	}
 	// Skip short exchanges — conversational filler ("hi" / "thanks")
 	// won't help future retrieval.
-	if len(userMsg) < 30 && len(reply) < 30 {
+	if len(userMsg) < 30 {
 		return
 	}
 	title := userMsg
 	if len(title) > 80 {
 		title = title[:80] + "…"
 	}
-	body := "User: " + userMsg + "\n\nReply: " + reply
-	ingestChatKnowledge(ctx, db, chatID, title, body)
+	ingestChatKnowledge(ctx, db, chatID, title, userMsg)
 	pruneOldChatKnowledge(db, chatID, retentionDays)
 }
 

@@ -222,6 +222,304 @@ func (t *chatTurn) autoAdvanceBuildPlan(summary string) int {
 	return 0
 }
 
+// markStepInProgressToolDef — Builder's "starting step N" tool.
+// Servitor's investigator calls mark_step_in_progress before every
+// probe so the UI shows which step the worker is currently driving;
+// Builder mirrors the shape so the plan card surfaces the live focus
+// during Phase 4 execution. Refuses if another step is already
+// in_progress — keeping the lifecycle clean (one step at a time
+// reflects the actual rhythm of plan_set's sequential worker pipeline).
+func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "mark_step_in_progress",
+			Description: "Mark a step of the current build plan as in_progress before starting its worker. Pass step=N (1-indexed). Refuses when another step is already in_progress — call mark_step_done or mark_step_blocked on it first. Updates the visible plan card so the user sees which step is actively running.",
+			Parameters: map[string]ToolParam{
+				"step": {Type: "integer", Description: "1-indexed step number, matching present_build_plan's numbering."},
+			},
+			Required: []string{"step"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			if t.session == nil || t.session.BuildPlan == nil {
+				return "", errors.New("mark_step_in_progress: no active build plan — call present_build_plan first")
+			}
+			step := intFromArgs(args, "step")
+			if step < 1 {
+				return "", errors.New("step must be >= 1 (1-indexed)")
+			}
+			plan := t.session.BuildPlan
+			idx := step - 1
+			if idx >= len(plan.Steps) {
+				return "", fmt.Errorf("step %d exceeds plan length %d", step, len(plan.Steps))
+			}
+			// Refuse if another step is already in_progress —
+			// lifecycle hygiene. The LLM must close the prior step
+			// (done or blocked) before opening a new one.
+			for i, s := range plan.Steps {
+				if i == idx {
+					continue
+				}
+				if s.Status == "in_progress" {
+					return "", fmt.Errorf("step %d (%q) is already in_progress — call mark_step_done or mark_step_blocked on it before starting step %d", s.Number, s.Title, step)
+				}
+			}
+			plan.Steps[idx].Status = "in_progress"
+			emitBuildPlanBlock(t.sse, plan)
+			return fmt.Sprintf("Step %d (%q) marked in_progress.", step, plan.Steps[idx].Title), nil
+		},
+	}
+}
+
+// markStepBlockedToolDef — Builder's "this step couldn't complete"
+// tool. Records a one-line reason and flips status to blocked. The
+// reason becomes part of the gap report at synthesis time, so the
+// final reply can be explicit about what didn't work. Mirrors
+// servitor's mark_step_blocked exactly.
+func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "mark_step_blocked",
+			Description: "Mark a step of the current build plan as blocked when its worker couldn't complete it. Pass step=N (1-indexed) and reason=\"one-line description of what blocked it\" (e.g. \"credential not registered\", \"endpoint requires OAuth flow\", \"user declined\"). The reason surfaces in report_build_gaps and your final reply must address it. Use when proceeding wastes worker rounds; for re-tryable failures (wrong arg, model error) just have the next worker retry instead of blocking the step.",
+			Parameters: map[string]ToolParam{
+				"step":   {Type: "integer", Description: "1-indexed step number."},
+				"reason": {Type: "string", Description: "One-line explanation of what blocked the step. Becomes part of the gap report."},
+			},
+			Required: []string{"step", "reason"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			if t.session == nil || t.session.BuildPlan == nil {
+				return "", errors.New("mark_step_blocked: no active build plan — call present_build_plan first")
+			}
+			step := intFromArgs(args, "step")
+			if step < 1 {
+				return "", errors.New("step must be >= 1 (1-indexed)")
+			}
+			reason := strings.TrimSpace(stringArg(args, "reason"))
+			if reason == "" {
+				return "", errors.New("reason is required — describe what blocked the step in one line")
+			}
+			plan := t.session.BuildPlan
+			idx := step - 1
+			if idx >= len(plan.Steps) {
+				return "", fmt.Errorf("step %d exceeds plan length %d", step, len(plan.Steps))
+			}
+			plan.Steps[idx].Status = "blocked"
+			plan.Steps[idx].BlockedReason = reason
+			emitBuildPlanBlock(t.sse, plan)
+			return fmt.Sprintf("Step %d (%q) marked blocked. Reason recorded for the gap report.", step, plan.Steps[idx].Title), nil
+		},
+	}
+}
+
+// reviseBuildPlanToolDef — Builder's plan-revision tool. Single
+// action verb to add / remove / reorder steps when execution reveals
+// something the original plan didn't anticipate. Capped at
+// BuildPlanRevisionLimit (3) calls per session — mirrors servitor's
+// guard against the "reshuffle instead of execute" failure mode.
+func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "revise_build_plan",
+			Description: fmt.Sprintf("Revise the current build plan when findings reveal something the original plan missed. action=\"add\" appends new pending steps, action=\"remove\" drops pending steps by step number (done / blocked steps refuse removal — they're durable history), action=\"reorder\" rearranges the full step list. Capped at %d revisions per session — use deliberately, not reflexively. Re-emits the plan card so the user sees the updated checklist.", BuildPlanRevisionLimit),
+			Parameters: map[string]ToolParam{
+				"action": {Type: "string", Description: "One of \"add\" | \"remove\" | \"reorder\"."},
+				"steps": {
+					Type:        "array",
+					Description: "(add) New {title, detail?} step objects to append. Same shape as present_build_plan's steps.",
+					Items: &ToolParam{
+						Type: "object",
+						Properties: map[string]ToolParam{
+							"title":  {Type: "string", Description: "One-line step title."},
+							"detail": {Type: "string", Description: "Optional one-line detail."},
+						},
+						Required: []string{"title"},
+					},
+				},
+				"step_numbers": {
+					Type:        "array",
+					Description: "(remove) Step numbers to drop. Only pending steps can be removed; done / blocked refused.",
+					Items:       &ToolParam{Type: "integer"},
+				},
+				"order": {
+					Type:        "array",
+					Description: "(reorder) New ordering of step numbers. Must be a permutation of all current step numbers — no missing, no extra.",
+					Items:       &ToolParam{Type: "integer"},
+				},
+			},
+			Required: []string{"action"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			if t.session == nil || t.session.BuildPlan == nil {
+				return "", errors.New("revise_build_plan: no active build plan — call present_build_plan first")
+			}
+			plan := t.session.BuildPlan
+			if plan.RevisionCount >= BuildPlanRevisionLimit {
+				return "", fmt.Errorf("revise_build_plan: revision cap reached (%d) — execute the plan you have rather than re-shuffling", BuildPlanRevisionLimit)
+			}
+			action := strings.TrimSpace(stringArg(args, "action"))
+			switch action {
+			case "add":
+				added := buildPlanStepsFromArg(args["steps"])
+				if len(added) == 0 {
+					return "", errors.New("revise_build_plan(add): steps is required and must contain at least one valid {title, detail?} object")
+				}
+				// Re-number the appended steps to follow the existing
+				// max — keeps the user-facing numbering monotonic
+				// across revisions.
+				next := 0
+				for _, s := range plan.Steps {
+					if s.Number > next {
+						next = s.Number
+					}
+				}
+				for i := range added {
+					next++
+					added[i].Number = next
+				}
+				plan.Steps = append(plan.Steps, added...)
+			case "remove":
+				raw, _ := args["step_numbers"].([]any)
+				if len(raw) == 0 {
+					return "", errors.New("revise_build_plan(remove): step_numbers is required")
+				}
+				want := make(map[int]bool, len(raw))
+				for _, v := range raw {
+					if n, ok := toInt(v); ok {
+						want[n] = true
+					}
+				}
+				var refused []int
+				out := plan.Steps[:0]
+				for _, s := range plan.Steps {
+					if !want[s.Number] {
+						out = append(out, s)
+						continue
+					}
+					if s.Status != "pending" {
+						out = append(out, s)
+						refused = append(refused, s.Number)
+						continue
+					}
+					// dropped
+				}
+				plan.Steps = out
+				if len(refused) > 0 {
+					return "", fmt.Errorf("revise_build_plan(remove): refused step(s) %v — only pending steps can be removed (done / blocked steps stay as durable history)", refused)
+				}
+			case "reorder":
+				raw, _ := args["order"].([]any)
+				if len(raw) != len(plan.Steps) {
+					return "", fmt.Errorf("revise_build_plan(reorder): order must list all %d step numbers; got %d", len(plan.Steps), len(raw))
+				}
+				want := make([]int, 0, len(raw))
+				for _, v := range raw {
+					if n, ok := toInt(v); ok {
+						want = append(want, n)
+					}
+				}
+				byNum := make(map[int]BuildPlanStep, len(plan.Steps))
+				for _, s := range plan.Steps {
+					byNum[s.Number] = s
+				}
+				seen := make(map[int]bool, len(want))
+				newSteps := make([]BuildPlanStep, 0, len(want))
+				for _, n := range want {
+					s, ok := byNum[n]
+					if !ok {
+						return "", fmt.Errorf("revise_build_plan(reorder): unknown step number %d", n)
+					}
+					if seen[n] {
+						return "", fmt.Errorf("revise_build_plan(reorder): step number %d listed more than once", n)
+					}
+					seen[n] = true
+					newSteps = append(newSteps, s)
+				}
+				plan.Steps = newSteps
+			default:
+				return "", fmt.Errorf("revise_build_plan: action must be \"add\" | \"remove\" | \"reorder\" (got %q)", action)
+			}
+			plan.RevisionCount++
+			emitBuildPlanBlock(t.sse, plan)
+			return fmt.Sprintf("Plan revised (%s). %d of %d revisions used (%d remaining).",
+				action, plan.RevisionCount, BuildPlanRevisionLimit, BuildPlanRevisionLimit-plan.RevisionCount), nil
+		},
+	}
+}
+
+// reportBuildGapsToolDef — Builder's "what didn't get done" tool.
+// Required call before the final user-facing reply when any step is
+// blocked or still pending. Returns a structured summary that the
+// model must address in its Phase 5 synthesis (either explicitly
+// surfacing the gap to the user, or revising the plan to fill it).
+// Sets BuildPlanState.GapsReported so the prompt-level gate knows
+// the call happened.
+func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "report_build_gaps",
+			Description: "BEFORE your final reply, call this to surface every blocked or still-pending step in the build plan. Returns a structured summary you MUST address in the reply — either explain the gap to the user, or call revise_build_plan to fill it (if within the revision cap). When the plan is fully complete (all steps done) this returns an empty summary and no gap section is needed in the reply. Takes no arguments.",
+			Parameters:  map[string]ToolParam{},
+			Caps:        []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			if t.session == nil || t.session.BuildPlan == nil {
+				return "", errors.New("report_build_gaps: no active build plan — call present_build_plan first")
+			}
+			plan := t.session.BuildPlan
+			plan.GapsReported = true
+			type gapEntry struct {
+				Step   int    `json:"step"`
+				Title  string `json:"title"`
+				Reason string `json:"reason"`
+			}
+			type gapReport struct {
+				Blocked []gapEntry `json:"blocked,omitempty"`
+				Skipped []gapEntry `json:"skipped,omitempty"`
+			}
+			rep := gapReport{}
+			for _, s := range plan.Steps {
+				switch s.Status {
+				case "blocked":
+					rep.Blocked = append(rep.Blocked, gapEntry{Step: s.Number, Title: s.Title, Reason: s.BlockedReason})
+				case "pending", "in_progress":
+					rep.Skipped = append(rep.Skipped, gapEntry{Step: s.Number, Title: s.Title, Reason: "step never completed"})
+				}
+			}
+			emitBuildPlanBlock(t.sse, plan)
+			if len(rep.Blocked) == 0 && len(rep.Skipped) == 0 {
+				return "All steps completed successfully — no gaps to report. You may write the final reply.", nil
+			}
+			data, err := json.Marshal(rep)
+			if err != nil {
+				return "", fmt.Errorf("report_build_gaps: marshal: %v", err)
+			}
+			return string(data) + "\n\nIncorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap).", nil
+		},
+	}
+}
+
+// toInt is a small JSON-tolerant int coercion for revise_build_plan's
+// array args. The LLM may emit step numbers as float64 (JSON number),
+// int, or string-of-digits; we accept all three.
+func toInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case float64:
+		return int(x), true
+	case string:
+		var n int
+		_, err := fmt.Sscanf(x, "%d", &n)
+		return n, err == nil
+	}
+	return 0, false
+}
+
 // emitBuildPlanBlock sends the orchestrate_plan SSE block. Reused for
 // the initial paint AND for every update — the renderer's onUpdate
 // hook handles re-rendering when the block id matches a card that's

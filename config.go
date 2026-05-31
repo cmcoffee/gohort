@@ -359,7 +359,9 @@ func setup_fuzz() {
 	lead.StringVar(&leadEndpoint, "Endpoint", leadEndpoint, "Custom API endpoint (leave blank for default).")
 	lead.ShowWhen(func() bool { return leadProvider == "ollama" || leadProvider == "llama.cpp" })
 	lead.ToggleVar(&leadDisableThinking, "Disable Thinking (force think=false on every call)", leadDisableThinking)
-	lead.ShowWhen(func() bool { return leadProvider == "ollama" || leadProvider == "gemini" || leadProvider == "llama.cpp" })
+	lead.ShowWhen(func() bool {
+		return leadProvider == "ollama" || leadProvider == "gemini" || leadProvider == "llama.cpp"
+	})
 	lead.IntVar(&leadThinkingBudget, "Thinking Budget (tokens, 0=unlimited)", leadThinkingBudget, "Max tokens the model may spend thinking per call. 0 = unlimited. Only supported by llama.cpp and Gemini.", 0, 131072)
 	lead.ShowWhen(func() bool { return (leadProvider == "gemini" || leadProvider == "llama.cpp") && !leadDisableThinking })
 	leadNoThinkSettings := NewOptions(" [No-Think Settings (Lead)] ", "(selection or 'q' to return)", 'q')
@@ -1334,6 +1336,14 @@ admin_allowed_ips =
 # data_dir and follow it automatically.
 data_dir =
 logs_dir =
+# vector_dir holds the embedding/vector store (gohort_vectors.db) —
+# a derived, regenerable cache that is the hot path for semantic
+# search. Empty = co-located with data_dir (unchanged behavior).
+# Point it at a fast LOCAL disk (e.g. an SSD) when data_dir lives on
+# network storage: the cold-load full-table scan that gates the first
+# search is dominated by per-row latency, so local storage is the
+# single biggest win. It need not be backed up — if lost, re-ingest.
+vector_dir =
 `
 
 // init_database initializes the application database.
@@ -1362,6 +1372,18 @@ func init_database() {
 	SetErrTable(global.db.Table("fuzz_errors"))
 	global.cache = global.db.Sub("cache")
 
+	// Dedicated vector store. Defaults to data_dir (co-located, same
+	// behavior as before); operators relocate it to local SSD via
+	// [paths] vector_dir when data_dir is on network storage. Opened
+	// with the same hardware-locked encryption as the main DB. The
+	// startup migration (see core) copies existing shared chunks here
+	// on first boot after upgrade.
+	vector_dir := loadPath("vector_dir", data_dir)
+	MkDir(vector_dir + "/")
+	vec_filename := FormatPath(fmt.Sprintf("%s/%s_vectors.db", vector_dir, APPNAME))
+	VectorDB, err = SecureDatabase(vec_filename)
+	Critical(err)
+
 	// Wire the persistent source hook cache to the global cache sub-database.
 	// This persists results from source hooks so repeated runs on the same
 	// topic don't re-hit rate-limited upstream APIs. TTL default is 30 days.
@@ -1378,6 +1400,9 @@ func init_database() {
 	// DB handle is live; called from here so every entry point that opens
 	// the DB (web, chat, CLI, setup) picks up saved rates automatically.
 	InitCostRates(global.db)
+	// Load agent-loop tuning (history-budget cap, future LLM-retry knobs).
+	// In-memory defaults are conservative; a stored record overrides them.
+	InitAgentLoopTuning(global.db)
 
 	// Load persisted embedding config so the vector-DB ingestion and
 	// semantic_search tool have their endpoint + model. Silent no-op

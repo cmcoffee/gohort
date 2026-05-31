@@ -270,6 +270,16 @@ func startBwrapShell(ctx context.Context, workspaceDir, openCmd string) (*bwrapS
 	// so probe via exec.LookPath.
 	bwrap, err := exec.LookPath("bwrap")
 	var c *exec.Cmd
+	// Network policy: persistent-mode tools NEED network by design
+	// (psql, redis-cli, ssh REPLs are all connection-oriented). Default
+	// is allowed. But the session connector still acts as a hard cap:
+	// Private mode toggles network OFF at the session level, and any
+	// new persistent shell spawned while Private is on must respect
+	// that with --unshare-net. The shell is checked at OPEN time only;
+	// a session that flips to Private after open-time can't re-namespace
+	// the running process — to enforce mid-flight, the chat UI cancels
+	// in-flight dispatches on toggle.
+	allowNet := NetworkAllowedFromContext(ctx)
 	if err == nil && bwrap != "" {
 		// Build the same bwrap argv shape RunSandboxedShell uses,
 		// trailing with `sh -c <openCmd>`. We assemble inline rather
@@ -277,7 +287,7 @@ func startBwrapShell(ctx context.Context, workspaceDir, openCmd string) (*bwrapS
 		// because persistent shells may want different defaults
 		// later (e.g., a per-tool bind-mount declaration for SSH
 		// keys — phase 2 work).
-		args := persistentBwrapArgv(workspaceDir, openCmd)
+		args := persistentBwrapArgv(workspaceDir, openCmd, allowNet)
 		c = exec.CommandContext(ctx, bwrap, args...)
 	} else {
 		// No bwrap. Match one-shot mode's degraded fallback: run via
@@ -317,14 +327,25 @@ func startBwrapShell(ctx context.Context, workspaceDir, openCmd string) (*bwrapS
 // Duplicated here because the core function is unexported AND because
 // persistent shells will diverge in phase 2 (per-tool credential
 // bind-mounts). For now: same isolation posture as one-shot shell.
-func persistentBwrapArgv(workspaceDir, shellCmd string) []string {
-	return []string{
+func persistentBwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
+	args := []string{
 		"--die-with-parent",
 		"--new-session",
 		"--unshare-pid",
 		"--unshare-uts",
 		"--unshare-ipc",
 		"--unshare-cgroup-try",
+	}
+	if !allowNetwork {
+		args = append(args, "--unshare-net")
+	}
+	// PYTHONPATH so `from gohort import fetch` resolves against the
+	// deployed gohort.py from any subdir of the workspace. Same
+	// rationale as the one-shot path in core/sandbox_exec.go.
+	if workspaceDir != "" {
+		args = append(args, "--setenv", "PYTHONPATH", workspaceDir)
+	}
+	args = append(args,
 		"--bind", workspaceDir, workspaceDir,
 		"--chdir", workspaceDir,
 		"--ro-bind", "/usr", "/usr",
@@ -345,7 +366,8 @@ func persistentBwrapArgv(workspaceDir, shellCmd string) []string {
 		"--tmpfs", "/tmp",
 		"--",
 		"sh", "-c", shellCmd,
-	}
+	)
+	return args
 }
 
 // reader drains stdout into ps.buf. Runs until the underlying pipe

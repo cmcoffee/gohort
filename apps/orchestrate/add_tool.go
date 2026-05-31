@@ -26,7 +26,7 @@ import (
 )
 
 // add_tool is NOT globally registered. The struct exists as a Go
-// type; Builder's catalog assembly (builderInternalTools) constructs
+// type; Builder's catalog assembly (builderAuthoringTools) constructs
 // the AgentToolDef directly from it. No other agent can find this
 // tool by name, list it, or call it — it's structurally bound to
 // Builder's runtime path.

@@ -81,6 +81,28 @@ type PipelineStage struct {
 	Kind   PipelineStageKind `json:"kind"`              // worker | agent | fanout | synthesize
 	Prompt string            `json:"prompt"`            // instruction, with {input}/{prev}/{stage:NAME} templating
 	Agent  string            `json:"agent,omitempty"`   // agent id/name for kind=agent (and kind=fanout's inner agent)
+	// Tools optionally overrides what this stage's worker has access
+	// to. Empty (default) = inherit the caller's tool catalog so a
+	// pipeline invoked from an agent with web_search / fetch_url
+	// inherits those without any per-stage configuration. Set
+	// explicitly to RESTRICT (e.g. a pure synthesizer stage that
+	// should not be tempted to fetch) or to OVERRIDE inherited tools
+	// for a specific stage. Only applies to kind="worker" stages; agent
+	// stages get their dispatched agent's full catalog regardless.
+	Tools []string `json:"tools,omitempty"`
+	// Think optionally enables/disables thinking for this stage. nil
+	// (default) = use the framework default (off, cheap). &true enables
+	// thinking for stages that genuinely benefit from deliberation —
+	// synthesis stages reconciling multiple sources, verification
+	// stages doing careful cross-reference, decomposition stages
+	// planning how to split a complex query. &false disables explicitly
+	// (same as default; useful for self-documenting "this stage doesn't
+	// need to think"). Pure transforms / format conversions / cheap
+	// paraphrases should leave think nil (or set to false) — they don't
+	// benefit from a deliberation budget. Only applies to kind="worker"
+	// stages; agent stages honor their dispatched agent's own think
+	// configuration.
+	Think *bool `json:"think,omitempty"`
 	// FanOver names a prior stage whose output is a JSON array; the
 	// fanout stage runs once per element, in parallel. Phase 2.
 	FanOver string `json:"fan_over,omitempty"`

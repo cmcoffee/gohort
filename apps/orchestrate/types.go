@@ -64,6 +64,20 @@ type AgentRecord struct {
 	// BlockedTools, filtered by cap. See availableWorkerToolOptions().
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 
+	// DisabledPersistentTools is an explicit DENY-LIST of admin-
+	// approved persistent temp-tool names this agent should NOT see.
+	// Persistent temp tools flow into every agent's catalog by default
+	// — the approval gate is already deployment-wide trust, so per-
+	// agent allow-listing on top of that is double-gating. Agents
+	// that want a tighter focus name specific persistent tools here
+	// to suppress them. Distinct from AllowedTools (which gates the
+	// REGISTERED chat-tool pool, not persistent temp tools).
+	//
+	// Empty / nil = include every approved persistent tool. Names
+	// not currently in the persistent pool are ignored silently — a
+	// stale entry in the deny list is harmless.
+	DisabledPersistentTools []string `json:"disabled_persistent_tools,omitempty"`
+
 	// MaxPlanSteps caps the number of steps the orchestrator may
 	// commit to in one turn. Zero = use defaultMaxPlanSteps. The
 	// orchestrator sees this cap embedded in its system prompt + the
@@ -280,6 +294,41 @@ type AgentRecord struct {
 	//     agents" block is filtered to just these entries.
 	AllowedDispatchTargets []string `json:"allowed_dispatch_targets,omitempty"`
 
+	// OwnedBy names a parent agent that owns this one as a sub-agent.
+	// Two effects:
+	//   - Cascade delete: when the parent is deleted, every agent
+	//     owned by it gets deleted too (record, sessions, memory,
+	//     knowledge — same dropAgentSideData treatment as a direct
+	//     delete). Prevents orphans when the parent goes away.
+	//   - Implicit dispatch authority: the parent can dispatch to this
+	//     sub-agent via agents(action="run") regardless of whether the
+	//     sub-agent's ID appears in the parent's AllowedDispatchTargets
+	//     list — ownership IS the link. Sub-agents typically also set
+	//     Hidden=true so they don't appear in the global fleet block;
+	//     the OwnedBy relationship keeps them reachable from the parent
+	//     without an explicit allowlist entry.
+	// Empty (default) = no parent, standard top-level agent.
+	OwnedBy string `json:"owned_by,omitempty"`
+
+	// Think overrides the LLM's reasoning mode for this agent's turns.
+	// Tri-state stored as a string so it round-trips cleanly through
+	// the form panel (HTML select) AND the LLM CRUD tool (string arg):
+	//   - "" or "auto" = let the route / caller decide. Worker LLM's
+	//     preserve_thinking + per-request thinking_budget govern.
+	//   - "on" = force reasoning ON for every turn. Use for agents
+	//     that decompose / plan / synthesize (Builder, top-level
+	//     conversational agents, sub-agents whose job is reasoning).
+	//   - "off" = force reasoning OFF for every turn. Use for fast
+	//     focused specialists where reasoning just adds latency
+	//     without improving the answer (lookup-shaped sub-agents,
+	//     transformers, routers).
+	//
+	// Applied at the call site: when "on" or "off", the agent's value
+	// overrides whatever the route would otherwise pick. CREATE defaults
+	// (set by parseThinkArg): top-level agents default "on", sub-agents
+	// default "off" — the right mode for each role's typical usage.
+	Think string `json:"think,omitempty"`
+
 	// (ForceClean removed — its semantic moved to DisableInferred.
 	// Same behavior: stop the LLM-derived layer from growing and
 	// exclude derived chunks from recall. The new name is more
@@ -390,18 +439,38 @@ type ChatSession struct {
 type BuildPlanState struct {
 	ID    string          `json:"id"`
 	Steps []BuildPlanStep `json:"steps"`
+
+	// RevisionCount tracks how many times revise_build_plan has been
+	// called this session. Capped at BuildPlanRevisionLimit (3) to
+	// prevent the model from re-shuffling instead of executing — same
+	// guard servitor's Plan.IncrRevision enforces. Reset to zero when
+	// present_build_plan replaces the plan wholesale.
+	RevisionCount int `json:"revision_count,omitempty"`
+
+	// GapsReported flips when report_build_gaps has been called.
+	// Builder's Phase 4 → Phase 5 transition demands an explicit gap
+	// report before the final user-facing reply, so the model is
+	// honest about blocked or skipped steps. Set once per plan;
+	// re-presenting the plan resets it.
+	GapsReported bool `json:"gaps_reported,omitempty"`
 }
+
+// BuildPlanRevisionLimit caps how many times revise_build_plan can
+// fire per session. Mirrors servitor's PlanRevisionLimit = 3 — a
+// hard ceiling that keeps the model from reshuffling indefinitely
+// instead of executing the plan it already has.
+const BuildPlanRevisionLimit = 3
 
 // BuildPlanStep mirrors the fields the orchestrate_plan renderer
 // consumes: title (line text), status (pending / in_progress / done
 // / blocked), what_to_find (sub-line detail), findings (one-line
 // result after step done).
 type BuildPlanStep struct {
-	Number       int    `json:"number"`
-	Title        string `json:"title"`
-	WhatToFind   string `json:"what_to_find,omitempty"`
-	Status       string `json:"status"` // pending | in_progress | done | blocked
-	Findings     string `json:"findings,omitempty"`
+	Number        int    `json:"number"`
+	Title         string `json:"title"`
+	WhatToFind    string `json:"what_to_find,omitempty"`
+	Status        string `json:"status"` // pending | in_progress | done | blocked
+	Findings      string `json:"findings,omitempty"`
 	BlockedReason string `json:"blocked_reason,omitempty"`
 }
 
@@ -413,10 +482,10 @@ type BuildPlanStep struct {
 // session reload — the SSE flow already emits the same shape live
 // via emitStats).
 type ChatMessage struct {
-	Role    string             `json:"role"`
-	Content string             `json:"content"`
-	Created time.Time          `json:"created,omitempty"`
-	Usage   *ChatMessageUsage  `json:"usage,omitempty"`
+	Role    string            `json:"role"`
+	Content string            `json:"content"`
+	Created time.Time         `json:"created,omitempty"`
+	Usage   *ChatMessageUsage `json:"usage,omitempty"`
 	// ToolCalls captures every tool the orchestrator + worker steps
 	// fired during this turn. Persisted so the session export gives a
 	// full debug trace (live UI shows them via SSE during the turn
@@ -476,26 +545,26 @@ type PlanSnapshot struct {
 // Field roles:
 //   - Title         — short step name (1 line), declared by the orchestrator.
 //   - Intent        — what the step is LOOKING FOR / aims to accomplish.
-//                     Visible to the user BEFORE the worker runs so they see
-//                     what the agent is about to do. Optional.
+//     Visible to the user BEFORE the worker runs so they see
+//     what the agent is about to do. Optional.
 //   - WorkerBrief   — the SYSTEM PROMPT the worker receives for this step.
-//                     Authored by the orchestrator at plan time. Specific
-//                     about what to produce, what tools to prefer, what
-//                     format to use. Framework prepends rules + memory and
-//                     appends the tool-use directive automatically — the
-//                     brief itself should focus on this step's deliverable.
-//                     Not user-visible. Optional (a fallback is synthesized
-//                     from title + intent when empty).
+//     Authored by the orchestrator at plan time. Specific
+//     about what to produce, what tools to prefer, what
+//     format to use. Framework prepends rules + memory and
+//     appends the tool-use directive automatically — the
+//     brief itself should focus on this step's deliverable.
+//     Not user-visible. Optional (a fallback is synthesized
+//     from title + intent when empty).
 //   - Findings      — short summary surfaced inline once the step completes.
-//                     Derived from the first paragraph of Output when not
-//                     set explicitly. Optional.
+//     Derived from the first paragraph of Output when not
+//     set explicitly. Optional.
 //   - Output        — full worker text. Lives in the collapsible.
 //   - BlockedReason — error message when status=blocked.
 type PlanStep struct {
-	ID            int    `json:"id"`
-	Title         string `json:"title"`
-	Intent        string `json:"intent,omitempty"`
-	WorkerBrief   string `json:"worker_brief,omitempty"`
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	Intent      string `json:"intent,omitempty"`
+	WorkerBrief string `json:"worker_brief,omitempty"`
 	// Tools is the orchestrator's explicit per-step tool surface.
 	// When set, the worker for THIS step sees exactly these tools
 	// (intersected with the agent's allowed pool for safety) +
@@ -503,10 +572,10 @@ type PlanStep struct {
 	// = fall back to the agent's full pool (degraded behavior; the
 	// orchestrator should specify when it knows the answer).
 	Tools         []string `json:"tools,omitempty"`
-	Status        string `json:"status"` // "pending" | "in_progress" | "done" | "blocked"
-	Findings      string `json:"findings,omitempty"`
-	Output        string `json:"output,omitempty"`
-	BlockedReason string `json:"blocked_reason,omitempty"`
+	Status        string   `json:"status"` // "pending" | "in_progress" | "done" | "blocked"
+	Findings      string   `json:"findings,omitempty"`
+	Output        string   `json:"output,omitempty"`
+	BlockedReason string   `json:"blocked_reason,omitempty"`
 }
 
 // Plan-step status constants. Strings (not iota) so JSON roundtrips
@@ -600,7 +669,7 @@ type EvalCase struct {
 type EvalResult struct {
 	Name    string   `json:"name"`
 	Passed  bool     `json:"passed"`
-	Output  string   `json:"output"`             // the agent's reply (truncated for display)
-	Reasons []string `json:"reasons,omitempty"`  // why a case failed (or "ok" entries on pass)
-	ErrText string   `json:"error,omitempty"`    // populated when the agent itself errored mid-run
+	Output  string   `json:"output"`            // the agent's reply (truncated for display)
+	Reasons []string `json:"reasons,omitempty"` // why a case failed (or "ok" entries on pass)
+	ErrText string   `json:"error,omitempty"`   // populated when the agent itself errored mid-run
 }

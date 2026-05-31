@@ -43,8 +43,33 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		Name  string
 		Order int
 	}
+	// subAgentsByParent groups every owned sub-agent under its parent
+	// ID so the chat UI can render a contextual secondary picker. The
+	// main dropdown only shows top-level agents (Hidden/OwnedBy filtered
+	// out); the secondary picker appears only when the selected parent
+	// has children. The secondary picker is what lets you chat directly
+	// with a sub-agent for testing without needing to dispatch from the
+	// parent.
+	subAgentsByParent := map[string][]map[string]string{}
 	var builtIns, customs []pickerRow
 	for _, a := range agents {
+		// Sub-agents (OwnedBy set → Hidden=true via enforceSubAgentPosture)
+		// stay out of the main picker — they appear in the secondary
+		// picker keyed by parent ID.
+		if a.OwnedBy != "" {
+			subAgentsByParent[a.OwnedBy] = append(subAgentsByParent[a.OwnedBy], map[string]string{
+				"id":   a.ID,
+				"name": a.Name,
+			})
+			continue
+		}
+		// Hidden top-level agents (no OwnedBy, hidden=true): personal
+		// agents the user wants to chat with directly but not surface
+		// to the fleet. Skip them from the picker too — direct URL
+		// access still works for "chat with this hidden agent" use case.
+		if a.Hidden {
+			continue
+		}
 		if ord, ok := builtInOrder[a.ID]; ok {
 			builtIns = append(builtIns, pickerRow{ID: a.ID, Name: a.Name, Order: ord})
 		} else {
@@ -87,8 +112,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// separate JS var rather than a field on SelectOption so the
 	// shared SelectOption type stays domain-agnostic.
 	internetJSON, _ := json.Marshal(internetWorkerToolNames())
+	// subAgentsByParent → JS map for the secondary picker. Empty map
+	// (no sub-agents in the fleet) is fine — the JS hides the picker
+	// when the selected parent has no children.
+	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
+		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
 		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	page := ui.Page{
@@ -126,6 +156,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					CancelURL:     "api/cancel",
 					ConfirmURL:    "api/confirm",
 					InjectURL:     "api/inject",
+					// Enables the run-resume probe in the chat panel:
+					// on session-load the runtime asks
+					// api/runs/active?session_id=… and, if there's an
+					// in-flight run, opens api/runs/<id>/stream to pick
+					// up live where the prior client left off. See
+					// runs.go / runs_http.go for the server contract.
+					RunsURLBase: "api/runs/",
 					DeepLinkParam: "session",
 					LockActivity:  true,
 					EmptyText:     "Pick an agent from the rail, then ask anything. The orchestrator plans the steps, the worker runs each one (tool calls appear inline), then the orchestrator replies.",
@@ -165,8 +202,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						},
 					},
 					Actions: []ui.ToolbarAction{
-						{Label: "New", Title: "Create a new agent",
-							Method: "redirect", URL: "agent/new"},
+						{Label: "Create", Title: "Create a new agent. When a parent agent is currently selected, asks whether to mint a top-level agent or a sub-agent owned by that parent (sub-agent layout masks public / intake / memory fields).",
+							Method: "client", URL: "orchestrate_create_agent"},
 						{Label: "Edit", Title: "Edit the active agent",
 							Method: "client", URL: "orchestrate_edit_agent"},
 						{Label: "Clone", Title: "Clone the active agent into a new draft",

@@ -114,14 +114,14 @@ func InvalidateChunkCache() { invalidateChunkCache() }
 // app-provided origin tag (e.g., the app name or record kind) so
 // consumers can filter or group results by where the chunk came from.
 type EmbeddedChunk struct {
-	ID       string    `json:"id"`         // UUID, the kvlite key
-	Source   string    `json:"source"`     // app-provided origin tag for this chunk
-	ReportID string    `json:"report_id"`  // parent record ID in that source's table
-	Section  string    `json:"section"`    // section heading, e.g. "Executive Summary"
-	Text     string    `json:"text"`       // the chunk content
-	Vector   []float32 `json:"vector"`     // embedding
-	Model    string    `json:"model"`      // embedding model used (for compatibility)
-	Date     string    `json:"date"`       // ingestion timestamp
+	ID       string    `json:"id"`                // UUID, the kvlite key
+	Source   string    `json:"source"`            // app-provided origin tag for this chunk
+	ReportID string    `json:"report_id"`         // parent record ID in that source's table
+	Section  string    `json:"section"`           // section heading, e.g. "Executive Summary"
+	Text     string    `json:"text"`              // the chunk content
+	Vector   []float32 `json:"vector"`            // embedding
+	Model    string    `json:"model"`             // embedding model used (for compatibility)
+	Date     string    `json:"date"`              // ingestion timestamp
 	Locator  string    `json:"locator,omitempty"` // optional source pointer for citations — e.g. "page 12", "pages 4-5", "§ 3.2 Auth flow". Empty when the source has no meaningful sub-document locator (plain text, single-page note). Surfaced in SearchHit so the LLM can cite specifically.
 	// Kind tags the provenance of this chunk so consumers can
 	// frame it appropriately at retrieval time. Empty (default)
@@ -672,6 +672,89 @@ func WipeChunksBySourcePrefix(db Database, prefix string) int {
 	return removed
 }
 
+// --- one-shot migration of legacy chunk stores into VectorDB ---
+
+// legacyChunkSources are pre-split stores that historically held
+// shared EmbeddedChunks rows (agent knowledge, collections, deployment
+// KB). Registered by wiring code; folded into VectorDB once on the
+// first boot after the split.
+var legacyChunkSources []Database
+
+// vectorMetaTable holds VectorDB-local bookkeeping (the migration
+// marker). Lives in VectorDB itself so the "already migrated" fact
+// travels with the file — relocate the vector store and the marker
+// comes with it.
+const vectorMetaTable = "vector_meta"
+
+// RegisterLegacyChunkSource declares a store whose EmbeddedChunks rows
+// should be folded into VectorDB by MigrateLegacyChunksToVectorDB.
+// Wiring registers each app/bucket that historically wrote SHARED
+// chunks. Stores that must stay isolated (e.g. phantom's personal
+// corpus) deliberately do NOT register — they keep passing their own
+// handle to the chunk functions. nil handles are ignored; registering
+// the same store twice is harmless (the copy dedups by chunk ID).
+func RegisterLegacyChunkSource(db Database) {
+	if db != nil {
+		legacyChunkSources = append(legacyChunkSources, db)
+	}
+}
+
+// MigrateLegacyChunksToVectorDB copies every EmbeddedChunk from each
+// registered legacy source into VectorDB exactly once. Idempotent: a
+// marker in VectorDB short-circuits later boots, and within a run rows
+// already present (by chunk ID = key) are skipped so a crashed prior
+// run resumes cleanly. NON-DESTRUCTIVE — legacy rows are left in place
+// so the split is rollback-safe; an operator drops them later once
+// satisfied. No-op when VectorDB is unset or a source IS VectorDB (the
+// co-located default, where there's nothing to move).
+func MigrateLegacyChunksToVectorDB() {
+	if VectorDB == nil || len(legacyChunkSources) == 0 {
+		return
+	}
+	var marker string
+	if VectorDB.Get(vectorMetaTable, "legacy_migrated", &marker) && marker != "" {
+		return
+	}
+	// Announce up-front, BEFORE any Keys()/Get() call, so an operator
+	// watching boot logs can tell the long pause on the first post-split
+	// boot is the migration and not a hang. The per-row Get over NFS is
+	// the dominant cost on big stores; counting source sizes (Keys walk)
+	// is itself slow there, so we don't pre-scan — progress lines show
+	// the rate as work proceeds.
+	start := time.Now()
+	Log("[vector] one-shot migration starting: %d legacy source(s) → VectorDB (non-destructive; legacy rows preserved). This may take minutes on large NFS-backed stores.", len(legacyChunkSources))
+	copied, scanned := 0, 0
+	for srcIdx, src := range legacyChunkSources {
+		if src == nil || src == VectorDB {
+			continue
+		}
+		keys := src.Keys(EmbeddedChunks)
+		Log("[vector] migrating source %d/%d: %d chunk(s)", srcIdx+1, len(legacyChunkSources), len(keys))
+		for i, key := range keys {
+			var c EmbeddedChunk
+			if !src.Get(EmbeddedChunks, key, &c) {
+				continue
+			}
+			scanned++
+			var existing EmbeddedChunk
+			if VectorDB.Get(EmbeddedChunks, key, &existing) {
+				continue // already migrated (resume-safe)
+			}
+			VectorDB.Set(EmbeddedChunks, key, c)
+			copied++
+			// Heartbeat every 500 chunks so progress is visible on
+			// large stores without spamming smaller deployments.
+			if (i+1)%500 == 0 {
+				Log("[vector] migration progress: source %d/%d, %d/%d chunk(s) in this source (%d copied total, %.0fs elapsed)",
+					srcIdx+1, len(legacyChunkSources), i+1, len(keys), copied, time.Since(start).Seconds())
+			}
+		}
+	}
+	VectorDB.Set(vectorMetaTable, "legacy_migrated", time.Now().Format(time.RFC3339))
+	invalidateChunkCache()
+	Log("[vector] migration complete: copied %d chunk(s), scanned %d, elapsed %.1fs; legacy rows left in place for rollback", copied, scanned, time.Since(start).Seconds())
+}
+
 // VectorIndexStats is the shape returned by VectorStats and the
 // /admin/api/vector-stats endpoint so the admin UI can display a
 // quick snapshot of index health.
@@ -776,7 +859,7 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 		}
 		// Temporal decay applies to the SORT KEY only — SearchHit.Score
 		// stays as the raw cosine so callers with similarity-floor
-		// filters (autoInjectMinScore, dedup thresholds) get
+		// filters (manualSearchMinScore, dedup thresholds) get
 		// predictable behavior. Recent chunks edge out stale ones on
 		// ties; strong-match old chunks still surface for niche queries.
 		all = append(all, scored{
@@ -840,7 +923,7 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 		}
 		// Temporal decay applies to the SORT KEY only — SearchHit.Score
 		// stays as the raw cosine so callers with similarity-floor
-		// filters (autoInjectMinScore, dedup thresholds) get
+		// filters (manualSearchMinScore, dedup thresholds) get
 		// predictable behavior. Recent chunks edge out stale ones on
 		// ties; strong-match old chunks still surface for niche queries.
 		all = append(all, scored{
@@ -908,6 +991,42 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 	return out
 }
 
+// MergeHitsByScore unions two hit lists, dedups by chunk ID, sorts by
+// descending score, and caps at k. Used to fold a second-store search
+// pass (e.g. deployment-scoped chunks in RootDB) into the primary
+// result set. Fast-paths when either side is empty.
+func MergeHitsByScore(a, b []SearchHit, k int) []SearchHit {
+	if k <= 0 {
+		return nil
+	}
+	if len(a) == 0 {
+		if len(b) > k {
+			return b[:k]
+		}
+		return b
+	}
+	if len(b) == 0 {
+		if len(a) > k {
+			return a[:k]
+		}
+		return a
+	}
+	merged := make([]SearchHit, 0, len(a)+len(b))
+	seen := make(map[string]bool, len(a)+len(b))
+	for _, h := range append(append([]SearchHit{}, a...), b...) {
+		if seen[h.ID] {
+			continue
+		}
+		seen[h.ID] = true
+		merged = append(merged, h)
+	}
+	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+	if len(merged) > k {
+		merged = merged[:k]
+	}
+	return merged
+}
+
 // SearchChunksInSources is the set-filtered cousin of SearchChunks:
 // rank ONLY chunks whose Source is in the allowed set, then return
 // top-k by similarity. Filtering BEFORE ranking is materially
@@ -942,7 +1061,7 @@ func SearchChunksInSources(db Database, allowed map[string]bool, query []float32
 		}
 		// Temporal decay applies to the SORT KEY only — SearchHit.Score
 		// stays as the raw cosine so callers with similarity-floor
-		// filters (autoInjectMinScore, dedup thresholds) get
+		// filters (manualSearchMinScore, dedup thresholds) get
 		// predictable behavior. Recent chunks edge out stale ones on
 		// ties; strong-match old chunks still surface for niche queries.
 		all = append(all, scored{
@@ -1039,7 +1158,7 @@ func SearchChunksBySource(db Database, sourcePrefix string, query []float32, k i
 		}
 		// Temporal decay applies to the SORT KEY only — SearchHit.Score
 		// stays as the raw cosine so callers with similarity-floor
-		// filters (autoInjectMinScore, dedup thresholds) get
+		// filters (manualSearchMinScore, dedup thresholds) get
 		// predictable behavior. Recent chunks edge out stale ones on
 		// ties; strong-match old chunks still surface for niche queries.
 		all = append(all, scored{

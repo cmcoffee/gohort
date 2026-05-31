@@ -231,6 +231,96 @@ func IdleSubSessionsFor(hostSessionID string) []SubSession {
 	return out
 }
 
+// SubSessionLivenessChecker reports whether a given sub-session is
+// being actively served by a live in-process worker (goroutine, sync
+// caller, etc.). Apps register a checker at startup so the routing
+// layer can distinguish "the persisted Active status reflects reality"
+// from "the goroutine that owned this died with the process / panicked
+// in a corner / hung in an unrecoverable way." The persisted record
+// can't tell the difference on its own — only the in-process owner can.
+//
+// Return true when the sub-session has a live worker; false when the
+// caller knows there's no goroutine for it (typical case: an in-memory
+// cancel/dispatch registry has no entry for the ID).
+//
+// Multiple checkers may register; ResolveDispatchRoute treats a
+// sub-session as live if ANY registered checker says yes. With no
+// checkers registered, every Active record is assumed live — same as
+// the pre-checker behavior, so apps that don't opt in see no change.
+type SubSessionLivenessChecker func(subSessionID string) bool
+
+var (
+	livenessMu        sync.RWMutex
+	livenessCheckers  []SubSessionLivenessChecker
+)
+
+// RegisterSubSessionLivenessChecker plugs an app's liveness check
+// into the routing path. Typically called from an app's RegisterRoutes
+// once its dispatch tracking is initialized.
+func RegisterSubSessionLivenessChecker(fn SubSessionLivenessChecker) {
+	if fn == nil {
+		return
+	}
+	livenessMu.Lock()
+	defer livenessMu.Unlock()
+	livenessCheckers = append(livenessCheckers, fn)
+}
+
+// subSessionIsLive consults every registered checker. When no
+// checkers are registered, returns true (defensive: assume the
+// persisted record is honest). When checkers ARE registered, returns
+// true iff at least one says yes — so an unowned sub-session can be
+// safely declared dead without the app having to know about peers.
+func subSessionIsLive(subSessionID string) bool {
+	livenessMu.RLock()
+	defer livenessMu.RUnlock()
+	if len(livenessCheckers) == 0 {
+		return true
+	}
+	for _, fn := range livenessCheckers {
+		if fn(subSessionID) {
+			return true
+		}
+	}
+	return false
+}
+
+// RetireOrphanedActiveSubSessions walks every persisted SubSession
+// and retires anything in Active state. Used at startup to scrub
+// records left behind by a prior process whose goroutines died with
+// it — without this, the first routing decision after a restart for
+// each affected chat would route as inject (because the persisted
+// status still reads Active) and ack forever, even though no
+// goroutine exists to consume the inject queue.
+//
+// Returns the number of records retired. Apps that own sub-sessions
+// should call this from their RegisterRoutes (or similar startup
+// hook) BEFORE any inbound traffic starts flowing.
+func RetireOrphanedActiveSubSessions() int {
+	if RootDB == nil {
+		return 0
+	}
+	subSessionMu.Lock()
+	defer subSessionMu.Unlock()
+	now := time.Now()
+	n := 0
+	for _, k := range RootDB.Keys(SubSessionsTable) {
+		var s SubSession
+		if !RootDB.Get(SubSessionsTable, k, &s) {
+			continue
+		}
+		if s.Status != SubSessionActive {
+			continue
+		}
+		s.Status = SubSessionRetired
+		s.RetiredAt = now
+		s.RetiredReason = "orphaned_at_startup"
+		RootDB.Set(SubSessionsTable, k, s)
+		n++
+	}
+	return n
+}
+
 // ActiveSubSessionsFor returns every active (in-flight) sub-session
 // belonging to a host. Used by cancellation — a "/stop" needs to find
 // the running dispatches for a chat so it can cancel each. Empty when

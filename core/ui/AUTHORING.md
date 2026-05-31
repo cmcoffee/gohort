@@ -155,7 +155,7 @@ Stable, ordered most → least stable:
 1. **The `Agent` interface** + `RegisterApp` + `NewWebUI` — frozen.
 2. **`ui.Page` + the well-known components** (Table, FormPanel, ChatPanel, PipelinePanel, FormField types) — adds-only; field renames go through a deprecation pass.
 3. **The extension registries** (block renderer, markdown extension, client action) — frozen signatures; new registries are additive.
-4. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRegister*`) — frozen names.
+4. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRenderMarkdown`, `uiRegister*`) — frozen names.
 5. **CSS class names** — generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
 
 ---
@@ -307,6 +307,9 @@ window.uiRegisterMarkdownExtension(function(html) {
     '<h2 class="ui-my-header">$1$2</h2>');
 });
 ```
+
+### Rendering markdown into your own element
+If a custom block renderer (or any app DOM) needs to show rendered markdown, use `window.uiRenderMarkdown(el, text)` rather than `el.innerHTML = uiMdToHTML(text)`. It stamps the `.ui-md` prose class on the target, which is what gives headings, code blocks, lists, and links the shared, proportionate type scale. Setting `innerHTML` from `uiMdToHTML` directly works too, but the element then falls back to the browser's default heading/monospace sizes — the giant-headings-next-to-tiny-code look. The styling lives entirely in `.ui-md`; never re-declare generic `h*`/`pre`/`code` rules in your app CSS — override only genuinely app-specific bits.
 
 ### Client action
 A browser-side action invoked by a `PipelineAction{Method: "client"}`. Use for things like `window.print`, custom clipboard handling, focus/scroll helpers.

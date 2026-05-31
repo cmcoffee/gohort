@@ -703,6 +703,64 @@ body { min-height: 100vh; min-height: 100dvh; }
   cursor: pointer; color: var(--text-mute); font-size: 0.85rem;
   user-select: none;
 }
+/* ============================================================
+ * .ui-md — canonical rendered-markdown prose
+ * ------------------------------------------------------------
+ * Every surface that drops mdToHTML output into the DOM carries
+ * this class (stamped automatically by uiRenderMarkdown). It is
+ * the single source of truth for how rendered markdown looks:
+ * headings, code, lists, links. Sizes are em-relative so each
+ * surface's own base font-size sets the absolute scale — a
+ * compact card and a full report share these rules yet stay
+ * proportional to their container.
+ *
+ * Carrying .ui-md is also what stops a markdown sink from
+ * falling back to the browser UA stylesheet — that fallback
+ * (h1 at 2em, the bare-monospace size shrink) was the "giant
+ * headings next to tiny console text" bug this block replaced.
+ *
+ * Defined BEFORE the per-surface bodies on purpose: a surface
+ * with a deliberate character (the modal's Orbitron report
+ * headings, the article's long-form scale) overrides by equal-
+ * specificity source order. Do NOT re-declare generic
+ * heading/pre/code rules in a surface body — add the ui-md
+ * class and override only what is genuinely surface-specific
+ * (e.g. a darker code background).
+ * ============================================================ */
+.ui-md > :first-child { margin-top: 0; }
+.ui-md > :last-child { margin-bottom: 0; }
+.ui-md p { margin: 0.5em 0; }
+.ui-md h1, .ui-md h2, .ui-md h3,
+.ui-md h4, .ui-md h5, .ui-md h6 {
+  font-weight: 600; line-height: 1.3; color: var(--text);
+  text-transform: none; letter-spacing: normal;
+  margin: 1em 0 0.3em;
+}
+.ui-md h1 { font-size: 1.3em; }
+.ui-md h2 { font-size: 1.18em; }
+.ui-md h3 { font-size: 1.07em; }
+.ui-md h4 { font-size: 1em; }
+.ui-md h5, .ui-md h6 { font-size: 0.92em; color: var(--text-mute); }
+.ui-md ul, .ui-md ol { margin: 0.5em 0; padding-left: 1.4em; }
+.ui-md li { margin: 0.15em 0; }
+.ui-md a { color: var(--accent-hi); text-decoration: underline; }
+.ui-md strong { color: var(--text); font-weight: 700; }
+.ui-md code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--bg-2); padding: 0.05em 0.3em; border-radius: 4px;
+}
+.ui-md pre {
+  margin: 0.5em 0; padding: 0.5em 0.7em;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em; line-height: 1.45;
+  white-space: pre; overflow-x: auto;
+}
+.ui-md pre code {
+  background: transparent; padding: 0; border-radius: 0; font-size: inherit;
+}
+
 .ui-watch-draft-body {
   margin-top: 0.7rem; color: var(--text);
   font-size: 0.9rem; line-height: 1.6;
@@ -980,6 +1038,18 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-display-label { font-size: 0.85rem; color: var(--text-mute); }
 .ui-display-value { font-size: 0.9rem; color: var(--text); text-align: right; word-break: break-all; }
 .ui-display-value.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.82rem; }
+/* Block-style row: label on its own line, value as a <pre> block
+   below — for multi-line content like script bodies. */
+.ui-display-row-block {
+  flex-direction: column; align-items: stretch; gap: 0.35rem;
+}
+.ui-display-value-block {
+  margin: 0; padding: 0.5rem 0.65rem;
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8rem;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+  max-height: 420px; overflow: auto;
+}
 
 /* --- BarChart --- */
 .ui-chart { width: 100%; }
@@ -1049,7 +1119,7 @@ body { min-height: 100vh; min-height: 100dvh; }
   gap: 1rem;
   /* Reserve only the actual page-header + root padding (~70px after
    * the header shrink) so the chat fills the rest of the viewport
-   * instead of leaving a phantom gap at the bottom. Matches techwriter
+   * instead of leaving a leftover gap at the bottom. Matches the standard chat-panel
    * / codewriter / agent-loop panels. min-height keeps mobile usable
    * when 100dvh is unreliable mid-keyboard. */
   height: calc(100vh - 70px);
@@ -1265,7 +1335,51 @@ body { min-height: 100vh; min-height: 100dvh; }
   overflow: hidden;
   word-break: break-word;
 }
-.ui-chat-side-meta { font-size: 0.7rem; color: var(--text-mute); margin-top: 0.05rem; }
+.ui-chat-side-meta {
+  font-size: 0.7rem; color: var(--text-mute); margin-top: 0.05rem;
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+}
+/* Source badge on session rows — small inline pill tagging where a
+ * session came from when it was contributed by an external
+ * ExtraSessionsSource registrant. The base style is neutral; the
+ * contributing app can colorize its own variant via
+ * .ui-chat-side-source-<sourcename> in Page.ExtraHeadHTML. */
+.ui-chat-side-source {
+  font-size: 0.6rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-0);
+  color: var(--text-mute);
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Running indicator on session rows — pulsing green dot in front of
+ * the title when the runs registry has an in-flight Run for this
+ * session. Survives client disconnect (the run keeps running
+ * detached), so a user reopening the chat sees at a glance which
+ * sessions are still working. Pulse animation draws the eye without
+ * being so loud it competes with the title text itself. */
+.ui-chat-side-running-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #3fb950;
+  box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.55);
+  vertical-align: middle;
+  margin-right: 0.4rem;
+  animation: ui-chat-side-running-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ui-chat-side-running-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); }
+  100% { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0); }
+}
 .ui-chat-side-del {
   position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%);
   background: transparent; color: var(--text-mute);
@@ -1397,6 +1511,26 @@ body { min-height: 100vh; min-height: 100dvh; }
   padding: 0.45rem 0.65rem; margin: 0;
   font-family: ui-monospace, monospace; font-size: 0.75rem;
   color: var(--text-mute); max-height: 320px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* Full args block inside the expanded tool details — one row per
+   key, pretty-printed value. Distinct from result via accent-tinted
+   key labels so it's obvious which lines are inputs vs. output. */
+.ui-chat-tool-argblock {
+  display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.4rem;
+}
+.ui-chat-tool-argrow {
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.ui-chat-tool-argkey {
+  font-size: 0.7rem; font-weight: 600; color: var(--accent);
+  font-family: ui-monospace, monospace; opacity: 0.85;
+}
+.ui-chat-tool-argval {
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.35rem 0.55rem; margin: 0;
+  font-family: ui-monospace, monospace; font-size: 0.75rem;
+  color: var(--text); max-height: 280px; overflow: auto;
   white-space: pre-wrap; word-break: break-word;
 }
 .ui-chat-status { align-self: center; font-size: 0.78rem; color: var(--text-mute); font-style: italic; padding: 0.2rem 0; }
@@ -1833,20 +1967,8 @@ body { min-height: 100vh; min-height: 100dvh; }
   white-space: pre-wrap; word-break: break-word;
 }
 .ui-pl-block-body p { margin: 0.4rem 0; }
-.ui-pl-block-body h1, .ui-pl-block-body h2, .ui-pl-block-body h3,
-.ui-pl-block-body h4, .ui-pl-block-body h5, .ui-pl-block-body h6 {
-  color: var(--text); font-weight: 600;
-  text-transform: none; letter-spacing: normal;
-}
-/* Section-header scale — h1/h2 are the "section title" tier (larger
- * so they stand out as breaks); h3-h6 step down for headings inside
- * the section body. */
-.ui-pl-block-body h1 { font-size: 1.15rem; margin: 1.6rem 0 0.5rem; }
-.ui-pl-block-body h2 { font-size: 1.05rem; margin: 1.6rem 0 0.5rem; }
-.ui-pl-block-body h3 { font-size: 0.95rem; margin: 1.3rem 0 0.4rem; }
-.ui-pl-block-body h4 { font-size: 0.9rem;  margin: 1.1rem 0 0.35rem; }
-.ui-pl-block-body h5,
-.ui-pl-block-body h6 { font-size: 0.85rem; margin: 0.9rem 0 0.3rem; }
+/* Pipeline-block prose (headings / pre / code / lists) comes from
+ * .ui-md — see the canonical block above. */
 
 /* Status with spinner — live + done variants. The active state
  * uses a brighter foreground + accent-tinted border so the
@@ -1914,12 +2036,8 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-pl-expandable.expanded .ui-pl-expandable-toggle::after { content: ' ▾'; }
 .ui-pl-expandable-body { display: none; margin-top: 0.5rem; font-size: 0.85rem; line-height: 1.5; color: var(--text); }
 .ui-pl-expandable.expanded .ui-pl-expandable-body { display: block; }
-.ui-pl-expandable-body h1, .ui-pl-expandable-body h2, .ui-pl-expandable-body h3 {
-  font-size: 0.92rem; font-weight: 600; margin: 0.6rem 0 0.25rem;
-  color: var(--text); text-transform: none; letter-spacing: normal;
-}
-.ui-pl-expandable-body p { margin: 0.3rem 0; }
-.ui-pl-expandable-body code { background: var(--bg-2); padding: 0.05rem 0.25rem; border-radius: 3px; }
+/* Expandable-card prose comes from .ui-md — the em-relative scale keeps
+ * headings compact against this card's smaller base font-size. */
 
 .ui-chat-field {
   display: inline-flex; align-items: center; gap: 0.3rem;
@@ -1973,28 +2091,9 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 @keyframes ui-mic-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.6); } 50% { box-shadow: 0 0 0 6px rgba(248,81,73,0); } }
 
-.ui-chat-msg-body p:first-child { margin-top: 0; }
-.ui-chat-msg-body p:last-child { margin-bottom: 0; }
-.ui-chat-msg-body pre {
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.5rem 0.7rem; margin: 0.4rem 0;
-  font-family: ui-monospace, monospace; font-size: 0.82rem;
-  overflow-x: auto;
-}
-.ui-chat-msg-body code {
-  background: var(--bg-2); padding: 0.05rem 0.3rem; border-radius: 4px;
-  font-family: ui-monospace, monospace; font-size: 0.85em;
-}
-.ui-chat-msg-body pre code { background: transparent; padding: 0; }
-.ui-chat-msg-body h1, .ui-chat-msg-body h2, .ui-chat-msg-body h3 {
-  margin: 0.6rem 0 0.3rem; font-weight: 600;
-}
-.ui-chat-msg-body h1 { font-size: 1.1rem; }
-.ui-chat-msg-body h2 { font-size: 1rem; }
-.ui-chat-msg-body h3 { font-size: 0.95rem; color: var(--text-mute); }
-.ui-chat-msg-body ul { margin: 0.4rem 0; padding-left: 1.3rem; }
-.ui-chat-msg-body li { margin: 0.15rem 0; }
-.ui-chat-msg-body a { color: var(--accent-hi); text-decoration: underline; }
+/* Chat-bubble prose (headings / pre / code / lists / links) comes from
+ * .ui-md — see the canonical block above. No surface-specific overrides
+ * needed here; don't re-add them. */
 .ui-chat-input {
   flex: 1; min-height: 40px; max-height: 200px; resize: none;
   padding: 0.5rem 0.7rem;
@@ -2026,7 +2125,7 @@ body { min-height: 100vh; min-height: 100dvh; }
   .ui-cw.ui-tw { grid-template-columns: 215px 1fr; }
 }
 /* Mobile — collapse to single column so the editor pane isn't
- * squashed against a 175px sidebar. Matches techwriter's mobile
+ * squashed against a 175px sidebar. Matches the standard chat-panel's mobile
  * rule; specificity (2 classes) must match the base selector
  * for the override to apply. */
 @media (max-width: 700px) {
@@ -2148,29 +2247,52 @@ body { min-height: 100vh; min-height: 100dvh; }
     flex-wrap: wrap !important;
   }
 }
-/* ListPosition: "top" — chat-style single-pane surface. The rail
- * sits flush against the conversation pane with no gap, no card
- * chrome, and only a border-right; the conversation column has no
- * card border or radius either; the topbar reads as one flat header
- * bar (single row of: ☰  agent-name  +New  …actions). The activity
- * pane is hidden via LockActivity at the app level. */
+/* ListPosition: "top" — two-card surface: rail (picker + sessions
+ * stacked) on the left, conversation pane on the right. Both wear
+ * rounded card chrome with a gap between them; the conversation
+ * pane's topbar reads as a single header bar (☰  agent-name  +New
+ * …actions). The activity pane is hidden via LockActivity at the app
+ * level.
+ *
+ * Earlier this mode dropped all chrome to read as a chat-style
+ * single-pane surface; the card look here mirrors a multi-column
+ * pipeline's two-card layout for visual consistency across surfaces
+ * that all sit under one Page. */
 .ui-agent.ui-agent-list-top {
-  /* Drop the outer flex gap so rail + main sit edge-to-edge. */
-  gap: 0;
   --rail-width: 260px;
 }
 .ui-agent.ui-agent-list-top .ui-agent-grid {
   grid-template-columns: var(--rail-width) 1fr;
-  gap: 0;
 }
 .ui-agent.ui-agent-list-top.side-collapsed .ui-agent-grid {
   grid-template-columns: 1fr;
 }
-.ui-agent.ui-agent-list-top .ui-chat-side {
-  background: var(--bg-1);
-  border: 0;
-  border-right: 1px solid var(--border);
-  border-radius: 0;
+/* Desktop: the rail is permanent in list-top mode. Earlier we let
+ * the user collapse it, but the placement of the expand affordance
+ * kept fighting the layout (sitting inside the chat card was
+ * confusing; a left-edge tab added chrome no one asked for; the
+ * 260px rail isn't large enough on desktop to warrant a hide).
+ *
+ * On desktop we therefore force the rail visible regardless of the
+ * stored sideCollapsed preference, and hide both the in-rail
+ * hamburger (collapse) and the floating expand tab so the user
+ * can't toggle a state that no longer exists.
+ *
+ * Mobile keeps the current drawer behavior — collapsing IS useful
+ * there because the rail would eat the whole viewport. The rules
+ * inside @media (max-width: 900px) further down govern that path
+ * and aren't affected. */
+@media (min-width: 901px) {
+  .ui-agent.ui-agent-list-top .ui-agent-collapse,
+  .ui-agent.ui-agent-list-top .ui-agent-expand {
+    display: none !important;
+  }
+  .ui-agent.ui-agent-list-top.side-collapsed .ui-chat-side {
+    display: flex !important;
+  }
+  .ui-agent.ui-agent-list-top.side-collapsed .ui-agent-grid {
+    grid-template-columns: var(--rail-width) 1fr;
+  }
 }
 /* Lock the rail header to the same fixed height as the chat-pane
  * topbar so the two bars on either side of the divider line up
@@ -2192,11 +2314,11 @@ body { min-height: 100vh; min-height: 100dvh; }
   height: auto;
   min-height: 3.5rem;
 }
-.ui-agent.ui-agent-list-top .ui-agent-main {
-  background: var(--bg-0);
-  border: 0;
-  border-radius: 0;
-}
+/* Main pane keeps the shared .ui-agent-main card chrome in this
+ * mode now — the rail is also a card (see .ui-chat-side default) so
+ * they read as two distinct rounded panels with a gap between, like
+ * a multi-column pipeline layout. Earlier this rule stripped the
+ * border/radius to render as a single flat surface. */
 /* Topbar lives INSIDE main in this mode, so its underline doesn't
  * span the rail. Chat-app-style: flat row with bg-1 + border-bottom.
  * The actions row collapses into the topbar inline. Compact — sits
@@ -2550,7 +2672,7 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-agent.activity-locked-hidden .ui-agent-activity-expand { display: none; }
 .ui-agent-main {
   display: flex; flex-direction: column;
-  background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
   overflow: hidden;
   min-height: 0;
 }
@@ -2659,10 +2781,11 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 .ui-agent-msg-body p:first-child { margin-top: 0; }
 .ui-agent-msg-body p:last-child  { margin-bottom: 0; }
-.ui-agent-msg-body pre {
-  background: var(--bg-0); padding: 0.4rem 0.6rem;
-  border-radius: 4px; overflow-x: auto;
-}
+/* Prose comes from .ui-md; only the code-block background is surface-
+ * specific here — the assistant bubble sits on --bg-1 and the user
+ * bubble on --bg-2, so code needs the darker --bg-0 to read as a
+ * distinct block against either. */
+.ui-agent-msg-body pre { background: var(--bg-0); }
 /* During streaming the body holds raw text (textContent) — preserve
  * the LLM's newlines so paragraphs don't collapse into a wall of
  * text. finalizeMessage runs mdToHTML and removes this class, so
@@ -2948,7 +3071,15 @@ body { min-height: 100vh; min-height: 100dvh; }
   border-radius: 6px;
 }
 .ui-agent-input-row {
-  display: flex; gap: 0.4rem; align-items: stretch;
+  display: flex; gap: 0.4rem; align-items: flex-end;
+  /* flex-end (not stretch) so the textarea uses its own height
+   * — governed by min-height + autosizeInput's inline style.height
+   * — rather than stretching to match the row's intrinsic height.
+   * Without this, the spinner + cancel button showing during a run
+   * make the row slightly taller than the resting send-button row,
+   * and the textarea stretches vertically with it. Aligning buttons
+   * to the bottom keeps things visually consistent at rest AND while
+   * a run is in flight. */
   padding: 0.5rem 0.7rem; border-top: 1px solid var(--border);
   background: var(--bg-1);
 }
@@ -2964,13 +3095,50 @@ body { min-height: 100vh; min-height: 100dvh; }
   padding: 0.4rem 0.55rem; font: inherit;
   white-space: pre-wrap; word-wrap: break-word;
 }
-.ui-agent-spinner { display: flex; align-items: center; padding: 0 0.4rem; }
-/* Bigger spinner specifically for the chat-input row — the shared
-   .ui-spinner is 12px (right for inline activity-feed status lines)
-   but too small here next to a Cancel button. Override with more
-   specific selector so other surfaces keep the small size. */
+/* Legacy .ui-agent-spinner — kept for any app that still wires it
+ * up directly. Any chat-style panel now
+ * uses .ui-agent-status-pill in the top bar instead (see below).
+ * Hidden by inline style at the JS layer; this rule retains the
+ * sizing in case a downstream app surfaces it again. */
+.ui-agent-spinner {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 0.4rem;
+  min-height: var(--tap);
+}
 .ui-agent-spinner .ui-spinner {
   width: 20px; height: 20px; border-width: 3px; margin-right: 0;
+}
+
+/* Top-bar in-flight status indicator. Spinner + "Running…" label,
+ * pill-shaped and quiet so it reads as status, not as an action
+ * button. Right-aligned in its parent (action row / topBundle row1
+ * cell) via margin-left:auto. Display toggled inline by JS:
+ * disableInput shows, enableInput hides. */
+.ui-agent-status-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  margin-left: auto;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-1); color: var(--text-mute);
+  font-size: 0.75rem; line-height: 1;
+  flex-shrink: 0;
+  /* Sits at the end of the flex row regardless of DOM order. The
+   * topbar uses CSS order: 1 on .ui-agent-extras-slot and order: 2
+   * on .ui-agent-actions to reorder picker-before-buttons in
+   * list-top mode. Without an explicit order here, statusPill (DOM
+   * order 0) would render visually FIRST and push everything else
+   * right when it appears. order: 99 pins it past every reordered
+   * sibling. */
+  order: 99;
+  /* Soft glow so the spinning state catches the eye without
+   * shouting — matches the muted top-bar palette. */
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.10) inset;
+}
+.ui-agent-status-pill .ui-spinner {
+  width: 12px; height: 12px; border-width: 2px; margin-right: 0;
+}
+.ui-agent-status-pill-label {
+  white-space: nowrap;
 }
 .ui-agent-attach-strip {
   padding: 0.3rem 0.7rem; border-top: 1px solid var(--border);
@@ -3040,7 +3208,12 @@ body { min-height: 100vh; min-height: 100dvh; }
   background: var(--bg-0); color: var(--text);
   border: 1px solid var(--border); border-radius: 4px;
   padding: 0.4rem 0.55rem; font: inherit; resize: vertical;
-  min-height: 4rem;
+  min-height: 7rem;
+  /* Cap autosize growth so a paste of a multi-page block doesn't
+   * push the rest of the chat off-screen. User can still drag taller
+   * via resize: vertical past this cap. */
+  max-height: 40rem;
+  width: 100%; box-sizing: border-box;
 }
 .ui-agent-msg-edit-ta:focus { border-color: var(--accent); outline: none; }
 .ui-agent-msg-edit-actions { display: flex; gap: 0.4rem; }
@@ -3361,7 +3534,25 @@ body { min-height: 100vh; min-height: 100dvh; }
   display: none; flex: 1 1 auto; min-height: 0;
   border-top: 1px solid var(--border);
 }
-.ui-cw-ctx-pane.open { display: flex; }
+.ui-cw-ctx-pane.open { display: flex; flex-direction: column; }
+.ui-cw-coll-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  font-size: 0.74rem;
+}
+.ui-cw-coll-lbl {
+  color: var(--text-mute); text-transform: uppercase;
+  letter-spacing: 0.04em; margin-right: 0.15rem;
+}
+.ui-cw-coll-chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.35rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text); cursor: pointer; user-select: none;
+}
+.ui-cw-coll-chip:hover { border-color: var(--accent); }
 .ui-cw-ctx-editor {
   flex: 1; width: 100%; min-height: 80px;
   resize: none; outline: none;
@@ -3826,7 +4017,11 @@ const runtimeJS = `
   function relTime(iso) {
     if (!iso) return '';
     var t = new Date(iso).getTime();
-    if (!t) return '';
+    // Reject NaN, epoch, and Go's zero-value time.Time (year 0001,
+    // serialized as "0001-01-01T00:00:00Z") which would otherwise
+    // render as ~739763d ago. Any pre-epoch timestamp is treated as
+    // "unknown" — we don't have legitimate pre-1970 records.
+    if (!t || t <= 0) return '';
     var s = Math.round((Date.now() - t) / 1000);
     if (s < 60) return s + 's ago';
     if (s < 3600) return Math.round(s/60) + 'm ago';
@@ -3921,6 +4116,18 @@ const runtimeJS = `
   // these globals stay panel-agnostic.
   window.uiEl = el;
   window.uiMdToHTML = mdToHTML;
+  // uiRenderMarkdown(target, raw) — the one call that renders markdown
+  // into an element. Stamps the .ui-md prose class so the output gets
+  // the canonical type scale instead of browser UA defaults, then sets
+  // the HTML (mdToHTML has already run the extension post-processors).
+  // Use this (or add the ui-md class yourself) for ANY element you fill
+  // with rendered markdown — it is what keeps headings / code / lists
+  // consistent across every surface.
+  window.uiRenderMarkdown = function(target, raw) {
+    if (!target) return;
+    target.classList.add('ui-md');
+    target.innerHTML = mdToHTML(String(raw == null ? '' : raw));
+  };
   // Markdown extension registry — apps add post-processors that
   // run after base mdToHTML passes complete.
   if (!window.UIMarkdownExtensions) window.UIMarkdownExtensions = [];
@@ -3945,6 +4152,35 @@ const runtimeJS = `
   if (!window.UIClientActions) window.UIClientActions = {};
   window.uiRegisterClientAction = function(name, fn) {
     if (typeof fn === 'function') window.UIClientActions[name] = fn;
+  };
+
+  // uiConfirm / uiAlert — always-async wrappers around the native
+  // dialog primitives. Use these instead of confirm() / window.uiAlert()
+  // anywhere in the runtime or apps. Callers must await uiConfirm.
+  //
+  // Why: native confirm()/alert() are sync, but they don't work in
+  // every host. Wails' WKWebView on macOS doesn't implement the
+  // WKUIDelegate methods that show those dialogs (Wails declares
+  // the protocol but leaves runJavaScriptConfirmPanel /
+  // runJavaScriptAlertPanel unimplemented), so confirm() silently
+  // returns false and window.uiAlert() does nothing — every delete and
+  // every error toast vanishes. Routing through these helpers lets
+  // a host inject a replacement (window.__uiConfirmImpl /
+  // __uiAlertImpl) that uses a custom CSS modal instead. In a real
+  // browser the impl is absent and we fall through to the native
+  // primitives — same behavior as before.
+  window.uiConfirm = function(msg) {
+    if (typeof window.__uiConfirmImpl === 'function') {
+      return Promise.resolve(window.__uiConfirmImpl(msg));
+    }
+    return Promise.resolve(window.confirm(msg));
+  };
+  window.uiAlert = function(msg) {
+    if (typeof window.__uiAlertImpl === 'function') {
+      return Promise.resolve(window.__uiAlertImpl(msg));
+    }
+    window.alert(msg);
+    return Promise.resolve();
   };
   // Data-source invalidation. Apps and components fire this when a
   // write completes so any list/table fetched from the same source
@@ -4248,8 +4484,8 @@ const runtimeJS = `
     var status = el('span', {class: 'ui-panic-status'});
     var btn = el('button', {
       class: 'ui-panic-btn',
-      onclick: function() {
-        if (cfg.confirm && !confirm(cfg.confirm)) return;
+      onclick: async function() {
+        if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
         status.textContent = 'Engaging…';
         fetchJSON(cfg.on_click, {method: 'POST'}).then(function(d) {
           status.textContent = (d && d.message) ? d.message : 'Done.';
@@ -4473,8 +4709,8 @@ const runtimeJS = `
         var classes = 'ui-row-btn';
         if (act.compact) classes += ' compact';
         if (act.variant) classes += ' ' + act.variant;
-        var btn = el('button', {class: classes, onclick: function() {
-          if (act.confirm && !confirm(act.confirm)) return;
+        var btn = el('button', {class: classes, onclick: async function() {
+          if (act.confirm && !(await window.uiConfirm(act.confirm))) return;
           var url = substitute(act.post_to, rec);
           // Method=GET means "pure navigation button" — skip the
           // fetch+JSON-parse dance and just navigate. Used by "Open",
@@ -4501,6 +4737,24 @@ const runtimeJS = `
           }
           fetchJSON(url, {method: act.method || 'POST'})
             .then(function(resp) {
+              // Close any open expansion on this row before the
+              // refresh — reload() silently skips when ANY expansion
+              // is open in the table (the guard exists to keep
+              // poll-driven refreshes from yanking content the user
+              // is reading), but for a user-initiated row mutation
+              // the data MUST refresh. The user clicked an action
+              // on this row; the expansion's stale content is no
+              // longer worth preserving. Without this close, the
+              // "View → Approve" workflow leaves the approved row
+              // still visible in the source table until manual
+              // page refresh.
+              if (rowEl && openExpansions[rowKey]) {
+                Object.keys(openExpansions[rowKey]).forEach(function(k){
+                  var panel = openExpansions[rowKey][k];
+                  if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+                });
+                delete openExpansions[rowKey];
+              }
               // RedirectURL — substitute response-JSON fields into
               // the destination URL and navigate. {id}, {session},
               // etc. resolve from the response body so a "Run"
@@ -4838,8 +5092,8 @@ const runtimeJS = `
           if (rec[lastSeenF]) metaBits.push('last seen ' + relTime(rec[lastSeenF]));
           var meta    = el('div', {class: 'ui-keys-row-meta'}, [metaBits.join(' · ') || '—']);
           var del     = el('button', {class: 'ui-keys-row-del', title: 'Delete this key'}, ['×']);
-          del.addEventListener('click', function() {
-            if (!confirm('Delete this API key? Any client using it will stop working.')) return;
+          del.addEventListener('click', async function() {
+            if (!(await window.uiConfirm('Delete this API key? Any client using it will stop working.'))) return;
             del.disabled = true;
             var url = cfg.delete_url.replace(/\/+$/, '') + '/' + encodeURIComponent(rec[idF]);
             fetch(url, {method: 'DELETE'}).then(function(r) {
@@ -4848,7 +5102,7 @@ const runtimeJS = `
               }
               loadList();
             }).catch(function(err) {
-              alert('Delete failed: ' + err.message);
+              window.uiAlert('Delete failed: ' + err.message);
               del.disabled = false;
             });
           });
@@ -4877,7 +5131,7 @@ const runtimeJS = `
         hideForm();
         showRevealed(rec || {});
       }).catch(function(err) {
-        alert('Create failed: ' + err.message);
+        window.uiAlert('Create failed: ' + err.message);
       }).then(function() {
         formCreate.disabled = false; formCancel.disabled = false;
       });
@@ -5048,6 +5302,20 @@ const runtimeJS = `
         if (f.help) {
           fieldWrap.appendChild(el('div', {class: 'ui-form-section-help'}, [f.help]));
         }
+        return fieldWrap;
+      }
+
+      // Hidden field: contributes its default to the save payload but
+      // renders no visible input. Use for context-derived values the
+      // page knows up front (e.g. "this new record is owned by X")
+      // that must ride on the POST without offering an edit affordance.
+      // The default seeds the form state immediately so the first save
+      // POST includes it.
+      if (t === 'hidden') {
+        if (f.field && (f.default !== undefined && f.default !== null && f.default !== '')) {
+          current[f.field] = f.default;
+        }
+        fieldWrap.style.display = 'none';
         return fieldWrap;
       }
 
@@ -5526,7 +5794,7 @@ const runtimeJS = `
           });
         }
       }).catch(function(err) {
-        alert('Suggest failed: ' + (err && err.message || err));
+        window.uiAlert('Suggest failed: ' + (err && err.message || err));
       }).then(function() {
         btn.classList.remove('busy');
         btn.disabled = false;
@@ -5583,9 +5851,9 @@ const runtimeJS = `
               [p.name || '?']);
             chip.addEventListener('click', function() { applyChip(p); });
             if (!p.builtin && f.chips_delete_url) {
-              chip.addEventListener('dblclick', function(ev) {
+              chip.addEventListener('dblclick', async function(ev) {
                 ev.stopPropagation();
-                if (!confirm('Delete "' + p.name + '"?')) return;
+                if (!(await window.uiConfirm('Delete "' + p.name + '"?'))) return;
                 var url = f.chips_delete_url.replace('{id}', encodeURIComponent(p.id || ''));
                 fetch(url, {method: 'DELETE'}).then(refresh);
               });
@@ -5819,8 +6087,8 @@ const runtimeJS = `
             var classes = 'ui-row-btn';
             if (act.variant) classes += ' ' + act.variant;
             var btn = el('button', {class: classes, title: act.title || '',
-              onclick: function() {
-                if (act.confirm && !confirm(act.confirm)) return;
+              onclick: async function() {
+                if (act.confirm && !(await window.uiConfirm(act.confirm))) return;
                 btn.disabled = true;
                 fetch(act.url, {method: act.method || 'POST'})
                   .then(function(r) {
@@ -5981,7 +6249,7 @@ const runtimeJS = `
       statusView.style.display = 'none';
       articleView.style.display = '';
       articleTitle.textContent = title || '';
-      articleBody.innerHTML = mdToHTML(String(content || ''));
+      uiRenderMarkdown(articleBody, content || '');
     }
 
     function renderDoneActions(lastEvent) {
@@ -6044,8 +6312,8 @@ const runtimeJS = `
     }
 
     if (cancelBtn) {
-      cancelBtn.addEventListener('click', function() {
-        if (!confirm('Cancel the pipeline?')) return;
+      cancelBtn.addEventListener('click', async function() {
+        if (!(await window.uiConfirm('Cancel the pipeline?'))) return;
         fetch(cfg.cancel_url, {method: 'POST'}).then(function() {
           titleText.innerHTML = '';
           titleText.appendChild(document.createTextNode('⛔ Cancelled'));
@@ -6078,7 +6346,7 @@ const runtimeJS = `
           var details = el('details', {class: 'ui-watch-draft-details', open: true});
           var summary = el('summary', {}, ['Rough draft (pre-voice pass)']);
           details.appendChild(summary);
-          details.appendChild(el('div', {class: 'ui-watch-draft-body', html: mdToHTML(String(data.message || ''))}));
+          details.appendChild(el('div', {class: 'ui-watch-draft-body ui-md', html: mdToHTML(String(data.message || ''))}));
           draftView.innerHTML = '';
           draftView.appendChild(details);
           draftView.style.display = '';
@@ -6165,8 +6433,8 @@ const runtimeJS = `
     }
     if (cfg.generate_url) {
       var gen = el('button', {class: 'ui-apikey-btn'}, ['Generate']);
-      gen.addEventListener('click', function() {
-        if (cfg.confirm_generate && !confirm(cfg.confirm_generate)) return;
+      gen.addEventListener('click', async function() {
+        if (cfg.confirm_generate && !(await window.uiConfirm(cfg.confirm_generate))) return;
         gen.disabled = true;
         fetchJSON(cfg.generate_url, {method: 'POST'}).then(function(d) {
           setKey((d || {})[keyField]);
@@ -6235,9 +6503,9 @@ const runtimeJS = `
       return '';
     }
 
-    function fireAction(action, item) {
+    async function fireAction(action, item) {
       if (!action || !action.url) return Promise.resolve();
-      if (action.confirm && !confirm(action.confirm)) return Promise.resolve();
+      if (action.confirm && !(await window.uiConfirm(action.confirm))) return Promise.resolve();
       var body = null;
       if (action.body_map) {
         body = {};
@@ -6507,8 +6775,8 @@ const runtimeJS = `
       }
       items.forEach(function(item) {
         var status = el('span', {class: 'ui-actionlist-status'});
-        var btn = el('button', {class: 'ui-row-btn', onclick: function() {
-          if (cfg.confirm && !confirm(cfg.confirm)) return;
+        var btn = el('button', {class: 'ui-row-btn', onclick: async function() {
+          if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
           var url = substitute(cfg.post_to, item);
           btn.disabled = true;
           status.textContent = '…';
@@ -6674,9 +6942,24 @@ const runtimeJS = `
     function render(rec) {
       wrap.innerHTML = '';
       cfg.pairs.forEach(function(p) {
+        var value = fmt(lookup(rec, p.field), p.format);
+        // Block-style pairs (multi-line content: script bodies,
+        // pipeline dumps, long command templates) render as a <pre>
+        // block on their own row below the label, with mono font +
+        // wrap on overflow. Inline pairs stay as a single-row span.
+        if (p.block) {
+          var rowB = el('div', {class: 'ui-display-row ui-display-row-block'}, [
+            el('span', {class: 'ui-display-label'}, [p.label]),
+          ]);
+          var pre = el('pre', {class: 'ui-display-value-block'});
+          pre.textContent = (value == null || value === '') ? '' : String(value);
+          rowB.appendChild(pre);
+          wrap.appendChild(rowB);
+          return;
+        }
         wrap.appendChild(el('div', {class: 'ui-display-row'}, [
           el('span', {class: 'ui-display-label'}, [p.label]),
-          el('span', {class: 'ui-display-value' + (p.mono ? ' mono' : '')}, [fmt(lookup(rec, p.field), p.format)]),
+          el('span', {class: 'ui-display-value' + (p.mono ? ' mono' : '')}, [value]),
         ]));
       });
     }
@@ -7124,10 +7407,10 @@ const runtimeJS = `
           renderBulkBar(list, sideList, bulkState, bulkSelected,
             function(s){ return s[idF]; },
             loadSessions,
-            function() {
+            async function() {
               var ids = Object.keys(bulkSelected);
               if (!ids.length) return;
-              if (!confirm('Delete ' + ids.length + ' session(s) permanently?')) return;
+              if (!(await window.uiConfirm('Delete ' + ids.length + ' session(s) permanently?'))) return;
               Promise.all(ids.map(function(id) {
                 var url = cfg.session_delete_url.replace('{id}', encodeURIComponent(id));
                 return fetchJSON(url, {method: 'DELETE'}).catch(function(){});
@@ -7153,14 +7436,35 @@ const runtimeJS = `
             (selected ? ' selected' : '')
           }, [
             el('div', {class: 'ui-chat-side-text'}, [
-              el('div', {class: 'ui-chat-side-title'}, [s[titleF] || '(untitled)']),
-              el('div', {class: 'ui-chat-side-meta'}, [relTime(s[lastF])]),
+              el('div', {class: 'ui-chat-side-title'}, [
+                // Running indicator — pulses while an agent loop is
+                // mid-turn for this session. Survives client
+                // disconnect (the run keeps running detached), so a
+                // user reopening the chat sees at a glance which
+                // sessions are still working. Populated by the server
+                // from the runs registry; absent / falsy = idle.
+                (s.running ? el('span', {
+                  class: 'ui-chat-side-running-dot',
+                  title: 'This session has an agent run in progress.',
+                }) : null),
+                s[titleF] || '(untitled)',
+              ]),
+              el('div', {class: 'ui-chat-side-meta'}, [
+                relTime(s[lastF]),
+                // Source badge — when the server tags a row with
+                // source="<name>" — when an external source contributes the row,
+                // surface a small pill with the chat label so the
+                // user can tell externally-sourced sessions apart
+                // from their own.
+                (s.source ? el('span', {class: 'ui-chat-side-source ui-chat-side-source-' + s.source},
+                  [s.source + (s.chat_id ? ' · ' + s.chat_id : '')]) : null),
+              ]),
             ]),
             inMode ? null : el('button', {
               class: 'ui-chat-side-del', title: 'Delete session',
-              onclick: function(ev){
+              onclick: async function(ev){
                 ev.stopPropagation();
-                if (!confirm('Delete this session permanently?')) return;
+                if (!(await window.uiConfirm('Delete this session permanently?'))) return;
                 var url = cfg.session_delete_url.replace('{id}', encodeURIComponent(s[idF]));
                 fetchJSON(url, {method: 'DELETE'}).then(function() {
                   if (currentSessionId === s[idF]) openSession(null);
@@ -7357,6 +7661,34 @@ const runtimeJS = `
         var det = el('details', {class: 'ui-chat-tool'});
         det.appendChild(summary);
         var body = el('div', {class: 'ui-chat-tool-body'});
+        // Full structured arguments — server-sent unclipped so the
+        // user can see the actual command / script / parameters when
+        // expanded, not just the 60-char-per-value summary chip. One
+        // labeled <pre> per key, pretty-printed JSON for objects /
+        // arrays. Only shown when argsFull is present (older bubbles
+        // without it just fall through to the output block).
+        if (t.argsFull && typeof t.argsFull === 'object') {
+          var keys = Object.keys(t.argsFull);
+          if (keys.length > 0) {
+            keys.sort();
+            var argBox = el('div', {class: 'ui-chat-tool-argblock'});
+            keys.forEach(function(k) {
+              var v = t.argsFull[k];
+              var rendered;
+              if (typeof v === 'string') {
+                rendered = v;
+              } else {
+                try { rendered = JSON.stringify(v, null, 2); }
+                catch (e) { rendered = String(v); }
+              }
+              var row = el('div', {class: 'ui-chat-tool-argrow'});
+              row.appendChild(el('span', {class: 'ui-chat-tool-argkey'}, [k]));
+              row.appendChild(el('pre', {class: 'ui-chat-tool-argval'}, [rendered]));
+              argBox.appendChild(row);
+            });
+            body.appendChild(argBox);
+          }
+        }
         var trimmed = String(t.output || '').trim();
         if (t.output === null) {
           body.appendChild(el('div', {class: 'ui-chat-tool-empty'}, ['(running…)']));
@@ -7632,6 +7964,19 @@ const runtimeJS = `
             // Stage 1: ignore. Stage 2 will surface in a collapsible block.
             break;
           case 'tool_call':
+            // Round boundary detection: if the current bubble has
+            // finalized text content from a PREVIOUS round, this
+            // tool_call is the start of a NEW round. Mint a fresh
+            // bubble for it (with a spinner) instead of stacking the
+            // new tool onto the prior round's settled card. Without
+            // this, tools accumulate on the last-text-bearing card
+            // forever, even across distinct rounds — confusing,
+            // because the chips visually attach to text they have
+            // nothing to do with.
+            if (assistantMsg && assistantMsg.parentNode && fullReply !== '') {
+              assistantMsg = null;
+              fullReply = '';
+            }
             // Tool calls can fire BEFORE the first chunk. Mint a host
             // assistant bubble on demand so the toggle has a parent.
             if (!assistantMsg || !assistantMsg.parentNode) {
@@ -7643,6 +7988,13 @@ const runtimeJS = `
             assistantMsg.tools.push({
               name: data.name || 'tool',
               args: data.args || '',
+              // Unclipped structured args, shown in the expanded
+              // details body. Server sends as a map; we keep it raw
+              // and let renderToolPanel format on display so a long
+              // command_template value (e.g. "python3
+              // /opt/gohort/data/workspaces/foo/script.py …") is
+              // fully visible instead of clipped to 60 chars.
+              argsFull: data.args_full || null,
               output: null,
             });
             attachToolToggle(assistantMsg);
@@ -7861,7 +8213,7 @@ const runtimeJS = `
     // mdToHTML is a top-level helper shared with pipeline_panel.
     function renderMessageBody(target, raw) {
       if (!cfg.markdown) { target.textContent = raw; return; }
-      target.innerHTML = mdToHTML(raw);
+      uiRenderMarkdown(target, raw);
     }
 
     // --- Input ergonomics -------------------------------------------------
@@ -7909,6 +8261,25 @@ const runtimeJS = `
     var hasList = !!(cfg.list_url && cfg.load_url && cfg.delete_url);
 
     var activeSessionId = '';
+    // activeRunId — server-issued run identifier for the current
+    // in-flight turn. Captured from the kind=run event the server
+    // emits right after the session event. Used to (a) address
+    // /api/runs/<id>/cancel from the cancel button when
+    // cfg.runs_url_base is set, and (b) subscribe to the run's
+    // stream after a reconnect.
+    var activeRunId = '';
+    // runSeqReceived — counter of real SSE events delivered to
+    // handleEvent for the current run. Sent as ?since=<n> on
+    // /api/runs/<id>/stream reconnect so the server replays only
+    // what was missed during the gap. Reset on session change or
+    // when a new run starts.
+    var runSeqReceived = 0;
+    // sessionSources — populated when the rail renders. Maps each
+    // session ID to its {source, chat_id} when the row comes from an
+    // external ExtraSessionsSource (see core/session_sources.go). openSession
+    // appends those as query params so the server can route the
+    // load to the right per-source scope.
+    var sessionSources = {};
     // activeContextId — used in CONTEXT mode for the left-rail's
     // active record (workspace, project, etc.). Distinct from
     // activeSessionId, which still tracks the server-issued chat
@@ -8100,8 +8471,8 @@ const runtimeJS = `
         title: action.title || '',
         'data-action-label': action.label || '',
       }, [action.label || '(action)']);
-      btn.addEventListener('click', function() {
-        if (action.confirm && !confirm(action.confirm)) return;
+      btn.addEventListener('click', async function() {
+        if (action.confirm && !(await window.uiConfirm(action.confirm))) return;
         var method = action.method || 'post';
         if (method === 'client') {
           var name = action.url || '';
@@ -8179,6 +8550,12 @@ const runtimeJS = `
     });
     if ((cfg.actions || []).length === 0) actionsBar.style.display = 'none';
     topbar.appendChild(actionsBar);
+    // statusPill removed — the in-chat thinking spinner (rendered
+    // by showThinking, floating above the active assistant bubble)
+    // already signals "agent working." A second top-bar indicator
+    // turned out to be visual noise. Kept the variable as null so
+    // the existing disable/enable null-guards still compile.
+    var statusPill = null;
     // ExtraFields strip lives in the topbar so context selectors
     // (active appliance, project, …) sit alongside the toolbar
     // buttons. The strip itself is built further below; we just
@@ -8643,14 +9020,14 @@ const runtimeJS = `
     var cancelBtn = el('button', {class: 'ui-row-btn ui-agent-cancel',
       style: 'display:none',
       onclick: function(){ cancelMessage(); }}, ['Cancel']);
-    var spinner = el('span', {class: 'ui-agent-spinner', style: 'display:none'},
-      [el('span', {class: 'ui-spinner'})]);
+    // statusPill is created earlier in this function (right after
+    // actionsBar) and appended into the top bar then. The input row
+    // only carries Send / Cancel now.
 
     inputRow.appendChild(inputArea);
     if (attachBtn) inputRow.appendChild(attachBtn);
     inputRow.appendChild(sendBtn);
     inputRow.appendChild(cancelBtn);
-    inputRow.appendChild(spinner);
 
     var attachStrip = el('div', {class: 'ui-agent-attach-strip', style: 'display:none'});
 
@@ -8783,7 +9160,7 @@ const runtimeJS = `
       var bubble = el('div', {class: classes});
       var body = el('div', {class: 'ui-agent-msg-body'});
       if (cfg.markdown && role === 'assistant' && text) {
-        body.innerHTML = mdToHTML(text);
+        uiRenderMarkdown(body, text);
       } else {
         body.textContent = text || '';
         // Assistant bubbles that arrive without pre-rendered HTML
@@ -8795,6 +9172,16 @@ const runtimeJS = `
         }
       }
       bubble.appendChild(body);
+      // Spinner-above-streaming pattern: if a thinking indicator
+      // exists, move it to the end of convoLog FIRST (so it sits
+      // after any existing content), THEN append the new bubble —
+      // the bubble lands just below the spinner, visually
+      // indicating "this bubble is being worked on." On the next
+      // round's new bubble, the same sequence relocates the
+      // spinner above THAT one.
+      if (thinkingEl && thinkingEl.parentNode === convoLog && role === 'assistant') {
+        convoLog.appendChild(thinkingEl); // move-to-end (no clone, same node)
+      }
       convoLog.appendChild(bubble);
       // A new user message means the user just sent — force-scroll
       // so their own message lands in view + reset the stick-to-
@@ -8975,7 +9362,7 @@ const runtimeJS = `
       var raw = (entry && entry.rawText) || bubble.querySelector(':scope > .ui-agent-msg-body').textContent || '';
       if (!raw) return;
       commitUserEdit(bubble, raw).catch(function(err) {
-        alert('Retry failed: ' + (err && err.message || err));
+        window.uiAlert('Retry failed: ' + (err && err.message || err));
       });
     }
 
@@ -8990,7 +9377,7 @@ const runtimeJS = `
         prev = prev.previousElementSibling;
       }
       if (!prev) {
-        alert('No prior user message to retry from.');
+        window.uiAlert('No prior user message to retry from.');
         return;
       }
       retryUserMessage(prev);
@@ -9136,15 +9523,25 @@ const runtimeJS = `
       }
       body.style.display = 'none';
       if (actions) actions.style.display = 'none';
-      var ta = el('textarea', {class: 'ui-agent-msg-edit-ta', rows: '3'});
+      // Default rows is a starting hint; autosizeEdit grows the
+      // textarea to fit the actual content immediately after mount
+      // (so a long message gets a tall edit area without the user
+      // having to drag the resize handle). Capped via CSS max-height
+      // so a huge message doesn't push the rest of the chat off-screen.
+      var ta = el('textarea', {class: 'ui-agent-msg-edit-ta', rows: '8'});
       ta.value = raw;
+      function autosizeEdit() {
+        ta.style.height = 'auto';
+        ta.style.height = (ta.scrollHeight + 2) + 'px';
+      }
+      ta.addEventListener('input', autosizeEdit);
       var save = el('button', {class: 'ui-agent-msg-act primary', onclick: function() {
         var newText = ta.value.trim();
         if (!newText) return;
         save.disabled = true;
         commitUserEdit(bubble, newText).catch(function(err) {
           save.disabled = false;
-          alert('Edit failed: ' + (err && err.message || err));
+          window.uiAlert('Edit failed: ' + (err && err.message || err));
         });
       }}, ['Save & resend']);
       var cancel = el('button', {class: 'ui-agent-msg-act', onclick: function() {
@@ -9155,13 +9552,16 @@ const runtimeJS = `
       var editBar = el('div', {class: 'ui-agent-msg-edit-bar'},
         [ta, el('div', {class: 'ui-agent-msg-edit-actions'}, [save, cancel])]);
       bubble.appendChild(editBar);
+      // Defer the initial sizing past mount so the element has a real
+      // computed scrollHeight to read (same pattern as the main input).
+      setTimeout(autosizeEdit, 0);
       ta.focus();
       ta.setSelectionRange(ta.value.length, ta.value.length);
     }
 
-    function deleteUserMessage(bubble) {
+    async function deleteUserMessage(bubble) {
       if (!activeSessionId) return;
-      if (!confirm('Delete this message and everything below it?')) return;
+      if (!(await window.uiConfirm('Delete this message and everything below it?'))) return;
       var at = userBubbleIndex(bubble);
       if (at < 0) return;
       truncateSession(at).then(function() {
@@ -9178,7 +9578,7 @@ const runtimeJS = `
         // No re-attach needed — every user bubble already has its
         // own action bar (we no longer treat the latest specially).
       }).catch(function(err) {
-        alert('Delete failed: ' + (err && err.message || err));
+        window.uiAlert('Delete failed: ' + (err && err.message || err));
       });
     }
 
@@ -9230,7 +9630,7 @@ const runtimeJS = `
       var m = msgEls[id];
       if (!m) return;
       if (cfg.markdown && m.role === 'assistant') {
-        m.body.innerHTML = mdToHTML(m.rawText || '');
+        uiRenderMarkdown(m.body, m.rawText || '');
       }
       // If the turn ended without any text (rare, e.g. tool-only
       // round), keep the bubble hidden so the user doesn't see an
@@ -9677,6 +10077,12 @@ const runtimeJS = `
       lastEventTime = Date.now();
       if (heartbeatEl) { heartbeatEl.remove(); heartbeatEl = null; }
       if (!ev || !ev.kind) return;
+      // Track received-event count so a /api/runs/<id>/stream
+      // reconnect can resume from the gap with ?since=<count>.
+      // Every event passing handleEvent — regardless of kind — is
+      // one server-Seq tick on the run buffer (Ping/keepalives stay
+      // out of the buffer; see sseWriter.emit in runner.go).
+      runSeqReceived++;
       // Drop the thinking indicator only on events that PRODUCE
       // CONVERSATION-PANE content. activity rows go to the activity
       // pane (which some apps lock off entirely), so they
@@ -9688,23 +10094,17 @@ const runtimeJS = `
       switch (ev.kind) {
         case 'chunk':
         case 'chunk_replace':
-          // Only ACTUAL response text clears the spinner. Tool
-          // calls, intent blocks, plan blocks, and lazy bubble
-          // materializations are mid-thought signals — the agent is
-          // still working out the answer, so the spinner stays up
-          // until the orchestrator starts streaming the user-facing
-          // reply.
-          clearThinking();
+          // Spinner used to clear here (on first response text), but
+          // the new behavior keeps it visible across the whole turn —
+          // it RELOCATES to sit above each new assistant bubble (see
+          // the move-to-end in appendMessage). Clear only happens on
+          // enableInput (turn end).
           break;
         case 'message':
-          // Empty-text message events are lazy-bubble materializations
-          // (orchestrator about to stream into a fresh bubble) — don't
-          // clear. Only clear when the server sent a message with
-          // pre-rendered text (e.g. an inline tool-result delivered
-          // as a final message).
-          if (ev.text && String(ev.text).length > 0) {
-            clearThinking();
-          }
+          // Same: don't clear mid-turn. The spinner stays as a "more
+          // is still coming" anchor above whichever bubble is most
+          // recent; relocated automatically when a new bubble is
+          // minted.
           break;
       }
       switch (ev.kind) {
@@ -9722,6 +10122,13 @@ const runtimeJS = `
             window.dispatchEvent(new CustomEvent('ui-agent-session',
               {detail: ev}));
           } catch (_) {}
+          break;
+        case 'run':
+          // Server-issued run identifier. Arrives once per turn
+          // (right after the session event, at server Seq=2). The
+          // top-of-handleEvent counter already ticked, so just
+          // capture the id and let the count keep accumulating.
+          activeRunId = ev.id || '';
           break;
         case 'message':
           addMessage(ev.role || 'assistant', ev.id || ('m-' + Date.now()), ev.text || '');
@@ -9744,13 +10151,15 @@ const runtimeJS = `
           // tool activity surfaces on a plan/intent card the user is
           // already looking at instead of a hidden materialization).
           // ev.name and ev.args describe the call; output lands via
-          // tool_result.
+          // tool_result. ev.call_id pairs the result back to THIS
+          // specific call (see tool_result case below).
           var bm = ensureMsgBubbleFor(ev.msg_id, 'assistant');
           if (!bm || !bm.bubble) break;
           var host = toolHostFor(bm);
           if (!host) break;
           if (!host.tools) host.tools = [];
           host.tools.push({
+            call_id: ev.call_id || '',
             name: ev.name || 'tool',
             args: ev.args || '',
             output: null,
@@ -9765,15 +10174,36 @@ const runtimeJS = `
           if (!bm2 || !bm2.bubble) break;
           var host2 = toolHostFor(bm2);
           if (!host2 || !host2.tools) break;
-          // Match the last call without an output — tools run
-          // sequentially within a round, so last-unmatched is the
-          // right pair. Accept either result or output as the key.
+          // Pair the result back to the exact tool_call that emitted
+          // it via call_id. Without call_id the renderer used to fall
+          // back to "last unmatched call" positional pairing, which
+          // silently mis-attributes results when calls don't strictly
+          // settle in emission order (async dispatch, parallel tool
+          // calls in one model response, cached short-circuits
+          // emitted alongside live calls). The result was a 401/404
+          // showing under the wrong tool name in the UI.
+          //
+          // Fallback: when an event arrives without a call_id (older
+          // server, in-flight buffered events during a deploy), keep
+          // the legacy "last unmatched" pairing so nothing breaks.
           var resultText = ev.result;
           if (resultText == null) resultText = ev.output;
-          for (var ti = host2.tools.length - 1; ti >= 0; ti--) {
-            if (host2.tools[ti].output === null) {
-              host2.tools[ti].output = String(resultText == null ? '' : resultText);
-              break;
+          var matched = false;
+          if (ev.call_id) {
+            for (var ti = host2.tools.length - 1; ti >= 0; ti--) {
+              if (host2.tools[ti].call_id === ev.call_id) {
+                host2.tools[ti].output = String(resultText == null ? '' : resultText);
+                matched = true;
+                break;
+              }
+            }
+          }
+          if (!matched) {
+            for (var ti2 = host2.tools.length - 1; ti2 >= 0; ti2--) {
+              if (host2.tools[ti2].output === null) {
+                host2.tools[ti2].output = String(resultText == null ? '' : resultText);
+                break;
+              }
             }
           }
           attachAgentToolToggle(host2); // refresh count + open panel
@@ -9905,7 +10335,7 @@ const runtimeJS = `
       sendBtn.disabled = true;
       sendBtn.style.display = 'none';
       cancelBtn.style.display = '';
-      spinner.style.display = '';
+      if (statusPill) statusPill.style.display = '';
       // Drop the empty-state placeholder as soon as any work
       // starts (chat send, Map subscribe, reconnect) so the user
       // sees a clean canvas the events fill into. Without this the
@@ -9919,7 +10349,7 @@ const runtimeJS = `
       sendBtn.disabled = false;
       sendBtn.style.display = '';
       cancelBtn.style.display = 'none';
-      spinner.style.display = 'none';
+      if (statusPill) statusPill.style.display = 'none';
       clearThinking();
       if (activeStream) { try { activeStream.abort(); } catch(_) {} activeStream = null; }
       if (activeEventSource) { activeEventSource.close(); activeEventSource = null; }
@@ -9953,12 +10383,23 @@ const runtimeJS = `
           // or one mid-stream) may be sitting just above it. When that
           // bubble later fills, the response materializes ABOVE the
           // interjection, which reads as "my message landed above the
-          // answer." Move the note ABOVE the first trailing in-flight
+          // answer." Move the note ABOVE the CURRENT (last) in-flight
           // assistant bubble so the response fills in below it.
+          //
+          // Iterate from the BOTTOM so we find the most recent in-
+          // flight bubble — older turns occasionally leave a stale
+          // ui-agent-msg-empty / ui-agent-msg-streaming class on
+          // their assistant bubble (lazy-materialized tool-call
+          // bubbles whose class transition didn't fully settle),
+          // and a top-down search would anchor on THAT ancient
+          // bubble, yanking the note all the way back near the
+          // original user turn instead of leaving it next to the
+          // current turn. Reverse iteration finds the in-flight
+          // bubble closest to the note, which is always the right one.
           var nb = noteBubble.bubble;
           var anchor = null;
           var kids = convoLog.children;
-          for (var ci = 0; ci < kids.length; ci++) {
+          for (var ci = kids.length - 1; ci >= 0; ci--) {
             var k = kids[ci];
             if (k === nb) continue;
             if (k.classList && k.classList.contains('ui-agent-msg-assistant') &&
@@ -9973,6 +10414,11 @@ const runtimeJS = `
           }
         }
         inputArea.value = '';
+        // Match the normal-send path: reset the inline style.height
+        // so a multi-line message (or a retry that put long text
+        // back into the input) doesn't leave the textarea visually
+        // taller than its empty content warrants.
+        inputArea.style.height = '';
         fetch(cfg.inject_url, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({id: activeSessionId, text: text}),
@@ -10040,6 +10486,13 @@ const runtimeJS = `
       pendingAttachments = [];
       renderAttachments();
       inputArea.value = '';
+      // Clear the inline style.height left over from autosizeInput
+      // when the user typed a multi-line message. Without this, the
+      // textarea stays at its grown height for the entire run even
+      // though the value is empty — looks like the input "grew" when
+      // really it just never shrank back. Clearing forces a return to
+      // the CSS-governed min-height: 2.2rem until the user types again.
+      inputArea.style.height = '';
 
       disableInput();
 
@@ -10218,10 +10671,10 @@ const runtimeJS = `
           renderBulkBar(items, sideList, bulkState, bulkSelected,
             function(s){ return s[idF]; },
             loadSessions,
-            function() {
+            async function() {
               var chosen = Object.keys(bulkSelected);
               if (!chosen.length) return;
-              if (!confirm('Delete ' + chosen.length + ' session(s) permanently?')) return;
+              if (!(await window.uiConfirm('Delete ' + chosen.length + ' session(s) permanently?'))) return;
               Promise.all(chosen.map(function(id) {
                 var url = substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(id)));
                 return fetchJSON(url, {method: 'DELETE'}).catch(function(){});
@@ -10302,9 +10755,9 @@ const runtimeJS = `
               row.appendChild(renBtn);
             }
             var delBtn = el('button', {class: 'ui-chat-side-del', title: 'Delete',
-              onclick: function(ev) {
+              onclick: async function(ev) {
                 ev.stopPropagation();
-                if (!confirm('Delete this item?')) return;
+                if (!(await window.uiConfirm('Delete this item?'))) return;
                 var url = substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(sid)));
                 fetchJSON(url, {method: 'DELETE'}).then(function() {
                   if (cfg.list_is_context) {
@@ -10388,6 +10841,11 @@ const runtimeJS = `
       }
       // SESSION mode — replay messages from the saved conversation.
       activeSessionId = sid || '';
+      // Reset run-tracking state — the new session may have its own
+      // in-flight run discovered via the active-run probe below, or
+      // no run at all. Either way, start counting from zero.
+      activeRunId = '';
+      runSeqReceived = 0;
       msgEls = {}; activityEls = {}; blockEls = {};
       convoLog.innerHTML = '';
       activityLog.innerHTML = '';
@@ -10408,6 +10866,16 @@ const runtimeJS = `
         return;
       }
       var url = substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)));
+      // External-source row? Append source + chat_id
+      // so the server's handleSessionOne knows which registered
+      // ExtraSessionsSource owns this row and how to route to its
+      // per-source storage scope.
+      var src = sessionSources[sid];
+      if (src && src.source) {
+        url += (url.indexOf('?') >= 0 ? '&' : '?') +
+          'source=' + encodeURIComponent(src.source) +
+          '&chat_id=' + encodeURIComponent(src.chat_id || '');
+      }
       fetchJSON(url).then(function(rec) {
         setHeaderTitle(rec && rec[ttlF]);
         var msgs = rec && rec[msgsF];
@@ -10441,9 +10909,65 @@ const runtimeJS = `
         }
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);
         loadSessions();
+        // After the saved transcript renders, ask the server
+        // whether this session has an in-flight run we should
+        // attach to. Server-side, the agent loop is decoupled from
+        // the original /api/send request (see runs.go); if the
+        // earlier client navigated away or refreshed mid-turn, the
+        // loop is still running and the buffer has its events
+        // queued. Subscribing here picks up live where the prior
+        // client left off.
+        tryResumeRun(sid);
       }).catch(function(err) {
         addActivity('error', '', err.message || String(err));
       });
+    }
+
+    // tryResumeRun queries /api/runs/active for the session; if an
+    // in-flight run exists, opens an EventSource that replays
+    // missed events from runSeqReceived (zero after a fresh load,
+    // higher if the same session was already on screen) and tails
+    // live until the run completes.
+    //
+    // No-op when cfg.runs_url_base is unset — apps that haven't
+    // adopted the run-registry layer keep their current
+    // load-and-stop behavior.
+    function tryResumeRun(sid) {
+      if (!cfg.runs_url_base || !sid) return;
+      var activeUrl = cfg.runs_url_base + 'active?session_id=' + encodeURIComponent(sid);
+      fetchJSON(activeUrl).then(function(d) {
+        if (!d || !d.run_id) return;
+        activeRunId = d.run_id;
+        // disableInput shows the in-flight UI affordances
+        // (cancel button, spinner) so the user knows a turn is
+        // running even though they didn't start it from this tab.
+        disableInput();
+        subscribeRunStream(d.run_id, runSeqReceived);
+      }).catch(function() { /* silent — no run is the common case */ });
+    }
+
+    // subscribeRunStream opens an EventSource on
+    // /api/runs/<id>/stream?since=<n>. Events flow into the same
+    // handleEvent path as the live /api/send response, so all
+    // existing chunk/message/block handling Just Works.
+    function subscribeRunStream(runId, since) {
+      // Tear down any prior subscription before starting a new one
+      // (e.g. fast session-switch could trigger double-subscribe).
+      if (activeEventSource) { activeEventSource.close(); activeEventSource = null; }
+      var url = cfg.runs_url_base + encodeURIComponent(runId) + '/stream?since=' + (since || 0);
+      activeEventSource = new EventSource(url);
+      activeEventSource.onmessage = function(ev) {
+        try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
+      };
+      activeEventSource.onerror = function() {
+        // EventSource auto-reconnects on transient errors. When
+        // the server closes the stream (run completed), we get a
+        // final onerror; tear down and re-enable input.
+        if (activeEventSource && activeEventSource.readyState === EventSource.CLOSED) {
+          activeEventSource = null;
+          enableInput();
+        }
+      };
     }
 
     // Deep-link bootstrapping: if the URL carries the configured
@@ -10457,7 +10981,31 @@ const runtimeJS = `
         if (sid) {
           if (cfg.list_is_context) activeContextId = sid;
           else activeSessionId = sid;
-          openSession(sid);
+          // Defer openSession until any extra inputs (Agency's
+          // agent picker, an app's custom picker, …) have
+          // populated. This bootstrap fires very early during panel
+          // mount — before those picker fetches resolve — and the
+          // session-load URL templates expect every extra to be
+          // substituted (e.g. api/sessions/{id}?agent_id={agent_id}).
+          // Loading early ships agent_id="", server returns 400,
+          // and the rail flashes "(failed to load)" until the user
+          // navigates away and back. Polling for value() lets the
+          // load fire as soon as the picker resolves, with a
+          // 3-second wall-clock cap as the retry-anyway fallback.
+          var openAttempts = 0;
+          function tryOpenFromDeepLink() {
+            var ready = true;
+            Object.keys(extraInputs || {}).forEach(function(k) {
+              if (!extraInputs[k] || !extraInputs[k].value) ready = false;
+            });
+            if (ready || openAttempts >= 30) {
+              openSession(sid);
+              return;
+            }
+            openAttempts++;
+            setTimeout(tryOpenFromDeepLink, 100);
+          }
+          tryOpenFromDeepLink();
         }
       } catch (_) {}
     }
@@ -10510,7 +11058,17 @@ const runtimeJS = `
       gridRow.appendChild(side);
       wrap.appendChild(drawer.backdrop);
     }
-    if (expandTab) gridRow.appendChild(expandTab);
+    if (expandTab) {
+      // Always absolute-position over the grid row. Earlier we
+      // experimented with inserting into the Agency topBundle as a
+      // flex/grid child — that shifted the bundle's action buttons
+      // to a second row when collapsed because the button took a
+      // grid cell. Absolute positioning leaves the bundle's layout
+      // untouched in both modes; the CSS rules for
+      // .ui-agent.side-collapsed .ui-agent-expand handle visible
+      // placement (see runtime.go's CSS block).
+      gridRow.appendChild(expandTab);
+    }
     gridRow.appendChild(main);
     gridRow.appendChild(activityExpandTab);
     wrap.appendChild(gridRow);
@@ -10988,8 +11546,8 @@ const runtimeJS = `
             style: 'text-decoration:none',
           }, [ma.label]);
         } else {
-          maBtn = el('button', {class: 'ui-pl-btn secondary', title: ma.title || ma.label, onclick: function() {
-            if (ma.confirm && !confirm(ma.confirm)) return;
+          maBtn = el('button', {class: 'ui-pl-btn secondary', title: ma.title || ma.label, onclick: async function() {
+            if (ma.confirm && !(await window.uiConfirm(ma.confirm))) return;
             if (maMethod === 'copy') {
               var fullURL = window.location.origin + window.location.pathname + maURL;
               if (ma.url && /^https?:/i.test(ma.url)) fullURL = maURL;
@@ -11144,7 +11702,7 @@ const runtimeJS = `
               content = el('div', {class: 'ui-pl-modal-content'});
               body.appendChild(content);
             }
-            content.innerHTML = mdToHTML(streamRaw);
+            uiRenderMarkdown(content, streamRaw);
             // Don't auto-scroll-to-bottom on each chunk — that
             // pushes the overlay past the headline and forces the
             // user to scroll back up. Scroll to top on done instead.
@@ -11153,7 +11711,7 @@ const runtimeJS = `
             streamRaw = data.Body || '';
             body.dataset.raw = streamRaw;
             var c2 = body.querySelector('.ui-pl-modal-content');
-            if (c2) c2.innerHTML = mdToHTML(streamRaw);
+            if (c2) uiRenderMarkdown(c2, streamRaw);
             break;
           case 'report_done':
           case 'done':
@@ -11216,8 +11774,8 @@ const runtimeJS = `
             style: 'text-decoration:none',
           }, [a.label]);
         } else {
-          btn = el('button', {class: btnClass, title: a.title || a.label, onclick: function() {
-            if (a.confirm && !confirm(a.confirm)) return;
+          btn = el('button', {class: btnClass, title: a.title || a.label, onclick: async function() {
+            if (a.confirm && !(await window.uiConfirm(a.confirm))) return;
             if (method === 'copy') {
               var fullURL = window.location.origin + window.location.pathname + url;
               if (a.url && /^https?:/i.test(a.url)) fullURL = url;
@@ -11366,7 +11924,7 @@ const runtimeJS = `
       if (!rec || rec.done) return;
       rec.done = true;
       if (rec.body && cfg.markdown && rec.raw.trim()) {
-        rec.body.innerHTML = mdToHTML(rec.raw);
+        uiRenderMarkdown(rec.body, rec.raw);
       }
       // Per-renderer onDone hook for any final chrome (e.g. drop the
       // streaming spinner, finalize sources panel).
@@ -11466,7 +12024,7 @@ const runtimeJS = `
       wrap.appendChild(head);
       var body = el('div', {class: 'ui-pl-expandable-body'});
       if (d.body) {
-        if (cfg.markdown) body.innerHTML = mdToHTML(d.body);
+        if (cfg.markdown) uiRenderMarkdown(body, d.body);
         else body.textContent = d.body;
       }
       wrap.appendChild(body);
@@ -11721,7 +12279,7 @@ const runtimeJS = `
             // chunks). Render it as markdown so contained-window
             // sections look polished.
             if (data.body != null && cfg.markdown) {
-              rec.body.innerHTML = mdToHTML(raw);
+              uiRenderMarkdown(rec.body, raw);
             } else {
               rec.body.textContent = raw;
             }
@@ -11845,8 +12403,7 @@ const runtimeJS = `
           if (content && rec && rec.body) {
             rec.raw = content;
             if (cfg.markdown) {
-              var rendered = mdToHTML(content);
-              rec.body.innerHTML = rendered;
+              uiRenderMarkdown(rec.body, content);
               // Diagnostic — surface the gap when the rendered HTML
               // has substantially less content than the raw markdown
               // (mdToHTML regex catastrophic-backtracking on certain
@@ -11925,15 +12482,24 @@ const runtimeJS = `
         list.sort(function(a, b){ return String(b[dateF] || '').localeCompare(String(a[dateF] || '')); });
         var ids = {}; list.forEach(function(s){ ids[s[idF]] = true; });
         Object.keys(bulkSelected).forEach(function(k){ if (!ids[k]) delete bulkSelected[k]; });
+        // Rebuild source map from the latest list. Cleared first so
+        // a row that drops a source tag (or goes away entirely)
+        // doesn't keep its old routing on subsequent loads.
+        sessionSources = {};
+        list.forEach(function(s){
+          if (s && s.source) {
+            sessionSources[s[idF]] = {source: s.source, chat_id: s.chat_id || ''};
+          }
+        });
 
         if (cfg.bulk_select) {
           renderBulkBar(list, sideList, bulkState, bulkSelected,
             function(s){ return s[idF]; },
             loadSessions,
-            function() {
+            async function() {
               var sel = Object.keys(bulkSelected);
               if (!sel.length) return;
-              if (!confirm('Delete ' + sel.length + ' run(s) permanently?')) return;
+              if (!(await window.uiConfirm('Delete ' + sel.length + ' run(s) permanently?'))) return;
               Promise.all(sel.map(function(id) {
                 var u = cfg.session_delete_url.replace('{id}', encodeURIComponent(id));
                 return fetch(u, {method: 'DELETE'});
@@ -12019,9 +12585,9 @@ const runtimeJS = `
           if (!inMode) {
             var delBtn = el('button', {
               class: 'ui-chat-side-del', title: 'Delete',
-              onclick: function(ev) {
+              onclick: async function(ev) {
                 ev.stopPropagation();
-                if (!confirm('Delete this run?')) return;
+                if (!(await window.uiConfirm('Delete this run?'))) return;
                 var u = cfg.session_delete_url.replace('{id}', encodeURIComponent(s[idF]));
                 fetch(u, {method: 'DELETE'}).then(function() {
                   if (s[idF] === currentSessionId) openSession(null);
@@ -12201,8 +12767,42 @@ const runtimeJS = `
       placeholder: cfg.placeholder_ctx || 'Paste table schemas, DDL, column descriptions, API docs, or any reference material here. The LLM reads this alongside the code on every chat turn.',
       spellcheck: 'false',
     });
-    var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [ctxEditor]);
+    // Reference-collections picker. Rendered only when the host wires
+    // cfg.collections_list_url; checkboxes are populated below. The IDs
+    // the user checks ride on every chat POST as a "collections" array.
+    var collChecks = [];
+    var collBar    = el('div', {class: 'ui-cw-coll-bar'});
+    if (!cfg.collections_list_url) collBar.style.display = 'none';
+    function pickedCollections() {
+      var out = [];
+      for (var i = 0; i < collChecks.length; i++) {
+        if (collChecks[i].checked) out.push(collChecks[i].value);
+      }
+      return out;
+    }
+    var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [collBar, ctxEditor]);
     var ctxSection = el('div', {class: 'ui-cw-ctx-section'}, [ctxToggle, ctxPane]);
+
+    // Populate the collections picker from the list endpoint. Best-
+    // effort: any failure (no endpoint, error, empty list) just leaves
+    // the bar hidden so the panel degrades to plain context-only.
+    if (cfg.collections_list_url) {
+      fetch(cfg.collections_list_url, {credentials: 'same-origin'})
+        .then(function(r){ return r.ok ? r.json() : []; })
+        .then(function(list){
+          list = list || [];
+          if (!list.length) { collBar.style.display = 'none'; return; }
+          collBar.appendChild(el('span', {class: 'ui-cw-coll-lbl'}, ['Reference collections:']));
+          list.forEach(function(c){
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = c.id;
+            collChecks.push(cb);
+            collBar.appendChild(el('label', {class: 'ui-cw-coll-chip'}, [cb, ' ' + (c.name || c.id)]));
+          });
+        })
+        .catch(function(){ collBar.style.display = 'none'; });
+    }
 
     // Horizontal drag handle between the code editor and the context
     // section. Dragging resizes the context section's height. Wired
@@ -12272,9 +12872,9 @@ const runtimeJS = `
         showToast('Load failed: ' + err.message);
       });
     }
-    function deleteContext(id) {
+    async function deleteContext(id) {
       if (!cfg.context_url) return;
-      if (!confirm('Delete this saved context?')) return;
+      if (!(await window.uiConfirm('Delete this saved context?'))) return;
       var url = cfg.context_url.replace('{id}', encodeURIComponent(id));
       fetch(url, {method: 'DELETE'}).then(function() {
         if (currentContextID === id) setCurrentContext(null, null);
@@ -12421,6 +13021,7 @@ const runtimeJS = `
         lang:    langSelect.value,
         code:    editor.value || '',
         context: ctxEditor.value || '',
+        collections: pickedCollections(),
         message: text,
         mode:    mode,
         history: chatHistory.slice(0, -1),
@@ -12627,9 +13228,9 @@ const runtimeJS = `
       }, 1500);
     }
 
-    function deleteSnippet(id) {
+    async function deleteSnippet(id) {
       if (!cfg.delete_url) return;
-      if (!confirm('Delete this snippet? This cannot be undone.')) return;
+      if (!(await window.uiConfirm('Delete this snippet? This cannot be undone.'))) return;
       var url = cfg.delete_url.replace('{id}', encodeURIComponent(id));
       fetch(url, {method: 'DELETE'}).then(function(r) {
         if (!r.ok && r.status !== 204) {
@@ -12863,8 +13464,8 @@ const runtimeJS = `
           var editBtn = el('button', {class: 'ui-cw-list-btn'}, ['Edit']);
           editBtn.addEventListener('click', function(){ editValueModal(it); });
           var del = el('button', {class: 'ui-cw-list-btn danger'}, ['×']);
-          del.addEventListener('click', function() {
-            if (!confirm('Delete value "' + (it.name || '') + '"?')) return;
+          del.addEventListener('click', async function() {
+            if (!(await window.uiConfirm('Delete value "' + (it.name || '') + '"?'))) return;
             var url = cfg.value_url.replace('{id}', encodeURIComponent(it.id));
             fetch(url, {method: 'DELETE'}).then(function(){ openValuesModal(); });
           });
@@ -13079,7 +13680,7 @@ const runtimeJS = `
       toast:    function(msg) { showToast(msg); },
       busy:     function(btn, label) { setBtnBusy(btn, label); },
       restore:  function(btn) { restoreBtn(btn); },
-      confirm:  function(msg) { return confirm(msg); },
+      confirm:  function(msg) { return window.uiConfirm(msg); },
       appendAssistant: function(role, content) { asstAppend(role, content); },
     };
 
@@ -13101,8 +13702,8 @@ const runtimeJS = `
       if (action.variant) classes += ' ' + action.variant;
       var btn = el('button', {class: classes, title: action.title || ''},
         [action.label || '(action)']);
-      btn.addEventListener('click', function() {
-        if (action.confirm && !confirm(action.confirm)) return;
+      btn.addEventListener('click', async function() {
+        if (action.confirm && !(await window.uiConfirm(action.confirm))) return;
         var method = action.method || 'post';
         if (method === 'client') {
           var name = action.url || '';
@@ -13152,9 +13753,9 @@ const runtimeJS = `
       extras.forEach(function(action) {
         var entry = el('button', {class: 'ui-tw-extras-item', title: action.title || ''},
           [action.label || '(action)']);
-        entry.addEventListener('click', function() {
+        entry.addEventListener('click', async function() {
           extrasMenu.style.display = 'none';
-          if (action.confirm && !confirm(action.confirm)) return;
+          if (action.confirm && !(await window.uiConfirm(action.confirm))) return;
           var method = action.method || 'post';
           if (method === 'client') {
             var name = action.url || '';
@@ -13408,10 +14009,10 @@ const runtimeJS = `
           renderBulkBar(items, sideList, bulkState, bulkSelected,
             function(it){ return it[idF]; },
             loadList,
-            function() {
+            async function() {
               var keys = Object.keys(bulkSelected);
               if (!keys.length) return;
-              if (!confirm('Delete ' + keys.length + ' article(s) permanently?')) return;
+              if (!(await window.uiConfirm('Delete ' + keys.length + ' article(s) permanently?'))) return;
               Promise.all(keys.map(function(id) {
                 var url = cfg.delete_url.replace('{id}', encodeURIComponent(id));
                 return fetchJSON(url, {method: 'DELETE'}).catch(function(){});
@@ -13451,9 +14052,9 @@ const runtimeJS = `
           if (cfg.delete_url && !inMode) {
             row.appendChild(el('button', {
               class: 'ui-chat-side-del', title: 'Delete article',
-              onclick: function(ev) {
+              onclick: async function(ev) {
                 ev.stopPropagation();
-                if (!confirm('Delete "' + fullSubject + '" permanently?')) return;
+                if (!(await window.uiConfirm('Delete "' + fullSubject + '" permanently?'))) return;
                 var url = cfg.delete_url.replace('{id}', encodeURIComponent(it[idF]));
                 fetchJSON(url, {method: 'DELETE'}).then(function() {
                   if (currentID === it[idF]) openArticle(null);
@@ -13555,8 +14156,8 @@ const runtimeJS = `
       imageRow.style.display = '';
       imageRow.appendChild(el('img', {src: url, class: 'ui-tw-image'}));
       imageRow.appendChild(el('div', {class: 'ui-tw-image-actions'}, [
-        el('button', {class: 'ui-row-btn', onclick: function() {
-          if (!confirm('Remove the header image from this article?')) return;
+        el('button', {class: 'ui-row-btn', onclick: async function() {
+          if (!(await window.uiConfirm('Remove the header image from this article?'))) return;
           hideImage();
           showToast('Image removed — Save to persist');
         }}, ['Remove']),
@@ -13895,11 +14496,11 @@ const runtimeJS = `
           }).catch(function(err){ showToast('Save source failed: ' + err.message); });
         }}, ['Save as source']) : null;
       var mergeRunBtn = el('button', {class: 'ui-row-btn success',
-        onclick: function() {
+        onclick: async function() {
           var other = pasteArea.value.trim();
           if (!other) { showToast('Need something to merge with'); return; }
           if (!bodyArea.value.trim()) { showToast('Current article is empty — nothing to merge into'); return; }
-          if (!confirm('Merge the source into the current article? The body will be replaced with the merged result.')) return;
+          if (!(await window.uiConfirm('Merge the source into the current article? The body will be replaced with the merged result.'))) return;
           setBtnBusy(mergeRunBtn, 'Merging…');
           statusLine.textContent = '';
           fetchJSON(cfg.merge_url, {

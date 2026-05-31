@@ -52,14 +52,140 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 	}
 	if db.Get(agentsTable, id, &a) {
 		a = selfHealAllowedTools(db, a)
+		a = enforceSubAgentPosture(a)
 		return a, true
 	}
 	// Fall back to the in-code seed when the DB had nothing — this
 	// is the "no shadow exists" branch. Returns the framework default.
 	if seed, ok := seedAgentByID(id); ok {
-		return seed, true
+		return enforceSubAgentPosture(seed), true
 	}
 	return a, false
+}
+
+// enforceSubAgentPosture pins the structural "sub-agent" fields when
+// OwnedBy is set. A sub-agent is a focused capability component called
+// by its parent via dispatch — not a user-facing standalone surface —
+// so certain fields are meaningless or actively harmful and we ignore
+// the stored value:
+//
+//   - Hidden    forced true:  sub-agents must not appear in the global
+//     fleet "Available agents" prompt block; they're reachable only via
+//     the parent's implicit dispatch authority.
+//   - Exposed   forced false: sub-agents have no public /agents/ surface
+//   - PublicName    cleared:  same reason
+//   - AllowExplorer  → false: explorer mode is an interactive recovery
+//     valve; sub-agent dispatches are focused single-task runs
+//   - IntakeForm    cleared:  sub-agents receive structured input from
+//     the parent, not from a user filling in a form
+//   - DisableExplicit → true: no facts (sub-agent dispatch is stateless;
+//     accumulated facts can't be meaningfully scoped)
+//   - DisableInferred → true: no Reference Memory (each call is a
+//     different target; prior findings would contaminate fresh lookups)
+//
+// Think is left untouched — it's a legitimate per-agent author choice.
+// Posture is enforced at the runtime read path so even if the stored
+// record drifts (Builder mistake, manual DB edit, old data) the runtime
+// treats sub-agents correctly. Editor + Builder also discipline the
+// write path so wrong values don't end up persisted in the first place.
+func enforceSubAgentPosture(a AgentRecord) AgentRecord {
+	if a.OwnedBy == "" {
+		return a
+	}
+	a.Hidden = true
+	a.Exposed = false
+	a.PublicName = ""
+	a.AllowExplorer = false
+	a.IntakeForm = nil
+	a.DisableExplicit = true
+	a.DisableInferred = true
+	return a
+}
+
+// enableApprovedToolOnSeedChat is the OnTempToolApproved hook target.
+// When admin approves a temp tool, ensure it shows up as enabled on
+// the user's seed-chat — both at runtime (LLM can call it) and in
+// the Tools modal (checkbox visibly checked).
+//
+// Two cases:
+//
+//  1. seed-chat already has a custom AllowedTools list: append the
+//     new tool. Existing behavior.
+//
+//  2. seed-chat is at the "default pool" sentinel (empty AllowedTools):
+//     EXPAND the list to the current effective set (framework defaults
+//     + every persistent tool the user already has) and append the
+//     new tool. Final runtime behavior is identical (same effective
+//     set), but the list is now explicit so the Tools modal renders
+//     every box checked instead of relying on the "empty means
+//     everything" sentinel — which previously made the just-approved
+//     tool look disabled even though the runtime auto-included it.
+//
+// Trade-off of expanding the sentinel: future framework default-pool
+// expansions don't auto-roll-forward to this user. They can re-check
+// the new tool in the Tools modal once. Worth it for the friction-free
+// "approve a tool, it shows up enabled immediately" UX.
+//
+// No-op when seed-chat doesn't exist for the user, or already has
+// the tool listed.
+func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
+	if db == nil || username == "" || toolName == "" {
+		return
+	}
+	udb := UserDB(db, username)
+	if udb == nil {
+		return
+	}
+	var rec AgentRecord
+	if !udb.Get(agentsTable, "seed-chat", &rec) {
+		return
+	}
+	// Respect a previous explicit-disable. If the user manually
+	// unchecked this tool in the past, it's on the deny list; the
+	// admin re-approving (often = author iterated and re-approved
+	// the new version) is not strong enough signal to override the
+	// user's choice silently. The tool stays disabled until the
+	// user re-checks it themselves.
+	for _, n := range rec.DisabledPersistentTools {
+		if n == toolName {
+			Log("[orchestrate.agents] approved tool %q stays disabled on seed-chat for user=%s (on user deny list)", toolName, username)
+			return
+		}
+	}
+	for _, n := range rec.AllowedTools {
+		if n == toolName {
+			return
+		}
+	}
+	if len(rec.AllowedTools) == 0 {
+		// Expand the "default pool" sentinel to the current effective
+		// set so the modal can render every effective tool as checked.
+		// Framework defaults + persistent temp tools the user already
+		// has + the new one being approved.
+		current := availableWorkerToolNames()
+		seen := make(map[string]bool, len(current)+8)
+		for _, n := range current {
+			seen[n] = true
+		}
+		for _, p := range LoadPersistentTempTools(db, username) {
+			if !seen[p.Tool.Name] {
+				seen[p.Tool.Name] = true
+				current = append(current, p.Tool.Name)
+			}
+		}
+		if !seen[toolName] {
+			current = append(current, toolName)
+		}
+		rec.AllowedTools = current
+		rec.Updated = time.Now()
+		udb.Set(agentsTable, "seed-chat", rec)
+		Log("[orchestrate.agents] expanded seed-chat default-pool sentinel to explicit list (%d tools) and enabled approved %q for user=%s", len(current), toolName, username)
+		return
+	}
+	rec.AllowedTools = append(rec.AllowedTools, toolName)
+	rec.Updated = time.Now()
+	udb.Set(agentsTable, "seed-chat", rec)
+	Log("[orchestrate.agents] enabled approved tool %q on seed-chat for user=%s", toolName, username)
 }
 
 // migrateBuilderShadows is the one-shot startup migration that
@@ -234,12 +360,26 @@ func selfHealAllowedTools(db Database, a AgentRecord) AgentRecord {
 }
 
 // isResolvableToolName reports whether the given name maps to either
-// a registered ChatTool or one of the agent owner's persistent temp
-// tools. Used to detect orphan entries left in AllowedTools after a
-// tool gets unregistered or a temp tool gets deleted.
+// a registered ChatTool, a connected gohort-desktop local tool, or
+// one of the agent owner's persistent temp tools. Used to detect
+// orphan entries left in AllowedTools after a tool gets unregistered
+// or a temp tool gets deleted.
+//
+// Client-bridge tools (name prefix "from_client.") are treated as
+// ALWAYS resolvable: they're framework-runtime tools injected
+// per-turn from the desktop bridge regardless of whether the
+// agent's AllowedTools lists them, and the desktop may be
+// disconnected at AllowedTools-load time even when it's connected
+// later at chat-turn time. Stripping them at load would create a
+// thrash where the user toggles them on, the load self-heals them
+// off, and the runtime keeps adding them via the per-turn hook
+// anyway.
 func isResolvableToolName(db Database, owner, name string) bool {
 	if name == "" {
 		return false
+	}
+	if strings.HasPrefix(name, "from_client.") {
+		return true
 	}
 	if _, ok := FindChatTool(name); ok {
 		return true
@@ -318,7 +458,7 @@ func listAgents(db Database, owner string) []AgentRecord {
 		if a.Owner == seedOwner {
 			continue
 		}
-		out = append(out, a)
+		out = append(out, enforceSubAgentPosture(a))
 		seen[a.ID] = true
 	}
 	// Pass 2: in-code seeds that the user hasn't shadowed. Adds the
@@ -328,7 +468,7 @@ func listAgents(db Database, owner string) []AgentRecord {
 		if seen[seed.ID] {
 			continue
 		}
-		out = append(out, seed)
+		out = append(out, enforceSubAgentPosture(seed))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -365,6 +505,25 @@ func deleteAgent(db Database, id, owner string) error {
 	}
 	if a.Owner != owner {
 		return fmt.Errorf("agent %q is not yours", id)
+	}
+	// Cascade-delete sub-agents — anything where OwnedBy points at the
+	// agent being deleted. Recursive (a sub-agent that owns its own
+	// sub-agents propagates the delete down). Idempotent: a sub-agent
+	// already gone (manual delete prior) is just skipped. Owned
+	// children's session buckets, memory, knowledge get cleaned up by
+	// the recursive deleteAgent call's normal path.
+	for _, k := range db.Keys(agentsTable) {
+		if k == id {
+			continue
+		}
+		var child AgentRecord
+		if !db.Get(agentsTable, k, &child) {
+			continue
+		}
+		if child.OwnedBy == id && child.Owner == owner {
+			Log("[orchestrate.agents] cascade-deleting sub-agent %q (owned_by=%q)", child.Name, a.Name)
+			_ = deleteAgent(db, child.ID, owner)
+		}
 	}
 	dropChatSessionBucket(db, id)
 	db.Unset(agentsTable, id)
@@ -473,7 +632,15 @@ func isShadowed(db Database, id string) bool {
 // no session history — that's the whole point of cloning. Used when
 // the user wants two named workspaces sharing one persona, or wants
 // to customize a seed without mutating the original.
-func cloneAgent(db Database, srcID, owner, newName string) (AgentRecord, error) {
+//
+// promote=true clears OwnedBy on the clone, turning a sub-agent into
+// a first-class top-level agent. This is the only path for surfacing
+// a sub-agent's persona as a standalone surface — the editor can't
+// flip the field (sub-agent posture is structurally pinned), so the
+// clone-with-promotion flow is the dedicated escape hatch when the
+// user wants to take a Builder-authored specialist and run it
+// independently of its parent.
+func cloneAgent(db Database, srcID, owner, newName string, promote bool) (AgentRecord, error) {
 	src, ok := loadAgent(db, srcID)
 	if !ok {
 		return AgentRecord{}, fmt.Errorf("agent %q not found", srcID)
@@ -490,6 +657,9 @@ func cloneAgent(db Database, srcID, owner, newName string) (AgentRecord, error) 
 	clone.Owner = owner
 	clone.Name = strings.TrimSpace(newName)
 	clone.Created = time.Time{}
+	if promote {
+		clone.OwnedBy = ""
+	}
 	return saveAgent(db, clone)
 }
 
@@ -598,6 +768,29 @@ Surface Builder's summary back to the user when it returns. Builder runs the ful
 			Description: "Authoring agent: creates, modifies, and verifies agents and tools. The only agent in the fleet with direct authoring access — every other agent (Chat, Research, etc.) delegates here when the user wants to build something.",
 			OrchestratorPrompt: `You are Builder — the dedicated authoring agent. Your only job is to create, modify, and verify agents and tools. You do NOT answer general questions, do NOT chitchat, do NOT do research on the user's behalf. If a question isn't about authoring something, point the user back to Chat and end the turn.
 
+## Sandbox network — all traffic goes through gohort
+
+All network access in your scripts flows through gohort. Inside your script:
+
+  ` + "from gohort import fetch_url, browse_page, log" + `
+  ` + "result = fetch_url(url)" + `         # {status, headers, body}
+  ` + "page   = browse_page(url)" + `       # JS-rendered, same shape
+
+These primitives are available by default — no declaration needed. Same names as the LLM-callable tools you tested with. ` + "fetch_url" + ` auto-routes JS-heavy hosts (Reddit / Twitter / etc.) through ` + "browse_page" + ` for you.
+
+**Any network-doing standard library is BLOCKED**: curl, wget, urllib (the network parts — ` + "urllib.parse" + ` for encoding is fine), requests, http.client, socket-dialing, subprocess wrapping curl/wget. The framework refuses tool_def calls that use any of them. When ` + "gohort.fetch_url" + ` returns 4xx, the fix is NEVER a different HTTP client — diagnose the URL, escalate to ` + "browse_page" + `, or add credentialed access (next).
+
+## API credentials in scripts
+
+Some endpoints need auth. Two declared-capability shapes:
+
+  ` + "hook_capabilities=[\"secret:<credential_name>\"]" + `  →  ` + "from gohort import secret; api_key = secret(\"openweather\")" + `
+  ` + "hook_capabilities=[\"fetch_via:<credential_name>\"]" + `  →  ` + "from gohort import fetch_via; data = fetch_via(\"openweather\", url)" + `
+
+**Prefer ` + "fetch_via" + `**: gohort dispatches the request through the credential's allow-list, injects auth server-side, logs it, returns the body. The script never sees the secret. ` + "secret" + ` is the escape hatch when you need the raw value (custom signing, OAuth-flow, etc.).
+
+These are the only capability declarations you ever need to write — bare ` + "fetch_url" + `/` + "browse_page" + `/` + "log" + ` are automatic. Credential identifiers can't be auto-guessed, so they stay explicit; if the credential isn't registered, tell the user to register it via the admin UI first.
+
 ## Authoring is your job
 
 You're the only agent in the fleet that can author — every other agent dispatches to you when the user wants something built.
@@ -665,7 +858,7 @@ The per-user lessons log (store_fact / forget_fact / list_facts) is reframed for
 You run in two modes depending on who invoked you. Check the first user message:
 
 - **INTERACTIVE** (default): a human is on the other end via the Agency chat surface. Use the full conversational rhythm below — ask one question at a time, use ask_user / ask_user_form with options[] for clarifying choices, pause for approval before executing. Multi-choice questions ("Pick a persona starting point: Researcher / Reviewer / Conversational") are great here — they're faster than open-ended back-and-forth and give the user a clear set of paths to choose from.
-- **DELEGATED**: the first user message starts with [DELEGATED INVOCATION]. Another agent called you via agents(action="run") — there is no human listening for ask_user / ask_user_form, so DO NOT call them. The brief in the delegated message is your full spec. Make reasonable defaults for anything not specified, skip Phase 1 conversation entirely, skip Phase 3 (CONFIRM) pause, go straight from a brief Phase 2 design to Phase 4 plan_set. Phase 5 synthesis is the reply to the dispatching caller.
+- **DELEGATED**: the first user message starts with [DELEGATED INVOCATION]. Another agent called you via agents(action="run") — there is no human listening for ask_user / ask_user_form, so DO NOT call them. The brief in the delegated message is your full spec. Make reasonable defaults for anything not specified, skip Phase 1 conversation entirely, skip Phase 3 (CONFIRM) pause, go straight from a brief Phase 2 design to Phase 4 execution (inline or via plan_set workers as the build warrants). Phase 5 synthesis is the reply to the dispatching caller.
 
 ## How you work — conversational intake → plan → execute → verify
 
@@ -674,6 +867,8 @@ You drive the conversation. Don't ask the user to fill in a form — ASK ONE QUE
 ### Phase 1 — UNDERSTAND (1-3 messages, conversational)
 
 Open by asking what the user wants to build. Probe minimally: what should it do? Who's it for? Does it need any external data sources? Don't drown them in 12 questions; if they give a clear intent ("I want a research agent for reddit topics") you have enough — propose defaults for everything else and confirm in Phase 2.
+
+**Intake discipline for API-backed builds.** When the user's request involves external APIs / providers / endpoints (OSINT tools, weather data, finance lookups, etc.) and they HAVEN'T named specific providers, ASK before going further: "Which APIs / sources do you want me to integrate? Please name each one — e.g. Shodan, HaveIBeenPwned, RDAP, NewsAPI. For each: docs URL and auth requirement (no_auth / API key / OAuth). I author tools against each provider's documentation, not by reverse-engineering arbitrary endpoints." Don't START researching what an "OSINT agent" or "finance agent" SHOULD include — that's how scope creep happens. Get the specific list from the user. The right answers are: user names providers (proceed to verify each is documented) OR user can't name any (refuse: "I need specific provider names — I can't write reliable tools by improvising against undocumented surfaces"). Once the user names a provider list, STAY WITHIN IT. Don't add a 5th API you "noticed" mid-build.
 
 If the domain is unfamiliar (a specific API, a niche topic the agent needs to know), call web_search / fetch_url YOURSELF to ground yourself BEFORE designing — that's your job, do it directly. Do NOT dispatch to another agent (e.g. agents(action="run", agent="Research", ...)) just to answer a question you could look up with a search; a single dispatch spins up a whole agent turn for what one web_search resolves. Reserve agents(action="run") for genuinely heavy, multi-step investigation you can't do inline (and even then, prefer doing it yourself). Authoring is hands-on work — reach for your own tools first.
 
@@ -830,18 +1025,19 @@ This is the pattern the built-in producer tools follow. For tools whose output i
 - Don't ask the user to "clean up after themselves" — the framework primitives (cleanup=true, workspace(rm)) handle it.
 - Don't author a tool whose ONLY job is cleanup ("clear_workspace") — workspace(rm) covers it.
 
-### Phase 4 — EXECUTE via plan_set (workers do all the work)
+### Phase 4 — EXECUTE
 
-On approval, call plan_set ONCE with the full work decomposed into steps. Each step runs as a worker in a FRESH LLM context — same pattern Servitor uses for investigation, here used for authoring. The orchestrator (you) doesn't call create_agent / update_agent / clone_agent / delete_agent / add_tool / tool_def in your own context — those are worker territory. You decompose; workers execute.
+On approval, build it out. You have the full authoring catalog (tool_def, create_agent, add_tool, skill_def, pipeline) in your own context — call them directly with the spec you assembled in Phase 2-3. plan_set is OPTIONAL: dispatch a worker when a single piece is heavy enough to deserve a fresh context (probing an unfamiliar API, drafting a >20-line script body where you'd benefit from not accumulating draft iterations, smoke-testing an agent you just created). For simple builds — one tool against a known API, an agent cloned from a seed, a skill that's pure prose — just author inline.
 
-Plan shape:
-- Steps 1..N-2: author each custom tool. Worker_brief calls tool_def(action="create", ...) with the full spec.
-- Step N-1: create the agent. Worker_brief calls create_agent with the full record + allowed_tools listing every name (auto-copy bundles session-authored tools into the agent record).
-- Step N (verify): worker_brief calls agents(action="run", agent=..., message=...) on the new agent with a representative sample input, reports what came back. This is the smoke test — done as a worker so the orchestrator stays out of the verification context.
+Build shape (inline):
+- For each custom tool: tool_def(action="create", ...) with the full spec. Include test_args so the framework smoke-tests it on creation.
+- For the agent: create_agent with the full record + allowed_tools listing every tool name (auto-copy bundles session-authored tools into the agent record).
+- To verify the agent: agents(action="run", agent=<name>, message=<sample input>). The new agent is reachable from your catalog now that agents(run) is enabled for you. Builder→Builder is auto-refused; everything else dispatches normally.
 
-Each worker_brief is SELF-CONTAINED. Restate every name, every template, every credential, every sample arg. Workers don't see this conversation; "as we discussed" / "see step 2" doesn't work. If step 3 needs to know what step 1 named the tool, restate the name in step 3's brief.
+Build shape (worker-dispatched):
+- If you want the per-step visibility OR if the work genuinely benefits from fresh contexts, call plan_set with steps whose briefs are SELF-CONTAINED. Workers have the same authoring catalog you do, so a worker step can call tool_def / create_agent / agents(run) itself.
 
-Why workers and not inline calls: a single LLM running the whole flow accumulates context (your design discussion, ask_user answers, prior tool probes) that distracts from the focused job each authoring call needs. Workers get a clean slate per step and reliably produce the same shape; inline calls drift.
+When in doubt, inline is cheaper. Workers exist for context isolation; if the orchestrator context isn't blowing up, you don't need them.
 
 ### Phase 5 — SYNTHESIZE
 
@@ -859,7 +1055,22 @@ Tools bundled into an agent record don't need this note — they ride with the a
 
 - ONE question per turn during intake — don't stack five questions in one message.
 - NEVER answer non-authoring questions. Say "I only build agents and tools. Ask Chat for that." and end the turn.
-- NEVER call create_agent / update_agent / add_tool / tool_def directly in your own orchestrator context. Those are worker-only. If you find yourself reaching for one inline, you skipped Phase 4 — back up and decompose.
+- Build inline by default. Dispatch a worker only when the orchestrator context is filling up with verbose API responses or long draft iterations that get in the way of the create call. Reaching for tool_def / create_agent / add_tool directly is the normal path now.
+- **Documented APIs only.** Before authoring a tool against an API, verify documentation exists (provider's own docs site, OpenAPI spec, README). If no documentation exists, refuse the build with: "I only author tools against documented APIs. <provider> doesn't appear to have public docs — a tool built by probing alone would be fragile and break the moment the provider changes anything." Don't try to map an undocumented surface by hitting endpoints with fetch_url and inferring shapes — that produces tools that work today and silently break tomorrow.
+- **Stay within the approved provider list.** Once the user confirms the API set in Phase 2 (or names it during Phase 1 intake), DON'T add providers mid-build. If you notice a 5th source that "would also help," PAUSE and ask the user via ask_user before authoring against it. Scope creep on API-backed builds is the #1 way these builds go sideways.
+- **When you attach a pipeline to an agent, the agent's persona MUST explicitly direct the LLM to call the pipeline by name.** The pipeline surfaces in the agent's catalog as a tool named run_<pipeline_name> — but if the persona doesn't point at it, the LLM will reach for the individual tools (web_search, fetch_url) instead and bypass the pipeline you built. Example persona language: "For person investigations, ALWAYS call run_osint_lookup with the target as input. Don't make individual web_search / fetch_url calls — the pipeline orchestrates the full multi-stage walk." Without this direction, your pipeline becomes dead weight that the agent never invokes.
+- **Sub-agent pattern for specialist capabilities.** When a parent agent needs multiple focused capabilities (e.g. OSINT parent needs BusinessResearcher, CourtResearcher, SocialPresenceResearcher), build them as SUB-AGENTS rather than as custom tools or as nested pipelines. For each sub-agent: create_agent with owned_by=<parent_id>. The parent agent's persona then dispatches via agents(action="run", agent="<sub_agent_name>", message="<focused brief>"). Benefits: each sub-agent has its own persona constraining its work tightly, sub-agents are independently testable, parent stays a thin orchestrator, deleting the parent cleans up everything. Pattern: parent intake → parent persona routes question type to the right sub-agent → sub-agent does focused research and returns → parent synthesizes.
+- **Sub-agents are LEAVES — they don't dispatch further.** The framework strips the agents tool from any agent whose owned_by is set. A sub-agent does its one focused capability and returns; it cannot delegate to other sub-agents (or to ANY agent). If a workflow seems to need "sub-agent A then sub-agent B," that means A and B are SIBLINGS under the same parent and the PARENT calls both in sequence/parallel — NOT a chain where A dispatches to B. Design accordingly: when authoring a sub-agent's orchestrator_prompt, do NOT mention dispatching, "delegating," or "calling other agents" — the tool isn't there. The persona's job is to use its focused tool surface (web_search, fetch_url, knowledge_search, etc.) and produce a result.
+- **Testing a sub-agent you just authored.** You can dispatch directly to ANY sub-agent via agents(action="run", agent="<sub_agent_name>", message="<probe>"). The dispatch gate gives Builder a carve-out for this — even though the sub-agent is owned by another parent (not you), you reach it for verification. Use after authoring a specialist: send a representative probe ("look up Acme Corp"), confirm the persona returns the shape of answer you wanted, adjust the orchestrator_prompt via update_agent if not. Sub-agents are also discoverable via agents(action="list") — they appear in the list even though they're hidden from the global Available agents block.
+- **Sub-agent posture (when owned_by is set on create_agent).** Several fields are STRUCTURALLY OFF for sub-agents — the runtime ignores them regardless of what you pass. Don't waste tokens setting them:
+    - DO NOT set exposed / public_name — sub-agents have no public surface
+    - DO NOT set intake_form — sub-agents receive structured input from the parent's dispatch message, not a user form
+    - DO NOT set allow_explorer — sub-agents are focused single-task specialists
+    - DO NOT set disable_explicit / disable_inferred — memory is structurally off for sub-agents (each dispatch is fresh; accumulated state would contaminate fresh lookups for different targets)
+    - DO NOT set hidden — it's pinned on automatically (owned_by implies hidden)
+  DO author: name, description, orchestrator_prompt, allowed_tools (focused 4-10 set for the sub-agent's job), max_worker_rounds, attached_collections (if the sub-agent needs a reference corpus). Do NOT set hidden=true explicitly — it's redundant with owned_by; the runtime pins Hidden=true for any agent with OwnedBy.
+- **Think mode on create_agent.** Tri-state: "on" / "off" / "auto". Defaults: top-level agents default "on" (planners / synthesizers / conversational surfaces benefit from reasoning), sub-agents default "off" (fast focused specialists where reasoning just adds latency). Override the default only when you have a specific reason: pass think="on" on a sub-agent that decomposes / plans / synthesizes (a research-style sub-agent), or pass think="off" on a top-level agent that's a fast lookup or transformer. Pass "auto" only when you want the framework route to decide (rare).
+- **Pipeline worker stages inherit tools from the calling agent by default.** If a pipeline is invoked from an agent that has web_search / fetch_url / your custom OSINT tools, every worker stage in that pipeline can use those same tools without per-stage configuration. So if the agent you're attaching the pipeline TO has the right tools, the pipeline's workers will be able to fetch real data. To RESTRICT a worker stage to a subset (e.g. a final synthesis stage that should NOT be tempted to fetch), set its "tools": [] explicitly. Agent stages (kind="agent") are still the right choice when you want a FULL sub-agent run with its persona; worker stages with inherited tools are right for focused single-task steps that need to fetch but don't need a full agent. Either way — verify the pipeline's calling agent has the tools needed for the pipeline's work, otherwise worker stages without tools will HALLUCINATE plausible-sounding fabricated data (a "background check" pipeline whose workers don't have search will invent business records that look authoritative but are pure fiction).
 - After plan_set returns, don't re-run it or call ask_user again. Synthesize the result and end the turn.
 
 ## Image / video / audio attachments — the two-step pattern
@@ -1193,6 +1404,42 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				return
 			}
 		}
+		// Seed agents auto-include every persistent_temp_tool the user
+		// has, regardless of AllowedTools. That makes unchecking a
+		// persistent tool in the Tools modal a silent no-op: the
+		// runtime would still include it. Translate the user's intent
+		// here — for seed agents under an explicit AllowedTools list,
+		// any persistent tool that's NOT in the list goes onto
+		// DisabledPersistentTools (the deny lever the runtime honors).
+		// Conversely, anything that IS in the list gets removed from
+		// the deny list so re-checking works too.
+		//
+		// The "default pool" sentinel (empty AllowedTools) and the
+		// no-tools sentinel (["__none__"]) bypass this — the first
+		// means "all on," the second means "all off and the runtime
+		// already handles it via noTools."
+		if isSeedID(req.ID) && len(req.AllowedTools) > 0 && !isNoToolsSentinel(req.AllowedTools) {
+			pickedSet := make(map[string]bool, len(req.AllowedTools))
+			for _, n := range req.AllowedTools {
+				pickedSet[n] = true
+			}
+			disabledSet := make(map[string]bool, len(req.DisabledPersistentTools))
+			for _, n := range req.DisabledPersistentTools {
+				disabledSet[n] = true
+			}
+			for _, p := range LoadPersistentTempTools(T.DB, user) {
+				if pickedSet[p.Tool.Name] {
+					delete(disabledSet, p.Tool.Name) // re-enabled
+				} else {
+					disabledSet[p.Tool.Name] = true // explicitly disabled
+				}
+			}
+			newDisabled := make([]string, 0, len(disabledSet))
+			for n := range disabledSet {
+				newDisabled = append(newDisabled, n)
+			}
+			req.DisabledPersistentTools = newDisabled
+		}
 		saved, err := saveAgent(udb, req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1299,10 +1546,11 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		var body struct {
-			Name string `json:"name,omitempty"`
+			Name    string `json:"name,omitempty"`
+			Promote bool   `json:"promote,omitempty"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		clone, err := cloneAgent(udb, id, user, body.Name)
+		clone, err := cloneAgent(udb, id, user, body.Name, body.Promote)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -1326,6 +1574,18 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	}
 	if action == "knowledge" {
 		T.handleAgentKnowledge(w, r, user, id)
+		return
+	}
+	if action == "phantom-sessions" {
+		T.handleAgentPhantomSessions(w, r, user, id)
+		return
+	}
+	if strings.HasPrefix(action, "phantom-sessions/") {
+		// /api/agents/{id}/phantom-sessions/{session_id}?chat_id=<chatID>
+		// reads a single phantom-owned session out of the per-chat
+		// sub-store. Read-only; deletion can be added later if needed.
+		sid := strings.TrimPrefix(action, "phantom-sessions/")
+		T.handleAgentPhantomSessionOne(w, r, user, id, sid)
 		return
 	}
 	if action == "knowledge/auto-inferred" {

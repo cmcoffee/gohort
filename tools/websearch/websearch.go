@@ -28,6 +28,7 @@ import (
 func init() {
 	RegisterChatTool(new(WebSearchTool))
 	RegisterChatTool(new(FetchURLTool))
+	RegisterChatTool(new(FetchJSONTool))
 	CrossSearchFunc = CrossProviderSearch
 }
 
@@ -218,7 +219,7 @@ type FetchURLTool struct{}
 func (t *FetchURLTool) Name() string { return "fetch_url" }
 func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP GET against live web
 func (t *FetchURLTool) Desc() string {
-	return "Fetch a URL from the live web. Two modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs without auth, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode."
+	return "Fetch a URL from the live web. Two modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs without auth, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page — the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
 }
 
 func (t *FetchURLTool) Params() map[string]ToolParam {
@@ -1067,21 +1068,10 @@ func FetchArticle(target_url string, max_chars int) (string, error) {
 	return text, err
 }
 
-// jsDomains is the set of base domains (www. stripped) that require a real
-// browser to render useful content. Plain HTTP fetches return a JS skeleton.
-var jsDomains = map[string]bool{
-	"reddit.com":    true,
-	"linkedin.com":  true,
-	"x.com":         true,
-	"twitter.com":   true,
-	"instagram.com": true,
-	"facebook.com":  true,
-	"tiktok.com":    true,
-}
-
-func isJSDomain(host string) bool {
-	return jsDomains[strings.TrimPrefix(strings.ToLower(host), "www.")]
-}
+// JS-heavy URL detection lives in core/ (see ShouldAutoBrowseURL) so
+// the sandbox-hook gohort.fetch_url routes the same URLs through
+// browse_page that fetch_url does. Both call sites here and in
+// core/sandbox_hook.go consult ShouldAutoBrowseURL directly.
 
 func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta, error) {
 	var meta SourceMeta
@@ -1099,9 +1089,13 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 		return "", meta, fmt.Errorf("parsing URL: %w", err)
 	}
 
-	// Known JS-heavy domains: skip the HTTP path and go straight to the browser.
-	// Fall through to HTTP if the browser fails so the pipeline is never left empty-handed.
-	if isJSDomain(meta.Domain) {
+	// Known JS-heavy URLs: skip the HTTP path and go straight to the browser.
+	// Uses the shared ShouldAutoBrowseURL (core/js_domains.go) so the
+	// script-side gohort.fetch_url makes the EXACT SAME routing decision —
+	// the LLM probes a URL with fetch_url, sees it work, and the same URL
+	// in a script via gohort.fetch_url succeeds via the same Chromium path.
+	// Falls through to HTTP on browser failure so the caller's never left empty-handed.
+	if ShouldAutoBrowseURL(target_url) {
 		text, berr := browser.Fetch(target_url, max_chars)
 		if berr == nil && strings.TrimSpace(text) != "" {
 			Debug("[fetch] browser fetch %s → %d chars", target_url, len(text))

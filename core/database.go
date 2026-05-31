@@ -30,6 +30,17 @@ var (
 	// RootDB is the top-level application database, set at startup.
 	// Apps can use it to access sibling buckets (e.g. for one-time migrations).
 	RootDB Database
+
+	// VectorDB is the dedicated store for the embedding/vector index
+	// (the EmbeddedChunks table). Split out from RootDB so the derived,
+	// regenerable chunk corpus — the hot path for semantic search — can
+	// live on fast local storage even when RootDB sits on network
+	// storage. Set at startup alongside RootDB; defaults to a separate
+	// file co-located with the main DB unless [paths] vector_dir
+	// relocates it. All SHARED chunk I/O (agent knowledge, collections,
+	// skills, deployment KB) routes here; per-app private corpora that
+	// must stay isolated (e.g. phantom) keep passing their own handle.
+	VectorDB Database
 )
 
 // OpenDB opens a database from the given filename.

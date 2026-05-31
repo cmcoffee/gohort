@@ -1,0 +1,411 @@
+// Desktop bridge — accepts WebSocket connections from gohort-desktop
+// clients and exposes their locally-registered tools to the gohort
+// server's agent loop as per-user ChatTools.
+//
+// The motivating use case: an admin runs gohort serve remotely (e.g.
+// on a home server) and gohort-desktop on their Mac. The desktop
+// registers local tools (filesystem.read_local_file, eventually
+// notify / screenshot / shell). Without this bridge those tools are
+// only reachable from the in-window JS bridge — agents running on
+// the remote server can't call them. The bridge fills that gap:
+//
+//   1. Desktop opens GET /api/desktop/ws with the gohort_session cookie.
+//   2. Server validates the cookie → user.
+//   3. Desktop announces its tool catalog with `{type:"announce",...}`.
+//   4. Server registers each tool as a DesktopChatTool under that user
+//      and the agent loop picks them up via LocalToolsForUser(user).
+//   5. When the LLM calls one, Run() sends `{type:"invoke",id,name,args}`
+//      over the same WS and blocks waiting for `{type:"result",id,...}`.
+//
+// Concurrency model: each desktop connection runs a read pump + a
+// write pump. Pending invocations live in a map keyed by request ID;
+// Run() registers itself + waits on a channel that the read pump
+// signals when the matching result arrives.
+//
+// Failure modes:
+//   - WS disconnect → client removed from registry; in-flight Run()
+//     calls receive an error.
+//   - WS slow → Run() respects a per-call deadline (default 60s);
+//     long-running tools should ack quickly and stream progress
+//     separately (not in this MVP).
+//   - Multiple connections for the same user → both registered;
+//     tool lookup uses the most-recent.
+
+package core
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+const (
+	// desktopInvokeDeadline caps how long an LLM tool call can wait
+	// on the desktop side. Most local tools (read file, take
+	// screenshot, show notification) return in under a second; 60s
+	// is generous headroom without making the agent loop stall
+	// forever on a hung client.
+	desktopInvokeDeadline = 60 * time.Second
+	// desktopPingInterval keeps idle WS connections alive through
+	// reverse proxies / load balancers (nginx default 60s,
+	// CloudFlare 100s).
+	desktopPingInterval = 25 * time.Second
+	// desktopReadDeadline — drop a connection that hasn't sent any
+	// frame (data or pong) in this long. Should be > ping interval
+	// + reasonable RTT.
+	desktopReadDeadline = 70 * time.Second
+)
+
+// DesktopToolDescriptor is the wire shape for one tool the desktop
+// has registered locally. Mirrors gohort-desktop/core/tool.go's
+// shape — the server doesn't care what implements it on the desktop
+// side, only what to surface to the LLM.
+type DesktopToolDescriptor struct {
+	Name     string               `json:"name"`
+	Desc     string               `json:"desc"`
+	Params   map[string]ToolParam `json:"params"`
+	Required []string             `json:"required"`
+}
+
+// announceMsg is sent by the desktop right after connecting. Carries
+// the full local-tool catalog. Repeat announces overwrite (a desktop
+// that loaded a new tool plugin can re-announce without reconnecting).
+type announceMsg struct {
+	Type  string                  `json:"type"`
+	Tools []DesktopToolDescriptor `json:"tools"`
+}
+
+// invokeMsg is sent by the server to the desktop to invoke one of
+// the announced tools. ID is correlation; results carry the same.
+type invokeMsg struct {
+	Type string         `json:"type"`
+	ID   string         `json:"id"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
+}
+
+// resultMsg is sent by the desktop in response to an invokeMsg.
+// Error is set when the tool raised; Result is empty in that case.
+type resultMsg struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	Result string `json:"result"`
+	Error  string `json:"error,omitempty"`
+}
+
+// desktopClient is one live connection from a gohort-desktop.
+type desktopClient struct {
+	user string
+	conn *websocket.Conn
+
+	mu       sync.Mutex
+	tools    []DesktopToolDescriptor
+	pending  map[string]chan resultMsg
+	nextID   uint64
+	closed   bool
+	writeMu  sync.Mutex // serialize concurrent writes (WS conns aren't goroutine-safe for writes)
+	closedAt time.Time
+}
+
+// desktopRegistry holds per-user connected clients. Reads
+// (LocalToolsForUser, lookups) are the hot path; writes
+// (connect/disconnect) are rare, so a single RWMutex is fine.
+type desktopRegistry struct {
+	mu      sync.RWMutex
+	byUser  map[string][]*desktopClient
+}
+
+var desktopReg = &desktopRegistry{byUser: map[string][]*desktopClient{}}
+
+// upgrader — default config; same-origin only (the server's auth
+// middleware already gated the connection on cookie).
+var desktopUpgrader = websocket.Upgrader{
+	ReadBufferSize:  4096,
+	WriteBufferSize: 4096,
+	// Cross-origin allowed because gohort-desktop reaches the
+	// server over a non-localhost origin; the cookie auth already
+	// validated identity.
+	CheckOrigin: func(_ *http.Request) bool { return true },
+}
+
+// HandleDesktopBridge is the WS endpoint handler. Mount at
+// /api/desktop/ws via the same auth middleware that protects the
+// rest of the app — by the time we get here the user is resolved.
+//
+// userOf returns the authenticated username for the request; pass
+// in whatever helper the surrounding webapp uses (gohort's
+// AuthSessionFromRequest, etc.). Returning empty rejects the
+// connection.
+func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		user := userOf(r)
+		if user == "" {
+			http.Error(w, "auth required", http.StatusUnauthorized)
+			return
+		}
+		conn, err := desktopUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			Warn("[desktop-bridge] upgrade for user=%s failed: %v", user, err)
+			return
+		}
+		client := &desktopClient{
+			user:    user,
+			conn:    conn,
+			pending: map[string]chan resultMsg{},
+		}
+		desktopReg.add(client)
+		Log("[desktop-bridge] connected user=%s remote=%s", user, r.RemoteAddr)
+
+		// Read deadline + pong handler keep the connection alive.
+		// Each pong from the client extends the read deadline; if
+		// no pong arrives within the window, ReadMessage errors and
+		// the loop exits, cleaning up.
+		conn.SetReadDeadline(time.Now().Add(desktopReadDeadline))
+		conn.SetPongHandler(func(string) error {
+			conn.SetReadDeadline(time.Now().Add(desktopReadDeadline))
+			return nil
+		})
+
+		// Background ping loop — fires until conn closes.
+		stop := make(chan struct{})
+		go client.pingLoop(stop)
+
+		defer func() {
+			close(stop)
+			desktopReg.remove(client)
+			client.markClosed()
+			conn.Close()
+			Log("[desktop-bridge] disconnected user=%s", user)
+		}()
+
+		client.readPump()
+	}
+}
+
+func (c *desktopClient) pingLoop(stop <-chan struct{}) {
+	t := time.NewTicker(desktopPingInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-t.C:
+			c.writeMu.Lock()
+			err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+			c.writeMu.Unlock()
+			if err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (c *desktopClient) readPump() {
+	for {
+		_, data, err := c.conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		var head struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(data, &head); err != nil {
+			continue
+		}
+		switch head.Type {
+		case "announce":
+			var m announceMsg
+			if err := json.Unmarshal(data, &m); err != nil {
+				continue
+			}
+			c.mu.Lock()
+			c.tools = m.Tools
+			c.mu.Unlock()
+			names := make([]string, 0, len(m.Tools))
+			for _, t := range m.Tools {
+				names = append(names, t.Name)
+			}
+			Log("[desktop-bridge] user=%s announced %d tool(s): %v", c.user, len(m.Tools), names)
+		case "result":
+			var m resultMsg
+			if err := json.Unmarshal(data, &m); err != nil {
+				continue
+			}
+			c.mu.Lock()
+			ch, ok := c.pending[m.ID]
+			if ok {
+				delete(c.pending, m.ID)
+			}
+			c.mu.Unlock()
+			if ok {
+				select {
+				case ch <- m:
+				default:
+				}
+			}
+		default:
+			// Unknown — ignore. Forward-compat for future message types.
+		}
+	}
+}
+
+// markClosed signals every in-flight Run() that the connection died
+// so they don't block forever waiting for a result that won't come.
+func (c *desktopClient) markClosed() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.closed = true
+	c.closedAt = time.Now()
+	for id, ch := range c.pending {
+		select {
+		case ch <- resultMsg{ID: id, Error: "desktop client disconnected"}:
+		default:
+		}
+		delete(c.pending, id)
+	}
+}
+
+// invoke fires a tool call over the WS and waits for the matching
+// result. The per-call deadline guards against a hung desktop or
+// lost result frame.
+func (c *desktopClient) invoke(name string, args map[string]any) (string, error) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return "", errors.New("desktop disconnected")
+	}
+	c.nextID++
+	id := fmt.Sprintf("%d", c.nextID)
+	ch := make(chan resultMsg, 1)
+	c.pending[id] = ch
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}()
+
+	frame, _ := json.Marshal(invokeMsg{Type: "invoke", ID: id, Name: name, Args: args})
+	c.writeMu.Lock()
+	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err := c.conn.WriteMessage(websocket.TextMessage, frame)
+	c.writeMu.Unlock()
+	if err != nil {
+		return "", fmt.Errorf("send to desktop: %w", err)
+	}
+
+	select {
+	case res := <-ch:
+		if res.Error != "" {
+			return "", errors.New(res.Error)
+		}
+		return res.Result, nil
+	case <-time.After(desktopInvokeDeadline):
+		return "", fmt.Errorf("desktop tool %q timed out after %s", name, desktopInvokeDeadline)
+	}
+}
+
+// add/remove maintain the per-user list. The list shape (not single
+// pointer) lets multiple desktops connect for the same user — each
+// just adds another callable surface.
+func (r *desktopRegistry) add(c *desktopClient) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byUser[c.user] = append(r.byUser[c.user], c)
+}
+
+func (r *desktopRegistry) remove(c *desktopClient) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.byUser[c.user]
+	out := list[:0]
+	for _, k := range list {
+		if k != c {
+			out = append(out, k)
+		}
+	}
+	if len(out) == 0 {
+		delete(r.byUser, c.user)
+	} else {
+		r.byUser[c.user] = out
+	}
+}
+
+func (r *desktopRegistry) clientsFor(user string) []*desktopClient {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	list := r.byUser[user]
+	out := make([]*desktopClient, len(list))
+	copy(out, list)
+	return out
+}
+
+// LocalToolsForUser returns ChatTool wrappers for every tool the
+// user's connected desktops have announced. Names are prefixed with
+// "from_client." so they're easy to distinguish in the LLM-visible
+// catalog and don't collide with server-side tools. The prefix is
+// chosen for clarity from the LLM's POV — "this tool runs on the
+// user's client device, not on the server I'm on" — since "local."
+// alone is ambiguous about whose local.
+//
+// Returns nil when no desktops are connected. The orchestrate
+// runner appends these to the agent's effective tool list per turn,
+// so a desktop connecting mid-conversation is picked up by the next
+// turn automatically.
+func LocalToolsForUser(user string) []ChatTool {
+	clients := desktopReg.clientsFor(user)
+	if len(clients) == 0 {
+		return nil
+	}
+	// De-dup by name — if two clients announce the same tool, the
+	// most-recently-connected one wins. Iterate newest-first.
+	seen := map[string]bool{}
+	var out []ChatTool
+	for i := len(clients) - 1; i >= 0; i-- {
+		c := clients[i]
+		c.mu.Lock()
+		tools := append([]DesktopToolDescriptor(nil), c.tools...)
+		c.mu.Unlock()
+		for _, t := range tools {
+			if seen[t.Name] {
+				continue
+			}
+			seen[t.Name] = true
+			out = append(out, &desktopChatTool{client: c, desc: t})
+		}
+	}
+	return out
+}
+
+// desktopChatTool implements core.ChatTool by proxying Run() over
+// the WS connection. Name is rewritten with the "from_client."
+// prefix so the LLM sees a clearly-distinct surface.
+type desktopChatTool struct {
+	client *desktopClient
+	desc   DesktopToolDescriptor
+}
+
+func (t *desktopChatTool) Name() string {
+	return "from_client." + t.desc.Name
+}
+
+func (t *desktopChatTool) Desc() string {
+	return t.desc.Desc + " (runs on the user's connected gohort-desktop client)"
+}
+
+func (t *desktopChatTool) Params() map[string]ToolParam {
+	return t.desc.Params
+}
+
+func (t *desktopChatTool) Run(args map[string]any) (string, error) {
+	return t.client.invoke(t.desc.Name, args)
+}

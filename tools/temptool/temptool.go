@@ -176,8 +176,34 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	}
 
 	cmd := strings.TrimSpace(StringArg(args, "command_template"))
+	scriptBody := StringArg(args, "script_body")
+	scriptName := strings.TrimSpace(StringArg(args, "script_name"))
+
+	// Auto-infer command_template when omitted but a script_body was
+	// supplied. Builder commonly forgets command_template on first try
+	// because "I gave you the script, just run it" is the natural mental
+	// model; we satisfy that intent rather than bouncing them. Inferred
+	// template is `<interpreter> {workspace_dir}/<script> {p1} {p2}…`
+	// with params in alphabetical order (deterministic; the LLM can
+	// always supply an explicit command_template for non-positional
+	// shapes like JSON-on-stdin or kwargs). Logged so the inference is
+	// auditable + the LLM can see what was assumed.
+	if cmd == "" && scriptBody != "" {
+		paramOrder, err := paramNamesInDefinitionOrder(args["params"])
+		if err == nil {
+			effective := scriptName
+			if effective == "" {
+				effective = "script.py"
+			}
+			cmd = inferCommandTemplate(effective, scriptBody, paramOrder)
+			if cmd != "" {
+				Log("[temptool] auto-inferred command_template=%q (script=%s, params=%v) — supply command_template explicitly for kwargs / stdin / non-positional shapes",
+					cmd, effective, paramOrder)
+			}
+		}
+	}
 	if cmd == "" {
-		return "", fmt.Errorf("command_template is required")
+		return "", fmt.Errorf("command_template is required (or supply script_body for a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer python3 {workspace_dir}/script.py; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name'])")
 	}
 
 	// script_body shortcut: auto-mint a sandbox, write the script
@@ -185,8 +211,6 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// {workspace_dir}/<script_name>. Collapses workspace-create +
 	// file-write + tool-create into one call. The LLM never has to
 	// think about workspaces.
-	scriptBody := StringArg(args, "script_body")
-	scriptName := strings.TrimSpace(StringArg(args, "script_name"))
 	canonicalName := ""
 	if scriptBody != "" {
 		// Keep the LLM's chosen script_name as-is in the tool record
@@ -298,6 +322,16 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	if sp := strings.TrimSpace(StringArg(args, "state_path")); sp != "" {
 		tool.StatePath = sp
 	}
+	// Optional RawNetwork: opt-in escape hatch that keeps the bwrap
+	// sandbox joined to the host network namespace. Default false
+	// (the sandbox runs with --unshare-net regardless of session
+	// connector). Reserve for persistent-mode REPLs and the small
+	// set of legacy tools that haven't been migrated to the hook
+	// (hook_capabilities=["fetch"] + gohort.fetch(...) is the
+	// preferred path for everything else).
+	if BoolArg(args, "raw_network") {
+		tool.RawNetwork = true
+	}
 	// Optional HookCapabilities: opens the per-dispatch UDS callback
 	// channel for the listed methods. Empty / unset = no hook, no
 	// extra env, zero surface area. Validate each entry — bare
@@ -307,7 +341,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// every credential it can read. Other typos fail authoring
 	// rather than silently never being granted at dispatch.
 	if caps := stringSliceArg(args["hook_capabilities"]); len(caps) > 0 {
-		bareKnown := map[string]bool{"fetch": true, "log": true}
+		bareKnown := map[string]bool{"fetch": true, "log": true, "browse_page": true}
 		var bad []string
 		var clean []string
 		seen := map[string]bool{}
@@ -322,17 +356,28 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			if idx := strings.IndexByte(c, ':'); idx >= 0 {
 				method := strings.ToLower(c[:idx])
 				name := strings.TrimSpace(c[idx+1:])
-				if method != "secret" || name == "" {
+				if name == "" {
+					bad = append(bad, c)
+					continue
+				}
+				// Qualified forms: per-credential grants. secret:<name>
+				// returns the decrypted secret to the script;
+				// fetch_via:<name> routes an HTTP call through that
+				// credential's Secure.Dispatch (allowlist + audit +
+				// auth applied server-side, script never sees the
+				// secret).
+				if method != "secret" && method != "fetch_via" {
 					bad = append(bad, c)
 					continue
 				}
 				c = method + ":" + name
 			} else {
 				c = strings.ToLower(c)
-				if c == "secret" {
-					// Bare "secret" is intentionally not honored — every
-					// credential grant must be explicit.
-					return "", fmt.Errorf("hook_capabilities entry %q is too broad — declare specific credentials as %q instead", "secret", "secret:<credential_name>")
+				if c == "secret" || c == "fetch_via" {
+					// Bare qualified-form methods are intentionally
+					// not honored — every credential grant must be
+					// explicit.
+					return "", fmt.Errorf("hook_capabilities entry %q is too broad — declare specific credentials as %q instead", c, c+":<credential_name>")
 				}
 				if !bareKnown[c] {
 					bad = append(bad, c)
@@ -346,9 +391,55 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			clean = append(clean, c)
 		}
 		if len(bad) > 0 {
-			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v — known forms: \"fetch\", \"log\", \"secret:<credential_name>\"", bad)
+			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v — known forms: \"fetch\", \"log\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
 		}
 		tool.HookCapabilities = clean
+	}
+	// Default-on the bare hook capabilities for any shell-mode tool
+	// with script_body. Builder doesn't have to remember to declare
+	// hook_capabilities=["fetch"] — the framework adds them
+	// automatically. Same security posture: the bwrap sandbox is still
+	// --unshare-net, the connector still gates Private mode, every
+	// call still goes through gohort's HTTP client with audit. Just
+	// removes the "tool exits 1 on first dispatch because GOHORT_HOOK_PATH
+	// wasn't set" footgun.
+	//
+	// Parameterized capabilities (secret:<name> / fetch_via:<name>)
+	// stay explicit. Those bind to specific credentials the framework
+	// can't safely guess, so they still need declaration. Script that
+	// calls gohort.secret("openweather") without "secret:openweather"
+	// declared fails authoring with a directive error.
+	if scriptBody != "" {
+		existing := map[string]bool{}
+		for _, c := range tool.HookCapabilities {
+			existing[c] = true
+		}
+		for _, def := range []string{"fetch", "log", "browse_page"} {
+			if !existing[def] {
+				existing[def] = true
+				tool.HookCapabilities = append(tool.HookCapabilities, def)
+			}
+		}
+		// Credentialed-call guard: script that needs secret:<name> or
+		// fetch_via:<name> must declare it explicitly. We refuse to
+		// guess credential identifiers.
+		if missing := findUngrantedCredentialCalls(scriptBody, tool.HookCapabilities); missing.calls != "" {
+			return "", fmt.Errorf(
+				"script_body uses %s but hook_capabilities doesn't grant the credential(s). "+
+					"Add %s to hook_capabilities — the framework won't auto-grant credential names. "+
+					"Register the credential via the admin UI first if it doesn't exist yet.",
+				missing.calls, missing.suggest)
+		}
+		// Refuse network primitives. Builder repeatedly rewrites
+		// fetch-failing tools to urllib/requests/curl/wget when
+		// fetch_url returns 4xx, but those libraries are BLOCKED in
+		// the script sandbox. Refuse at authoring time so the
+		// rewrite path is closed off entirely.
+		if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" {
+			return "", fmt.Errorf(
+				"script_body uses %s — that's BLOCKED. Any network-doing standard library (urllib / requests / curl / wget / http.client / socket) is blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client — diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints.",
+				forbidden)
+		}
 	}
 	// Optional cache spec — opt-in memoization keyed by rendered
 	// {param} template (default = hash of all args). Validated here
@@ -358,6 +449,18 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		return "", fmt.Errorf("cache: %w", err)
 	} else if cacheSpec != nil {
 		tool.Cache = cacheSpec
+	}
+	// Network-grant lint: if the script_body uses a raw-network Python
+	// or shell API (urllib / requests / socket / http.client / curl /
+	// wget) AND the tool has neither a hook grant ("fetch" or
+	// "fetch_via:..." in HookCapabilities) nor RawNetwork=true, the
+	// tool will fail at first dispatch with a DNS-resolution error
+	// (--unshare-net cuts the namespace). Refuse at create time with
+	// directive guidance so the LLM re-authors with the right shape
+	// instead of producing a tool that test_args would catch but
+	// silent re-runs wouldn't. Same pattern as missingWorkspaceScriptRefs.
+	if mismatch := networkGrantMismatch(tool); mismatch != "" {
+		return "", fmt.Errorf("network-grant mismatch: %s", mismatch)
 	}
 	// Allow in-session overwrite: if the LLM is recreating a tool by
 	// the same name (typically because v1 had a schema mistake), drop
@@ -1100,6 +1203,18 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// applies --unshare-net when the calling turn is in private
 	// mode. No-op when sess has no connector.
 	ctx = sess.ContextWithNetworkConnector(ctx)
+	// Tool-level network policy: shell-mode tools default to
+	// --unshare-net regardless of session policy. Raw network is
+	// granted only when the tool record explicitly opts in with
+	// RawNetwork=true (the documented escape hatch for persistent-
+	// mode REPLs and legacy tools). For everything else, the
+	// authoring contract is: declare hook_capabilities=["fetch"]
+	// and call gohort.fetch(...). Override layers DOWNWARD only —
+	// if the session connector is already blocking, this can't
+	// undo that.
+	if !tt.RawNetwork {
+		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+	}
 
 	// Pass every declared arg as an env var so scripts can read them
 	// via $name (shell) or os.environ.get("name") (Python) — second
@@ -1112,36 +1227,24 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 
 	// SandboxHook: when the tool declared HookCapabilities, start a
 	// per-dispatch UDS server inside the workspace, deploy the Python
-	// helper module (`gohort_hook.py`) so scripts can `from gohort_hook
-	// import gohort`, and expose the socket path via GOHORT_HOOK_PATH
-	// in the sandbox env. The hook lets the script call back into
-	// gohort for narrow capabilities (HTTP fetch, log) WITHOUT opening
-	// the sandbox's network namespace — gohort proxies on its behalf.
-	// Empty HookCapabilities ⇒ no hook started, no env var set, zero
-	// extra surface area (same posture as a pre-hook tool).
-	hook, hookErr := NewSandboxHook(workspaceDir, tt.HookCapabilities)
+	// helper module (`gohort.py`) so scripts can `from gohort import
+	// fetch`, and expose the socket path via GOHORT_HOOK_PATH in the
+	// sandbox env. The hook lets the script call back into gohort
+	// for narrow capabilities (HTTP fetch, log, secret, fetch_via)
+	// WITHOUT opening the sandbox's network namespace — gohort
+	// proxies on its behalf. Empty HookCapabilities ⇒ no hook
+	// started, no env var set, zero extra surface area.
+	hook, hookErr := NewSandboxHook(workspaceDir, tt.HookCapabilities, sess)
 	if hookErr != nil {
 		return "", fmt.Errorf("start sandbox hook: %w", hookErr)
 	}
 	if hook != nil {
 		defer hook.Close()
 		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
-		// Deploy the Python helper module into the workspace
-		// idempotently. Same pattern as ScriptBody redeploy: if a
-		// matching file already exists, no-op; otherwise (re)write.
-		helperPath := filepath.Join(workspaceDir, "gohort_hook.py")
-		needHelperWrite := true
-		if existing, err := os.ReadFile(helperPath); err == nil {
-			if string(existing) == SandboxHookPythonHelper {
-				needHelperWrite = false
-			}
-		}
-		if needHelperWrite {
-			if err := os.WriteFile(helperPath, []byte(SandboxHookPythonHelper), 0600); err != nil {
-				return "", fmt.Errorf("write gohort_hook.py: %w", err)
-			}
-			Debug("[temptool] %q deployed gohort_hook.py helper (%dB) at %s", tt.Name, len(SandboxHookPythonHelper), helperPath)
-		}
+		// The gohort helper package is bind-mounted RO into the
+		// sandbox from a host-side library dir (see
+		// EnsureGohortLibDir, wired in bwrapArgv). Nothing to deploy
+		// into the workspace.
 		Debug("[temptool] %q hook attached: %s caps=%v", tt.Name, hook.SocketPath, tt.HookCapabilities)
 	}
 
@@ -1651,6 +1754,76 @@ func missingWorkspaceScriptRefs(cmd, workspaceDir string) []string {
 	return missing
 }
 
+// rawNetworkPatterns names script-side APIs that bypass the hook and
+// reach the network directly. Tools that use any of these MUST
+// declare raw_network=true (to leave the bwrap namespace networked)
+// or migrate to the hook (gohort.fetch / gohort.fetch_via). Detection
+// is substring-match against the script_body — coarse but
+// catches the common authoring mistakes (mostly Python urllib and
+// shell curl/wget) without false positives in normal prose.
+var rawNetworkPatterns = []string{
+	"urllib.request",
+	"urlopen(",
+	"http.client",
+	"requests.get",
+	"requests.post",
+	"requests.put",
+	"requests.delete",
+	"requests.request",
+	"requests.Session",
+	"socket.create_connection",
+	"socket.connect",
+	"curl ",
+	"wget ",
+}
+
+// networkGrantMismatch returns a directive error string when the
+// tool's script_body uses a raw-network API but the tool record
+// doesn't declare a network grant (HookCapabilities including
+// "fetch" or "fetch_via:..." OR RawNetwork=true). Returns "" when
+// the grant matches the script's usage. The post-strict-network
+// guard: --unshare-net would cause urllib / curl / etc. to fail
+// with "Name or service not known" on every dispatch; catch at
+// authoring time instead.
+//
+// Hook-only tools (HookCapabilities=["log"] with no fetch) still
+// trigger the lint if the script tries to do raw HTTP — log alone
+// doesn't grant network reach.
+func networkGrantMismatch(tt *TempTool) string {
+	if tt == nil || tt.ScriptBody == "" {
+		return ""
+	}
+	if tt.RawNetwork {
+		return ""
+	}
+	// Hook grants "fetch" or any "fetch_via:..." count as a network
+	// grant via the proxy path — the script SHOULD use gohort.fetch,
+	// but we can't easily tell whether it does without parsing.
+	// Accept the grant and move on; the actual mismatch (script uses
+	// urllib AND has fetch capability) is a possible authoring smell
+	// but valid in principle (mixed-use tools).
+	for _, c := range tt.HookCapabilities {
+		if c == "fetch" || strings.HasPrefix(c, "fetch_via:") {
+			return ""
+		}
+	}
+	// No grant — check whether the script needs one.
+	var found []string
+	seen := map[string]bool{}
+	for _, pat := range rawNetworkPatterns {
+		if strings.Contains(tt.ScriptBody, pat) {
+			if !seen[pat] {
+				found = append(found, pat)
+				seen[pat] = true
+			}
+		}
+	}
+	if len(found) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("script_body uses raw-network API(s) %v but the tool has no network grant. Either (a) re-author with the hook: `from gohort import fetch` then `fetch(url)` instead of urllib.request.urlopen(url) — and declare hook_capabilities=[\"fetch\"]; or (b) declare raw_network=true (escape hatch for persistent-mode REPLs and non-HTTP TCP). Without one of these the sandbox runs --unshare-net and every outbound call fails with a DNS-resolution error", found)
+}
+
 // looksLikeNumberLiteral returns true when s parses cleanly as a
 // JSON-style number (integer or decimal, optional leading sign). No
 // shell metacharacters by definition; safe to emit bare. Used by
@@ -1804,7 +1977,14 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	}
 	credName := strings.TrimSpace(StringArg(args, "credential"))
 	if credName == "" {
-		return "", fmt.Errorf("credential is required")
+		// Default to the always-bootstrapped no_auth credential when
+		// the LLM omitted credential — public APIs are the common case
+		// and forcing the author to specify credential="no_auth"
+		// explicitly was friction without security benefit (the
+		// no_auth credential is the deployment's open-by-default
+		// pattern anyway). Admin tighten via no_auth's
+		// AllowedURLPattern if scope-limiting matters.
+		credName = "no_auth"
 	}
 	if _, ok := Secure().Load(credName); !ok {
 		return "", fmt.Errorf("credential %q is not registered — register it via the admin UI first", credName)
@@ -2532,4 +2712,280 @@ func jsonMarshal(v any) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// inferCommandTemplate produces a sensible default command_template
+// for a script_body when the caller forgot to specify one. Returns
+// empty string when no interpreter can be guessed — caller falls
+// back to a directive error.
+//
+// Strategy:
+//   - Shebang on line 1 → use it directly (script must be executable
+//     at dispatch; the framework writes script files with 0700 so a
+//     shebang line resolves naturally).
+//   - Recognized extension → known interpreter:
+//     .py → python3, .sh/.bash → bash, .jq → jq -f, .js → node,
+//     .rb → ruby, .pl → perl.
+//   - Otherwise empty (no inference).
+//
+// Params are NOT inlined as positional placeholders. The framework
+// already passes every declared param to the script as an environment
+// variable (see RunSandboxedShellWithEnv) — adding positional args on
+// top forces the script to choose between sys.argv and os.environ,
+// and the ordering of those positional args (alphabetical?
+// insertion-order?) becomes a footgun the LLM keeps tripping on.
+// Standardizing on env-vars-only means: scripts read params with
+// `os.environ['name']` (Python) / `$name` (bash); ordering is a
+// non-question; insertion + retrieval are both by NAME.
+//
+// If the caller really wants positional args (third-party scripts
+// that take strict argv shapes), they supply an explicit
+// command_template — the inference only fires when command_template
+// is omitted.
+func inferCommandTemplate(scriptName, scriptBody string, paramOrder []string) string {
+	if scriptName == "" {
+		return ""
+	}
+	interpreter := ""
+	if shebang := firstShebang(scriptBody); shebang != "" {
+		// Use the file directly; the kernel resolves the shebang.
+		interpreter = ""
+	} else {
+		ext := strings.ToLower(filepath.Ext(scriptName))
+		switch ext {
+		case ".py":
+			interpreter = "python3"
+		case ".sh", ".bash":
+			interpreter = "bash"
+		case ".jq":
+			interpreter = "jq -f"
+		case ".js":
+			interpreter = "node"
+		case ".rb":
+			interpreter = "ruby"
+		case ".pl":
+			interpreter = "perl"
+		default:
+			return "" // unknown — caller must supply command_template
+		}
+	}
+	// paramOrder is intentionally unused — see the doc comment above.
+	_ = paramOrder
+	var b strings.Builder
+	if interpreter != "" {
+		b.WriteString(interpreter)
+		b.WriteByte(' ')
+	}
+	b.WriteString("{workspace_dir}/")
+	b.WriteString(scriptName)
+	return b.String()
+}
+
+// detectForbiddenNetworkPatterns returns a human-readable description
+// of any sandbox-incompatible network-library use found in script_body.
+// Empty string means clean.
+//
+// The patterns we refuse are the ones that DEFINITELY cannot work
+// inside the bwrap sandbox (--unshare-net). False positives here have
+// real cost — refusing a legitimate use breaks authoring — so we keep
+// the list focused on the calls that are network-doing (not just
+// `import socket` since AF_UNIX sockets work, not just `import urllib`
+// since urllib.parse is useful for URL encoding).
+//
+// Patterns:
+//
+//	import requests / from requests import …      → requests library
+//	import urllib2                                → Py2 legacy net
+//	urllib.request.urlopen / urllib.urlopen       → urllib network
+//	from urllib.request import …                  → urllib network
+//	from urllib import urlopen                    → urllib network
+//	import http.client / from http.client …       → http.client
+//	socket.create_connection / socket.connect(    → raw socket dialing
+//	curl <url> / wget <url>                       → shell HTTP
+//	subprocess.* with "curl" or "wget"            → wrapped shell HTTP
+func detectForbiddenNetworkPatterns(script string) string {
+	patterns := []struct {
+		needle string
+		label  string
+	}{
+		// Python network libs.
+		{"import requests", "import requests"},
+		{"from requests import", "from requests import …"},
+		{"import urllib2", "import urllib2"},
+		{"urllib.request", "urllib.request"},
+		{"from urllib.request import", "from urllib.request import …"},
+		{"from urllib import urlopen", "from urllib import urlopen"},
+		{"urllib.urlopen", "urllib.urlopen"},
+		{"import http.client", "import http.client"},
+		{"from http.client import", "from http.client import …"},
+		{"socket.create_connection", "socket.create_connection"},
+		{"socket.connect(", "socket.connect()"},
+		// Shell HTTP. Match with leading space / line-start so a
+		// substring inside a longer word doesn't false-positive.
+		{"\ncurl ", "curl"},
+		{" curl ", "curl"},
+		{"\nwget ", "wget"},
+		{" wget ", "wget"},
+		// Catch curl/wget wrapped in subprocess too.
+		{"subprocess.run([\"curl", "subprocess.run([\"curl …\"])"},
+		{"subprocess.run(['curl", "subprocess.run(['curl …'])"},
+		{"subprocess.run([\"wget", "subprocess.run([\"wget …\"])"},
+		{"subprocess.run(['wget", "subprocess.run(['wget …'])"},
+		{"os.system(\"curl", "os.system(\"curl …\")"},
+		{"os.system('curl", "os.system('curl …')"},
+		{"os.system(\"wget", "os.system(\"wget …\")"},
+		{"os.system('wget", "os.system('wget …')"},
+	}
+	for _, p := range patterns {
+		if strings.Contains(script, p.needle) {
+			return p.label
+		}
+	}
+	return ""
+}
+
+// ungrantedCalls represents one or more credential-bearing calls
+// found in script_body that aren't covered by HookCapabilities.
+// calls and suggest are pre-formatted for the directive error.
+type ungrantedCalls struct {
+	calls   string
+	suggest string
+}
+
+// findUngrantedCredentialCalls scans script_body for gohort.secret(...)
+// and gohort.fetch_via(...) calls, extracts the credential name from
+// the first string-literal arg, and returns any names that aren't
+// covered by the existing HookCapabilities. Used to produce a
+// directive error at authoring time instead of letting the tool fail
+// at dispatch with a confusing "HookError: secret %q not granted".
+//
+// Best-effort parse — only catches the common shape with a string
+// literal as the first arg (`gohort.secret("openweather")`,
+// `gohort.fetch_via("github", url)`). Dynamic args (variable, f-string,
+// dict lookup) slip through silently — they'll surface at dispatch
+// where the hook denies the unknown credential.
+//
+// Returns the zero value when nothing's missing (calls == "" means
+// no error to raise).
+func findUngrantedCredentialCalls(script string, granted []string) ungrantedCalls {
+	grantedSet := map[string]bool{}
+	for _, c := range granted {
+		grantedSet[c] = true
+	}
+	var missingCalls []string
+	var suggestParts []string
+	scan := func(prefix, capKind string) {
+		idx := 0
+		for {
+			pos := strings.Index(script[idx:], prefix)
+			if pos < 0 {
+				return
+			}
+			start := idx + pos + len(prefix)
+			// Skip whitespace.
+			for start < len(script) && (script[start] == ' ' || script[start] == '\t') {
+				start++
+			}
+			if start >= len(script) {
+				return
+			}
+			quote := script[start]
+			if quote != '"' && quote != '\'' {
+				// Not a string literal — can't extract the name.
+				idx = idx + pos + len(prefix)
+				continue
+			}
+			end := strings.IndexByte(script[start+1:], quote)
+			if end < 0 {
+				return
+			}
+			name := script[start+1 : start+1+end]
+			needed := capKind + ":" + name
+			if !grantedSet[needed] {
+				missingCalls = append(missingCalls, fmt.Sprintf("gohort.%s(%q)", capKind, name))
+				suggestParts = append(suggestParts, fmt.Sprintf("%q", needed))
+				grantedSet[needed] = true // dedupe across multiple call sites
+			}
+			idx = idx + pos + len(prefix)
+		}
+	}
+	scan("gohort.secret(", "secret")
+	scan("gohort.fetch_via(", "fetch_via")
+	if len(missingCalls) == 0 {
+		return ungrantedCalls{}
+	}
+	return ungrantedCalls{
+		calls:   strings.Join(missingCalls, ", "),
+		suggest: strings.Join(suggestParts, ", "),
+	}
+}
+
+// firstShebang returns the shebang line of scriptBody (without the
+// leading "#!") when the body starts with one. Empty otherwise.
+func firstShebang(scriptBody string) string {
+	if !strings.HasPrefix(scriptBody, "#!") {
+		return ""
+	}
+	end := strings.IndexByte(scriptBody, '\n')
+	if end < 0 {
+		end = len(scriptBody)
+	}
+	return strings.TrimSpace(scriptBody[2:end])
+}
+
+// paramNamesInDefinitionOrder extracts param names from the raw
+// `params` argument value while preserving the order the LLM
+// specified. parseParamsArg returns a map[string]ToolParam which
+// loses order; for inferring positional command_template we want the
+// order the LLM listed them in. Uses encoding/json's Decoder Token
+// stream to walk an object's keys in insertion order.
+//
+// Falls back to alphabetical when the input isn't a parseable JSON
+// object (the typed-map path takes over via parseParamsArg downstream,
+// so this is a best-effort ordering for the auto-inference shortcut).
+func paramNamesInDefinitionOrder(v any) ([]string, error) {
+	if v == nil {
+		return nil, fmt.Errorf("params is nil")
+	}
+	var raw []byte
+	switch s := v.(type) {
+	case string:
+		raw = []byte(s)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		raw = b
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, fmt.Errorf("params is not a JSON object")
+	}
+	var keys []string
+	depth := 0
+	for dec.More() || depth > 0 {
+		t, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		switch d := t.(type) {
+		case json.Delim:
+			switch d {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+			}
+		case string:
+			if depth == 0 {
+				keys = append(keys, d)
+			}
+		}
+	}
+	return keys, nil
 }

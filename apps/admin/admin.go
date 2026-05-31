@@ -880,6 +880,39 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		})
 	})
 
+	// Agent-loop tuning — history-budget cap (and future LLM-retry
+	// knobs). Mirrors /api/network's GET-current/POST-new shape so the
+	// admin FormPanel can save without app-specific JS.
+	sub.HandleFunc("/api/agent-loop-tuning", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			var req struct {
+				HistoryBudgetPercent int `json:"history_budget_percent"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if err := SaveAgentLoopTuningToDB(a.db, AgentLoopTuning{
+				HistoryBudgetPercent: req.HistoryBudgetPercent,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			Log("[admin] user %q updated agent-loop tuning (history_budget_percent=%d)",
+				AuthCurrentUser(r), GetAgentLoopTuning().HistoryBudgetPercent)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		cur := GetAgentLoopTuning()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{
+			"history_budget_percent": cur.HistoryBudgetPercent,
+		})
+	})
+
 	// List registered maintenance functions (GET) or run one by key (POST ?key=<key>).
 	sub.HandleFunc("/api/maintenance", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -1296,21 +1329,23 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			// large float32 array that the admin UI doesn't need
 			// and would just bloat the response.
 			type wire struct {
-				ID           string   `json:"id"`
-				Name         string   `json:"name"`
-				Description  string   `json:"description"`
-				Triggers     []string `json:"triggers"`
-				AllowedTools []string `json:"allowed_tools"`
-				Instructions string   `json:"instructions"`
-				Disabled     bool     `json:"disabled"`
-				Updated      string   `json:"updated"`
+				ID                  string   `json:"id"`
+				Name                string   `json:"name"`
+				Description         string   `json:"description"`
+				Triggers            []string `json:"triggers"`
+				AllowedTools        []string `json:"allowed_tools"`
+				AttachedCollections []string `json:"attached_collections"`
+				Instructions        string   `json:"instructions"`
+				Disabled            bool     `json:"disabled"`
+				Updated             string   `json:"updated"`
 			}
 			out := make([]wire, 0, len(skills))
 			for _, s := range skills {
 				out = append(out, wire{
 					ID: s.ID, Name: s.Name, Description: s.Description,
 					Triggers: s.Triggers, AllowedTools: s.AllowedTools,
-					Instructions: s.Instructions, Disabled: s.Disabled,
+					AttachedCollections: s.AttachedCollections,
+					Instructions:        s.Instructions, Disabled: s.Disabled,
 					Updated: s.Updated.Format("2006-01-02 15:04:05"),
 				})
 			}
@@ -1426,18 +1461,20 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				w.Header().Set("Content-Type", "application/json")
 				// Strip embedding from the wire payload — same as list.
 				type wire struct {
-					ID           string   `json:"id"`
-					Name         string   `json:"name"`
-					Description  string   `json:"description"`
-					Triggers     []string `json:"triggers"`
-					AllowedTools []string `json:"allowed_tools"`
-					Instructions string   `json:"instructions"`
-					Disabled     bool     `json:"disabled"`
+					ID                  string   `json:"id"`
+					Name                string   `json:"name"`
+					Description         string   `json:"description"`
+					Triggers            []string `json:"triggers"`
+					AllowedTools        []string `json:"allowed_tools"`
+					AttachedCollections []string `json:"attached_collections"`
+					Instructions        string   `json:"instructions"`
+					Disabled            bool     `json:"disabled"`
 				}
 				_ = json.NewEncoder(w).Encode(wire{
 					ID: s.ID, Name: s.Name, Description: s.Description,
 					Triggers: s.Triggers, AllowedTools: s.AllowedTools,
-					Instructions: s.Instructions, Disabled: s.Disabled,
+					AttachedCollections: s.AttachedCollections,
+					Instructions:        s.Instructions, Disabled: s.Disabled,
 				})
 				return
 			}
@@ -2017,51 +2054,51 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		})
 	})
 
-		// Local model scheduler: GET returns max parallel for Ollama and llama.cpp,
-		// POST updates both values. Requires restart to apply.
-		sub.HandleFunc("/api/local-scheduler", func(w http.ResponseWriter, r *http.Request) {
-			if !a.requireAdmin(w, r) {
+	// Local model scheduler: GET returns max parallel for Ollama and llama.cpp,
+	// POST updates both values. Requires restart to apply.
+	sub.HandleFunc("/api/local-scheduler", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method == http.MethodPost {
+			var req struct {
+				OllamaMaxParallel   int `json:"ollama_max_parallel"`
+				LlamacppMaxParallel int `json:"llamacpp_max_parallel"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			if r.Method == http.MethodPost {
-				var req struct {
-					OllamaMaxParallel   int `json:"ollama_max_parallel"`
-					LlamacppMaxParallel int `json:"llamacpp_max_parallel"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					http.Error(w, "bad request", http.StatusBadRequest)
-					return
-				}
-				if a.db != nil {
-					if req.OllamaMaxParallel < 1 {
-						req.OllamaMaxParallel = 1
-					}
-					if req.LlamacppMaxParallel < 1 {
-						req.LlamacppMaxParallel = 1
-					}
-					a.db.Set(LLMTable, "ollama_max_parallel", req.OllamaMaxParallel)
-					a.db.Set(LLMTable, "llamacpp_max_parallel", req.LlamacppMaxParallel)
-				}
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			var ollamaMP, llamacppMP int
 			if a.db != nil {
-				a.db.Get(LLMTable, "ollama_max_parallel", &ollamaMP)
-				a.db.Get(LLMTable, "llamacpp_max_parallel", &llamacppMP)
+				if req.OllamaMaxParallel < 1 {
+					req.OllamaMaxParallel = 1
+				}
+				if req.LlamacppMaxParallel < 1 {
+					req.LlamacppMaxParallel = 1
+				}
+				a.db.Set(LLMTable, "ollama_max_parallel", req.OllamaMaxParallel)
+				a.db.Set(LLMTable, "llamacpp_max_parallel", req.LlamacppMaxParallel)
 			}
-			if ollamaMP < 1 {
-				ollamaMP = 1
-			}
-			if llamacppMP < 1 {
-				llamacppMP = 1
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
-				"ollama_max_parallel":   ollamaMP,
-				"llamacpp_max_parallel": llamacppMP,
-			})
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var ollamaMP, llamacppMP int
+		if a.db != nil {
+			a.db.Get(LLMTable, "ollama_max_parallel", &ollamaMP)
+			a.db.Get(LLMTable, "llamacpp_max_parallel", &llamacppMP)
+		}
+		if ollamaMP < 1 {
+			ollamaMP = 1
+		}
+		if llamacppMP < 1 {
+			llamacppMP = 1
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"ollama_max_parallel":   ollamaMP,
+			"llamacpp_max_parallel": llamacppMP,
 		})
+	})
 
 	// API: database browser.
 	sub.HandleFunc("/api/db/tables", a.handleDBTables)
@@ -2367,35 +2404,35 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"allow_signup":          allow_signup,
-		"session_days":          session_days,
-		"max_login_attempts":    max_attempts,
-		"lockout_minutes":       lockout_minutes,
-		"service_name":          service_name,
-		"external_url":          external_url,
-		"notify_from":           notify_from,
-		"default_apps":          AuthGetDefaultApps(a.db),
-		"ollama_proxy_enabled":  ollama_proxy_enabled,
-		"ollama_proxy_port":     ollama_proxy_port,
-		"ollama_proxy_url":      proxy_url,
-		"ollama_active":         ollama_active,
-		"fetch_cache_quota_mb":  fetch_cache_quota_mb,
+		"allow_signup":         allow_signup,
+		"session_days":         session_days,
+		"max_login_attempts":   max_attempts,
+		"lockout_minutes":      lockout_minutes,
+		"service_name":         service_name,
+		"external_url":         external_url,
+		"notify_from":          notify_from,
+		"default_apps":         AuthGetDefaultApps(a.db),
+		"ollama_proxy_enabled": ollama_proxy_enabled,
+		"ollama_proxy_port":    ollama_proxy_port,
+		"ollama_proxy_url":     proxy_url,
+		"ollama_active":        ollama_active,
+		"fetch_cache_quota_mb": fetch_cache_quota_mb,
 	})
 }
 
 func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		AllowSignup         *bool     `json:"allow_signup,omitempty"`
-		SessionDays         *int      `json:"session_days,omitempty"`
-		MaxLoginAttempts    *int      `json:"max_login_attempts,omitempty"`
-		LockoutMinutes      *int      `json:"lockout_minutes,omitempty"`
-		ServiceName         *string   `json:"service_name,omitempty"`
-		ExternalURL         *string   `json:"external_url,omitempty"`
-		NotifyFrom          *string   `json:"notify_from,omitempty"`
-		DefaultApps         *[]string `json:"default_apps,omitempty"`
-		OllamaProxyEnabled  *bool     `json:"ollama_proxy_enabled,omitempty"`
-		OllamaProxyPort     *int      `json:"ollama_proxy_port,omitempty"`
-		FetchCacheQuotaMB   *int      `json:"fetch_cache_quota_mb,omitempty"`
+		AllowSignup        *bool     `json:"allow_signup,omitempty"`
+		SessionDays        *int      `json:"session_days,omitempty"`
+		MaxLoginAttempts   *int      `json:"max_login_attempts,omitempty"`
+		LockoutMinutes     *int      `json:"lockout_minutes,omitempty"`
+		ServiceName        *string   `json:"service_name,omitempty"`
+		ExternalURL        *string   `json:"external_url,omitempty"`
+		NotifyFrom         *string   `json:"notify_from,omitempty"`
+		DefaultApps        *[]string `json:"default_apps,omitempty"`
+		OllamaProxyEnabled *bool     `json:"ollama_proxy_enabled,omitempty"`
+		OllamaProxyPort    *int      `json:"ollama_proxy_port,omitempty"`
+		FetchCacheQuotaMB  *int      `json:"fetch_cache_quota_mb,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
@@ -3303,6 +3340,11 @@ const adminBody = `
         <label style="display:flex;flex-direction:column;gap:0.2rem">
           <span style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Allowed tools (comma-separated, optional)</span>
           <input id="skill-allowed-tools" type="text" placeholder="web_search, fetch_url" style="padding:0.4rem 0.55rem;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font:inherit" />
+        </label>
+        <label style="display:flex;flex-direction:column;gap:0.2rem">
+          <span style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Attached collections (comma-separated collection IDs, optional)</span>
+          <input id="skill-attached-collections" type="text" placeholder="col_xyz, col_abc" style="padding:0.4rem 0.55rem;background:#0d1117;border:1px solid #30363d;border-radius:4px;color:#c9d1d9;font:inherit" />
+          <span style="font-size:0.7rem;color:#6e7681">Searchable via knowledge_search ONLY when the skill is active. Ship domain docs alongside the behavior.</span>
         </label>
         <label style="display:flex;flex-direction:column;gap:0.2rem">
           <span style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Instructions (markdown — appended to the host system prompt when active)</span>
@@ -4675,6 +4717,7 @@ function showSkillModal(s) {
   document.getElementById('skill-description').value = s ? (s.description || '') : '';
   document.getElementById('skill-triggers').value = s ? (s.triggers || []).join(', ') : '';
   document.getElementById('skill-allowed-tools').value = s ? (s.allowed_tools || []).join(', ') : '';
+  document.getElementById('skill-attached-collections').value = s ? (s.attached_collections || []).join(', ') : '';
   document.getElementById('skill-instructions').value = s ? (s.instructions || '') : '';
   document.getElementById('skill-modal-overlay').dataset.editingId = s ? s.id : '';
   document.getElementById('skill-modal-overlay').dataset.editingDisabled = (s && s.disabled) ? '1' : '';
@@ -4702,6 +4745,7 @@ function saveSkillModal() {
     description: description,
     triggers: splitCSV(document.getElementById('skill-triggers').value),
     allowed_tools: splitCSV(document.getElementById('skill-allowed-tools').value),
+    attached_collections: splitCSV(document.getElementById('skill-attached-collections').value),
     instructions: instructions,
     disabled: ov.dataset.editingDisabled === '1'
   };
@@ -4748,8 +4792,9 @@ function renderPendingTools(pending) {
   list.style.display = '';
   empty.style.display = 'none';
   pending.forEach(function(p){
+    var rel = relTime(p.requested_at);
     list.appendChild(renderToolCard(p.tool, {
-      meta: 'Requested ' + relTime(p.requested_at),
+      meta: rel ? 'Requested ' + rel : 'Pending review',
       pending: true
     }));
   });
@@ -4767,12 +4812,10 @@ function renderActiveTools(active) {
   list.style.display = '';
   empty.style.display = 'none';
   active.forEach(function(p){
-    var meta = 'Approved ' + relTime(p.approved_at);
-    if (p.last_used_at && p.last_used_at !== '0001-01-01T00:00:00Z') {
-      meta += ' • last used ' + relTime(p.last_used_at);
-    } else {
-      meta += ' • never used';
-    }
+    var rel = relTime(p.approved_at);
+    var meta = rel ? 'Approved ' + rel : 'Approved';
+    var lastUsed = relTime(p.last_used_at);
+    meta += lastUsed ? ' • last used ' + lastUsed : ' • never used';
     list.appendChild(renderToolCard(p.tool, {meta: meta, pending: false}));
   });
 }
@@ -4949,6 +4992,21 @@ function showToolModal(tool, opts) {
   } else {
     section('Command template', tool.command_template || '(empty)', true);
     if (tool.state_path) section('State path', tool.state_path, true);
+    // script_body is the canonical place for shell-mode source today
+    // (the inline-with-tool-record path that survives workspace wipes).
+    // Show with a length header so the admin can spot tools that
+    // smuggle huge blobs vs. small declarative wrappers.
+    if (tool.script_body) {
+      var sname = tool.script_name || '';
+      var canon = tool.canonical_script_name || '';
+      var bodyHeader = 'Script body (' + tool.script_body.length + ' bytes';
+      if (sname) bodyHeader += ', script_name=' + sname;
+      if (canon && canon !== sname) bodyHeader += ', canonical=' + canon;
+      bodyHeader += ')';
+      section(bodyHeader, tool.script_body, true);
+    }
+    // recipe[] is the older multi-file packaging — still supported
+    // for tools that ship more than one source file, but rare today.
     if (tool.recipe && tool.recipe.length) {
       var recipeLines = tool.recipe.map(function(f) {
         var modeStr = f.mode ? (' [' + f.mode.toString(8) + ']') : '';
@@ -4957,6 +5015,19 @@ function showToolModal(tool, opts) {
       }).join('\n\n');
       section('Recipe (' + tool.recipe.length + ' file' + (tool.recipe.length === 1 ? '' : 's') + ')', recipeLines, true);
     }
+  }
+
+  // Network policy + hook surface — applies to both shell and api
+  // (api tools have implicit network via gohort's HTTP stack, but
+  // hook_capabilities still applies if someone wired it). Show
+  // these LAST so the admin sees them on every tool record.
+  if (tool.hook_capabilities && tool.hook_capabilities.length) {
+    section('Hook capabilities', tool.hook_capabilities.join(', '), true);
+  }
+  if (tool.raw_network) {
+    section('Raw network', 'YES — sandbox keeps host network namespace (--unshare-net NOT applied). Escape-hatch for non-HTTP TCP needs.', false);
+  } else if (mode === 'shell' || mode === 'persistent') {
+    section('Raw network', 'no (sandbox runs with --unshare-net; HTTP must go through hook_capabilities)', false);
   }
 
   if (tool.params && Object.keys(tool.params).length) {
@@ -4988,9 +5059,13 @@ document.addEventListener('keydown', function(e){
 });
 
 function relTime(iso) {
-  if (!iso) return 'unknown';
+  if (!iso) return '';
   var t = new Date(iso).getTime();
-  if (!t) return iso;
+  // Reject NaN, epoch, and Go's zero-value time.Time (year 0001,
+  // serialized as "0001-01-01T00:00:00Z") which would otherwise
+  // render as ~739763d ago. Pre-epoch timestamps are treated as
+  // "unknown" — we don't have legitimate pre-1970 records.
+  if (!t || t <= 0) return '';
   var s = Math.round((Date.now() - t) / 1000);
   if (s < 60) return s + 's ago';
   if (s < 3600) return Math.round(s/60) + 'm ago';

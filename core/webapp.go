@@ -858,6 +858,14 @@ func ServeDashboard(addr string) error {
 		mux.HandleFunc("/reset", ResetHandler(db))
 	}
 
+	// Desktop bridge — gohort-desktop opens a WebSocket here,
+	// announces its locally-installed tools, and the orchestrate
+	// runner exposes those to the LLM as local.<name> tools (see
+	// core/desktop_bridge.go). The auth middleware that wraps
+	// this mux upstream already gates by cookie; we just resolve
+	// the user from the same cookie session for the registry.
+	mux.HandleFunc("/api/desktop/ws", HandleDesktopBridge(AuthCurrentUser))
+
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.
 	QueueRestore()

@@ -47,9 +47,9 @@ func skillStore(fallback Database) Database {
 // the classifier when its triggers/description match the current
 // turn's user message.
 type SkillRecord struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	// Triggers are substring patterns matched against the user
 	// message (and attachment filenames). Glob-style `*.pdf` matches
 	// any attachment ending in .pdf; everything else is a plain
@@ -77,12 +77,17 @@ type SkillRecord struct {
 	// definition (admin can re-enable later instead of re-authoring).
 	Disabled bool `json:"disabled,omitempty"`
 
-	// (Corpus-side fields removed: SelfTraining grew the skill's own
-	// corpus from paraphrases and compounded drift; AttachedCollections
-	// tried to make skills carry reference material but the right
-	// primitive for that turned out to be Agents — the agent has the
-	// persona, the collections, the tools, and its own conversational
-	// surface. Skills are pure behavior packets again.)
+	// AttachedCollections lists collection IDs whose corpus becomes
+	// searchable when this skill is active. Admin-curated only — the
+	// derived "SelfTraining" path (paraphrased self-corpus from the
+	// skill's own work) stays removed because it compounded drift,
+	// but admin-attached collections are stable reference material
+	// that pairs naturally with a skill's Instructions. Active path
+	// only: when the classifier doesn't pick this skill, its
+	// collections stay out of scope, so a heavy reference corpus
+	// doesn't leak into unrelated turns. Empty by default — most
+	// skills are pure behavior packets and don't carry docs.
+	AttachedCollections []string `json:"attached_collections,omitempty"`
 	// Embedding is cached at save time so the classifier doesn't
 	// have to re-embed on every turn. Re-computed in SaveSkill from
 	// the current Description. Persisted with the record so reloads
@@ -532,10 +537,17 @@ func SkillSource(skillID string) string {
 // Returns nil when RootDB isn't initialized; callers should treat
 // that as "no corpus available" and skip both ingest and search.
 func SkillChunksDB(username string) Database {
-	if RootDB == nil || username == "" {
+	if username == "" {
 		return nil
 	}
-	return UserDB(RootDB, username)
+	// Skill corpus now lives in the shared, dedicated vector store
+	// alongside all other knowledge, scoped logically by the
+	// SkillSource("skill:<id>") tag rather than by a per-user sub-store.
+	// Skill IDs are globally unique, so any future skill search MUST
+	// scope to the requesting user's own skill IDs (the source tag does
+	// not by itself partition by user). No skill chunks are ingested or
+	// searched today; the only consumer is delete-cleanup.
+	return VectorDB
 }
 
 // SkillPromptSection returns the skill's instructions formatted for

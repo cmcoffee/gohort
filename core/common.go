@@ -1566,12 +1566,35 @@ type TempTool struct {
 	// script is allowed to invoke. When non-empty, the dispatcher
 	// starts a per-dispatch UDS hook server inside the workspace,
 	// exposes its path via the GOHORT_HOOK_PATH env var, and the
-	// shipped `gohort_hook.py` helper module lets the script call
-	// back into gohort for those narrow operations (fetch, log, …)
-	// WITHOUT opening the sandbox's network namespace. Empty list
-	// means no hook is wired — zero surface area, same posture as
-	// before the hook existed. Recognized methods: "fetch", "log".
+	// shipped `gohort.py` helper module lets the script call back
+	// into gohort for those narrow operations (fetch, log, secret,
+	// fetch_via) WITHOUT opening the sandbox's network namespace.
+	// Empty list means no hook is wired — zero surface area, same
+	// posture as before the hook existed. Recognized methods:
+	// "fetch", "log", "secret:<name>", "fetch_via:<name>".
 	HookCapabilities []string `json:"hook_capabilities,omitempty"`
+
+	// RawNetwork, when true, leaves the sandbox's network namespace
+	// JOINED with the host's (no --unshare-net). The default is
+	// false: shell-mode + persistent-mode tools run with the network
+	// namespace cut, so a script that does urllib.request /
+	// socket.connect / curl from inside the sandbox fails. Such
+	// tools must declare hook_capabilities=["fetch"] and call
+	// gohort.fetch(...) instead — gohort proxies HTTP on their
+	// behalf with auditing.
+	//
+	// Reserve RawNetwork=true for the narrow cases where the tool
+	// genuinely needs raw TCP from the sandbox (persistent-mode
+	// psql / redis-cli / ssh-like REPLs that connect to a
+	// non-HTTP protocol; legacy shell tools that haven't been
+	// re-authored yet). Every new shell-mode tool that does HTTP
+	// should use the hook, not RawNetwork.
+	//
+	// The session-level NetworkConnector still acts as a hard
+	// upper bound — RawNetwork=true on a tool dispatched within a
+	// private-mode session still gets no network. RawNetwork only
+	// matters when the session would otherwise permit it.
+	RawNetwork bool `json:"raw_network,omitempty"`
 
 	// --- Pipeline-mode fields (Mode == "pipeline") ----------------------
 	// Pipeline-mode tools are mini-agents exposed as a single tool.
@@ -1947,6 +1970,7 @@ var (
 	NewOptions      = nfo.NewOptions
 	Log             = nfo.Log             // Standard Log Output
 	Fatal           = nfo.Fatal           // Fatal Log Output & Exit.
+	Critical        = nfo.Critical        // err-or-nil → Fatal helper
 	Notice          = nfo.Notice          // Notice Log Output
 	Flash           = nfo.Flash           // Flash to Stderr
 	Stdout          = nfo.Stdout          // Send to Stdout
@@ -2005,13 +2029,6 @@ func Err(input ...interface{}) {
 	nfo.Err(msg)
 	if err_table != nil {
 		err_table.Set(fmt.Sprintf("%d", atomic.LoadUint32(&error_counter)), fmt.Sprintf("<%v> %s", time.Now().Round(time.Second), msg))
-	}
-}
-
-// Critical performs a fatal error check.
-func Critical(err error) {
-	if err != nil {
-		Fatal(err)
 	}
 }
 

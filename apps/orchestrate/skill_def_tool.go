@@ -1,6 +1,6 @@
 // skill_def — Builder's authoring surface for skills (conditional
 // prompt injection bundles). NOT globally registered; reaches
-// catalogs only via builderInternalTools when the active agent IS
+// catalogs only via builderAuthoringTools when the active agent IS
 // Builder. Same exclusivity model as create_agent / add_tool / tool_def.
 //
 // Actions: list (read), get (read one), create (upsert), delete,
@@ -45,6 +45,11 @@ func (skillDefImpl) Params() map[string]ToolParam {
 			Description: "(create) Optional tools the skill brings to the active agent's catalog while it's active. Resolved against the registered tool pool — names not in the pool are silently skipped (e.g. authoring tools won't surface on non-Builder agents). Same shape as agent AllowedTools.",
 			Items:       &ToolParam{Type: "string"},
 		},
+		"attached_collections": {
+			Type:        "array",
+			Description: "(create) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the classifier doesn't pick this skill, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list).",
+			Items:       &ToolParam{Type: "string"},
+		},
 		"instructions": {
 			Type:        "string",
 			Description: "(create) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance — \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
@@ -82,16 +87,19 @@ func skillDefHelpText() string {
 
 action="list"
   Return every skill in the user's pool as JSON
-  [{id, name, description, triggers, allowed_tools, updated}].
+  [{id, name, description, triggers, allowed_tools, attached_collections, updated}].
 
 action="get", name="<skill name>"
   Fetch one skill's full record (incl. instructions body) by name.
 
 action="create", name=..., description=..., instructions=...,
-                 triggers=[...]?, allowed_tools=[...]?
+                 triggers=[...]?, allowed_tools=[...]?,
+                 attached_collections=[...]?
   Upsert a skill. If a skill with this name already exists in the
   user's pool, it gets replaced (same record, new content). Skill is
   embedded automatically for the fuzzy-match classifier.
+  attached_collections ships domain corpus alongside the skill —
+  searchable via knowledge_search only when the skill is active.
 
 action="delete", name=...
   Drop a skill from the pool by name.
@@ -117,19 +125,21 @@ func skillDefList(sess *ToolSession) (string, error) {
 		ID           string   `json:"id"`
 		Name         string   `json:"name"`
 		Description  string   `json:"description,omitempty"`
-		Triggers     []string `json:"triggers,omitempty"`
-		AllowedTools []string `json:"allowed_tools,omitempty"`
-		Updated      string   `json:"updated"`
+		Triggers            []string `json:"triggers,omitempty"`
+		AllowedTools        []string `json:"allowed_tools,omitempty"`
+		AttachedCollections []string `json:"attached_collections,omitempty"`
+		Updated             string   `json:"updated"`
 	}
 	out := make([]row, 0, len(skills))
 	for _, s := range skills {
 		out = append(out, row{
-			ID:           s.ID,
-			Name:         s.Name,
-			Description:  s.Description,
-			Triggers:     s.Triggers,
-			AllowedTools: s.AllowedTools,
-			Updated:      s.Updated.Format("2006-01-02 15:04:05"),
+			ID:                  s.ID,
+			Name:                s.Name,
+			Description:         s.Description,
+			Triggers:            s.Triggers,
+			AllowedTools:        s.AllowedTools,
+			AttachedCollections: s.AttachedCollections,
+			Updated:             s.Updated.Format("2006-01-02 15:04:05"),
 		})
 	}
 	b, _ := json.Marshal(out)
@@ -164,16 +174,18 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	triggers := stringSliceFromArgs(args, "triggers")
 	allowedTools := stringSliceFromArgs(args, "allowed_tools")
+	attachedCollections := stringSliceFromArgs(args, "attached_collections")
 
 	// Upsert by name. If an existing skill matches, reuse its ID +
 	// Created so the record's identity is preserved across edits.
 	existing, hadPrior := FindSkillByName(sess.DB, sess.Username, name)
 	rec := SkillRecord{
-		Name:         name,
-		Description:  description,
-		Triggers:     triggers,
-		AllowedTools: allowedTools,
-		Instructions: instructions,
+		Name:                name,
+		Description:         description,
+		Triggers:            triggers,
+		AllowedTools:        allowedTools,
+		AttachedCollections: attachedCollections,
+		Instructions:        instructions,
 	}
 	if hadPrior {
 		rec.ID = existing.ID

@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 
-	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
+	. "github.com/cmcoffee/gohort/core"
 
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -56,8 +56,10 @@ func get_runtime_info() string {
 // sub-command so a user can drop `--debug` / `--trace` / `--snoop`
 // / `--serial` on either side of the command name. Values bind
 // against the same global struct fields, so order doesn't matter:
-//   gohort --debug serve :8080
-//   gohort serve --debug :8080
+//
+//	gohort --debug serve :8080
+//	gohort serve --debug :8080
+//
 // both end with global.debug == true.
 func registerModifiers(set *eflag.EFlagSet) {
 	set.BoolVar(&global.single_thread, "serial", NONE)
@@ -281,10 +283,19 @@ func main() {
 		Log("### %s v%s ###", APPNAME, VERSION)
 		init_database()
 		RootDB = global.db
+		// Legacy chunk homes to fold into the dedicated VectorDB on the
+		// first boot after the split: RootDB root (deployment-collection
+		// chunks) and the orchestrate bucket (agent knowledge + user
+		// collections). wireToolDB() registers the private-side homes
+		// (research / debate buckets). Phantom's bucket is deliberately
+		// never registered — its personal corpus stays isolated.
+		RegisterLegacyChunkSource(global.db)
+		RegisterLegacyChunkSource(global.db.Bucket("orchestrate"))
 		wireToolDB()
+		MigrateLegacyChunksToVectorDB()
 		init_logging()
 
-				// Load saved web config as defaults; CLI flags override.
+		// Load saved web config as defaults; CLI flags override.
 		// Values come from the INI file (gohort.ini) with a one-time
 		// fallback to the kvlite-backed mirror so existing installs
 		// don't lose their settings on first boot after this migration.

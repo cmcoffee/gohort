@@ -247,6 +247,24 @@ type AgentLoopConfig struct {
 	// into the same dead end. Nil = no per-round override.
 	RoundChatOptions func() []ChatOption
 
+	// ContextSize is the model's context window (tokens). When > 0, the
+	// loop compacts history before each round once it crosses ~70% of the
+	// window — eliding the bodies of OLD tool results (keeping recent ones
+	// + all conversational text) so a long multi-round session can't grow
+	// past the window and trigger server-side context-shift (which drops
+	// the system prompt and degrades the model). 0 = no compaction. Set it
+	// from the caller's WorkerContextSize()/LeadContextSize().
+	ContextSize int
+
+	// RoundCompactNow, when set, is checked at the top of each round; a
+	// true return forces an AGGRESSIVE compaction this round (shed all but
+	// the newest tool-result body, regardless of budget). This is the
+	// LLM-driven path: a compact_context tool sets it so the model can
+	// proactively drop a long tool output (e.g. a smoke-test report) the
+	// moment it's done with it, instead of waiting for the budget floor.
+	// Works even when ContextSize is 0. Nil = budget-only compaction.
+	RoundCompactNow func() bool
+
 	// AllowedCaps gates which tools the LLM is offered, by capability tier
 	// (CapRead, CapNetwork, CapWrite, CapExecute). Tools whose declared Caps
 	// aren't all in this set are filtered out before the LLM ever sees the
@@ -492,6 +510,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	failureStreakWarned := false
 	const failureStreakThreshold = 3
 
+	// cumulativeToolErrors tracks tool errors across the WHOLE loop, not
+	// just the current round. Used to catch the "give up with errors
+	// pending" pattern: model emits empty content + finish=stop after a
+	// run with unresolved tool errors, even though budget remains.
+	// Increments after each round's native-tool batch (toolErrors local
+	// var), and the no-tool-call exit path checks it before letting the
+	// loop terminate — injecting a "fix the errors, don't summarize"
+	// nudge instead of letting the rescue path paper over the bailout.
+	cumulativeToolErrors := 0
+
 	for round := 1; round <= maxRounds; round++ {
 		// Bail immediately on cancellation so the loop doesn't burn another
 		// LLM call (or tool execution) after the session was aborted. Tool
@@ -500,6 +528,19 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if err := ctx.Err(); err != nil {
 			return lastResp, history, err
 		}
+		// Round-start breadcrumb — pair with the existing "round N:
+		// content=..." post-LLM log to bracket each round. When a
+		// hang lands between rounds (after a tool returned, before
+		// the next LLM call), we see "starting" without a matching
+		// "calling LLM" → narrows the wedge to compaction / option
+		// assembly / injection drain. Cheap, fires once per iteration.
+		Debug("[agent_loop] round %d: starting (history=%d msgs)", round, len(history))
+		// BREADCRUMB: round-top reached. Mirrors the Debug above at
+		// Log level — paired with the "dispatch complete" breadcrumb
+		// after tools, the gap between the two pinpoints whether
+		// the hang is in iteration restart (Debug fires) or pre-
+		// iteration bookkeeping (Debug does NOT fire).
+		Log("[agent_loop] round %d: top of iteration", round)
 		// Soft cap hook — apps that want a budget cap depending on
 		// runtime state (e.g. orchestrate's explorer-mode flag) wire
 		// StopRound; it gets called once per round and a true return
@@ -625,6 +666,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			}
 			rebuildToolMaps(active)
 		}
+		// Compact history if it's about to push the round past the window
+		// (budget-based), OR if the LLM asked for it via RoundCompactNow
+		// (forced, aggressive). Elides old tool-result bodies in place so
+		// this and later rounds stay under the window. Runs after
+		// round-start injections so it sees the full assembled history.
+		forceCompact := cfg.RoundCompactNow != nil && cfg.RoundCompactNow()
+		compactHistory(history, systemPrompt, cfg.ContextSize, forceCompact)
 		// Route think is the default; ChatOptions override it. Build route
 		// defaults first so per-call WithThink(true/false) takes precedence.
 		var opts []ChatOption
@@ -675,6 +723,26 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 		var resp *Response
 		var err error
+		// Pre-call breadcrumb: when an LLM round hangs, we want to know
+		// whether the hang is upstream of the LLM call (compaction,
+		// injection drain, option assembly) or inside it (waiting on
+		// llama.cpp's response). Pairs with the existing "stream
+		// completed" log after the call returns: enter-without-exit =
+		// LLM-side hang; no-enter = something earlier in the loop wedged.
+		// Cheap, fires once per round.
+		histChars := 0
+		for _, m := range history {
+			histChars += len(m.Content)
+			for _, tr := range m.ToolResults {
+				histChars += len(tr.Content)
+			}
+		}
+		Debug("[agent_loop] round %d: calling LLM (history=%d msgs, ~%d chars)", round, len(history), histChars)
+		// BREADCRUMB: about to make the LLM HTTP call. If we see this
+		// but no matching "LLM returned" below, the call is hung at
+		// the provider — needs a per-call hard timeout or the
+		// provider's endpoint is wedged.
+		Log("[agent_loop] round %d: → LLM call (history=%d msgs)", round, len(history))
 		// If the caller wants reasoning streamed but didn't set a content
 		// stream handler, take the streaming path with a no-op content
 		// callback so the reasoning callback can fire. The reasoning
@@ -701,12 +769,46 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// direct WorkerChat/LeadChat and chat-handler ChatStream.
 			resp, err = callFn(ctx, history, opts...)
 		}
+		// Context-exceeded recovery: provider rejected the prompt as
+		// too large. Naive retries don't help (same prompt → same
+		// error), but aggressive compaction (force=true drops all but
+		// the newest tool-result body) may free enough room. Retry
+		// once after compacting; if the second call still says context-
+		// exceeded, surface a clean caller-friendly error instead of
+		// the raw provider message.
+		if err != nil && IsContextExceededError(err) {
+			Debug("[agent_loop] round %d: context exceeded — force-compacting history and retrying once", round)
+			compactHistory(history, systemPrompt, cfg.ContextSize, true)
+			if streamHandler != nil {
+				resp, err = T.ChatStreamWithReport(ctx, history, streamHandler, opts...)
+			} else {
+				useLead := cfg.Tier == LEAD && !T.NoLead
+				if cfg.RouteKey != "" && !T.NoLead {
+					useLead = RouteToLead(cfg.RouteKey)
+				}
+				callFn := T.WorkerChat
+				if useLead {
+					callFn = T.LeadChat
+				}
+				resp, err = callFn(ctx, history, opts...)
+			}
+			if err != nil && IsContextExceededError(err) {
+				Debug("[agent_loop] round %d: context exceeded after force-compact — giving up", round)
+				return resp, history, fmt.Errorf("context exhausted: even after aggressive history compaction, the round prompt remains too large for the model's context window — start a new session or split this turn into smaller steps (%w)", err)
+			}
+			if err == nil {
+				Debug("[agent_loop] round %d: context-exceeded recovered after force-compact", round)
+			}
+		}
 		if err != nil {
 			return resp, history, err
 		}
 		lastResp = resp
 
 		Debug("[agent_loop] round %d: content=%d chars, reasoning=%d chars, tool_calls=%d", round, len(resp.Content), len(resp.Reasoning), len(resp.ToolCalls))
+		// BREADCRUMB: LLM returned. Pair with the "→ LLM call"
+		// breadcrumb above to detect a wedged provider call.
+		Log("[agent_loop] round %d: ← LLM returned (content=%d, tools=%d)", round, len(resp.Content), len(resp.ToolCalls))
 
 		// Thinking models may place their response entirely in the
 		// reasoning field. Promote reasoning to content when there is
@@ -777,6 +879,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if toolErr != nil {
 				resultText = fmt.Sprintf("Tool %s returned an error: %s", tc.Name, toolErr)
 				toolErrors = 1
+				cumulativeToolErrors++
 			} else {
 				resultText = fmt.Sprintf("Tool result from %s:\n%s", tc.Name, output)
 			}
@@ -888,6 +991,41 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 					promiseCorrectionsTotal++
 					continue
 				}
+			} else if containsFakeToolCodeBlock(resp.Content) {
+				// Training-data artifact: the model writes its tool call
+				// as plain text in a <tool_code> block (Gemini format) or
+				// with ::name(...):: cascade syntax (gohort-shaped fake).
+				// This happens most often near the round cap when the
+				// wrap-up nudge fires and the model interprets "respond
+				// directly now" as "polish a final message" — so it
+				// describes the call in narrative form ("Creating the
+				// updated tool now…") and appends the fake invocation.
+				// The actual tool_calls field is empty, so the loop
+				// would otherwise terminate with nothing executed.
+				//
+				// Recovery: strip the fake markup from the visible
+				// content and inject a corrective re-prompt so the
+				// model issues the real structured call next round.
+				attemptedName := extractFakeToolCodeName(resp.Content)
+				resp.Content = stripFakeToolCodeBlocks(resp.Content)
+				history[len(history)-1] = Message{
+					Role:      "assistant",
+					Content:   resp.Content,
+					Reasoning: resp.Reasoning,
+				}
+				if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds {
+					hint := ""
+					if attemptedName != "" {
+						hint = fmt.Sprintf(" You appeared to invoke %q.", attemptedName)
+					}
+					Debug("[agent_loop] fake <tool_code>/::name():: block detected (name=%q), re-prompting: correction %d/%d", attemptedName, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					history = append(history, Message{
+						Role:    "user",
+						Content: "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
+					})
+					promiseCorrectionsTotal++
+					continue
+				}
 			}
 		}
 
@@ -926,6 +1064,52 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				history = append(history, Message{
 					Role:    "user",
 					Content: "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
+				})
+				promiseCorrectionsTotal++
+				continue
+			}
+
+			// Give-up-with-errors-pending catch. Model emitted no tool
+			// calls and ~empty content while tool errors accumulated
+			// earlier in this turn AND budget remains — the "I tried,
+			// give up" pattern. The forced-final-answer rescue path
+			// after the loop would otherwise paper over this with a
+			// polite "here's what I did" summary instead of fixing the
+			// underlying problem. Push back: inject a continuation
+			// nudge that names the error count and the rounds remaining,
+			// and re-loop. Budget-gated via promiseCorrectionsTotal so
+			// pathological cases can't infinitely re-prompt.
+			//
+			// Triggers:
+			//   - no tool calls THIS round
+			//   - empty content (or nearly so — <30 chars after trim)
+			//   - cumulative tool errors > 0
+			//   - more than 5 rounds remain (don't push at the cap;
+			//     the existing wrap-up message owns that case)
+			//   - haven't already burned the correction budget
+			// trimmedContent reuses the variable declared in the
+			// reasoning-collapse check above — same scope, already trimmed.
+			roundsLeft := maxRounds - round
+			if promiseCorrectionsTotal < maxPromiseCorrections &&
+				roundsLeft >= 5 &&
+				cumulativeToolErrors > 0 &&
+				len(trimmedContent) < 30 {
+				Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch), re-prompting: correction %d/%d",
+					cumulativeToolErrors, roundsLeft, len(trimmedContent), promiseCorrectionsTotal+1, maxPromiseCorrections)
+				errPlural := ""
+				if cumulativeToolErrors != 1 {
+					errPlural = "s"
+				}
+				roundPlural := ""
+				if roundsLeft != 1 {
+					roundPlural = "s"
+				}
+				history = append(history, Message{
+					Role: "user",
+					Content: fmt.Sprintf(
+						"You stopped without producing a reply and without calling any tool, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
+						cumulativeToolErrors, errPlural, roundsLeft, roundPlural,
+					),
 				})
 				promiseCorrectionsTotal++
 				continue
@@ -1212,6 +1396,11 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			toolErrors += int(atomic.LoadInt32(&errCount))
 		}
 
+		// BREADCRUMB: tool dispatch complete. If we see this line but
+		// no subsequent "round N+1: starting", the hang is in the
+		// bookkeeping/OnStep/iteration-restart path. Log-level (not
+		// Debug) so it surfaces regardless of debug flags.
+		Log("[agent_loop] round %d: tool dispatch complete (%d tools, %d errors) — appending results to history", round, len(work), toolErrors)
 		// Add tool results to history for the next LLM round.
 		history = append(history, Message{
 			Role:        "user",
@@ -1259,6 +1448,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				Done:       false,
 			})
 		}
+		cumulativeToolErrors += toolErrors
 
 		// stay_silent closes the turn. The "do not call any more tools"
 		// instruction in the tool result is unreliable — Qwen 3 in
@@ -1329,7 +1519,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		Debug("[agent_loop] empty after lookback rescue — issuing a forced-final-answer call with no tools")
 		wrapHistory := append([]Message{}, history...)
 		wrapHistory = append(wrapHistory, Message{
-			Role: "user",
+			Role:    "user",
 			Content: "Your previous response had no content for the user. Stop calling tools. Produce a final answer NOW from whatever you've gathered so far — even if incomplete, summarize what you found and what you tried. The user is waiting and seeing nothing. Just text, no tool calls.",
 		})
 		// No-tools, no-think final call so the model has nothing to
@@ -1355,11 +1545,11 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 // ParseTextToolCall attempts to extract a tool call from text content when the
 // model doesn't use structured tool calling. Tries three forms in order:
 //
-//   1. XML-style: <function=name><parameter=key>value</parameter></function>,
-//      optionally wrapped in <tool_call> tags. Emitted by Llama-3 / Qwen /
-//      Hermes-style instruction tunes even in native function-calling mode.
-//   2. JSON: {"name": "...", "parameters": {...}} or {"name": "...", "arguments": {...}}.
-//   3. Natural-language tool name in prose (last-resort fallback).
+//  1. XML-style: <function=name><parameter=key>value</parameter></function>,
+//     optionally wrapped in <tool_call> tags. Emitted by Llama-3 / Qwen /
+//     Hermes-style instruction tunes even in native function-calling mode.
+//  2. JSON: {"name": "...", "parameters": {...}} or {"name": "...", "arguments": {...}}.
+//  3. Natural-language tool name in prose (last-resort fallback).
 //
 // toolDefs is consulted to validate that any synthesized call satisfies the
 // tool's `Required` fields. If the extractor produces a call missing required
@@ -1402,7 +1592,19 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 	}
 
 	// JSON form. Validate required fields below rather than trusting blindly.
-	if tc := parseJSONToolCall(content, handlers); tc != nil {
+	// Peel a wrapping <tool_call>...</tool_call> first when present —
+	// some models emit a JSON call (no <function=> tag pair inside) but
+	// still wrap it in the tool-call envelope. Without the peel the JSON
+	// parser sees raw "<tool_call>" before the brace and fails; the
+	// orchestrator then renders the markup as visible text and burns the
+	// round. Mirrors the same peel the XML branch above does.
+	jsonBody := content
+	if start := strings.Index(jsonBody, "<tool_call>"); start >= 0 {
+		if end := strings.Index(jsonBody, "</tool_call>"); end > start {
+			jsonBody = strings.TrimSpace(jsonBody[start+len("<tool_call>") : end])
+		}
+	}
+	if tc := parseJSONToolCall(jsonBody, handlers); tc != nil {
 		if hasRequired(tc, toolDefs) {
 			return tc
 		}
@@ -1421,11 +1623,20 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 	return nil
 }
 
-// StripToolCallMarkup removes <tool_call>...</tool_call> blocks and
-// bare <function=...>...</function> blocks from text. Used after the
-// agent loop promotes a synthesized tool call so the original markup
-// (and any leading "let me try..." narration) doesn't leak into the
-// user-visible reply.
+// StripToolCallMarkup removes fake tool-call markup from streamed
+// content so it doesn't leak to the user-visible bubble. Used after
+// the agent loop promotes a synthesized tool call (or re-prompts the
+// LLM for a corrected call) — the original markup stays out of the
+// chat surface, only the corrected behavior is visible.
+//
+// Handles four shapes:
+//   - <tool_call>...</tool_call> (Qwen / Hermes — JSON or function form inside)
+//   - <function=...>...</function> (bare Hermes/Qwen)
+//   - <tool_code>...</tool_code> (Gemini training-data artifact)
+//   - ```tool_code ... ``` (markdown code fence variant of the same)
+//
+// Unclosed tags drop everything from the open onward — safer than
+// leaving partial markup that the bubble renders raw.
 func StripToolCallMarkup(s string) string {
 	// Drop <tool_call>...</tool_call> wrappers first (they may contain
 	// JSON-shape calls or function-tag calls inside).
@@ -1457,11 +1668,254 @@ func StripToolCallMarkup(s string) string {
 		}
 		s = s[:start] + s[end+len("</function>"):]
 	}
+	// Drop <tool_code>...</tool_code> blocks. This is Gemini's
+	// training-data artifact format — Qwen sometimes copies it under
+	// confusion. The promise-detector elsewhere in the loop catches
+	// the pattern and re-prompts; stripping here ensures the bubble
+	// doesn't show the raw markup if corrections were exhausted or
+	// the strip is being called after the loop gave up.
+	for {
+		start := strings.Index(s, "<tool_code>")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s, "</tool_code>")
+		if end < 0 || end < start {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[end+len("</tool_code>"):]
+	}
+	// Drop ```tool_code ... ``` markdown code-fence variants. Same
+	// failure pattern as bare <tool_code> blocks but emitted with
+	// markdown wrapping. Fenced blocks may have trailing newlines
+	// inside the fence, so match through to the closing ```.
+	for {
+		start := strings.Index(s, "```tool_code")
+		if start < 0 {
+			break
+		}
+		// Find the closing ``` after the open fence.
+		searchFrom := start + len("```tool_code")
+		end := strings.Index(s[searchFrom:], "```")
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[searchFrom+end+len("```"):]
+	}
 	// Note: we do NOT strip "let me try" / "one moment" narration here
 	// even though it's noise the user shouldn't see. The promise-detector
 	// elsewhere in the loop catches that pattern and re-prompts the LLM
 	// to produce clean output, which is more useful than silent removal
 	// (the LLM learns the pattern is wrong; doesn't just keep doing it).
+	return strings.TrimSpace(s)
+}
+
+// containsFakeToolCodeBlock detects training-data-artifact tool-call
+// formats the LLM writes as plain text instead of structured calls:
+//
+//   - <tool_code>...</tool_code> blocks (Gemini's text tool format)
+//   - ```tool_code\n...\n``` markdown code fences tagged tool_code
+//   - ```json\n[{"tool_def": {...}}]\n``` JSON-shaped tool-call lists
+//     in markdown fences (Qwen variant where the LLM writes what a
+//     tool_calls field WOULD look like as JSON content)
+//   - ::tool_name(arg=val, ...):: cascade-style invocations (a
+//     gohort-shaped fake that Qwen has invented in training data;
+//     looks like Smalltalk/Ruby cascade with gohort tool names)
+//
+// Used by the agent loop to detect "model wrote a tool call as
+// narrative text" and inject a corrective re-prompt instead of
+// silently terminating with the call un-executed.
+func containsFakeToolCodeBlock(s string) bool {
+	if strings.Contains(s, "<tool_code>") {
+		return true
+	}
+	if strings.Contains(s, "```tool_code") {
+		return true
+	}
+	if containsFakeJSONToolBlock(s) {
+		return true
+	}
+	// ::name(  — Smalltalk-cascade-shaped fake. Require alphanumeric
+	// + underscore for the name, an opening paren, and a closing
+	// :: somewhere downstream so we don't false-positive on the
+	// common "::" markdown-headline separator or C++-style scope
+	// resolution that might appear in legitimate prose.
+	if idx := strings.Index(s, "::"); idx >= 0 {
+		rest := s[idx+2:]
+		nameEnd := 0
+		for nameEnd < len(rest) {
+			c := rest[nameEnd]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+				nameEnd++
+				continue
+			}
+			break
+		}
+		if nameEnd > 0 && nameEnd < len(rest) && rest[nameEnd] == '(' && strings.Contains(rest[nameEnd:], "::") {
+			return true
+		}
+	}
+	return false
+}
+
+// fakeJSONFenceToolNames is the set of tool names whose presence
+// as a JSON key inside a ```json fence flags the fence as a fake
+// tool-call attempt. Restricted to authoring-side names that would
+// only legitimately appear via native tool_calls, never as content
+// describing what a worker found. Adding ordinary read tools here
+// (knowledge_search, fetch_url) would false-positive on workers
+// that legitimately return JSON examples mentioning them.
+var fakeJSONFenceToolNames = []string{
+	"tool_def", "create_agent", "update_agent", "clone_agent",
+	"delete_agent", "add_tool", "skill_def", "pipeline",
+}
+
+// containsFakeJSONToolBlock detects when the LLM emits a tool call
+// as JSON inside a ```json markdown fence — the Qwen variant where
+// the model writes what a native tool_calls payload would look like
+// as content. The distinguishing signal is an authoring tool name
+// appearing as a JSON key inside the fence body. A regular ```json
+// fence with no authoring-tool-name key reads as legitimate JSON
+// content (a worker showing an API response shape) and is left
+// alone.
+func containsFakeJSONToolBlock(s string) bool {
+	lower := strings.ToLower(s)
+	pos := 0
+	for {
+		idx := strings.Index(lower[pos:], "```json")
+		if idx < 0 {
+			return false
+		}
+		fenceStart := pos + idx
+		bodyStart := fenceStart + len("```json")
+		bodyEnd := strings.Index(s[bodyStart:], "```")
+		if bodyEnd < 0 {
+			// Unclosed fence — treat as fake if any authoring name
+			// appears anywhere from the open onward.
+			tail := s[bodyStart:]
+			for _, name := range fakeJSONFenceToolNames {
+				if strings.Contains(tail, `"`+name+`"`) {
+					return true
+				}
+			}
+			return false
+		}
+		body := s[bodyStart : bodyStart+bodyEnd]
+		for _, name := range fakeJSONFenceToolNames {
+			if strings.Contains(body, `"`+name+`"`) {
+				return true
+			}
+		}
+		// This fence is legit JSON content — advance past it and
+		// keep looking for another one.
+		pos = bodyStart + bodyEnd + len("```")
+	}
+}
+
+// extractFakeToolCodeName pulls the first plausible tool-name out
+// of a fake <tool_code> or ::name(...):: block so the corrective
+// message can reference it ("You appeared to invoke 'tool_def'").
+// Returns "" when no name can be extracted.
+func extractFakeToolCodeName(s string) string {
+	// ::name( form
+	if idx := strings.Index(s, "::"); idx >= 0 {
+		rest := s[idx+2:]
+		nameEnd := 0
+		for nameEnd < len(rest) {
+			c := rest[nameEnd]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+				nameEnd++
+				continue
+			}
+			break
+		}
+		if nameEnd > 0 && nameEnd < len(rest) && rest[nameEnd] == '(' {
+			return rest[:nameEnd]
+		}
+	}
+	// <tool_code>\n[whitespace]name( form
+	if start := strings.Index(s, "<tool_code>"); start >= 0 {
+		body := s[start+len("<tool_code>"):]
+		// Skip leading whitespace and any ::
+		body = strings.TrimSpace(body)
+		body = strings.TrimPrefix(body, "::")
+		nameEnd := 0
+		for nameEnd < len(body) {
+			c := body[nameEnd]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+				nameEnd++
+				continue
+			}
+			break
+		}
+		if nameEnd > 0 && nameEnd < len(body) && body[nameEnd] == '(' {
+			return body[:nameEnd]
+		}
+	}
+	return ""
+}
+
+// stripFakeToolCodeBlocks removes <tool_code>...</tool_code> blocks,
+// ```tool_code fenced blocks, and ::name(...):: cascades from text
+// content so the user-visible message doesn't show the fake
+// invocation alongside the narrative that introduced it.
+func stripFakeToolCodeBlocks(s string) string {
+	// <tool_code>...</tool_code>
+	for {
+		start := strings.Index(s, "<tool_code>")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s, "</tool_code>")
+		if end < 0 || end < start {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + s[end+len("</tool_code>"):]
+	}
+	// ```tool_code\n...\n```
+	for {
+		start := strings.Index(s, "```tool_code")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(s[start+len("```tool_code"):], "```")
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		closeAt := start + len("```tool_code") + end + len("```")
+		s = s[:start] + s[closeAt:]
+	}
+	// ::name(...)::  — best-effort: drop from "::" through the matching "::".
+	for {
+		start := strings.Index(s, "::")
+		if start < 0 {
+			break
+		}
+		// Confirm this is the cascade-call shape (name follows, then "(").
+		rest := s[start+2:]
+		nameEnd := 0
+		for nameEnd < len(rest) {
+			c := rest[nameEnd]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+				nameEnd++
+				continue
+			}
+			break
+		}
+		if nameEnd == 0 || nameEnd >= len(rest) || rest[nameEnd] != '(' {
+			break // not a fake call — leave the rest alone
+		}
+		end := strings.Index(rest, "::")
+		if end < 0 {
+			s = s[:start]
+			break
+		}
+		s = s[:start] + rest[end+2:]
+	}
 	return strings.TrimSpace(s)
 }
 
@@ -1602,6 +2056,125 @@ func EstimateMessagesTokens(msgs []Message) int {
 		total += len(m.Content) / 4
 	}
 	return total
+}
+
+// compactHistory bounds the agent loop's working history so a long
+// multi-round session can't grow past the model's context window and
+// trigger server-side context-shift (which silently drops the system
+// prompt and degrades the model). When the estimated round size crosses
+// the budget, it elides the BODIES of OLD tool results
+// (Message.ToolResults[].Content) oldest-first — keeping the most recent
+// few result messages full plus ALL conversational text — until back
+// under budget. Mutates msgs in place: once a body is elided it stays
+// elided on later rounds (cumulative). The model keeps the conversational
+// structure (it knows the tool ran) but not the stale body, and can
+// re-run the tool if it needs the data again. No-op when contextSize<=0
+// or already under budget. See project_long_context_management.
+//
+// budget accounts for what ELSE occupies the window each round — the
+// separately-sent system prompt + tool schemas + the thinking/response
+// the model still has to generate — so history is trimmed to leave that
+// headroom, not to 100% of the window.
+// force=true is the LLM-driven / on-demand path (the compact_context
+// tool): shed verbose history NOW regardless of budget, keeping only the
+// newest result — for when the model knows it's done with a long tool
+// output (e.g. a smoke-test report it has finished judging). force also
+// works when contextSize is unset.
+func compactHistory(msgs []Message, systemPrompt string, contextSize int, force bool) {
+	if contextSize <= 0 && !force {
+		return
+	}
+	const (
+		// Headroom (tokens) reserved for tool schemas + a near-max thinking
+		// budget + the response — what the round needs ON TOP of history.
+		genReserve = 34000
+		// Don't bother eliding small bodies.
+		elideMinBytes = 400
+	)
+	// Steady-state cap on history relative to the window. Pulled from
+	// operator tuning per compaction call so a live admin change tunes
+	// without restart. Default 50% — a 200K context targets ~100K of
+	// history. Prefill latency, llama.cpp's cache-hit ratio, and
+	// Anthropic's prompt cache all degrade sharply when the prefix
+	// grows turn-over-turn, so we deliberately don't fill the window.
+	// The model can still re-run any tool whose body was elided.
+	historyFractionCap := float64(GetAgentLoopTuning().HistoryBudgetPercent) / 100.0
+	// Newest tool-result messages always kept full (the model needs recent
+	// results to act on this round). On a forced compaction the model has
+	// explicitly said it's done with the verbose history, so keep only 1.
+	keepRecentToolMsgs := 4
+	var budget int
+	if force {
+		keepRecentToolMsgs = 1
+		budget = 0 // elide every elidable old body
+	} else {
+		budget = contextSize - EstimateTokens(systemPrompt) - genReserve
+		// Steady-state cap layered ON TOP of the window-minus-sysprompt
+		// budget — whichever is tighter. Long sessions with a small
+		// sysprompt would otherwise let history fill 75-85% of the
+		// window; this pulls it down to ~50% so each round stays cheap
+		// to prefill and the model has room to think+reply.
+		if fractionBudget := int(float64(contextSize) * historyFractionCap); fractionBudget < budget {
+			budget = fractionBudget
+		}
+		if floor := contextSize / 4; budget < floor {
+			budget = floor // never starve history below 25% of the window
+		}
+	}
+	msgTokens := func(m Message) int {
+		n := len(m.Content) / 4
+		for _, tr := range m.ToolResults {
+			n += len(tr.Content) / 4
+		}
+		return n
+	}
+	total := 0
+	for i := range msgs {
+		total += msgTokens(msgs[i])
+	}
+	// Per-round breadcrumb — fires every compaction call so a long
+	// session's history trajectory is visible under --debug without
+	// waiting for an elision to fire the Log line below.
+	Debug("[agent_loop] compaction check: history ~%d tokens, budget %d, window %d (msgs=%d)", total, budget, contextSize, len(msgs))
+	if total <= budget {
+		return
+	}
+	origTotal := total
+	var trIdx []int
+	for i := range msgs {
+		if len(msgs[i].ToolResults) > 0 {
+			trIdx = append(trIdx, i)
+		}
+	}
+	if len(trIdx) <= keepRecentToolMsgs {
+		return // nothing old enough to safely elide
+	}
+	elided := 0
+	for _, i := range trIdx[:len(trIdx)-keepRecentToolMsgs] {
+		if total <= budget {
+			break
+		}
+		for j := range msgs[i].ToolResults {
+			body := msgs[i].ToolResults[j].Content
+			if len(body) <= elideMinBytes {
+				continue
+			}
+			marker := fmt.Sprintf("[earlier tool result elided to fit context — was %d bytes; re-run the tool if you still need it]", len(body))
+			total -= len(body)/4 - len(marker)/4
+			msgs[i].ToolResults[j].Content = marker
+			elided++
+		}
+	}
+	if elided > 0 {
+		mode := "budget"
+		if force {
+			mode = "compact_context"
+		}
+		// Log (not Debug): compaction firing is infrequent (only over
+		// budget or when the LLM asks) and notable — surface it so long-
+		// session context management is visible without --debug.
+		Log("[agent_loop] compaction (%s): elided %d old tool-result body(ies), est %d→%d tokens (budget=%d, window=%d)", mode, elided, origTotal, total, budget, contextSize)
+	}
 }
 
 // nearestToolName returns the registered tool whose name shares the

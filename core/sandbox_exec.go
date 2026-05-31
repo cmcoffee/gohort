@@ -74,6 +74,51 @@ func RunSandboxedShell(ctx context.Context, command, workspaceDir string) Sandbo
 	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, nil)
 }
 
+// RunSandboxedShellWithHook is the iterate-and-test variant: starts a
+// SandboxHook with the given capabilities, threads GOHORT_HOOK_PATH
+// into the sandbox env so `from gohort import fetch` works exactly
+// the way it would inside a registered shell-mode tool, runs the
+// command, then closes the hook.
+//
+// Solves an asymmetry that bit Builder repeatedly: a registered
+// shell tool's sandbox got a hook (via temptool dispatch), but the
+// iterate-and-test path (workspace action="run") didn't. The same
+// script that worked when dispatched as a tool raised
+// `HookError: GOHORT_HOOK_PATH not set` when iterated via shell,
+// teaching Builder that "fetch doesn't work" and sending it down a
+// wrong-direction rewrite spiral. Wiring the hook here equalizes
+// the two contexts — what works in iterate-and-test works in
+// dispatch and vice versa.
+//
+// Pass capabilities=["fetch", "log", "browse_page"] for the typical
+// iterate-and-test default. Don't auto-grant secret:* or fetch_via:*
+// — those should still surface as missing during iteration so the
+// author registers credentials properly before shipping the tool.
+//
+// sess is forwarded to the hook (needed for fetch_via session-aware
+// dispatch). nil sess is fine — fetch/log/browse_page don't need it.
+//
+// Returns the same shape as RunSandboxedShell. On hook-start failure
+// (rare — would mean the workspace dir is unwritable), falls back to
+// the no-hook path so the run still completes; the script will then
+// see the HookError on attempt and the operator gets a Log line.
+func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string, sess *ToolSession, capabilities []string) SandboxedShellResult {
+	if len(capabilities) == 0 || workspaceDir == "" {
+		return RunSandboxedShell(ctx, command, workspaceDir)
+	}
+	hook, err := NewSandboxHook(workspaceDir, capabilities, sess)
+	if err != nil || hook == nil {
+		if err != nil {
+			Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
+		}
+		return RunSandboxedShell(ctx, command, workspaceDir)
+	}
+	defer hook.Close()
+	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, map[string]string{
+		"GOHORT_HOOK_PATH": hook.SocketPath,
+	})
+}
+
 // RunSandboxedShellWithEnv is the env-extended variant: extraEnv maps
 // key→value are appended to the sandbox's standard env (sandboxEnv())
 // so shell commands can reference them as `$key`, and Python scripts
@@ -95,6 +140,22 @@ func RunSandboxedShell(ctx context.Context, command, workspaceDir string) Sandbo
 func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) SandboxedShellResult {
 	bwrap := detectBwrap()
 	allowNetwork := NetworkAllowedFromContext(ctx)
+
+	// PYTHONPATH := SandboxGohortLibMountPath so `from gohort import
+	// fetch` resolves against the bind-mounted gohort helper package
+	// (which lives OUTSIDE the workspace — see EnsureGohortLibDir).
+	// Without this, a script at any depth under workspaceDir can't
+	// find the helper because the workspace doesn't contain it.
+	// Prepend rather than clobber so a caller-supplied PYTHONPATH
+	// also stays in the search list.
+	if extraEnv == nil {
+		extraEnv = map[string]string{}
+	}
+	if existing := extraEnv["PYTHONPATH"]; existing == "" {
+		extraEnv["PYTHONPATH"] = SandboxGohortLibMountPath
+	} else if !strings.Contains(existing, SandboxGohortLibMountPath) {
+		extraEnv["PYTHONPATH"] = SandboxGohortLibMountPath + ":" + existing
+	}
 
 	var c *exec.Cmd
 	sandbox := false
@@ -188,8 +249,8 @@ func bwrapArgvWithEnv(workspaceDir, shellCmd string, extraEnv map[string]string,
 func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 	args := []string{
 		// Lifecycle.
-		"--die-with-parent",   // kill child when bwrap dies
-		"--new-session",       // detach controlling tty
+		"--die-with-parent", // kill child when bwrap dies
+		"--new-session",     // detach controlling tty
 		// Namespace isolation. PID/UTS/IPC are uncontroversial. Network
 		// is governed by the NetworkConnector — when the connector is
 		// blocked, --unshare-net is appended below to cut outbound off
@@ -199,10 +260,36 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 		"--unshare-uts",
 		"--unshare-ipc",
 		"--unshare-cgroup-try", // own cgroup when kernel supports it
+	}
+	// Network namespace isolation: when allowNetwork=false (privacy
+	// mode session OR tool didn't declare raw_network=true), --unshare-net
+	// creates a brand-new network namespace with no interfaces, blocking
+	// every outbound call at the kernel. When true, we keep the host's
+	// net namespace so curl / urllib / etc. work normally. This MUST
+	// appear before the "--" separator so bwrap interprets it as a flag
+	// rather than part of the command to exec.
+	if !allowNetwork {
+		args = append(args, "--unshare-net")
+	}
+	args = append(args,
 		// Filesystem: workspace writable, system dirs read-only,
 		// everything else not visible.
 		"--bind", workspaceDir, workspaceDir,
 		"--chdir", workspaceDir,
+	)
+	// Bind the host-side gohort helper library RO into the sandbox at
+	// a fixed mount point (SandboxGohortLibMountPath). PYTHONPATH is
+	// set to this path in the env so `from gohort import fetch`
+	// resolves regardless of the running script's location. The mount
+	// is RO: no shell escape inside the sandbox can modify the helper
+	// source, and the LLM can't see it from the workspace at all.
+	// Best-effort: if EnsureGohortLibDir failed (e.g., WorkspacesDir
+	// unset), skip the bind — the script's gohort import will fail
+	// loudly with ModuleNotFoundError, which is the right shape.
+	if libDir := EnsureGohortLibDir(); libDir != "" {
+		args = append(args, "--ro-bind", libDir, SandboxGohortLibMountPath)
+	}
+	args = append(args,
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind-try", "/bin", "/bin",
 		"--ro-bind-try", "/sbin", "/sbin",
@@ -230,7 +317,7 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 		"--tmpfs", "/tmp",
 		"--",
 		"sh", "-c", shellCmd,
-	}
+	)
 	return args
 }
 

@@ -37,6 +37,14 @@ import (
 type NetworkConnector struct {
 	mu      sync.RWMutex
 	allowed bool
+	// waiters holds per-call cancel channels for in-flight network
+	// operations that derived a cancellable ctx via DeriveCancelCtx.
+	// On a true→false transition, every registered channel is closed,
+	// which cancels the corresponding http.NewRequestWithContext call
+	// at the kernel level. Callers register on derive and unregister
+	// either when the call completes (defer cancel) or when the
+	// connector closes the channel. nil map until first derive.
+	waiters map[chan struct{}]struct{}
 }
 
 // NewNetworkConnector builds a connector. blockNetwork=true (privacy
@@ -62,13 +70,92 @@ func (c *NetworkConnector) Allowed() bool {
 // during a running turn, the active turn's connector is updated and
 // every subsequent Allowed() check (including in-flight tools that
 // re-check on each call) sees the new state immediately.
+//
+// True → False transition ALSO cancels every in-flight HTTP call
+// that registered via DeriveCancelCtx — those calls error out with
+// context.Canceled instead of completing their requests. This makes
+// Private mode actually cut traffic the user has already initiated,
+// not just block future calls.
 func (c *NetworkConnector) SetAllowed(v bool) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
+	wasAllowed := c.allowed
 	c.allowed = v
+	var toClose []chan struct{}
+	if wasAllowed && !v {
+		// Snapshot waiters so we can close them after releasing the
+		// lock (close panics aren't caught by mutex semantics, but
+		// holding the lock while signalling N receivers needlessly
+		// delays the flip).
+		for ch := range c.waiters {
+			toClose = append(toClose, ch)
+		}
+		c.waiters = nil
+	}
 	c.mu.Unlock()
+	for _, ch := range toClose {
+		close(ch)
+	}
+}
+
+// DeriveCancelCtx returns a child context that's cancelled either
+// when parent is cancelled (normal completion path) OR when the
+// connector flips from allowed to blocked (mid-flight Private toggle
+// fires close on the registered channel). The returned cancel func
+// is idempotent and MUST be deferred so the registration is cleaned
+// up even on the normal-completion path; without that, the
+// registration leaks until the connector itself is GC'd.
+//
+// nil-receiver returns context.WithCancel(parent) with no
+// connector wiring — back-compat for paths that don't have one.
+//
+// If the connector is ALREADY blocked at derive time, the returned
+// ctx is already cancelled. The caller's HTTP request will fail
+// immediately rather than waiting for the connection to be tried.
+func (c *NetworkConnector) DeriveCancelCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	if c == nil {
+		return ctx, cancel
+	}
+	c.mu.Lock()
+	if !c.allowed {
+		c.mu.Unlock()
+		cancel()
+		return ctx, cancel
+	}
+	ch := make(chan struct{})
+	if c.waiters == nil {
+		c.waiters = make(map[chan struct{}]struct{})
+	}
+	c.waiters[ch] = struct{}{}
+	c.mu.Unlock()
+	// Goroutine watches both completion and blocked-signal. Either
+	// path exits cleanly; the other side's signal is just ignored.
+	go func() {
+		select {
+		case <-ctx.Done():
+			// Normal completion (caller called cancel or parent
+			// expired). Unregister so SetAllowed doesn't waste time
+			// closing an already-stale channel.
+			c.mu.Lock()
+			delete(c.waiters, ch)
+			c.mu.Unlock()
+		case <-ch:
+			// Connector flipped to blocked — fire cancel so the
+			// http.NewRequestWithContext call returns with
+			// context.Canceled.
+			cancel()
+		}
+	}()
+	// Wrap cancel so it's safe to call multiple times AND so a
+	// caller's deferred cancel doesn't race with the goroutine's
+	// own ctx.Done() drain.
+	wrapped := func() {
+		cancel()
+	}
+	return ctx, wrapped
 }
 
 type networkConnectorCtxKey struct{}

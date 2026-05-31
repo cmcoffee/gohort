@@ -88,6 +88,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/value/", T.handleValue)
 	sub.HandleFunc("/api/contexts", T.handleContexts)
 	sub.HandleFunc("/api/context/", T.handleContext)
+	sub.HandleFunc("/api/collections", T.handleCollectionsList)
 	sub.HandleFunc("/api/revisions/", T.handleRevisions)
 	sub.HandleFunc("/api/revision/", T.handleRevision)
 	sub.HandleFunc("/api/suggest-name", T.handleSuggestName)
@@ -138,6 +139,11 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		// a change. Absent / blank is treated as "edit" for back-compat
 		// with older clients.
 		Mode string `json:"mode"`
+		// Collections is the set of Document Collection IDs the user
+		// picked as reference corpora for this turn. Top chunks are
+		// RAG-retrieved (best-effort) from each and injected as grounding
+		// alongside the manual Context block. Empty = no collection RAG.
+		Collections []string `json:"collections"`
 		// History is the prior conversation, client-maintained.
 		// Allows Chat → Edit to carry discussion context so Edit can
 		// act on what was just discussed. File state (code/context)
@@ -177,6 +183,20 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if req.Name != "" && !is_regex {
 		code_context += fmt.Sprintf("\n\nScript name: %s\n(Editor is empty -- this is a new script.)", req.Name)
+	}
+
+	// Reference Collections — best-effort RAG over the user's picked
+	// Document Collections via the shared core primitive. Degrades
+	// silently on any miss (no auth, no embedding backend, empty corpus)
+	// so chat always works; retrieved chunks ride on the user message as
+	// a labeled grounding block, same shape as the manual Context.
+	if len(req.Collections) > 0 {
+		if uid := AuthCurrentUser(r); uid != "" {
+			// Collections live in the shared collections home, NOT
+			// codewriter's own bucket — reach them via CollectionsDB().
+			hits := SearchCollections(r.Context(), CollectionsDB(), uid, req.Collections, req.Message, 6)
+			code_context += formatCollectionRefs(hits)
+		}
 	}
 
 	prompt := req.Message + code_context
@@ -271,6 +291,53 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
+}
+
+// formatCollectionRefs renders retrieved collection chunks as a labeled
+// reference block appended to the prompt. Returns "" for no hits so the
+// caller can append unconditionally.
+func formatCollectionRefs(hits []SearchHit) string {
+	if len(hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nReference material from your attached collections (grounding — use what's relevant, ignore the rest):\n")
+	for _, h := range hits {
+		label := strings.TrimSpace(h.Section)
+		if label == "" {
+			label = h.Source
+		}
+		b.WriteString("\n--- ")
+		b.WriteString(label)
+		b.WriteString(" ---\n")
+		b.WriteString(strings.TrimSpace(h.Text))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// handleCollectionsList returns the collections visible to the current
+// user (their own + deployment-scoped), as {id, name} for the picker.
+// Server-side via the core ListCollections primitive — codewriter never
+// reaches into orchestrate's HTTP surface for this.
+func (T *CodeWriterAgent) handleCollectionsList(w http.ResponseWriter, r *http.Request) {
+	uid := AuthCurrentUser(r)
+	if uid == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	type item struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	out := []item{}
+	// Collections live in the shared collections home, not codewriter's
+	// own bucket — list from UserDB(CollectionsDB(), uid).
+	for _, c := range ListCollections(UserDB(CollectionsDB(), uid), uid) {
+		out = append(out, item{ID: c.ID, Name: c.Name})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 // buildValuePrompt appends a note about placeholders to the system prompt.

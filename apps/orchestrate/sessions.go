@@ -53,6 +53,22 @@ func saveChatSession(db Database, s ChatSession) (ChatSession, error) {
 	return s, nil
 }
 
+// ListChatSessions is the exported entry point for callers that need
+// to enumerate an agent's sessions in a different per-user scope —
+// notably phantom, which surfaces its phantom:<chatID>-scoped
+// dispatches in Agency via the ExtraSessionsSource registry. Same
+// shape as the unexported listChatSessions; just public.
+func ListChatSessions(db Database, agentID string) []ChatSession {
+	return listChatSessions(db, agentID)
+}
+
+// LoadChatSession is the exported variant of loadChatSession so
+// external session sources (phantom) can resolve a session row
+// back into a full transcript for Agency's load handler.
+func LoadChatSession(db Database, agentID, sessionID string) (ChatSession, bool) {
+	return loadChatSession(db, agentID, sessionID)
+}
+
 // listChatSessions returns all sessions for an agent, most-recently-used
 // first. The AgentLoopPanel's session sidebar sorts client-side too,
 // but ordering here keeps the wire payload tidy.

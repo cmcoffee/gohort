@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"sort"
@@ -56,38 +57,94 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 	return defaultMaxWorkerRounds
 }
 
-// sseWriter wraps an SSE response with a flusher so emit helpers
-// stay tidy. Each Send writes one event and flushes.
+// sseWriter wraps an SSE-frame destination. Each Send assembles
+// one full SSE frame and writes it atomically, so a downstream
+// per-Write consumer (Run.Append) captures whole frames.
+//
+// Two destinations, kept separate on purpose:
+//
+//   - live: the current HTTP response, what the originating client
+//     sees in real time. Optional — run-only mode (after the
+//     originator disconnected) leaves this nil.
+//   - run: the in-memory Run buffer. Optional — exposed agents and
+//     the design endpoint use the response-only path.
+//
+// Send / SendChatEvent write to BOTH (they're real events worth
+// replaying). Ping writes ONLY to live (it's a keepalive comment;
+// putting it in the buffer would inflate sequence numbers on the
+// server without inflating the client's received-event counter,
+// which would break the since=N reconnect protocol).
 type sseWriter struct {
-	w  http.ResponseWriter
-	f  http.Flusher
-	mu sync.Mutex
+	live    io.Writer    // optional; nil = no live client
+	flusher http.Flusher // optional; nil for non-flushable destinations
+	run     *Run         // optional; nil = no buffer
+	mu      sync.Mutex
 }
 
 func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	f, _ := w.(http.Flusher)
-	return &sseWriter{w: w, f: f}
+	return &sseWriter{live: w, flusher: f}
+}
+
+// newTeeSSEWriter writes Send/SendChatEvent frames to BOTH the live
+// HTTP response AND the given Run's event buffer. Pings go to live
+// only. Used by handleSend so a fresh /api/runs/<id>/stream
+// subscriber after a reconnect can replay every real event from any
+// sequence number.
+func newTeeSSEWriter(w http.ResponseWriter, run *Run) *sseWriter {
+	f, _ := w.(http.Flusher)
+	return &sseWriter{live: w, flusher: f, run: run}
+}
+
+// detachLive drops the live HTTP-response writer. After this returns,
+// emit() writes only to the run buffer. Used by the disconnect
+// watchdog in handleSend so a client that navigates away can't wedge
+// the loop on a now-dead TCP write. Run-buffer subscribers (a fresh
+// /api/runs/<id>/stream client) continue receiving events fine.
+//
+// Idempotent. Takes the same mutex emit() holds, so it serializes
+// cleanly with in-flight writes: any current write completes (or
+// errors), then live drops to nil before the next write.
+func (s *sseWriter) detachLive() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.live = nil
+	s.flusher = nil
+}
+
+// emit writes one assembled SSE frame to whichever destinations are
+// configured. The toBuffer flag distinguishes real events (true)
+// from keepalive comments (false) so pings stay out of the replay
+// buffer.
+func (s *sseWriter) emit(frame []byte, toBuffer bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.live != nil {
+		_, _ = s.live.Write(frame)
+		if s.flusher != nil {
+			s.flusher.Flush()
+		}
+	}
+	if toBuffer && s.run != nil {
+		s.run.Append(frame)
+	}
 }
 
 // Send writes one SSE event in the AgentLoopPanel protocol shape:
-// `data: <json>\n\n`. Each call grabs the writer lock so concurrent
-// emit-helpers (e.g. a future cancellation goroutine) can't interleave.
+// `data: <json>\n\n`. Buffered for replay.
 func (s *sseWriter) Send(payload map[string]any) {
-	if s == nil || s.w == nil {
+	if s == nil {
 		return
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, _ = s.w.Write([]byte("data: "))
-	_, _ = s.w.Write(body)
-	_, _ = s.w.Write([]byte("\n\n"))
-	if s.f != nil {
-		s.f.Flush()
-	}
+	frame := make([]byte, 0, len(body)+8)
+	frame = append(frame, "data: "...)
+	frame = append(frame, body...)
+	frame = append(frame, '\n', '\n')
+	s.emit(frame, true)
 }
 
 // SendChatEvent writes an SSE event in the ChatPanel runtime's format:
@@ -97,40 +154,31 @@ func (s *sseWriter) Send(payload map[string]any) {
 // Send() — different parser, different shape, kept distinct so
 // callers pick the one matching their UI primitive.
 func (s *sseWriter) SendChatEvent(eventType string, payload map[string]any) {
-	if s == nil || s.w == nil {
+	if s == nil {
 		return
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, _ = s.w.Write([]byte("event: "))
-	_, _ = s.w.Write([]byte(eventType))
-	_, _ = s.w.Write([]byte("\ndata: "))
-	_, _ = s.w.Write(body)
-	_, _ = s.w.Write([]byte("\n\n"))
-	if s.f != nil {
-		s.f.Flush()
-	}
+	frame := make([]byte, 0, len(body)+len(eventType)+16)
+	frame = append(frame, "event: "...)
+	frame = append(frame, eventType...)
+	frame = append(frame, "\ndata: "...)
+	frame = append(frame, body...)
+	frame = append(frame, '\n', '\n')
+	s.emit(frame, true)
 }
 
-// Ping writes an SSE comment line (`: keepalive\n\n`). Comments are
-// silently dropped by EventSource clients but keep the TCP connection
-// alive through proxies / CDNs that close idle streams. Used by the
-// runner's keepalive ticker so a long-thinking LLM doesn't get its
-// SSE response cut off by an upstream timeout.
+// Ping writes an SSE comment line (`: keepalive\n\n`) to the live
+// destination only. Comments are silently dropped by EventSource
+// clients but keep the TCP connection alive through proxies / CDNs
+// that close idle streams.
 func (s *sseWriter) Ping() {
-	if s == nil || s.w == nil {
+	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, _ = s.w.Write([]byte(": keepalive\n\n"))
-	if s.f != nil {
-		s.f.Flush()
-	}
+	s.emit([]byte(": keepalive\n\n"), false)
 }
 
 // startKeepalive fires SSE comment pings every 10 seconds until the
@@ -170,16 +218,16 @@ func startKeepalive(sse *sseWriter) func() {
 // consolidator writes in the background goroutine don't race the
 // already-fired prompt injection.
 type chatTurn struct {
-	app          *OrchestrateApp
-	ctx          context.Context
-	sse          *sseWriter
-	udb          Database
-	user         string
-	agent        AgentRecord
-	queue        *injectionQueue   // pending mid-flight user notes for this session
-	session      *ChatSession      // mutable session pointer so drained notes can be persisted
-	privateMode  bool              // per-turn: drop internet tools from worker pool
-	network      *NetworkConnector // SHARED instance: ctx + sess.Network + inflight registry all reference this same pointer so SetAllowed flips propagate to every read site mid-turn
+	app         *OrchestrateApp
+	ctx         context.Context
+	sse         *sseWriter
+	udb         Database
+	user        string
+	agent       AgentRecord
+	queue       *injectionQueue   // pending mid-flight user notes for this session
+	session     *ChatSession      // mutable session pointer so drained notes can be persisted
+	privateMode bool              // per-turn: drop internet tools from worker pool
+	network     *NetworkConnector // SHARED instance: ctx + sess.Network + inflight registry all reference this same pointer so SetAllowed flips propagate to every read site mid-turn
 	// inferredDisabled is the per-turn snapshot of the user's "Clean"
 	// toggle preference — when true (or when agent.DisableInferred is
 	// true), the Reference Memory layer is suppressed for this turn:
@@ -189,8 +237,8 @@ type chatTurn struct {
 	// t.inferredOff() returns the effective state. The Knowledge layer
 	// (uploaded files) and Explicit Memory (facts) are unaffected.
 	inferredDisabled bool
-	isNewSession      bool // first turn for this session; gates background title generation
-	userImages   [][]byte        // decoded image attachments from the chat panel; attached to the orchestrator's last user message
+	isNewSession     bool     // first turn for this session; gates background title generation
+	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 
 	// topic is the snake_case slug classified from this turn's user
 	// message. Scopes knowledge save/search to a per-subject bucket
@@ -204,9 +252,9 @@ type chatTurn struct {
 	// once, the first time a caller actually needs the topic; by
 	// then the classify worker call has almost always finished, so
 	// it adds no perceptible latency. Empty → generalTopic fallback.
-	topic         string
-	topicCh       chan string
-	topicOnce     sync.Once
+	topic     string
+	topicCh   chan string
+	topicOnce sync.Once
 
 	// staticTempToolNames is the set of persistent temp tool names
 	// that were included in the orchestrator's static catalog at
@@ -243,6 +291,18 @@ type chatTurn struct {
 	// non-Builder agents. Read by runPlan's classifierTrimTools call.
 	builderPinnedTools map[string]bool
 
+	// activeWorkspaceID carries the session's active managed-workspace ID
+	// ACROSS the per-step / inline sessions of a single turn. Each call to
+	// newToolSession() mints a fresh ToolSession whose WorkspaceDir defaults
+	// to the per-user root; without this, a workspace(create) isolation
+	// switch made in one authoring step is lost in the next step's fresh
+	// session — a script written into the isolated workspace then can't be
+	// found when a later step tries to run it (the dropped-file symptom
+	// Builder hit). newToolSession restores this; the post-call capture in
+	// runPlan / runWorkerStep writes back any switch the step performed.
+	// Empty = no managed workspace active yet → per-user root (the default).
+	activeWorkspaceID string
+
 	// Active orchestrator bubble id — set by runPlan's streamHandler
 	// when text begins, cleared by onStepHandler at the round
 	// boundary. wrapToolsForActivity reads this to attach tool_call
@@ -259,6 +319,17 @@ type chatTurn struct {
 	// that it shows live via the SSE stats event.
 	lastUsageMu sync.Mutex
 	lastUsage   *ChatMessageUsage
+
+	// midTurnBubbles collects every finalized assistant bubble the
+	// turn streams BEFORE the final synthesis/respond_directly/question.
+	// runPlan's onStepHandler and runWorkerStep's onStep append to it
+	// as each round closes with non-empty text; handleSend drains it
+	// into sess.Messages immediately before the final assistant message,
+	// so a reloaded session replays the same sequence the user saw live
+	// instead of only seeing the closing reply (the gap the user
+	// reported — "anything it writes mid-turn is lost").
+	bubblesMu     sync.Mutex
+	midTurnBubbles []ChatMessage
 
 	// pipelineDepth tracks recursion into pipeline-mode sub-agents.
 	// Capped at maxPipelineDepth so a pipeline tool calling another
@@ -279,6 +350,19 @@ type chatTurn struct {
 	// before the cap tripped). Includes the current turn's agent ID
 	// when propagated to a sub-turn.
 	dispatchChain []string
+
+	// ownerDB / ownerUser are the FLEET view — set on phantom-
+	// dispatched (and other foreign-user) runs where the runtime
+	// identity (udb / user) is a synthetic per-chat user that owns
+	// sessions/memory/facts, but the AGENT RECORDS themselves live
+	// in the original owner's per-user DB. Without this split,
+	// renderAvailableAgentsBlock + agents(action="run") would scope
+	// to the synthetic user's DB and find no peers — leaving the LLM
+	// to either hallucinate plausible names ("OSINT Family Tracker")
+	// or refuse to dispatch. Unset on direct interactive turns where
+	// udb already owns the fleet.
+	ownerDB   Database
+	ownerUser string
 
 	// explorerMode is flipped by the enter_explorer_mode tool when
 	// AllowExplorer is set on the agent. While true, the worker
@@ -312,8 +396,27 @@ type chatTurn struct {
 	// alongside CapNetwork tool calls — both count as "new info
 	// entered the conversation this turn."
 	userDocsThisTurn bool
-	toolCache map[string]string // canonical(name, args) → result
+	toolCache        map[string]string // canonical(name, args) → result
+	// dispatchCounts tracks how many times each unique (name, args)
+	// pair has been DISPATCHED this turn — regardless of whether the
+	// result was successful or errored. Distinct from toolCache, which
+	// only stores SUCCESSFUL results. Used by the dispatch-cap path
+	// to refuse the Nth identical call (default cap = dispatchCallCap)
+	// so a loop on a transient-error tool can't burn the round budget
+	// by re-dispatching 16 times. Empty until first cap-eligible call.
+	dispatchCounts map[string]int
 }
+
+// dispatchCallCap is the number of times one (tool name, args) pair
+// can be dispatched in a single turn before the wrapper refuses
+// further dispatches. Two allows ONE retry for genuinely transient
+// errors (503, timeout) while bounding the loop pattern (same URL
+// 16 times). Applies only to tools in cacheableTools — pure-read
+// tools where re-dispatching identical args genuinely produces the
+// same answer. State-mutating tools (tool_def, create_agent, etc.)
+// aren't subject to the cap because legitimate workflows may call
+// them multiple times with the same args.
+const dispatchCallCap = 2
 
 // toolCallRecord is one entry in the per-turn tool log. Used to build
 // the "## Tool calls already made this turn" prompt section that every
@@ -329,6 +432,7 @@ type toolCallRecord struct {
 // internet. Checks BOTH signals a tool can declare network access:
 //   - IsInternetTool() bool — legacy explicit declaration
 //   - Caps() containing CapNetwork — modern capability-style
+//
 // Either signal is sufficient. Tools that declare neither are
 // treated as local-only and pass the Private-mode filter.
 func isNetworkTool(ct ChatTool) bool {
@@ -543,6 +647,23 @@ func latestUserMessageText(msgs []ChatMessage) string {
 	return ""
 }
 
+// fleetView returns the (db, user) pair to use for agent-record
+// lookups (Available agents block + agents(action="run") dispatch).
+// On phantom and other foreign-user runs ownerDB / ownerUser are set
+// so the fleet read hits the original owner's per-user DB even
+// though session/memory/facts stay scoped to the runtime user. On
+// interactive owner-runs where the fields are unset, falls back to
+// udb / user — same behavior as before this split.
+func (t *chatTurn) fleetView() (Database, string) {
+	if t == nil {
+		return nil, ""
+	}
+	if t.ownerDB != nil && t.ownerUser != "" {
+		return t.ownerDB, t.ownerUser
+	}
+	return t.udb, t.user
+}
+
 // renderAvailableAgentsBlock surfaces the OTHER agents in the user's
 // fleet so the host LLM knows what it can dispatch to via
 // agents(action="run", agent=..., message=...). Without this block
@@ -556,8 +677,38 @@ func latestUserMessageText(msgs []ChatMessage) string {
 // and Builder (Builder is a separate routing concern handled by the
 // "Building agents and tools — delegate to Builder" persona section).
 func (t *chatTurn) renderAvailableAgentsBlock() string {
-	if t == nil || t.udb == nil || t.user == "" {
+	if t == nil {
 		return ""
+	}
+	// Sub-agents (OwnedBy set) are leaves — they don't get the agents
+	// dispatch tool, so the Available agents block has no audience.
+	// Short-circuit before the fleet read to save tokens AND avoid the
+	// "DELEGATE FIRST" nudge contradicting the missing tool.
+	if t.agent.OwnedBy != "" {
+		return ""
+	}
+	fleetDB, fleetUser := t.fleetView()
+	if fleetDB == nil || fleetUser == "" {
+		return ""
+	}
+	// Agents that can't dispatch (no `agents` tool in their resolved
+	// catalog) shouldn't be told to "DELEGATE FIRST" — the block would
+	// be telling them to do something their catalog physically prevents.
+	// KB's ForcePrivate + restricted AllowedTools is the canonical case;
+	// the persona explicitly says "no sub-agents" and used to fight this
+	// block. Default-pool agents (empty AllowedTools) include `agents`,
+	// so the block still fires for Chat / Research / user customs.
+	if len(t.agent.AllowedTools) > 0 {
+		hasAgents := false
+		for _, n := range t.agent.AllowedTools {
+			if n == "agents" {
+				hasAgents = true
+				break
+			}
+		}
+		if !hasAgents {
+			return ""
+		}
 	}
 	// Build the caller's explicit-link set once. AllowedDispatchTargets
 	// has two modes depending on emptiness:
@@ -570,7 +721,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 		linked[id] = true
 	}
 	restrictMode := len(linked) > 0
-	all := listAgents(t.udb, t.user)
+	all := listAgents(fleetDB, fleetUser)
 	available := all[:0]
 	for _, a := range all {
 		if a.ID == t.agent.ID {
@@ -609,6 +760,63 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 		b.WriteString("- **")
 		b.WriteString(a.Name)
 		b.WriteString("** — ")
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// renderBuilderExistingToolsBlock lists the user's persistent (admin-
+// approved) custom tools as READ-ONLY awareness for Builder. Builder's
+// executable catalog hides these on purpose — see the persistent-tool
+// load skip in newToolSession — so the LLM can't accidentally "use" a
+// pre-existing tool when it should be authoring a new one. But Builder
+// still needs to KNOW what exists so it can:
+//
+//   - Spot name collisions ("user wants a news_summary tool — does one
+//     already exist?")
+//   - Pick the iteration path when authoring with an existing name
+//     (re-author with same name overwrites the active entry in place,
+//     no admin re-approval needed — handled by UpdatePersistentTempTool
+//     from the queueForReview path)
+//   - Reference an existing tool by name in pipeline_tools (pipeline
+//     mode resolves by name at dispatch, doesn't need the tool in the
+//     executable catalog)
+//
+// Returns empty when there are no persistent custom tools or when the
+// current agent isn't Builder. Format mirrors renderAvailableAgentsBlock
+// — one bullet per tool, name + one-line description.
+func (t *chatTurn) renderBuilderExistingToolsBlock() string {
+	if t == nil || t.udb == nil || t.user == "" {
+		return ""
+	}
+	if !isBuilderAgent(t.agent.ID) {
+		return ""
+	}
+	persistent := LoadPersistentTempTools(t.udb, t.user)
+	if len(persistent) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Existing custom tools in this user's environment (READ-ONLY for awareness)\n\n")
+	b.WriteString("Tools the user already authored + an admin approved. **These are NOT in your executable catalog — you cannot dispatch them.** They're listed here so you can: (a) check for name collisions before authoring (re-authoring with an existing name OVERWRITES the active entry — no admin re-approval needed, that's the canonical iteration path); (b) reference one in pipeline_tools when composing (pipeline mode resolves by name at dispatch, doesn't need the tool in your callable catalog).\n\nFormat: **name** (mode) — one-line description.\n\n")
+	for _, p := range persistent {
+		desc := strings.TrimSpace(p.Tool.Description)
+		if len(desc) > 140 {
+			desc = desc[:140] + "…"
+		}
+		if desc == "" {
+			desc = "(no description)"
+		}
+		mode := strings.TrimSpace(p.Tool.Mode)
+		if mode == "" {
+			mode = "shell"
+		}
+		b.WriteString("- **")
+		b.WriteString(p.Tool.Name)
+		b.WriteString("** (")
+		b.WriteString(mode)
+		b.WriteString(") — ")
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}
@@ -693,7 +901,6 @@ func (t *chatTurn) activateSkillToolDef() AgentToolDef {
 	}
 }
 
-
 // roundShapePreamble returns the universal "How this round works"
 // framework block that sits ABOVE the agent persona for agents
 // without their own detailed phased rhythm. Builder skips it
@@ -706,19 +913,10 @@ func (t *chatTurn) activateSkillToolDef() AgentToolDef {
 func roundShapePreamble(maxSteps int) string {
 	stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
 	return "## How this round works\n\n" +
-		"You have four ways to act this turn. If the persona below says otherwise, the persona wins; this is the default behavior for any case it doesn't address.\n\n" +
-		"**Direct tools** — the agent's worker tool surface (web_search, fetch_url, calculate, datemath, agents, etc.). Call these inline: call → see result → call again → reply. This is the default for most turns, including ones that need several tool calls to resolve. Calling tools across multiple orchestrator rounds is fine — you see each result before the next call.\n\n" +
-		"**Don't speculate-then-correct.** If you're about to call a tool, do NOT first write a full answer from training-prior knowledge that you'll then have to revise after the tool result comes back. The user sees both — a confident-sounding first answer followed by a corrected second answer reads as confused and wastes tokens. Before tools fire, either say nothing or say something terse and clearly preliminary (\"Looking that up…\", \"Let me check the corpus…\"). Save the actual answer for AFTER you have the tool result.\n\n" +
-		"**Control tools** — these END the round; only one fires per response:\n\n" +
-		"- **ask_user(question)** — Pause and ask the user. Use when GUESSING is the alternative (not when SEARCHING is): tool results returned multiple plausible matches, the user must choose between meaningfully different approaches, they must supply personal info you can't look up, or the request has an unresolved choice no search will settle. Pass enumerable choices as `options`. Multi-question → ask_user_form. The turn pauses here and waits for the user's next message.\n" +
-		"- **respond_directly(text)** — Explicit terminate-with-reply. The text you pass IS the final reply. Use when you've done the work (inline) and want to end cleanly with a specific reply.\n" +
-		"- **plan_set(steps)** — Hand off to a multi-step worker pipeline (" + stepBudget + "). Use ONLY when the turn genuinely needs decomposition into INDEPENDENT subquestions that should run as separate fresh-context workers and synthesize — research-style \"investigate A and B and C in parallel.\" Minimum 2 steps. NOT a wrapper for sequential tool calls you could make inline across rounds.\n\n" +
-		"Pure conversation (greetings, opinions, well-known textbook concepts, follow-ups already answered): just reply as text — no tool needed. Time-sensitive or verifiable facts: call the relevant tool inline; don't answer from training.\n\n" +
-		"**Delivering files to the user — the two-step rule.** No tool auto-attaches anymore. Producer tools (find_image, fetch_image, generate_image, download_video, screenshot_page, and any custom tool that saves a file) WRITE INTO YOUR WORKSPACE and return the saved path. To actually deliver the file to the user, follow up with:\n\n" +
-		"  workspace(action=\"attach\", path=\"<the-path-the-tool-returned>\", cleanup=true)\n\n" +
-		"Read the tool's result text carefully — if it says \"Stored at X\" / \"Saved at X\" / \"Written to X\" / similar, that file is in your workspace but NOT yet delivered. You must explicitly attach it. Use cleanup=true for one-shot deliveries (search results, fresh downloads); use cleanup=false when the file is also work product you might reference later. Some older tools may have descriptions that imply auto-attach — trust the result text over the description: if it returned a path, you still need to attach.\n\n" +
-		"**Multiple files in one turn is fine.** When the user asks for several attachments (\"send me three duck pictures\"), produce each one (multiple find_image / fetch_image / etc. calls are OK in one turn) and then call workspace(attach) once per file you want to deliver. Each workspace(attach) delivers exactly one file; chain as many as the user asked for.\n\n" +
-		"**Save what's worth remembering.** When you discover a non-obvious finding worth recalling later — an API quirk you figured out, a working approach that took effort, a configuration recipe, a complicated reference detail — call memory_save WITHOUT being asked. Use your judgment: a normal answer to a normal question isn't worth saving; a hard-won discovery is. Nothing captures findings automatically anymore; the corpus only grows when you actively save. If you recall something from a prior turn, call memory_search first to verify it's in memory; if you only RE-derive what you already had saved, don't save the duplicate.\n\n"
+		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with one of: **ask_user / ask_user_form** (pause for input), **respond_directly** (terminate with reply), or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
+		"**Don't speculate-then-correct.** If you're about to call a tool, do NOT first write a full answer from training that you'll then revise after the result comes back — the user sees both, and it reads as confused. Before tools fire, say nothing or something terse (\"Looking that up…\"). Save the answer for AFTER you have the result.\n\n" +
+		"**Delivering files.** Producer tools (find_image, fetch_image, generate_image, download_video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
+		"Pure conversation (greetings, opinions, well-known textbook concepts, follow-ups already answered): just reply as text. Time-sensitive or verifiable facts: call the tool; don't answer from training.\n\n"
 }
 
 // drainNotes pulls all queued interjections and persists them as
@@ -793,6 +991,18 @@ func notesContextBlock(notes []injectionNote) string {
 // Shared by runPlan (orchestrator's inline tool surface) and
 // runWorkerStep (worker step) so both paths get the same persistent
 // tool pool without drift.
+// captureActiveWorkspace records a managed-workspace switch a session
+// performed (via workspace create/use, which set sess.WorkspaceID) so
+// the next newToolSession() this turn restores the same workspace.
+// No-op when the session stayed on the per-user root (WorkspaceID
+// empty) — that case keeps activeWorkspaceID empty so we don't pin a
+// transient root path. Safe to call via defer on any session.
+func (t *chatTurn) captureActiveWorkspace(sess *ToolSession) {
+	if sess != nil && sess.WorkspaceID != "" {
+		t.activeWorkspaceID = sess.WorkspaceID
+	}
+}
+
 func (t *chatTurn) newToolSession() *ToolSession {
 	sess := &ToolSession{
 		LLM:      t.app.LLM,
@@ -832,46 +1042,97 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// script_body was shipped to the user root at authoring time —
 	// the new managed workspace had no copy. Reverted; per-session
 	// isolation is now opt-in via workspace(create).
-	if ws, err := EnsureWorkspaceDir(t.user); err == nil {
-		sess.WorkspaceDir = ws
+	//
+	// If a PRIOR step this turn switched to a managed workspace (via
+	// workspace create/use), restore it so multi-step authoring shares
+	// one workspace: a script written in step N is visible to a run in
+	// step N+1. Falls through to the per-user root if the managed
+	// workspace is gone (deleted / not ours).
+	if t.activeWorkspaceID != "" {
+		if w, ok := LoadManagedWorkspace(t.activeWorkspaceID); ok && w.Owner == t.user {
+			if dir, derr := ManagedWorkspaceDir(w.Owner, w.ID); derr == nil {
+				sess.WorkspaceDir = dir
+				sess.WorkspaceID = w.ID
+			}
+		}
+	}
+	if sess.WorkspaceDir == "" {
+		if ws, err := EnsureWorkspaceDir(t.user); err == nil {
+			sess.WorkspaceDir = ws
+		}
 	}
 	if sess.DB == nil || sess.Username == "" {
 		return sess
 	}
-	// Build the per-turn allowlist gate for temp tools. Mirrors the
-	// registered-pool semantics in resolveWorkerTools:
-	//   - no-tools sentinel → drop all temp tools (admin unchecked everything)
-	//   - non-empty list    → only temp tools whose name is in the list
-	//   - empty list        → no restriction (default pool)
-	// Without this, unchecking a persistent / agent-scoped / draft
-	// temp tool in the Tools modal had no effect: the loader added it
-	// unconditionally and the LLM still saw it in the catalog.
+	// Persistent temp tools — gate logic depends on whether this is a
+	// SEED agent (framework default, owner="system") or a USER-crafted
+	// agent. Seed agents reflect "everything deployment-trusted is
+	// available" — admin-approved persistent tools flow into them
+	// automatically. User-crafted agents have deliberate AllowedTools
+	// lists that should not be silently expanded by approvals
+	// happening elsewhere; for those, persistent tools still follow
+	// the explicit allow-list semantic.
+	//
+	// Both honor DisabledPersistentTools (per-agent deny list) as a
+	// per-agent opt-out, and the no-tools sentinel (the "give me
+	// absolutely no optional tools" mode) still suppresses everything.
 	noTools := isNoToolsSentinel(t.agent.AllowedTools)
-	var allow map[string]bool
-	if !noTools && len(t.agent.AllowedTools) > 0 {
-		allow = make(map[string]bool, len(t.agent.AllowedTools))
+	isSeed := t.agent.Owner == seedOwner
+	disabledPersistent := make(map[string]bool, len(t.agent.DisabledPersistentTools))
+	for _, n := range t.agent.DisabledPersistentTools {
+		disabledPersistent[n] = true
+	}
+	// User-crafted agents only: an explicit AllowedTools list still
+	// gates persistent temp tools as before. Empty list = default
+	// pool = include all (matching pre-change behavior). The map is
+	// nil for seed agents because they don't use this gate at all.
+	var allowPersistent map[string]bool
+	if !isSeed && !noTools && len(t.agent.AllowedTools) > 0 {
+		allowPersistent = make(map[string]bool, len(t.agent.AllowedTools))
 		for _, n := range t.agent.AllowedTools {
-			allow[n] = true
+			allowPersistent[n] = true
 		}
 	}
-	tempToolAllowed := func(name string) bool {
-		if noTools {
-			return false
-		}
-		if allow == nil {
-			return true
-		}
-		return allow[name]
-	}
+	// Builder exception: hide the user's pre-existing custom tools from
+	// Builder's executable catalog. Builder's job is to AUTHOR new
+	// tools, not to use existing ones — having get_weather, news_aggregator,
+	// place_vapi_call, etc. callable from Builder's prompt invites the
+	// LLM to "use" one of them when it should be authoring fresh, and
+	// inflates the catalog (each tool's description costs prompt tokens
+	// every turn). Builder can still ENUMERATE existing tools via
+	// tool_def(action="list") for collision-avoidance or pipeline-mode
+	// composition, and re-authoring with the same name is the iteration
+	// path (the in-place persistent update fix makes that work). Same
+	// skip applies to plan_set worker steps under Builder — they
+	// inherit Builder's agent identity, so authoring discipline stays
+	// consistent across the orchestrator + worker boundary.
 	loaded := LoadPersistentTempTools(sess.DB, sess.Username)
+	if isBuilderAgent(t.agent.ID) {
+		if n := len(loaded); n > 0 {
+			Debug("[orchestrate.tools] Builder catalog: skipped loading %d user-authored persistent tool(s) — Builder authors fresh, doesn't reuse", n)
+		}
+		loaded = nil
+	}
 	for _, p := range loaded {
+		if noTools {
+			continue
+		}
 		// Private mode hides API-mode temp tools (network side
 		// effects); shell-mode is allowed because the sandbox keeps
 		// them local.
 		if t.privateMode && p.Tool.Mode == TempToolModeAPI {
 			continue
 		}
-		if !tempToolAllowed(p.Tool.Name) {
+		// Per-agent opt-out applies to BOTH seed and user-crafted
+		// agents — the deny list is the universal "this agent
+		// shouldn't see that tool" lever.
+		if disabledPersistent[p.Tool.Name] {
+			continue
+		}
+		// User-crafted agents: persistent tool must be in the
+		// AllowedTools allow-list (when one is set). Seed agents
+		// skip this gate — admin approval is enough.
+		if allowPersistent != nil && !allowPersistent[p.Tool.Name] {
 			continue
 		}
 		tool := p.Tool
@@ -1168,7 +1429,13 @@ func (t *chatTurn) getCurrentMsgID() string {
 // Shared by runPlan (orchestrator's inline tool surface) and
 // runWorkerStep (worker step execution) so the two pipelines agree on
 // what's available without drift.
-func (t *chatTurn) resolveWorkerTools(sess *ToolSession) ([]AgentToolDef, []string, error) {
+// resolveWorkerTools builds the per-turn tool catalog. The
+// forOrchestrator flag distinguishes Builder's own chat-orchestrator
+// turn (the planner — gets a LEAN authoring catalog, no workhorses)
+// from a plan_set worker step (gets the FULL authoring catalog).
+// Non-Builder agents are unaffected by the flag — the gate at
+// isBuilderAgent only fires for the Builder seed.
+func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) ([]AgentToolDef, []string, error) {
 	defaultNames := availableWorkerToolNames()
 	var toolNames []string
 	switch {
@@ -1231,6 +1498,23 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession) ([]AgentToolDef, []stri
 		}
 		toolNames = filtered
 	}
+	// Strip client-bridge tool names (from_client.*) before the
+	// global-registry lookup. They're never in the registered
+	// ChatTools pool (they're per-user, injected at runtime by the
+	// bridge), so GetAgentToolsWithSession would 404 on every one
+	// and abort the whole turn. The runtime hook later in this
+	// function reads them from the user's connected desktops and
+	// appends as ChatToolToAgentToolDef so the LLM still sees them.
+	if len(toolNames) > 0 {
+		filtered := toolNames[:0]
+		for _, n := range toolNames {
+			if strings.HasPrefix(n, "from_client.") {
+				continue
+			}
+			filtered = append(filtered, n)
+		}
+		toolNames = filtered
+	}
 	tools, err := GetAgentToolsWithSession(sess, toolNames...)
 	if err != nil {
 		return nil, nil, err
@@ -1240,8 +1524,25 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession) ([]AgentToolDef, []stri
 	// catalog only via this explicit code path. Identity check
 	// against the seed-builder ID prevents the appendage from
 	// leaking to other agents.
+	//
+	// forOrchestrator chooses between two catalogs that reflect the
+	// assembler-vs-research split:
+	//   - true  → Builder's OWN chat-orchestrator turn. Builder is
+	//             the assembler: it reads worker drafts and calls
+	//             create_agent / tool_def / etc. itself, so it
+	//             needs the FULL authoring catalog right here.
+	//   - false → A plan_set worker step under Builder. Workers
+	//             research / draft / smoke-test and report COMPONENTS
+	//             back. They get the worker-research extras only
+	//             (raw call_<credential> for API probing); authoring
+	//             tools stay with the orchestrator.
 	if isBuilderAgent(t.agent.ID) {
-		extra := builderInternalTools(sess)
+		var extra []AgentToolDef
+		if forOrchestrator {
+			extra = builderAuthoringTools(sess)
+		} else {
+			extra = builderWorkerResearchTools(sess)
+		}
 		tools = append(tools, extra...)
 		// Pin every builder-internal tool past the classifier-trim:
 		// authoring IS Builder's job, so create_agent / add_tool /
@@ -1296,6 +1597,34 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession) ([]AgentToolDef, []stri
 			}
 		}
 	}
+	// Local tools from any connected gohort-desktop clients for the
+	// REQUESTING user. Always-allowed: keyed off the chat user, not
+	// the agent owner, so seed agents (Chat) get them too, and
+	// unconditional vs AllowedTools so the user doesn't need to
+	// toggle them per-agent. De-duped against tools already added
+	// via AllowedTools (in case a previous version persisted the
+	// local.* name into the allowlist) so the LLM doesn't see the
+	// same entry twice.
+	have := map[string]bool{}
+	for _, n := range toolNames {
+		have[n] = true
+	}
+	var fromClient []AgentToolDef
+	for _, lt := range LocalToolsForUser(t.user) {
+		if have[lt.Name()] {
+			continue
+		}
+		fromClient = append(fromClient, ChatToolToAgentToolDef(lt))
+		toolNames = append(toolNames, lt.Name())
+	}
+	// Wrap the client-bridge tools so tool_call / tool_result SSE
+	// events fire to the chat panel like every other tool. Without
+	// this the UI shows "still working" with no indication the
+	// agent is in a server→desktop round-trip, including while the
+	// user is staring at the approval modal — exactly the case
+	// where they want to see what's happening.
+	t.wrapToolsForActivity(sess, fromClient)
+	tools = append(tools, fromClient...)
 	return tools, toolNames, nil
 }
 
@@ -1338,16 +1667,16 @@ func (t *chatTurn) agentCanAuthorAgents() bool {
 // filterToolAuthoringWithoutFocus prunes overlapping or unfireable
 // authoring tools from the catalog. Two distinct surfaces survive:
 //
-//  - **add_tool** attaches a tool to the agent currently in
-//    AuthoringAgentID focus. Refuses without focus, so hide it when
-//    no focus is set (otherwise the LLM pattern-matches and burns
-//    rounds calling a tool that always errors).
-//  - **tool_def** is the standalone session/user-scoped grouped tool
-//    builder. Stays visible in BOTH states — when there's no focus
-//    it's the only authoring path; when there IS focus the LLM picks
-//    between "attach to this agent" (add_tool) and "one-off session
-//    tool" (tool_def) based on intent. The Chat prompt teaches the
-//    distinction.
+//   - **add_tool** attaches a tool to the agent currently in
+//     AuthoringAgentID focus. Refuses without focus, so hide it when
+//     no focus is set (otherwise the LLM pattern-matches and burns
+//     rounds calling a tool that always errors).
+//   - **tool_def** is the standalone session/user-scoped grouped tool
+//     builder. Stays visible in BOTH states — when there's no focus
+//     it's the only authoring path; when there IS focus the LLM picks
+//     between "attach to this agent" (add_tool) and "one-off session
+//     tool" (tool_def) based on intent. The Chat prompt teaches the
+//     distinction.
 //
 // The legacy unbundled trio (create_temp_tool / create_api_tool /
 // create_pipeline_tool) is always dropped — tool_def is the grouped
@@ -1526,13 +1855,51 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 						"text": "♻ " + callLabel + " (cached)",
 					})
 					if msgID := t.ensureBubbleForTool(); msgID != "" {
-						t.emitToolCall(msgID, name, args, " (cached)", prefix)
-						t.emitToolResult(msgID, name, cached, nil)
+						callID := t.emitToolCall(msgID, name, args, " (cached)", prefix)
+						t.emitToolResult(msgID, callID, name, cached, nil)
 					}
 				}
 				return cached, nil
 			}
-			var msgID string
+			// Dispatch-cap path — refuse the Nth identical (name, args)
+			// call regardless of cache hit/miss. The cache only stores
+			// SUCCESSFUL results, so a tool that's been failing (timeout,
+			// 503, blocked-by-bot) won't short-circuit via lookupToolCache
+			// and the LLM can re-dispatch the same call indefinitely
+			// until budget runs out. Applies only to cacheableTools
+			// (pure-read tools where identical args genuinely give the
+			// same answer); state-mutating calls fall through unchanged.
+			//
+			// Tool calls fire from a per-call goroutine in RunAgentLoop,
+			// so dispatchCounts MUST be protected — toolMu is the existing
+			// mutex on chatTurn that also guards toolCache and toolCalls.
+			if cacheableTools[name] {
+				key := toolCallKey(name, args)
+				t.toolMu.Lock()
+				if t.dispatchCounts == nil {
+					t.dispatchCounts = map[string]int{}
+				}
+				prior := t.dispatchCounts[key]
+				if prior >= dispatchCallCap {
+					t.dispatchCounts[key] = prior + 1
+					attempted := t.dispatchCounts[key] - 1
+					t.toolMu.Unlock()
+					msg := fmt.Sprintf("You've already dispatched %s with these exact args %d times this turn. The result is whatever it was — re-dispatching won't change it. Either USE the result from one of the prior calls, or call something DIFFERENT (different URL, different query, different tool). Don't retry the same call.",
+						name, attempted)
+					if !hidden {
+						t.sse.Send(map[string]any{
+							"kind": "activity",
+							"type": "error",
+							"id":   activityCheapID(),
+							"text": "⛔ " + callLabel + " refused (dispatch cap)",
+						})
+					}
+					return msg, nil
+				}
+				t.dispatchCounts[key] = prior + 1
+				t.toolMu.Unlock()
+			}
+			var msgID, callID string
 			if !hidden {
 				t.sse.Send(map[string]any{
 					"kind": "activity",
@@ -1542,11 +1909,23 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				})
 				msgID = t.ensureBubbleForTool()
 				if msgID != "" {
-					t.emitToolCall(msgID, name, args, "", prefix)
+					callID = t.emitToolCall(msgID, name, args, "", prefix)
 				}
 			}
 			imgN, vidN, fileN := sessAttachmentCounts(sess)
 			out, err := orig(args)
+			// Spill-to-workspace guard. When a tool result is larger
+			// than the inline cap, write the full body to the session
+			// workspace and replace `out` with a small stub that points
+			// at it. The LLM then reads slices via workspace(head/tail/
+			// grep/read_lines/stat). Prevents one fat result (a large
+			// read_local_file, a verbose agents() dispatch, an unbounded
+			// pipeline output) from blowing the context window.
+			if err == nil {
+				if spilled, ok := maybeSpillToolResult(sess, name, out); ok {
+					out = spilled
+				}
+			}
 			rec := toolCallRecord{Name: name, Args: args, Result: out}
 			if err != nil {
 				rec.Err = err.Error()
@@ -1567,7 +1946,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				})
 			}
 			if msgID != "" {
-				t.emitToolResult(msgID, name, out, err)
+				t.emitToolResult(msgID, callID, name, out, err)
 				t.flushNewAttachments(sess, msgID, imgN, vidN, fileN)
 			}
 			if err == nil && agentMutationTools[name] {
@@ -1715,16 +2094,39 @@ func (t *chatTurn) ensureBubbleForTool() string {
 // of blending in with the parent's own tool calls. The canonical
 // tool name passed to the LLM is unaffected — only the display
 // chip changes.
-func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix string, namePrefix ...string) {
+func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix string, namePrefix ...string) string {
 	displayName := name
 	if len(namePrefix) > 0 && namePrefix[0] != "" {
 		displayName = namePrefix[0] + name
 	}
+	// Generate a per-dispatch call_id so emitToolResult can be paired
+	// back to THIS exact tool_call regardless of arrival order. Without
+	// this the client falls back to "last unmatched" positional pairing
+	// (see core/ui/runtime.go tool_result case), which silently
+	// mis-attributes when calls don't strictly settle in emission order
+	// (async dispatch, parallel tool calls in one model response,
+	// cached short-circuits emitted alongside live calls). The caller
+	// passes the returned ID to emitToolResult; both events ride
+	// together so the client can correlate by ID.
+	callID := UUIDv4()
+	// args is the COMPACT one-line summary shown in the inline chip
+	// — values clipped at 60 chars so a row of tool calls stays
+	// readable. args_full is the unclipped, structured view rendered
+	// inside the expanded <details> body so the user can see the
+	// actual command / script / arguments without re-running the
+	// turn. Without args_full, debugging "what did the Builder
+	// actually run?" required reading the server log.
+	callArgs := args
+	if callArgs == nil {
+		callArgs = map[string]any{}
+	}
 	payload := map[string]any{
-		"kind":   "tool_call",
-		"msg_id": msgID,
-		"name":   displayName,
-		"args":   summarizeToolArgs(args) + suffix,
+		"kind":      "tool_call",
+		"msg_id":    msgID,
+		"call_id":   callID,
+		"name":      displayName,
+		"args":      summarizeToolArgs(args) + suffix,
+		"args_full": callArgs,
 	}
 	// Mark pipeline-mode temp tools so the client can decorate the
 	// pill differently (today: an emoji prefix). Detected by walking
@@ -1733,6 +2135,7 @@ func (t *chatTurn) emitToolCall(msgID, name string, args map[string]any, suffix 
 		payload["tool_kind"] = kind
 	}
 	t.sse.Send(payload)
+	return callID
 }
 
 // toolKindFor returns "pipeline" when name belongs to a pipeline-mode
@@ -1759,11 +2162,12 @@ func (t *chatTurn) toolKindFor(name string) string {
 	return ""
 }
 
-func (t *chatTurn) emitToolResult(msgID, name, out string, err error) {
+func (t *chatTurn) emitToolResult(msgID, callID, name, out string, err error) {
 	payload := map[string]any{
-		"kind":   "tool_result",
-		"msg_id": msgID,
-		"name":   name,
+		"kind":    "tool_result",
+		"msg_id":  msgID,
+		"call_id": callID,
+		"name":    name,
 	}
 	if err != nil {
 		payload["result"] = "error: " + err.Error()
@@ -2065,23 +2469,40 @@ func (t *chatTurn) resolveTopic() string {
 	return t.topic
 }
 
-// agentHasCuratedCorpus reports whether the agent has its OWN curated
-// knowledge worth auto-searching at turn start: an explicitly attached
-// collection, or it ingests uploads into its knowledge store
-// (IngestAttachments). When false — a plain chat agent like seed-chat —
-// the turn-start auto-inject is skipped entirely: no Embed call, no
-// chunk walk, and no "default = open" auto-pull of the whole deployment
-// KB into a general agent's context.
-//
-// Gated on DECLARED signals (cheap struct fields), not a chunk-count
-// probe — counting decrypts every chunk, exactly the cost we're
-// avoiding. Trade-off: an agent with docs manually uploaded via the
-// Knowledge modal but no IngestAttachments and no attached collection
-// won't auto-inject; it can still reach them via an explicit
-// knowledge_search. Enable IngestAttachments (or attach a collection)
-// to restore auto-RAG for such an agent.
-func (t *chatTurn) agentHasCuratedCorpus() bool {
-	return len(t.agent.AttachedCollections) > 0 || t.agent.IngestAttachments
+// agentHasRetrievableContent reports whether the agent has any
+// corpus the knowledge tools could surface this turn. Used to gate
+// knowledge_search + fetch_knowledge_doc out of catalogs where they
+// would only produce empty / not-found results — the LLM sees the
+// tools, reaches for them, hallucinates doc_ids, and burns rounds.
+// Considers:
+//   - the agent's own AttachedCollections
+//   - IngestAttachments (uploaded files land in the agent's per-(user,agent) bucket)
+//   - active skills' AttachedCollections (active-path only)
+//   - deployment-scope collections that auto-attach when the agent's
+//     AttachedCollections list is empty (the open-pool default)
+func (t *chatTurn) agentHasRetrievableContent() bool {
+	if t == nil {
+		return false
+	}
+	if len(t.agent.AttachedCollections) > 0 || t.agent.IngestAttachments {
+		return true
+	}
+	for _, sk := range t.skillsActive {
+		if len(sk.AttachedCollections) > 0 {
+			return true
+		}
+	}
+	// Open-pool default: when the agent has NO explicit collections,
+	// deployment-scope collections auto-attach. If any exist, the agent
+	// effectively has retrievable content.
+	if len(t.agent.AttachedCollections) == 0 {
+		for _, c := range ListCollections(nil, "") {
+			if IsDeploymentScope(c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // appendSearchOrderGuidance inserts a "knowledge before web" stub
@@ -2118,19 +2539,9 @@ func (t *chatTurn) appendSearchOrderGuidance(sys string) string {
 
 ## Search order — knowledge first
 
-Before any tool call, ask: "Does this question require information that has CHANGED since my documents/findings were written?"
-- **No** → call ` + "`knowledge_search`" + ` (or trust the pre-injected chunks above if they're relevant).
-- **Yes** → ` + "`web_search`" + ` / ` + "`fetch_url`" + ` is justified.
+Before reaching for web_search / fetch_url, ask: "Does this question require information that has CHANGED since my documents were written?" If no, call ` + "`knowledge_search`" + ` first — APIs don't change daily, runbooks haven't been edited, last year's policies haven't moved. Web is the exception. One cheap query beats an unnecessary web round.
 
-Most domain questions fail the freshness test — APIs don't change daily, last year's tax rules haven't moved, our runbooks haven't been edited. Treat web as the exception, not the default.
-
-Examples:
-- "How do I check pod scheduling failures?" → knowledge_search (k8s API hasn't changed).
-- "What's the latest k8s version?" → web_search (version IS the live data).
-
-If unsure: knowledge_search first. One cheap embedding lookup beats an unnecessary web round.
-
-**Handling multiple documents in your corpus:** knowledge_search results carry a ` + "`source_doc`" + ` field, and the pre-injected block groups chunks under "### From document: <name>" headers. When chunks from DIFFERENT documents disagree on a specific point — different API versions, conflicting policies, an older doc vs. a newer revision — DO NOT silently average or pick one. Surface the conflict explicitly: "Doc 'X' says A but Doc 'Y' says B; both are in the corpus." Let the user decide which is authoritative for their context. The corpus may legitimately contain multiple variants on the same subject; pretending they're one source erases information the user needs.`
+If results from different documents disagree on a specific point, surface the conflict ("Doc A says X but Doc B says Y") rather than averaging or silently picking one.`
 }
 
 // emitSkillActivations reports which skills the classifier picked +
@@ -2178,102 +2589,6 @@ func (t *chatTurn) emitSkillActivations(acts []SkillActivation) {
 	}
 }
 
-// emitKnowledgeActivity reports what RAG actually pulled into the
-// orchestrator prompt this turn. Lands one "cmd" row summarizing the
-// chunk count + source breakdown, then one "output" row per chunk
-// with a short preview. The user can scan the activity pane and see
-// whether the skill's docs were the ones that surfaced.
-func (t *chatTurn) emitKnowledgeActivity(hits []SearchHit) {
-	if len(hits) == 0 {
-		return
-	}
-	// Group by resolved source label so the summary reads "2 from
-	// Kubernetes Helper, 1 from K8s Reference" rather than raw IDs.
-	labels := make([]string, 0, len(hits))
-	labelCounts := map[string]int{}
-	labelOrder := []string{}
-	for _, h := range hits {
-		lbl := t.humanLabelForSource(h.Source)
-		labels = append(labels, lbl)
-		if _, seen := labelCounts[lbl]; !seen {
-			labelOrder = append(labelOrder, lbl)
-		}
-		labelCounts[lbl]++
-	}
-	var parts []string
-	for _, lbl := range labelOrder {
-		c := labelCounts[lbl]
-		if c > 1 {
-			parts = append(parts, fmt.Sprintf("%s (×%d)", lbl, c))
-		} else {
-			parts = append(parts, lbl)
-		}
-	}
-	summary := fmt.Sprintf("Knowledge: %d chunk%s injected — %s",
-		len(hits), pluralS(len(hits)), strings.Join(parts, ", "))
-	t.sse.Send(map[string]any{
-		"kind": "activity",
-		"type": "cmd",
-		"id":   activityCheapID(),
-		"text": summary,
-	})
-	// Per-chunk detail: source label + section + short preview. Helps
-	// when the user wants to verify "did the right paragraph surface."
-	for i, h := range hits {
-		section := strings.TrimPrefix(h.Section, "## ")
-		section = strings.TrimSpace(section)
-		preview := strings.TrimSpace(h.Text)
-		// Collapse whitespace + truncate. 160 chars is enough to
-		// recognize the source paragraph without blowing the pane.
-		preview = strings.Join(strings.Fields(preview), " ")
-		if len(preview) > 160 {
-			preview = preview[:160] + "…"
-		}
-		line := fmt.Sprintf("  [%s] %s — %s", labels[i], section, preview)
-		t.sse.Send(map[string]any{
-			"kind": "activity",
-			"type": "output",
-			"id":   activityCheapID(),
-			"text": line,
-		})
-	}
-}
-
-// humanLabelForSource maps a SearchHit.Source string to a human label
-// for the activity pane. Resolves skill IDs to skill names, collection
-// IDs to collection names; falls back to the bare ID when lookup fails.
-func (t *chatTurn) humanLabelForSource(src string) string {
-	switch {
-	case src == knowledgeSource(t.user, t.agent.ID, ""):
-		return "agent corpus"
-	case strings.HasPrefix(src, knowledgeSource(t.user, t.agent.ID, "")+":"):
-		topic := strings.TrimPrefix(src, knowledgeSource(t.user, t.agent.ID, "")+":")
-		return "agent corpus (topic: " + topic + ")"
-	case strings.HasPrefix(src, "skill:"):
-		id := strings.TrimPrefix(src, "skill:")
-		for _, sk := range LoadSkills(t.udb, t.user) {
-			if sk.ID == id {
-				return "skill: " + sk.Name
-			}
-		}
-		return "skill: " + id
-	case strings.HasPrefix(src, "collection:"):
-		id := strings.TrimPrefix(src, "collection:")
-		if c, ok := loadCollection(t.udb, t.user, id); ok {
-			return "collection: " + c.Name
-		}
-		return "collection: " + id
-	}
-	return src
-}
-
-func pluralS(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}
-
 // facts loads the agent's structured key/value Explicit Memory entries
 // (the always-in-prompt facts layer). Re-read every call — cheap and
 // ensures store_fact mid-turn lands in subsequent worker steps.
@@ -2302,7 +2617,7 @@ func (t *chatTurn) gatedPersona(prompt string) string {
 		// never get stripped regardless of admin allowlist.
 		"plan_set", "plan_get", "plan_update", "plan_clear",
 		"ask_user", "ask_user_form", "respond_directly",
-		"knowledge_save", "knowledge_search", "get_report",
+		"knowledge_save", "knowledge_search", "fetch_knowledge_doc", "get_report",
 		"store_fact", "forget_fact", "list_facts",
 	}, t.agent.AllowedTools...)
 	return StripPromptSectionsForTools(prompt, gate)
@@ -2412,6 +2727,121 @@ func (t *chatTurn) recordToolCall(rec toolCallRecord) {
 	}
 }
 
+// captureMidTurnBubble records one finalized assistant bubble's text
+// so it survives session reload. Called from runPlan / runWorkerStep
+// when a round closes with non-empty narration that the user saw live
+// via SSE but would otherwise vanish (the saved transcript previously
+// kept only the final synthesis / directReply / question). Empty
+// strings are dropped — the live UI doesn't materialize a bubble for
+// tool-only rounds, and we mirror that here.
+func (t *chatTurn) captureMidTurnBubble(text string) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	t.bubblesMu.Lock()
+	t.midTurnBubbles = append(t.midTurnBubbles, ChatMessage{
+		Role:    "assistant",
+		Content: trimmed,
+		Created: time.Now(),
+	})
+	t.bubblesMu.Unlock()
+}
+
+// drainMidTurnBubbles returns all bubbles captured so far and clears
+// the buffer. Called by handleSend right before appending the final
+// assistant message so they land in the saved transcript in order.
+func (t *chatTurn) drainMidTurnBubbles() []ChatMessage {
+	t.bubblesMu.Lock()
+	defer t.bubblesMu.Unlock()
+	if len(t.midTurnBubbles) == 0 {
+		return nil
+	}
+	out := t.midTurnBubbles
+	t.midTurnBubbles = nil
+	return out
+}
+
+// appendMidTurnBubbles drops captured bubbles whose content is a near-
+// duplicate of the final reply (the stream-then-respond_directly /
+// stream-then-synthesize-same-bulk-different-conclusion case the live
+// SSE path's exact-match dedup couldn't catch). Then appends every
+// remaining bubble into the session's transcript in the order it was
+// emitted.
+//
+// "Near-duplicate" here means substantial shared LEADING content — the
+// orchestrator draft + synthesis "same analysis, revised conclusion"
+// pattern. See isNearDuplicate for the threshold.
+func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply string) {
+	if len(bubbles) == 0 {
+		return
+	}
+	if final := strings.TrimSpace(finalReply); final != "" {
+		kept := bubbles[:0]
+		for _, b := range bubbles {
+			if isNearDuplicate(b.Content, final) {
+				continue
+			}
+			kept = append(kept, b)
+		}
+		bubbles = kept
+	}
+	if len(bubbles) == 0 {
+		return
+	}
+	sess.Messages = append(sess.Messages, bubbles...)
+}
+
+// isNearDuplicate returns true when two strings share substantial
+// LEADING content even if they diverge at the end. Used to dedup mid-
+// turn bubbles against the final reply when the orchestrator emitted
+// a draft that the synthesis pass then re-rendered with a changed
+// conclusion. Exact-match dedup misses this; full substring / LCS
+// dedup is too aggressive (drops legit shorter messages that happen
+// to overlap). The longest-common-prefix ratio (vs the shorter string)
+// is the narrowest catch: a 1500-char shared analysis with a 200-char
+// diverging conclusion (LCP / short ≈ 0.88) drops; a short opener
+// like "Looking into your question, …" shared between a brief
+// narration bubble and a long final reply (LCP / short ≈ 0.2) doesn't.
+//
+// Threshold 0.6: tuned conservative — error toward keeping bubbles
+// over dropping them, matching the deliberate posture of the live SSE
+// dedup. Two identical strings register as 1.0 (still drop).
+func isNearDuplicate(a, b string) bool {
+	na := normalizeForDedup(a)
+	nb := normalizeForDedup(b)
+	if na == "" || nb == "" {
+		return false
+	}
+	if na == nb {
+		return true
+	}
+	minLen := len(na)
+	if len(nb) < minLen {
+		minLen = len(nb)
+	}
+	lcp := 0
+	for lcp < minLen && na[lcp] == nb[lcp] {
+		lcp++
+	}
+	if lcp == 0 {
+		return false
+	}
+	return float64(lcp)/float64(minLen) >= 0.6
+}
+
+// normalizeForDedup lowercases, trims, and collapses runs of whitespace
+// so cosmetic differences (extra newlines, casing, trailing space)
+// don't defeat the dedup. Returns "" for empty / whitespace-only
+// inputs so callers can use the empty check to bail.
+func normalizeForDedup(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+}
+
 // persistedToolCalls converts the per-turn tool-call log into the
 // shape persisted alongside the assistant message. Called at session
 // save time so the export trace has every tool fired during the turn,
@@ -2453,10 +2883,11 @@ func (t *chatTurn) persistedToolCalls() []PersistedToolCall {
 // embedding index. Add to this map deliberately — when in doubt,
 // leave it out.
 var cacheableTools = map[string]bool{
-	"web_search":       true,
-	"fetch_url":        true,
-	"browse_page":      true,
-	"knowledge_search": true,
+	"web_search":          true,
+	"fetch_url":           true,
+	"browse_page":         true,
+	"knowledge_search":    true,
+	"fetch_knowledge_doc": true,
 }
 
 // lookupToolCache returns a cached result for (name, args) if present.
@@ -2544,18 +2975,18 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	}
 
 	var req struct {
-		Message           string        `json:"message"`
-		SessionID         string        `json:"session_id,omitempty"`
-		History           []ChatMessage `json:"history,omitempty"`
-		PrivateMode       bool          `json:"private_mode,omitempty"`
-		InferredDisabled  bool          `json:"inferred_disabled,omitempty"`
+		Message          string        `json:"message"`
+		SessionID        string        `json:"session_id,omitempty"`
+		History          []ChatMessage `json:"history,omitempty"`
+		PrivateMode      bool          `json:"private_mode,omitempty"`
+		InferredDisabled bool          `json:"inferred_disabled,omitempty"`
 		// Hidden marks the user message as already-shown-in-prior-bubble
 		// (e.g. an ask_user card's submitted state). LLM still sees the
 		// content in history; the chat panel just skips rendering a
 		// duplicate user bubble.
-		Hidden            bool          `json:"hidden,omitempty"`
-		Images            []string      `json:"images,omitempty"` // base64-encoded image data from the chat panel's paperclip
-		Documents   []struct {
+		Hidden    bool     `json:"hidden,omitempty"`
+		Images    []string `json:"images,omitempty"` // base64-encoded image data from the chat panel's paperclip
+		Documents []struct {
 			Name     string `json:"name"`
 			MimeType string `json:"mime_type"`
 			Data     string `json:"data"` // base64
@@ -2569,25 +3000,36 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	// Extract attached documents (PDFs, DOCX, text files) and prepend
-	// their plain text to the user message so the LLM sees the
-	// content inline. Failures land as a short "[attach failed: ...]"
-	// note so the user knows something didn't make it; the turn
-	// continues with whatever did parse plus the user's typed text.
+	// Extract attached documents (PDFs, DOCX, text files). Hold them
+	// in extractedAttachments for now — the preamble build runs LATER,
+	// after the chat session is resolved, so we have a workspace dir
+	// available for spill-on-large.
+	//
+	// Why split phases: a 200-page PDF text-extracts to ~500KB–2MB of
+	// plain text. Prepending that whole thing to req.Message blows the
+	// model's context in one round, even before any tool calls. Large
+	// attachments instead spill to <workspace>/.attachments/<name>.txt
+	// and inject a stub preamble (filename + size + sample + path +
+	// directive to use workspace stat/head/grep/read_lines) so the LLM
+	// pulls only the slices it needs.
+	type extractedAttachment struct {
+		name     string
+		mime     string
+		text     string
+		failNote string // non-empty when decode / extraction failed
+	}
+	const minIngestChars = 200
+	var extractedAttachments []extractedAttachment
+	type ingestPair struct{ name, text string }
+	var ingestQueue []ingestPair
 	if len(req.Documents) > 0 {
-		var preamble strings.Builder
-		// Collect extracted attachment text for optional persistence
-		// into the agent's knowledge store. Gated by agent.IngestAttachments
-		// AND knowledge being enabled overall (DisableKnowledge=false).
-		// Skipped when the extracted text is trivially short — a tiny
-		// config snippet isn't worth a vector chunk.
-		const minIngestChars = 200
-		type extracted struct{ name, text string }
-		var ingestQueue []extracted
 		for _, d := range req.Documents {
 			raw, err := base64.StdEncoding.DecodeString(d.Data)
 			if err != nil {
-				preamble.WriteString(fmt.Sprintf("[attached %s — decode failed: %v]\n\n", d.Name, err))
+				extractedAttachments = append(extractedAttachments, extractedAttachment{
+					name:     d.Name,
+					failNote: fmt.Sprintf("[attached %s — decode failed: %v]\n\n", d.Name, err),
+				})
 				continue
 			}
 			text, err := ExtractDocument(r.Context(), DocumentAttachment{
@@ -2596,16 +3038,32 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 				Data:     raw,
 			})
 			if err != nil {
-				preamble.WriteString(fmt.Sprintf("[attached %s — extraction failed: %v]\n\n", d.Name, err))
+				extractedAttachments = append(extractedAttachments, extractedAttachment{
+					name:     d.Name,
+					failNote: fmt.Sprintf("[attached %s — extraction failed: %v]\n\n", d.Name, err),
+				})
 				continue
 			}
-			preamble.WriteString(FormatAttachmentPreamble(d.Name, d.MimeType, text))
+			extractedAttachments = append(extractedAttachments, extractedAttachment{
+				name: d.Name,
+				mime: d.MimeType,
+				text: text,
+			})
 			if agent.IngestAttachments && len(strings.TrimSpace(text)) >= minIngestChars {
-				ingestQueue = append(ingestQueue, extracted{name: d.Name, text: text})
+				ingestQueue = append(ingestQueue, ingestPair{name: d.Name, text: text})
 			}
 		}
-		if preamble.Len() > 0 {
-			req.Message = preamble.String() + req.Message
+		// Provisionally satisfy the "message or attachment required"
+		// check below: a non-empty marker stands in for the eventual
+		// preamble we'll write after the session exists. Replaced
+		// verbatim with the real preamble after session create.
+		if strings.TrimSpace(req.Message) == "" {
+			for _, a := range extractedAttachments {
+				if a.failNote != "" || strings.TrimSpace(a.text) != "" {
+					req.Message = "[attachments-being-processed]"
+					break
+				}
+			}
 		}
 		// Background ingest — runs outside the reply path so the user
 		// doesn't wait on embedding latency. Each attachment gets its
@@ -2613,7 +3071,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// store, topic="attachments". Later turns retrieve them via
 		// knowledge_search like any other ingested content.
 		if len(ingestQueue) > 0 {
-			go func(items []extracted, user, agentID string) {
+			go func(items []ingestPair, user, agentID string) {
 				for _, it := range items {
 					ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 					ingestAgentKnowledge(ctx, T.DB, user, agentID, "attachments", it.name, it.text)
@@ -2652,7 +3110,6 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
-	sse := newSSEWriter(w)
 
 	// Resolve session (create on first turn, otherwise load).
 	sess, _ := loadChatSession(udb, agent.ID, req.SessionID)
@@ -2660,33 +3117,118 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	if isNewSession {
 		sess = ChatSession{
 			AgentID: agent.ID,
-			Title:      titleFromFirstMessage(req.Message),
-			Created:    time.Now(),
+			Title:   titleFromFirstMessage(req.Message),
+			Created: time.Now(),
 		}
 		var err error
 		sess, err = saveChatSession(udb, sess)
 		if err != nil {
-			sse.Send(map[string]any{"kind": "error", "text": "save session: " + err.Error()})
+			// Bare sseWriter for this one error; the run hasn't been
+			// created yet so there's no buffer to tee into.
+			tmp := newSSEWriter(w)
+			tmp.Send(map[string]any{"kind": "error", "text": "save session: " + err.Error()})
 			return
 		}
 	}
-	sse.Send(map[string]any{"kind": "session", "id": sess.ID})
 
-	ctx, cancel := context.WithCancel(r.Context())
+	// Build the attachment preamble now that the chat session (and a
+	// resolvable workspace path) is available. Large extractions spill
+	// to <workspace>/.attachments/<sanitized-name>.txt and inject a
+	// stub; small ones inline as before via FormatAttachmentPreamble.
+	//
+	// Workspace dir: per-user root (same default the agent loop falls
+	// back to in newToolSession). The agent loop's later ToolSession
+	// resolves to the same directory unless a workspace(create/use)
+	// switched to a managed one mid-turn — which doesn't happen before
+	// the first user message anyway. So a spilled attachment is always
+	// readable via workspace(action="head"/"grep"/...) at the path the
+	// stub prints.
+	if len(extractedAttachments) > 0 {
+		attachSess := &ToolSession{
+			Username:      user,
+			ChatSessionID: sess.ID,
+		}
+		if ws, err := EnsureWorkspaceDir(user); err == nil {
+			attachSess.WorkspaceDir = ws
+		}
+		var preamble strings.Builder
+		for _, a := range extractedAttachments {
+			if a.failNote != "" {
+				preamble.WriteString(a.failNote)
+				continue
+			}
+			preamble.WriteString(buildAttachmentPreamble(attachSess, a.name, a.mime, a.text))
+		}
+		// Replace the provisional marker if it was used, else prepend.
+		if req.Message == "[attachments-being-processed]" {
+			req.Message = strings.TrimRight(preamble.String(), "\n")
+		} else if preamble.Len() > 0 {
+			req.Message = preamble.String() + req.Message
+		}
+	}
+
+	// Detach the agent loop's lifetime from the HTTP request. Earlier
+	// the loop derived its ctx from r.Context(), so a client disconnect
+	// (browser nav-away, network blip, desktop overlay opening) killed
+	// every in-flight tool call mid-turn. Now ctx is rooted at
+	// Background; cancellation is explicit — either /api/cancel from
+	// the user, or the run-registry's auto-replace when a fresh turn
+	// starts on the same session.
+	//
+	// The run tees every SSE frame into an in-memory buffer (see runs.go),
+	// so a fresh /api/runs/<id>/stream subscriber after a reconnect
+	// can replay the conversation from any sequence number.
+	ctx, cancel := context.WithCancel(context.Background())
+	run := T.runsRegistry().Create(user, agent.ID, sess.ID, cancel)
+	sse := newTeeSSEWriter(w, run)
+
+	// Disconnect watchdog: when the original request's context fires
+	// (client navigated away, network blip, the desktop app quit),
+	// drop the live HTTP-response writer from sse. The loop runs to
+	// completion thanks to the detached ctx above; this prevents
+	// sse.Send from wedging the entire turn on a write to a dead
+	// TCP connection (the symptom: the loop hangs after a tool exit
+	// because the post-tool activity-event Send blocks holding the
+	// sseWriter mutex). Run-buffer subscribers (a fresh
+	// /api/runs/<id>/stream after the client reconnects) keep
+	// receiving events fine.
+	go func() {
+		<-r.Context().Done()
+		sse.detachLive()
+	}()
+
+	// inflightCancels stays populated for /api/cancel backward compat
+	// (the cancel endpoint key is sessionID, same shape as before).
 	inflightCancels.Store(sess.ID, cancel)
 	defer func() {
 		cancel()
 		inflightCancels.Delete(sess.ID)
+		// Mark the run done. Complete is idempotent; the panic
+		// recovery defer below runs FIRST (LIFO) and gets to upgrade
+		// to Failed if a panic occurred, so the unconditional
+		// Completed here is the "no panic happened" path.
+		run.Complete(RunStatusCompleted)
 	}()
+
+	// Always carry the run ID alongside session so the chat panel can
+	// open /api/runs/<id>/stream after a reconnect. session event
+	// keeps its prior shape for backward compat.
+	sse.Send(map[string]any{"kind": "session", "id": sess.ID})
+	sse.Send(map[string]any{"kind": "run", "id": run.ID})
 	// Surface any panic in the turn pipeline through the SSE stream
 	// AND the gohort log. The http server has its own panic recovery
 	// that just tears down the connection; without this, a silent
 	// panic in runPlan / runWorkerStep / synthesis looks like "no
 	// reply" to the user and shows no clue in the log.
+	//
+	// Runs first in LIFO order so it gets to mark the run Failed
+	// before the outer defer marks it Completed (Run.Complete is
+	// idempotent — first call wins).
 	defer func() {
 		if rec := recover(); rec != nil {
 			Log("[orchestrate /api/send] PANIC recovered: %v", rec)
 			sse.Send(map[string]any{"kind": "error", "text": fmt.Sprintf("server panic: %v", rec)})
+			run.Complete(RunStatusFailed)
 		}
 	}()
 
@@ -2851,6 +3393,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// agent loop) + message_done + stats. Just persist + run
 		// background consolidation + title generation.
 		turn.emitStatus("Direct response.")
+		appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), directReply)
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: directReply,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
@@ -2866,6 +3409,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// + end the turn — the user's next message will re-enter the
 		// plan round with the answer in context.
 		turn.emitStatus("Orchestrator asked for clarification.")
+		appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), question)
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: question,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
@@ -3013,6 +3557,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	// worker steps). The trace makes session export useful for
 	// debugging and dataset capture without needing live SSE.
 	turnToolCalls := turn.persistedToolCalls()
+	appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), reply)
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
@@ -3148,6 +3693,32 @@ func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, ag
 //   - all empty → orchestrator chose no tool. Caller substitutes a
 //     one-step "Respond" plan so the flow still produces a reply.
 func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, directReply string, err error) {
+	// Telemetry — populated by onStepHandler (set up below), summarized
+	// at function exit via deferred Log call. Captures rounds used,
+	// tool call breakdown, dup-args fingerprinting, and exit reason so
+	// budget-tuning and drift-pattern questions have data to look at.
+	telem := newTurnTelemetry()
+	defer func() {
+		softCap := resolveMaxWorkerRounds(t.agent)
+		hardCap := softCap
+		if t.agent.AllowExplorer && softCap < explorerHardCap {
+			hardCap = explorerHardCap
+		}
+		exitReason := classifyOrchestratorExit(
+			err,
+			telem.rounds, softCap,
+			directReply != "",
+			question != "",
+			len(steps) > 0,
+			t.ctx.Err() != nil,
+		)
+		label := "orchestrate.orch"
+		Log("%s", telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
+		if line := telem.toolCallSummary(label); line != "" {
+			Log("%s", line)
+		}
+	}()
+
 	// Assembly order matters — LLMs weight more-recent prompt
 	// content heavier. We want the agent's persona to be the most
 	// authoritative directive, so the universal "How this round
@@ -3178,6 +3749,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// this block the LLM has to call agents(action="list") to
 	// discover them, which it almost never does speculatively.
 	sys += t.renderAvailableAgentsBlock()
+	// Builder-only: list the user's existing persistent custom tools
+	// as READ-ONLY awareness. They're hidden from Builder's executable
+	// catalog (see newToolSession's isBuilderAgent skip) — this block
+	// is how Builder still knows what exists. No-op for every other
+	// agent.
+	sys += t.renderBuilderExistingToolsBlock()
 	// ("Available knowledge collections" block unmounted alongside
 	// dispatch_to_worker — there's no LLM-facing tool that
 	// references collections by ID right now, so advertising them
@@ -3227,6 +3804,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	var planSetRejects int
 	var forceNoThinkAfterReject bool
 	const planSetDropThreshold = 2
+	// compactRequested: set by the compact_context tool when the LLM wants
+	// to proactively shed verbose tool-result bodies it's done with (e.g.
+	// a smoke-test report). Consumed by the RoundCompactNow hook, which
+	// forces an aggressive history compaction on the next round.
+	var compactRequested bool
 	orchCtx, cancelOrch := context.WithCancel(t.ctx)
 	defer cancelOrch()
 
@@ -3258,17 +3840,27 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		},
 		Handler: func(args map[string]any) (string, error) {
 			steps := parsePlanSteps(args["steps"], maxSteps)
-			// Reject single-step plans — they're wasteful (full
-			// plan→worker→synthesis pipeline for what should be
-			// one inline tool call + reply). Returning an error
-			// hands feedback to the LLM; the agent loop continues
-			// and the model gets another chance to either issue
-			// the inline tool call directly or author a real
-			// multi-step plan.
-			if len(steps) < 2 {
+			// 1-step minimum on Builder; 2-step minimum elsewhere.
+			//
+			// The general rationale for ≥2 stands for research /
+			// chat: a 1-step plan_set wraps planner+worker+synthesis
+			// around what should be one inline call, and the model
+			// has the inline tool available anyway. But Builder's
+			// orchestrator catalog deliberately EXCLUDES the
+			// workhorses (create_agent, add_tool, tool_def — see
+			// builderAuthoringTools), so Builder has no "do it
+			// inline" path. A genuine single-step authoring task
+			// ("create this one tool") is forced through plan_set,
+			// and a hard ≥2 here would loop into the rejection-then-
+			// improvise bypass that motivated this whole change.
+			minSteps := 2
+			if isBuilderAgent(t.agent.ID) {
+				minSteps = 1
+			}
+			if len(steps) < minSteps {
 				planSetRejects++
 				forceNoThinkAfterReject = true
-				return "", fmt.Errorf("plan_set requires at least 2 steps (got %d). For a single tool call, invoke the tool directly inline — plan_set's planner+worker+synthesis overhead is only worth it for genuinely multi-step work", len(steps))
+				return "", fmt.Errorf("plan_set requires at least %d step(s) (got %d). For a single tool call, invoke the tool directly inline — plan_set's planner+worker+synthesis overhead is only worth it for genuinely multi-step work", minSteps, len(steps))
 			}
 			// Reject vacuous plans — steps whose intent is "just
 			// respond" or "summarize and reply" with no actual work.
@@ -3290,7 +3882,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	askTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user",
-			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is. Call ask_user when: (a) a tool returned 2+ plausible matches and you'd be picking arbitrarily (\"there are 3 users named Sam — which one?\"), (b) the user must choose between meaningfully different approaches (\"PDF or HTML?\"), (c) they must supply personal info (which appliance, which file, their preference), or (d) the request is genuinely ambiguous beyond what a search could resolve. DON'T ask for things you could just look up — call the right tool instead. When the answer has known choices (the matches you found, output formats, scope, mode), pass them as `options` so the user gets a checkbox / radio UI plus a free-text field; otherwise leave options empty for a plain text reply. For multi-step builds (Builder agent), pass `plan` to paint a visible checklist card above the question — each item flips to ✓ as later turns mark steps done.",
+			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is. Call ask_user when: (a) a tool returned 2+ plausible matches and you'd be picking arbitrarily (\"there are 3 users named Sam — which one?\"), (b) the user must choose between meaningfully different approaches (\"PDF or HTML?\"), (c) they must supply personal info (which appliance, which file, their preference), or (d) the request is genuinely ambiguous beyond what a search could resolve. DON'T ask for things you could just look up — call the right tool instead. **DEFAULT TO `options`**: whenever the answer space is bounded — yes/no confirmations, picking a format / mode / category, choosing among matches you already found — pass the choices as `options=[\"…\",\"…\"]` so the user clicks one button instead of typing. Free-text fields are friction; click-to-choose is one tap. Only OMIT `options` when the user must type something open-ended you couldn't enumerate (a name, a description, content). If you find yourself writing \"(yes / no / maybe)\" or similar choices into the question TEXT, you should be passing them as `options` instead — text-only renders as a plain field with no buttons. For multi-step builds (Builder agent), pass `plan` to paint a visible checklist card above the question — each item flips to ✓ as later turns mark steps done.",
 			Parameters: map[string]ToolParam{
 				"question": {
 					Type:        "string",
@@ -3298,7 +3890,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				},
 				"options": {
 					Type:        "array",
-					Description: "Optional pre-filled choices the user can pick from. MUST be an array of STRINGS, each being one option label. Concrete example: options=[\"yes\", \"edit\", \"no\"] or options=[\"PDF\", \"HTML\", \"Markdown\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders radios (or checkboxes when multi=true) plus a free-text field. PUT THE CHOICES HERE, not in the question text — writing \"(yes / no / edit)\" into the question string gives a plain text field with no buttons; passing them as this array is what produces clickable choices. Keep labels short (1-4 words each), 8 max.",
+					Description: "**STRONGLY PREFERRED — pass options whenever the answer has any natural choices.** Click-to-choose is one tap; a free-text field is friction. MUST be an array of STRINGS, each being one option label. Concrete examples: options=[\"yes\", \"edit\", \"no\"], options=[\"PDF\", \"HTML\", \"Markdown\"], options=[\"Sam Patel\", \"Sam Reyes\", \"Sam Chen\"]. NOT a count, NOT a number, NOT a JSON-encoded string. When provided, the UI renders radios (or checkboxes when multi=true) plus a free-text fallback. PUT THE CHOICES HERE, not in the question text — writing \"(yes / no / edit)\" into the question text gives a plain field with no buttons. Keep labels short (1-4 words each), 8 max. Only OMIT options when the user must type something genuinely open-ended you couldn't enumerate.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"multi": {
@@ -3421,8 +4013,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// round + synthesis for what should be one round.
 	Debug("[orchestrate.orch] runPlan: building tool session")
 	sess := t.newToolSession()
+	// Persist any managed-workspace switch this inline turn performs so
+	// the next step/turn's session lands in the same workspace.
+	defer t.captureActiveWorkspace(sess)
 	Debug("[orchestrate.orch] runPlan: resolving worker tools")
-	workerTools, workerNames, err := t.resolveWorkerTools(sess)
+	// forOrchestrator=true — this is Builder's own chat-orchestrator
+	// round, NOT a worker step. The Builder branch in resolveWorkerTools
+	// returns the LEAN authoring catalog so Builder must decompose via
+	// plan_set instead of reaching for create_agent / add_tool / tool_def
+	// inline.
+	workerTools, workerNames, err := t.resolveWorkerTools(sess, true)
 	if err != nil {
 		Debug("[orchestrate.orch] runPlan: resolveWorkerTools error: %v", err)
 		return nil, "", "", fmt.Errorf("resolve tools: %w", err)
@@ -3446,7 +4046,22 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// sentinel still short-circuits (nothing to trim).
 	if !isNoToolsSentinel(t.agent.AllowedTools) && len(workerTools) > classifierKeepBudget {
 		before := len(workerTools)
-		workerTools, workerNames = classifierTrimTools(t.ctx, msgs, workerTools, workerNames, t.builderPinnedTools)
+		// Pin every client-bridge tool past the classifier. They're
+		// always-available framework-runtime tools (the user opted
+		// in by running gohort-desktop); their descriptions rarely
+		// match user messages closely so the classifier would drop
+		// them silently otherwise — exactly the "I connected my
+		// desktop but the LLM can't see the tool" symptom.
+		alwaysKeep := t.builderPinnedTools
+		for _, n := range workerNames {
+			if strings.HasPrefix(n, "from_client.") {
+				if alwaysKeep == nil {
+					alwaysKeep = map[string]bool{}
+				}
+				alwaysKeep[n] = true
+			}
+		}
+		workerTools, workerNames = classifierTrimTools(t.ctx, msgs, workerTools, workerNames, alwaysKeep)
 		Log("[orchestrate.orch] classifier-trim: %d worker tools → %d (agent=%s)", before, len(workerTools), t.agent.ID)
 	}
 	workerTools, workerNames = filterToolAuthoringWithoutFocus(workerTools, workerNames, t.session)
@@ -3473,7 +4088,19 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	//   - Reference Memory (vector-grown derived chunks): memory_save +
 	//     memory_search + memory_forget → gated by inferredOff
 	//     (DisableInferred OR per-turn Clean toggle).
-	knowTools := []AgentToolDef{t.searchKnowledgeToolDef()}
+	// Knowledge tools (knowledge_search + fetch_knowledge_doc) only
+	// surface when the agent has something to retrieve — its own
+	// AttachedCollections, IngestAttachments, an active skill carrying
+	// collections, or deployment-default collections (the open-pool
+	// case when AttachedCollections is empty). Without this gate,
+	// agents like Builder that have no corpus see the tools in their
+	// catalog, reach for them anyway, and hallucinate doc_ids that
+	// the handler then has to refuse with "not found" — burns rounds
+	// for zero value.
+	var knowTools []AgentToolDef
+	if t.agentHasRetrievableContent() {
+		knowTools = append(knowTools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
+	}
 	// find_tools — always-on classifier-fallback. The LLM uses this
 	// to discover tools that didn't surface from the per-turn vector
 	// pre-selection (mid-conversation pivot, unusual phrasing,
@@ -3495,6 +4122,22 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// verbose schemas out of the catalog. Always available; harmless
 	// when the agent has no lazy custom tools (LLM just never calls it).
 	knowTools = append(knowTools, t.loadToolToolDef())
+	// compact_context — LLM-driven context management. Lets the model
+	// proactively discard the bodies of EARLIER tool results it has
+	// consumed and no longer needs (a smoke-test report, a big fetch, a
+	// verbose listing), instead of carrying them until the automatic
+	// budget compaction kicks in. Framework meta-tool: always available,
+	// not classifier-trimmed (it's in knowTools).
+	knowTools = append(knowTools, AgentToolDef{
+		Tool: Tool{
+			Name:        "compact_context",
+			Description: "Free up context: discard the bodies of EARLIER tool results you've already read and no longer need — e.g. after judging a long smoke-test report, a big page fetch, or a verbose listing. Their bodies are replaced with a short marker (re-run the tool if you need the data again); the most recent result and the whole conversation stay intact. Call this at a natural breakpoint when you're carrying long tool outputs you're done with, to keep a long session from bloating its context. No arguments.",
+		},
+		Handler: func(args map[string]any) (string, error) {
+			compactRequested = true
+			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
+		},
+	})
 	// activate_skill — manual override for the classifier when context
 	// implies a skill match that triggers/embedding missed. Gated on
 	// DisableSkills (no tool when the agent has skills off).
@@ -3528,7 +4171,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if isBuilderAgent(t.agent.ID) {
 		knowTools = append(knowTools,
 			t.presentBuildPlanToolDef(),
+			t.markStepInProgressToolDef(),
 			t.markStepDoneToolDef(),
+			t.markStepBlockedToolDef(),
+			t.reviseBuildPlanToolDef(),
+			t.reportBuildGapsToolDef(),
 			// pipeline (create / update / run / list / get / delete) —
 			// declarative multi-stage workflow authoring + management.
 			// Builder-only: authoring pipelines is Builder's job, same as
@@ -3546,7 +4193,22 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// get_agent, dispatch_to_agent) for new code. The legacy
 		// tools stay registered for backward compat with agent
 		// records that explicitly name them in AllowedTools.
-		t.agentsGroupedToolDef(),
+		//
+		// Builder gets the READ-ONLY variant (list / get only) —
+		// its job is authoring/composition, not delegation. With
+		// run enabled Builder reaches for Chat ("ask Chat about
+		// X") and Chat's authoring-intent routing sends control
+		// right back into Builder, an A→B→A cycle the chain guard
+		// catches only after the round-trip already happened.
+		// Builder's actual delegation surface is plan_set workers,
+		// which spawn with their own catalog (web_search /
+		// fetch_url for any specialist-knowledge sub-task).
+		// Builder gets run too — needed for smoke-testing the just-
+		// created agent. The self-dispatch guard (target.ID == t.agent.ID)
+		// and dispatchChain cycle detection in agentsRunAction prevent
+		// Builder→Builder and Builder→Chat→Builder loops; everything
+		// else is fair game.
+		t.agentsGroupedToolDef(true),
 		// Recurring tasks — background work that posts back into this
 		// session at a fixed interval. Mirror of chat's schedule_chat_update
 		// flow, scoped per-(user, agent).
@@ -3591,7 +4253,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	t.loadedCustomTools = map[string]bool{}
 	t.lazyCustomToolDefs = map[string]AgentToolDef{}
 	var directCustomTools []AgentToolDef // zero-arg → callable now
-	var lazyCustomTools []AgentToolDef    // has-args → name+desc + load_tool
+	var lazyCustomTools []AgentToolDef   // has-args → name+desc + load_tool
 	for _, td := range allCustomTools {
 		if len(td.Tool.Parameters) == 0 {
 			directCustomTools = append(directCustomTools, td)
@@ -3706,6 +4368,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
 		think = *p
 	}
+	// Per-agent override wins over the route default — the author may
+	// have decided this agent always reasons (planners, synthesizers)
+	// or never reasons (fast specialists). Empty Think means "auto":
+	// keep the route default we just picked up.
+	switch t.agent.Think {
+	case "on":
+		think = true
+	case "off":
+		think = false
+	}
 
 	// Per-round bubbles: each agent-loop round that streams text gets
 	// its own assistant bubble, finalized at the round boundary by
@@ -3721,14 +4393,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	var streamMsgID string
 	var streamedBuf strings.Builder
 	var lastFinalizedID string
-	var lastRoundHadContent bool
-	// shownText accumulates the text of EVERY finalized bubble this
-	// turn. emitCapturedAsBubble checks it so a respond_directly that
-	// repeats text the model already streamed in a prior round doesn't
-	// double-emit (stream answer in round 1 → respond_directly same
-	// text in round 2 → two identical bubbles). lastRoundHadContent
-	// alone misses this because round 2 (tool-only) resets it.
-	var shownText strings.Builder
+	// lastFinalizedText is the text of the MOST RECENT finalized bubble.
+	// emitCapturedAsBubble dedups against it: a respond_directly that just
+	// repeats what the model streamed (stream answer → respond_directly
+	// same text) is suppressed; anything else emits. Match is EXACT
+	// (after trim), NOT substring-over-all-bubbles — the latter dropped a
+	// short respond_directly reply whenever it happened to be a substring
+	// of a larger earlier block. Dropping a reply is far worse than an
+	// occasional double, so we err toward emitting: suppress only on an
+	// exact repeat of the last shown bubble.
+	var lastFinalizedText string
 	streamHandler := func(chunk string) {
 		if chunk == "" {
 			return
@@ -3758,7 +4432,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			"text": chunk,
 		})
 	}
+	// Telemetry record fires at the top of the onStep callback; the
+	// telem var is declared at function entry and summarized in the
+	// deferred block above.
 	onStepHandler := func(info StepInfo) {
+		telem.record(info)
 		// Tool-only round with no text and no lazy-bubble: nothing
 		// to finalize, nothing visible. (Tool calls in that round
 		// already created their own bubble via ensureBubbleForTool;
@@ -3768,7 +4446,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			id = t.getCurrentMsgID()
 		}
 		if id == "" {
-			lastRoundHadContent = false
 			return
 		}
 		// Models on llama.cpp sometimes emit <tool_call><function=…>
@@ -3792,15 +4469,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// round produces actual text, finalize as usual — that text
 		// is the orchestrator's narration and deserves its own card.
 		if cleaned == "" {
-			lastRoundHadContent = false
 			streamedBuf.Reset()
 			return
 		}
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-		shownText.WriteString(cleaned)
-		shownText.WriteString("\n")
 		lastFinalizedID = id
-		lastRoundHadContent = true
+		lastFinalizedText = cleaned
+		// Persist this round's narration so a reloaded session replays
+		// the same bubble the user saw live. handleSend drains the
+		// buffer right before appending the final assistant message.
+		t.captureMidTurnBubble(cleaned)
 		streamMsgID = ""
 		streamedBuf.Reset()
 		t.setCurrentMsgID("")
@@ -3811,17 +4489,60 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// blind. OnRoundStart fires AFTER history is appended but BEFORE
 	// the LLM call, so each round sees the same brief note appended
 	// to history.
-	maxR := resolveMaxWorkerRounds(t.agent)
+	maxR := resolveMaxWorkerRounds(t.agent) // soft cap (the pace-against target)
+	// Explorer wiring for the ORCHESTRATOR loop (mirrors runWorkerStep):
+	// MaxRounds is the HARD cap, StopRound enforces the soft cap (maxR)
+	// UNTIL the LLM flips explorerMode via enter_explorer_mode — then it
+	// runs on to orchHardCap. Without this the orchestrator hard-stops at
+	// maxR and enter_explorer_mode (which only flips a flag) is a no-op
+	// inline, so a build that runs short can't self-extend. Non-explorer
+	// agents keep orchHardCap == maxR, so StopRound is a plain cap.
+	orchHardCap := maxR
+	if t.agent.AllowExplorer && maxR < explorerHardCap {
+		orchHardCap = explorerHardCap
+	}
+	var orchRoundsUsed int
 	roundCounter := 0
 	onRoundStartHandler := func() []Message {
 		roundCounter++
-		remaining := maxR - roundCounter
+		// Pace against the SOFT cap normally; once the LLM has flipped
+		// explorer mode, pace against the hard cap (StopRound lets it run
+		// there). Explorer NUDGES only fire when NOT already exploring.
+		cap := maxR
+		if t.explorerMode {
+			cap = orchHardCap
+		}
+		remaining := cap - roundCounter
+		canExtend := t.agent.AllowExplorer && !t.explorerMode
 		if remaining <= 0 {
+			// At the cap. If the agent can still self-extend (explorer-
+			// capable and not yet exploring), offer it — extending beats
+			// getting cut off mid-build and shipping a half-built agent.
+			if canExtend {
+				return []Message{{
+					Role: "user",
+					Content: fmt.Sprintf(
+						"[Round %d/%d — FINAL round. If you are NOT finished (still mid-build / tools left to add or verify), call enter_explorer_mode NOW to extend your budget. Otherwise produce your final answer from what you have.]",
+						roundCounter, cap,
+					),
+				}}
+			}
 			return []Message{{
 				Role: "user",
 				Content: fmt.Sprintf(
 					"[Round %d/%d — FINAL round. No more tool calls. Produce your final answer NOW from what you have so far.]",
-					roundCounter, maxR,
+					roundCounter, cap,
+				),
+			}}
+		}
+		// Few rounds left and able to self-extend: nudge enter_explorer_mode
+		// so a large build / discovery stretches instead of getting cut off.
+		if canExtend && remaining <= 5 {
+			return []Message{{
+				Role: "user",
+				Content: fmt.Sprintf(
+					"[Round %d/%d — only %d round%s left. enter_explorer_mode extends your budget to 50 rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\" — find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool — probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
+					roundCounter, cap, remaining, plural(remaining),
 				),
 			}}
 		}
@@ -3829,7 +4550,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			Role: "user",
 			Content: fmt.Sprintf(
 				"[Round %d/%d — %d round%s left before this turn ends. Pace accordingly: if the answer needs more searches than that, use plan_set instead of iterating inline.]",
-				roundCounter, maxR, remaining, plural(remaining),
+				roundCounter, cap, remaining, plural(remaining),
 			),
 		}}
 	}
@@ -3848,80 +4569,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		}
 	}
 
-	// Pre-plan retrieval — search the agent's OWN curated knowledge
-	// (uploaded files + explicitly attached collections), CURATED-ONLY
-	// (ChunkScopeCuratedOnly), against the user message and inject any
-	// hits into the prompt. Reference Memory (derived chunks) is NOT in
-	// this path — it's pull-only via memory_search; Explicit facts ride
-	// the system prompt. So this is purely the Knowledge-layer RAG.
-	//
-	// GATED on agentHasCuratedCorpus(): a plain chat agent with no
-	// corpus skips the whole block — otherwise it pays an Embed + full
-	// chunk-walk every turn (a cold embedding endpoint spiked this to
-	// ~17s on a bare "hello") and, via the "default = open" rule,
-	// auto-pulls the entire deployment KB into a general agent's context.
-	if t.agentHasCuratedCorpus() {
-		if userMsg := lastUserContent(llmMsgs); userMsg != "" {
-			searchCtx, cancelSearch := context.WithTimeout(t.ctx, knowledgeIngestTimeout)
-			// Wider net when skills are active — they bring extra
-			// sources (self-training + attached collections) and
-			// surfacing more chunks raises the chance the LLM sees
-			// its answer in-context instead of reaching for web.
-			autoInjectK := 4
-			if len(t.skillsActive) > 0 {
-				autoInjectK = 6
-			}
-			// Auto-inject pulls CURATED chunks only (uploads,
-			// attached collections, deployment-knowledge). Derived
-			// chunks from Reference Memory are NOT auto-injected
-			// anymore — that was the session-bleed source ("thank
-			// you" surfacing prior Kiteworks findings, etc.). The
-			// LLM can still recall its own prior findings by
-			// explicitly calling memory_search; pull-only beats
-			// push-injected for fuzzy/derived material.
-			scope := ChunkScopeCuratedOnly
-			// NOTE: pass generalTopic, NOT t.resolveTopic(). The topic
-			// slug is dead weight to searchAgentKnowledge — it scopes by
-			// SOURCE predicate (agent-corpus prefix + collections), never
-			// by topic, in both the embedding and substring paths. Calling
-			// resolveTopic() here used to BLOCK the main generation on the
-			// concurrent classify LLM call (~1.5s, up to ~10s if it thinks)
-			// for a value the search throws away. The classify still runs
-			// concurrently for knowledge STORAGE labeling; it just no longer
-			// gates time-to-answer.
-			hits := searchAgentKnowledge(searchCtx, t.app.DB, t.user, t.agent.ID, generalTopic, userMsg, autoInjectK, t.skillsActive, t.agent.AttachedCollections, scope)
-			cancelSearch()
-			// Min-similarity floor — vector search returns top-K
-			// regardless of score, so even a weak match (a chunk from
-			// a prior session that's only tangentially related) gets
-			// surfaced. That's the "the LLM thought I was running a
-			// query from an earlier query" failure mode: low-score
-			// chunks pull the LLM toward old context. Filter to
-			// chunks scoring above autoInjectMinScore so weak matches
-			// stay out of the prompt.
-			filtered := hits[:0]
-			for _, h := range hits {
-				if h.Score >= autoInjectMinScore {
-					filtered = append(filtered, h)
-				}
-			}
-			hits = filtered
-			if section := renderKnowledgePromptSection(hits); section != "" {
-				for i := len(llmMsgs) - 1; i >= 0; i-- {
-					if llmMsgs[i].Role == "user" {
-						llmMsgs[i].Content = section + llmMsgs[i].Content
-						break
-					}
-				}
-				Log("[orchestrate.knowledge] injected %d hit(s) into orchestrator prompt for agent=%s",
-					len(hits), t.agent.ID)
-				// Activity-pane observability: tell the user WHAT got
-				// pulled into RAG this turn so "did the skill use the
-				// docs?" is answerable from the UI, not just the logs.
-				t.emitKnowledgeActivity(hits)
-			}
-		}
-	}
+	// (Auto-inject removed — knowledge retrieval is now exclusively
+	// pull-driven via knowledge_search. The LLM decides when to query,
+	// scopes the search itself, and reads excerpts before deciding
+	// whether to fetch more. Eliminates contamination from
+	// tangentially-related chunks getting silently injected, and saves
+	// an Embed call per turn for every agent with a corpus.)
 
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
@@ -3932,6 +4585,27 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		Stream:       streamHandler,
 		OnStep:       onStepHandler,
 		OnRoundStart: onRoundStartHandler,
+		// Drain mid-flight user injections EACH ROUND so the orchestrator
+		// incorporates them during inline work — not just at plan-step
+		// boundaries / synthesis. Without this, a note injected while the
+		// orchestrator iterated inline sat in the queue until end-of-turn,
+		// so the agent "kept doing what it was doing" and only acknowledged
+		// the note at synthesis. Separate hook from OnRoundStart (which is
+		// the always-returns-content budget pacer); InjectionDrain MUST
+		// return empty when nothing's queued or the pre-finalize re-drain
+		// would loop. drainNotes() empties the shared queue, so the
+		// plan-step/synthesis drains coexist (first drain wins).
+		InjectionDrain: func() []Message {
+			notes := t.drainNotes()
+			if len(notes) == 0 {
+				return nil
+			}
+			block := notesContextBlock(notes)
+			if block == "" {
+				return nil
+			}
+			return []Message{{Role: "user", Content: block}}
+		},
 		// plan_set fixation guard. Once the model has had plan_set
 		// rejected planSetDropThreshold times this turn, drop it from the
 		// catalog so it physically can't keep re-submitting the same
@@ -3949,10 +4623,36 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			}
 			return nil
 		},
-		// Cap orchestrator iterations at the agent's worker-rounds
-		// budget. Most chat-style turns need 1-3 rounds; deep
-		// research bumps this naturally via the agent config.
-		MaxRounds: maxR,
+		// Context window for history compaction — long multi-round
+		// sessions (Builder's edit→re-fetch loop especially) were growing
+		// past the window and triggering server-side context-shift. With
+		// this set, the loop elides old tool-result bodies once history
+		// nears the budget. LeadContextSize falls back to the worker
+		// window; 0 (unconfigured) disables compaction.
+		ContextSize: t.app.LeadContextSize(),
+		// LLM-driven compaction: when the model calls compact_context (it
+		// just consumed a long output it's done with), force an aggressive
+		// shed on the next round.
+		RoundCompactNow: func() bool {
+			if compactRequested {
+				compactRequested = false
+				return true
+			}
+			return false
+		},
+		// Cap orchestrator iterations. MaxRounds is the HARD ceiling;
+		// StopRound enforces the soft cap (maxR) until the LLM flips
+		// explorer mode, then lets it run to orchHardCap. Most chat turns
+		// need 1-3 rounds; deep research / large builds bump via the
+		// agent's worker-rounds budget + enter_explorer_mode.
+		MaxRounds: orchHardCap,
+		StopRound: func() bool {
+			orchRoundsUsed++
+			if t.explorerMode {
+				return false // explorer mode: run on to MaxRounds (orchHardCap)
+			}
+			return orchRoundsUsed > maxR // soft-cap stop unless extended
+		},
 		// Auto-confirm any NeedsConfirm tool (delete_agent) so the
 		// orchestrator can act without a stdin prompt hanging the
 		// stream. Higher-level approval gates would live at the
@@ -4007,11 +4707,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if finalID != "" {
 		t.sse.Send(map[string]any{"kind": "message_done", "id": finalID})
 		if streamedBuf.Len() > 0 {
-			shownText.WriteString(strings.TrimSpace(StripToolCallMarkup(streamedBuf.String())))
-			shownText.WriteString("\n")
+			lastFinalizedText = strings.TrimSpace(StripToolCallMarkup(streamedBuf.String()))
 		}
 		lastFinalizedID = finalID
-		lastRoundHadContent = streamedBuf.Len() > 0
+		// Persist the final round's narration too — same gap as the
+		// per-round capture in onStepHandler, only on the rare path
+		// where the loop terminates after streaming but before OnStep.
+		t.captureMidTurnBubble(lastFinalizedText)
 		streamMsgID = ""
 		t.setCurrentMsgID("")
 	}
@@ -4024,24 +4726,31 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 
 	// emitCapturedAsBubble produces a new bubble for captured
 	// control-tool text (respond_directly's text, ask_user's
-	// question). Skips when the last round already streamed
-	// content — assumes the LLM's streamed text matches the tool
-	// arg (the common case) so we don't double up. When the last
-	// round was tool-only with no narration, this is the only
-	// bubble the user gets.
+	// question). Dedup keys on lastFinalizedText (the LAST shown
+	// bubble): skip ONLY when this exact text was just shown
+	// (stream-then-respond_directly with identical content). Two earlier
+	// guards both dropped real replies and were removed: lastRoundHadContent
+	// suppressed a 7k reply because the round streamed an 82-char preamble;
+	// the shownText substring match dropped a 338-char reply because it was
+	// a substring of a larger earlier block. Exact-match-last-bubble is the
+	// narrowest dedup that still catches the true duplicate case.
 	emitCapturedAsBubble := func(text string) {
-		if text == "" || lastRoundHadContent {
+		trimmed := strings.TrimSpace(text)
+		if trimmed == "" {
 			return
 		}
-		// Skip if the model already streamed this text in an earlier
-		// round's bubble (stream-then-respond_directly with identical
-		// content). Trimmed-substring match: respond_directly's arg is
-		// usually verbatim what streamed, sometimes with trailing
-		// whitespace differences.
-		if trimmed := strings.TrimSpace(text); trimmed != "" &&
-			strings.Contains(shownText.String(), trimmed) {
+		// Suppress when the captured reply is a near-duplicate of the
+		// LAST shown bubble — the stream-then-respond_directly /
+		// stream-draft-then-revised-conclusion case. Near-duplicate
+		// catches the "same analysis, different ending" pattern that
+		// exact-match missed; it's still narrow enough not to drop a
+		// short reply that coincidentally shares an opener with a
+		// longer earlier block (LCP/short ratio < 0.6 keeps it).
+		if last := strings.TrimSpace(lastFinalizedText); last != "" && isNearDuplicate(trimmed, last) {
+			Debug("[orchestrate.orch] captured reply (%d ch) is a near-duplicate of last shown bubble (%d ch) — suppressing", len(trimmed), len(last))
 			return
 		}
+		Debug("[orchestrate.orch] emitting captured reply as bubble (%d ch, last bubble %d ch)", len(trimmed), len(strings.TrimSpace(lastFinalizedText)))
 		id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
 		t.sse.Send(map[string]any{
 			"kind": "message",
@@ -4142,7 +4851,25 @@ func plural(n int) string {
 // Each tool call the worker makes surfaces as an activity row in the
 // AgentLoopPanel pane so the user can see what the agent is doing
 // live, without waiting for the step to finish.
-func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string, notes []injectionNote) (string, error) {
+func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string, notes []injectionNote) (stepOut string, stepErr error) {
+	// Per-step telemetry — same instrumentation as the orchestrator's
+	// runPlan. Each worker step gets its own round budget and its own
+	// telem; the summary log fires when the step exits.
+	telem := newTurnTelemetry()
+	defer func() {
+		softCap := resolveMaxWorkerRounds(t.agent)
+		hardCap := softCap
+		if t.agent.AllowExplorer && softCap < explorerHardCap {
+			hardCap = explorerHardCap
+		}
+		exitReason := classifyWorkerExit(stepErr, telem.rounds, softCap, len(stepOut))
+		label := fmt.Sprintf("orchestrate.worker step=%d", cur.ID)
+		Log("%s", telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
+		if line := telem.toolCallSummary(label); line != "" {
+			Log("%s", line)
+		}
+	}()
+
 	// Reset the active-bubble id at each worker-step boundary so the
 	// first tool call of THIS step materializes its own card under
 	// the just-emitted intent block, instead of attaching to the
@@ -4153,8 +4880,20 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// Build the worker's per-call session — same helper the
 	// orchestrator uses, so persistent temp tools land on both paths.
 	sess := t.newToolSession()
+	// Persist any managed-workspace switch this step performs so the
+	// next step's fresh session shares the same workspace (a script
+	// written here is then runnable from the following step).
+	defer t.captureActiveWorkspace(sess)
 
-	tools, toolNames, err := t.resolveWorkerTools(sess)
+	// forOrchestrator=false — this is the per-step worker running one
+	// plan_set step. The Builder branch returns builderWorkerResearchTools
+	// (raw call_<credential> for endpoint probing + the full authoring
+	// catalog: tool_def / create_agent / add_tool / skill_def) on top of
+	// the standard AllowedTools pool. Workers can either author directly
+	// (call tool_def themselves and return confirmation) or return
+	// components for Builder to assemble. The framework doesn't dictate;
+	// Builder's brief decides which shape the worker takes.
+	tools, toolNames, err := t.resolveWorkerTools(sess, false)
 	if err != nil {
 		return "", fmt.Errorf("resolve tools: %w", err)
 	}
@@ -4193,8 +4932,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// the orchestrator catalog in runPlan. Workers are the ones
 	// actually researching, so they get write access to the Inferred
 	// Memory layer when it's enabled. Knowledge is always available.
-	tools = append(tools, t.searchKnowledgeToolDef())
-	toolNames = append(toolNames, "knowledge_search")
+	tools = append(tools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
+	toolNames = append(toolNames, "knowledge_search", "fetch_knowledge_doc")
 	if !t.agent.DisableSkills {
 		tools = append(tools, t.activateSkillToolDef())
 		toolNames = append(toolNames, "activate_skill")
@@ -4215,7 +4954,14 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.
 	// See the matching note in runPlan above.
-	tools = append(tools, t.agentsGroupedToolDef())
+	// Worker step catalog — always include agents(run). Builder's
+	// orchestrator-round restriction (no run) is structural for the
+	// chat-facing conductor turn, where Builder→Chat→Builder cycles
+	// can form. Worker steps spawned via plan_set are different:
+	// they smoke-test newly-created agents ("Step N (verify): worker
+	// dispatches to the new agent with a representative input"), and
+	// stripping run here breaks that pattern.
+	tools = append(tools, t.agentsGroupedToolDef(true))
 	tools = append(tools, t.scheduleRecurringToolDef(), t.listRecurringToolDef(), t.cancelRecurringToolDef())
 	tools = append(tools, t.enterExplorerModeToolDef())
 	// Include persistent temp tools in the static set so the group
@@ -4302,7 +5048,21 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	var fullOut strings.Builder
 	stream := func(chunk string) { fullOut.WriteString(chunk) }
 
-	t.wrapToolsForActivity(sess, tools)
+	// Tag every tool call this worker makes with a "↳ [worker: <Title>]"
+	// nesting prefix so the user can tell at a glance which calls are
+	// the orchestrator's vs the worker's. Without this, plan_set's
+	// inner tool_def / create_agent / etc. chips blend visually with
+	// Builder's own chips and the conversation reads as if Builder
+	// authored them inline — defeating the whole conductor metaphor.
+	// Mirrors the agents(run) sub-dispatch nesting ("↳ [TargetName] …").
+	workerLabel := strings.TrimSpace(cur.Title)
+	if workerLabel == "" {
+		workerLabel = "step"
+	}
+	if len(workerLabel) > 32 {
+		workerLabel = workerLabel[:32] + "…"
+	}
+	t.wrapToolsForActivity(sess, tools, "↳ [worker: "+workerLabel+"] ")
 
 	// Collapse admin-curated tool groups. Workers may have a totally
 	// different tool surface than the orchestrator (each step
@@ -4338,6 +5098,17 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	if frag := RenderToolPromptFragments(tools); frag != "" {
 		sysPrompt += "\n\n" + frag
 	}
+	// Universal authoring directives for Builder-spawned workers.
+	// Workers don't see Builder's OrchestratorPrompt (only the brief
+	// + per-tool fragments), so the cross-cutting rules that apply
+	// to any script the worker writes — URL encoding, no pip install,
+	// hook usage, script-body patterns, etc. — never reach them
+	// otherwise. Injected here for any worker whose parent agent is
+	// Builder. Kept short on purpose: the rules that catch the most
+	// common authoring mistakes, no narrative.
+	if isBuilderAgent(t.agent.ID) {
+		sysPrompt += "\n\n" + builderWorkerDirectives
+	}
 
 	stopKeepalive := startKeepalive(t.sse)
 	f := false
@@ -4358,6 +5129,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		DynamicTools: t.dynamicNewTempTools(sess),
 		MaxRounds:    hardCap,
 		Stream:       stream,
+		// OnStep feeds telemetry — rounds, tool calls, dup-args
+		// fingerprints. Summary log fires from the deferred block at
+		// the top of runWorkerStep.
+		OnStep: func(info StepInfo) { telem.record(info) },
 		// Soft-cap enforcement for explorer-mode agents: pass hardCap
 		// as MaxRounds upfront, then stop early at softCap UNLESS the
 		// LLM has flipped explorerMode via enter_explorer_mode. For
@@ -4474,6 +5249,14 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	think := true
 	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
 		think = *p
+	}
+	// Per-agent override wins over the route default (see plan round
+	// for rationale).
+	switch t.agent.Think {
+	case "on":
+		think = true
+	case "off":
+		think = false
 	}
 	synthStart := time.Now()
 	// Same skill injection the orchestrator round saw — synthesis
@@ -4864,11 +5647,6 @@ func emitIntentBlock(sse *sseWriter, blockID string, step PlanStep) {
 func buildToolUseDirective(tools []AgentToolDef) string {
 	var b strings.Builder
 	b.WriteString("## Tools available\n\n")
-	b.WriteString("You have these tools. PREFER calling a tool over answering from training whenever the question involves:\n")
-	b.WriteString("- live information (weather, news, prices, sports scores, current events)\n")
-	b.WriteString("- specific facts that could have changed since your training (versions, URLs, hours, contact info)\n")
-	b.WriteString("- anything the user could verify externally and catch you fabricating\n\n")
-	b.WriteString("If in doubt, call a tool. A wrong answer from training reads as you making things up; a tool result reads as research.\n\n")
 	for _, t := range tools {
 		desc := strings.SplitN(t.Tool.Description, "\n", 2)[0]
 		if len(desc) > 200 {

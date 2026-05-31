@@ -31,12 +31,21 @@ package orchestrate
 
 import (
 	"net/http"
+	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
 )
 
 func init() {
 	RegisterApp(new(OrchestrateApp))
+	// Wire the temp-tool-approval hook so admin's "approve" gate (and
+	// the chat-side "promote to global" path) auto-enable the tool on
+	// the user's seed-chat agent. Without this, a user who customized
+	// their Chat agent's AllowedTools list would have to re-edit it
+	// every time admin approves a new tool — surprising friction. Seed
+	// agents with empty AllowedTools (the default-pool case) are
+	// unaffected — they already see every persistent tool.
+	OnTempToolApproved = enableApprovedToolOnSeedChat
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.orchestrator",
 		Label:   "Agency: Orchestrator (thinking)",
@@ -84,6 +93,23 @@ func init() {
 // OrchestrateApp is the entry point. Dashboard-only (no CLI Main).
 type OrchestrateApp struct {
 	AppCore
+
+	// Runs is the in-memory ledger of in-flight + recently-completed
+	// agent turns (see runs.go). Lazily initialized on first access
+	// via runsRegistry() so handlers don't have to care whether the
+	// app was bootstrapped through Init() or a hot-reload path that
+	// skipped it.
+	runsOnce sync.Once
+	runs     *RunRegistry
+}
+
+// runsRegistry returns the lazily-initialized RunRegistry. Goroutine-
+// safe; first caller wins, everyone else gets the same instance.
+func (T *OrchestrateApp) runsRegistry() *RunRegistry {
+	T.runsOnce.Do(func() {
+		T.runs = NewRunRegistry()
+	})
+	return T.runs
 }
 
 func (T OrchestrateApp) Name() string         { return "orchestrate" }
@@ -216,6 +242,11 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/cancel", g(T.handleCancelRouter))
 	T.HandleFunc("/api/confirm", g(T.handleConfirmRouter))
 	T.HandleFunc("/api/inject", g(T.handleInject))
+	// Run-registry endpoints (see runs.go / runs_http.go) — let a
+	// reconnecting client discover and resume the in-flight stream
+	// for a session after disconnect.
+	T.HandleFunc("/api/runs/active", g(T.handleRunsActive))
+	T.HandleFunc("/api/runs/", g(T.handleRunsDispatch))
 	T.HandleFunc("/api/settings/private", g(T.handlePrivateModeGet))
 	T.HandleFunc("/api/settings/private/set", g(T.handlePrivateModeSet))
 	T.HandleFunc("/api/settings/memory", g(T.handleMemoryModeGet))

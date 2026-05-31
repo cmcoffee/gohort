@@ -38,8 +38,9 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 					RevisionLoadURL:  "api/revision/{id}",
 					ValuesListURL:    "api/values",
 					ValueURL:         "api/value/{id}",
-					ContextsListURL:  "api/contexts",
-					ContextURL:       "api/context/{id}",
+					ContextsListURL:    "api/contexts",
+					ContextURL:         "api/context/{id}",
+					CollectionsListURL: "api/collections",
 					Languages: []string{
 						"bash", "sql", "python", "powershell", "go", "regex", "",
 					},

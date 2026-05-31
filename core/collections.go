@@ -21,7 +21,9 @@
 package core
 
 import (
+	"context"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -49,10 +51,11 @@ const (
 // auto-minted deployment-wide Collection that research, debate, and
 // answer pipelines ingest into. Fixed ID (not generated) so any app
 // can reference it without a lookup. Chunks for this collection
-// live in RootDB.EmbeddedChunks so cross-app retrieval works
-// without per-bucket fanout. Agents with empty AttachedCollections
-// auto-include deployment collections in their knowledge_search
-// scope; agents with curated AttachedCollections stay self-contained.
+// live in the dedicated VectorDB (alongside every other shared chunk),
+// partitioned by the collectionSource(ID) tag. Agents with empty
+// AttachedCollections auto-include deployment collections in their
+// knowledge_search scope; agents with curated AttachedCollections
+// stay self-contained.
 const DeploymentKnowledgeCollectionID = "deployment-knowledge"
 
 // EnsureDeploymentKnowledgeCollection auto-mints the well-known
@@ -128,11 +131,113 @@ func CollectionSource(id string) string {
 	return "collection:" + id
 }
 
+// CollectionsBucket is the global.db bucket where Document Collections
+// are homed. Collections were first built inside the orchestrate app,
+// so their metadata + user-scoped chunks live in that bucket (the table
+// name CollectionsTable = "orchestrate_collections" already encodes
+// this). Any app that wants the shared collection pool must reach this
+// bucket rather than its own per-app bucket — see CollectionsDB.
+const CollectionsBucket = "orchestrate"
+
+// CollectionsDB returns the base store under which Document Collections
+// live, regardless of which app is asking:
+//   - user-scoped metadata:  UserDB(CollectionsDB(), user)
+//   - user-scoped chunks:     CollectionsDB() root (keyed by CollectionSource)
+//   - deployment metadata + chunks: RootDB
+//
+// Apps must NOT use their own T.DB bucket for collections — that's
+// app-private and won't see the shared pool. Returns nil before the
+// database is open. Once the planned collections-app move lands, only
+// this accessor (and CollectionsBucket) changes.
+func CollectionsDB() Database {
+	if RootDB == nil {
+		return nil
+	}
+	return RootDB.Bucket(CollectionsBucket)
+}
+
 // IsDeploymentScope reports whether a collection record is in the
 // deployment-wide pool. Empty string is treated as user-scoped for
 // back-compat with records written before the Scope field existed.
 func IsDeploymentScope(c Collection) bool {
 	return c.Scope == CollectionScopeDeployment
+}
+
+// SearchCollections runs a RAG search over a FIXED set of Document
+// Collections and returns the top-k chunks across them. This is the
+// app-agnostic retrieval primitive behind any "attach reference
+// corpora to my app" feature (codewriter, techwriter, …): no
+// AgentRecord, no skills, no per-(user, agent) corpus — just "given
+// these collection IDs and a query, hand me the most relevant chunks."
+// searchAgentKnowledge in apps/orchestrate layers agent/skill/memory
+// concerns ON TOP of this same idea; apps that aren't agents call here
+// directly instead of dragging in that machinery.
+//
+// `base` is the collections home (pass CollectionsDB() — NOT the
+// caller's own app bucket). Metadata is read from UserDB(base, user);
+// each ID is resolved via LoadCollection so user-scoped and
+// deployment-scoped IDs mix freely and access gating (ownership /
+// scope) is enforced — an ID the caller can't see contributes nothing.
+//
+// Chunk storage mirrors the ingest paths: user-scoped chunks live at
+// `base` root (keyed by CollectionSource), deployment-scoped chunks
+// live in RootDB. Both are searched as needed and merged by score
+// (capped at k); the merge dedups by chunk ID.
+//
+// Embeddings are used when configured; otherwise it degrades to a
+// substring scan so the feature still works without an embedding
+// backend. Collections are curated by definition, so there is no
+// curated/derived provenance gate here.
+func SearchCollections(ctx context.Context, base Database, user string, collectionIDs []string, query string, k int) []SearchHit {
+	if base == nil || strings.TrimSpace(query) == "" || k <= 0 || len(collectionIDs) == 0 {
+		return nil
+	}
+	metaDB := UserDB(base, user) // nil when user=="" → LoadCollection reads deployment only
+	// Resolve each ID to its chunk-source tag, routed to the store its
+	// chunks actually live in. Unknown / not-visible IDs are skipped.
+	baseSources := make(map[string]bool, len(collectionIDs)) // user-scoped → base root
+	rootSources := make(map[string]bool, len(collectionIDs)) // deployment → RootDB
+	for _, cid := range collectionIDs {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
+		}
+		c, ok := LoadCollection(metaDB, user, cid)
+		if !ok {
+			continue
+		}
+		src := CollectionSource(c.ID)
+		if IsDeploymentScope(c) {
+			rootSources[src] = true
+		} else {
+			baseSources[src] = true
+		}
+	}
+	if len(baseSources) == 0 && len(rootSources) == 0 {
+		return nil
+	}
+
+	var vec []float32
+	if GetEmbeddingConfig().Enabled {
+		if v, err := Embed(ctx, query); err == nil && len(v) > 0 {
+			vec = v
+		}
+	}
+	search := func(db Database, sources map[string]bool) []SearchHit {
+		if db == nil || len(sources) == 0 {
+			return nil
+		}
+		allow := func(c EmbeddedChunk) bool { return sources[c.Source] }
+		if len(vec) > 0 {
+			return SearchChunksByPredicate(db, allow, vec, k)
+		}
+		return SearchChunksSubstringByPredicate(db, allow, query, k)
+	}
+	hits := search(base, baseSources)
+	if len(rootSources) > 0 && RootDB != nil {
+		hits = MergeHitsByScore(hits, search(RootDB, rootSources), k)
+	}
+	return hits
 }
 
 // LoadCollection reads one collection by ID. Looks in the user's
