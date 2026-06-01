@@ -226,6 +226,11 @@ func (c *desktopClient) readPump() {
 			c.mu.Lock()
 			c.tools = m.Tools
 			c.mu.Unlock()
+			// Persist the surface so the agent's catalog stays stable
+			// across desktop disconnect/reconnect. LocalToolsForUser
+			// merges live + persisted; calls to an offline tool return
+			// a clean "open your desktop" error.
+			persistDesktopKnownTools(c.user, m.Tools)
 			names := make([]string, 0, len(m.Tools))
 			for _, t := range m.Tools {
 				names = append(names, t.Name)
@@ -349,49 +354,114 @@ func (r *desktopRegistry) clientsFor(user string) []*desktopClient {
 	return out
 }
 
-// LocalToolsForUser returns ChatTool wrappers for every tool the
-// user's connected desktops have announced. Names are prefixed with
-// "from_client." so they're easy to distinguish in the LLM-visible
-// catalog and don't collide with server-side tools. The prefix is
-// chosen for clarity from the LLM's POV — "this tool runs on the
-// user's client device, not on the server I'm on" — since "local."
-// alone is ambiguous about whose local.
-//
-// Returns nil when no desktops are connected. The orchestrate
-// runner appends these to the agent's effective tool list per turn,
-// so a desktop connecting mid-conversation is picked up by the next
-// turn automatically.
-func LocalToolsForUser(user string) []ChatTool {
-	clients := desktopReg.clientsFor(user)
-	if len(clients) == 0 {
+// desktopKnownToolsTable persists the per-user tool surface across
+// disconnects. Written on every announce; read on LocalToolsForUser
+// when no live clients are present so the LLM still sees the surface
+// (and gets a clean "open your desktop" error if it calls one offline)
+// instead of having tools silently appear and disappear from its
+// catalog as the user opens / closes the desktop client.
+const desktopKnownToolsTable = "desktop_known_tools"
+
+// persistDesktopKnownTools stores the union of the user's announced
+// tool descriptors. Writes to RootDB so the data survives process
+// restarts and reaches every chat surface (desktop, browser, phantom)
+// uniformly.
+func persistDesktopKnownTools(user string, tools []DesktopToolDescriptor) {
+	if user == "" || RootDB == nil {
+		return
+	}
+	// Merge with any previously-known tools so a desktop that
+	// announces a smaller set this connect doesn't shrink the
+	// known surface (could be a partial plugin load). The intent
+	// is "everything the user has ever registered" — admins prune
+	// via a future surface, not the announce path.
+	var prior []DesktopToolDescriptor
+	RootDB.Get(desktopKnownToolsTable, user, &prior)
+	byName := map[string]DesktopToolDescriptor{}
+	for _, t := range prior {
+		byName[t.Name] = t
+	}
+	for _, t := range tools {
+		byName[t.Name] = t // overwrite with latest schema
+	}
+	merged := make([]DesktopToolDescriptor, 0, len(byName))
+	for _, t := range byName {
+		merged = append(merged, t)
+	}
+	RootDB.Set(desktopKnownToolsTable, user, merged)
+}
+
+// loadDesktopKnownTools returns the persisted tool surface for the
+// user. Nil when no record exists.
+func loadDesktopKnownTools(user string) []DesktopToolDescriptor {
+	if user == "" || RootDB == nil {
 		return nil
 	}
-	// De-dup by name — if two clients announce the same tool, the
-	// most-recently-connected one wins. Iterate newest-first.
-	seen := map[string]bool{}
-	var out []ChatTool
+	var out []DesktopToolDescriptor
+	RootDB.Get(desktopKnownToolsTable, user, &out)
+	return out
+}
+
+// LocalToolsForUser returns ChatTool wrappers for the user's desktop
+// tool surface. Always returns the same surface whether the desktop
+// is currently connected or not — agents see a stable catalog instead
+// of tools appearing / disappearing as the desktop comes and goes.
+// At call time, the wrapper resolves a live client; if none is
+// connected, the call returns a clean "your gohort-desktop isn't
+// connected" error the LLM can relay to the user.
+//
+// Returns nil only when the user has NEVER registered a desktop
+// (no live clients AND nothing persisted).
+//
+// Tool names are prefixed with "from_client." so they're easy to
+// distinguish in the LLM-visible catalog and don't collide with
+// server-side tools.
+func LocalToolsForUser(user string) []ChatTool {
+	clients := desktopReg.clientsFor(user)
+	// Walk live tools newest-client-first so the latest connection's
+	// schema wins for any name collision.
+	seen := map[string]DesktopToolDescriptor{}
 	for i := len(clients) - 1; i >= 0; i-- {
 		c := clients[i]
 		c.mu.Lock()
-		tools := append([]DesktopToolDescriptor(nil), c.tools...)
-		c.mu.Unlock()
-		for _, t := range tools {
-			if seen[t.Name] {
+		for _, t := range c.tools {
+			if _, dup := seen[t.Name]; dup {
 				continue
 			}
-			seen[t.Name] = true
-			out = append(out, &desktopChatTool{client: c, desc: t})
+			seen[t.Name] = t
 		}
+		c.mu.Unlock()
+	}
+	// Layer persisted tools on top — covers the "desktop was here,
+	// now offline" case so the agent still sees the catalog.
+	for _, t := range loadDesktopKnownTools(user) {
+		if _, dup := seen[t.Name]; dup {
+			continue
+		}
+		seen[t.Name] = t
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]ChatTool, 0, len(seen))
+	for _, t := range seen {
+		out = append(out, &desktopChatTool{user: user, desc: t})
 	}
 	return out
 }
 
 // desktopChatTool implements core.ChatTool by proxying Run() over
-// the WS connection. Name is rewritten with the "from_client."
-// prefix so the LLM sees a clearly-distinct surface.
+// whichever live WS connection the user has at call time. Name is
+// rewritten with the "from_client." prefix so the LLM sees a
+// clearly-distinct surface.
+//
+// Resolves the client at CALL time (not registration time) so the
+// catalog stays stable even as the desktop disconnects/reconnects.
+// An offline tool call returns a clean error the LLM can relay; the
+// catalog doesn't churn.
 type desktopChatTool struct {
-	client *desktopClient
-	desc   DesktopToolDescriptor
+	user string
+	desc DesktopToolDescriptor
 }
 
 func (t *desktopChatTool) Name() string {
@@ -399,7 +469,7 @@ func (t *desktopChatTool) Name() string {
 }
 
 func (t *desktopChatTool) Desc() string {
-	return t.desc.Desc + " (runs on the user's connected gohort-desktop client)"
+	return t.desc.Desc + " (runs on the user's gohort-desktop client — works when the desktop is connected; returns a clean error otherwise)"
 }
 
 func (t *desktopChatTool) Params() map[string]ToolParam {
@@ -407,5 +477,11 @@ func (t *desktopChatTool) Params() map[string]ToolParam {
 }
 
 func (t *desktopChatTool) Run(args map[string]any) (string, error) {
-	return t.client.invoke(t.desc.Name, args)
+	clients := desktopReg.clientsFor(t.user)
+	if len(clients) == 0 {
+		return "", fmt.Errorf("your gohort-desktop client isn't connected — open it (it's the gohort app on your Mac / Windows) and try again. The %q tool runs there, not on the server", t.desc.Name)
+	}
+	// Newest-connected wins (matches LocalToolsForUser's dedup order
+	// for live announces).
+	return clients[len(clients)-1].invoke(t.desc.Name, args)
 }

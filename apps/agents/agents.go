@@ -297,6 +297,8 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 							Method: "client", URL: "agents_memory_modal"},
 						{Label: "Knowledge", Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus.",
 							Method: "client", URL: "agents_knowledge_modal"},
+						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+							Method: "client", URL: "copy_session"},
 					},
 					Modes: modes,
 				},
@@ -938,7 +940,7 @@ const memoryModalScript = `<script>
         if (!items || !items.length) {
           var emp = document.createElement('div');
           emp.style.cssText = 'color:var(--text-mute);font-size:0.78rem;font-style:italic;padding:0.2rem 0';
-          emp.textContent = 'No inferred entries yet. memory_save findings and synthesis auto-ingest will appear here.';
+          emp.textContent = 'No memory entries yet. memory_save findings will appear here once the agent decides something is worth remembering.';
           inferredList.appendChild(emp);
           return;
         }

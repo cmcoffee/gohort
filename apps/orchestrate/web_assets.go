@@ -1092,6 +1092,25 @@ const orchestrateWebAssets = `<style>
       window.GOHORT_AGENT_ID = sel.value || '';
       window.dispatchEvent(new CustomEvent('gohort-agent-id-changed',
         {detail: {agent_id: window.GOHORT_AGENT_ID}}));
+      // pinAgentInURL keeps the URL bar synced with the picker so
+      // refresh / edit-and-back / share-link all stay on the chosen
+      // agent. /orchestrate/ (no param) still defaults to seed-chat
+      // server-side; once the user picks an agent, ?agent=<id> is the
+      // sticky surface. replaceState (not pushState) so picker churn
+      // doesn't grow the back-stack — back still takes the user out
+      // of Agency, not back through agent selections.
+      function pinAgentInURL(id) {
+        try {
+          var u = new URL(window.location.href);
+          if (id) {
+            u.searchParams.set('agent', id);
+          } else {
+            u.searchParams.delete('agent');
+          }
+          window.history.replaceState({}, '', u.toString());
+        } catch (_) {}
+      }
+      pinAgentInURL(window.GOHORT_AGENT_ID);
       // Track current value so the first listener invocation (which
       // can fire as a no-op when the runtime reads cfg.default into
       // the select) doesn't reset a still-active session.
@@ -1105,6 +1124,7 @@ const orchestrateWebAssets = `<style>
         window.GOHORT_AGENT_ID = sel.value || '';
         window.dispatchEvent(new CustomEvent('gohort-agent-id-changed',
           {detail: {agent_id: window.GOHORT_AGENT_ID}}));
+        pinAgentInURL(window.GOHORT_AGENT_ID);
         var newBtn = document.querySelector('.ui-chat-new');
         if (newBtn) {
           newBtn.click();
@@ -2652,7 +2672,7 @@ const orchestrateWebAssets = `<style>
           if (!items || !items.length) {
             var empty = document.createElement('div');
             empty.style.cssText = 'color:var(--text-mute);font-style:italic;padding:0.4rem 0';
-            empty.textContent = 'No inferred entries yet. memory_save findings and synthesis auto-ingest will appear here.';
+            empty.textContent = 'No memory entries yet. memory_save findings will appear here once the agent decides something is worth remembering.';
             inferredList.appendChild(empty);
             return;
           }

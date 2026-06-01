@@ -217,24 +217,14 @@ const documentsDetailBody = `
       <button id="docs-upload" class="ui-row-btn primary" disabled>Upload</button>
       <span id="docs-upload-status"></span>
     </div>
-    <div class="docs-section-help" style="margin-top:0.6rem">Or, let the framework seed this collection from the web using the name + description above. Skips URLs already pulled.</div>
-    <div class="docs-upload-row" style="margin-top:0.4rem;align-items:center;gap:0.5rem">
-      <button id="docs-autofill" class="ui-row-btn">Auto-fill from web</button>
-      <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.82rem;color:var(--text-mute)">
-        <span>up to</span>
-        <input id="docs-autofill-max" type="number" min="1" max="50" value="10"
-          style="width:4rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.25rem 0.4rem;font:inherit;font-size:0.85rem">
-        <span>documents</span>
-      </label>
-      <span id="docs-autofill-status"></span>
-    </div>
   </div>
 
   <div class="docs-section">
-    <div class="docs-section-title">Autofill guidance</div>
-    <div class="docs-section-help">Notes the autofill flow uses to shape what gets pulled in. Rules bias the generated search queries (e.g. "2026 edition", "official sources only") and, when the LLM judge is on, also drop candidates that don't match.</div>
-    <label style="display:block;font-size:0.82rem;font-weight:600;color:var(--text);margin-top:0.4rem">Filter rules / hints (optional)</label>
-    <div id="docs-filter-rules-list" style="display:flex;flex-direction:column;gap:0.3rem;margin-bottom:0.4rem"></div>
+    <div class="docs-section-title">Auto-fill from web</div>
+    <div class="docs-section-help">Seeds this collection from the web using the name + description above. Skips URLs already pulled. The settings below shape which candidates get in.</div>
+    <label style="display:block;font-size:0.82rem;font-weight:600;color:var(--text);margin-top:0.6rem">Filter rules / hints (optional)</label>
+    <div class="docs-section-help" style="margin-top:0.15rem;font-size:0.74rem">Rules bias the generated search queries (e.g. "2026 edition", "official sources only") and, when the LLM judge is on, also drop candidates that don't match.</div>
+    <div id="docs-filter-rules-list" style="display:flex;flex-direction:column;gap:0.3rem;margin:0.4rem 0"></div>
     <div style="display:flex;align-items:center;gap:0.4rem">
       <input id="docs-filter-rules-input" type="text" placeholder="Add a rule (e.g. &quot;Prefer 2026 edition&quot; or &quot;Skip blog posts&quot;)"
         style="flex:1;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.35rem 0.55rem;font:inherit;font-size:0.85rem">
@@ -243,9 +233,19 @@ const documentsDetailBody = `
     </div>
     <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;color:var(--text);margin:0.6rem 0 0">
       <input id="docs-classify-toggle" type="checkbox">
-      <span>Also run an LLM judge on each Auto-fill candidate (extra ~1 LLM call per doc)</span>
+      <span>Also run an LLM judge on each candidate (extra ~1 LLM call per doc)</span>
       <span id="docs-classify-status" style="font-size:0.72rem;color:var(--text-mute);margin-left:0.3rem"></span>
     </label>
+    <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border)">
+      <button id="docs-autofill" class="ui-row-btn primary">Auto-fill from web</button>
+      <label style="display:flex;align-items:center;gap:0.35rem;font-size:0.82rem;color:var(--text-mute)">
+        <span>up to</span>
+        <input id="docs-autofill-max" type="number" min="1" max="50" value="10"
+          style="width:4rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.25rem 0.4rem;font:inherit;font-size:0.85rem">
+        <span>documents</span>
+      </label>
+      <span id="docs-autofill-status"></span>
+    </div>
   </div>
 
   <div class="docs-section">

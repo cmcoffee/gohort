@@ -261,9 +261,10 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						// Per-chat vector knowledge: count + nuke-button.
 						// Read-only count via DisplayPanel with a Wipe row
 						// action below. Per-chunk inspection lives in the
-						// LLM's knowledge_forget tool — this is the "blank
-						// it out" admin control. Auto-refresh so the count
-						// updates as auto-ingest accrues without reloading.
+						// LLM's knowledge(action=forget) tool — this is the
+						// "blank it out" admin control. Auto-refresh so the
+						// count updates as the LLM saves new chunks without
+						// reloading.
 						compactExpand("📚", ui.DisplayPanel{
 							Source:        "/phantom/api/knowledge/{chat_id}",
 							AutoRefreshMS: 15000,
@@ -276,7 +277,7 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 									Label:   "Wipe all knowledge",
 									Method:  "DELETE",
 									URL:     "/phantom/api/knowledge/{chat_id}",
-									Confirm: "Wipe ALL vector knowledge for this chat? Auto-ingested past turns AND explicit saves will be deleted. The AI will lose long-term recall for this chat — settings and saved memories are kept.",
+									Confirm: "Wipe ALL vector knowledge for this chat? Every chunk the LLM saved via knowledge(action=save) will be deleted. The AI will lose long-term recall for this chat — settings and saved memories are kept.",
 									Variant: "danger",
 								},
 							},

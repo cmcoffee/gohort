@@ -2,8 +2,8 @@
 // scoped to ONE conversation (individual or group) so the agent can
 // recall details from prior turns without the whole chat history
 // having to fit in context. Distinct from phantom_memory (manual
-// plain-text notes): knowledge is semantic-search over auto-ingested
-// turn synthesis + explicit LLM saves.
+// plain-text notes): knowledge is semantic-search over LLM-saved
+// chunks.
 //
 // Source-tag isolation: every chunk lives under
 // "phantom:<chat_id>" so retrieval can never cross-pollinate
@@ -11,20 +11,14 @@
 // + servitor use is reused; the source tag is the only thing that
 // keeps namespaces apart.
 //
-// Lifetimes:
-//   - knowledge_save (action="save") deposits a chunk explicitly when
-//     the LLM decides something is worth keeping.
-//   - autoIngestChatTurn runs at turn close, capturing the user's
-//     message + the assistant's reply as a single chunk — so the
-//     store grows even when the LLM forgets the explicit save.
-//   - The system prompt gets a pre-search injection at turn start,
-//     surfacing the top-k chunks relevant to the incoming user
-//     message so the LLM can reference past turns without scanning
-//     the full transcript.
-//
-// Both auto-ingest and prompt injection are gated by the per-chat
-// "knowledge" tool toggle so an admin can enable it only on chats
-// where long-term memory is desired.
+// Pull-only, never auto. Earlier revisions auto-ingested user
+// messages at turn close and auto-injected the top-K hits into the
+// system prompt every turn. Both paths were ripped out: silent
+// ingest grew a corpus the LLM never asked to populate, and silent
+// inject prepended cosine-nearest chunks that the model couldn't
+// distinguish from authoritative context. The store is now written
+// ONLY by knowledge(action="save") and read ONLY by
+// knowledge(action="search") — both LLM-driven, both explicit.
 
 package phantom
 
@@ -42,30 +36,11 @@ import (
 // orchestrate's cap so the two paths feel the same under load.
 const knowledgeIngestTimeout = 45 * time.Second
 
-// autoInjectMinScore is the cosine-similarity floor for chunks
-// pre-injected into the system prompt. Vector search ALWAYS returns
-// the top-K even when nothing is meaningfully close — injecting weak
-// matches gives the LLM "recalled context" that's actually unrelated,
-// which it then anchors to and extends with hallucinated specifics.
-// 0.65 catches the genuine semantic matches our embeddings produce
-// without dragging in low-confidence neighbors. Explicit
-// knowledge_search (action="search") returns hits without this floor —
-// when the LLM asks on purpose, low-confidence hits are still useful.
-const autoInjectMinScore = 0.65
-
-// autoInjectTopK is the cap on auto-injected chunks per turn. Lower
-// than the explicit-search default (5) because pre-injection rides on
-// EVERY turn — tight prompts + fewer anchoring surfaces means less
-// noise for the LLM to incorporate when the question isn't actually
-// recall-shaped.
-const autoInjectTopK = 3
-
 // chatKnowledgeEnabled reports whether the "knowledge" tool is in
 // the conv's effective enabled-tools set. Mirrors the toolEnabled
-// closure in buildConvTools so the prompt-injection and auto-ingest
-// paths gate on the SAME signal the tool catalog uses — admins flip
-// "knowledge" on a chat and all three (tool / inject / ingest)
-// activate together.
+// closure in buildConvTools so the same gate decides whether the
+// LLM-callable knowledge tool (save / search / forget) is exposed
+// on this chat.
 func chatKnowledgeEnabled(conv Conversation, cfg PhantomConfig) bool {
 	names := cfg.EnabledTools
 	if conv.EnabledTools != nil {
@@ -155,116 +130,6 @@ func searchChatKnowledge(ctx context.Context, db Database, chatID, query string,
 	return out
 }
 
-// renderChatKnowledgePromptSection formats a slice of search hits as
-// a markdown block suitable for prepending to the system prompt.
-// Empty input → empty string so callers can concatenate unconditionally.
-//
-// Framing is deliberately cautious: these are auto-recalled notes that
-// MIGHT be relevant by semantic similarity to the inbound message, not
-// confirmed-relevant facts. Older auto-inject prompts ("Things you
-// recall…") read as authoritative recall, which the LLM would then
-// anchor on and extend with hallucinated specifics. Reframe as
-// "possibly relevant — verify against current message" so the LLM
-// treats them as one source among others, not a fact pile to riff off.
-func renderChatKnowledgePromptSection(hits []SearchHit) string {
-	if len(hits) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("\n\nPossibly relevant notes from earlier turns in this chat (semantic-search hits — VERIFY against the current message before relying on any of them; ignore entries that don't actually fit the current question):\n\n")
-	for _, h := range hits {
-		fmt.Fprintf(&b, "- %s\n", strings.TrimSpace(h.Text))
-	}
-	return b.String()
-}
-
-// autoIngestChatTurn captures the user's message as a knowledge chunk
-// at turn close. Runs for chats that have knowledge enabled, so the
-// store accrues without the LLM having to call knowledge_save
-// explicitly.
-//
-// **Only the user's message is ingested — NOT the assistant's reply.**
-// Ingesting the reply (the prior behavior) was the compounding-
-// hallucination loop: a wrong answer got embedded as "recall," then
-// surfaced on a later semantically-similar question, and the LLM
-// extended it with growing confidence because it was now in its
-// "memory." Even when the user later corrected it, both versions sat
-// in the store and search returned both — the LLM had to gamble on
-// which to believe. User messages are grounded by definition; the
-// model can't have hallucinated something the user actually typed.
-// For findings worth keeping that came from the assistant, the LLM
-// calls knowledge(action="save") deliberately — that path stays open
-// and is the right shape for curated saves.
-//
-// Short messages are skipped (conversational filler — "hi" / "thanks"
-// won't help future retrieval). A retention sweep runs piggybacked
-// after a successful ingest so old chunks for this chat get pruned
-// without a background goroutine.
-func autoIngestChatTurn(ctx context.Context, db Database, chatID, userMsg, reply string, retentionDays int) {
-	if db == nil || chatID == "" {
-		return
-	}
-	userMsg = strings.TrimSpace(userMsg)
-	// reply is intentionally unused — see header comment. Kept in the
-	// signature so callers don't have to change.
-	_ = reply
-	if userMsg == "" {
-		return
-	}
-	// Skip short exchanges — conversational filler ("hi" / "thanks")
-	// won't help future retrieval.
-	if len(userMsg) < 30 {
-		return
-	}
-	title := userMsg
-	if len(title) > 80 {
-		title = title[:80] + "…"
-	}
-	ingestChatKnowledge(ctx, db, chatID, title, userMsg)
-	pruneOldChatKnowledge(db, chatID, retentionDays)
-}
-
-// pruneOldChatKnowledge walks this chat's chunks and deletes any
-// older than retentionDays. retentionDays<=0 (or no parseable date
-// on the chunk) means "keep" — the latter is defensive against a
-// future schema where Date is absent or unparseable. Cheap when the
-// chat's chunk count is small; amortized across each ingest so
-// there's no separate goroutine to manage.
-func pruneOldChatKnowledge(db Database, chatID string, retentionDays int) {
-	if db == nil || retentionDays <= 0 {
-		return
-	}
-	src := chatKnowledgeSource(chatID)
-	if src == "" {
-		return
-	}
-	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-	var toDelete []string
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if c.Source != src {
-			continue
-		}
-		if c.Date == "" {
-			continue
-		}
-		t, err := time.Parse(time.RFC3339, c.Date)
-		if err != nil {
-			continue
-		}
-		if t.Before(cutoff) {
-			toDelete = append(toDelete, key)
-		}
-	}
-	if len(toDelete) > 0 {
-		DeleteChunksByIDs(db, toDelete)
-		Log("[phantom/knowledge] retention sweep chat=%s pruned=%d retention_days=%d", chatID, len(toDelete), retentionDays)
-	}
-}
-
 // knowledgeGroupedToolDef builds the LLM-facing grouped tool for the
 // chat knowledge surface — action discriminator handles save / search
 // / forget / help. Mirrors orchestrate's three-tool split but folded
@@ -274,7 +139,7 @@ func knowledgeGroupedToolDef(db Database, chatID string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "knowledge",
-			Description: "IMPLICIT long-term memory for THIS chat — semantic-search over auto-ingested past turns plus explicit saves. The framework automatically pulls relevant chunks into your prompt each turn; you can also call action=\"search\" to look up something on demand, action=\"save\" to deposit a bulkier finding (\"the user runs a Postgres 16 cluster with these specific tuning quirks\"), action=\"forget\" to drop entries that have gone stale. Counterpart to the EXPLICIT memory tool (short facts always visible in your prompt every turn). Rule of thumb: if a fact deserves to be visible to you on EVERY turn forever, use memory; if it's recall-worthy but situational, use knowledge.",
+			Description: "Long-term memory for THIS chat — vector-searchable store of findings you've explicitly saved. Pull-only: nothing auto-ingests, nothing auto-injects into your prompt. Call action=\"search\" to look something up when the current turn reminds you of a prior finding; action=\"save\" to deposit a bulkier finding worth recalling later (\"the user runs a Postgres 16 cluster with these specific tuning quirks\"); action=\"forget\" to drop entries that have gone stale. Counterpart to the EXPLICIT memory tool (short facts always visible in your prompt every turn). Rule of thumb: if a fact deserves to be visible to you on EVERY turn forever, use memory; if it's recall-worthy but situational and you'll know to search for it, use knowledge.",
 			Parameters: map[string]ToolParam{
 				"action": {Type: "string", Description: "Which sub-action: save | search | forget | help."},
 				"title":  {Type: "string", Description: "(save) Short heading for what this finding is about. Example: \"User's daughter's birthday\"."},

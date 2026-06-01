@@ -51,22 +51,25 @@ func (t *VideoTool) Caps() []Capability {
 func (t *VideoTool) IsInternetTool() bool { return true }
 
 func (t *VideoTool) Desc() string {
-	return "Manage videos end-to-end: find a URL by topic, download for delivery, view for analysis-only, transcribe spoken content. Single entry point — pick the action matching intent. " +
-		"actions: find (search the web for a URL), download (fetch a URL AND prepare it for delivery to the user — use when the user shared a URL expecting the file back), view (fetch a URL and just look at frames; NO file delivery — use for research-style \"analyze this video about X\" when the user doesn't need the file), transcribe (workspace audio/video → text; AFTER download when user asks what was said), help. " +
-		"Decision: when a user PASTES a video URL (TikTok, YouTube, etc.) → action=download (they want the file). When a user asks you to RESEARCH or ANALYZE a video → action=view (they want your analysis, not the file). When unsure, prefer download — delivering a file the user didn't need is far better than failing to deliver a file they did."
+	return "Manage videos end-to-end: find a URL by topic, download for delivery, view for analysis-only, transcribe spoken content, transcode to shrink a workspace file under a size cap. Single entry point — pick the action matching intent. " +
+		"actions: find (search the web for a URL), download (fetch a URL AND prepare it for delivery to the user — use when the user shared a URL expecting the file back), view (fetch a URL and just look at frames; NO file delivery — use for research-style \"analyze this video about X\" when the user doesn't need the file), transcribe (workspace audio/video → text; AFTER download when user asks what was said), transcode (re-encode a workspace video to fit under a size cap — use when a previous delivery attempt failed because the file was too large for the transport, typically iMessage's ~20MB limit), help. " +
+		"Decision: when a user PASTES a video URL (TikTok, YouTube, etc.) → action=download (they want the file). When a user asks you to RESEARCH or ANALYZE a video → action=view (they want your analysis, not the file). When delivery feedback says an [ATTACH:] was too large → action=transcode with max_size_mb=18, then re-emit [ATTACH:] with the smaller file. When unsure between download/view, prefer download — delivering a file the user didn't need is far better than failing to deliver a file they did."
 }
 
 func (t *VideoTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"action": {Type: "string", Description: "One of: find | download | transcribe | help."},
+		"action": {Type: "string", Description: "One of: find | download | view | transcribe | transcode | help."},
 		// find params
-		"query": {Type: "string", Description: "(find) Description of the video to find (topic, creator, distinctive details). Phrase like a search query."},
+		"query":  {Type: "string", Description: "(find) Description of the video to find (topic, creator, distinctive details). Phrase like a search query."},
 		"prefer": {Type: "string", Description: "(find) Optional platform hint: youtube | tiktok | vimeo | twitter | reddit | instagram | twitch | facebook."},
-		"count": {Type: "integer", Description: "(find) Optional. Number of candidates to return (1-5, default 1)."},
-		// download params
-		"url": {Type: "string", Description: "(download) The video URL to fetch. Any site yt-dlp supports."},
-		// transcribe params
-		"path": {Type: "string", Description: "(transcribe) Workspace-relative path to the audio/video file to transcribe."},
+		"count":  {Type: "integer", Description: "(find) Optional. Number of candidates to return (1-5, default 1)."},
+		// download / view params
+		"url": {Type: "string", Description: "(download, view) The video URL to fetch. Any site yt-dlp supports."},
+		// transcribe / transcode params (both take a workspace-relative input path)
+		"path": {Type: "string", Description: "(transcribe, transcode) Workspace-relative path to the file."},
+		// transcode params
+		"max_size_mb": {Type: "number", Description: "(transcode) Target maximum output size in megabytes. Default 18 (under iMessage's ~20MB cap with container-overhead headroom). Raise for other transports."},
+		"output_path": {Type: "string", Description: "(transcode) Optional workspace-relative output path. Default: <input-basename>-small.mp4 in the same directory."},
 	}
 }
 
@@ -102,8 +105,10 @@ func (t *VideoTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	case "transcribe":
 		var tt transcribe.TranscribeTool
 		return tt.RunWithSession(args, sess)
+	case "transcode":
+		return transcodeVideoAction(args, sess)
 	default:
-		return "", fmt.Errorf("video: unknown action %q (expected find | download | transcribe | help)", action)
+		return "", fmt.Errorf("video: unknown action %q (expected find | download | view | transcribe | transcode | help)", action)
 	}
 }
 
@@ -139,6 +144,20 @@ ACTIONS:
                         whisper STT endpoint, returns text. Only call
                         when user explicitly asked what was said.
 
+  transcode   Re-encode a workspace video to fit under a size cap.
+              Args: path (required, workspace-relative)
+                    max_size_mb (optional, default 18)
+                    output_path (optional, default <basename>-small.mp4)
+              Use when: a previous [ATTACH:] failed because the file
+                        was too large for the transport (iMessage caps
+                        attachments at ~20MB).
+              Behavior: ffprobe duration → compute target bitrate from
+                        max_size_mb / duration → ffmpeg encode at
+                        target bitrate. If the result is still over
+                        cap, retries with progressively smaller
+                        resolutions (720p → 540 → 480). Returns the
+                        new workspace path ready for [ATTACH:].
+
   help        Show this message.
 
 TYPICAL FLOWS:
@@ -155,5 +174,10 @@ TYPICAL FLOWS:
 
   User: "Send me this <URL>"
     → video(action="download", url=<URL>)
-    → attaches; no transcribe needed.`
+    → attaches; no transcribe needed.
+
+  Delivery feedback says [ATTACH: clip.mp4] failed (file too large):
+    → video(action="transcode", path="clip.mp4", max_size_mb=18)
+    → [ATTACH: clip-small.mp4, cleanup=true]
+    → user gets the smaller version.`
 }

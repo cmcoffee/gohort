@@ -1482,6 +1482,44 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		http.NotFound(w, r)
 	})
 
+	// Collections (admin-side): GET returns the current user's
+	// Document Collections as a lightweight picker payload so the
+	// Skills editor can offer an attached_collections ChipPicker
+	// alongside allowed_tools. Mirrors the per-user scope orchestrate
+	// uses (UserDB under the orchestrate bucket) — admin doesn't own
+	// collection storage, it just exposes a read view. List-only by
+	// design: create/edit/delete still happen on the Collections page
+	// in orchestrate.
+	sub.HandleFunc("/api/collections", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		username := AuthCurrentUser(r)
+		if username == "" {
+			http.Error(w, "no user identity", http.StatusUnauthorized)
+			return
+		}
+		orchestrateBase := a.db.Bucket("orchestrate")
+		udb := UserDB(orchestrateBase, username)
+		type entry struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+		out := []entry{}
+		if udb != nil {
+			for _, c := range ListCollections(udb, username) {
+				out = append(out, entry{ID: c.ID, Name: c.Name, Description: c.Description})
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
+	})
+
 	// Tool Groups: admin-curated bundles of chat tools that the runtime
 	// catalog rewriter can collapse into one expandable entry. GET
 	// lists all groups; POST upserts (id empty = create, present = update);

@@ -198,142 +198,38 @@ func Secure() *SecureAPI {
 	}
 	if secureAPIInstance.db == nil && AuthDB != nil {
 		secureAPIInstance.db = AuthDB()
-		// One-time migration from the older "none" credential name
-		// to "no_auth". The original name read ambiguously as "make
-		// no call" — same family of misuse as the catalog-name
-		// problem with `local`. Runs before the bootstrap so the
-		// fresh-install path still hits the new name directly.
-		secureAPIInstance.migrateNoneToNoAuth()
-		// Bootstrap the always-on "no_auth" credential. Idempotent —
-		// Add upserts on existing records, and the helper is a no-op
-		// when the entry is already present (post-migration).
-		secureAPIInstance.ensureNoAuthCredential()
+		// One-time cleanup: legacy "none" / "no_auth" credential
+		// records were used to back the unauthenticated fetch path.
+		// fetch_url now handles that natively (no credential record
+		// involved), so any vestigial rows from prior versions are
+		// dead weight in the admin UI. Remove them on first attach.
+		secureAPIInstance.cleanupLegacyNoAuth()
 	}
 	return secureAPIInstance
 }
 
 // ensureNoAuthCredential installs a credential literally named
-// "no_auth" with Type=SecureCredNone and a wide-open allow-list, so
-// the LLM can target unauthenticated public APIs as
-// `credential="no_auth"` without the operator having to register
-// anything. The pattern can be tightened later via the admin UI if
-// scope-limiting is desired (e.g. "https://api.open-meteo.com/**").
-func (s *SecureAPI) ensureNoAuthCredential() {
-	if s == nil || s.db == nil {
-		return
-	}
-	const name = "no_auth"
-	if _, ok := s.Load(name); ok {
-		return
-	}
-	c := SecureCredential{
-		Name:              name,
-		Type:              SecureCredNone,
-		AllowedURLPattern: "https://**",
-		Description:       "Public unauthenticated HTTPS endpoints (Open-Meteo, wttr.in, etc.). No auth header injected; allow-list pattern + audit log + rate limits still apply. Tighten the URL pattern in admin if you want to scope it.",
-	}
-	if err := s.Save(c, ""); err != nil {
-		Debug("[secure_api] bootstrap of \"no_auth\" credential failed: %v", err)
-	}
-}
-
-// migrateNoneToNoAuth moves the legacy "none" credential to
-// "no_auth", preserving any operator customizations (description,
-// allow-list pattern, etc.), and rewrites the credential name on
-// every watcher tool reference and every persisted/pending temp tool
-// that points at it. Runs once on first attach after the rename;
-// idempotent — when no "none" record exists this is a no-op.
+// cleanupLegacyNoAuth removes any legacy "none" or "no_auth"
+// credential records left over from earlier versions. The
+// unauthenticated fetch path now lives entirely in fetch_url's own
+// runImpl — there's no credential record to back it. Leftover rows
+// would just clutter the admin UI and confuse operators.
 //
-// Layering note: this function reaches into the watchers and temp-
-// tool tables from inside secure_api.go. Both are package-core
-// concerns (watchers in core/watcher.go, temp tools in
-// core/temp_tool_persist.go), so the access is intra-package; the
-// alternative — broadcasting a "credential renamed" event to every
-// subsystem — adds plumbing for a one-time migration.
-func (s *SecureAPI) migrateNoneToNoAuth() {
+// Best-effort: failures are logged at Debug and don't block startup.
+// Idempotent — re-runs on every process attach.
+func (s *SecureAPI) cleanupLegacyNoAuth() {
 	if s == nil || s.db == nil {
 		return
 	}
-	legacy, ok := s.Load("none")
-	if !ok {
-		return
-	}
-	// Copy over to the new name, preserving any operator edits.
-	if _, alreadyHave := s.Load("no_auth"); !alreadyHave {
-		legacy.Name = "no_auth"
-		if err := s.Save(legacy, ""); err != nil {
-			Debug("[secure_api] migrate none→no_auth: save failed: %v", err)
-			return
-		}
-	}
-	s.db.Unset(secureAPITable, "none")
-	// Save also stashes a (placeholder) secret blob keyed by
-	// credName + "__secret". Clear it so the legacy row doesn't
-	// linger in the credential bucket.
-	s.db.Unset(secureAPITable, secureCredSecretKey("none"))
-	Log("[secure_api] migrated credential \"none\" → \"no_auth\"")
-	migrateNoneRefsInRecords(s.db)
-}
-
-// migrateNoneRefsInRecords rewrites the legacy "none" credential
-// name out of records that reference it: watcher tool fields
-// (ToolName="call_none") and temp tool credentials (Credential="none").
-// Lives next to the credential migration so the whole rename lands
-// as a single atomic step at startup.
-func migrateNoneRefsInRecords(db Database) {
-	if db == nil {
-		return
-	}
-	// Watchers: ToolName="call_none" → "call_no_auth".
-	for _, k := range db.Keys(watcherTable) {
-		var w Watcher
-		if !db.Get(watcherTable, k, &w) {
+	for _, name := range []string{"none", "no_auth"} {
+		if _, ok := s.Load(name); !ok {
 			continue
 		}
-		if w.ToolName == "call_none" {
-			w.ToolName = "call_no_auth"
-			db.Set(watcherTable, k, w)
-		}
-	}
-	// Persistent + pending temp tools: rewrite the Credential field
-	// inside each pool entry. Stored as a per-user array; load,
-	// patch in place, save back.
-	rewriteCred := func(t *TempTool) bool {
-		if t.Credential == "none" {
-			t.Credential = "no_auth"
-			return true
-		}
-		return false
-	}
-	for _, user := range db.Keys(persistentTempToolsTable) {
-		var pool []PersistentTempTool
-		if !db.Get(persistentTempToolsTable, user, &pool) {
+		if err := s.Delete(name); err != nil {
+			Debug("[secure_api] cleanup of legacy %q credential failed: %v", name, err)
 			continue
 		}
-		changed := false
-		for i := range pool {
-			if rewriteCred(&pool[i].Tool) {
-				changed = true
-			}
-		}
-		if changed {
-			db.Set(persistentTempToolsTable, user, pool)
-		}
-	}
-	for _, user := range db.Keys(pendingTempToolsTable) {
-		var pool []PendingTempTool
-		if !db.Get(pendingTempToolsTable, user, &pool) {
-			continue
-		}
-		changed := false
-		for i := range pool {
-			if rewriteCred(&pool[i].Tool) {
-				changed = true
-			}
-		}
-		if changed {
-			db.Set(pendingTempToolsTable, user, pool)
-		}
+		Log("[secure_api] removed vestigial %q credential — fetch_url now handles unauthenticated HTTP directly", name)
 	}
 }
 
@@ -583,9 +479,21 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	for _, c := range creds {
 		if c.Disabled || c.Restricted {
 			// Disabled = hard kill; Restricted = wrapper-only. Either
-			// way, no direct call_<name> exposure. Dispatch via
+			// way, no direct LLM-callable exposure. Dispatch via
 			// DispatchToolCall (used by api-mode temp tools) is
 			// unaffected by Restricted.
+			continue
+		}
+		// SecureCredNone (the bootstrapped "no_auth" credential) is
+		// the policy storage for the bare fetch_url tool — operators
+		// tune its AllowedURLPattern / rate limit / audit verbosity to
+		// scope unauthenticated HTTP. Do NOT generate a separate
+		// fetch_url_no_auth tool — fetch_url already covers that path
+		// and dispatches through this credential for the same policy.
+		// Exposing it as a parallel LLM-callable would be a redundant
+		// catalog entry and force the LLM to disambiguate two tools
+		// that do the same thing.
+		if c.Type == SecureCredNone {
 			continue
 		}
 		out = append(out, s.agentToolFromCredential(c, sess))
@@ -601,9 +509,17 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 }
 
 func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSession) AgentToolDef {
-	toolName := "call_" + c.Name
+	// fetch_url_<credential> mirrors fetch_url's shape (method / body /
+	// request_headers / save_to) but injects this credential's auth
+	// server-side and bounds the URL space to the credential's
+	// AllowedURLPattern. Visually groups with fetch_url in the
+	// alphabetical catalog so related tools cluster together. The
+	// legacy call_<credential> name still resolves at dispatch time
+	// (see normalizeLegacyCallToolName) so existing AllowedTools
+	// lists and authored temp tools don't break.
+	toolName := "fetch_url_" + c.Name
 	desc := fmt.Sprintf(
-		"Call the %s API. The auth credential is injected server-side; you do not see it. Allowed URLs: %s. %s",
+		"Fetch a URL on the %s API. Same shape as fetch_url (method / body / request_headers / save_to all supported), but the auth credential is injected server-side and the URL is bounded by an allow-list. You do not see the credential value. Allowed URLs: %s. %s",
 		c.Name, c.AllowedURLPattern, c.Description,
 	)
 	desc = strings.TrimSpace(desc)
@@ -667,6 +583,28 @@ func (s *SecureAPI) DispatchToolCallForPipe(sess *ToolSession, credName, urlStr,
 func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method, body string, pipeFollowing bool) (string, error) {
 	if credName == "" {
 		return "", fmt.Errorf("credential name required")
+	}
+	// Legacy "no_auth" / "none" references — api-mode temp tools
+	// authored before fetch_url absorbed the unauthenticated path.
+	// Synthesize a SecureCredNone credential on the fly so the
+	// existing dispatch machinery still runs (URL pattern wide-open,
+	// no auth header, audit log + rate limit through the standard
+	// path). Lets persisted tools keep working without a DB record.
+	if credName == "no_auth" || credName == "none" {
+		synth := SecureCredential{
+			Name:              "no_auth",
+			Type:              SecureCredNone,
+			AllowedURLPattern: "https://**",
+			Description:       "Synthesized unauthenticated dispatch — back-compat for tools authored before fetch_url subsumed this path.",
+		}
+		args := map[string]any{
+			"url":    urlStr,
+			"method": method,
+		}
+		if body != "" {
+			args["body"] = body
+		}
+		return s.dispatch(synth, args, sess)
 	}
 	c, ok := s.Load(credName)
 	if !ok {

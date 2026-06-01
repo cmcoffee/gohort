@@ -2142,49 +2142,14 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	// workers with inline-authored briefings. No persisted expert
 	// pool to advertise; collections are advertised separately
 	// when phantom wires that store later.)
-	// Knowledge auto-inject: when the chat has the "knowledge" tool
-	// enabled, run a semantic search against the incoming user message
-	// and prepend the top hits to the system prompt as recall context.
-	// Lets the LLM reference past turns without the full transcript
-	// having to be in window. Skipped when knowledge isn't enabled on
-	// this conv, when the inbound text is empty, or when nothing
-	// matches — concat-friendly empty-string returns.
-	if chatKnowledgeEnabled(conv, cfg) {
-		knowCtx, knowCancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
-		// Use the tighter auto-inject K (smaller than the explicit-
-		// search default) and drop hits below the similarity floor so
-		// weak matches don't pollute the prompt. autoInjectMinScore +
-		// autoInjectTopK live in phantom/knowledge.go.
-		rawHits := searchChatKnowledge(knowCtx, T.DB, chatID, text, autoInjectTopK)
-		knowCancel()
-		hits := make([]SearchHit, 0, len(rawHits))
-		for _, h := range rawHits {
-			if h.Score >= autoInjectMinScore {
-				hits = append(hits, h)
-			}
-		}
-		if block := renderChatKnowledgePromptSection(hits); block != "" {
-			sysPrompt += block
-			// Log auto-injection so it's grep-able from phantom
-			// logs — iMessage has no activity pane like the chat
-			// UI does. One line per turn that auto-injected
-			// chunks; absence of the line = no auto-inject this
-			// turn (either no relevant chunks or empty corpus).
-			previews := make([]string, 0, len(hits))
-			for _, h := range hits {
-				sec := strings.TrimPrefix(strings.TrimSpace(h.Section), "## ")
-				if sec == "" {
-					sec = "(unsection)"
-				}
-				if len(sec) > 60 {
-					sec = sec[:57] + "..."
-				}
-				previews = append(previews, sec)
-			}
-			Log("[phantom/knowledge] auto-inject chat=%s hits=%d sections=[%s]",
-				chatID, len(hits), strings.Join(previews, " | "))
-		}
-	}
+	// Auto-inject of vector chunks at turn-start has been removed —
+	// silently prepending semantic-search hits trained the LLM to
+	// trust drift and polluted prompts with second-best matches the
+	// model couldn't tell from authoritative context. The knowledge
+	// tool (action=search) remains in the catalog as the explicit
+	// pull-only path: the LLM searches when it decides recall is
+	// worth the call, sees the hits in a tool-result envelope it
+	// can weigh, and ignores them when irrelevant.
 	// Specialist-agents awareness: when this chat has Agency agents
 	// in its AllowedAgents list, surface them in the system prompt so
 	// the LLM knows up front what specialists it can delegate to. The
@@ -2337,6 +2302,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	}
 
 	var reply, reasoning string
+	var attachFailures []attachFailure
 	if resp != nil {
 		reply = strings.TrimSpace(stripEmojis(resp.Content))
 		// Consume any [ATTACH: filename] markers the LLM emitted — each
@@ -2344,8 +2310,11 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		// workspace(action="attach")) and disappears from the visible
 		// reply. The marker is phantom's delivery directive: it sidesteps
 		// the tool-call-as-text leak where a model mimics the prose call
-		// syntax it sees in tool descriptions.
-		reply = applyAttachMarkers(sess, reply)
+		// syntax it sees in tool descriptions. Failures are captured so
+		// the next-turn history can tell the LLM what didn't make it
+		// (file too large, missing, etc.) — the LLM may then transcode
+		// or rephrase instead of falsely claiming "I sent the file."
+		reply, attachFailures = applyAttachMarkers(sess, reply)
 		// Defensive cleanup of residual literal-prose mimics — when a
 		// model copies workspace(action="attach", ...) out of a tool
 		// description verbatim into its reply, strip it. The real tool
@@ -2427,25 +2396,44 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		Timestamp: now(),
 	})
 
+	// Attach-failure feedback for the next turn. When the LLM's
+	// [ATTACH:] markers couldn't deliver (file too large for iMessage,
+	// missing, etc.), the user got the reply text but no attachment —
+	// without this note, the LLM next turn thinks delivery succeeded
+	// and may falsely claim it sent the file (or skip the recovery
+	// path entirely). We store the feedback as a user-role message
+	// with a clear "[system feedback to assistant — not visible to
+	// user]" prefix so the LLM pattern-matches it as out-of-band,
+	// not as something the user typed. Phantom only has user/assistant
+	// roles in its history schema (see PhantomMessage), so this is
+	// the cleanest channel.
+	if len(attachFailures) > 0 {
+		var b strings.Builder
+		b.WriteString("[system feedback to assistant — not visible to the user]: Your previous reply attempted to deliver attachment(s), but the following failed:\n")
+		for _, f := range attachFailures {
+			fmt.Fprintf(&b, "- %s — %s\n", f.Name, f.Reason)
+		}
+		b.WriteString("\nThe user did NOT receive these attachments. On your next reply, recover or explain — do NOT claim you sent something that didn't go through.\n\nRecovery paths:\n- Size-too-large videos: video(action=\"transcode\", path=\"<filename>\", max_size_mb=18) → re-emit [ATTACH: <new-filename>, cleanup=true]. The transcode tool shrinks to fit under iMessage's ~20MB cap.\n- File-not-found: check the workspace path (was it cleanup=true on an earlier attach? was the file ever actually written?).\n- Anything else: explain what couldn't be delivered and offer an alternative (link, smaller version, different format).")
+		storeMessage(T.DB, PhantomMessage{
+			ID:        now() + "-" + newID(),
+			ChatID:    chatID,
+			Role:      "user", // phantom history schema = user/assistant only; the prefix is the in-band signal
+			Text:      b.String(),
+			Timestamp: now(),
+		})
+		Log("[phantom] %d attach failure(s) recorded for next-turn feedback to LLM on %s", len(attachFailures), chatID)
+	}
+
 	// Rolling compaction — fire post-turn to keep older exchanges
 	// folded into the conversation's summary. Non-blocking goroutine,
 	// no-op when nothing's aged out yet (cheap check).
 	T.maybeCompact(chatID, conv, cfg)
 
-	// Auto-ingest into chat-scoped vector knowledge when enabled —
-	// captures user-message + assistant-reply as a single chunk so
-	// future turns can recall this exchange without it being in
-	// context. Runs in a background goroutine with its own timeout so
-	// embedding latency doesn't extend the reply path; failures are
-	// silent (knowledge is an optimization, not part of the contract).
-	if chatKnowledgeEnabled(conv, cfg) {
-		retention := cfg.KnowledgeRetentionDays
-		go func(userMsg, assistantReply string) {
-			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
-			defer cancel()
-			autoIngestChatTurn(ctx, T.DB, chatID, userMsg, assistantReply, retention)
-		}(text, reply)
-	}
+	// Auto-ingest of turn content into chat-scoped vector knowledge
+	// has been removed — silently growing a corpus that then
+	// auto-injected drove the compounding-drift loop we kept
+	// patching. Writes now happen ONLY when the LLM calls
+	// knowledge(action=save) — same store, explicit pull-only.
 
 	// Replay guard: if this exact reply was already enqueued recently,
 	// drop it. Catches two failure modes that both produce a confused

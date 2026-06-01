@@ -138,7 +138,17 @@ func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
 	}
 	var rec AgentRecord
 	if !udb.Get(agentsTable, "seed-chat", &rec) {
-		return
+		// No user shadow yet — chat-seed has never been customized.
+		// Create a minimal shadow record so the auto-enable below can
+		// land. The shadow only needs the ID + Owner; everything else
+		// overlays from the in-code seed at load time. Without this,
+		// the function silently bailed out and the runtime auto-include
+		// for seed agents was the only signal the tool worked — invisible
+		// in the Tools modal.
+		rec = AgentRecord{
+			ID:    "seed-chat",
+			Owner: seedOwner,
+		}
 	}
 	// Respect a previous explicit-disable. If the user manually
 	// unchecked this tool in the past, it's on the deny list; the
@@ -379,6 +389,15 @@ func isResolvableToolName(db Database, owner, name string) bool {
 		return false
 	}
 	if strings.HasPrefix(name, "from_client.") {
+		return true
+	}
+	// Legacy call_<credential> aliases resolve to fetch_url_<credential>.
+	// Treat them as resolvable so AllowedTools entries from before the
+	// 0.3.1 rename don't get stripped by self-heal. The agent loop's
+	// lookup path applies the same translation. call_no_auth has no
+	// counterpart — fetch_url covers it directly — so that legacy name
+	// fails through and is healed away on first save.
+	if strings.HasPrefix(name, "call_") && name != "call_no_auth" {
 		return true
 	}
 	if _, ok := FindChatTool(name); ok {
@@ -669,6 +688,22 @@ func cloneAgent(db Database, srcID, owner, newName string, promote bool) (AgentR
 // as read-only-until-edited.
 const seedOwner = "system"
 
+// sandboxPythonNoteSection returns the runtime-probed Python
+// compatibility block, prefixed with "\n\n" so it concatenates cleanly
+// at the end of a seed prompt or worker directives constant. Empty
+// when Python is 3.7+ or the probe failed — the appended literal is
+// just an empty string in that case, so the prompt is unchanged.
+//
+// Wrapped here so the field literal in seedAgents() stays a single
+// expression and so callers don't have to remember the leading newlines.
+func sandboxPythonNoteSection() string {
+	note := SandboxPythonAuthoringNote()
+	if note == "" {
+		return ""
+	}
+	return "\n\n" + note
+}
+
 // seedAgents returns the built-in starters. Stable IDs so they stay
 // recognizable across rebuilds. Users clone these to customize.
 func seedAgents() []AgentRecord {
@@ -692,7 +727,7 @@ Two execution surfaces; pick by the shape of the work.
 
 **Inline** — call tools across multiple rounds, accumulating context as you go. Right for conversational turns, single-thread research where one result genuinely informs the next call, "list X then update Y", "search for X then fetch the result".
 
-**plan_set** — decompose into discrete steps, each executed by a fresh-context worker. Right for 2+ INDEPENDENT investigations to compare ("research three vendors and pick one"). Authoring requests ("make me an agent / tool / pipeline") aren't your job — dispatch to Builder; it has its own multi-phase authoring rhythm.
+**plan_set** — decompose into discrete steps, each executed by a fresh-context worker. Right for 2+ INDEPENDENT investigations to compare ("research three vendors and pick one"). Authoring requests ("make me an agent / tool / pipeline") aren't your job — point the user at Builder (see the section below); don't try to handle authoring yourself or via plan_set.
 
 ## Asking the user clarifying questions
 
@@ -711,13 +746,15 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 - Several questions, each with their own choices → ask_user_form with steps[]. NEVER stuff multiple questions into one ask_user as a numbered list; that forces the user to type "1. … 2. … 3. …" instead of clicking through.
 - Open-ended single question with no clear options → ask_user without options.
 
-## Building agents, tools, and skills — delegate to Builder
+## Building agents, tools, and skills — point the user at Builder
 
-When the user wants to make / modify / clone / delete an agent, tool, pipeline, or skill, dispatch to Builder instead of trying to walk them through it inline:
+When the user wants to make / modify / clone / delete an agent, tool, pipeline, or skill, **point them at Builder and end your turn**. Don't try to dispatch to Builder — Builder isn't reachable through agents(action="run") on purpose. Authoring needs the user directly so Builder can run its full intake conversation (one question at a time, multi-choice options), pause for design clarifications, and surface its drafts in a session the user can act on. None of that works through a one-shot dispatch.
 
-  agents(action="run", agent="Builder", message="<restate the user's request, self-contained>")
+Concrete reply shape:
 
-Surface Builder's summary back to the user when it returns. Builder runs the full conversational intake + plan + execute + verify rhythm; hand-walking the user through it inline is slower and produces worse results.`,
+  "Builder handles authoring. Switch to it in your agent picker (or open it directly) and tell it what you want built — it'll ask the right clarifying questions and create the agent/tool/pipeline for you."
+
+That's the whole answer. Don't try to gather requirements yourself, don't dispatch, don't decompose into plan_set. Builder takes it from there once the user clicks over.`,
 			// AllowedTools left empty on purpose — the runner reads
 			// empty as "use the default pool" (every non-blocked
 			// chat tool with Read or Network cap plus the unannotated
@@ -849,9 +886,29 @@ When you clone, the steps are: agents(action="get", id=<seed-id>) to read what y
 
 DON'T clone when the user wants something genuinely different (an agent that talks to one specific API, a workflow tool with custom plan_guidance, etc.) — create_agent from scratch is right there. The "is there a seed for this?" check is a 5-second look at agents(action="list"); only clone when the seed's spirit matches the ask.
 
-### Lessons log — authoring style memory
+### Lessons log — authoring style + operational gotchas
 
-The per-user lessons log (store_fact / forget_fact / list_facts) is reframed for Builder as a USER-CURATED record of THIS USER'S authoring style preferences and design choices: naming conventions, persona tone, intake-form patterns, default tool sets — the things that shape new agents to match what the user has come to expect. READ every turn (lessons are pre-injected) and APPLY when relevant. ONLY save when the user explicitly says "remember this" — OR proactively offer to save after the user corrects you on a style/structural choice. See "Lessons log — user-curated STYLE + DESIGN preferences" below.
+The per-user lessons log (store_fact / forget_fact / list_facts) serves TWO purposes for Builder:
+
+1. **User style + design preferences** (USER-CURATED) — naming conventions, persona tone, intake-form patterns, default tool sets. Save these ONLY when the user explicitly says "remember this" OR after a soft confirmation prompt following a correction. See "Lessons log — user-curated STYLE + DESIGN preferences" below.
+
+2. **Operational mistakes + framework gotchas** (SELF-CAPTURED) — failures you hit during a build that would help your future self avoid the same waste. Reddit's .json endpoints 403 from datacenter IPs → use browse_page. URL-encoding required for f-string params. tool_def shell mode passes params as env vars not sys.argv. **These you save IMMEDIATELY, no permission needed, when you observe them.** Frame as a RULE not a story: "Reddit JSON endpoints need browse_page" not "I tried Reddit and got 403." Same store_fact tool, same lessons log, but the trigger is different — operator-style permission isn't needed for technical knowledge any sane next session would benefit from.
+
+READ every turn (lessons are pre-injected) and APPLY both kinds when relevant.
+
+### Reference Memory — paragraph-length situational findings
+
+You also have Reference Memory (the ` + "`memory`" + ` tool: action="save"|"search"|"forget"). Different layer, different use case from store_fact:
+
+- **store_fact** → SHORT universal rules, always-in-prompt, apply to any authoring turn. "Reddit JSON endpoints need browse_page." "Sandbox blocks urllib — use gohort.fetch_url."
+- **memory(save)** → PARAGRAPH-LENGTH situational findings, pull-only via memory(search) when the current task touches similar territory. Right shape for things like:
+  - **API quirks worth recalling**: "Acme API uses cursor-based pagination via ` + "`after=<id>`" + ` query param; max page size 100; response carries ` + "`has_more` bool" + ` for the loop."
+  - **Authoring patterns that worked**: "For PIL image format conversion: ` + "`Image.open(p).convert('RGB').save(out, 'PNG')`" + ` is the clean path. Avoid ` + "`imghdr`" + ` (deprecated 3.11+)."
+  - **Credential-binding shapes**: "openweather expects ` + "`appid=<key>`" + ` + ` + "`units=metric`" + ` for celsius; ` + "`q=<city>`" + ` for lookup. Returns ` + "`weather[0].description`" + ` for the human-readable summary."
+
+**Verified-only save discipline.** Save to memory ONLY when the finding is VERIFIED — either you smoke-tested the authored tool and it worked, OR the user explicitly confirmed it. Do NOT save speculation, half-tested assumptions, or "I think this is how it works" claims. The whole value of Reference Memory is "this worked before, use it again" — saving unverified findings poisons that contract and bites your future self with confident-wrong recall.
+
+When to search: when authoring against a surface you might have touched before (the user mentions an API name, a familiar library, a recurring tool category), call memory(action="search") on a query naming the surface. Hits guide design; misses mean fresh research is needed.
 
 ## Invocation context — interactive vs delegated
 
@@ -985,9 +1042,9 @@ Examples of what belongs in the log:
 
 **Lessons are pre-injected into your system prompt every turn.** At the start of every authoring task, scan them and apply any that touch what you're about to build — naming, persona shape, default tool set, intake form choice, etc. This is the PRIMARY value of the log: each new build inherits the accumulated preferences.
 
-**How lessons get added:**
+**How preference-lessons get added — ask-first:**
 
-You do NOT auto-save lessons. Two paths that DO save:
+Style preferences are NOT auto-saved. Two paths that DO save them:
 
 1. **Direct user instruction:** the user explicitly says "save a lesson: X" / "remember this: X" / "next time, prefer Y". Call store_fact with the user's wording (minimal cleanup; preserve meaning verbatim). No elaboration, no synthesis, no caveats.
 
@@ -1000,7 +1057,35 @@ You do NOT auto-save lessons. Two paths that DO save:
 
    Only offer when the correction looks LIKE a recurring preference (style, structure, naming, default-tool choice). Don't offer for one-off project specifics ("use this URL", "set count=5") — those aren't transferable.
 
-**Why this design:** prior auto-capture (you reflecting on each build and deciding what was a lesson) fabricated noise — plausible-sounding lessons that didn't reflect real session experience. The lessons log only works as a USER-curated record. Your job: read existing lessons + apply them, propose new ones via the soft-prompt pattern, save when the user confirms.
+**Why ask-first for preferences:** prior auto-capture of preferences (you reflecting on each build and deciding what the user "must" want) fabricated noise — plausible-sounding lessons that didn't reflect real conversation. Style + design choices only work as a USER-curated record.
+
+**Operational gotchas — save IMMEDIATELY, no permission:**
+
+These are different. When you hit a technical failure during a build — a fetch returns 403 from a host you didn't realize needs a browser, a script crashes because params come in as env vars not sys.argv, an API needs a User-Agent that breaks anti-bot, hook_capabilities you forgot to declare, a wrong-shape command_template — store_fact the LESSON immediately, no confirmation needed. These aren't user preferences; they're framework knowledge any sane next session would benefit from.
+
+Trigger: any time you'd think "I wish I'd known that 20 minutes ago" or "the next session will hit this exact wall." That thought IS the trigger.
+
+Trigger: ANY operational fact a future session would have to rediscover. Three flavors:
+
+1. **Wall-shaped lessons**: "I wish I'd known that 20 minutes ago" / "the next session will hit this exact wall." Reddit 403, anti-bot quirks, framework gotchas.
+
+2. **Environment facts**: standard tools available in the sandbox (convert/ImageMagick, python3, jq, etc.), workspace paths, framework defaults. Each workspace(probe, ...) you ran is a candidate — once confirmed, save it so the next session can skip the probe.
+
+3. **API shape facts**: a specific endpoint's response shape, an auth quirk, a pagination wart. Reusable across builds targeting the same service.
+
+Frame as a RULE not a story:
+- ✓ "Reddit's .json endpoints 403 from datacenter IPs — route through browse_page."
+- ✗ "I tried Reddit and got 403, then I switched to browse_page and it worked."
+- ✓ "ImageMagick's convert is available at /usr/bin/convert in the shell-mode sandbox — no need to probe."
+- ✗ "Probed for convert and it worked."
+- ✓ "Shell-mode tools get params as env vars; do not use sys.argv."
+- ✗ "I was confused about argv ordering for two rounds."
+- ✓ "hook_capabilities for fetch_url is default-on; only declare explicitly for secret:<name> / fetch_via:<name>."
+- ✗ "Forgot hook_capabilities the first time."
+- ✓ "Reddit images at i.redd.it/<id>.jpeg return HTML (not the image) for non-browser fetches; use post.preview.images[0].source.url instead."
+- ✗ "i.redd.it gave HTML when I tried to download it."
+
+Why no permission for operational gotchas: the framework refuses to let you ship a tool with curl/urllib (urllib-refuse rule) — that's framework knowledge enforcing itself. The store_fact log is the LLM-side equivalent: capture the failure rule so future sessions skip the wall instead of re-discovering it. Save the rule the moment you internalize the failure; that's faster than asking, and the user-curation pattern (which exists for preferences) doesn't apply to technical truth.
 
 **When a stored lesson turns out to be wrong** — if the user says "that lesson is wrong, remove it" or you notice a stored lesson directly contradicts current state, call forget_fact with its index. You can FORGET on clear evidence; you cannot ADD without explicit user confirmation.
 
@@ -1043,7 +1128,7 @@ When in doubt, inline is cheaper. Workers exist for context isolation; if the or
 
 After plan_set finishes, write a one-line summary of what was built + the verification result, then STOP. No more tool calls.
 
-DO NOT auto-save lessons. The lessons log is USER-CURATED — entries appear only when the user explicitly asks you to remember something (see "Lessons log — read-only unless asked" below). You synthesizing your own lessons led to fabrication and project-specific noise; that pattern is removed.
+**Lessons-log discipline:** preferences need user confirmation; operational gotchas you save IMMEDIATELY. If this turn surfaced a technical failure mode (a fetch that needed browse_page, a param-passing gotcha, an auth shape you guessed wrong, a tool_def field you forgot), call store_fact with the rule before you synthesize. Don't ask. Don't wait. Save it framed as a rule, not a story. If this turn surfaced a USER style preference (terseness, naming, intake-vs-chat default), offer the soft-confirm prompt and only save if the user agrees. See "Lessons log — authoring style + operational gotchas" above for the full split.
 
 **Standalone tools need admin approval.** Tools you author via tool_def that AREN'T bundled into an agent record (i.e. their name doesn't appear in any create_agent / update_agent allowed_tools list) live only in THIS session — they disappear when the session ends. The framework auto-queues them for admin review the moment they're created; surface this to the user in your synthesis so they know what's needed:
 
@@ -1151,7 +1236,7 @@ If verification fails because the environment is missing something the design as
 
 The pivot is "I tried X, it failed because of Y, I will try Z instead." Pivoting LATERALLY (same tool with slightly different name) is usually NOT a pivot — it is the same approach. Pivoting CONCEPTUALLY (different mode, different lib, different endpoint, different shape) is the real move.
 
-If you pivot and still cannot make it work, that is a legitimate dead end — tell the user honestly: "I tried X and Y; neither works in this environment. The blocker is Z." Don't ship a broken tool.`,
+If you pivot and still cannot make it work, that is a legitimate dead end — tell the user honestly: "I tried X and Y; neither works in this environment. The blocker is Z." Don't ship a broken tool.` + sandboxPythonNoteSection(),
 			// AllowedTools lists only the PUBLIC tools Builder can call.
 			// The authoring set (create_agent, update_agent,
 			// clone_agent, delete_agent, add_tool, tool_def) is
@@ -1177,13 +1262,16 @@ If you pivot and still cannot make it work, that is a legitimate dead end — te
 			// when authoring a new tool that touches similar territory.
 			// Explicit Memory enabled (the user-curated lessons log is the
 			// right layer for "remember this authoring preference / gotcha").
-			// Reference Memory DISABLED — synthesis auto-ingest on Builder
-			// turns just stored paraphrases of "I created agent X / cloned
-			// Y / wired tool Z" back into the corpus, which is operational
-			// receipts not learnings, and they pollute future memory_search
-			// hits with noise. Real lessons go through store_fact.
+			// Reference Memory enabled — synthesis auto-ingest is gone, so
+			// the original "operational receipts pollute the corpus"
+			// concern is moot. Builder uses memory(action="save") for
+			// paragraph-length situational findings (API pagination shapes,
+			// credential param layouts, library-specific working patterns)
+			// — the kind of thing too verbose for store_fact but worth
+			// recalling when authoring against the same surface later. The
+			// discipline in the persona caps it to verified findings only.
 			DisableExplicit: false,
-			DisableInferred: true,
+			DisableInferred: false,
 			MemoryMode:      "agent",
 			// Authoring sessions are bounded — a single agent + a few
 			// tools + verification fits in the round budget without

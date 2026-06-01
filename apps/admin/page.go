@@ -851,7 +851,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Skills",
-				Subtitle: "Conditional prompt addendums that auto-activate based on the user's message — dynamic personas. Builder is the canonical authoring path (talk to it in Agency); this surface manages what's been authored. Disabled skills stay defined but the classifier skips them.",
+				Subtitle: "Conditional prompt addendums the LLM activates on demand via activate_skill(name) — dynamic personas with their own tools and knowledge. Builder is the canonical authoring path (talk to it in Agency); this surface manages what's been authored. Disabled skills stay defined but are hidden from the LLM's available-skills block.",
 				Body: ui.Table{
 					Source: "api/skills",
 					RowKey: "id",
@@ -878,12 +878,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Method:  "POST",
 									Fields: []ui.FormField{
 										{Field: "name", Type: "text", Label: "Name"},
-										{Field: "description", Type: "textarea", Label: "Description (classifier's match target)", Rows: 2,
-											Help: "One-sentence \"when to use this skill\" hint. The classifier embeds this and matches it against user messages."},
-										{Field: "triggers", Type: "tags", Label: "Triggers",
-											Help: "Substring patterns matched against the user's message (case-insensitive). Empty = embedding-only activation."},
+										{Field: "description", Type: "textarea", Label: "Description", Rows: 2,
+											Help: "One-sentence \"use when…\" hint. Surfaces in the LLM's \"Available skills\" prompt block so it can judge whether to call activate_skill(name) for the current turn. Write it as a decision shape, not a label."},
 										{Field: "instructions", Type: "textarea", Label: "Instructions (markdown)", Rows: 10,
-											Help: "Body appended to the active agent's system prompt when the skill activates. Framework prepends an `## Skill: <name>` H2 header."},
+											Help: "Body returned as the activate_skill tool result. The LLM reads this on activation and applies it for the rest of the turn."},
 									},
 								},
 								// Allowed tools — picker from the registered
@@ -892,6 +890,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// actually available. Posts independently of
 								// the FormPanel above (the chip click immediately
 								// updates the record).
+								ui.Card{HTML: `<div style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Allowed tools</div><div style="font-size:0.75rem;color:#6e7681">Tools the LLM may call while this skill is active. Skills with no selection inherit the agent's normal tool set.</div>`},
 								ui.ChipPicker{
 									OptionsSource: "api/tool-groups/registry",
 									RecordSource:  "api/skills/{id}",
@@ -899,6 +898,25 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo:        "api/skills",
 									Method:        "POST",
 									NameField:     "name",
+									LabelField:    "name",
+									DescField:     "description",
+								},
+								// Attached collections — picker from the
+								// current user's Document Collections. Same
+								// pattern; flipping a chip POSTs the full
+								// record back. Empty list = no extra corpus
+								// injected when this skill activates. The
+								// list endpoint lives at api/collections
+								// (admin-side read view; create/edit/delete
+								// happens on the Knowledge surface).
+								ui.Card{HTML: `<div style="font-size:0.78rem;color:#8b949e;text-transform:uppercase;letter-spacing:0.04em">Attached collections</div><div style="font-size:0.75rem;color:#6e7681">Document Collections merged into RAG recall while this skill is active. Manage the collections themselves on the Knowledge page.</div>`},
+								ui.ChipPicker{
+									OptionsSource: "api/collections",
+									RecordSource:  "api/skills/{id}",
+									Field:         "attached_collections",
+									PostTo:        "api/skills",
+									Method:        "POST",
+									NameField:     "id",
 									LabelField:    "name",
 									DescField:     "description",
 								},

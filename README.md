@@ -327,7 +327,7 @@ gohort/
     ├── transcribe/          # transcribe_audio: STT via configured Whisper endpoint
     ├── video/, videodl/, videofind/   # video attach + yt-dlp wrappers
     ├── watcher/             # watcher: poll-and-alert framework
-    ├── websearch/           # web_search, fetch_url, fetch_json + article extraction
+    ├── websearch/           # web_search, fetch_url + article extraction
     └── workspace/           # workspace state primitives — create/use/ls/cat/write/run + head/tail/grep/read_lines/stat query actions for spilled / large files
 gohort-desktop/         # Native macOS host (Wails) — separate module, see its README
 ```

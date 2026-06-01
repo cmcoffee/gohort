@@ -10,6 +10,10 @@ package main
 
 import (
 	"embed"
+	"fmt"
+	"html"
+	"net"
+	"net/http"
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
 	"github.com/wailsapp/wails/v2"
@@ -69,6 +73,39 @@ func main() {
 	stopWS := startWSClient(cfg, cookies, app)
 	defer stopWS()
 
+	// Local HTTP listener on 127.0.0.1:<random>. WKWebView refuses to
+	// upgrade WebSocket connections from its custom-scheme handler
+	// (wails://wails.localhost/...), which broke xterm panels and any
+	// other WS-dependent feature when running through the desktop app.
+	// Solution: serve the proxy through a real net/http server on
+	// loopback, then redirect the initial wails:// navigation to that
+	// http://127.0.0.1:<port>/ origin. WKWebView treats loopback HTTP
+	// as a normal origin and upgrades WS just fine. The AssetServer's
+	// HTML-redirect handler still gets the first hit; everything from
+	// that point on is direct HTTP to the local listener.
+	//
+	// httputil.NewSingleHostReverseProxy (in proxy.go) already
+	// supports WebSocket upgrades transparently when reached through a
+	// real net/http server — it detects the Upgrade header and
+	// switches to a tunnel mode. So no proxy-side change is needed
+	// for WS to work; only the transport in front of it needs to be
+	// real HTTP rather than the custom URL scheme.
+	proxyHandler := new_gohort_proxy(cfg, configure_html, cookies)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		core.Fatal("gohort-desktop: local listener: %v", err)
+	}
+	localPort := listener.Addr().(*net.TCPAddr).Port
+	localBase := fmt.Sprintf("http://127.0.0.1:%d", localPort)
+	httpServer := &http.Server{Handler: proxyHandler}
+	go func() {
+		core.Log("[gohort-desktop] local proxy listening at %s", localBase)
+		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			core.Warn("[gohort-desktop] local listener stopped: %v", err)
+		}
+	}()
+	defer httpServer.Close()
+
 	err = wails.Run(&options.App{
 		Title:     "Gohort",
 		Width:     width,
@@ -76,15 +113,26 @@ func main() {
 		MinWidth:  core.MIN_WINDOW_WIDTH,
 		MinHeight: core.MIN_WINDOW_HEIGHT,
 
-		// AssetServer.Handler is the sole responder for every webview
-		// request. Assets is intentionally NOT set — its FS-first
-		// middleware would intercept "/" (matching index.html) before
-		// the proxy could route to the configure page or upstream
-		// gohort serve. Wails' native bindings (window.go.main.App.*)
-		// are injected by WKWebView's message handler, independent of
-		// the asset server, so dropping Assets doesn't affect them.
+		// AssetServer.Handler runs only for wails://wails.localhost/*
+		// requests — that's just the initial webview load. Its sole
+		// job is to bounce the navigation to the local HTTP listener
+		// above; once redirected, the webview is on http://127.0.0.1
+		// and every subsequent request (including WebSocket upgrades)
+		// flows through real HTTP. Wails' window.go.main.App.*
+		// bindings are injected independent of origin so they keep
+		// working at the loopback URL.
 		AssetServer: &assetserver.Options{
-			Handler: new_gohort_proxy(cfg, configure_html, cookies),
+			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				target := localBase + r.URL.RequestURI()
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Cache-Control", "no-store")
+				fmt.Fprintf(w,
+					`<!DOCTYPE html><html><head><meta charset="utf-8">`+
+						`<meta http-equiv="refresh" content="0;url=%s">`+
+						`<title>Loading…</title></head>`+
+						`<body><script>location.replace(%q);</script></body></html>`,
+					html.EscapeString(target), target)
+			}),
 		},
 
 		// Bind the App struct so its exported methods (ListTools,

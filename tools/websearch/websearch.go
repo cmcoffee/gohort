@@ -28,7 +28,6 @@ import (
 func init() {
 	RegisterChatTool(new(WebSearchTool))
 	RegisterChatTool(new(FetchURLTool))
-	RegisterChatTool(new(FetchJSONTool))
 	CrossSearchFunc = CrossProviderSearch
 }
 
@@ -217,14 +216,20 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 type FetchURLTool struct{}
 
 func (t *FetchURLTool) Name() string { return "fetch_url" }
-func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP GET against live web
+func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP against live web
 func (t *FetchURLTool) Desc() string {
-	return "Fetch a URL from the live web. Two modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs without auth, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page — the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
+	return "Fetch a URL from the live web. Defaults to GET; pass method=POST/PUT/PATCH/DELETE with optional body for write calls. Two response modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nJSON endpoints: the body comes back as JSON text — read fields directly out of the text (the model handles it fluently) or, inside a script, json.loads(body). There is no separate fetch_json tool.\n\nFor credentialed endpoints, use the matching `fetch_url_<credential>` tool (e.g. fetch_url_github) — same shape (method / body / request_headers / save_to all work the same), auth injected server-side.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page — the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
 }
 
 func (t *FetchURLTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"url": {Type: "string", Description: "The URL to fetch. Must be http:// or https://."},
+		"url":    {Type: "string", Description: "The URL to fetch. Must be http:// or https://."},
+		"method": {Type: "string", Description: "Optional HTTP method. Defaults to GET. Use POST/PUT/PATCH/DELETE for write operations."},
+		"body":   {Type: "string", Description: "Optional request body (typically JSON-encoded). Sent as-is with Content-Type: application/json unless overridden by request_headers."},
+		"request_headers": {
+			Type:        "object",
+			Description: "Optional extra headers as a {name: value} object (e.g. Accept, X-Custom-Token). Cannot override the auth header on credentialed fetch_url_<name> variants.",
+		},
 		"save_to": {
 			Type:        "string",
 			Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"report.pdf\", \"image.jpg\"). When set, response is streamed straight to disk and the tool result is a short metadata line instead of the body — use for binary content the LLM can't usefully read as text.",
@@ -287,6 +292,22 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
 			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
 		}
+	}
+
+	// Non-GET / body-bearing / custom-header path: send the request
+	// directly via NewBoundedHTTPClient. No credential machinery, no
+	// hidden "no_auth" record — fetch_url IS the no-auth path. The
+	// text-extraction + cache + JS-heavy auto-route below applies
+	// only to bare-GET reads, which is what fetch_url's article-style
+	// shaping was designed for.
+	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
+	if method == "" {
+		method = "GET"
+	}
+	bodyStr := StringArg(args, "body")
+	customHeaders, hasHeaders := args["request_headers"].(map[string]any)
+	if method != "GET" || bodyStr != "" || hasHeaders {
+		return fetchURLDirect(sess, target, method, bodyStr, customHeaders, StringArg(args, "save_to"))
 	}
 
 	// save_to path — streams raw bytes to workspace. Caller must have
@@ -555,6 +576,75 @@ func enforceFetchCacheQuota(workspaceDir string) {
 			Debug("[fetch_url] evicted cache entry %s (%d bytes, mtime %s)", files[i].path, files[i].size, files[i].mtime.Format(time.RFC3339))
 		}
 	}
+}
+
+// fetchURLDirect is the verb-surface implementation: any HTTP method,
+// optional body, optional custom headers, optional save_to. Used for
+// non-GET / body-bearing / header-customized calls. No auth header is
+// injected; URL has already cleared the SSRF guard upstream. Returns
+// either {status, headers, body} as text or a save_to metadata line.
+func fetchURLDirect(sess *ToolSession, target, method, body string, customHeaders map[string]any, saveTo string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	var bodyReader io.Reader
+	if body != "" {
+		bodyReader = strings.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, bodyReader)
+	if err != nil {
+		return "", fmt.Errorf("build request: %w", err)
+	}
+	// Caller headers first; then ensure a sensible UA + Content-Type
+	// (if a body is present and the caller didn't supply one).
+	for k, v := range customHeaders {
+		if s, ok := v.(string); ok {
+			req.Header.Set(k, s)
+		}
+	}
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	}
+	if body != "" && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := NewBoundedHTTPClient().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch_url: %w", err)
+	}
+	defer resp.Body.Close()
+	// save_to: stream to disk, return a metadata line.
+	saveTo = strings.TrimSpace(saveTo)
+	if saveTo != "" {
+		if sess == nil || sess.WorkspaceDir == "" {
+			return "", fmt.Errorf("save_to requires a session with WorkspaceDir set")
+		}
+		savePath, perr := ResolveWorkspacePath(sess.WorkspaceDir, saveTo)
+		if perr != nil {
+			return "", fmt.Errorf("save_to: %w", perr)
+		}
+		f, ferr := os.Create(savePath)
+		if ferr != nil {
+			return "", fmt.Errorf("create save_to: %w", ferr)
+		}
+		defer f.Close()
+		written, werr := io.Copy(f, io.LimitReader(resp.Body, fetchURLMaxSaveBytes+1))
+		if werr != nil {
+			os.Remove(savePath)
+			return "", werr
+		}
+		if written > fetchURLMaxSaveBytes {
+			os.Remove(savePath)
+			return "", fmt.Errorf("response exceeded %d byte cap", fetchURLMaxSaveBytes)
+		}
+		return fmt.Sprintf("Saved %d bytes to %s (status=%d, content-type=%s).",
+			written, saveTo, resp.StatusCode, resp.Header.Get("Content-Type")), nil
+	}
+	// Read body (capped at 10 MB to match the script-side hook fetch).
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	return fmt.Sprintf("HTTP %d %s\n\n%s", resp.StatusCode, http.StatusText(resp.StatusCode), string(respBody)), nil
 }
 
 // fetchURLToFile streams target to absPath, capped at fetchURLMaxSaveBytes.

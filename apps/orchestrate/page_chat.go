@@ -63,13 +63,16 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 			})
 			continue
 		}
-		// Hidden top-level agents (no OwnedBy, hidden=true): personal
-		// agents the user wants to chat with directly but not surface
-		// to the fleet. Skip them from the picker too — direct URL
-		// access still works for "chat with this hidden agent" use case.
-		if a.Hidden {
-			continue
-		}
+		// Hidden=true used to filter the agent out of THIS picker too —
+		// which conflated two audiences. The flag's intent is "hide from
+		// the fleet so other agents can't dispatch to me" (the runner's
+		// renderAvailableAgentsBlock honors it; agents(action="run")
+		// refuses it absent an AllowedDispatchTargets carve-out). The
+		// user's own Agency picker is their home for managing their
+		// agents — they need every top-level agent they own visible
+		// here, Hidden or not. Filtering Hidden here just made KB agents
+		// (published to /agents/ but marked Hidden to keep them out of
+		// the fleet) silently disappear from Agency. Don't.
 		if ord, ok := builtInOrder[a.ID]; ok {
 			builtIns = append(builtIns, pickerRow{ID: a.ID, Name: a.Name, Order: ord})
 		} else {
@@ -194,7 +197,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						},
 						{
 							Label:     "Clean",
-							Title:     "Suppress the Reference Memory layer for this turn — no memory_save / memory_search / memory_forget tools, no synthesis auto-ingest, no derived chunks in auto-injection. The agent answers fresh from the user's question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without its own prior derived findings coloring the response. Use when you want the agent unbiased by its own accumulated history.",
+							Title:     "Suppress the Reference Memory layer for this turn — memory_save / memory_search / memory_forget stripped from the agent's catalog so it can't write to or read from its accumulated derived store. The agent answers fresh from the user's question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without prior memory_save findings coloring the response. Use when you want the agent unbiased by its own accumulated history.",
 							GetURL:    "api/settings/memory",
 							PostURL:   "api/settings/memory/set",
 							Field:     "inferred_disabled",
@@ -218,6 +221,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_memory_modal"},
 						{Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
 							Method: "client", URL: "orchestrate_knowledge_modal"},
+						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+							Method: "client", URL: "copy_session"},
 						{Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
 							Method: "client", URL: "orchestrate_skills_modal"},
 						{Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",

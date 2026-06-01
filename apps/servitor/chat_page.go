@@ -142,6 +142,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "servitor_open_workspace"},
 						{Label: "Clear", Title: "Clear the conversation and activity panes",
 							Method: "client", URL: "servitor_clear"},
+						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+							Method: "client", URL: "copy_session"},
 						{Label: "Clear Memory", Title: "Wipe stored profile, facts, knowledge, and notes for this appliance",
 							Method: "client", URL: "servitor_clear_memory", Variant: "danger"},
 					},

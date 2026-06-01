@@ -516,6 +516,7 @@ type PersistedToolCall struct {
 	Args   map[string]any `json:"args,omitempty"`
 	Result string         `json:"result,omitempty"`
 	Err    string         `json:"err,omitempty"`
+	Cached bool           `json:"cached,omitempty"` // true = wrapper returned cached body (no fresh dispatch)
 }
 
 // ChatMessageUsage is the per-assistant-message token / throughput

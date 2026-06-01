@@ -20,20 +20,34 @@ import (
 // reply each parse cleanly.
 var attachMarkerRe = regexp.MustCompile(`\[ATTACH:\s*([^\],]+?)(?:\s*,\s*cleanup\s*=\s*(true|false))?\s*\]`)
 
+// attachFailure carries one failed [ATTACH:] marker through to the
+// caller so phantom's reply path can feed the failure back to the
+// LLM on the next turn (otherwise the model thinks its attach went
+// through and may falsely claim "I sent you the video"). Reason is
+// the error string from workspace.AttachWorkspaceFile.
+type attachFailure struct {
+	Name   string
+	Reason string
+}
+
 // applyAttachMarkers consumes every [ATTACH: ...] marker in reply: each
 // match calls workspace.AttachWorkspaceFile (the same primitive the
 // workspace(action="attach") tool uses) to queue the file onto sess for
 // delivery, then the marker is removed from the visible text. Failures
-// (typo'd filename, missing file) are logged but never block the rest
-// of the reply — partial delivery beats no reply.
-func applyAttachMarkers(sess *ToolSession, reply string) string {
+// (typo'd filename, missing file, file too large for iMessage) are
+// logged AND returned so the caller can feed them back to the LLM via
+// the next turn's history — partial delivery beats no reply, but the
+// LLM needs to know what didn't make it so it doesn't lie on the
+// follow-up turn or skip a recovery (e.g. transcode the video).
+func applyAttachMarkers(sess *ToolSession, reply string) (string, []attachFailure) {
 	if sess == nil || reply == "" {
-		return reply
+		return reply, nil
 	}
 	matches := attachMarkerRe.FindAllStringSubmatchIndex(reply, -1)
 	if len(matches) == 0 {
-		return reply
+		return reply, nil
 	}
+	var failures []attachFailure
 	var b strings.Builder
 	last := 0
 	for _, m := range matches {
@@ -50,6 +64,7 @@ func applyAttachMarkers(sess *ToolSession, reply string) string {
 		}
 		if summary, err := workspace.AttachWorkspaceFile(sess, name, "", cleanup); err != nil {
 			Log("[phantom] attach marker %q failed: %v", name, err)
+			failures = append(failures, attachFailure{Name: name, Reason: err.Error()})
 		} else {
 			Debug("[phantom] attach marker delivered: %s", summary)
 		}
@@ -59,7 +74,8 @@ func applyAttachMarkers(sess *ToolSession, reply string) string {
 	// Markers commonly sit on their own line at the end of the reply;
 	// collapse runs of blank lines they leave behind so the visible text
 	// doesn't end in a void.
-	return strings.TrimSpace(blankRunRe.ReplaceAllString(b.String(), "\n\n"))
+	clean := strings.TrimSpace(blankRunRe.ReplaceAllString(b.String(), "\n\n"))
+	return clean, failures
 }
 
 // blankRunRe collapses three-or-more consecutive newlines (left over

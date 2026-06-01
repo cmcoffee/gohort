@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -162,6 +161,14 @@ func (t *chatTurn) agentsListAction() (string, error) {
 	all := listAgents(fleetDB, fleetUser)
 	out := make([]row, 0, len(all))
 	for _, a := range all {
+		// Builder is not dispatch-callable (see agentsRunAction);
+		// hide it from the listing too so the LLM can't address it
+		// by id/name through the tool. Direct chat with Builder via
+		// the Agency picker / /chat/seed-builder still works — those
+		// are human-facing surfaces, not LLM-facing.
+		if isBuilderAgent(a.ID) {
+			continue
+		}
 		out = append(out, row{
 			ID:          a.ID,
 			Name:        a.Name,
@@ -184,6 +191,11 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	id := strings.TrimSpace(stringArg(args, "id"))
 	if id == "" {
 		return "", errors.New("id is required for action=get")
+	}
+	// Builder is hidden from this surface — see agentsRunAction and
+	// agentsListAction for the rationale.
+	if isBuilderAgent(id) {
+		return "", fmt.Errorf("agent %q not found", id)
 	}
 	fleetDB, fleetUser := t.fleetView()
 	a, ok := loadAgent(fleetDB, id)
@@ -267,25 +279,26 @@ func slimAgentJSON(a AgentRecord) []byte {
 	return b
 }
 
-// agentsRunAction dispatches to the target agent. Two behaviors
-// distinguish it from a one-shot call:
+// agentsRunAction dispatches to the target agent — a stateless
+// function call from the parent's perspective. The sub-agent has no
+// session storage of its own under this path; the parent owns all
+// context.
 //
-//   - **Live activity** (V1): the sub-agent's tool calls + step
-//     progress emit into the parent turn's SSE so the user sees
-//     "[<target name>] web_search(...)" appear in the activity
-//     pane as the sub-agent works. Without this the sub-agent
-//     was invisible until its final synthesis returned.
-//   - **Multi-turn persistence** (V2): the sub-session's prior
-//     Messages are loaded before the run and the new
-//     (user → assistant) pair appended back after. A caller that
-//     dispatches to the same target multiple times within the
-//     same parent session gets continuity — the sub-agent
-//     remembers what was discussed.
+// Live activity: the sub-agent's tool calls + step progress emit
+// into the parent turn's SSE so the user sees "[<target name>]
+// web_search(...)" appear in the activity pane as the sub-agent
+// works. Without this the sub-agent would be invisible until its
+// final synthesis returned.
 //
-// The sub-session ID is deterministic (dispatch:<parent>:<target>)
-// so the storage slot survives across calls. Different parents
-// talking to the same target each get their own thread; the same
-// parent gets one persistent thread per target.
+// Stateless contract: prior dispatches in the same parent session
+// leave no trace the sub-agent can read. Follow-up dispatches that
+// want context must include it in the brief ("Earlier you summarized
+// X as <Y>. Now…"). This keeps the parent in charge — every fact
+// the sub-agent works from arrived in the brief, every change to
+// context is the parent's next dispatch. Direct chat with a sub-
+// agent via Agency's secondary picker is a SEPARATE code path
+// (handleSend) and DOES persist its ChatSession normally — that's
+// the testing/iteration surface, not the dispatch surface.
 func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if t.dispatchDepth >= maxDispatchDepth {
 		return "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
@@ -302,6 +315,18 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	}
 	if target.ID == t.agent.ID {
 		return "", fmt.Errorf("agents(run, agent=%q) is impossible — you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing — pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
+	}
+	// Builder is never dispatchable. Builder's authoring rhythm needs
+	// a human in the loop — Phase 1 conversational intake, ask_user
+	// pauses for design clarifications, the approval gate on every
+	// authored tool. The [DELEGATED INVOCATION] marker that strips
+	// ask_user under dispatch turns Builder into a guessing game on a
+	// thin brief, and any tools it authors get stuck in a sub-session
+	// draft pool the dispatching agent can't see. The user clicks
+	// Builder in their picker directly when they want authoring; no
+	// other agent should be intermediating that conversation.
+	if isBuilderAgent(target.ID) {
+		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder isn't dispatch-callable. Authoring needs the user directly so Builder can run its full intake conversation, ask clarifying questions, and surface its drafts in a session the user can act on. Point the user at Builder in their agent picker (or the chat URL for Builder), describe what they want built, and end your turn", key)
 	}
 	// Cycle guard. The current turn's agent is always considered "in
 	// flight" — combined with dispatchChain (inherited from parent
@@ -447,7 +472,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// helpers gate internally on agent.DisableInferred /
 	// DisableExplicit, so just appending unconditionally is safe.
 	if !subTurn.inferredOff() {
-		tools = append(tools, subTurn.saveMemoryToolDef(), subTurn.searchMemoryToolDef(), subTurn.forgetMemoryToolDef())
+		tools = append(tools, subTurn.memoryToolDef())
 	}
 	if !subTurn.explicitOff() {
 		tools = append(tools, subTurn.storeFactToolDef(), subTurn.forgetFactToolDef())
@@ -484,29 +509,28 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		target, subFacts,
 	)
 
-	// V2 — load prior sub-session and prepend its Messages so a
-	// repeated dispatch to the same target reads as a continuation
-	// rather than a fresh ask. New session loaded as empty when no
-	// prior exists; ID + AgentID set so saveChatSession routes the
-	// write to the target's bucket under our deterministic ID.
-	subSession, subExists := loadChatSession(t.udb, target.ID, subSessID)
-	if !subExists {
-		subSession = ChatSession{
-			ID:      subSessID,
-			AgentID: target.ID,
-			Title:   "dispatched by " + t.agent.Name,
-			Created: time.Now(),
-		}
-	} else {
-		subSession.AgentID = target.ID // loadChatSession stamps this; defensive
-	}
-
+	// Sub-agent dispatches are STATELESS — each agents(action="run")
+	// is a fresh function call from the parent. The parent owns the
+	// conversation context and must include any prior context in the
+	// brief itself ("Earlier I asked you about Acme Corp and you told
+	// me X. Now tell me more about their B2B presence."). Same shape
+	// as Claude Code's Agent() subagent dispatches.
+	//
+	// Why not V2 continuity: sub-agent state under phantom:<chatID>
+	// (or under the parent's user) was a hidden ledger the parent
+	// couldn't see or control — context "changes" happened inside the
+	// sub-agent without the parent's knowledge, and a phantom thread
+	// accumulated sub-agent threads of its own. Stateless dispatches
+	// keep the parent in charge: every fact the sub-agent works from
+	// arrived in the brief; every change to context is the parent's
+	// next dispatch.
+	//
+	// Doesn't affect direct Agency chat with a sub-agent (different
+	// code path — that goes through handleSend, normal ChatSession
+	// persistence applies). Only the agents(run) parent→sub-agent
+	// dispatch is ephemeral.
 	deliveredMsg := markAsDelegated(msg)
-	llmMessages := make([]Message, 0, len(subSession.Messages)+1)
-	for _, m := range subSession.Messages {
-		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
-	}
-	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMsg})
+	llmMessages := []Message{{Role: "user", Content: deliveredMsg}}
 
 	// V1 — per-step status emit. Hooks the orchestrator's per-round
 	// progress callback so the user sees "[<target>] round N (X tool
@@ -531,11 +555,19 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		"kind": "activity",
 		"type": "status",
 		"id":   activityCheapID(),
-		"text": fmt.Sprintf("[%s] dispatched (%d prior turn%s)", target.Name, len(subSession.Messages)/2, plural(len(subSession.Messages)/2)),
+		"text": fmt.Sprintf("[%s] dispatched (stateless)", target.Name),
 	})
 
 	ctx, cancel := context.WithTimeout(t.ctx, knowledgeIngestTimeout*4)
 	defer cancel()
+	// ForcePrivate enforcement — same shape as the external dispatch
+	// paths. The parent's network connector already propagates via
+	// subSess.Network (set at line ~391), but if THIS sub-agent has
+	// ForcePrivate=true while the parent didn't, the connector would
+	// stay permissive. This call upgrades to a blocked connector and
+	// strips CapNetwork tools from the catalog. No-op when
+	// target.ForcePrivate is false.
+	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
 	// Resolve thinking the same way the chat surface does so a
 	// dispatched agent runs with the SAME default as if it were
 	// invoked directly from Agency. Base = route default (true for
@@ -563,26 +595,17 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 			WithThink(think),
 		},
 	})
-	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s prior_msgs=%d msg_chars=%d err=%v",
-		t.dispatchDepth, t.agent.ID, target.ID, len(subSession.Messages), len(msg), runErr)
+	Log("[orchestrate.agents.run] depth=%d caller=%s → target=%s msg_chars=%d err=%v",
+		t.dispatchDepth, t.agent.ID, target.ID, len(msg), runErr)
 	if runErr != nil {
 		return "", runErr
 	}
 	if resp == nil {
 		return "", errors.New("agents(run): target returned no response")
 	}
-
-	// V2 — persist this exchange (user msg + assistant reply) onto
-	// the sub-session so the next dispatch sees it as prior history.
-	now := time.Now()
 	cleanReply := strings.TrimSpace(resp.Content)
-	subSession.Messages = append(subSession.Messages,
-		ChatMessage{Role: "user", Content: deliveredMsg, Created: now},
-		ChatMessage{Role: "assistant", Content: cleanReply, Created: now},
-	)
-	if _, serr := saveChatSession(t.udb, subSession); serr != nil {
-		Log("[orchestrate.agents.run] WARN failed to persist sub-session %s: %v", subSessID, serr)
-	}
-
+	// No sub-session save — stateless. The reply is the entire
+	// contract: it appears in the parent's tool-call history as the
+	// agents(run) result, and that's the only persistence.
 	return fmt.Sprintf("From %s:\n\n%s", target.Name, cleanReply), nil
 }

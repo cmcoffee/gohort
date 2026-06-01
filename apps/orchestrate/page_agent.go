@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -157,9 +158,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_explicit", Type: "toggle", Label: "Disable Explicit Memory",
 				Help: "Strips store_fact tools + pre-injected facts block. For impersonal / stateless agents."},
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
-				Help: "Strips memory_save/search/forget + synthesis auto-ingest. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
+				Help: "Strips memory_save / memory_search / memory_forget from the catalog and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
 			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
-				Help: "Suppresses the skills classifier entirely — no skills fire regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
+				Help: "Hides activate_skill from the catalog and drops the \"Available skills\" prompt block — no skills can be invoked regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
 
 			ui.FormField{Type: "header", Label: "Publishing",
 				Help: "Who can use this agent and under what restrictions."},
@@ -174,7 +175,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "force_private", Type: "toggle", Label: "Force Private mode (network locked off)",
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
-				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = hidden: dropped from the fleet block and dispatch is refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
+				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agency picker and stays reachable at its public URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
 
 			ui.FormField{Type: "header", Label: "Intake & evals",
 				Help: "Optional structured input form + saved test cases."},
@@ -253,10 +254,15 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// list (which reads only your DB). This read-only table walks
 	// every phantom:* user, finds sessions in this agent's bucket,
 	// and lets the operator drill into any of them via an expand
-	// row-action that renders the full message history. Renders for
-	// every existing agent — top-level OR sub-agent — since phantom
-	// might be dispatching to either (the parent forwards to its
-	// specialists).
+	// row-action that renders the full message history.
+	//
+	// Top-level agents only. Sub-agent dispatches via
+	// agents(action="run") are stateless (no session persisted), so a
+	// sub-agent's bucket under any phantom:<chatID> user is always
+	// empty. Pre-stateless leftover threads under those buckets are
+	// inaccessible here anyway — wiping the parent's phantom sessions
+	// is the recovery path. Hiding this section on sub-agents stops
+	// the editor from advertising a surface that's structurally empty.
 	//
 	// Wipe affordances at two granularities: per-row Delete (clears
 	// one chat's session with this agent) and a section-level
@@ -265,7 +271,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// path — phantom chats accumulate dispatch history that the
 	// LLM treats as recall, so a wipe is sometimes the only way to
 	// stop a misbehavior loop.
-	if id != "" {
+	if id != "" && !subAgent {
 		sections = append(sections, ui.Section{
 			Title:    "Phantom dispatches",
 			Subtitle: "Every phantom chat that has dispatched to this agent. Phantom-driven runs scope under per-chat synthetic users (phantom:<chatID>) for isolation; this is the only place to inspect — or wipe — their session history. Per-row Delete clears one chat; \"Wipe all\" below the table nukes every phantom session for this agent.",
@@ -324,10 +330,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		})
 	}
 
+	// Carry the edited agent's ID back to Agency so the picker
+	// reopens on the agent the user was just editing instead of
+	// snapping to Chat. Empty id (create form) skips the param.
+	backURL := ".."
+	if id != "" {
+		backURL = "..?agent=" + url.QueryEscape(id)
+	}
 	page := ui.Page{
 		Title:     title,
 		ShowTitle: true,
-		BackURL:   "..",
+		BackURL:   backURL,
 		MaxWidth:  "900px",
 		Sections:  sections,
 	}

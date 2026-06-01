@@ -96,6 +96,63 @@ func (T *OrchestrateApp) SaveAgentForUser(user string, rec AgentRecord) (string,
 // against agentOwner's store. Sub-session is torn down on return so
 // transient state (authoring focus, session temp tools) doesn't
 // leak.
+// applyForcePrivateToDispatch enforces target.ForcePrivate on a
+// dispatched run — RunAgentSync / RunAgentSyncContinuing / phantom's
+// dispatch_agent / agents(action="run") all funnel through this so a
+// privacy-locked agent stays locked regardless of how it was invoked.
+//
+// Without this, the direct-chat path read ForcePrivate and built a
+// blocked NetworkConnector + filtered CapNetwork tools (runner.go's
+// privateMode branch), but the dispatch paths built their sub-session
+// with sess.Network = nil and shipped every tool through — so a
+// phantom-dispatched compliance-locked agent reached the internet
+// freely. Three things happen here when ForcePrivate is on:
+//
+//   1. ctx gets a blocked NetworkConnector attached so any callee
+//      that gates on NetworkAllowedFromContext (sandbox shell hook,
+//      direct HTTP helpers) sees the block.
+//   2. subSess.Network points at the same connector so tools that
+//      gate on ToolSession.NetworkAllowed() (web_search, fetch_url,
+//      browse_page) refuse the call up front.
+//   3. CapNetwork-tagged AgentToolDefs are removed from the catalog
+//      so the LLM never sees web_search / fetch_url / browse_page /
+//      etc. in the first place — the cleanest signal that this turn
+//      runs offline.
+//
+// No-op when ForcePrivate is false. Returns ctx + the (possibly
+// filtered) tool slice so the caller can replace its local references.
+func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tools []AgentToolDef, target AgentRecord) (context.Context, []AgentToolDef) {
+	if !target.ForcePrivate {
+		return ctx, tools
+	}
+	connector := NewNetworkConnector(true)
+	ctx = WithNetworkConnector(ctx, connector)
+	if subSess != nil {
+		subSess.Network = connector
+	}
+	filtered := tools[:0]
+	dropped := []string{}
+	for _, td := range tools {
+		hasNet := false
+		for _, c := range td.Tool.Caps {
+			if c == CapNetwork {
+				hasNet = true
+				break
+			}
+		}
+		if hasNet {
+			dropped = append(dropped, td.Tool.Name)
+			continue
+		}
+		filtered = append(filtered, td)
+	}
+	if len(dropped) > 0 {
+		Log("[orchestrate.dispatch] ForcePrivate active on %s — dropped %d network-capable tool(s): %v",
+			target.ID, len(dropped), dropped)
+	}
+	return ctx, filtered
+}
+
 // buildDispatchTurnExtras assembles the per-turn closure tools and the
 // "Available agents" prompt block that the target agent needs to behave
 // the same way it would on its own chat surface — knowledge_search,
@@ -153,11 +210,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 	}
 	extraTools = append(extraTools, subTurn.searchKnowledgeToolDef())
 	if !subTurn.inferredOff() {
-		extraTools = append(extraTools,
-			subTurn.saveMemoryToolDef(),
-			subTurn.searchMemoryToolDef(),
-			subTurn.forgetMemoryToolDef(),
-		)
+		extraTools = append(extraTools, subTurn.memoryToolDef())
 	}
 	if !subTurn.explicitOff() {
 		extraTools = append(extraTools,
@@ -187,6 +240,21 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 	if target.OwnedBy == "" {
 		availableBlock = subTurn.renderAvailableAgentsBlock()
 	}
+	// "Available skills" block — same parity issue as agents. The
+	// dispatch path adds activate_skill to the tool catalog when the
+	// agent has skills enabled, but without this block the LLM has
+	// no idea which skills it can invoke. That bit a phantom-
+	// dispatched agent whose network capability came via a Skill's
+	// AllowedTools: the LLM "knew" it had activate_skill but couldn't
+	// see fetch_url was reachable through it, so it hallucinated
+	// that the network was unavailable. Always emit alongside
+	// activate_skill so the tool and its catalog stay in sync.
+	availableBlock += subTurn.renderAvailableSkillsBlock()
+	// "Known topics" block — surfaces the (user, agent) topic
+	// accumulator so memory_save / memory_search reuse existing
+	// snake_case slugs instead of minting near-duplicates. Cheap to
+	// add; matches what the direct path does.
+	availableBlock += subTurn.renderKnownTopicsBlock()
 	return extraTools, availableBlock
 }
 
@@ -269,6 +337,12 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 	// Agency chat UI.
 	extraTools, availableBlock := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
 	tools = append(tools, extraTools...)
+	// ForcePrivate enforcement — drop network tools + attach blocked
+	// connector. Done AFTER tools are fully assembled (allowlist +
+	// dispatch extras) so the filter sees everything that would have
+	// reached the LLM and removes the network-capable subset in one
+	// pass. No-op when ForcePrivate is false.
+	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
 	// Facts read from the RUNTIME user's DB, so dispatches from
 	// different phantom chats see isolated state for the same agent
 	// record. First call against a fresh runtimeUser starts clean —
@@ -444,6 +518,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
 	extraTools, availableBlock := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
 	tools = append(tools, extraTools...)
+	// ForcePrivate enforcement — see applyForcePrivateToDispatch.
+	// No-op when target.ForcePrivate is false.
+	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
 	var subFacts []MemoryFact
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))

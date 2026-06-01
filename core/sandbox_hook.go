@@ -461,15 +461,17 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		writeHookError(conn, "build request: "+err.Error())
 		return
 	}
-	// Default User-Agent + Accept headers. Match fetch_url's article
-	// path (the one the LLM tests with) so a URL that worked when
-	// inspected via fetch_url also works when called via gohort.fetch.
-	// The previous "gohort/fetch" UA slipped past dumb blockers but
-	// still tripped some Cloudflare WAFs that require browser-shaped
-	// fingerprints; using the same browser UA fetch_url uses closes
-	// that asymmetry. Caller-supplied headers below override per-call.
+	// Default headers. UA matches fetch_url's browser-shaped article
+	// path so anti-bot WAFs treat both surfaces identically. Accept
+	// MUST be wide (*/*) — narrowing it to "text/html,..." causes
+	// content-negotiating CDNs (Reddit's i.redd.it, etc.) to serve
+	// the HTML wrapper instead of the actual file when the URL
+	// points at binary content (.jpg, .png, etc.). curl's default is
+	// also */*, which is why curl works against those endpoints when
+	// our previous Accept didn't. Caller-supplied request_headers
+	// below override either.
 	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/json,*/*;q=0.8")
+	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	if hh, ok := params["headers"].(map[string]interface{}); ok {
 		for k, v := range hh {
@@ -500,6 +502,85 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// avoid hangs on slow servers. Sized to the call's timeout so the
 	// idle window matches the caller's expectation.
 	resp.Body = iotimeout.NewReadCloser(resp.Body, timeout)
+	// save_to path — stream the response body straight to a workspace
+	// file instead of returning bytes through the JSON envelope. Right
+	// shape for binary downloads (images, PDFs, audio, video). Body in
+	// the return dict becomes a short metadata line so the script's
+	// downstream code can still introspect status / content-type
+	// without expecting the actual bytes. Caps at 100MB to match the
+	// LLM-callable fetch_url's save cap.
+	if saveTo, ok := params["save_to"].(string); ok && strings.TrimSpace(saveTo) != "" {
+		saveTo = strings.TrimSpace(saveTo)
+		wsDir := ""
+		if h != nil && h.Sess != nil {
+			wsDir = strings.TrimSpace(h.Sess.WorkspaceDir)
+		}
+		if wsDir == "" {
+			writeHookError(conn, "save_to requires a workspace — call from a tool that has WorkspaceDir set")
+			return
+		}
+		// Resolve save_to into a workspace path. Accept either:
+		//   1. a workspace-relative path ("meme.png", "out/img.jpg") — joined to wsDir
+		//   2. an absolute path that falls UNDER the workspace dir — rewritten to its relative form
+		// Reject anything that escapes (absolute outside workspace, "..", symlink traversal).
+		// Auto-accepting absolute paths inside the workspace removes a class
+		// of Builder retries — scripts often build absolute paths like
+		// f"{os.environ['workspace']}/meme.png" expecting them to "just work."
+		var savePath string
+		if filepath.IsAbs(saveTo) {
+			cleanedSave := filepath.Clean(saveTo)
+			cleanedWS := filepath.Clean(wsDir)
+			rel, relErr := filepath.Rel(cleanedWS, cleanedSave)
+			if relErr != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+				writeHookError(conn, "save_to absolute path must fall under the workspace dir (or pass a workspace-relative path)")
+				return
+			}
+			savePath = cleanedSave
+			saveTo = rel
+		} else {
+			if strings.Contains(saveTo, "..") {
+				writeHookError(conn, "save_to must not contain parent-traversal segments")
+				return
+			}
+			savePath = filepath.Join(wsDir, saveTo)
+		}
+		if err := os.MkdirAll(filepath.Dir(savePath), 0700); err != nil {
+			writeHookError(conn, "create parent dir for save_to: "+err.Error())
+			return
+		}
+		f, ferr := os.Create(savePath)
+		if ferr != nil {
+			writeHookError(conn, "save_to create: "+ferr.Error())
+			return
+		}
+		written, werr := io.Copy(f, io.LimitReader(resp.Body, 100*1024*1024+1))
+		f.Close()
+		if werr != nil {
+			os.Remove(savePath)
+			writeHookError(conn, "save_to write: "+werr.Error())
+			return
+		}
+		if written > 100*1024*1024 {
+			os.Remove(savePath)
+			writeHookError(conn, "save_to: response exceeded 100MB cap")
+			return
+		}
+		Log("[hook/fetch] done elapsed=%s status=%d saved=%dB path=%s", time.Since(callStart).Round(time.Millisecond), resp.StatusCode, written, saveTo)
+		headers := make(map[string]string, len(resp.Header))
+		for k, vs := range resp.Header {
+			if len(vs) > 0 {
+				headers[k] = vs[0]
+			}
+		}
+		writeHookResult(conn, map[string]interface{}{
+			"status":  resp.StatusCode,
+			"headers": headers,
+			"body":    fmt.Sprintf("[Saved %d bytes to %s]", written, saveTo),
+			"path":    saveTo,
+			"bytes":   written,
+		})
+		return
+	}
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
 	if err != nil {
 		Log("[hook/fetch] done elapsed=%s error=%v (read error after status=%d)", time.Since(callStart).Round(time.Millisecond), err, resp.StatusCode)
@@ -960,23 +1041,35 @@ class _Gohort:
             raise HookError(resp["error"])
         return resp.get("result")
 
-    def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30):
+    def fetch_url(self, url, method="GET", headers=None, body=None, timeout=30, save_to=None):
         """HTTP request via gohort. Returns dict {status, headers, body}.
-        body is a string. Capped at 10MiB response.
+        body is a string. Capped at 10MiB response (text mode) or
+        100MiB (save_to mode).
 
         Same name + same routing as the LLM-callable fetch_url tool:
         JS-heavy hosts (Reddit, Twitter/X, etc.) auto-route through
         browse_page; data-shaped URLs (.json, /api/, etc.) plain-HTTP.
-        Only difference from the LLM tool: body is raw (no preamble
-        wrap) because a Python script consumes it programmatically.
 
-        Returned for ALL status codes (including 4xx/5xx) — this method
-        does NOT raise on HTTP errors. Standard Python guard:
+        save_to: workspace-relative path OR an absolute path inside the
+        workspace. When set, the response body streams straight to that
+        file instead of being returned as a string. Right shape for
+        binary downloads (images, PDFs, audio, video, archives) —
+        strings mangle binary content. The returned dict's "body"
+        becomes a short metadata line; "path" and "bytes" carry the
+        saved (always workspace-relative) location and size.
+
+        Standard guard:
 
             result = fetch_url(url)
             if result["status"] != 200:
                 return f"upstream {result['status']}: {result['body'][:200]}"
             data = json.loads(result["body"])   # if JSON
+
+        Image-download example:
+
+            r = fetch_url(image_url, save_to="meme.png")
+            if r["status"] != 200: ...
+            # file now exists at <workspace>/meme.png; r["path"] = "meme.png"
         """
         return self._call("fetch", {
             "url": url,
@@ -984,6 +1077,7 @@ class _Gohort:
             "headers": headers or {},
             "body": body or "",
             "timeout": timeout,
+            "save_to": save_to or "",
         })
 
     # fetch — back-compat alias for fetch_url. Older tools authored
@@ -1042,14 +1136,21 @@ gohort = _Gohort()
 
 
 # Module-level function aliases — same operations, function-call style.
-def fetch_url(url, method="GET", headers=None, body=None, timeout=30):
+# Every method on the singleton has a matching free function here so
+# the "from gohort import X" import shape works for any X the
+# singleton exposes.
+def fetch_url(url, method="GET", headers=None, body=None, timeout=30, save_to=None):
     return gohort.fetch_url(url, method=method, headers=headers,
-                            body=body, timeout=timeout)
+                            body=body, timeout=timeout, save_to=save_to)
 
 
-def fetch(url, method="GET", headers=None, body=None, timeout=30):
+def fetch(url, method="GET", headers=None, body=None, timeout=30, save_to=None):
     return gohort.fetch_url(url, method=method, headers=headers,
-                            body=body, timeout=timeout)
+                            body=body, timeout=timeout, save_to=save_to)
+
+
+def browse_page(url):
+    return gohort.browse_page(url)
 
 
 def log(msg, level="info"):

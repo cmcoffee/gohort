@@ -897,12 +897,19 @@ func accessLogMiddleware(next http.Handler) http.Handler {
 		if isStreamingPath(path) || strings.HasSuffix(path, "/api/poll") {
 			return
 		}
+		// Include the query string when present — diagnostics like
+		// "why is this 404?" usually hinge on the query params (agent_id,
+		// session_id, format, etc.) that the bare path strips.
+		fullPath := path
+		if raw := r.URL.RawQuery; raw != "" {
+			fullPath = path + "?" + raw
+		}
 		ip := clientIP(r)
 		ip_str := "-"
 		if ip != nil {
 			ip_str = ip.String()
 		}
-		Log("[http] %s %s %s %d (%s)", ip_str, r.Method, path, lw.status, time.Since(start).Round(time.Millisecond))
+		Log("[http] %s %s %s %d (%s)", ip_str, r.Method, fullPath, lw.status, time.Since(start).Round(time.Millisecond))
 	})
 }
 

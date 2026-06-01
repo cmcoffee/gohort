@@ -41,12 +41,6 @@ import (
 // would hang the consolidation goroutine or the user-facing tool call.
 const knowledgeIngestTimeout = 45 * time.Second
 
-// classifyTopicTimeout caps the topic-classification LLM call.
-// Classification is on the user-facing critical path (runPlan can't
-// start until the topic is known), so a generous-but-bounded cap
-// keeps a stuck LLM from holding up the turn.
-const classifyTopicTimeout = 20 * time.Second
-
 // knowledgeTopicsTable stores the per-(user, agent) accumulator of
 // topics the classifier has seen so future classifications can prefer
 // existing slugs over coining new ones. One row per (user, agentID),
@@ -132,38 +126,6 @@ func recordAgentTopic(db Database, user, agentID, topic string) {
 	rec.Topics = append(rec.Topics, topic)
 	sort.Strings(rec.Topics)
 	db.Set(knowledgeTopicsTable, key, rec)
-}
-
-// classifyTopicForQuestion asks the worker LLM to label the question
-// with a short snake_case topic slug. Existing topics for this
-// (user, agent) are surfaced as a hint so the classifier prefers
-// reusing them — keeps "ssh_keys" from drifting into "sshkey",
-// "ssh_key", "ssh-keys" across turns. Errors fall back to
-// generalTopic so the turn proceeds with a usable namespace.
-func classifyTopicForQuestion(ctx context.Context, app *OrchestrateApp, db Database, user, agentID, question string) string {
-	if app == nil {
-		return generalTopic
-	}
-	existing := listAgentTopics(db, user, agentID)
-	hint := ""
-	if len(existing) > 0 {
-		hint = "\n\nExisting topics you may want to reuse: " + strings.Join(existing, ", ")
-	}
-	sys := "Pick a short topic slug (snake_case, 1-3 words) that best categorizes the user's question for knowledge-base storage. Reuse existing topics when applicable. Reply with ONLY the slug, no explanation." + hint
-	cctx, cancel := context.WithTimeout(ctx, classifyTopicTimeout)
-	defer cancel()
-	// Thinking OFF: picking a snake_case slug is a deterministic
-	// classification, not a reasoning task. Without this the worker
-	// burns its full thinking budget (~10s, up toward classifyTopicTimeout)
-	// deliberating over a 1-3 word label — same waste the ack avoids.
-	resp, err := app.WorkerChat(cctx,
-		[]Message{{Role: "user", Content: question}},
-		WithSystemPrompt(sys), WithMaxTokens(20), WithThink(false),
-	)
-	if err != nil || resp == nil {
-		return generalTopic
-	}
-	return normalizeTopic(resp.Content)
 }
 
 // handleAgentKnowledge serves GET (count) and DELETE (wipe) for the
@@ -1055,63 +1017,98 @@ const manualSearchMinScore = 0.35
 
 // --- Tools the LLM can call directly --------------------------------------
 
-// saveMemoryToolDef builds the AgentToolDef that lets the
-// orchestrator / worker explicitly record a derived finding into the
-// Reference Memory layer (vector-grown, searchable via memory_search).
-// Closure-bound to the chatTurn so it picks up (user, agent_id)
-// without an extra ToolSession round-trip.
+// memoryToolDef builds the grouped tool for Reference Memory.
+// One LLM-facing entry (memory) with an action discriminator
+// covers save / search / forget / help — same shape phantom's
+// knowledge tool uses. Earlier revisions exposed three separate
+// tools (memory_save / memory_search / memory_forget); they all
+// operated on the same conceptual store and shared most params, so
+// the grouped form reads cleaner in the catalog and the action
+// keyword carries the semantic load.
 //
-// Writes to Reference Memory only. The Knowledge layer (uploaded
-// files) is admin-managed read-only; Explicit Memory (always-in-
-// prompt) is the store_fact tool's job.
-func (t *chatTurn) saveMemoryToolDef() AgentToolDef {
+// Closure-bound to the chatTurn so it picks up (user, agent_id)
+// without an extra ToolSession round-trip. Writes go to Reference
+// Memory only — the Knowledge layer (uploaded files) is admin-
+// managed read-only; Explicit Memory (always-in-prompt) is the
+// store_fact tool's job.
+func (t *chatTurn) memoryToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        "memory_save",
-			Description: "Persist COMPLICATED REFERENCE MATERIAL you MAY need later — API specs, website navigation instructions, configuration recipes, working approaches you figured out, document-derived technical details. Saved into your Reference Memory (vector-searchable), retrieved on-demand via `memory_search`. **Pull-only**: these findings do NOT auto-inject into future prompts; you have to explicitly search for them when a future question triggers your recall.\n\n**Use memory_save when**: the finding is non-trivial to re-derive, specific enough to be useful for a similar future question, AND would clutter your prompt if always-in-context. Right examples: \"Acme API uses cursor-based pagination with `after` token; max page size 100\", \"To configure Nginx rate-limiting per-IP, use the limit_req_zone directive in the http block\", \"To install ffmpeg with libx264 on Ubuntu, ...\". Paragraph-length self-contained findings work best.\n\n**Use store_fact instead when**: the note shapes how you respond to ANY future question (user preferences, recurring constraints, identity facts). Those are always-in-prompt; memory_save is searchable reference.\n\nFindings are namespaced by `topic` (snake_case slug like `acme_api`, `nginx_config`). Defaults to the turn's classified topic.\n\nDO NOT save findings already retrieved via memory_search OR knowledge_search this turn — saving the same content again compounds noise. Save ONLY information genuinely NEW: facts from web_search / fetch_url / browse_page / external sources OR from an uploaded document.",
+			Name:        "memory",
+			Description: "Reference Memory for THIS agent — your own vector-searchable scratchpad of findings worth recalling later. Pull-only: nothing auto-injects, you call this tool when the current question reminds you of something you previously figured out. Sibling tools: `knowledge_search` (read-only over uploaded files — authoritative source-of-truth), `store_fact` (Explicit Memory — short notes pre-injected on every turn).\n\n**action=\"save\"** — persist a finding. Use for COMPLICATED REFERENCE MATERIAL you MAY need later (API specs, website navigation, config recipes, working approaches, document-derived technical details). Right examples: \"Acme API uses cursor-based pagination with `after` token; max page size 100\", \"To install ffmpeg with libx264 on Ubuntu, ...\". Paragraph-length self-contained findings work best. **Use store_fact instead** when the note shapes how you respond to ANY future question (user preferences, identity facts). DO NOT save findings already retrieved via memory(action=\"search\") OR knowledge_search this turn — saving the same content again compounds noise. Required: `content`. Optional: `topic`, `subject`.\n\n**action=\"search\"** — semantic search over saved findings. Returns up to k JSON entries ranked by relevance. Reference Memory is your own derived material and may have drifted, so verify against curated sources (knowledge_search) when accuracy matters. Required: `query`. Optional: `topic`, `k`.\n\n**action=\"forget\"** — delete chunks. Two modes: pass `id` (a mem_id from a prior search) to surgically drop ONE entry — the safe path; or pass `query` (+ optional `topic`, `k`) to delete top-matching chunks — useful for bulk cleanup but a loose query nukes more than intended. When both are present, `id` wins. Operates ONLY on derived chunks; curated Knowledge is admin-managed.\n\n**action=\"help\"** — return this spec.\n\nFindings are namespaced by `topic` (snake_case slug like `acme_api`, `nginx_config`) — YOU pick the slug. Look at the \"Known topics\" block in your system prompt and reuse when applicable; mint a new snake_case slug when the subject genuinely doesn't fit. Omit `topic` on save to drop into `general`; omit on search/forget to span all topics.",
 			Parameters: map[string]ToolParam{
-				"topic": {
-					Type:        "string",
-					Description: "Snake_case topic slug (1-3 words). Reuse an existing slug when possible to keep retrieval sharp. Leave blank to inherit the turn's classified topic.",
-				},
-				"subject": {
-					Type:        "string",
-					Description: "Short heading for THIS specific finding — what the chunk's about. Example: \"Acme API rotates session tokens every 24h\". Optional; defaults to the topic slug.",
-				},
-				"content": {
-					Type:        "string",
-					Description: "The finding itself. Several sentences to a paragraph; include enough context that it'll make sense without seeing this conversation. No need to repeat the subject.",
-				},
+				"action":  {Type: "string", Description: "Which operation: save | search | forget | help."},
+				"topic":   {Type: "string", Description: "Snake_case topic slug. (save) reuse one from the \"Known topics\" block or mint a new one; omit for `general`. (search, forget) scope query to one bucket; omit to span all."},
+				"subject": {Type: "string", Description: "(save) Short heading for THIS specific finding. Example: \"Acme API rotates session tokens every 24h\". Optional; defaults to the topic slug."},
+				"content": {Type: "string", Description: "(save) The finding itself — several sentences to a paragraph. Self-contained: include enough context that it'll make sense without seeing this conversation."},
+				"query":   {Type: "string", Description: "(search, forget) Natural-language search query. The user's current question often works well, possibly trimmed to the gist. (forget) Be specific — a loose query wipes more than you intended."},
+				"k":       {Type: "number", Description: "(search default 5, cap 20; forget default 3, cap 10) Max hits to return / delete."},
+				"id":      {Type: "string", Description: "(forget) The mem_id from a memory(action=\"search\") hit. Deletes exactly that chunk; preferred when you know which entry to drop."},
 			},
-			Required: []string{"content"},
-			Caps:     []Capability{CapWrite},
+			Required: []string{"action"},
+			// CapWrite covers save + forget; search reads, but the
+			// combined tool needs the broader cap so privacy filters
+			// don't strip it from agents allowed to write.
+			Caps: []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			topic := normalizeTopic(stringArg(args, "topic"))
-			content := strings.TrimSpace(stringArg(args, "content"))
-			if content == "" {
-				return "", errors.New("content is required")
+			action := strings.TrimSpace(stringArg(args, "action"))
+			switch action {
+			case "", "help":
+				return memoryHelpText(), nil
+			case "save":
+				return t.memorySave(args)
+			case "search":
+				return t.memorySearch(args)
+			case "forget":
+				return t.memoryForget(args)
+			default:
+				return "", fmt.Errorf("unknown action %q. valid: save, search, forget, help", action)
 			}
-			// Default to the turn's classified topic when the LLM omitted
-			// or sent something that collapsed to the fallback. Keeps
-			// namespacing sharp even when the worker skips the arg.
-			if rt := t.resolveTopic(); topic == generalTopic && rt != "" {
-				topic = rt
-			}
-			subject := strings.TrimSpace(stringArg(args, "subject"))
-			if subject == "" {
-				subject = strings.TrimSpace(stringArg(args, "title"))
-			}
-			if subject == "" {
-				subject = topic
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
-			defer cancel()
-			ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
-			return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory_search.",
-				len(content), topic), nil
 		},
 	}
+}
+
+// memoryHelpText returns the same spec the description carries.
+// Kept as a separate function so the help action returns plain
+// markdown without re-quoting the description body.
+func memoryHelpText() string {
+	return `memory — usage:
+
+  action="save"   — persist a finding to Reference Memory.
+                    Required: content. Optional: topic, subject.
+  action="search" — semantic search over saved findings.
+                    Required: query. Optional: topic, k.
+  action="forget" — delete chunks. Pass id (surgical, one entry)
+                    OR query (+ optional topic, k for bulk).
+  action="help"   — show this spec.
+
+Findings live under snake_case topic slugs; reuse from the
+"Known topics" block when applicable, or omit topic to span all
+(search/forget) / land in "general" (save).
+`
+}
+
+// memorySave is the save-action implementation. Extracted so the
+// grouped memoryToolDef can route through it cleanly.
+func (t *chatTurn) memorySave(args map[string]any) (string, error) {
+	topic := normalizeTopic(stringArg(args, "topic"))
+	content := strings.TrimSpace(stringArg(args, "content"))
+	if content == "" {
+		return "", errors.New("content is required")
+	}
+	subject := strings.TrimSpace(stringArg(args, "subject"))
+	if subject == "" {
+		subject = strings.TrimSpace(stringArg(args, "title"))
+	}
+	if subject == "" {
+		subject = topic
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+	defer cancel()
+	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
+	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory(action=\"search\").",
+		len(content), topic), nil
 }
 
 // searchKnowledgeToolDef builds the read-side tool over the
@@ -1132,7 +1129,7 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 				},
 				"topic": {
 					Type:        "string",
-					Description: "Optional snake_case topic slug to scope the search. Defaults to the turn's classified topic (which is usually what you want). Supply explicitly to look in a different subject area.",
+					Description: "Optional snake_case topic slug to scope the search. Omit to search across all topics (broadest). Pass an existing slug from the \"Known topics\" block in your system prompt to narrow to a single subject area when you know which one applies.",
 				},
 				"k": {
 					Type:        "number",
@@ -1154,13 +1151,11 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 					k = 20
 				}
 			}
-			// Topic scoping: explicit arg wins; else default to the
-			// turn's classified topic so the search is sharp. Pass
-			// empty string to deliberately broaden to agent-wide.
+			// Topic scoping: the LLM picks the slug via the topic= arg
+			// (referencing the "Known topics" block in its prompt).
+			// Empty or garbage collapses to generalTopic — agent-wide
+			// retrieval without a per-subject filter.
 			topic := normalizeTopic(stringArg(args, "topic"))
-			if topic == generalTopic {
-				topic = t.resolveTopic()
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
 			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
@@ -1381,223 +1376,152 @@ func (t *chatTurn) fetchKnowledgeDocToolDef() AgentToolDef {
 	}
 }
 
-// searchMemoryToolDef builds the read-side tool over the derived
-// Memory layer — the LLM's own accumulated recollections from
-// memory_save / synthesis auto-ingest. Same ranking pass + topic
-// scoping as knowledge_search but filters to derived chunks only.
-// Closure-bound to the chatTurn.
-func (t *chatTurn) searchMemoryToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "memory_search",
-			Description: "Search THIS agent's Reference Memory — your accumulated recollections from prior turns (memory_save findings, synthesis auto-ingest). Returns up to k JSON entries ranked by relevance. Topic-scoped by default. Call this tool explicitly when the current question reminds you of something you previously figured out (an API quirk, a working approach, a prior synthesis). Treat results as fuzzier than knowledge_search — Reference Memory is derived and may have drifted, so verify against curated sources when accuracy matters.\n\nDistinct from `knowledge_search` (read-only over uploaded files — authoritative source-of-truth content; pull-only via that tool) and `list_facts` (your Explicit Memory entries, always pre-injected into your system prompt).",
-			Parameters: map[string]ToolParam{
-				"query": {
-					Type:        "string",
-					Description: "Natural-language search query. The user's current question often works well, possibly trimmed to the gist.",
-				},
-				"topic": {
-					Type:        "string",
-					Description: "Optional snake_case topic slug to scope the search. Defaults to the turn's classified topic (which is usually what you want). Supply explicitly to look in a different subject area.",
-				},
-				"k": {
-					Type:        "number",
-					Description: "Max number of hits to return (default 5, cap 20). Leave default unless you specifically want a wider net.",
-				},
-			},
-			Required: []string{"query"},
-			Caps:     []Capability{CapRead},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			query := strings.TrimSpace(stringArg(args, "query"))
-			if query == "" {
-				return "", errors.New("query is required")
-			}
-			k := 5
-			if v, ok := args["k"].(float64); ok && v > 0 {
-				k = int(v)
-				if k > 20 {
-					k = 20
-				}
-			}
-			topic := normalizeTopic(stringArg(args, "topic"))
-			if topic == generalTopic {
-				topic = t.resolveTopic()
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
-			defer cancel()
-			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
-			rawHits := len(hits)
-			filtered := hits[:0]
-			for _, h := range hits {
-				if h.Score < manualSearchMinScore {
-					continue
-				}
-				filtered = append(filtered, h)
-			}
-			hits = filtered
-			dropped := rawHits - len(hits)
-			if len(hits) == 0 {
-				if dropped > 0 {
-					return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f) — they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, manualSearchMinScore), nil
-				}
-				return "No matching derived recollections. The Memory layer is empty for this query — try knowledge_search for curated content, or proceed without prior context and call memory_save after you investigate.", nil
-			}
-			// Plain numbered format, same shape as web_search /
-			// knowledge_search. Reference Memory chunks are atomic
-			// findings — no fetch tool, but the mem_id line lets the
-			// LLM target a specific entry with memory_forget(id=...)
-			// when it needs surgical cleanup.
-			var b strings.Builder
-			for i, h := range hits {
-				if i > 0 {
-					b.WriteString("\n\n")
-				}
-				topic := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
-				if topic == "" {
-					topic = "(no topic)"
-				}
-				fmt.Fprintf(&b, "%d. %s", i+1, topic)
-				if h.Date != "" {
-					// Just the date part of the RFC3339 stamp — full
-					// timestamps are visual noise here.
-					if dt, err := time.Parse(time.RFC3339, h.Date); err == nil {
-						fmt.Fprintf(&b, " (%s)", dt.Format("2006-01-02"))
-					}
-				}
-				b.WriteString("\n")
-				fmt.Fprintf(&b, "   mem_id: %s\n   ", h.ID)
-				b.WriteString(strings.ReplaceAll(strings.TrimSpace(h.Text), "\n", "\n   "))
-			}
-			return b.String(), nil
-		},
+// memorySearch is the search-action implementation. Same ranking
+// pass + topic scoping as knowledge_search but filters to derived
+// chunks only. Returns a numbered text block with mem_ids so the
+// LLM can pass them to memory(action="forget", id=...) for
+// surgical cleanup.
+func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
+	query := strings.TrimSpace(stringArg(args, "query"))
+	if query == "" {
+		return "", errors.New("query is required")
 	}
+	k := 5
+	if v, ok := args["k"].(float64); ok && v > 0 {
+		k = int(v)
+		if k > 20 {
+			k = 20
+		}
+	}
+	topic := normalizeTopic(stringArg(args, "topic"))
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+	defer cancel()
+	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	rawHits := len(hits)
+	filtered := hits[:0]
+	for _, h := range hits {
+		if h.Score < manualSearchMinScore {
+			continue
+		}
+		filtered = append(filtered, h)
+	}
+	hits = filtered
+	dropped := rawHits - len(hits)
+	if len(hits) == 0 {
+		if dropped > 0 {
+			return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f) — they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, manualSearchMinScore), nil
+		}
+		return "No matching derived recollections. The Memory layer is empty for this query — try knowledge_search for curated content, or proceed without prior context and call memory(action=\"save\") after you investigate.", nil
+	}
+	var b strings.Builder
+	for i, h := range hits {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		topic := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
+		if topic == "" {
+			topic = "(no topic)"
+		}
+		fmt.Fprintf(&b, "%d. %s", i+1, topic)
+		if h.Date != "" {
+			if dt, err := time.Parse(time.RFC3339, h.Date); err == nil {
+				fmt.Fprintf(&b, " (%s)", dt.Format("2006-01-02"))
+			}
+		}
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "   mem_id: %s\n   ", h.ID)
+		b.WriteString(strings.ReplaceAll(strings.TrimSpace(h.Text), "\n", "\n   "))
+	}
+	return b.String(), nil
 }
 
-// forgetMemoryToolDef builds the AgentToolDef that lets the agent
-// delete its own derived chunks when they go stale or stop being
-// relevant. Operates over the Memory layer only — curated Knowledge
-// content (uploads, shared KB) is admin-managed and has no in-LLM
-// delete surface. Same scoping as memory_search (per-user,
-// per-agent, optional topic). Capped at maxForgetK matches per call
-// so a single fuzzy query can't clear the whole index — if the
-// agent really wants to wipe everything under a topic, the right
-// path is the
-// admin per-agent wipe button in the Memory modal.
-func (t *chatTurn) forgetMemoryToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "memory_forget",
-			Description: "Delete chunks from this agent's Reference Memory. Two modes: (a) pass `id` (a mem_id from memory_search) to surgically remove ONE entry — the safe path when you know the exact entry to drop; (b) pass `query` (+ optional `topic` and `k`) to delete top-matching chunks — useful for bulk cleanup but a loose query can wipe more than you intended. When both `id` and `query` are present, `id` wins. Operates ONLY on derived chunks; curated Knowledge (uploads, shared KB) is admin-managed.",
-			Parameters: map[string]ToolParam{
-				"id": {
-					Type:        "string",
-					Description: "The mem_id from a memory_search hit. Deletes exactly that chunk. Preferred when you know which entry you want to drop.",
-				},
-				"query": {
-					Type:        "string",
-					Description: "Natural-language description of what to forget. Used when `id` is not provided. Be specific — \"Acme API session token rotation policy from before 2025\" deletes the stale claim cleanly; \"Acme\" deletes anything tangentially related.",
-				},
-				"topic": {
-					Type:        "string",
-					Description: "Optional snake_case topic slug to scope query-based deletion. Defaults to the turn's classified topic. Ignored when `id` is passed.",
-				},
-				"k": {
-					Type:        "number",
-					Description: "Max matches to delete (default 3, cap 10) for query-based mode. Lower is safer. Ignored when `id` is passed.",
-				},
-			},
-			Caps: []Capability{CapWrite},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			explicitID := strings.TrimSpace(stringArg(args, "id"))
-			query := strings.TrimSpace(stringArg(args, "query"))
-			if explicitID == "" && query == "" {
-				return "", errors.New("either id or query is required")
-			}
-
-			// ID-mode: targeted delete of one chunk. Same allow predicate
-			// as searchAgentKnowledge so an LLM can't pass a mem_id it
-			// found in another context and reach across into someone
-			// else's memory store.
-			if explicitID != "" {
-				if VectorDB == nil {
-					return "", errors.New("vector store unavailable")
-				}
-				var c EmbeddedChunk
-				if !VectorDB.Get(EmbeddedChunks, explicitID, &c) {
-					return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
-				}
-				// Reconstruct allow predicate matching searchAgentKnowledge.
-				agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
-				exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
-				for _, cid := range t.agent.AttachedCollections {
-					if cid = strings.TrimSpace(cid); cid != "" {
-						exact[collectionSource(cid)] = true
-					}
-				}
-				if len(t.agent.AttachedCollections) == 0 {
-					for _, col := range ListCollections(nil, "") {
-						if IsDeploymentScope(col) {
-							exact[collectionSource(col.ID)] = true
-						}
-					}
-				}
-				inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
-				if !inScope {
-					return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
-				}
-				// Only derived chunks are LLM-deletable. Curated content
-				// (uploads, shared KB) is admin-managed.
-				if chunkProvenance(c.Source, c.ReportID) != "derived" {
-					return fmt.Sprintf("mem_id=%q points at curated content (uploaded doc / shared KB / collection), not a memory entry. memory_forget only deletes derived chunks. Curated content is admin-managed.", explicitID), nil
-				}
-				topic := strings.TrimSpace(strings.TrimPrefix(c.Section, "## "))
-				DeleteChunksByIDs(t.app.DB, []string{explicitID})
-				Log("[orchestrate.knowledge_forget] user=%q agent=%q deleted by id=%s topic=%q",
-					t.user, t.agent.ID, explicitID, topic)
-				return fmt.Sprintf("Deleted 1 memory entry — mem_id=%s, topic=%q.", explicitID, topic), nil
-			}
-
-			// Query-mode: vector-search delete.
-			k := 3
-			if v, ok := args["k"].(float64); ok && v > 0 {
-				k = int(v)
-				if k > maxForgetK {
-					k = maxForgetK
-				}
-			}
-			topic := normalizeTopic(stringArg(args, "topic"))
-			if topic == generalTopic {
-				topic = t.resolveTopic()
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
-			defer cancel()
-			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
-			if len(hits) == 0 {
-				return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query under this agent.", nil
-			}
-			ids := make([]string, 0, len(hits))
-			var b strings.Builder
-			noun := "entries"
-			if len(hits) == 1 {
-				noun = "entry"
-			}
-			fmt.Fprintf(&b, "Deleted %d memory %s:\n", len(hits), noun)
-			for i, h := range hits {
-				if h.ID == "" {
-					continue
-				}
-				ids = append(ids, h.ID)
-				topicLabel := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
-				fmt.Fprintf(&b, "%d. %s — mem_id=%s\n   %s\n", i+1, topicLabel, h.ID, knowledgeSearchExcerpt(h.Text))
-				Log("[orchestrate.knowledge_forget] user=%q agent=%q deleted chunk id=%s topic=%q score=%.3f",
-					t.user, t.agent.ID, h.ID, h.Section, h.Score)
-			}
-			DeleteChunksByIDs(t.app.DB, ids)
-			return strings.TrimRight(b.String(), "\n"), nil
-		},
+// memoryForget is the forget-action implementation. Two modes:
+// surgical (id=...) and bulk (query=...). Caps at maxForgetK so a
+// single fuzzy query can't clear the whole index — admin per-agent
+// wipe in the Memory modal is the path for bulk reset.
+func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
+	explicitID := strings.TrimSpace(stringArg(args, "id"))
+	query := strings.TrimSpace(stringArg(args, "query"))
+	if explicitID == "" && query == "" {
+		return "", errors.New("either id or query is required")
 	}
+
+	// ID-mode: targeted delete of one chunk. Same allow predicate
+	// as searchAgentKnowledge so an LLM can't pass a mem_id it
+	// found in another context and reach across into someone
+	// else's memory store.
+	if explicitID != "" {
+		if VectorDB == nil {
+			return "", errors.New("vector store unavailable")
+		}
+		var c EmbeddedChunk
+		if !VectorDB.Get(EmbeddedChunks, explicitID, &c) {
+			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
+		}
+		agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+		exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
+		for _, cid := range t.agent.AttachedCollections {
+			if cid = strings.TrimSpace(cid); cid != "" {
+				exact[collectionSource(cid)] = true
+			}
+		}
+		if len(t.agent.AttachedCollections) == 0 {
+			for _, col := range ListCollections(nil, "") {
+				if IsDeploymentScope(col) {
+					exact[collectionSource(col.ID)] = true
+				}
+			}
+		}
+		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
+		if !inScope {
+			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
+		}
+		// Only derived chunks are LLM-deletable. Curated content
+		// (uploads, shared KB) is admin-managed.
+		if chunkProvenance(c.Source, c.ReportID) != "derived" {
+			return fmt.Sprintf("mem_id=%q points at curated content (uploaded doc / shared KB / collection), not a memory entry. memory(action=\"forget\") only deletes derived chunks. Curated content is admin-managed.", explicitID), nil
+		}
+		topic := strings.TrimSpace(strings.TrimPrefix(c.Section, "## "))
+		DeleteChunksByIDs(t.app.DB, []string{explicitID})
+		Log("[orchestrate.memory.forget] user=%q agent=%q deleted by id=%s topic=%q",
+			t.user, t.agent.ID, explicitID, topic)
+		return fmt.Sprintf("Deleted 1 memory entry — mem_id=%s, topic=%q.", explicitID, topic), nil
+	}
+
+	// Query-mode: vector-search delete.
+	k := 3
+	if v, ok := args["k"].(float64); ok && v > 0 {
+		k = int(v)
+		if k > maxForgetK {
+			k = maxForgetK
+		}
+	}
+	topic := normalizeTopic(stringArg(args, "topic"))
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+	defer cancel()
+	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	if len(hits) == 0 {
+		return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query under this agent.", nil
+	}
+	ids := make([]string, 0, len(hits))
+	var b strings.Builder
+	noun := "entries"
+	if len(hits) == 1 {
+		noun = "entry"
+	}
+	fmt.Fprintf(&b, "Deleted %d memory %s:\n", len(hits), noun)
+	for i, h := range hits {
+		if h.ID == "" {
+			continue
+		}
+		ids = append(ids, h.ID)
+		topicLabel := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
+		fmt.Fprintf(&b, "%d. %s — mem_id=%s\n   %s\n", i+1, topicLabel, h.ID, knowledgeSearchExcerpt(h.Text))
+		Log("[orchestrate.memory.forget] user=%q agent=%q deleted chunk id=%s topic=%q score=%.3f",
+			t.user, t.agent.ID, h.ID, h.Section, h.Score)
+	}
+	DeleteChunksByIDs(t.app.DB, ids)
+	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 // maxForgetK caps how many chunks one knowledge_forget call can

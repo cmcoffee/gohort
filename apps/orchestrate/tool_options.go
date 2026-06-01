@@ -84,21 +84,16 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 				},
 			})
 		}
-		// Client-bridge tools from any connected gohort-desktop.
-		// Surfaced here so they're visible + toggleable per agent
-		// like any other tool. The runtime hook in
-		// resolveWorkerTools also adds them unconditionally as a
-		// safety net (so toggling them off doesn't disable the
-		// bridge mid-conversation), but per-agent presence in this
-		// modal IS the user-facing control surface.
-		for _, lt := range LocalToolsForUser(user) {
-			defs = append(defs, AgentToolDef{
-				Tool: Tool{
-					Name:        lt.Name(),
-					Description: lt.Desc(),
-				},
-			})
-		}
+		// Client-bridge tools (from_client.*) are NOT surfaced here.
+		// The runtime always includes them in the catalog whenever
+		// the user has registered a desktop (see LocalToolsForUser
+		// + resolveWorkerTools) and the desktop's per-call approval
+		// modal is the real enforcement point. A per-agent checkbox
+		// here would create a confusing UX: the LLM would see the
+		// tool in the catalog regardless of the toggle state. If a
+		// user wants to disable the bridge surface entirely, they
+		// close gohort-desktop; per-tool gating belongs on the
+		// desktop side (the approval modal).
 	}
 
 	// Use group membership to drive the section header so admins see
@@ -124,13 +119,6 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		group := capGroupLabel(d.Tool.Caps)
 		if gName, ok := memberToGroup[d.Tool.Name]; ok {
 			group = gName
-		}
-		// Client-bridge tools (from a connected gohort-desktop) get
-		// their own section. Distinct from the cap-derived groups
-		// so the user can see at a glance what's running on their
-		// machine vs the server.
-		if strings.HasPrefix(d.Tool.Name, "from_client.") {
-			group = "From your client"
 		}
 		opts = append(opts, ui.SelectOption{
 			Value: d.Tool.Name,

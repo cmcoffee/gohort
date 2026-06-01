@@ -8548,6 +8548,84 @@ const runtimeJS = `
       });
       actionsBar.appendChild(btn);
     });
+    // Copy session — registered as a built-in client action so apps
+    // can place it wherever they want in their Actions list. Closes
+    // over substituteExtras + cfg.load_url + activeSessionId so the
+    // export URL resolves the same way regardless of where the action
+    // surfaces in the UI. Apps that want the button do:
+    //   {Label: "Copy session", Method: "client", URL: "copy_session"}
+    // No-op when cfg.load_url isn't set (no export endpoint to hit).
+    if (cfg.load_url && window.uiRegisterClientAction) {
+      window.uiRegisterClientAction('copy_session', function(ctx) {
+        var btn = ctx && ctx.button;
+        if (!activeSessionId) {
+          showToast('No active session.');
+          return;
+        }
+        var loaded = substituteExtras(
+          cfg.load_url.replace('{id}', encodeURIComponent(activeSessionId))
+        );
+        if (loaded.indexOf('{agent_id}') >= 0) {
+          var agentId = '';
+          // Resolve agent_id from FOUR sources in priority order so
+          // desktop (no URL ?agent=) + browser (no body dataset) both
+          // work without depending on a single source.
+          var sel = document.querySelector('.ui-agent-extras select[name="agent_id"], .ui-agent-extras-label select');
+          if (sel && sel.value) agentId = sel.value;
+          if (!agentId) {
+            try {
+              agentId = new URL(window.location.href).searchParams.get('agent') || '';
+            } catch (_) {}
+          }
+          if (!agentId && document.body && document.body.dataset) {
+            agentId = document.body.dataset.agentId || '';
+          }
+          if (!agentId) {
+            showToast('Copy session: could not resolve agent_id. Make sure an agent is selected.');
+            return;
+          }
+          loaded = loaded.replace('{agent_id}', encodeURIComponent(agentId));
+        }
+        var qIdx = loaded.indexOf('?');
+        var path = (qIdx >= 0 ? loaded.slice(0, qIdx) : loaded) + '/export' + (qIdx >= 0 ? loaded.slice(qIdx) : '');
+        var prior = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Copying…'; }
+        fetch(path).then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        }).then(function(md) {
+          var done = function() {
+            if (btn) {
+              btn.textContent = 'Copied';
+              setTimeout(function() {
+                btn.disabled = false;
+                btn.textContent = prior;
+              }, 1100);
+            }
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(md).then(done).catch(function() {
+              fallback(md, done);
+            });
+          } else {
+            fallback(md, done);
+          }
+        }).catch(function(err) {
+          if (btn) { btn.disabled = false; btn.textContent = prior; }
+          var dispUrl = path.length > 120 ? path.slice(0, 117) + '…' : path;
+          showToast('Copy failed: ' + (err && err.message || err) + ' (url: ' + dispUrl + ')');
+        });
+        function fallback(text, done) {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); done(); } catch (_) {}
+          document.body.removeChild(ta);
+        }
+      });
+    }
     if ((cfg.actions || []).length === 0) actionsBar.style.display = 'none';
     topbar.appendChild(actionsBar);
     // statusPill removed — the in-chat thinking spinner (rendered
@@ -9028,6 +9106,10 @@ const runtimeJS = `
     if (attachBtn) inputRow.appendChild(attachBtn);
     inputRow.appendChild(sendBtn);
     inputRow.appendChild(cancelBtn);
+    // Copy session no longer auto-appended here. Apps that want it
+    // in the input row can register their own client action and place
+    // it via Actions or via ExtraHeadHTML DOM massage; built-in
+    // surface is the top-bar ToolbarAction now.
 
     var attachStrip = el('div', {class: 'ui-agent-attach-strip', style: 'display:none'});
 
@@ -9407,6 +9489,97 @@ const runtimeJS = `
       function fallback() {
         var ta = document.createElement('textarea');
         ta.value = text;
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); flash(); } catch (_) {}
+        document.body.removeChild(ta);
+      }
+    }
+
+    // copyTurnForTuning was the per-bubble "Copy turn" handler — its
+    // button has been removed in favor of the bottom-row Copy session
+    // button (which captures the same conversation in one click rather
+    // than per-turn). Function kept below for reference but unreachable;
+    // delete it once the prompt-tuning flow has been on Copy session
+    // for a release and no caller has been added back.
+    function copyTurnForTuning(bubble, btn) {
+      // Walk back to the user bubble that started this turn.
+      var userBubble = bubble;
+      while (userBubble && !userBubble.classList.contains('ui-agent-msg-user')) {
+        userBubble = userBubble.previousElementSibling;
+      }
+      if (!userBubble) {
+        window.uiAlert('No user prompt found for this turn.');
+        return;
+      }
+      var userEntry = msgEntryForBubble(userBubble);
+      var userText = (userEntry && userEntry.rawText) ||
+        (userBubble.querySelector(':scope > .ui-agent-msg-body') &&
+          userBubble.querySelector(':scope > .ui-agent-msg-body').innerText) || '';
+      var lines = ['## User', '', userText.trim(), ''];
+      // Walk forward from the user bubble through assistant bubbles
+      // until the next user (or end). Each assistant bubble becomes
+      // a round; tools attached to the bubble become subsections.
+      var roundNum = 0;
+      var next = userBubble.nextElementSibling;
+      while (next && !next.classList.contains('ui-agent-msg-user')) {
+        if (next.classList.contains('ui-agent-msg-assistant')) {
+          roundNum++;
+          lines.push('## Assistant (round ' + roundNum + ')');
+          lines.push('');
+          var body = next.querySelector(':scope > .ui-agent-msg-body');
+          var txt = body ? (body.innerText || body.textContent || '').trim() : '';
+          if (txt) {
+            lines.push(txt);
+            lines.push('');
+          }
+          var tools = next.tools || [];
+          // Markdown fence built via fromCharCode so the source-level
+          // character isn't a backtick (which would terminate the
+          // Go raw string that wraps this whole JS payload). Same
+          // workaround used at lines 4041 and 7875.
+          var BT = String.fromCharCode(96);
+          var fence = BT + BT + BT;
+          tools.forEach(function(t) {
+            lines.push('### Tool call: ' + (t.name || '(unnamed)'));
+            if (t.args !== undefined) {
+              var argsStr;
+              try { argsStr = JSON.stringify(t.args, null, 2); }
+              catch (_) { argsStr = String(t.args); }
+              lines.push('args:');
+              lines.push(fence + 'json');
+              lines.push(argsStr);
+              lines.push(fence);
+            }
+            if (t.output !== undefined && t.output !== null && t.output !== '') {
+              lines.push('result:');
+              lines.push(fence);
+              lines.push(String(t.output));
+              lines.push(fence);
+            }
+            lines.push('');
+          });
+        }
+        next = next.nextElementSibling;
+      }
+      var blob = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim() + '\n';
+      var flash = function() {
+        if (!btn) return;
+        var prior = btn.textContent;
+        btn.textContent = 'Copied';
+        setTimeout(function(){ btn.textContent = prior; }, 1100);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(blob).then(flash).catch(function() {
+          fallback();
+        });
+        return;
+      }
+      fallback();
+      function fallback() {
+        var ta = document.createElement('textarea');
+        ta.value = blob;
         ta.style.position = 'fixed'; ta.style.opacity = '0';
         document.body.appendChild(ta);
         ta.select();
@@ -10828,6 +11001,35 @@ const runtimeJS = `
                 if (m.created || m.usage) {
                   setMessageMeta(mid, {created: m.created, usage: m.usage});
                 }
+                // Replay persisted tool calls (same shape as the
+                // SESSION-mode branch below — see that comment for
+                // rationale). Skipped silently when the message has
+                // no tool_calls field.
+                var ctxToolCalls = m.tool_calls || m.ToolCalls;
+                if (m.role === 'assistant' && Array.isArray(ctxToolCalls) && ctxToolCalls.length) {
+                  var ctxEntry = msgEls[mid];
+                  var ctxHost = ctxEntry && toolHostFor(ctxEntry);
+                  if (ctxHost) {
+                    if (!ctxHost.tools) ctxHost.tools = [];
+                    ctxToolCalls.forEach(function(tc, idx) {
+                      var argsStr = '';
+                      try { argsStr = JSON.stringify(tc.args || tc.Args || {}); }
+                      catch (_) { argsStr = String(tc.args || tc.Args || ''); }
+                      var resultText = tc.result || tc.Result || '';
+                      var errText = tc.err || tc.Err || '';
+                      var output = errText ? ('ERROR: ' + errText) : resultText;
+                      var cached = tc.cached || tc.Cached;
+                      ctxHost.tools.push({
+                        call_id: 'replay-' + mid + '-' + idx,
+                        name: (tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
+                        args: argsStr,
+                        output: String(output == null ? '' : output),
+                        kind: '',
+                      });
+                    });
+                    attachAgentToolToggle(ctxHost);
+                  }
+                }
               });
             }
             if (hasList) loadSessions();
@@ -10890,6 +11092,40 @@ const runtimeJS = `
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
             if (m.created || m.usage) {
               setMessageMeta(mid, {created: m.created, usage: m.usage});
+            }
+            // Replay persisted tool calls onto this bubble's host.
+            // The live SSE path (tool_call / tool_result events)
+            // builds the same host.tools[] structure; on replay the
+            // server has already paired call+result into one
+            // PersistedToolCall per entry, so we collapse the two
+            // live events into a single push and refresh the toggle
+            // once at the end. Without this, reloading a session
+            // showed prose but no chips for the tool activity the
+            // user watched live.
+            var toolCalls = m.tool_calls || m.ToolCalls;
+            if (m.role === 'assistant' && Array.isArray(toolCalls) && toolCalls.length) {
+              var rmEntry = msgEls[mid];
+              var rmHost = rmEntry && toolHostFor(rmEntry);
+              if (rmHost) {
+                if (!rmHost.tools) rmHost.tools = [];
+                toolCalls.forEach(function(tc, idx) {
+                  var argsStr = '';
+                  try { argsStr = JSON.stringify(tc.args || tc.Args || {}); }
+                  catch (_) { argsStr = String(tc.args || tc.Args || ''); }
+                  var resultText = tc.result || tc.Result || '';
+                  var errText = tc.err || tc.Err || '';
+                  var output = errText ? ('ERROR: ' + errText) : resultText;
+                  var cached = tc.cached || tc.Cached;
+                  rmHost.tools.push({
+                    call_id: 'replay-' + mid + '-' + idx,
+                    name: (tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
+                    args: argsStr,
+                    output: String(output == null ? '' : output),
+                    kind: '',
+                  });
+                });
+                attachAgentToolToggle(rmHost);
+              }
             }
             // App-registered replay hooks let app code decorate
             // replayed bubbles (e.g. swap an intake-derived user msg's
@@ -12466,6 +12702,11 @@ const runtimeJS = `
     // etc.) without a second round-trip. Populated by every
     // loadSessions() call; renderActions reads it on demand.
     var sessionsByID = {};
+    // sessionSources mirrors the one declared in agent_loop_panel.
+    // pipeline_panel is its own components.X scope, so this needs
+    // its own var or WebKit throws "Can't find variable:
+    // sessionSources" when loadSessions assigns to it below.
+    var sessionSources = {};
     function loadSessions() {
       fetchJSON(cfg.sessions_list_url).then(function(list) {
         sideList.innerHTML = '';

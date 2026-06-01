@@ -383,9 +383,20 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 			secureCache = Secure().BuildTools(sess)
 			secureBuilt = true
 		}
+		// Legacy alias: pre-0.3.1 the secure-API tools were named
+		// call_<credential>. They're now fetch_url_<credential> for
+		// shape parity with fetch_url. Old AllowedTools lists, old
+		// pipeline_steps, and authored temp tools that reference the
+		// legacy name still resolve here so the rename doesn't break
+		// existing deployments. Drop this fallback when callers
+		// have all been migrated.
+		lookupName := name
+		if strings.HasPrefix(lookupName, "call_") && lookupName != "call_no_auth" {
+			lookupName = "fetch_url_" + strings.TrimPrefix(lookupName, "call_")
+		}
 		var found *AgentToolDef
 		for i := range secureCache {
-			if secureCache[i].Tool.Name == name {
+			if secureCache[i].Tool.Name == lookupName {
 				found = &secureCache[i]
 				break
 			}
@@ -396,6 +407,20 @@ func GetAgentToolsWithSession(sess *ToolSession, names ...string) ([]AgentToolDe
 		tools = append(tools, *found)
 	}
 	return tools, nil
+}
+
+// SecureToolLegacyAlias translates a legacy call_<credential> tool
+// name to its current fetch_url_<credential> form. Returns name
+// unchanged for anything that isn't a legacy call_* reference, or
+// for the special call_no_auth case (which no longer has a direct
+// tool — fetch_url covers it). Lookup paths that accept tool names
+// from authored records / persisted AllowedTools should pass them
+// through this before matching against the live catalog.
+func SecureToolLegacyAlias(name string) string {
+	if strings.HasPrefix(name, "call_") && name != "call_no_auth" {
+		return "fetch_url_" + strings.TrimPrefix(name, "call_")
+	}
+	return name
 }
 
 // BlockedTools is the set of tool names that are never exposed in chat,

@@ -181,7 +181,11 @@ func renderSessionMarkdown(agent AgentRecord, sess ChatSession) string {
 					if len(argsStr) > 400 {
 						argsStr = argsStr[:400] + "… [truncated]"
 					}
-					fmt.Fprintf(&b, "- 🔧 `%s(%s)`\n", tc.Name, argsStr)
+					marker := ""
+					if tc.Cached {
+						marker = " ♻ cached"
+					}
+					fmt.Fprintf(&b, "- 🔧 `%s(%s)`%s\n", tc.Name, argsStr, marker)
 					if tc.Err != "" {
 						fmt.Fprintf(&b, "  ↳ ERROR: %s\n", tc.Err)
 					} else if tc.Result != "" {

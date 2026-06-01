@@ -237,24 +237,16 @@ type chatTurn struct {
 	// t.inferredOff() returns the effective state. The Knowledge layer
 	// (uploaded files) and Explicit Memory (facts) are unaffected.
 	inferredDisabled bool
-	isNewSession     bool     // first turn for this session; gates background title generation
-	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
+	isNewSession     bool // first turn for this session; gates background title generation
+	userImages [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 
-	// topic is the snake_case slug classified from this turn's user
-	// message. Scopes knowledge save/search to a per-subject bucket
-	// so retrieval stays sharp as the agent accumulates findings
-	// across unrelated topics. Read by the knowledge tool handlers
-	// (default arg), pre-plan auto-search, and consolidation, ALWAYS
-	// via resolveTopic() — never the field directly — because the
-	// classify call now runs CONCURRENTLY with round-1 planning
-	// (handleSend launches it into topicCh) rather than blocking
-	// before the response. resolveTopic blocks on topicCh exactly
-	// once, the first time a caller actually needs the topic; by
-	// then the classify worker call has almost always finished, so
-	// it adds no perceptible latency. Empty → generalTopic fallback.
-	topic     string
-	topicCh   chan string
-	topicOnce sync.Once
+	// topic is the snake_case slug used to scope memory_save /
+	// memory_search to a per-subject bucket. The LLM picks the slug
+	// via the topic= arg when it calls those tools — there is no
+	// auto-classifier. Empty defaults to generalTopic. Stays on the
+	// turn for sub-agent dispatches that want to inherit a parent's
+	// scope (agents_grouped_tool.go:run carries it forward).
+	topic string
 
 	// staticTempToolNames is the set of persistent temp tool names
 	// that were included in the orchestrator's static catalog at
@@ -281,15 +273,6 @@ type chatTurn struct {
 	// (already activity-wrapped) AgentToolDef, so load_tool can return
 	// the schema + mark it loaded without rebuilding the temp-tool set.
 	lazyCustomToolDefs map[string]AgentToolDef
-
-	// builderPinnedTools is the set of Builder's authoring tool names
-	// (create_agent, add_tool, skill_def, …) that must survive the
-	// per-turn classifier-trim. They're appended to the worker pool in
-	// resolveWorkerTools, but without pinning a research-flavored message
-	// would trim them out — leaving Builder unable to author and prone to
-	// delegating via `agents` instead of doing the work itself. Empty for
-	// non-Builder agents. Read by runPlan's classifierTrimTools call.
-	builderPinnedTools map[string]bool
 
 	// activeWorkspaceID carries the session's active managed-workspace ID
 	// ACROSS the per-step / inline sessions of a single turn. Each call to
@@ -372,15 +355,13 @@ type chatTurn struct {
 	explorerMode   bool
 	explorerReason string
 
-	// Skills active for this turn — resolved once on first call to
-	// activeSkillsForTurn, cached so the system prompt assembly +
-	// catalog union both see the same set. skillActivations carries
-	// the classifier's reasoning (which trigger matched, what the
-	// score was) — surfaced in the activity pane for confidence
-	// visibility.
-	skillsResolved   bool
-	skillsActive     []SkillRecord
-	skillActivations []SkillActivation
+	// Skills the LLM has activated this turn via activate_skill. Each
+	// entry's instructions + AllowedTools are surfaced via the tool
+	// result (instructions) and the per-round catalog union
+	// (tools). Starts empty every turn — there is no auto-classifier;
+	// activation requires an explicit tool call. Tracked so the
+	// "Available skills" block can hide already-activated entries.
+	skillsActive []SkillRecord
 
 	// Per-turn tool log + dedup cache. Wrapped handlers append to
 	// the log on first call and short-circuit to the cached result
@@ -389,6 +370,15 @@ type chatTurn struct {
 	// already returned Y" and skip the round entirely.
 	toolMu    sync.Mutex
 	toolCalls []toolCallRecord
+	// lastBubbleToolIdx tracks how many tool calls had fired the
+	// last time captureMidTurnBubble took a snapshot. Subsequent
+	// captures slice from this index forward so each mid-turn bubble
+	// only carries the calls that fired AFTER the previous bubble's
+	// text — attributing each call to the assistant message that
+	// triggered it. persistedToolCalls (the final-message helper)
+	// reads from the same index so the final message picks up any
+	// trailing calls without double-counting earlier ones.
+	lastBubbleToolIdx int
 
 	// userDocsThisTurn flips true when the inbound chat send carried
 	// at least one extracted document (PDF/DOCX/audio/text). Used by
@@ -426,6 +416,7 @@ type toolCallRecord struct {
 	Args   map[string]any
 	Result string
 	Err    string // set when the original call failed
+	Cached bool   // true when the wrapper returned a cached body (no fresh dispatch)
 }
 
 // isNetworkTool reports whether a registered ChatTool contacts the
@@ -458,43 +449,40 @@ func isNetworkTool(ct ChatTool) bool {
 // something, no framework-driven capture. The loop-break gate
 // this function fed isn't needed anymore.)
 
-// appendActiveSkills folds the cached-active skills' instructions
-// + per-skill corpus chunks onto the supplied system prompt and
-// returns the result. Shared by the orchestrator round and the
-// synthesis call so the user-facing reply gets the same skill
-// voice the planning round saw.
-//
-// Builder is excluded upstream (activeSkillsForTurn returns nil
-// for the Builder seed), so this is a no-op for Builder turns.
-func (t *chatTurn) appendActiveSkills(sys string, msgs []ChatMessage) string {
-	skills := t.activeSkillsForTurn(msgs)
-	if len(skills) == 0 {
+// appendActiveSkills folds the instructions of any skills the LLM
+// has activated this turn (via activate_skill) onto the supplied
+// system prompt. Shared by the orchestrator round and the synthesis
+// call so the user-facing reply gets the same skill voice the
+// planning round saw. No-op when skillsActive is empty (the common
+// case — most turns activate zero skills).
+func (t *chatTurn) appendActiveSkills(sys string, _ []ChatMessage) string {
+	// Iterates t.skillsActive directly — every entry got there via
+	// the LLM's activate_skill tool call. No classifier, no
+	// per-turn evaluation; the LLM owns whether a skill is active.
+	// Used by the synthesis pass so any skill activated mid-turn
+	// also shapes the user-facing reply (the orchestrator round
+	// reads the skill via the tool result in conversation history;
+	// synthesis builds a fresh system prompt without that history,
+	// so we re-inject here).
+	if len(t.skillsActive) == 0 {
 		return sys
 	}
-	for _, s := range skills {
+	for _, s := range t.skillsActive {
 		section := SkillPromptSection(s)
 		sys += section
-		Debug("[orchestrate.skills] injected section for %q (%d chars):\n%s", s.Name, len(section), section)
-		// Skill corpus injection removed — skills no longer carry
-		// chunks (no SelfTraining, no AttachedCollections). The
-		// section above is the full payload now.
-		Log("[orchestrate.skills] activated skill %q for turn (agent=%s, section=%d chars)", s.Name, t.agent.ID, len(section))
+		Debug("[orchestrate.skills] injected section for %q (%d chars)", s.Name, len(section))
 	}
 	return sys
 }
 
 // renderAvailableSkillsBlock produces a compact "Available skills"
-// section listing skills the user has authored that are NOT already
-// active this turn. Always-in-prompt so the LLM can recognize when
-// the conversation drifts into a skill's domain that the classifier
-// missed (e.g. a follow-up "were you talking about X or Y?" without
-// trigger words) and pull it in via the activate_skill tool. Empty
-// string when DisableSkills is on, the user has no skills, or every
-// skill is already active.
-//
-// Listing format mirrors the facts block: one line per entry,
-// **name** — one-sentence description. Description is truncated to
-// keep prompt cost bounded as the user's skill count grows.
+// section listing every skill the agent can reach (via AllowedSkills)
+// that's NOT already active this turn. Parallel to the
+// "Available agents" block — same shape, same activation pattern:
+// LLM reads the catalog and pulls one in via activate_skill(name)
+// when it judges the current conversation needs the skill's
+// instructions or tools. Empty string when DisableSkills is on,
+// AllowedSkills is empty, or every allowed skill is already active.
 func (t *chatTurn) renderAvailableSkillsBlock() string {
 	if t == nil || t.agent.DisableSkills {
 		return ""
@@ -535,7 +523,7 @@ func (t *chatTurn) renderAvailableSkillsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available skills\n\n")
-	b.WriteString("Skills you can pull in via `activate_skill(name)` when the conversation clearly enters a domain a listed skill covers. Don't activate speculatively — only when the current question or topic shift would benefit from the skill's instructions / tools. Format: **name** — one-sentence purpose.\n\n")
+	b.WriteString("Skills you can pull in via `activate_skill(name)` when the current turn clearly enters a domain a listed skill covers. Don't activate speculatively — only when the question or topic would benefit from the skill's instructions / tools. Once activated, the skill's instructions arrive in the tool result and its tools join your catalog for the rest of the turn. Format: **name** — one-sentence purpose.\n\n")
 	for _, s := range available {
 		desc := strings.TrimSpace(s.Description)
 		if len(desc) > 140 {
@@ -553,98 +541,15 @@ func (t *chatTurn) renderAvailableSkillsBlock() string {
 	return b.String()
 }
 
-// classifierTrimTools shrinks an agent's default-pool tool surface
-// to just the top-K tools whose descriptions match the user's
-// latest message. The framework essentials (knowTools — control,
-// knowledge, memory) bypass this filter entirely; they're always-
-// on. This is the catalog-saturation fix: instead of dumping 40+
-// tools on the LLM each turn, classifier picks the ~8 most likely
-// to be useful for THIS message, and find_tools (an always-on
-// meta-tool) is the LLM's escape hatch when the classifier misses
-// the user's intent.
-//
-// Returns the input slices unchanged when:
-//   - tools list is small enough not to bother (<= classifierKeepBudget)
-//   - no user message is available to embed
-//   - the embedder is offline (RelevantTools returns nil — we keep
-//     the full surface so the agent still works)
-//
-// Tools surfaced from the classifier always include the high-score
-// matches first; ties get stable ordering by name. Anything below
-// threshold OR beyond k is dropped from THIS turn's catalog but
-// still callable via find_tools.
-func classifierTrimTools(ctx context.Context, msgs []ChatMessage, tools []AgentToolDef, names []string, alwaysKeep map[string]bool) ([]AgentToolDef, []string) {
-	if len(tools) <= classifierKeepBudget {
-		return tools, names
-	}
-	query := latestUserMessageText(msgs)
-	if query == "" {
-		return tools, names
-	}
-	hits := RelevantTools(ctx, query, classifierKeepBudget, classifierThreshold)
-	if len(hits) == 0 {
-		// Embedder offline OR nothing matched above threshold —
-		// keep full surface rather than ship an empty catalog.
-		return tools, names
-	}
-	keep := make(map[string]bool, len(hits))
-	for _, h := range hits {
-		keep[h.Name] = true
-	}
-	keptTools := tools[:0]
-	keptNames := names[:0]
-	for i, t := range tools {
-		// Always preserve framework-tagged tools. They're excluded
-		// from the embedding index by design (find_tools doesn't
-		// surface itself from a "search for tools" query, etc.),
-		// so they'd never be in `keep` — but they're always-on
-		// safety nets and have to stay in the catalog regardless
-		// of what the classifier matched this turn.
-		if keep[t.Tool.Name] || IsFrameworkToolDef(t) || alwaysKeep[t.Tool.Name] {
-			keptTools = append(keptTools, t)
-			if i < len(names) {
-				keptNames = append(keptNames, names[i])
-			}
-		}
-	}
-	return keptTools, keptNames
-}
-
 // IsFrameworkToolDef reports whether an AgentToolDef wraps a
-// framework-tagged tool. We can't IsFrameworkTool() the AgentToolDef
-// directly because the wrapping decorator hides the underlying
-// ChatTool's interface; the registered name is the way back to
-// the source tool for the check.
+// framework-tagged tool. Kept after the per-turn classifier-trim was
+// ripped out (find_tools still lives in the registry and uses the
+// framework flag to avoid recommending itself).
 func IsFrameworkToolDef(td AgentToolDef) bool {
 	if ct, ok := LookupChatTool(td.Tool.Name); ok {
 		return IsFrameworkTool(ct)
 	}
 	return false
-}
-
-// classifierKeepBudget caps how many tools the classifier surfaces
-// per turn. 8 fits comfortably alongside the always-on essentials
-// (~12 tools — control + knowledge + memory + framework meta) for a
-// ~20-tool round-0 catalog, well within local-model tolerance.
-const classifierKeepBudget = 8
-
-// classifierThreshold is the minimum cosine similarity for a tool
-// to be surfaced from classifier match. Modest — high enough to
-// drop tools genuinely unrelated to the message, low enough to
-// surface plausibly-relevant tools without missing obvious matches.
-const classifierThreshold = 0.30
-
-// latestUserMessageText returns the most recent user-role message's
-// text content, or "" if there isn't one. Skips any role that isn't
-// "user" so an assistant-only history (rare; usually only on the
-// first turn before the user has spoken) doesn't crash the embed.
-func latestUserMessageText(msgs []ChatMessage) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			return strings.TrimSpace(msgs[i].Content)
-		}
-	}
-	return ""
 }
 
 // fleetView returns the (db, user) pair to use for agent-record
@@ -748,7 +653,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available agents\n\n")
-	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST — answer yourself only when no agent's description matches the question.** Each one is a focused brain with its own persona, tool surface, and reference material; they handle their domains better than you will from general knowledge.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the question or follow-up>\")`. The dispatched agent **retains its conversation across calls within this session** — repeated dispatches to the same agent see prior turns as history, so you can ask follow-ups (\"can you go deeper on point 3?\", \"what about X variant?\") without re-explaining the original context. Integrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
+	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST — answer yourself only when no agent's description matches the question.** Each one is a focused brain with its own persona, tool surface, and reference material; they handle their domains better than you will from general knowledge.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **Each dispatch is stateless** — the agent has no memory of prior dispatches in this session. When you need a follow-up (\"go deeper on point 3\", \"what about X variant?\"), include the prior context in the brief itself: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
 	for _, a := range available {
 		desc := strings.TrimSpace(a.Description)
 		if len(desc) > 140 {
@@ -823,6 +728,31 @@ func (t *chatTurn) renderBuilderExistingToolsBlock() string {
 	return b.String()
 }
 
+// renderKnownTopicsBlock lists the snake_case topic slugs this
+// (user, agent) has already used for memory_save. Surfaced so the
+// LLM reuses an existing slug instead of minting near-duplicates
+// when it calls memory_save / memory_search. Replaces the per-turn
+// classifier — the LLM picks the slug now, not a side worker call.
+// Empty when there's no accumulator yet.
+func (t *chatTurn) renderKnownTopicsBlock() string {
+	if t == nil || t.app == nil || t.app.DB == nil {
+		return ""
+	}
+	topics := listAgentTopics(t.app.DB, t.user, t.agent.ID)
+	if len(topics) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Known topics\n\n")
+	b.WriteString("Snake_case slugs already used for memory_save in this agent's bucket. Reuse one when the current finding fits — picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n")
+	for _, name := range topics {
+		b.WriteString("- ")
+		b.WriteString(name)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // activateSkillToolDef builds the per-turn activate_skill tool.
 // Looks up a skill by name (case-insensitive), appends it to the
 // turn's active set, and returns the skill's instructions as the
@@ -886,12 +816,7 @@ func (t *chatTurn) activateSkillToolDef() AgentToolDef {
 				}
 			}
 			t.skillsActive = append(t.skillsActive, *found)
-			t.skillActivations = append(t.skillActivations, SkillActivation{
-				Skill:  *found,
-				Reason: "manual",
-				Score:  1.0,
-			})
-			Log("[orchestrate.skills] manual activation of %q for agent=%s user=%s via activate_skill", found.Name, t.agent.ID, t.user)
+			Log("[orchestrate.skills] activate_skill %q (agent=%s user=%s)", found.Name, t.agent.ID, t.user)
 			body := strings.TrimSpace(found.Instructions)
 			if body == "" {
 				body = "(this skill has no instructions body — its value is in attached tools / corpus.)"
@@ -1544,24 +1469,17 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			extra = builderWorkerResearchTools(sess)
 		}
 		tools = append(tools, extra...)
-		// Pin every builder-internal tool past the classifier-trim:
-		// authoring IS Builder's job, so create_agent / add_tool /
-		// skill_def / tool_def / collections / call_<cred> must always
-		// be in its catalog regardless of what this turn's message
-		// happens to match. Without this they get trimmed on a
-		// research-flavored turn and Builder, missing its tools, falls
-		// back to delegating via `agents`.
-		t.builderPinnedTools = make(map[string]bool, len(extra))
 		for _, td := range extra {
 			toolNames = append(toolNames, td.Tool.Name)
-			t.builderPinnedTools[td.Tool.Name] = true
 		}
 	}
 	// Active skills can bring extra tools into the catalog. Resolve
 	// each one through the same registry path — missing names are
 	// silently dropped (e.g. a skill that names create_agent on a
 	// non-Builder agent just doesn't add it, preserving exclusivity).
-	if skills := t.activeSkillsForTurn(nil); len(skills) > 0 {
+	// skillsActive starts empty and only grows when the LLM calls
+	// activate_skill; no auto-classification.
+	if skills := t.skillsActive; len(skills) > 0 {
 		have := make(map[string]bool, len(toolNames))
 		for _, n := range toolNames {
 			have[n] = true
@@ -1597,14 +1515,18 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			}
 		}
 	}
-	// Local tools from any connected gohort-desktop clients for the
-	// REQUESTING user. Always-allowed: keyed off the chat user, not
-	// the agent owner, so seed agents (Chat) get them too, and
-	// unconditional vs AllowedTools so the user doesn't need to
-	// toggle them per-agent. De-duped against tools already added
-	// via AllowedTools (in case a previous version persisted the
-	// local.* name into the allowlist) so the LLM doesn't see the
-	// same entry twice.
+	// Local tools from the user's gohort-desktop surface. Always added
+	// to the catalog as long as LocalToolsForUser returns anything —
+	// the user has at some point registered a desktop and announced
+	// these tools. When the desktop is offline at call time, the
+	// tool's wrapper returns a clean "open your desktop" error so the
+	// LLM can relay that to the user; the catalog itself doesn't
+	// churn as the desktop connects / disconnects. The approval
+	// modal on the desktop is the enforcement point — only someone
+	// at the desktop can approve a call, so a browser session asking
+	// "screenshot my Mac" still requires the Mac's user to consent.
+	// Keyed off the chat user (not the agent owner) so seed agents
+	// (Chat) get the surface for whoever is chatting.
 	have := map[string]bool{}
 	for _, n := range toolNames {
 		have[n] = true
@@ -1859,6 +1781,19 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 						t.emitToolResult(msgID, callID, name, cached, nil)
 					}
 				}
+				// Persist cache-hit calls. The live UI shows them via
+				// the cmd/inline chip emissions above; without this
+				// record, the saved transcript + Copy session export
+				// drop them silently — same call visible to the user
+				// at the time, invisible to anyone reading the log
+				// afterwards. Cached=true distinguishes from a fresh
+				// dispatch so a downstream consumer can tell.
+				t.recordToolCall(toolCallRecord{
+					Name:   name,
+					Args:   args,
+					Result: cached,
+					Cached: true,
+				})
 				return cached, nil
 			}
 			// Dispatch-cap path — refuse the Nth identical (name, args)
@@ -1894,6 +1829,17 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 							"text": "⛔ " + callLabel + " refused (dispatch cap)",
 						})
 					}
+					// Persist refused dispatches too — they're real LLM
+					// attempts that consumed budget. Without recording,
+					// the saved transcript shows N calls, the export
+					// reader is confused about where the "you've already
+					// dispatched" feedback came from. Err carries the
+					// refusal message so it renders as an error row.
+					t.recordToolCall(toolCallRecord{
+						Name: name,
+						Args: args,
+						Err:  msg,
+					})
 					return msg, nil
 				}
 				t.dispatchCounts[key] = prior + 1
@@ -2449,23 +2395,16 @@ func (t *chatTurn) emitAck(ctx context.Context, userMsg string) {
 	t.emitStatus(ack)
 }
 
-// resolveTopic returns the turn's classified knowledge topic,
-// blocking on the concurrent classify (topicCh) the first time a
-// caller needs it. Subsequent calls return the cached value. The
-// classify is launched in handleSend at turn start so it overlaps
-// round-1 planning — by the time a worker step or knowledge tool
-// reads the topic, the slug is almost always already in the
-// channel, so this resolves instantly. Falls back to generalTopic
-// when classification was never started or returned empty.
+// resolveTopic returns the turn's knowledge topic. With the per-turn
+// classifier removed, this is just the value passed at chatTurn
+// construction (sub-agent dispatches set it from the parent) or
+// generalTopic. Kept as a method so callers don't reach into the
+// field directly — leaves room to evolve scope without churning
+// every call site.
 func (t *chatTurn) resolveTopic() string {
-	t.topicOnce.Do(func() {
-		if t.topicCh != nil {
-			t.topic = <-t.topicCh
-		}
-		if t.topic == "" {
-			t.topic = generalTopic
-		}
-	})
+	if t == nil || t.topic == "" {
+		return generalTopic
+	}
 	return t.topic
 }
 
@@ -2544,51 +2483,6 @@ Before reaching for web_search / fetch_url, ask: "Does this question require inf
 If results from different documents disagree on a specific point, surface the conflict ("Doc A says X but Doc B says Y") rather than averaging or silently picking one.`
 }
 
-// emitSkillActivations reports which skills the classifier picked +
-// the confidence per skill. One activity row per skill so the user
-// can see WHY each one activated — trigger phrase or embedding
-// similarity — and decide whether the classifier got it right.
-func (t *chatTurn) emitSkillActivations(acts []SkillActivation) {
-	if len(acts) == 0 {
-		return
-	}
-	// Short summary line first.
-	names := make([]string, 0, len(acts))
-	for _, a := range acts {
-		names = append(names, a.Skill.Name)
-	}
-	t.sse.Send(map[string]any{
-		"kind": "activity",
-		"type": "cmd",
-		"id":   activityCheapID(),
-		"text": fmt.Sprintf("Skills activated (%d): %s", len(acts), strings.Join(names, ", ")),
-	})
-	// Per-skill detail with the classifier's reasoning.
-	for _, a := range acts {
-		var line string
-		switch a.Reason {
-		case "trigger":
-			if a.Score > 0 {
-				line = fmt.Sprintf("  [%s] trigger=%q gatekeeper=%.2f", a.Skill.Name, a.Trigger, a.Score)
-			} else {
-				// L1 trusted without gatekeeper (short message or
-				// missing embedding).
-				line = fmt.Sprintf("  [%s] trigger=%q (no gatekeeper — embeddings off or msg short)", a.Skill.Name, a.Trigger)
-			}
-		case "embedding":
-			line = fmt.Sprintf("  [%s] embedding=%.2f", a.Skill.Name, a.Score)
-		default:
-			line = fmt.Sprintf("  [%s] %s score=%.2f", a.Skill.Name, a.Reason, a.Score)
-		}
-		t.sse.Send(map[string]any{
-			"kind": "activity",
-			"type": "output",
-			"id":   activityCheapID(),
-			"text": line,
-		})
-	}
-}
-
 // facts loads the agent's structured key/value Explicit Memory entries
 // (the always-in-prompt facts layer). Re-read every call — cheap and
 // ensures store_fact mid-turn lands in subsequent worker steps.
@@ -2615,81 +2509,23 @@ func (t *chatTurn) gatedPersona(prompt string) string {
 	gate := append([]string{
 		// Framework always-on tools — sections that depend on these
 		// never get stripped regardless of admin allowlist.
-		"plan_set", "plan_get", "plan_update", "plan_clear",
+		"plan_set",
 		"ask_user", "ask_user_form", "respond_directly",
-		"knowledge_save", "knowledge_search", "fetch_knowledge_doc", "get_report",
+		"knowledge_search", "fetch_knowledge_doc", "get_report",
+		"memory",
 		"store_fact", "forget_fact", "list_facts",
 	}, t.agent.AllowedTools...)
 	return StripPromptSectionsForTools(prompt, gate)
 }
 
-// activeSkillsForTurn runs the skills classifier against the latest
-// user message in this turn and returns the skills to activate.
-// Cached on the chatTurn so runPlan + downstream worker steps see
-// the same set — skills shouldn't drift mid-turn.
-//
-// Only fires once per turn. Builder is excluded — its prompt is
-// stateless-and-locked, so adding skill addendums on top of its
-// curated persona breaks the lockdown invariant.
-//
-// msgs is optional — passed from runPlan where it's available; the
-// worker-step path passes nil and we fall back to t.session.Messages.
-func (t *chatTurn) activeSkillsForTurn(msgs []ChatMessage) []SkillRecord {
-	if t.skillsResolved {
-		return t.skillsActive
-	}
-	t.skillsResolved = true
-	if isBuilderAgent(t.agent.ID) {
-		return nil
-	}
-	// Skill suppression — two gates, both treated as "no skills this turn":
-	//   1. Agent-level DisableSkills (config) — for agents whose job is
-	//      to faithfully read a specific corpus; auto-activated skills
-	//      would smuggle in their own knowledge and contaminate output.
-	//   2. inferredOff (per-turn Clean toggle OR DisableInferred) —
-	//      skills emit derived chunks via self-training, which is
-	//      exactly the kind of material Reference Memory governs.
-	//      If Inferred is off, suppress the classifier too.
-	if t.agent.DisableSkills || t.inferredOff() {
-		return nil
-	}
-	if msgs == nil && t.session != nil {
-		msgs = t.session.Messages
-	}
-	latestUserMsg := ""
-	lastAssistantMsg := ""
-	// Walk backward — record the most recent user message AND the most
-	// recent assistant message (used as priorContext for the skill
-	// classifier so follow-ups like "were you talking about X or Y?"
-	// can still activate the skill that was active in the prior turn).
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if latestUserMsg == "" && msgs[i].Role == "user" {
-			latestUserMsg = msgs[i].Content
-		}
-		if lastAssistantMsg == "" && msgs[i].Role == "assistant" {
-			lastAssistantMsg = msgs[i].Content
-		}
-		if latestUserMsg != "" && lastAssistantMsg != "" {
-			break
-		}
-	}
-	if latestUserMsg == "" {
-		return nil
-	}
-	// Attachment filenames land in the message text via
-	// FormatAttachmentPreamble's headers, so triggers can match
-	// `.pdf` etc. against the text directly — no separate
-	// attachment list needed.
-	t.skillActivations = ActiveSkillsWithScores(t.udb, t.user, latestUserMsg, lastAssistantMsg, nil, t.agent.AllowedSkills)
-	t.skillsActive = make([]SkillRecord, 0, len(t.skillActivations))
-	for _, a := range t.skillActivations {
-		t.skillsActive = append(t.skillsActive, a.Skill)
-	}
-	if len(t.skillActivations) > 0 {
-		t.emitSkillActivations(t.skillActivations)
-	}
-	return t.skillsActive
-}
+// (The auto-classifier — activeSkillsForTurn + ActiveSkillsWithScores
+// + trigger/embedding/gatekeeper layers — was removed. Skills now
+// activate ONLY when the LLM calls activate_skill(name). The
+// previous design auto-fired skills via a stateless classifier
+// against the latest user message, which mid-conversation drift
+// silently changed the agent's behavior with no LLM awareness.
+// LLM-driven activation makes the choice visible in the activity
+// log alongside every other tool call.)
 
 // toolCallKey is the dedup key for the per-turn cache. JSON-marshal
 // in sorted-key order via encoding/json's deterministic map output so
@@ -2739,13 +2575,53 @@ func (t *chatTurn) captureMidTurnBubble(text string) {
 	if trimmed == "" {
 		return
 	}
+	// Snapshot the tool calls that have fired SINCE the previous mid-
+	// turn bubble was captured. This attributes each tool call to the
+	// assistant message that triggered it, instead of dumping all of
+	// them onto the final message — which made the export almost
+	// useless for tuning because you couldn't tell which call followed
+	// which piece of reasoning.
+	//
+	// Hold both mutexes briefly to take a consistent slice + index
+	// advance. toolMu first to match the lock order used elsewhere.
+	t.toolMu.Lock()
+	calls := t.persistedToolCallsFromUnlocked(t.lastBubbleToolIdx)
+	t.lastBubbleToolIdx = len(t.toolCalls)
+	t.toolMu.Unlock()
 	t.bubblesMu.Lock()
 	t.midTurnBubbles = append(t.midTurnBubbles, ChatMessage{
-		Role:    "assistant",
-		Content: trimmed,
-		Created: time.Now(),
+		Role:      "assistant",
+		Content:   trimmed,
+		Created:   time.Now(),
+		ToolCalls: calls,
 	})
 	t.bubblesMu.Unlock()
+}
+
+// persistedToolCallsFromUnlocked returns the slice of tool calls from
+// index `from` onward, converted to the persisted shape. Caller MUST
+// hold toolMu. Used by captureMidTurnBubble to attribute calls to the
+// specific assistant message that triggered them, and by
+// persistedToolCalls (the existing helper) to return calls since the
+// LAST mid-turn snapshot for the FINAL assistant message.
+func (t *chatTurn) persistedToolCallsFromUnlocked(from int) []PersistedToolCall {
+	if from < 0 {
+		from = 0
+	}
+	if from >= len(t.toolCalls) {
+		return nil
+	}
+	out := make([]PersistedToolCall, 0, len(t.toolCalls)-from)
+	for _, rec := range t.toolCalls[from:] {
+		out = append(out, PersistedToolCall{
+			Name:   rec.Name,
+			Args:   rec.Args,
+			Result: rec.Result,
+			Err:    rec.Err,
+			Cached: rec.Cached,
+		})
+	}
+	return out
 }
 
 // drainMidTurnBubbles returns all bubbles captured so far and clears
@@ -2772,14 +2648,26 @@ func (t *chatTurn) drainMidTurnBubbles() []ChatMessage {
 // "Near-duplicate" here means substantial shared LEADING content — the
 // orchestrator draft + synthesis "same analysis, revised conclusion"
 // pattern. See isNearDuplicate for the threshold.
-func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply string) {
+// Returns any ToolCalls from dropped near-duplicate bubbles so the
+// caller can merge them into the final reply's ToolCalls — otherwise
+// short turns (one round of tool calls, then a final reply with the
+// same text) silently lose every tool record when the mid-turn
+// bubble that carried them gets dedup'd against the final reply.
+// "What time is it?" → get_local_time called → assistant emits the
+// answer once → final reply equals the bubble → bubble dropped →
+// tool call invisible in the saved transcript was the symptom.
+func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply string) []PersistedToolCall {
+	var orphanedCalls []PersistedToolCall
 	if len(bubbles) == 0 {
-		return
+		return nil
 	}
 	if final := strings.TrimSpace(finalReply); final != "" {
 		kept := bubbles[:0]
 		for _, b := range bubbles {
 			if isNearDuplicate(b.Content, final) {
+				if len(b.ToolCalls) > 0 {
+					orphanedCalls = append(orphanedCalls, b.ToolCalls...)
+				}
 				continue
 			}
 			kept = append(kept, b)
@@ -2787,9 +2675,10 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 		bubbles = kept
 	}
 	if len(bubbles) == 0 {
-		return
+		return orphanedCalls
 	}
 	sess.Messages = append(sess.Messages, bubbles...)
+	return orphanedCalls
 }
 
 // isNearDuplicate returns true when two strings share substantial
@@ -2851,19 +2740,13 @@ func normalizeForDedup(s string) string {
 func (t *chatTurn) persistedToolCalls() []PersistedToolCall {
 	t.toolMu.Lock()
 	defer t.toolMu.Unlock()
-	if len(t.toolCalls) == 0 {
-		return nil
-	}
-	out := make([]PersistedToolCall, 0, len(t.toolCalls))
-	for _, rec := range t.toolCalls {
-		out = append(out, PersistedToolCall{
-			Name:   rec.Name,
-			Args:   rec.Args,
-			Result: rec.Result,
-			Err:    rec.Err,
-		})
-	}
-	return out
+	// Slice from the LAST mid-turn snapshot index so the final
+	// assistant message only carries calls that fired AFTER the most
+	// recent mid-turn bubble. captureMidTurnBubble took the earlier
+	// calls and attributed them to their owning bubbles. Without this
+	// the final message would double-list calls already counted on
+	// mid-turn bubbles.
+	return t.persistedToolCallsFromUnlocked(t.lastBubbleToolIdx)
 }
 
 // cacheableTools is the opt-in allowlist of tools whose results are
@@ -3360,18 +3243,12 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	// redundant with just chatting. Injection/promotion remain a
 	// phantom concern, where async dispatch makes them meaningful.
 
-	// Classify the turn's topic CONCURRENTLY with round-1 planning
-	// rather than blocking before it. The classify is a short worker
-	// call (~20 tokens) but on a cold prompt cache it added a visible
-	// stall before the user saw any response. Launching it into
-	// topicCh lets round 1 start immediately; resolveTopic() blocks
-	// on the result only when a worker step or knowledge tool first
-	// needs the slug, by which point the classify has almost always
-	// finished. Falls back to generalTopic on error.
-	turn.topicCh = make(chan string, 1)
-	go func(msg string) {
-		turn.topicCh <- classifyTopicForQuestion(ctx, T, T.DB, user, agent.ID, msg)
-	}(req.Message)
+	// (Per-turn topic auto-classifier removed. The LLM picks the
+	// topic slug when it calls memory_save / memory_search via the
+	// topic= arg — the system prompt's "Known topics" block shows
+	// existing slugs to nudge reuse. Without the classifier, this
+	// turn starts unscoped; tools fall back to generalTopic when
+	// the LLM doesn't pass one.)
 
 	// Fire a fast acknowledgment concurrently so the user sees a
 	// contextual "On it…" while round-1 planning (thinking mode)
@@ -3393,10 +3270,18 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// agent loop) + message_done + stats. Just persist + run
 		// background consolidation + title generation.
 		turn.emitStatus("Direct response.")
-		appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), directReply)
+		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), directReply)
+		finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: directReply,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
+			// ToolCalls: the orchestrator's tool log this turn — same
+			// data the plan_set path persists at the bottom of this
+			// function. orphanCalls picks up any tool records from
+			// mid-turn bubbles that got dedup'd as near-duplicates of
+			// directReply — without that merge, short turns lose the
+			// only carrier of their tool record.
+			ToolCalls: finalCalls,
 		})
 		_, _ = saveChatSession(udb, sess)
 		turn.consolidate(req.Message, nil, directReply)
@@ -3409,10 +3294,17 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// + end the turn — the user's next message will re-enter the
 		// plan round with the answer in context.
 		turn.emitStatus("Orchestrator asked for clarification.")
-		appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), question)
+		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), question)
+		finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: question,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
+			// ToolCalls: ask_user / ask_user_form are themselves tool
+			// calls; record everything that fired this turn (including
+			// the ask itself) so the export shows what led to the
+			// question. orphanCalls preserves tool records from
+			// dedup'd mid-turn bubbles — symmetric with directReply.
+			ToolCalls: finalCalls,
 		})
 		_, _ = saveChatSession(udb, sess)
 		turn.titleAfterFirstTurn()
@@ -3556,12 +3448,15 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	// the full tool-call trace for this turn (orchestrator rounds +
 	// worker steps). The trace makes session export useful for
 	// debugging and dataset capture without needing live SSE.
+	// orphanCalls picks up tool records carried by mid-turn bubbles
+	// that got dedup'd as near-duplicates of the synthesis reply.
 	turnToolCalls := turn.persistedToolCalls()
-	appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), reply)
+	orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), reply)
+	finalCalls := append(orphanCalls, turnToolCalls...)
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
-		ToolCalls: turnToolCalls,
+		ToolCalls: finalCalls,
 	})
 	sess.Plans = append(sess.Plans, PlanSnapshot{
 		RoundIndex: len(sess.Plans),
@@ -3733,15 +3628,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if g := strings.TrimSpace(t.agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g
 	}
-	// Activate any skills the user's message triggers. Skills append
-	// their instructions to the system prompt and union their
-	// declared tools into the catalog for this turn only. Capped at
-	// 3 active skills via core's classifier.
+	// Any skill the LLM activated mid-turn via activate_skill is
+	// re-injected here as well — the orchestrator round sees the
+	// skill via the tool result in conversation history naturally,
+	// but a fresh prompt build (e.g. round-2 re-entry after a
+	// catalog change) wouldn't carry that history forward without
+	// this anchor.
 	sys = t.appendActiveSkills(sys, msgs)
-	// "Available skills" block — lists skills the user has authored
-	// that didn't auto-activate this turn, so the LLM can recognize a
-	// context-implied match and call activate_skill(name) to pull
-	// one in. No-op when DisableSkills is set.
+	// "Available skills" block — lists every skill the agent can
+	// reach. The LLM decides when to activate via activate_skill(name).
+	// No-op when DisableSkills is set or AllowedSkills is empty.
 	sys += t.renderAvailableSkillsBlock()
 	// "Available agents" block — lists the user's OTHER agents so
 	// the host LLM knows what specialists exist and can dispatch to
@@ -3755,6 +3651,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// is how Builder still knows what exists. No-op for every other
 	// agent.
 	sys += t.renderBuilderExistingToolsBlock()
+	// "Known topics" block — lists the snake_case slugs this
+	// (user, agent) has already used so the LLM reuses them when
+	// calling memory_save / memory_search instead of minting near-
+	// duplicates ("ssh_keys" vs "sshkey" vs "ssh-keys"). Replaces
+	// the per-turn topic auto-classifier — now the LLM picks.
+	sys += t.renderKnownTopicsBlock()
 	// ("Available knowledge collections" block unmounted alongside
 	// dispatch_to_worker — there's no LLM-facing tool that
 	// references collections by ID right now, so advertising them
@@ -4028,42 +3930,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		return nil, "", "", fmt.Errorf("resolve tools: %w", err)
 	}
 	Debug("[orchestrate.orch] runPlan: resolved %d worker tools", len(workerTools))
-	// Classifier-driven trim. When the agent has no explicit
-	// AllowedTools (default pool), shrink the catalog to the top-K
-	// most-relevant tools for the user's latest message so the LLM
-	// isn't drowning in 40+ options. Skipped for agents with an
-	// explicit allowlist (those tools were picked on purpose — all
-	// of them stay) and for noTools-sentinel agents (nothing to
-	// trim). The framework essentials (control / knowledge / memory
-	// tools added below as knowTools) bypass this filter entirely;
-	// they're always-on regardless of message content.
-	// Classifier-trim fires whenever the worker pool is above the
-	// per-turn budget, regardless of whether the agent has an
-	// explicit AllowedTools list or uses the default pool. The
-	// agent's curation defines the UNIVERSE of tools available;
-	// the classifier picks which subset to surface per turn based
-	// on relevance to the user's latest message. The noTools
-	// sentinel still short-circuits (nothing to trim).
-	if !isNoToolsSentinel(t.agent.AllowedTools) && len(workerTools) > classifierKeepBudget {
-		before := len(workerTools)
-		// Pin every client-bridge tool past the classifier. They're
-		// always-available framework-runtime tools (the user opted
-		// in by running gohort-desktop); their descriptions rarely
-		// match user messages closely so the classifier would drop
-		// them silently otherwise — exactly the "I connected my
-		// desktop but the LLM can't see the tool" symptom.
-		alwaysKeep := t.builderPinnedTools
-		for _, n := range workerNames {
-			if strings.HasPrefix(n, "from_client.") {
-				if alwaysKeep == nil {
-					alwaysKeep = map[string]bool{}
-				}
-				alwaysKeep[n] = true
-			}
-		}
-		workerTools, workerNames = classifierTrimTools(t.ctx, msgs, workerTools, workerNames, alwaysKeep)
-		Log("[orchestrate.orch] classifier-trim: %d worker tools → %d (agent=%s)", before, len(workerTools), t.agent.ID)
-	}
+	// No per-turn classifier-trim. Every allowed tool on the agent
+	// is shipped to the LLM verbatim — the model's own attention
+	// disambiguates better than a cosine-similarity classifier ever
+	// did, and a stateless trim broke follow-ups like "get me another"
+	// (turn 1 used get_meme; turn 2's bare text scored get_report
+	// higher and the LLM never saw get_meme). find_tools is still
+	// registered as the escape hatch for any future massive-catalog
+	// case (a 200-tool MCP plug-in); today's agents fit fine
+	// without trimming.
 	workerTools, workerNames = filterToolAuthoringWithoutFocus(workerTools, workerNames, t.session)
 	t.gateAgentCRUDTools(workerTools)
 	t.wrapToolsForActivity(sess, workerTools)
@@ -4151,10 +4026,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// Re-mount here when the dispatch path's discoverability is
 	// figured out.)
 	if !t.inferredOff() {
-		knowTools = append(knowTools,
-			t.saveMemoryToolDef(),
-			t.searchMemoryToolDef(),
-			t.forgetMemoryToolDef())
+		knowTools = append(knowTools, t.memoryToolDef())
 	}
 	if !t.explicitOff() {
 		knowTools = append(knowTools,
@@ -4325,16 +4197,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	}
 	Debug("[orchestrate.orch] runPlan: rewriting catalog over %d tools", len(allTools))
 
-	// Collapse admin-curated tool groups: any member tool in the
-	// current set gets replaced by a synthetic group entry the LLM
-	// (Runtime tool-group rewriting retired. Vector pre-selection
-	// in classifierTrimTools already shrinks the worker-tool surface
-	// by relevance per turn; the static-catalog group placeholders
-	// and the expand_tool_group meta-tool were adding a parallel
-	// concept without earning their keep. find_tools is the LLM's
-	// explicit-search fallback when the classifier missed.
-	// ToolGroup records still exist as admin-side organizational
-	// metadata — they just don't gate the runtime catalog anymore.)
+	// (Runtime tool-group rewriting retired. The per-turn
+	// classifier-trim that preceded this block is also gone — every
+	// allowed tool ships to the LLM verbatim; the model's attention
+	// disambiguates better than a cosine-similarity classifier did.
+	// find_tools stays registered as the explicit-search fallback for
+	// any future massive-catalog case. ToolGroup records still exist
+	// as admin-side organizational metadata — they just don't gate
+	// the runtime catalog anymore.)
 
 	// Full-surface log every turn — confirms what the LLM actually
 	// receives. If a follow-up turn lacks a tool the first turn had,
@@ -4829,6 +4699,17 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// per-round finalizer already finalized that bubble; we
 		// just need a clean copy for the persisted history.
 		clean := strings.TrimSpace(StripToolCallMarkup(resp.Content))
+		// Forced-final-answer rescue safety net: the rescue calls
+		// T.LLM.Chat NON-streaming (core/agent_loop.go:1534), so no
+		// per-round finalizer fires and the page never gets an SSE
+		// frame for the rescue's content. Detect by checking whether
+		// any bubble was finalized this turn — if not, emit one now
+		// so the user actually sees what the LLM produced.
+		// emitCapturedAsBubble's near-duplicate dedup keeps the
+		// streamed-then-rescued path from double-showing.
+		if lastFinalizedID == "" && strings.TrimSpace(lastFinalizedText) == "" {
+			emitCapturedAsBubble(clean)
+		}
 		return nil, "", clean, nil
 	}
 	return nil, "", "", nil
@@ -4942,11 +4823,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// too — same reason as the orchestrator catalog: discoverability
 	// problem, not a wiring problem.)
 	if !t.inferredOff() {
-		tools = append(tools,
-			t.saveMemoryToolDef(),
-			t.searchMemoryToolDef(),
-			t.forgetMemoryToolDef())
-		toolNames = append(toolNames, "memory_save", "memory_search", "memory_forget")
+		tools = append(tools, t.memoryToolDef())
+		toolNames = append(toolNames, "memory")
 	}
 	if !t.explicitOff() {
 		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef())
@@ -5108,6 +4986,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// common authoring mistakes, no narrative.
 	if isBuilderAgent(t.agent.ID) {
 		sysPrompt += "\n\n" + builderWorkerDirectives
+		sysPrompt += sandboxPythonNoteSection()
 	}
 
 	stopKeepalive := startKeepalive(t.sse)
@@ -5260,12 +5139,12 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	}
 	synthStart := time.Now()
 	// Same skill injection the orchestrator round saw — synthesis
-	// IS the user-facing voice, so it should carry whichever skills
-	// activated this turn (style, instructions, relevant corpus
-	// chunks). Without this, a skill that prescribed a tone or
-	// reference convention would govern the planning but not the
-	// final reply. Builder turns no-op (activeSkillsForTurn returns
-	// nil for Builder).
+	// IS the user-facing voice, so any skill the LLM activated this
+	// turn must shape the final reply as well. The orchestrator
+	// round sees the skill via the tool result in conversation
+	// history; synthesis builds a fresh system prompt and re-injects
+	// here so a skill that prescribed a tone or reference convention
+	// governs both planning and reply. No-op when no skills active.
 	synthSys := prependAgentContext(t.gatedPersona(t.agent.OrchestratorPrompt), t.agent, t.facts())
 	synthSys = t.appendActiveSkills(synthSys, nil)
 	resp, err := t.app.LLM.ChatStream(t.ctx,

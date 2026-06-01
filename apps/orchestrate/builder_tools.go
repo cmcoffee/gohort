@@ -63,7 +63,7 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 		// collections still happens via the Knowledge surface.
 		ChatToolToAgentToolDefWithSession(collectionsListTool(), sess),
 	}
-	// Raw secure-API call_<credential> tools — Builder uses these for
+	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
 	// before wrapping the verified URL into a persistent api-mode
 	// temp tool record.
@@ -78,10 +78,10 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 // cover the research/drafting/testing rhythm. This function adds the
 // pieces that aren't globally registered:
 //
-//   - raw call_<credential> — workers may need to probe a registered
-//     credential to map out an API's response shape before drafting a
-//     wrapper script. Same auth surface Builder uses, but in
-//     worker-step context with fresh history per step.
+//   - per-credential fetch_url_<name> — workers may need to probe a
+//     registered credential to map out an API's response shape before
+//     drafting a wrapper script. Same auth surface Builder uses, but
+//     in worker-step context with fresh history per step.
 //
 // Workers get the FULL authoring catalog alongside the research
 // extras. The framework declines to dictate the assembler model — a
@@ -125,7 +125,7 @@ const builderWorkerDirectives = `## Worker discipline — sandbox + script rules
 
 You're a Builder-spawned worker executing one focused step (research / draft / smoke-test). When you write scripts or run shell commands, the following constraints apply:
 
-- **Network goes through gohort.** All HTTP from inside a script flows through ` + "gohort.fetch_url" + ` / ` + "gohort.browse_page" + `, available by default — no ` + "hook_capabilities" + ` declaration needed for the bare set. Canonical: ` + "from gohort import fetch_url; data = fetch_url(url)" + `. ` + "fetch_url" + ` auto-routes JS-heavy hosts through ` + "browse_page" + ` so the same URL that worked for your LLM-tool probe works in the script. **Any network-doing standard library is BLOCKED**: curl, wget, urllib (network parts), requests, http.client, socket — the framework refuses tool_def calls that use them. Don't reach for those when a fetch fails; they can't help.
+- **Network goes through gohort.** All HTTP from inside a script flows through ` + "gohort.fetch_url" + ` / ` + "gohort.browse_page" + `, available by default — no ` + "hook_capabilities" + ` declaration needed for the bare set. Canonical: ` + "from gohort import fetch_url; data = fetch_url(url)" + `. ` + "fetch_url" + ` auto-routes JS-heavy hosts through ` + "browse_page" + ` so the same URL that worked for your LLM-tool probe works in the script. **For binary downloads (image, PDF, audio, video, archive)**: pass ` + "save_to=" + ` and the response streams to a workspace file — never try to write ` + "result['body']" + ` to disk for binary data (the string conversion mangles bytes). Example: ` + "r = fetch_url(image_url, save_to='meme.png'); if r['status'] != 200: return f'fetch failed: {r[\"status\"]}'; # file is now at <workspace>/meme.png" + `. **Any network-doing standard library is BLOCKED**: curl, wget, urllib (network parts), requests, http.client, socket — the framework refuses tool_def calls that use them.
 
 - **For credentialed endpoints, declare the credential.** ` + "secret:<name>" + ` returns the decrypted value (script injects it itself); ` + "fetch_via:<name>" + ` routes the request through that credential's secure dispatch (auth applied server-side, URL allow-list enforced, script never sees the secret — prefer this). Example: ` + "hook_capabilities=[\"fetch_via:openweather\"]" + `, then ` + "from gohort import fetch_via; data = fetch_via(\"openweather\", url)" + `. If the credential isn't registered, tell the user to register it via the admin UI; don't invent a credential name.
 
@@ -143,7 +143,7 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
   ` + "result = fetch_url(url)" + `
   ` + "if result['status'] != 200: return f\"upstream {result['status']}: {result['body'][:200]}\"" + `
   ` + "data = json.loads(result['body'])" + `
-  No ` + "fetch_json" + ` on the script side — it'd just be ` + "json.loads(fetch_url(url)['body'])" + ` in one line. There's NO ` + "gohort.fetch_json" + ` in the script module. (` + "fetch_json" + ` IS available as a separate LLM-callable tool for direct probing — but inside a script, you write standard Python.)
+  There is no separate fetch_json tool — script-side OR LLM-callable. ` + "fetch_url" + ` returns the body as a string in every case; if you need parsed data, ` + "json.loads()" + ` it. Probing an API endpoint inline (LLM-level)? Same shape — read the JSON text in the tool result and reason about it.
 
 - **403 from anti-bot ⇒ ` + "gohort.browse_page" + `**. ` + "fetch_url" + ` already auto-routes JS-heavy hosts (Reddit, Twitter/X, etc.) through Chromium for you, but if a non-listed host returns 403 / captcha / Cloudflare interstitial / a JS-skeleton, fall through manually: ` + "if result['status'] == 403: result = browse_page(url)" + `. browse_page runs real headless Chromium server-side — executes JS, handles cookies, beats most soft blocks. 5-20s per call so it's the recovery path, not the default.
 
@@ -155,7 +155,7 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
   - **2 web_searches max** to find the provider's documentation URL (try "<provider> API documentation", "<provider> OpenAPI spec"). If two searches don't surface OFFICIAL documentation (the provider's own docs site, not forum posts, not third-party blogs, not GitHub mirrors of unofficial reverse-engineering), STOP and report back "no public documentation found for <provider>." Don't search a third time hoping to find it — if it's not in the first two searches, it's not public.
   - **2 fetch_url calls max** on the documentation site itself once located (a docs index + the specific endpoint reference page is enough for shape). Don't read the entire docs site.
   - **NEVER probe endpoints directly to map shapes.** Hitting the actual API surface with fetch_url to "see what comes back" is the failure mode — it produces fragile tools and burns rounds. The docs are the source of truth.
-- **Auth errors are a STOP signal, not a "try harder" signal.** If a probe returns HTTP 401 / 403 / 407, OR if call_<credential> returns "no_auth" but the endpoint clearly requires credentials (the response body says "invalid api key", "authentication required", "401 Unauthorized"), STOP. Don't try the same endpoint twice. Don't try a "different auth shape." Report back: "endpoint <URL> requires <provider> API credentials; the user needs to supply an API key before this tool can be built." 4 consecutive call_no_auth failures is not exploration — it's wasted rounds.
+- **Auth errors are a STOP signal, not a "try harder" signal.** If a probe returns HTTP 401 / 403 / 407, OR if fetch_url returns an upstream error explicitly demanding auth (the response body says "invalid api key", "authentication required", "401 Unauthorized"), STOP. Don't try the same endpoint twice. Don't try a "different auth shape." Report back: "endpoint <URL> requires <provider> API credentials; the user needs to supply an API key before this tool can be built." 4 consecutive unauthenticated failures is not exploration — it's wasted rounds.
 
 - **Be compact in your report-back.** You return COMPONENTS to Builder for assembly. Builder's context is finite. If you're returning a drafted script_body, return JUST the script content — no commentary above/below unless it's truly necessary for assembly. If you're returning an API shape from a PROBE step, return the structured summary (endpoint + fields + sample response), not the raw blob.
 
