@@ -122,13 +122,53 @@ func RemoveAllowedReadRoot(path string) ([]string, error) {
 	return SetAllowedReadRoots(out)
 }
 
+// fsConsent, when registered, is asked for a yes/no decision the first
+// time a filesystem tool touches a path outside the allowlist. The
+// bridge registers it (a native "Allow access to <folder>?" prompt) and
+// is responsible for persisting an approval so it isn't asked again.
+var (
+	fsConsentMu sync.RWMutex
+	fsConsent   func(abs string) bool
+)
+
+// RegisterFSConsent installs the just-in-time consent handler. With no
+// handler registered, anything outside the allowlist is simply denied
+// (the safe default — e.g. the viewer, which has no consent UI).
+func RegisterFSConsent(fn func(abs string) bool) {
+	fsConsentMu.Lock()
+	fsConsent = fn
+	fsConsentMu.Unlock()
+}
+
+// PathAllowedOrConsent is the access gate the filesystem tools use:
+// allow immediately if abs is under an approved root; otherwise ask the
+// registered consent handler (a human says "yes, you can access this
+// folder"). The handler persists its approval, so the next read under
+// that folder passes the fast PathAllowed path. No handler → deny.
+func PathAllowedOrConsent(abs string) bool {
+	if PathAllowed(abs) {
+		return true
+	}
+	fsConsentMu.RLock()
+	fn := fsConsent
+	fsConsentMu.RUnlock()
+	if fn == nil {
+		return false
+	}
+	return fn(abs)
+}
+
 // PathAllowed reports whether abs resolves under any configured read
 // root. Caller is responsible for resolving symlinks (filepath.EvalSymlinks)
 // BEFORE calling — that lets the filesystem tool layer keep one
 // canonical place for the symlink-safety policy.
-func PathAllowed(abs string) bool {
+func PathAllowed(abs string) bool { return pathUnderAny(abs, AllowedReadRoots()) }
+
+// pathUnderAny reports whether abs resolves under any of roots. Shared
+// by the read and write allowlists.
+func pathUnderAny(abs string, roots []string) bool {
 	abs = filepath.Clean(abs)
-	for _, root := range AllowedReadRoots() {
+	for _, root := range roots {
 		rel, err := filepath.Rel(root, abs)
 		if err != nil {
 			continue

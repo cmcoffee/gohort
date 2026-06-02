@@ -58,7 +58,7 @@ func resolve_query_path(path string) (string, error) {
 	if real, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = real
 	}
-	if !core.PathAllowed(abs) {
+	if !core.PathAllowedOrConsent(abs) {
 		return "", fmt.Errorf("refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via Account → Add Allowed Folder…", abs, core.AllowedReadRoots())
 	}
 	info, err := os.Stat(abs)

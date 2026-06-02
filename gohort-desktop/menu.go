@@ -22,6 +22,8 @@
 package main
 
 import (
+	"encoding/json"
+
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
 	wails_menu "github.com/wailsapp/wails/v2/pkg/menu"
 	"github.com/wailsapp/wails/v2/pkg/menu/keys"
@@ -33,7 +35,31 @@ import (
 func build_app_menu(app *App) *wails_menu.Menu {
 	custom := wails_menu.NewMenu()
 
-	custom.AddText("Change Server…", keys.CmdOrCtrl(","), func(_ *wails_menu.CallbackData) {
+	// Non-destructive: open the same form with the current server URL
+	// prefilled and the bridge API-key field — to set/update the key (or
+	// the URL) WITHOUT clearing the session. This is where you configure
+	// the API key the Gohort-Bridge agent uses.
+	custom.AddText("Server & Bridge Settings…", keys.CmdOrCtrl(","), func(_ *wails_menu.CallbackData) {
+		if app.ctx == nil {
+			return
+		}
+		wails_runtime.WindowExecJS(app.ctx, `location.replace('/__desktop/settings');`)
+		core.Log("[gohort-desktop] menu: Settings invoked")
+	})
+
+	// Dedicated, probe-free bridge API-key editor — separate from the
+	// server-connection flow so it can never hang on "Checking server…".
+	custom.AddText("Set Bridge API Key…", nil, func(_ *wails_menu.CallbackData) {
+		if app.ctx == nil {
+			return
+		}
+		wails_runtime.WindowExecJS(app.ctx, `location.replace('/__desktop/apikey');`)
+		core.Log("[gohort-desktop] menu: Set Bridge API Key invoked")
+	})
+
+	// Destructive escape hatch: wipe URL + cookies and reconfigure from
+	// scratch (for when the saved URL responds but is the wrong service).
+	custom.AddText("Change Server (reset)…", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
@@ -77,41 +103,59 @@ func build_app_menu(app *App) *wails_menu.Menu {
 
 	custom.AddSeparator()
 
-	// Filesystem read-allowlist management — controls which folders
-	// the desktop's filesystem.* tools (read_local_file, list_directory)
-	// may resolve paths under. Add uses the OS-native folder picker;
-	// Show opens an in-page modal listing the current roots with a
-	// remove button per row (popup_shim_script catches the event).
-	custom.AddText("Add Allowed Folder…", nil, func(_ *wails_menu.CallbackData) {
+	// Bridge agent management — install/remove the separate
+	// Gohort-Bridge.app as a login item, straight from the viewer. This
+	// execs the agent's own --install (the viewer links no systray), so
+	// Gohort-Bridge.app must already exist (in /Applications or beside
+	// this app). After install we point the user at Full Disk Access,
+	// which iMessage needs and can't be granted programmatically.
+	custom.AddText("Install Gohort-Bridge…", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
-		// Run on the Wails ctx so the dialog parent is the app window
-		// and OS focus behaves correctly. Adding is done inside
-		// PickReadRoot — the menu callback just kicks it.
 		go func() {
-			res := app.PickReadRoot()
+			res := app.InstallBridge()
 			if res.Error != "" {
-				core.Warn("[gohort-desktop] menu: Add Allowed Folder failed: %s", res.Error)
+				wails_runtime.MessageDialog(app.ctx, wails_runtime.MessageDialogOptions{
+					Type: wails_runtime.WarningDialog, Title: "Gohort-Bridge", Message: res.Error,
+				})
 				return
 			}
-			if res.Path == "" {
-				return // user canceled
+			sel, _ := wails_runtime.MessageDialog(app.ctx, wails_runtime.MessageDialogOptions{
+				Type:          wails_runtime.InfoDialog,
+				Title:         "Gohort-Bridge Installed",
+				Message:       "The bridge is running and set to start at login.\n\nFor iMessage it needs Full Disk Access — grant it to Gohort-Bridge under System Settings → Privacy & Security → Full Disk Access.",
+				Buttons:       []string{"Open Settings", "Later"},
+				DefaultButton: "Open Settings",
+			})
+			if sel == "Open Settings" {
+				wails_runtime.BrowserOpenURL(app.ctx, "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
 			}
-			// Notify the open page so an active "Allowed Folders"
-			// modal can refresh without a manual reopen.
-			wails_runtime.EventsEmit(app.ctx, "allowed-folders-changed")
+			core.Log("[gohort-desktop] menu: Gohort-Bridge installed")
 		}()
 	})
 
-	custom.AddText("Show Allowed Folders", nil, func(_ *wails_menu.CallbackData) {
+	custom.AddText("Remove Gohort-Bridge", nil, func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
-		wails_runtime.EventsEmit(app.ctx, "show-allowed-folders")
+		go func() {
+			res := app.UninstallBridge()
+			msg, typ := "Gohort-Bridge has been removed from login items.", wails_runtime.InfoDialog
+			if res.Error != "" {
+				msg, typ = res.Error, wails_runtime.WarningDialog
+			}
+			wails_runtime.MessageDialog(app.ctx, wails_runtime.MessageDialogOptions{
+				Type: typ, Title: "Gohort-Bridge", Message: msg,
+			})
+		}()
 	})
 
 	custom.AddSeparator()
+
+	// (Filesystem read-allowlist management lives in the Gohort-Bridge
+	// agent now — folder access is granted per-folder via a consent
+	// prompt there, not from the viewer.)
 
 	// Show the in-app log viewer (see log_buffer.go + the
 	// "show-logs" event handler in proxy.go's popup_shim_script).
@@ -121,14 +165,25 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		if app.ctx == nil {
 			return
 		}
-		wails_runtime.EventsEmit(app.ctx, "show-logs")
+		// Proxy-served pages don't carry the Wails JS runtime, so the
+		// "show-logs" EventsOn listener never registers there and an
+		// EventsEmit goes nowhere. Drive the overlay straight from Go via
+		// WindowExecJS, injecting the current log snapshot (window.go's
+		// GetLogs is likewise absent on proxy pages).
+		data, err := json.Marshal(app.GetLogs())
+		if err != nil {
+			data = []byte("[]")
+		}
+		wails_runtime.WindowExecJS(app.ctx, "window.__desktop_logs_open && window.__desktop_logs_open("+string(data)+")")
 	})
 
 	custom.AddText("Reload", keys.CmdOrCtrl("R"), func(_ *wails_menu.CallbackData) {
 		if app.ctx == nil {
 			return
 		}
-		wails_runtime.WindowReload(app.ctx)
+		// location.reload() reloads the CURRENT proxied page; WindowReload
+		// targets the frontend start URL, which isn't where the user is.
+		wails_runtime.WindowExecJS(app.ctx, "window.location.reload()")
 	})
 
 	return wails_menu.NewMenuFromItems(

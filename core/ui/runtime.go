@@ -8603,7 +8603,19 @@ const runtimeJS = `
               }, 1100);
             }
           };
-          if (navigator.clipboard && navigator.clipboard.writeText) {
+          // Host-provided clipboard takes precedence. The desktop
+          // wrapper sets window.__uiClipboardImpl to a Promise-returning
+          // function backed by Wails' native runtime — needed because
+          // navigator.clipboard.writeText is restricted in WKWebView at
+          // the loopback proxy origin (silent failure, then the
+          // execCommand fallback also dies on a non-focusable hidden
+          // textarea). Plain browsers don't set this hook and fall
+          // through to the standard navigator.clipboard path.
+          if (typeof window.__uiClipboardImpl === 'function') {
+            window.__uiClipboardImpl(md).then(done).catch(function() {
+              fallback(md, done);
+            });
+          } else if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(md).then(done).catch(function() {
               fallback(md, done);
             });
@@ -8757,41 +8769,75 @@ const runtimeJS = `
     // computed scrollHeight to read.
     setTimeout(autosizeInput, 0);
 
-    // Large-paste redirect: when the user pastes more than ~500
-    // chars of text (a code block, a log dump, a doc excerpt),
-    // collapse it into a "snippet.txt" attachment instead of jamming
-    // the textarea. Newlines stay intact in the file content; the
-    // textarea stays compact for the user's actual message; the
-    // server treats it like any text/plain document upload.
+    // Large-paste marker: when the user pastes more than ~500 chars
+    // (a code block, log dump, doc excerpt), insert a compact marker
+    // like "[Pasted text #2 — 47 lines / 1834 chars]" at the cursor
+    // instead of jamming the textarea with the entire block. The full
+    // content lives in pasteMap keyed by the marker's N; sendMessage
+    // substitutes it back in just before submit, so the LLM gets the
+    // real text but the user's composition surface stays readable.
+    // Same shape Claude Code uses for terminal pastes.
+    //
+    // Small pastes (< threshold) flow through normally — no marker,
+    // the content lands directly in the textarea.
     var pasteSnippetThreshold = 500;
+    var pasteMap = {};        // {n: full-text-content}
+    var pasteCounter = 0;     // monotonic; marker uses this number
     inputArea.addEventListener('paste', function(ev) {
-      if (!window.uiAddPendingAttachment) return; // attachments disabled
       var clip = ev.clipboardData || window.clipboardData;
       if (!clip) return;
+      // Pasted image (e.g. a macOS screenshot taken with Ctrl-Cmd-Shift-4,
+      // which copies the grab to the clipboard): attach it the same way
+      // the paperclip does, so the flow is shoot -> paste -> send with no
+      // "get a screenshot" round-trip. Only when attachments are enabled.
+      if (cfg.attachments && clip.items) {
+        var imgItems = Array.prototype.slice.call(clip.items).filter(function(it) {
+          return it.type && it.type.indexOf('image/') === 0;
+        });
+        if (imgItems.length) {
+          ev.preventDefault();
+          imgItems.forEach(function(it) {
+            var file = it.getAsFile();
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function() {
+              if (window.uiAddPendingAttachment) {
+                window.uiAddPendingAttachment({
+                  name: 'pasted-image.png',
+                  dataURL: reader.result,
+                  mime: file.type || 'image/png',
+                  kind: 'image',
+                });
+              }
+            };
+            reader.readAsDataURL(file);
+          });
+          return;
+        }
+      }
       var text = clip.getData('text/plain') || '';
       if (text.length < pasteSnippetThreshold) return; // small paste — normal
       ev.preventDefault();
-      // Build a data URL — same shape attachInput.change produces.
-      // Use base64 encoding so unicode survives the round-trip.
-      var b64;
-      try { b64 = btoa(unescape(encodeURIComponent(text))); }
-      catch (_) { b64 = ''; }
-      if (!b64) return;
-      var n = ++pasteSnippetCounter;
-      var name = 'snippet-' + n + '.txt';
-      window.uiAddPendingAttachment({
-        name: name,
-        dataURL: 'data:text/plain;base64,' + b64,
-        mime: 'text/plain',
-        kind: 'document',
-      });
-      // Surface a brief hint in the input so the user knows what
-      // happened. Auto-clears after a moment.
-      var prev = inputArea.placeholder;
-      inputArea.placeholder = 'Pasted ' + text.length + ' chars as ' + name + ' — type your message and Send.';
-      setTimeout(function(){ inputArea.placeholder = prev; }, 4000);
+      var n = ++pasteCounter;
+      var lines = text.split('\n').length;
+      var marker = '[Pasted text #' + n + ' — ' + lines + ' lines / ' + text.length + ' chars]';
+      pasteMap[n] = text;
+      // Insert at the cursor position, replacing any selection. Mirrors
+      // standard textarea-paste semantics so existing typed text
+      // around the cursor is preserved.
+      var start = inputArea.selectionStart;
+      var end = inputArea.selectionEnd;
+      var before = inputArea.value.substring(0, start);
+      var after = inputArea.value.substring(end);
+      inputArea.value = before + marker + after;
+      var caret = before.length + marker.length;
+      inputArea.selectionStart = inputArea.selectionEnd = caret;
+      // Trigger autosize + any other input listeners.
+      inputArea.dispatchEvent(new Event('input'));
+      // Park the cursor in the textarea so the next keystroke lands
+      // there — the source pane sometimes retains focus after paste.
+      inputArea.focus();
     });
-    var pasteSnippetCounter = 0;
 
     var attachInput = null, attachBtn = null;
     if (cfg.attachments) {
@@ -10532,6 +10578,25 @@ const runtimeJS = `
     function sendMessage() {
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
+      // Paste-marker substitution: expand any "[Pasted text #N — X
+      // lines / Y chars]" markers back to their full content before
+      // the send. The marker UX keeps the textarea readable while
+      // composing (paste of a 200-line block doesn't fill the screen),
+      // but the LLM + the bubble + the saved transcript all see the
+      // expanded text — same shape Claude Code uses for terminal
+      // pastes. Markers that don't have a stored entry (rare — e.g. a
+      // session-resume edit re-introducing a marker that was never in
+      // pasteMap) are left as literal text. After substitution we
+      // clear the map so a follow-up paste starts fresh.
+      if (text.indexOf('[Pasted text #') !== -1) {
+        text = text.replace(/\[Pasted text #(\d+) — \d+ lines \/ \d+ chars\]/g,
+          function(match, n) {
+            var content = pasteMap[parseInt(n, 10)];
+            return content == null ? match : content;
+          });
+        pasteMap = {};
+        pasteCounter = 0;
+      }
       // Interjection path — when a session is already running and
       // the app configured an InjectURL, route this send into the
       // running session's note queue instead of starting a new

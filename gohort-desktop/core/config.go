@@ -13,8 +13,11 @@
 package core
 
 import (
+	"errors"
 	"os"
 	"strconv"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 const (
@@ -47,7 +50,35 @@ type Config struct {
 // problem — usually a permissions issue worth telling the user about
 // explicitly.
 func LoadConfig() (*Config, error) {
-	settings, err := open_settings_store()
+	return LoadConfigNamed(SETTINGS_DB_NAME)
+}
+
+// LoadConfigForViewer opens the config store for the viewer window.
+// It prefers the shared SETTINGS_DB_NAME — so the viewer sees whatever
+// was configured by --setup OR by an earlier build, with no migration
+// needed. Only if the always-on daemon already holds that store's lock
+// (kvlite.ErrLocked, returned after a 1s timeout) does it fall back to
+// the viewer-private VIEWER_DB_NAME; in that case the daemon has
+// already mirrored the server URL to the sidecar, which ServerURL()
+// reads. This avoids the "lost my connection after rebuild" trap the
+// hard split caused while still letting both processes run at once.
+func LoadConfigForViewer() (*Config, error) {
+	c, err := LoadConfigNamed(SETTINGS_DB_NAME)
+	if err == nil {
+		return c, nil
+	}
+	if errors.Is(err, kvlite.ErrLocked) {
+		return LoadConfigNamed(VIEWER_DB_NAME)
+	}
+	return nil, err
+}
+
+// LoadConfigNamed opens a specific settings DB by file name. The
+// daemon uses SETTINGS_DB_NAME (config authority); the viewer uses
+// LoadConfigForViewer, which prefers the same store and only falls
+// back to VIEWER_DB_NAME when the daemon holds the lock.
+func LoadConfigNamed(db_name string) (*Config, error) {
+	settings, err := open_settings_store(db_name)
 	if err != nil {
 		return nil, err
 	}
@@ -78,14 +109,44 @@ func (c *Config) ServerURL() string {
 	if v := os.Getenv(ENV_GOHORT_ADDR); v != "" {
 		return v
 	}
-	return c.settings.ServerURL()
+	if v := c.settings.ServerURL(); v != "" {
+		return v
+	}
+	// Viewer path: its own store (viewer.db) doesn't hold the URL —
+	// the daemon owns config and mirrors it to the lock-free sidecar.
+	// The daemon's own store has the URL set, so this fallback is a
+	// no-op for it.
+	return ReadServerURLSidecar()
 }
 
 // SetServerURL persists a new server URL (assumes caller already
-// validated form + reachability).
+// validated form + reachability) and mirrors it to the lock-free
+// sidecar so the viewer can read it without opening this store.
 func (c *Config) SetServerURL(url string) error {
-	return c.settings.SetServerURL(url)
+	if err := c.settings.SetServerURL(url); err != nil {
+		return err
+	}
+	return WriteServerURLSidecar(url)
 }
+
+// APIKey returns the unified daemon API key.
+func (c *Config) APIKey() string { return c.settings.APIKey() }
+
+// SetAPIKey persists the unified daemon API key.
+func (c *Config) SetAPIKey(key string) error { return c.settings.SetAPIKey(key) }
+
+// PollSecs returns the configured chat.db poll interval in seconds
+// (0 if unset; callers apply their own minimum/default).
+func (c *Config) PollSecs() int { return c.settings.PollSecs() }
+
+// SetPollSecs persists the chat.db poll interval.
+func (c *Config) SetPollSecs(secs int) error { return c.settings.SetPollSecs(secs) }
+
+// ChatDBPath returns the chat.db path override, or empty for the default.
+func (c *Config) ChatDBPath() string { return c.settings.ChatDBPath() }
+
+// SetChatDBPath persists a chat.db path override.
+func (c *Config) SetChatDBPath(path string) error { return c.settings.SetChatDBPath(path) }
 
 // ClearServerURL drops the persisted URL so the next webview request
 // renders the configure page. Used by the "Change server" button on

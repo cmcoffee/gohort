@@ -89,7 +89,7 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
 			abs = real
 		}
-		if !core.PathAllowed(abs) {
+		if !core.PathAllowedOrConsent(abs) {
 			return "", fmt.Errorf("filesystem.read_local_file refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		f, err := os.Open(abs)

@@ -24,6 +24,20 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	RegisterPublicPath(prefix + "/api/hook")
 	RegisterPublicPath(prefix + "/api/poll")
 
+	// Let the desktop tool bridge (core/desktop_bridge.go) authenticate
+	// the headless gohort-bridge daemon with the same phantom API key it
+	// uses for /api/hook. core/ can't import this package, so we hand it
+	// a key→user resolver here, where T.DB is live (NOT at init(), where
+	// it's still nil). The Owner field binds the key to a gohort user;
+	// keys created before Owner existed resolve to "" and are rejected.
+	RegisterAPIKeyValidator(func(key string) (string, bool) {
+		ak, ok := validateAPIKey(T.DB, key)
+		if !ok || ak.Owner == "" {
+			return "", false
+		}
+		return ak.Owner, true
+	})
+
 	// Phantom now uses the core/ui declarative framework on both
 	// desktop and mobile. The same handler renders both — the page is
 	// laid out responsively (toggle group, persona form, conversations
@@ -116,7 +130,7 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 // --- API key management ---
 
 func (T *Phantom) handleKeys(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := RequireUser(w, r, T.DB)
+	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -149,6 +163,7 @@ func (T *Phantom) handleKeys(w http.ResponseWriter, r *http.Request) {
 			ID:      newID(),
 			Name:    strings.TrimSpace(req.Name),
 			Key:     fmt.Sprintf("%x", secret),
+			Owner:   user, // binds the key to this user for the per-user desktop tool bridge
 			Created: now(),
 		}
 		T.DB.Set(apiKeyTable, ak.ID, ak)

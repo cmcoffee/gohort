@@ -782,7 +782,22 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 	if cfg.SystemPrompt != "" {
 		msgs = append(msgs, oaiMessage{Role: "system", Content: oaiTextContent(cfg.SystemPrompt)})
 	}
-	lastIdx := len(messages) - 1
+	// Images/videos are encoded on exactly ONE message — the most recent
+	// one that carries them — so attachments aren't re-sent (and don't
+	// re-inflate context) every turn. We target the last message WITH
+	// visuals, NOT the literal last message: callers legitimately append
+	// trailing user messages AFTER the image-bearing turn (orchestrator
+	// round-budget notes, mid-flight injections). Keying off the literal
+	// last index there would serialize the image as plain text and silently
+	// blind the vision model. Since visuals are ephemeral (never persisted
+	// into history), the last visual-bearing message is always the current
+	// turn.
+	lastVisualIdx := -1
+	for i := range messages {
+		if len(messages[i].Images) > 0 || len(messages[i].Videos) > 0 {
+			lastVisualIdx = i
+		}
+	}
 	for i, m := range messages {
 		switch {
 		case m.Role == "assistant" && len(m.ToolCalls) > 0:
@@ -807,7 +822,7 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 			// Only include images/videos from the last message — older
 			// attachments in history would be re-sent on every turn,
 			// ballooning the context window.
-			if (len(m.Images) > 0 || len(m.Videos) > 0) && i == lastIdx {
+			if (len(m.Images) > 0 || len(m.Videos) > 0) && i == lastVisualIdx {
 				// Prepend [image_context] / [video_context] blocks (mime/
 				// size/dimensions + EXIF or container metadata, GPS →
 				// place name) so the vision model has ambient grounding

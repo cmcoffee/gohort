@@ -487,7 +487,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		tools = append(tools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
 	}
 	if !target.DisableSkills {
-		tools = append(tools, subTurn.activateSkillToolDef())
+		tools = append(tools, subTurn.activateSkillToolDef(), subTurn.deactivateSkillToolDef())
 	}
 
 	// V1 — wrap the sub-agent's tools so their calls emit into the

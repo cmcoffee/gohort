@@ -8,11 +8,17 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -92,6 +98,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	type candidate struct {
 		raw  []byte
 		b64  string
+		w, h int
 		meta SerperImageResult
 	}
 	var candidates []candidate
@@ -99,9 +106,23 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		if len(candidates) >= 5 {
 			break
 		}
-		data, err := FetchImageBytes(r.ImageURL, r.Link, 20)
+		// Pull the image from the SOURCE PAGE underneath the result, not the
+		// (often cached / thumbnail / google-hosted) search-result image URL:
+		// fetch the page, take its representative image (og:image / twitter:
+		// image), download that. Fall back to the result image URL if the page
+		// yields nothing or its image won't download.
+		imgURL := r.ImageURL
+		if pageImg := extractPageImage(r.Link); pageImg != "" {
+			imgURL = pageImg
+		}
+		data, err := FetchImageBytes(imgURL, r.Link, 20)
 		if err != nil {
-			continue
+			if imgURL != r.ImageURL {
+				data, err = FetchImageBytes(r.ImageURL, r.Link, 20)
+			}
+			if err != nil {
+				continue
+			}
 		}
 		// Validate the bytes are ACTUALLY an image — Serper sometimes
 		// returns URLs that 404, hot-link-protect, or redirect to
@@ -114,9 +135,18 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			Log("[imagefetch/find_image] candidate skipped — URL %q returned %s (not an image)", r.ImageURL, mime)
 			continue
 		}
+		// Decode pixel dimensions (header only) so the picker can prefer a
+		// prominent full-size photo over a tiny thumbnail — the shape that
+		// lets a person search surface connection thumbnails.
+		w, h := 0, 0
+		if ic, _, derr := image.DecodeConfig(bytes.NewReader(data)); derr == nil {
+			w, h = ic.Width, ic.Height
+		}
 		candidates = append(candidates, candidate{
 			raw:  data,
 			b64:  base64.StdEncoding.EncodeToString(data),
+			w:    w,
+			h:    h,
 			meta: r,
 		})
 	}
@@ -124,21 +154,31 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		return "", fmt.Errorf("could not download any image results for %q", query)
 	}
 
+	// Vision verify-or-reject. Show the candidate(s) to the vision LLM and
+	// have it pick the one that GENUINELY depicts the query — or reject all
+	// (0). The old "choose 1 of N" forced a pick even when every result was
+	// wrong (a person search surfacing their connections, all with near-
+	// identical titles), returning a confidently-wrong image. Now it can say
+	// "none match", and a single result gets verified instead of returned
+	// blind. No vision LLM → can't verify, fall through to the first result.
 	chosen := 0
-	if len(candidates) > 1 && sess.LLM != nil {
+	if sess.LLM != nil {
 		var rawImages [][]byte
 		var meta strings.Builder
 		for i, c := range candidates {
 			rawImages = append(rawImages, c.raw)
-			fmt.Fprintf(&meta, "Image %d — title: %q, source: %s\n", i+1, c.meta.Title, c.meta.Source)
+			dim := ""
+			if c.w > 0 && c.h > 0 {
+				dim = fmt.Sprintf(", %dx%d px", c.w, c.h)
+			}
+			fmt.Fprintf(&meta, "Image %d — title: %q, source: %s%s\n", i+1, c.meta.Title, c.meta.Source, dim)
 		}
 		prompt := fmt.Sprintf(
-			"I searched for %q and found %d candidate images. "+
-				"Their metadata (title and source domain) is listed below — use this alongside what you see to identify the correct subject.\n\n"+
-				"%s\n"+
-				"Choose the single best match: most relevant to the query, correct subject identity, and appropriate to send. "+
-				"Reply with ONLY the number (1 through %d), nothing else.",
-			query, len(candidates), meta.String(), len(candidates),
+			"I searched for %q and downloaded %d candidate image(s). Metadata (title, source domain, pixel size) is below — weigh it alongside what you actually SEE.\n\n%s\n"+
+				"Identify which candidate GENUINELY depicts %q: the correct subject/identity, not a lookalike, a different person, or an unrelated result. "+
+				"A specific search (especially for a person) routinely surfaces near-duplicates and unrelated items with similar titles — e.g. a profile page listing other people's thumbnails — so prefer the prominent, correctly-identified subject (a larger image is likelier the real one than a small thumbnail), and be willing to reject everything. "+
+				"Reply with ONLY a number: 1 to %d for the genuine match, or 0 if NONE of them confidently depict %q.",
+			query, len(candidates), meta.String(), query, len(candidates), query,
 		)
 		resp, err := sess.LLM.Chat(context.Background(),
 			[]Message{{Role: "user", Content: prompt, Images: rawImages}},
@@ -149,7 +189,11 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		if err == nil && resp != nil {
 			for _, tok := range strings.Fields(resp.Content) {
 				tok = strings.Trim(tok, ".,;:\"'")
-				if n, err := strconv.Atoi(tok); err == nil && n >= 1 && n <= len(candidates) {
+				if n, perr := strconv.Atoi(tok); perr == nil && n >= 0 && n <= len(candidates) {
+					if n == 0 {
+						Log("[imagefetch/find_image] query=%q — vision rejected all %d candidate(s) as non-matching", query, len(candidates))
+						return "", fmt.Errorf("found %d image(s) for %q but none confidently match — a specific search (especially for a person) can surface lookalikes, connections, or unrelated results with similar titles. Refine the query, or use fetch_image with a specific image URL", len(candidates), query)
+					}
 					chosen = n - 1
 					break
 				}
@@ -334,6 +378,73 @@ func FetchImageBytes(rawURL, referer string, timeoutSecs int) ([]byte, error) {
 		return nil, fmt.Errorf("empty response")
 	}
 	return data, nil
+}
+
+// pageImageRes matches a page's representative image in its <head> meta
+// tags — og:image (either attribute order) and twitter:image.
+var pageImageRes = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)["']`),
+	regexp.MustCompile(`(?i)<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::url)?["']`),
+	regexp.MustCompile(`(?i)<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']`),
+}
+
+// extractPageImage fetches a source page and returns its representative
+// image URL (og:image / twitter:image), resolved to absolute — so
+// find_image grabs the real, full-size original from the page underneath a
+// search result instead of the cached / thumbnail result image. Returns ""
+// if the page can't be fetched or declares no such image.
+func extractPageImage(pageURL string) string {
+	if pageURL == "" {
+		return ""
+	}
+	req, err := http.NewRequest("GET", pageURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", browserUA)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	client := &http.Client{Timeout: 12 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	const maxHTML = 1 << 20 // 1 MB reaches the <head> metas on any sane page
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTML))
+	if err != nil {
+		return ""
+	}
+	page := string(body)
+	for _, re := range pageImageRes {
+		if m := re.FindStringSubmatch(page); len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+			if abs := resolvePageURL(pageURL, html.UnescapeString(strings.TrimSpace(m[1]))); abs != "" {
+				return abs
+			}
+		}
+	}
+	return ""
+}
+
+// resolvePageURL resolves a possibly-relative image ref against the page it
+// came from, keeping only http(s) results.
+func resolvePageURL(base, ref string) string {
+	b, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+	r, err := url.Parse(ref)
+	if err != nil {
+		return ""
+	}
+	abs := b.ResolveReference(r)
+	if abs.Scheme != "http" && abs.Scheme != "https" {
+		return ""
+	}
+	return abs.String()
 }
 
 func downloadImageBytes(rawURL string) ([]byte, error) {

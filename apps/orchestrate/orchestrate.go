@@ -112,9 +112,9 @@ func (T *OrchestrateApp) runsRegistry() *RunRegistry {
 	return T.runs
 }
 
-func (T OrchestrateApp) Name() string         { return "orchestrate" }
-func (T OrchestrateApp) SystemPrompt() string { return "" }
-func (T OrchestrateApp) Desc() string {
+func (T *OrchestrateApp) Name() string         { return "orchestrate" }
+func (T *OrchestrateApp) SystemPrompt() string { return "" }
+func (T *OrchestrateApp) Desc() string {
 	return "Apps: Agency — define and run plan-driven AI agents."
 }
 

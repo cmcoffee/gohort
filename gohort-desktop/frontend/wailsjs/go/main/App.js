@@ -26,6 +26,10 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function InstallBridge() {
+  return window['go']['main']['App']['InstallBridge']();
+}
+
 export function InvokeTool(arg1, arg2) {
   return window['go']['main']['App']['InvokeTool'](arg1, arg2);
 }
@@ -58,10 +62,18 @@ export function ResetSettings() {
   return window['go']['main']['App']['ResetSettings']();
 }
 
-export function SaveSettings(arg1) {
-  return window['go']['main']['App']['SaveSettings'](arg1);
+export function SaveSettings(arg1, arg2) {
+  return window['go']['main']['App']['SaveSettings'](arg1, arg2);
 }
 
 export function SetAutoApprove(arg1) {
   return window['go']['main']['App']['SetAutoApprove'](arg1);
+}
+
+export function SetBridgeAPIKey(arg1) {
+  return window['go']['main']['App']['SetBridgeAPIKey'](arg1);
+}
+
+export function UninstallBridge() {
+  return window['go']['main']['App']['UninstallBridge']();
 }

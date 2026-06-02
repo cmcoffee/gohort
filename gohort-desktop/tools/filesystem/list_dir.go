@@ -91,7 +91,7 @@ func (t *list_dir_tool) Handler() core.ToolHandler {
 		if real, err := filepath.EvalSymlinks(abs); err == nil {
 			abs = real
 		}
-		if !core.PathAllowed(abs) {
+		if !core.PathAllowedOrConsent(abs) {
 			return "", fmt.Errorf("filesystem.list_directory refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		info, err := os.Stat(abs)

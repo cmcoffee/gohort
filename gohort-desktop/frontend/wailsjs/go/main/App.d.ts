@@ -14,6 +14,8 @@ export function GetReadRoots():Promise<Array<string>>;
 
 export function GetSettings():Promise<main.settings_view>;
 
+export function InstallBridge():Promise<main.save_result>;
+
 export function InvokeTool(arg1:string,arg2:{[key: string]: any}):Promise<string>;
 
 export function IsConfigured():Promise<boolean>;
@@ -30,6 +32,10 @@ export function RequestApprovalBlocking(arg1:string,arg2:string,arg3:{[key: stri
 
 export function ResetSettings():Promise<main.save_result>;
 
-export function SaveSettings(arg1:string):Promise<main.save_result>;
+export function SaveSettings(arg1:string,arg2:string):Promise<main.save_result>;
 
 export function SetAutoApprove(arg1:boolean):Promise<main.save_result>;
+
+export function SetBridgeAPIKey(arg1:string):Promise<main.save_result>;
+
+export function UninstallBridge():Promise<main.save_result>;

@@ -3,9 +3,11 @@
 //   window.go.main.App.InvokeTool(name, args)  → result string
 //   window.go.main.App.ListTools()             → [{name, desc, params, required}]
 //   window.go.main.App.IsConfigured()          → bool
-//   window.go.main.App.GetSettings()           → {server_url}
-//   window.go.main.App.SaveSettings(url)       → {ok, error?}
+//   window.go.main.App.GetSettings()           → {server_url, api_key_set}
+//   window.go.main.App.SaveSettings(url, key)  → {ok, error?}
 //   window.go.main.App.ResetSettings()         → {ok, error?}
+//   window.go.main.App.InstallBridge()         → {ok, error?}   (execs Gohort-Bridge --install)
+//   window.go.main.App.UninstallBridge()       → {ok, error?}
 //
 // Tool-specific methods (ReadLocalFile, OpenApp, etc.) are NOT
 // individually bound — that would mean every new tool requires a new
@@ -134,11 +136,17 @@ func (a *App) IsConfigured() bool { return a.config.IsConfigured() }
 // future settings page can grow naturally.
 type settings_view struct {
 	ServerURL string `json:"server_url"`
+	APIKeySet bool   `json:"api_key_set"` // true if a bridge API key is stored (the key itself is never sent to JS)
 }
 
-// GetSettings returns the current visible settings to the webview.
+// GetSettings returns the current visible settings to the webview. The
+// api_key_set flag reflects the bridge config sidecar (the agent's key),
+// not the viewer's own store.
 func (a *App) GetSettings() settings_view {
-	return settings_view{ServerURL: a.config.ServerURL()}
+	return settings_view{
+		ServerURL: a.config.ServerURL(),
+		APIKeySet: core.ReadBridgeConfig().APIKey != "",
+	}
 }
 
 // save_result is the uniform return shape for SaveSettings /
@@ -150,14 +158,24 @@ type save_result struct {
 	Error string `json:"error,omitempty"`
 }
 
-// SaveSettings validates + persists a new server URL. Probes the URL
-// to confirm reachability before saving — a saved-but-unreachable URL
-// puts the user in a frustrating loop, easier to catch up front.
-func (a *App) SaveSettings(server_url string) save_result {
+// SaveSettings validates + persists a new server URL and, optionally,
+// the bridge API key. Probes the URL to confirm reachability before
+// saving — a saved-but-unreachable URL puts the user in a frustrating
+// loop, easier to catch up front. An empty api_key leaves any stored
+// key unchanged (users who don't run the background bridge never need
+// to enter one).
+func (a *App) SaveSettings(server_url, api_key string) save_result {
 	server_url = strings.TrimSpace(server_url)
 	if server_url == "" {
 		return save_result{Error: "Enter a server URL."}
 	}
+	// Normalize to a BARE origin. The viewer's proxy and the bridge both
+	// want the origin: the bridge appends /phantom/api/* and
+	// /api/desktop/ws itself, so a pasted ".../phantom" would otherwise
+	// become ".../phantom/phantom/api/hook" → 404.
+	server_url = strings.TrimRight(server_url, "/")
+	server_url = strings.TrimSuffix(server_url, "/phantom")
+	server_url = strings.TrimRight(server_url, "/")
 	parsed, err := url.Parse(server_url)
 	if err != nil {
 		return save_result{Error: fmt.Sprintf("Invalid URL: %v", err)}
@@ -168,19 +186,53 @@ func (a *App) SaveSettings(server_url string) save_result {
 	if parsed.Host == "" {
 		return save_result{Error: "URL is missing a host."}
 	}
-	if err := probe_gohort(parsed.String()); err != nil {
-		return save_result{Error: fmt.Sprintf("Couldn't reach %s — %v", parsed.Host, err)}
-	}
-	// Server change → clear cookies. Old session cookie was for a
-	// different host (or the same host but stale), and the new server
-	// will issue a fresh one on login.
-	if previous := a.config.ServerURL(); previous != server_url && a.cookies != nil {
-		a.cookies.Clear()
+	// Only probe (and clear cookies) when the URL actually CHANGES.
+	// Re-saving the same URL — e.g. just to update the bridge API key —
+	// shouldn't re-probe a server that's already known-good, and must
+	// not drop the session. This is what lets "update the API key" work
+	// without going through the reachability check.
+	changed := server_url != a.config.ServerURL()
+	if changed {
+		if err := probe_gohort(parsed.String()); err != nil {
+			return save_result{Error: fmt.Sprintf("Couldn't reach %s — %v", parsed.Host, err)}
+		}
+		if a.cookies != nil {
+			a.cookies.Clear() // new host → old session cookie is stale
+		}
 	}
 	if err := a.config.SetServerURL(server_url); err != nil {
 		return save_result{Error: fmt.Sprintf("Save failed: %v", err)}
 	}
+	// Write the bridge config sidecar so the separate Gohort-Bridge agent
+	// picks up the server URL + API key. Preserve any poll interval set
+	// via the agent's CLI.
+	bc := core.ReadBridgeConfig()
+	bc.ServerURL = server_url
+	if key := strings.TrimSpace(api_key); key != "" {
+		bc.APIKey = key
+	}
+	if err := core.WriteBridgeConfig(bc); err != nil {
+		return save_result{Error: fmt.Sprintf("Saved URL, but writing the bridge config failed: %v", err)}
+	}
 	core.Log("[gohort-desktop] saved server URL: %s", server_url)
+	return save_result{OK: true}
+}
+
+// SetBridgeAPIKey writes ONLY the bridge API key to the sidecar — no
+// server URL, no reachability probe, no reload. This is the dedicated
+// "just update the key" path; it can't get stuck on the Connect probe.
+// Exposed to JS as window.go.main.App.SetBridgeAPIKey(key).
+func (a *App) SetBridgeAPIKey(api_key string) save_result {
+	key := strings.TrimSpace(api_key)
+	if key == "" {
+		return save_result{Error: "Enter an API key."}
+	}
+	bc := core.ReadBridgeConfig()
+	bc.APIKey = key
+	if err := core.WriteBridgeConfig(bc); err != nil {
+		return save_result{Error: fmt.Sprintf("Save failed: %v", err)}
+	}
+	core.Log("[gohort-desktop] bridge API key updated")
 	return save_result{OK: true}
 }
 

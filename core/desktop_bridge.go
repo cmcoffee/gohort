@@ -133,6 +133,67 @@ var desktopUpgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
+// --- API-key authentication hook ---
+//
+// The desktop bridge normally authenticates via the gohort_session
+// cookie (the viewer logs in through its webview). The headless
+// gohort-bridge daemon has no cookie — it authenticates with an
+// X-API-Key header instead, the same key it uses for its other
+// server endpoints (e.g. phantom's /api/hook).
+//
+// core/ must not import app packages, so an app that issues API keys
+// registers a validator here once its key store is live. The desktop
+// WS mount (core/webapp.go) resolves the user by trying the cookie
+// first, then walking these validators against the X-API-Key header.
+// A validator returns the gohort username the key belongs to (the WS
+// bridge is per-user) and ok=false when the key is unknown.
+var (
+	apiKeyValidatorsMu sync.RWMutex
+	apiKeyValidators   []func(key string) (user string, ok bool)
+)
+
+// RegisterAPIKeyValidator adds a key→user resolver consulted by
+// userFromAPIKey. Apps call this once at route-registration time
+// (when their key store is live, not at init() — the DB may be nil
+// then). Validators are tried in registration order; first match wins.
+func RegisterAPIKeyValidator(fn func(key string) (user string, ok bool)) {
+	if fn == nil {
+		return
+	}
+	apiKeyValidatorsMu.Lock()
+	apiKeyValidators = append(apiKeyValidators, fn)
+	apiKeyValidatorsMu.Unlock()
+}
+
+// userFromAPIKey resolves the X-API-Key header to a username via the
+// registered validators. Returns "" when the header is absent or no
+// validator recognizes the key.
+func userFromAPIKey(r *http.Request) string {
+	key := r.Header.Get("X-API-Key")
+	if key == "" {
+		return ""
+	}
+	apiKeyValidatorsMu.RLock()
+	defer apiKeyValidatorsMu.RUnlock()
+	for _, fn := range apiKeyValidators {
+		if u, ok := fn(key); ok && u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
+// DesktopBridgeUserOf is the auth resolver the desktop WS mount uses:
+// cookie session first (the viewer's logged-in webview), then the
+// X-API-Key header (the headless daemon). Returning "" rejects the
+// connection.
+func DesktopBridgeUserOf(r *http.Request) string {
+	if u := AuthCurrentUser(r); u != "" {
+		return u
+	}
+	return userFromAPIKey(r)
+}
+
 // HandleDesktopBridge is the WS endpoint handler. Mount at
 // /api/desktop/ws via the same auth middleware that protects the
 // rest of the app — by the time we get here the user is resolved.

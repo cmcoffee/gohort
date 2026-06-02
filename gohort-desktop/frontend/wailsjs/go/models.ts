@@ -86,6 +86,7 @@ export namespace main {
 	}
 	export class settings_view {
 	    server_url: string;
+	    api_key_set: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new settings_view(source);
@@ -94,6 +95,7 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.server_url = source["server_url"];
+	        this.api_key_set = source["api_key_set"];
 	    }
 	}
 	export class tool_descriptor {

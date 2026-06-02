@@ -231,7 +231,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		extraTools = append(extraTools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
 	}
 	if !target.DisableSkills {
-		extraTools = append(extraTools, subTurn.activateSkillToolDef())
+		extraTools = append(extraTools, subTurn.activateSkillToolDef(), subTurn.deactivateSkillToolDef())
 	}
 	// Sub-agents also skip the Available agents block — no point
 	// telling a leaf about fleet peers it can't dispatch to. Saves

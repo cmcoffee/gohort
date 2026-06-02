@@ -1,10 +1,14 @@
-// gohort-desktop entry point. Minimal by design — config + Wails
-// bootstrap only. Tool registration happens in each tool package's
-// init() (pulled in via blank imports in tools.go). The Wails app
-// (wails_app.go) exposes a single InvokeTool bridge that delegates
-// to the registry, plus the settings methods used by the first-run
-// configure page. Neither this file nor wails_app.go knows what
-// tools exist.
+// gohort-desktop entry point. One binary, two modes: with no flag it
+// runs the Wails viewer window (runViewer below); with --bridge it
+// runs the always-on daemon (menu-bar app + iMessage relay + WS tool
+// bridge — see package bridge). Management flags (--setup/--install/
+// --uninstall/--test) run a bridge action and exit. launchd runs us
+// with --bridge; the tray's "Open Window" relaunches us with no flag.
+//
+// Tool registration happens in each tool package's init() (blank
+// imports in tools.go). The Wails app (wails_app.go) exposes an
+// InvokeTool bridge to the webview; the daemon serves the same
+// registry to the server over the WS bridge.
 
 package main
 
@@ -32,11 +36,23 @@ import (
 var assets embed.FS
 
 func main() {
+	// The viewer is a plain Wails window app. The bridge (iMessage relay
+	// + WS tool bridge) is a SEPARATE app/process (Gohort-Bridge.app);
+	// this binary just renders the gohort web UI and writes the bridge's
+	// config to the shared sidecar when the user saves settings.
+	runViewer()
+}
+
+// runViewer launches the Gohort app window.
+func runViewer() {
 	// Wrap every nfo output flag with the in-app ring buffer BEFORE
 	// any code calls Log/Err/Warn — so the buffer captures startup
 	// lines too. The viewer (Show Logs menu item) reads from this.
 	installLogCapture()
 
+	// The viewer keeps its own store (cookies, window state, server URL
+	// for the proxy). The bridge agent is a different process with its
+	// own config sidecar, so there's no kvlite lock contention here.
 	cfg, err := core.LoadConfig()
 	if err != nil {
 		core.Fatal("gohort-desktop: load config: %v", err)
@@ -52,26 +68,13 @@ func main() {
 		core.Fatal("gohort-desktop: init cookie jar: %v", err)
 	}
 
-	// Seed / load the shared filesystem read-allowlist. Filesystem
-	// tools (read_local_file, list_directory) consult core.PathAllowed
-	// for every operation — InitFSAllowlist makes that lookup safe to
-	// call. On first run it writes the seed defaults so the operator
-	// sees them immediately in "Show Allowed Folders".
-	core.InitFSAllowlist(cfg.Settings())
+	// The viewer registers NO filesystem tools and has no file-read
+	// capability — all local tools (filesystem, contacts, iMessage) live
+	// in the separate Gohort-Bridge agent, which gates folder reads
+	// behind per-folder consent (see bridge/fsconsent.go).
 
 	width, height := cfg.WindowSize()
 	app := NewApp(cfg, cookies)
-
-	// Bridge — opens a WebSocket to the gohort server and exposes
-	// our local tools (filesystem.read_local_file, eventually
-	// notify / screenshot / shell) so server-side agents can invoke
-	// them. Runs in the background; failures retry with backoff and
-	// never block startup. The app reference gives ws_client the
-	// approval-store handle for per-invocation consent (see
-	// approvals.go) — without app, every server-initiated tool call
-	// would silently auto-execute, no user gate.
-	stopWS := startWSClient(cfg, cookies, app)
-	defer stopWS()
 
 	// Local HTTP listener on 127.0.0.1:<random>. WKWebView refuses to
 	// upgrade WebSocket connections from its custom-scheme handler

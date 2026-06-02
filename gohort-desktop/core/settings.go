@@ -20,17 +20,32 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 const (
-	SETTINGS_DIR_NAME  = "gohort-desktop"
-	SETTINGS_DB_NAME   = "settings.db"
-	SETTINGS_TABLE     = "desktop"
-	SETTING_SERVER_URL = "server_url"
-	SETTING_COOKIES    = "cookies"
+	SETTINGS_DIR_NAME = "gohort-desktop"
+	// Two stores so the always-on daemon and the on-demand viewer
+	// never contend on one bolt file (kvlite takes an exclusive OS
+	// lock). SETTINGS_DB_NAME is the daemon's config authority;
+	// VIEWER_DB_NAME holds the viewer's cookies + window state only.
+	SETTINGS_DB_NAME = "settings.db"
+	VIEWER_DB_NAME   = "viewer.db"
+	SETTINGS_TABLE   = "desktop"
+
+	SETTING_SERVER_URL  = "server_url"
+	SETTING_COOKIES     = "cookies"
+	SETTING_API_KEY     = "api_key"     // unified key: phantom hook/poll + desktop WS tool bridge
+	SETTING_POLL_SECS   = "poll_secs"   // chat.db poll interval, seconds
+	SETTING_CHATDB_PATH = "chatdb_path" // override for ~/Library/Messages/chat.db
+
+	// SERVER_URL_SIDECAR is a plain, lock-free file the daemon writes
+	// on every server-URL change so the viewer (which can't open the
+	// daemon-locked settings.db) can learn where to proxy.
+	SERVER_URL_SIDECAR = "server_url.txt"
 )
 
 // StoredCookie pairs a cookie with the origin URL it came from. The
@@ -50,10 +65,13 @@ type Settings struct {
 	db kvlite.Store
 }
 
-// open_settings_store opens (and creates if needed) the on-disk
-// settings DB. Returns an error rather than panicking so main can
-// surface a clean Fatal with the actual filesystem reason.
-func open_settings_store() (*Settings, error) {
+// open_settings_store opens (and creates if needed) the named on-disk
+// settings DB in the shared config dir. The daemon passes
+// SETTINGS_DB_NAME, the viewer VIEWER_DB_NAME — two files so the two
+// processes never contend on one kvlite/bolt exclusive lock. Returns
+// an error rather than panicking so main can surface a clean Fatal
+// with the actual filesystem reason.
+func open_settings_store(db_name string) (*Settings, error) {
 	dir, err := settings_dir()
 	if err != nil {
 		return nil, fmt.Errorf("locate config dir: %w", err)
@@ -61,7 +79,7 @@ func open_settings_store() (*Settings, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", dir, err)
 	}
-	db, err := kvlite.Open(filepath.Join(dir, SETTINGS_DB_NAME))
+	db, err := kvlite.Open(filepath.Join(dir, db_name))
 	if err != nil {
 		return nil, fmt.Errorf("open settings db: %w", err)
 	}
@@ -106,6 +124,89 @@ func (s *Settings) ClearServerURL() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.db.Unset(SETTINGS_TABLE, SETTING_SERVER_URL)
+}
+
+// APIKey returns the unified daemon API key (used for both phantom's
+// /api/hook + /api/poll and the desktop WS tool bridge). Empty until
+// configured via --setup.
+func (s *Settings) APIKey() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var v string
+	s.db.Get(SETTINGS_TABLE, SETTING_API_KEY, &v)
+	return v
+}
+
+// SetAPIKey persists the unified daemon API key.
+func (s *Settings) SetAPIKey(key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.Set(SETTINGS_TABLE, SETTING_API_KEY, key)
+}
+
+// PollSecs returns the chat.db poll interval in seconds, or 0 if
+// unset (callers apply their own default/minimum).
+func (s *Settings) PollSecs() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var v int
+	s.db.Get(SETTINGS_TABLE, SETTING_POLL_SECS, &v)
+	return v
+}
+
+// SetPollSecs persists the chat.db poll interval.
+func (s *Settings) SetPollSecs(secs int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.Set(SETTINGS_TABLE, SETTING_POLL_SECS, secs)
+}
+
+// ChatDBPath returns the override path to Messages' chat.db, or empty
+// for the default (~/Library/Messages/chat.db).
+func (s *Settings) ChatDBPath() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var v string
+	s.db.Get(SETTINGS_TABLE, SETTING_CHATDB_PATH, &v)
+	return v
+}
+
+// SetChatDBPath persists a chat.db path override.
+func (s *Settings) SetChatDBPath(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.Set(SETTINGS_TABLE, SETTING_CHATDB_PATH, path)
+}
+
+// WriteServerURLSidecar writes the bare server origin to a plain,
+// lock-free file in the config dir so the viewer can read it without
+// opening the daemon-locked settings.db. Called by the daemon on
+// every server-URL change. Best-effort: a write failure is returned
+// but is non-fatal to the daemon.
+func WriteServerURLSidecar(url string) error {
+	dir, err := settings_dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, SERVER_URL_SIDECAR), []byte(url), 0o600)
+}
+
+// ReadServerURLSidecar reads the server origin the daemon last wrote.
+// Returns "" if the file is absent (daemon never configured) so the
+// viewer can show its "configure via the menu bar" hint.
+func ReadServerURLSidecar() string {
+	dir, err := settings_dir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, SERVER_URL_SIDECAR))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // Close flushes and releases the underlying bolt file. Call from the

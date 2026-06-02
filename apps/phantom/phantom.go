@@ -104,13 +104,13 @@ func (T *Phantom) matchesRecentReply(text string) bool {
 	return true
 }
 
-func (T Phantom) Name() string    { return "phantom" }
-func (T Phantom) WebPath() string { return "/phantom" }
-func (T Phantom) WebName() string { return "Phantom" }
-func (T Phantom) WebDesc() string {
+func (T *Phantom) Name() string    { return "phantom" }
+func (T *Phantom) WebPath() string { return "/phantom" }
+func (T *Phantom) WebName() string { return "Phantom" }
+func (T *Phantom) WebDesc() string {
 	return "Bridge iMessage (and other messaging apps) to an AI persona via a lightweight local agent."
 }
-func (T Phantom) Desc() string { return "Apps: iMessage/Teams AI persona bridge." }
+func (T *Phantom) Desc() string { return "Apps: iMessage/Teams AI persona bridge." }
 
 func (T *Phantom) Init() error {
 	// Register this instance with the agency-export source (see
@@ -145,8 +145,9 @@ const (
 // APIKey authenticates a relay agent (e.g. the Mac bridge binary).
 type APIKey struct {
 	ID       string `json:"id"`
-	Name     string `json:"name"` // friendly label, e.g. "Craig's MacBook"
-	Key      string `json:"key"`  // the secret token, shown once on creation
+	Name     string `json:"name"`  // friendly label, e.g. "Craig's MacBook"
+	Key      string `json:"key"`   // the secret token, shown once on creation
+	Owner    string `json:"owner"` // gohort username the key belongs to; binds the key to a user for the per-user desktop tool bridge
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`
 }
@@ -785,6 +786,15 @@ func storeMessage(db Database, m PhantomMessage) {
 func enqueueOutbox(db Database, item OutboxItem) {
 	if db == nil {
 		return
+	}
+	// De-markdown every outbound message at the chokepoint. iMessage
+	// renders no markdown, so literal **bold**, `code`, # headers and
+	// the like would otherwise reach the user as punctuation noise. The
+	// main reply paths already call markdownToPlain; doing it here too is
+	// belt-and-suspenders for any path that doesn't, and it's idempotent
+	// (already-plain text is unchanged).
+	if item.Text != "" {
+		item.Text = markdownToPlain(item.Text)
 	}
 	if len(item.Videos) > 0 && strings.TrimSpace(item.Text) != "" {
 		// Send the video portion now.

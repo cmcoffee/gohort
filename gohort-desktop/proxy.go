@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -74,12 +75,83 @@ func new_gohort_proxy(cfg *core.Config, configure_html []byte, cookies *core.Per
 // webview URL bar — no need to nuke settings.db from the filesystem.
 const CONFIGURE_PATH = "/__desktop/configure"
 
+// SETTINGS_PATH renders the SAME form as CONFIGURE_PATH but WITHOUT
+// clearing the saved server URL — so the user can revise the server URL
+// or the bridge API key without nuking their session. Saving with an
+// unchanged URL keeps cookies (see App.SaveSettings).
+const SETTINGS_PATH = "/__desktop/settings"
+
+// APIKEY_PATH is a dedicated, self-contained page that updates ONLY the
+// Gohort-Bridge API key (via App.SetBridgeAPIKey). No server URL, no
+// reachability probe — so it can't get stuck on "Checking server…".
+const APIKEY_PATH = "/__desktop/apikey"
+
+// apikey_page_html is the standalone bridge-API-key editor. Kept inline
+// (not a proxied gohort page, not the configure form) so updating the
+// key is fully decoupled from the server-connection flow.
+const apikey_page_html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Gohort-Bridge API Key</title><style>
+html,body{height:100%;margin:0}body{background:#0d1117;color:#c9d1d9;
+font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,sans-serif;
+display:flex;align-items:center;justify-content:center}
+.card{max-width:460px;width:90%;background:#161b22;border:1px solid #30363d;
+border-radius:10px;padding:28px}h1{font-size:19px;margin:0 0 6px}
+p{color:#8b949e;font-size:13px;line-height:1.5;margin:0 0 16px}
+input{width:100%;box-sizing:border-box;padding:10px 12px;background:#0d1117;
+border:1px solid #30363d;border-radius:6px;color:#c9d1d9;font-size:14px}
+button{margin-top:14px;padding:9px 18px;background:#238636;color:#fff;border:0;
+border-radius:6px;font-size:14px;cursor:pointer}button:hover{background:#2ea043}
+#msg{margin-top:12px;font-size:13px;min-height:18px}
+code{background:#0d1117;padding:1px 5px;border-radius:4px;color:#79c0ff}
+</style></head><body><div class="card">
+<h1>Gohort-Bridge API Key</h1>
+<p>The key the Gohort-Bridge agent uses to authenticate with the server.
+Generate one in <code>Phantom &rarr; API Keys</code>. Saved locally for the
+bridge — no server connection needed, so this can't hang.</p>
+<input id="key" type="password" placeholder="paste API key" autocomplete="off" spellcheck="false" autofocus>
+<div id="msg"></div>
+<button onclick="savekey()">Save Key</button>
+</div><script>
+// NB: uses a plain HTTP POST to the local proxy, NOT window.go — Wails
+// doesn't inject its Go-bridge into proxy-served pages, so it's absent
+// here. The proxy handles POST /__desktop/apikey in Go.
+var key=document.getElementById('key'),msg=document.getElementById('msg');
+key.addEventListener('keydown',function(e){if(e.key==='Enter')savekey();});
+function savekey(){var k=key.value.trim();if(!k){msg.textContent='Enter a key.';return;}
+msg.style.color='';msg.textContent='Saving…';
+fetch('/__desktop/apikey',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:k})})
+.then(function(r){return r.json();})
+.then(function(d){if(!d.ok){msg.style.color='#f85149';msg.textContent=d.error||'Could not save.';return;}
+msg.style.color='#3fb950';msg.textContent='Saved. The bridge picks it up automatically.';key.value='';})
+.catch(function(e){msg.style.color='#f85149';msg.textContent='Failed: '+(e&&e.message?e.message:e);});}
+</script></body></html>`
+
 func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Escape hatch — always wins, regardless of whether a server is
 	// configured. Lets the user reach the configure form from any
 	// state, including "saved URL responds but is the wrong service".
 	if r.URL.Path == CONFIGURE_PATH {
 		gp.clear_and_configure(w)
+		return
+	}
+	// Non-destructive settings: show the same form, keep the saved URL.
+	if r.URL.Path == SETTINGS_PATH {
+		gp.serve_configure(w)
+		return
+	}
+	// Dedicated bridge-API-key page. GET serves the form; POST writes
+	// the key to the sidecar IN GO (the page can't use window.go — Wails
+	// doesn't inject its bridge into proxy-served pages — so it POSTs
+	// here instead). No server probe, so it never hangs on "Checking
+	// server…".
+	if r.URL.Path == APIKEY_PATH {
+		if r.Method == http.MethodPost {
+			gp.handle_apikey_post(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write([]byte(apikey_page_html))
 		return
 	}
 
@@ -158,6 +230,15 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		original_director(req)
 		req.Host = host
 		req.Header.Set("X-Forwarded-For-Desktop", "gohort-desktop")
+		// Suppress the X-Forwarded-For this local proxy would otherwise
+		// stamp on (= 127.0.0.1, the webview's loopback connection to us).
+		// If that 127.0.0.1 reaches gohort, its "loopback = trusted
+		// internal call, skip auth" bypass fires: logged-out requests
+		// then hit the app directly and come back 401 instead of being
+		// redirected to /login. Setting the header to nil tells
+		// httputil.ReverseProxy to omit it, so the REAL reverse proxy in
+		// front of gohort fills in the actual client IP.
+		req.Header["X-Forwarded-For"] = nil
 		// Inject cookies from our jar. Strip any Cookie header the
 		// webview might have set (it normally can't, but if Wails ever
 		// changes its scheme behavior we don't want two competing
@@ -200,6 +281,30 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 	gp.cached_proxy = proxy
 	gp.landing_done = false
 	return proxy
+}
+
+// handle_apikey_post writes the bridge API key to the sidecar from a
+// local form POST. Runs entirely in Go — no Wails Go-bridge needed,
+// which is the whole point (it's unavailable on proxy-served pages).
+func (gp *gohort_proxy) handle_apikey_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	var req struct {
+		Key string `json:"key"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "Enter an API key."})
+		return
+	}
+	bc := core.ReadBridgeConfig()
+	bc.APIKey = key
+	if err := core.WriteBridgeConfig(bc); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	core.Log("[gohort-desktop] bridge API key updated (local POST)")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 // serve_configure writes the embedded configure-page HTML. Status 200
@@ -440,6 +545,22 @@ const popup_shim_script = `<script>(function(){` +
 	`}` +
 	`window.__uiConfirmImpl=function(msg){return __desktop_modal_open({kind:'confirm',msg:msg});};` +
 	`window.__uiAlertImpl=function(msg){return __desktop_modal_open({kind:'alert',msg:msg});};` +
+	// --- clipboard implementation ---
+	// WKWebView restricts navigator.clipboard.writeText at non-https /
+	// non-user-gesture contexts; the loopback proxy origin trips both,
+	// so the browser-side fallback in core/ui (a hidden textarea +
+	// document.execCommand('copy')) also silently fails. Route Copy
+	// session and any other framework clipboard writes through Wails'
+	// native runtime.ClipboardSetText instead. The shim returns a
+	// Promise so the caller's then/catch chain works unchanged.
+	`window.__uiClipboardImpl=function(text){` +
+	`if(window.runtime&&window.runtime.ClipboardSetText){` +
+	`try{var r=window.runtime.ClipboardSetText(text||'');` +
+	`return (r&&typeof r.then==='function')?r:Promise.resolve(true);}` +
+	`catch(e){return Promise.reject(e);}` +
+	`}` +
+	`return Promise.reject(new Error('Wails clipboard runtime unavailable'));` +
+	`};` +
 	// --- bridge tool-call approval modal ---
 	// When the WS bridge receives a tool invocation from the
 	// server, ws_client.go's handleInvoke calls
@@ -484,7 +605,7 @@ const popup_shim_script = `<script>(function(){` +
 	// Show Logs menu item. Renders the ring-buffer as a scrollable
 	// dark overlay; polls every 2s for new lines while open so the
 	// viewer stays live without leaving the app.
-	`function __desktop_logs_open(){` +
+	`function __desktop_logs_open(initial){` +
 	`var prev=document.getElementById('__desktop_logs');` +
 	`if(prev){prev.remove();}` +
 	`var overlay=document.createElement('div');` +
@@ -539,6 +660,7 @@ const popup_shim_script = `<script>(function(){` +
 	`if(!window.go||!window.go.main||!window.go.main.App||!window.go.main.App.GetLogs)return;` +
 	`window.go.main.App.GetLogs().then(function(lines){render(lines||[]);});` +
 	`}` +
+	`if(initial&&initial.length){render(initial);}` +
 	`var pollId=setInterval(refresh,2000);refresh();` +
 	`function teardown(){clearInterval(pollId);overlay.remove();document.removeEventListener('keydown',onKey,true);}` +
 	`function onKey(e){if(e.key==='Escape'){e.preventDefault();teardown();}}` +
@@ -551,6 +673,7 @@ const popup_shim_script = `<script>(function(){` +
 	`};` +
 	`(document.body||document.documentElement).appendChild(overlay);` +
 	`}` +
+	`window.__desktop_logs_open=__desktop_logs_open;` +
 	`if(window.runtime&&window.runtime.EventsOn){` +
 	`window.runtime.EventsOn('show-logs',function(){__desktop_logs_open();});` +
 	`}` +

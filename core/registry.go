@@ -12,18 +12,18 @@ import (
 // Apps register these in init() so their settings appear in --setup
 // without the framework needing to know about them.
 type SetupSection struct {
-	Name  string                   // display name for the setup menu
-	Order int                      // display order (lower = earlier; framework uses 0-99, apps use 100+)
+	Name  string                     // display name for the setup menu
+	Order int                        // display order (lower = earlier; framework uses 0-99, apps use 100+)
 	Build func(db Database) *Options // build the interactive submenu
-	Save  func(db Database)        // persist values after user exits setup
+	Save  func(db Database)          // persist values after user exits setup
 }
 
 var (
-	registryMu            sync.Mutex
-	registeredAgents      []Agent
-	registeredApps        []Agent
-	registeredAdminAgents []Agent
-	registeredChatTools   []ChatTool
+	registryMu              sync.Mutex
+	registeredAgents        []Agent
+	registeredApps          []Agent
+	registeredAdminAgents   []Agent
+	registeredChatTools     []ChatTool
 	registeredSetupSections []SetupSection
 )
 
@@ -296,6 +296,20 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			// exist in the workspace.
 			wsBefore := snapshotWorkspaceFiles(sess)
 			out, err := base(args)
+			// A result that is purely a data:image/...;base64,... URI is a
+			// vision attachment, not text. Decode it into the session's
+			// image list so vision LLMs see it, and replace the unwieldy
+			// base64 with a short note. This lets string-only tools —
+			// desktop tools over the WS bridge (screenshot), MCP image
+			// tools, etc. — return an image despite the (string, error)
+			// contract. The imgDelta logic below then emits the standard
+			// attachment notice for free.
+			if err == nil {
+				if b64, ok := dataURIImage(out); ok {
+					sess.AppendImage(b64)
+					out = "Image captured and attached."
+				}
+			}
 			imgDelta := len(sess.Images) - imgBefore
 			vidDelta := len(sess.Videos) - vidBefore
 			fileDelta := len(sess.Files) - fileBefore
@@ -356,6 +370,26 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 		NeedsConfirm:       confirm,
 		SingleFirePerBatch: singleFire,
 	}
+}
+
+// dataURIImage returns the base64 payload of a tool result that is
+// nothing but a data:image/<type>;base64,<data> URI, and true. Any other
+// result returns ("", false). Used so a string-only tool can hand back
+// an image that becomes a vision attachment (see the wrapper above).
+func dataURIImage(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "data:image/") {
+		return "", false
+	}
+	i := strings.Index(s, ";base64,")
+	if i < 0 {
+		return "", false
+	}
+	b64 := s[i+len(";base64,"):]
+	if b64 == "" {
+		return "", false
+	}
+	return b64, true
 }
 
 // GetAgentToolsWithSession looks up registered chat tools by name and returns

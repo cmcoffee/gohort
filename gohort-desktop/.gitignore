@@ -14,3 +14,7 @@ node_modules/
 
 # Local config overrides
 desktop.conf.local
+
+# stray bridge binaries (built to /Applications or via -o)
+gohort-bridge
+gohort-bridge.exe

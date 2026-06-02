@@ -7,7 +7,16 @@ OUTDIR    := build/bin
 APPBUNDLE := $(OUTDIR)/$(APPNAME).app
 INSTALL_DIR := /Applications
 
-.PHONY: all build dev doctor universal clean install uninstall help
+# The bridge is a SEPARATE app/bundle (Gohort-Bridge.app), built from
+# cmd/gohort-bridge — a menu-bar agent (LSUIElement, no dock icon), its
+# own bundle id, distinct process from the viewer. BRIDGEBIN is its
+# binary inside the assembled bundle.
+BRIDGENAME   := Gohort-Bridge
+BRIDGEBUNDLE := $(OUTDIR)/$(BRIDGENAME).app
+BRIDGEBIN    := $(BRIDGEBUNDLE)/Contents/MacOS/gohort-bridge
+BRIDGE_ID    := com.gohort.bridge
+
+.PHONY: all build dev doctor universal clean install uninstall help bridge bridge-install bridge-setup install-all
 
 # Default target: native architecture build. For a distribution build
 # that runs on both Intel and Apple Silicon Macs in one binary, use
@@ -65,6 +74,48 @@ universal:
 	@echo ""
 	@echo "Built universal $(APPBUNDLE) ($(VERSION))"
 
+# Build Gohort-Bridge.app — the menu-bar agent. Plain `go build` (cgo on
+# macOS for systray); no Wails. Assembles a minimal .app bundle with an
+# LSUIElement Info.plist so it has no dock icon and lives in the menu bar.
+bridge:
+	@mkdir -p "$(BRIDGEBUNDLE)/Contents/MacOS" "$(BRIDGEBUNDLE)/Contents/Resources"
+	CGO_ENABLED=1 go build -trimpath -o "$(BRIDGEBIN)" ./cmd/gohort-bridge
+	@cp build/appicon.png "$(BRIDGEBUNDLE)/Contents/Resources/appicon.png"
+	@printf '%s\n' \
+		'<?xml version="1.0" encoding="UTF-8"?>' \
+		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+		'<plist version="1.0"><dict>' \
+		'  <key>CFBundleName</key><string>Gohort Bridge</string>' \
+		'  <key>CFBundleDisplayName</key><string>Gohort Bridge</string>' \
+		'  <key>CFBundleIdentifier</key><string>$(BRIDGE_ID)</string>' \
+		'  <key>CFBundleExecutable</key><string>gohort-bridge</string>' \
+		'  <key>CFBundleIconFile</key><string>appicon</string>' \
+		'  <key>CFBundlePackageType</key><string>APPL</string>' \
+		'  <key>CFBundleShortVersionString</key><string>$(VERSION)</string>' \
+		'  <key>LSUIElement</key><true/>' \
+		'  <key>LSMinimumSystemVersion</key><string>10.15</string>' \
+		'</dict></plist>' > "$(BRIDGEBUNDLE)/Contents/Info.plist"
+	@echo ""
+	@echo "Built $(BRIDGEBUNDLE) (menu-bar agent, no dock icon)"
+	@echo "Configure it from Gohort (Connect screen) or: make bridge-setup"
+
+# Optional CLI config for the bridge (normally configured in the viewer).
+bridge-setup: bridge
+	"$(BRIDGEBIN)" --setup
+
+# Install BOTH apps to /Applications and register the bridge to run at
+# login. Gohort.app = the viewer (dock); Gohort-Bridge.app = the agent
+# (menu bar). Grant Full Disk Access to Gohort-Bridge.app for iMessage.
+install-all: install bridge
+	@if [ -d "$(INSTALL_DIR)/$(BRIDGENAME).app" ]; then rm -rf "$(INSTALL_DIR)/$(BRIDGENAME).app"; fi
+	cp -R "$(BRIDGEBUNDLE)" "$(INSTALL_DIR)/"
+	"$(INSTALL_DIR)/$(BRIDGENAME).app/Contents/MacOS/gohort-bridge" --install
+	@echo "Installed both apps. Grant Full Disk Access to $(BRIDGENAME).app for iMessage."
+
+# Register the (already-installed) bridge to run at login.
+bridge-install: bridge
+	"$(BRIDGEBIN)" --install
+
 # Dev mode: opens the window with live-reload on Go file edits. The
 # operator runs `gohort serve 127.0.0.1:8088` in another terminal;
 # this just opens the window pointed at that. Edit app.go / proxy.go
@@ -113,8 +164,12 @@ clean:
 help:
 	@echo "gohort-desktop build targets:"
 	@echo ""
-	@echo "  make                 Build .app for the current architecture (default)"
+	@echo "  make                 Build viewer .app for the current architecture (default)"
 	@echo "  make universal       Build universal .app (Intel + Apple Silicon)"
+	@echo "  make bridge          Build Gohort-Bridge.app (menu-bar agent, no dock icon)"
+	@echo "  make install-all     Install BOTH apps + register the bridge at login"
+	@echo "  make bridge-install  Register the bridge to run at login"
+	@echo "  make bridge-setup    Configure the bridge from the CLI (server URL, API key)"
 	@echo "  make debug           Build with WKWebView inspector enabled"
 	@echo "  make debug-install   Build (debug) and install to /Applications/"
 	@echo "  make dev             Run dev mode with live reload"

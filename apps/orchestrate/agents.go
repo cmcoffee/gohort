@@ -431,6 +431,15 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	if strings.TrimSpace(a.OrchestratorPrompt) == "" {
 		return a, fmt.Errorf("orchestrator_prompt is required")
 	}
+	// Builder-specific invariants. Hidden must stay true — Builder's
+	// authoring flows require the user directly (one-question-at-a-
+	// time intake, ask_user_form, draft sessions), none of which
+	// survive a fleet dispatch. Even if a shadow edit tried to flip
+	// it, the dispatch path's isBuilderAgent gate already refuses;
+	// forcing it here keeps the record consistent with the runtime.
+	if isBuilderAgent(a.ID) {
+		a.Hidden = true
+	}
 	// Reachability invariant: a Hidden agent (not in the fleet's
 	// "Available agents" block + not dispatchable via agents(run)) is
 	// orphaned if it's ALSO not exposed as a public app — the owner
@@ -777,14 +786,21 @@ That's the whole answer. Don't try to gather requirements yourself, don't dispat
 			// Phase 1 research + Phase 2 design + Phase 4 execution
 			// in one turn without squeezing out the create_agent call.
 			MaxWorkerRounds: 18,
-			// Lets Chat call enter_explorer_mode mid-turn when it
-			// realizes it needs more than the soft cap (e.g. a heavy
-			// agent-creation flow with several Phase 1 research
-			// sources). Hard ceiling is explorerHardCap (50 rounds);
-			// the LLM has to ask for it explicitly, so it stays
-			// visible in the activity log instead of being a silent
-			// auto-bump.
-			AllowExplorer: true,
+			// Explorer mode is OFF on seed-chat: the original use case
+			// (heavy authoring flows) moved to Builder, and 18 rounds
+			// covers normal multi-tool conversational work with
+			// headroom. Power-user agents (research / investigation)
+			// can opt in; Chat doesn't need it.
+			AllowExplorer: false,
+			// Seeds default to Hidden=true so they don't surface in
+			// other agents' fleet dispatch lists. They're user-facing
+			// entry points (run them directly from the Agency picker),
+			// not workhorses to be chained into other agents' workflows.
+			// The user can flip this per non-Builder seed if they
+			// actually want fleet dispatch (e.g. exposing Research as a
+			// callable specialist to a custom agent). Builder ignores
+			// edits — saveAgent forces Hidden=true on the Builder ID.
+			Hidden: true,
 			// Surface the per-turn Private toggle. Chat is the
 			// general-purpose conversational agent — sometimes the user
 			// wants a network-only-when-they-say-so answer (personal
@@ -1281,6 +1297,12 @@ If you pivot and still cannot make it work, that is a legitimate dead end — te
 			MaxWorkerRounds: 22,
 			MaxPlanSteps:    8,
 			AllowExplorer:   true,
+			// Builder is permanently hidden from the agent fleet and
+			// never dispatchable via agents(action="run") — its
+			// authoring flows require the user directly. saveAgent
+			// forces Hidden=true on this ID so user shadow edits
+			// can't flip it.
+			Hidden: true,
 		},
 		{
 			ID:          "seed-research",
@@ -1339,6 +1361,10 @@ Multi-step clarifications (several distinct decisions to make) → use ask_user_
 			// tool pool, which is too unrestricted for an end-user
 			// surface.
 			Exposed: true,
+			// Hidden by default — same reasoning as the other seeds.
+			// The user can flip this if they actually want Research
+			// to be a callable specialist from a custom agent's fleet.
+			Hidden: true,
 		},
 		{
 			ID:          "seed-kb",
@@ -1456,6 +1482,11 @@ When the user uploads a document (via paperclip or intake), the framework extrac
 			// decide which KB to publish. Admin opts in per-clone after
 			// uploading their corpus.
 			Exposed: false,
+			// Hidden by default — same reasoning as the other seeds.
+			// Users clone seed-kb for specific corpora; the clones are
+			// where dispatch-from-fleet decisions get made, not on the
+			// seed itself.
+			Hidden: true,
 		},
 	}
 }

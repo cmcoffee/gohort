@@ -113,6 +113,22 @@
       any state.
     </p>
 
+    <label for="api_key" style="display:block;margin-top:1.2rem;">
+      Bridge API key <span style="color:#888;font-weight:normal;">(optional)</span>
+    </label>
+    <input
+      id="api_key"
+      type="password"
+      placeholder="leave blank if you don't run the background bridge"
+      autocomplete="off"
+      spellcheck="false"
+    >
+    <p class="hint">
+      Only needed for the Gohort-Bridge app (iMessage relay + local tools).
+      Generate one in the server's <code>Phantom → API Keys</code>; the
+      bridge picks it up automatically once saved here.
+    </p>
+
     <div id="error" class="error"></div>
     <div id="status" class="status">Checking…</div>
 
@@ -123,14 +139,19 @@
 
 <script>
 var input = document.getElementById('server_url');
+var key_input = document.getElementById('api_key');
 var save_btn = document.getElementById('save');
 var error_box = document.getElementById('error');
 var status_box = document.getElementById('status');
 
 // Prefill if we already have a value (e.g. user reopened to change).
+// The API key itself is never sent back to JS — we only learn whether
+// one is set, and show that as a placeholder so a blank field leaves
+// the stored key untouched.
 if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSettings) {
   window.go.main.App.GetSettings().then(function(s) {
     if (s && s.server_url) input.value = s.server_url;
+    if (s && s.api_key_set) key_input.placeholder = '•••••••• (already set — leave blank to keep)';
   });
 }
 
@@ -159,7 +180,7 @@ function save_url() {
   if (!v) { show_error('Enter a server URL.'); return; }
 
   set_busy(true);
-  window.go.main.App.SaveSettings(v).then(function(res) {
+  window.go.main.App.SaveSettings(v, key_input.value.trim()).then(function(res) {
     set_busy(false);
     if (!res.ok) {
       show_error(res.error || 'Could not save settings.');

@@ -210,7 +210,7 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 
 | Client | Purpose |
 |--------|---------|
-| `gohort-desktop` | Native macOS host (Wails) that wraps the gohort web UI in an app window and exposes the host's filesystem (read, list, head, tail, grep, range, stat) as `from_client.filesystem.*` tools the connected gohort server can dispatch over a per-user WebSocket. Per-invocation approval modal + auto-approve toggle; in-app log viewer; operator-controlled read-allowlist with native folder picker. See `gohort-desktop/README.md`. |
+| `gohort-desktop` | Native desktop host (Wails), shipped as **two apps**: **Gohort.app** — the viewer window (reverse-proxies the gohort web UI; no special permissions) — and **Gohort-Bridge.app** — an always-on menu-bar daemon that owns the host's OS permissions and exposes local capabilities (filesystem read/write, screenshot, contacts) plus, on macOS, the iMessage relay, all dispatched from the gohort server over a per-user WebSocket. One unified API key authenticates both the tool bridge and `/phantom/api/*`. Per-invocation approval (auto-approve toggle), read/write folder consent, MCP host. See `gohort-desktop/README.md`. |
 
 ## Where it's going
 
@@ -304,7 +304,7 @@ gohort/
 │   ├── knowledge/           # Document Collections — RAG buckets agents attach to (upload, autofill, filter rules)
 │   ├── ollama_proxy/        # Ollama-compatible HTTP proxy
 │   ├── orchestrate/         # Agency — agent fleet runner, plan-driven authoring, memory + knowledge per (user, agent), skill activation, sub-agent dispatch
-│   ├── phantom/             # iMessage assistant (bridge in apps/phantom/_bridge)
+│   ├── phantom/             # iMessage assistant (Mac relay lives in gohort-desktop)
 │   ├── servitor/            # SSH-based system investigator with plan-driven flow + xterm terminal pane
 │   └── techwriter/          # Technical documentation editor
 └── tools/               # Chat tools (built-in, registered via init)

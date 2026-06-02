@@ -3166,7 +3166,14 @@ const orchestrateWebAssets = `<style>
         // and .ui-agent-modes, so a strict-parent selector misses
         // anything that's been relocated. The label attributes are
         // unique enough to query bare.
-        var lockedActions = ['Edit', 'Clone', 'Delete', 'Knowledge'];
+        // Edit + Delete (which acts as Revert for seeds) stay exposed
+        // on Builder — its persona / authoring conventions are
+        // legitimately tweakable, and seed-revert is the safety net.
+        // Clone stays hidden: a "cloned Builder" wouldn't get the
+        // Builder-specific dispatch wiring and would silently lose
+        // its authoring behavior. Knowledge stays hidden: Builder's
+        // attached collections are framework-curated state.
+        var lockedActions = ['Clone', 'Knowledge'];
         lockedActions.forEach(function(label) {
           var nodes = document.querySelectorAll('[data-action-label="' + label + '"]');
           nodes.forEach(function(btn) { btn.style.display = lock ? 'none' : ''; });
@@ -3967,7 +3974,13 @@ const orchestrateWebAssets = `<style>
               subMap[a.owned_by].push({id: a.id, name: a.name});
               return;
             }
-            if (a.hidden) return;
+            // Hidden=true scopes to FLEET visibility, not the Agency
+            // picker — matches the server-side page_chat.go rule.
+            // Filtering Hidden here used to silently flip the user
+            // off Builder onto seed-chat after every save / refresh
+            // event, because Builder is permanently Hidden now.
+            // Only sub-agents (handled by the owned_by branch above)
+            // are picker-suppressed.
             if (a.id in builtInOrder) { builtIns.push(a); }
             else { customs.push(a); }
           });

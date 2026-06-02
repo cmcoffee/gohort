@@ -237,8 +237,8 @@ type chatTurn struct {
 	// t.inferredOff() returns the effective state. The Knowledge layer
 	// (uploaded files) and Explicit Memory (facts) are unaffected.
 	inferredDisabled bool
-	isNewSession     bool // first turn for this session; gates background title generation
-	userImages [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
+	isNewSession     bool     // first turn for this session; gates background title generation
+	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
 
 	// topic is the snake_case slug used to scope memory_save /
 	// memory_search to a per-subject bucket. The LLM picks the slug
@@ -311,7 +311,7 @@ type chatTurn struct {
 	// so a reloaded session replays the same sequence the user saw live
 	// instead of only seeing the closing reply (the gap the user
 	// reported — "anything it writes mid-turn is lost").
-	bubblesMu     sync.Mutex
+	bubblesMu      sync.Mutex
 	midTurnBubbles []ChatMessage
 
 	// pipelineDepth tracks recursion into pipeline-mode sub-agents.
@@ -355,12 +355,15 @@ type chatTurn struct {
 	explorerMode   bool
 	explorerReason string
 
-	// Skills the LLM has activated this turn via activate_skill. Each
-	// entry's instructions + AllowedTools are surfaced via the tool
-	// result (instructions) and the per-round catalog union
-	// (tools). Starts empty every turn — there is no auto-classifier;
-	// activation requires an explicit tool call. Tracked so the
-	// "Available skills" block can hide already-activated entries.
+	// Skills the LLM has activated via activate_skill — sticky across
+	// turns. Rehydrated from session.ActiveSkillIDs at the start of each
+	// turn (re-loaded from the user's skills store so edits take effect
+	// immediately); the LLM grows the list via activate_skill and
+	// shrinks it via deactivate_skill. Each entry contributes its
+	// instructions to the system prompt (via appendActiveSkills), its
+	// AllowedTools to the round's catalog union, and its
+	// AttachedCollections to RAG search. The "Available skills" block
+	// hides already-active entries so the LLM doesn't re-activate.
 	skillsActive []SkillRecord
 
 	// Per-turn tool log + dedup cache. Wrapped handlers append to
@@ -449,21 +452,16 @@ func isNetworkTool(ct ChatTool) bool {
 // something, no framework-driven capture. The loop-break gate
 // this function fed isn't needed anymore.)
 
-// appendActiveSkills folds the instructions of any skills the LLM
-// has activated this turn (via activate_skill) onto the supplied
-// system prompt. Shared by the orchestrator round and the synthesis
-// call so the user-facing reply gets the same skill voice the
-// planning round saw. No-op when skillsActive is empty (the common
-// case — most turns activate zero skills).
+// appendActiveSkills folds the instructions of any active skills
+// (rehydrated from session.ActiveSkillIDs at turn start, plus any
+// the LLM activates mid-turn) onto the supplied system prompt.
+// Shared by the orchestrator round and the synthesis call so both
+// see the same skill voice. No-op when skillsActive is empty.
 func (t *chatTurn) appendActiveSkills(sys string, _ []ChatMessage) string {
 	// Iterates t.skillsActive directly — every entry got there via
-	// the LLM's activate_skill tool call. No classifier, no
-	// per-turn evaluation; the LLM owns whether a skill is active.
-	// Used by the synthesis pass so any skill activated mid-turn
-	// also shapes the user-facing reply (the orchestrator round
-	// reads the skill via the tool result in conversation history;
-	// synthesis builds a fresh system prompt without that history,
-	// so we re-inject here).
+	// either rehydrate (sticky from a prior turn) or the LLM's
+	// activate_skill tool call this turn. No classifier, no auto-
+	// activation; the LLM owns whether a skill is active.
 	if len(t.skillsActive) == 0 {
 		return sys
 	}
@@ -477,7 +475,7 @@ func (t *chatTurn) appendActiveSkills(sys string, _ []ChatMessage) string {
 
 // renderAvailableSkillsBlock produces a compact "Available skills"
 // section listing every skill the agent can reach (via AllowedSkills)
-// that's NOT already active this turn. Parallel to the
+// that's NOT currently active in this session. Parallel to the
 // "Available agents" block — same shape, same activation pattern:
 // LLM reads the catalog and pulls one in via activate_skill(name)
 // when it judges the current conversation needs the skill's
@@ -523,7 +521,7 @@ func (t *chatTurn) renderAvailableSkillsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available skills\n\n")
-	b.WriteString("Skills you can pull in via `activate_skill(name)` when the current turn clearly enters a domain a listed skill covers. Don't activate speculatively — only when the question or topic would benefit from the skill's instructions / tools. Once activated, the skill's instructions arrive in the tool result and its tools join your catalog for the rest of the turn. Format: **name** — one-sentence purpose.\n\n")
+	b.WriteString("Skills you can pull in via `activate_skill(name)` when the conversation enters a domain a listed skill covers. Don't activate speculatively — only when the question or topic would benefit from the skill's instructions / tools. Activation is sticky: once active, the skill's instructions, tools, and attached corpus stay in scope on follow-up turns until you call `deactivate_skill(name)`. Format: **name** — one-sentence purpose.\n\n")
 	for _, s := range available {
 		desc := strings.TrimSpace(s.Description)
 		if len(desc) > 140 {
@@ -753,21 +751,21 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	return b.String()
 }
 
-// activateSkillToolDef builds the per-turn activate_skill tool.
-// Looks up a skill by name (case-insensitive), appends it to the
-// turn's active set, and returns the skill's instructions as the
-// tool result so the LLM has them in this turn's context (without
-// waiting for the next turn's system-prompt rebuild). Skill-attached
-// tools join the catalog from the next round via the dynamic-tools
-// feed (skillsActive is the source of truth there).
+// activateSkillToolDef builds the activate_skill tool. Looks up a
+// skill by name (case-insensitive), appends it to the turn's active
+// set AND to session.ActiveSkillIDs so the activation carries across
+// follow-up turns (sticky semantics), and returns the skill's
+// instructions as the tool result so the LLM has them in this turn's
+// context too. Skill-attached tools join the catalog from the next
+// round via the dynamic-tools feed.
 //
-// chatTurn-bound (mutates t.skillsActive). Stripped when the agent
-// has DisableSkills=true.
+// chatTurn-bound (mutates t.skillsActive + t.session.ActiveSkillIDs).
+// Stripped when the agent has DisableSkills=true.
 func (t *chatTurn) activateSkillToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "activate_skill",
-			Description: "Activate a named skill from the 'Available skills' list for the rest of this turn. Use when the conversation has clearly entered a domain a listed skill covers but the classifier didn't fire on its triggers (topical drift, follow-up question, context-implied domain). The skill's instructions are returned in the tool result so you can apply them immediately; the skill's attached tools (if any) join your catalog next round. Don't activate speculatively or for skills that are already active — re-activation is a no-op.",
+			Description: "Activate a named skill from the 'Available skills' list. Sticky — the skill stays active across follow-up turns in this session until you call deactivate_skill(name). Use when the conversation enters a domain a listed skill covers. The skill's instructions are returned in the tool result so you can apply them immediately; the skill's attached tools (if any) join your catalog next round. Don't activate speculatively or for skills already active — re-activation is a no-op.",
 			Parameters: map[string]ToolParam{
 				"name": {
 					Type:        "string",
@@ -812,16 +810,88 @@ func (t *chatTurn) activateSkillToolDef() AgentToolDef {
 			}
 			for _, a := range t.skillsActive {
 				if a.ID == found.ID {
-					return fmt.Sprintf("Skill %q is already active this turn — no-op.", found.Name), nil
+					return fmt.Sprintf("Skill %q is already active — no-op.", found.Name), nil
 				}
 			}
 			t.skillsActive = append(t.skillsActive, *found)
+			// Sticky: record on the session so the next turn picks
+			// it up. Dedup against any prior ID that resolved out and
+			// got pruned during rehydrate.
+			if t.session != nil {
+				already := false
+				for _, id := range t.session.ActiveSkillIDs {
+					if id == found.ID {
+						already = true
+						break
+					}
+				}
+				if !already {
+					t.session.ActiveSkillIDs = append(t.session.ActiveSkillIDs, found.ID)
+				}
+			}
 			Log("[orchestrate.skills] activate_skill %q (agent=%s user=%s)", found.Name, t.agent.ID, t.user)
 			body := strings.TrimSpace(found.Instructions)
 			if body == "" {
 				body = "(this skill has no instructions body — its value is in attached tools / corpus.)"
 			}
-			return fmt.Sprintf("Skill %q activated. Apply these instructions for the rest of this turn:\n\n%s\n\nAttached tools (if any) will appear in your catalog next round.", found.Name, body), nil
+			return fmt.Sprintf("Skill %q activated. Apply these instructions until you call deactivate_skill(%q):\n\n%s\n\nAttached tools (if any) will appear in your catalog next round.", found.Name, found.Name, body), nil
+		},
+	}
+}
+
+// deactivateSkillToolDef builds the deactivate_skill tool. Removes a
+// skill from the session's sticky active list and from this turn's
+// active set so its instructions, tools, and attached collections
+// stop flowing into the prompt / catalog / RAG. Use when topic shifts
+// and the previously activated skill no longer applies.
+//
+// chatTurn-bound (mutates t.skillsActive + t.session.ActiveSkillIDs).
+// Stripped when the agent has DisableSkills=true.
+func (t *chatTurn) deactivateSkillToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "deactivate_skill",
+			Description: "Turn off a skill that's currently active in this session. Use when the conversation has moved off the skill's domain and its instructions / tools / corpus are no longer relevant. Pair with activate_skill — skills stay sticky until explicitly deactivated. Idempotent (deactivating an already-off skill is a no-op).",
+			Parameters: map[string]ToolParam{
+				"name": {
+					Type:        "string",
+					Description: "The exact skill name to deactivate (case-insensitive).",
+				},
+			},
+			Required: []string{"name"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			name := strings.TrimSpace(stringArg(args, "name"))
+			if name == "" {
+				return "", errors.New("name is required")
+			}
+			var removed *SkillRecord
+			next := t.skillsActive[:0]
+			for i := range t.skillsActive {
+				if strings.EqualFold(t.skillsActive[i].Name, name) && removed == nil {
+					tmp := t.skillsActive[i]
+					removed = &tmp
+					continue
+				}
+				next = append(next, t.skillsActive[i])
+			}
+			t.skillsActive = next
+			if removed == nil {
+				return fmt.Sprintf("Skill %q wasn't active — no-op.", name), nil
+			}
+			if t.session != nil {
+				ids := t.session.ActiveSkillIDs[:0]
+				for _, id := range t.session.ActiveSkillIDs {
+					if id == removed.ID {
+						continue
+					}
+					ids = append(ids, id)
+				}
+				t.session.ActiveSkillIDs = ids
+			}
+			Log("[orchestrate.skills] deactivate_skill %q (agent=%s user=%s)", removed.Name, t.agent.ID, t.user)
+			return fmt.Sprintf("Skill %q deactivated. Its instructions, tools, and attached collections stop applying as of next round.", removed.Name), nil
 		},
 	}
 }
@@ -1477,8 +1547,9 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// each one through the same registry path — missing names are
 	// silently dropped (e.g. a skill that names create_agent on a
 	// non-Builder agent just doesn't add it, preserving exclusivity).
-	// skillsActive starts empty and only grows when the LLM calls
-	// activate_skill; no auto-classification.
+	// skillsActive is rehydrated each turn from session.ActiveSkillIDs;
+	// the LLM grows it via activate_skill and shrinks it via
+	// deactivate_skill. No auto-classification.
 	if skills := t.skillsActive; len(skills) > 0 {
 		have := make(map[string]bool, len(toolNames))
 		for _, n := range toolNames {
@@ -3217,6 +3288,43 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// reads this to decide whether to ingest the synthesis.
 		userDocsThisTurn: len(req.Documents) > 0,
 	}
+	// Rehydrate sticky skill activations from the session. activate_skill
+	// writes IDs onto sess.ActiveSkillIDs; this loop re-loads the records
+	// each turn so any edits to the skill (name, instructions, tools,
+	// collections) take effect immediately. Skills the LLM activated in a
+	// prior turn stay active until deactivate_skill is called or the user
+	// starts a new session. Disabled / deleted / no-longer-allowed skills
+	// drop silently (allowlist drift is normal as agents are edited).
+	if len(sess.ActiveSkillIDs) > 0 && !agent.DisableSkills {
+		all := LoadSkills(udb, user)
+		allowed := make(map[string]bool, len(agent.AllowedSkills))
+		for _, id := range agent.AllowedSkills {
+			allowed[id] = true
+		}
+		kept := make([]string, 0, len(sess.ActiveSkillIDs))
+		for _, id := range sess.ActiveSkillIDs {
+			for _, s := range all {
+				if s.ID != id || s.Disabled {
+					continue
+				}
+				// Allowlist drift: if the agent's AllowedSkills was
+				// edited to drop this skill (or emptied entirely)
+				// after activation, the stickiness should drop with
+				// it — otherwise we'd be carrying a skill the LLM
+				// couldn't re-activate. Matches the available-skills
+				// block's "empty allowlist = no skills" rule.
+				if !allowed[s.ID] {
+					continue
+				}
+				turn.skillsActive = append(turn.skillsActive, s)
+				kept = append(kept, s.ID)
+				break
+			}
+		}
+		// Prune any IDs that no longer resolve so the session stays
+		// honest about what's actually carrying forward.
+		sess.ActiveSkillIDs = kept
+	}
 	// Reset the session's "awaiting user confirm" flag — the two-turn
 	// gate that read this is removed. Kept here to clear stale state
 	// from older sessions that may have set it; if THIS turn ends with
@@ -4013,11 +4121,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},
 	})
-	// activate_skill — manual override for the classifier when context
-	// implies a skill match that triggers/embedding missed. Gated on
-	// DisableSkills (no tool when the agent has skills off).
+	// activate_skill / deactivate_skill — sticky LLM-driven activation.
+	// Once activated, the skill stays in scope (instructions, tools,
+	// attached collections) across turns until deactivate_skill is
+	// called. Both gated on DisableSkills (no tools when the agent
+	// has skills off).
 	if !t.agent.DisableSkills {
 		knowTools = append(knowTools, t.activateSkillToolDef())
+		knowTools = append(knowTools, t.deactivateSkillToolDef())
 	}
 	// (dispatch_to_worker temporarily unmounted — the LLM wasn't
 	// reaching for it reliably and the surface area was diluting
@@ -4816,8 +4927,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	tools = append(tools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
 	toolNames = append(toolNames, "knowledge_search", "fetch_knowledge_doc")
 	if !t.agent.DisableSkills {
-		tools = append(tools, t.activateSkillToolDef())
-		toolNames = append(toolNames, "activate_skill")
+		tools = append(tools, t.activateSkillToolDef(), t.deactivateSkillToolDef())
+		toolNames = append(toolNames, "activate_skill", "deactivate_skill")
 	}
 	// (dispatch_to_worker temporarily unmounted on the worker step
 	// too — same reason as the orchestrator catalog: discoverability

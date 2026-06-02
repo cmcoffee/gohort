@@ -429,6 +429,17 @@ type ChatSession struct {
 	// orchestrate_plan SSE block so the user sees a live checklist
 	// updating as each step's tool fires.
 	BuildPlan *BuildPlanState `json:"BuildPlan,omitempty"`
+
+	// ActiveSkillIDs holds the skill IDs the LLM has activated via
+	// activate_skill in this session. Sticky-across-turns: each new
+	// chatTurn rehydrates skillsActive from this list, so the skill's
+	// instructions stay injected into the system prompt, its
+	// AllowedTools stay in the catalog, and its AttachedCollections
+	// stay merged into RAG until the LLM explicitly calls
+	// deactivate_skill(name). Stored as IDs (not full records) so a
+	// later edit to the skill picks up on the next turn — the SkillRecord
+	// is re-loaded each turn from the user's skills store.
+	ActiveSkillIDs []string `json:"ActiveSkillIDs,omitempty"`
 }
 
 // BuildPlanState is the persisted plan-card state for Builder's

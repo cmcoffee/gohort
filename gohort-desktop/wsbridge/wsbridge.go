@@ -1,8 +1,8 @@
-// WebSocket client that connects to the gohort server and exposes
-// the desktop's locally-registered tools (see core/tool.go +
-// tools/<category>/) to the server's agent loop. This is the bridge
-// that turns "tool registered in the desktop" into "tool callable
-// by an agent on the server."
+// Package wsbridge is the WebSocket client that connects the headless
+// gohort-bridge daemon to the gohort server and exposes the daemon's
+// locally-registered tools (see core/tool.go + macos/*) to the
+// server's agent loop. It turns "tool registered in the daemon" into
+// "tool callable by an agent on the server."
 //
 // Protocol mirror of core/desktop_bridge.go on the server:
 //
@@ -10,20 +10,25 @@
 //   - Server sends {type:"invoke", id, name, args} for each tool call.
 //   - Reply with {type:"result", id, result, error}.
 //
-// Auth: uses the gohort_session cookie from the proxy's PersistentCookieJar
-// — same cookie the webview's pages use after the user logs in.
-// Without a saved cookie the server returns 401 and we back off,
-// retrying once login finishes (the cookie jar update happens
-// asynchronously when the user signs in via /login).
+// Auth: the daemon authenticates with the unified API key (X-API-Key
+// header) — the same key it uses for phantom's /api/hook + /api/poll.
+// The server accepts it via the validator hook registered in
+// apps/phantom (see core.RegisterAPIKeyValidator). Without a key the
+// bridge backs off and retries; tools simply aren't available until
+// the daemon is configured (gohort-bridge --setup).
 //
 // Reconnect: exponential backoff, capped at 30s. The bridge is
 // non-essential — agents work fine without local tools — so failures
 // are warn-logged and never block startup.
-
-package main
+//
+// Migrated from gohort-desktop/ws_client.go during the bridge
+// consolidation. The only behavioral changes from that file are the
+// auth swap (cookie → X-API-Key) and the Approver indirection that
+// replaces the Wails *App dependency, keeping this package — and the
+// daemon that imports it — free of Wails.
+package wsbridge
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -37,38 +42,50 @@ import (
 )
 
 const (
-	wsPath              = "/api/desktop/ws"
-	wsInitialBackoff    = 2 * time.Second
-	wsMaxBackoff        = 30 * time.Second
-	wsHandshakeTimeout  = 8 * time.Second
-	wsPingInterval      = 25 * time.Second
-	wsReadDeadline      = 70 * time.Second
+	wsPath             = "/api/desktop/ws"
+	wsInitialBackoff   = 2 * time.Second
+	wsMaxBackoff       = 30 * time.Second
+	wsHandshakeTimeout = 8 * time.Second
+	wsPingInterval     = 25 * time.Second
+	wsReadDeadline     = 70 * time.Second
 )
 
-// wsClient runs the long-lived bridge. One instance per app; the
+// Approver gates server-initiated tool invocations behind user
+// consent. The daemon supplies an implementation (a tray prompt, a
+// native alert, or an auto-approve toggle). A nil Approver means
+// every invocation runs without a prompt — acceptable only when the
+// daemon's own config opts into auto-approve.
+type Approver interface {
+	RequestApprovalBlocking(id, name string, args map[string]any) bool
+}
+
+// Config is the live config source the client reads on every (re)connect
+// — so a config edit takes effect without restarting. Both *core.Config
+// and a sidecar-backed adapter satisfy it.
+type Config interface {
+	ServerURL() string
+	APIKey() string
+}
+
+// wsClient runs the long-lived bridge. One instance per daemon; the
 // reconnect loop is the only goroutine, plus per-connection read/
 // ping pumps spawned when a connection is live.
 type wsClient struct {
-	cfg     *core.Config
-	cookies *core.PersistentCookieJar
-	// app gives ws_client a way to ask the user for approval
-	// before running a server-initiated tool invocation. See
-	// handleInvoke + approvals.go.
-	app *App
+	cfg      Config
+	approver Approver
 
-	mu     sync.Mutex
-	stop   chan struct{}
-	conn   *websocket.Conn
+	mu      sync.Mutex
+	stop    chan struct{}
+	conn    *websocket.Conn
 	writeMu sync.Mutex // WS connections aren't safe for concurrent writes
 }
 
-// startWSClient spawns the bridge loop in the background. Caller
-// keeps the returned function around to cleanly tear it down on
-// shutdown. Safe to call before the user has logged in; the loop
-// will keep retrying with backoff until the cookie jar has a
-// valid session.
-func startWSClient(cfg *core.Config, cookies *core.PersistentCookieJar, app *App) func() {
-	c := &wsClient{cfg: cfg, cookies: cookies, app: app, stop: make(chan struct{})}
+// StartClient spawns the bridge loop in the background. Caller keeps
+// the returned function around to cleanly tear it down on shutdown.
+// Safe to call before the daemon is configured; the loop keeps
+// retrying with backoff until a server URL + API key are set.
+func StartClient(cfg Config, approver Approver) func() {
+	c := &wsClient{cfg: cfg, approver: approver, stop: make(chan struct{})}
 	go c.runForever()
 	return func() {
 		close(c.stop)
@@ -90,7 +107,7 @@ func (c *wsClient) runForever() {
 		}
 		serverURL := c.cfg.ServerURL()
 		if serverURL == "" {
-			// User hasn't configured yet — wait + retry.
+			// Not configured yet — wait + retry.
 			c.sleep(wsInitialBackoff)
 			continue
 		}
@@ -101,9 +118,9 @@ func (c *wsClient) runForever() {
 			continue
 		}
 		// Don't log the same auth error every backoff — it's
-		// normal during pre-login startup.
+		// normal before the daemon is configured.
 		if !errors.Is(err, errWSNotAuthenticated) {
-			core.Warn("[ws-client] connection failed: %v (backoff %s)", err, backoff)
+			core.Warn("[ws-bridge] connection failed: %v (backoff %s)", err, backoff)
 		}
 		c.sleep(backoff)
 		backoff = backoff * 2
@@ -120,7 +137,7 @@ func (c *wsClient) sleep(d time.Duration) {
 	}
 }
 
-var errWSNotAuthenticated = errors.New("ws: not authenticated yet")
+var errWSNotAuthenticated = errors.New("ws: not configured yet (no server URL / API key)")
 
 // connectAndServe opens one WS connection, announces the tool
 // catalog, then serves invocations until the connection drops.
@@ -141,18 +158,14 @@ func (c *wsClient) connectAndServe(serverURL string) error {
 	}
 	wsURL.Path = strings.TrimSuffix(wsURL.Path, "/") + wsPath
 
-	// Pull cookies from the proxy's jar for this URL — same cookie
-	// the webview uses after login. Without a gohort_session the
-	// server returns 401.
-	header := http.Header{}
-	if c.cookies != nil {
-		for _, ck := range c.cookies.Cookies(parsed) {
-			header.Add("Cookie", ck.Name+"="+ck.Value)
-		}
-	}
-	if header.Get("Cookie") == "" {
+	// Authenticate with the unified API key. Without one the server
+	// returns 401; back off and retry once the daemon is configured.
+	apiKey := c.cfg.APIKey()
+	if apiKey == "" {
 		return errWSNotAuthenticated
 	}
+	header := http.Header{}
+	header.Set("X-API-Key", apiKey)
 
 	dialer := *websocket.DefaultDialer
 	dialer.HandshakeTimeout = wsHandshakeTimeout
@@ -174,7 +187,7 @@ func (c *wsClient) connectAndServe(serverURL string) error {
 		c.mu.Unlock()
 	}()
 
-	core.Log("[ws-client] connected to %s", wsURL.String())
+	core.Log("[ws-bridge] connected to %s", wsURL.String())
 
 	// Announce the local catalog right away.
 	if err := c.announce(conn); err != nil {
@@ -241,8 +254,7 @@ func (c *wsClient) pingLoop(conn *websocket.Conn, stop <-chan struct{}) {
 }
 
 // announce sends the current tool catalog. Pulled at call time so a
-// reconnect after a hot-reload (where new tool packages registered
-// post-startup) sees the latest list.
+// reconnect after new tool packages registered sees the latest list.
 func (c *wsClient) announce(conn *websocket.Conn) error {
 	regs := core.RegisteredTools()
 	descs := make([]map[string]any, 0, len(regs))
@@ -261,30 +273,27 @@ func (c *wsClient) announce(conn *websocket.Conn) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	core.Log("[ws-client] announcing %d local tool(s)", len(descs))
+	core.Log("[ws-bridge] announcing %d local tool(s)", len(descs))
 	return conn.WriteMessage(websocket.TextMessage, frame)
 }
 
 // handleInvoke runs one tool locally and writes the result back.
-// Crashes inside the tool become error results — never panic up to
-// the read loop, which would kill the connection for the wrong
-// reason.
+// Panics inside the tool become error results — never propagate to
+// the read loop, which would kill the connection for the wrong reason.
 //
-// Approval gate: before calling the tool, we ask the user via the
-// in-window modal (see approvals.go + popup_shim_script's
-// approval handler). Auto-approve mode bypasses the prompt; deny /
-// timeout returns a "denied by user" error to the server so the
-// agent sees a clean failure rather than a hang.
+// Approval gate: before calling the tool, ask the Approver. A nil
+// Approver runs without a prompt; deny returns a clean "denied by
+// user" error so the agent sees a failure rather than a hang.
 func (c *wsClient) handleInvoke(conn *websocket.Conn, id, name string, args map[string]any) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			core.Err("[ws-client] tool %q panicked: %v", name, rec)
+			core.Err("[ws-bridge] tool %q panicked: %v", name, rec)
 			c.sendResult(conn, id, "", "tool panic")
 		}
 	}()
-	if c.app != nil {
-		if !c.app.RequestApprovalBlocking(id, name, args) {
-			core.Log("[ws-client] tool %q (id=%s) denied by user", name, id)
+	if c.approver != nil {
+		if !c.approver.RequestApprovalBlocking(id, name, args) {
+			core.Log("[ws-bridge] tool %q (id=%s) denied by user", name, id)
 			c.sendResult(conn, id, "", "denied by user")
 			return
 		}
@@ -308,9 +317,6 @@ func (c *wsClient) sendResult(conn *websocket.Conn, id, result, errMsg string) {
 	defer c.writeMu.Unlock()
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
-		core.Warn("[ws-client] result write failed: %v", err)
+		core.Warn("[ws-bridge] result write failed: %v", err)
 	}
 }
-
-// silence unused-import lint when context is referenced only via doc.
-var _ = context.Background

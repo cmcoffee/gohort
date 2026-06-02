@@ -191,6 +191,17 @@ type AgentLoopConfig struct {
 	// mode keeps it lifted to the absolute MaxRounds).
 	StopRound func() bool
 
+	// GraceRounds is the wrap-up runway. When the cap is reached (MaxRounds
+	// or StopRound), instead of hard-stopping — which strips tools and makes
+	// some models emit their intended call as TEXT to compensate — the loop
+	// keeps tools available and gives the model this many extra rounds to
+	// land the turn, escalating a "wrap up now" directive each round before
+	// a hard stop (the forced no-tools rescue is the final backstop). 0 lets
+	// the loop default it: 5 for real agent turns (MaxRounds >= 10), 0 for
+	// short fixed loops (classifiers, judges) which must stop exactly on cap.
+	// Set explicitly to override either default.
+	GraceRounds int
+
 	// OnRoundReset, when set, is called once per round. Returning true
 	// rebases the soft-pacing thresholds (midpoint nudge, wrap-up
 	// warning, failure-streak counter) as if the loop just started —
@@ -520,7 +531,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// nudge instead of letting the rescue path paper over the bailout.
 	cumulativeToolErrors := 0
 
-	for round := 1; round <= maxRounds; round++ {
+	// Wrap-up grace runway. Rather than hard-stopping at the cap (which
+	// strips tools and makes some models emit their intended tool call as
+	// TEXT to compensate — a garbled final round), we keep tools available
+	// and give the model a bounded runway to land the turn. hardStop is the
+	// last allowed round once wrap-up begins (-1 until the cap is hit).
+	graceRounds := cfg.GraceRounds
+	if graceRounds == 0 && maxRounds >= 10 {
+		graceRounds = 5 // default runway for real agent turns; short fixed loops opt out
+	}
+	if graceRounds < 0 {
+		graceRounds = 0
+	}
+	hardStop := -1
+
+	for round := 1; round <= maxRounds+graceRounds; round++ {
 		// Bail immediately on cancellation so the loop doesn't burn another
 		// LLM call (or tool execution) after the session was aborted. Tool
 		// handlers that don't check ctx themselves can otherwise hold the
@@ -543,10 +568,40 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		Log("[agent_loop] round %d: top of iteration", round)
 		// Soft cap hook — apps that want a budget cap depending on
 		// runtime state (e.g. orchestrate's explorer-mode flag) wire
-		// StopRound; it gets called once per round and a true return
-		// terminates the loop cleanly, same effect as MaxRounds.
-		if cfg.StopRound != nil && cfg.StopRound() {
-			break
+		// StopRound. Called EXACTLY ONCE per round (it has side effects,
+		// e.g. orchestrate increments its round counter here).
+		stop := cfg.StopRound != nil && cfg.StopRound()
+		if graceRounds <= 0 {
+			// No runway (short fixed loops / opted out): original behavior —
+			// a true StopRound terminates immediately.
+			if stop {
+				break
+			}
+		} else {
+			// Begin the wrap-up runway the first time the cap is reached,
+			// then hard-stop once it's spent. Tools stay available the whole
+			// time (see the tool-offer gate below), so the model lands the
+			// turn instead of getting them stripped mid-intent. The escalating
+			// directive a few lines down is what bounds the runway; the forced
+			// no-tools rescue after the loop is the final backstop.
+			if stop || round >= maxRounds {
+				if hardStop < 0 {
+					hardStop = round + graceRounds
+					if hardStop > maxRounds+graceRounds {
+						hardStop = maxRounds + graceRounds
+					}
+					Debug("[agent_loop] round %d: cap reached — entering wrap-up grace, hard stop at round %d", round, hardStop)
+				}
+			} else if hardStop >= 0 {
+				// The cap lifted again (e.g. the model flipped orchestrate's
+				// explorer mode mid-grace, so StopRound now returns false).
+				// Cancel wrap-up and resume normal running until the next cap.
+				Debug("[agent_loop] round %d: cap lifted — cancelling wrap-up grace", round)
+				hardStop = -1
+			}
+			if hardStop >= 0 && round > hardStop {
+				break
+			}
 		}
 		// Phase-reset hook — when OnRoundReset returns true, rebase
 		// the soft-pacing thresholds so the LLM gets a fresh
@@ -641,6 +696,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			history = append(history, Message{Role: "user", Content: wrapUpMsg})
 			wrapUpWarningFired = true
 		}
+		// Wrap-up grace directive — once on the runway, tell the model
+		// (escalating) to finish and answer. Tools stay available, so this
+		// message is what makes it land rather than thrash; it's the most
+		// recent thing the model sees before the call.
+		if hardStop >= 0 {
+			left := hardStop - round + 1
+			var msg string
+			if left <= 1 {
+				msg = "[ROUND LIMIT — HARD STOP after this round. Produce your final answer NOW from what you already have. Start no new work; make a tool call only if it is the single step needed to finish, then answer.]"
+			} else {
+				msg = fmt.Sprintf("[Round limit reached — wrap up and give your final answer. %d round(s) left before a hard stop. Finish in-flight work only; start nothing new.]", left)
+			}
+			history = append(history, Message{Role: "user", Content: msg})
+		}
 		// Pull dynamic tools (e.g. temp tools defined by the LLM via
 		// create_temp_tool earlier this loop) and merge into the catalog
 		// for this round. Filtered through the same caps gate as static
@@ -710,8 +779,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if cfg.MaskDebugOutput {
 			opts = append(opts, WithMaskDebug())
 		}
-		// Only offer native tools when NOT in PromptTools mode.
-		if !cfg.PromptTools && len(toolDefs) > 0 && round < maxRounds {
+		// Offer native tools when NOT in PromptTools mode. Grace-enabled
+		// loops keep tools available through the wrap-up runway (the
+		// escalating directive + post-loop rescue handle the landing, so we
+		// never strip — that's what caused models to emit tool-calls as
+		// text). Grace-disabled short loops keep the original behavior:
+		// no tools on the forced final round.
+		offerTools := graceRounds > 0 || round < maxRounds
+		if !cfg.PromptTools && len(toolDefs) > 0 && offerTools {
 			opts = append(opts, WithTools(toolDefs))
 		}
 		// Surface reasoning chunks to the caller-supplied handler when set.
@@ -1038,7 +1113,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// corrective user message and re-loop instead of returning,
 		// up to maxPromiseCorrections times per session.
 		if len(resp.ToolCalls) == 0 {
-			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn && containsActionPromise(resp.Content) {
+			// Action-promise correction DISABLED for now — it false-positived
+			// on ordinary conversational replies ("I'll try to nail the house
+			// next time."), burning rounds re-prompting for an action the model
+			// never intended. Flip to true to re-enable; the reasoning-collapse
+			// correction below is unaffected either way.
+			const actionPromiseCorrection = false
+			if actionPromiseCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn && containsActionPromise(resp.Content) {
 				Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", promiseCorrectionsTotal+1, maxPromiseCorrections, truncForLog(resp.Content, 80))
 				history = append(history, Message{
 					Role:    "user",

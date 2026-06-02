@@ -1,39 +1,34 @@
-// phantom-bridge bridges the local macOS Messages app to a remote gohort
-// Phantom server. Successor to the older `phantom-agent` name; existing
-// installs migrate via tools/migrate-phantom-agent-to-bridge.sh.
+//go:build darwin
+
+// Package imsg is the macOS iMessage relay service: it watches the
+// local Messages chat.db, relays inbound messages to the gohort
+// Phantom server's /phantom/api/hook, polls /phantom/api/poll for
+// outbound items, and sends them through Messages.app via AppleScript.
 //
-// It watches ~/Library/Messages/chat.db for new incoming messages and POSTs
-// them to the server. It polls the server for queued replies and delivers them
-// via AppleScript (osascript).
-//
-// Build on macOS:
-//
-//	cd apps/phantom/_bridge && go build -o phantom-bridge .
-//
-// First run: phantom-bridge --setup
-// Normal run: phantom-bridge (or install as a launchd service)
-package main
+// Migrated verbatim from apps/phantom/_bridge/main.go during the
+// bridge consolidation; the daemon (cmd/gohort-bridge) drives it via
+// Run(). Process lifecycle, flag parsing, launchd install, and the
+// setup wizard moved to the daemon; contacts lookup moved to the
+// sibling macos/contacts package.
+package imsg
 
 import (
 	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
-	"encoding/json"
-
-	"github.com/cmcoffee/snugforge/cfg"
-	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/gohort/gohort-desktop/macos/contacts"
 	"github.com/cmcoffee/snugforge/nfo"
 	_ "modernc.org/sqlite"
 )
@@ -41,12 +36,117 @@ import (
 const defaultPollInterval = 5 * time.Second
 const defaultDB = "~/Library/Messages/chat.db"
 
-// Config is loaded from ~/.phantom-bridge.cfg (INI format).
+// Config drives the relay service. The daemon (cmd/gohort-bridge)
+// builds it from the kvlite settings store and passes it to Run.
+// ServerURL is the BARE origin (e.g. "https://gohort.example.com") —
+// the /phantom prefix is appended by the service, unlike the old INI
+// which baked it in.
 type Config struct {
-	ServerURL string // e.g. "https://gohort.example.com/phantom"
+	ServerURL string // bare gohort origin, e.g. "https://gohort.example.com"
 	APIKey    string
-	PollSecs  int    // default 10
+	PollSecs  int    // chat.db poll interval, seconds
 	DBPath    string // path to chat.db (for resolving "any;-;..." chat IDs)
+}
+
+// expandHome expands a leading ~/ to the user's home directory.
+func expandHome(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
+
+// Run opens the Messages chat.db and runs the relay loop forever:
+// each tick it relays new inbound messages to the server and delivers
+// any queued outbound items. The daemon (cmd/gohort-bridge) calls
+// this in a goroutine. fromStart processes all existing messages
+// instead of only new ones; verbose logs every poll cycle. Blocks
+// until the process exits.
+func Run(cfg Config, fromStart, verbose bool) {
+	dbPath := expandHome(defaultDB)
+	if cfg.DBPath != "" {
+		dbPath = expandHome(cfg.DBPath)
+	}
+	cfg.DBPath = dbPath
+
+	interval := time.Duration(cfg.PollSecs) * time.Second
+	if interval < 5*time.Second {
+		interval = defaultPollInterval
+	}
+
+	db := openChatDB(dbPath, interval)
+	defer db.Close()
+
+	var lastRowID int64
+	if !fromStart {
+		lastRowID = latestMessageRowID(dbPath)
+	}
+	hasBody := hasColumn(db, "message", "attributedBody")
+	nfo.Log("imsg relay started. db=%s server=%s poll=%s last_rowid=%d attributedBody=%v",
+		dbPath, cfg.ServerURL, interval, lastRowID, hasBody)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for range ticker.C {
+		prev := lastRowID
+		lastRowID = processNewMessages(cfg, db, hasBody, lastRowID, verbose)
+		if verbose && lastRowID == prev {
+			nfo.Log("poll: no new messages (watermark=%d)", lastRowID)
+		}
+		deliverOutbox(cfg, db)
+	}
+}
+
+// openChatDB blocks until Messages' chat.db is readable, then returns
+// a read-only handle. The retry loop exists because Full Disk Access
+// may not be granted yet at first launch — the daemon keeps trying and
+// logs the grant instructions until access lands.
+func openChatDB(dbPath string, interval time.Duration) *sql.DB {
+	for {
+		if _, err := os.Stat(dbPath); err != nil {
+			nfo.Log("chat.db not accessible (%v) — retrying in %s\n"+
+				"Make sure the bridge has Full Disk Access:\n"+
+				"System Settings → Privacy & Security → Full Disk Access", err, interval)
+			time.Sleep(interval)
+			continue
+		}
+		d, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=5000")
+		if err != nil {
+			nfo.Log("open chat.db: %v — retrying in %s", err, interval)
+			time.Sleep(interval)
+			continue
+		}
+		d.SetMaxOpenConns(3)
+		if err := d.Ping(); err != nil {
+			d.Close()
+			nfo.Log("chat.db ping failed (%v) — retrying in %s\n"+
+				"Make sure the bridge has Full Disk Access:\n"+
+				"System Settings → Privacy & Security → Full Disk Access", err, interval)
+			time.Sleep(interval)
+			continue
+		}
+		return d
+	}
+}
+
+// RunTest prints recent messages from chat.db and returns — the daemon's
+// --test flag. Verifies Full Disk Access without contacting the server.
+func RunTest(dbPath string) { runTest(expandHome(dbPath)) }
+
+// ProbeChatDB attempts a tiny read of Messages' chat.db purely so macOS
+// registers this app in System Settings → Privacy & Security → Full Disk
+// Access — letting the user just flip the toggle instead of adding the
+// app by hand with the "+" button. Call it at startup, BEFORE access is
+// granted: the denied read is the whole point, so errors are ignored.
+func ProbeChatDB() {
+	f, err := os.Open(expandHome(defaultDB))
+	if err != nil {
+		return
+	}
+	var b [1]byte
+	_, _ = f.Read(b[:])
+	_ = f.Close()
 }
 
 // HookPayload is what we POST to /api/hook.
@@ -159,131 +259,6 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-func main() {
-	home, _ := os.UserHomeDir()
-	plistFile := filepath.Join(home, "Library", "LaunchAgents", "com.gohort.phantom-bridge.plist")
-	logFile := filepath.Join(home, "phantom-bridge.log")
-
-	eflag.Header(fmt.Sprintf(`phantom-bridge — bridges macOS Messages to a gohort Phantom server.
-
-USAGE
-  phantom-bridge [flags]
-
-FIRST-TIME SETUP
-  1. make install               # build and copy to ~/bin/phantom-bridge
-  2. phantom-bridge --setup     # enter server URL and API key
-  3. phantom-bridge --install   # register as a login item (launchd)
-  4. phantom-bridge --test      # verify chat.db access
-
-LAUNCHD SERVICE
-  Logs:  %s
-  Plist: %s
-
-PERMISSIONS
-  Terminal (or the binary) must have Full Disk Access:
-  System Settings → Privacy & Security → Full Disk Access
-
-FLAGS`, logFile, plistFile))
-
-	setup     := eflag.Bool("setup",      "interactive setup wizard (run this first)")
-	install   := eflag.Bool("install",    "install as a launchd service (starts at login)")
-	uninstall := eflag.Bool("uninstall",  "remove the launchd service")
-	test      := eflag.Bool("test",       "print recent messages from chat.db and exit")
-	fromStart := eflag.Bool("from-start", "process all existing messages instead of only new ones")
-	verbose   := eflag.Bool("verbose",    "log every poll cycle even when no new messages are found")
-	cfgPath   := eflag.String("config",   configPath(), "path to config file")
-
-	eflag.Parse()
-
-	if *install {
-		runInstall()
-		return
-	}
-	if *uninstall {
-		runUninstall()
-		return
-	}
-
-	dbPath := expandHome(defaultDB)
-
-	if *test {
-		runTest(dbPath)
-		return
-	}
-
-	if *setup {
-		runSetup(*cfgPath)
-		return
-	}
-
-	agentCfg, err := loadConfig(*cfgPath)
-	if err != nil {
-		nfo.Fatal("config error: %v\n(run phantom-bridge --setup to configure)", err)
-	}
-	agentCfg.DBPath = dbPath
-
-	// Set up file logging — writes to ~/phantom-bridge.log alongside stdout.
-	if _, err := nfo.LogFile(logFile, 10, 1); err != nil {
-		nfo.Fatal("cannot open log file %s: %v", logFile, err)
-	}
-
-	interval := time.Duration(agentCfg.PollSecs) * time.Second
-	if interval < 5*time.Second {
-		interval = defaultPollInterval
-	}
-
-	// Wait until chat.db is accessible (Full Disk Access may not be granted yet).
-	var db *sql.DB
-	for {
-		if _, err := os.Stat(dbPath); err != nil {
-			nfo.Log("chat.db not accessible (%v) — retrying in %s\n"+
-				"Make sure Terminal has Full Disk Access:\n"+
-				"System Settings → Privacy & Security → Full Disk Access", err, interval)
-			time.Sleep(interval)
-			continue
-		}
-		d, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=5000")
-		if err != nil {
-			nfo.Log("open chat.db: %v — retrying in %s", err, interval)
-			time.Sleep(interval)
-			continue
-		}
-		d.SetMaxOpenConns(3)
-		if err := d.Ping(); err != nil {
-			d.Close()
-			nfo.Log("chat.db ping failed (%v) — retrying in %s\n"+
-				"Make sure Terminal has Full Disk Access:\n"+
-				"System Settings → Privacy & Security → Full Disk Access", err, interval)
-			time.Sleep(interval)
-			continue
-		}
-		db = d
-		break
-	}
-	defer db.Close()
-
-	var lastRowID int64
-	if !*fromStart {
-		lastRowID = latestMessageRowID(dbPath)
-	}
-
-	hasBody := hasColumn(db, "message", "attributedBody")
-	nfo.Log("phantom-bridge started. db=%s server=%s poll=%s last_rowid=%d attributedBody=%v",
-		dbPath, agentCfg.ServerURL, interval, lastRowID, hasBody)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for range ticker.C {
-		prev := lastRowID
-		lastRowID = processNewMessages(agentCfg, db, hasBody, lastRowID, *verbose)
-		if *verbose && lastRowID == prev {
-			nfo.Log("poll: no new messages (watermark=%d)", lastRowID)
-		}
-		deliverOutbox(agentCfg, db)
-	}
-}
-
-// hasColumn returns true if the named column exists in the named table.
 func hasColumn(db *sql.DB, table, column string) bool {
 	var n int
 	db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, table, column).Scan(&n)
@@ -505,7 +480,14 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 					nfo.Log("rowid=%d handle=%q: no content yet (poll %d/%d), rechecking", rowID, handle, polls, maxEmptyPolls)
 					break
 				}
-				nfo.Log("rowid=%d handle=%q: still empty after %d polls, skipping", rowID, handle, polls)
+				// Log the raw attributedBody (hex, capped) so a message that
+				// extracts to empty — e.g. a very short "P." — can be decoded
+				// after the fact and the extractor fixed for that exact layout.
+				hexBody := body
+				if len(hexBody) > 256 {
+					hexBody = hexBody[:256]
+				}
+				nfo.Log("rowid=%d handle=%q: still empty after %d polls, skipping — body[%d]=%x", rowID, handle, polls, len(body), hexBody)
 				emptyRowMu.Lock()
 				delete(emptyRowSeen, rowID)
 				emptyRowMu.Unlock()
@@ -517,7 +499,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 		// Resolve display name: prefer group chat name, then Contacts lookup, then handle.
 		displayName := chatDisplayName
 		if displayName == "" {
-			displayName = lookupContact(handle)
+			displayName = contacts.Lookup(handle)
 		}
 
 		payload := HookPayload{
@@ -731,37 +713,37 @@ func bplistNSString(body []byte) string {
 // chat.db blobs across Sonoma+ and the iMessage-internal attribute keys
 // that ride alongside data-detector / link runs.
 var typedstreamClassNames = map[string]bool{
-	"streamtyped":                  true,
-	"NSObject":                     true,
-	"NSString":                     true,
-	"NSMutableString":              true,
-	"NSAttributedString":           true,
-	"NSMutableAttributedString":    true,
-	"NSDictionary":                 true,
-	"NSMutableDictionary":          true,
-	"NSArray":                      true,
-	"NSMutableArray":               true,
-	"NSData":                       true,
-	"NSMutableData":                true,
-	"NSNumber":                     true,
-	"NSValue":                      true,
-	"NSDate":                       true,
-	"NSURL":                        true,
-	"NSColor":                      true,
-	"NSFont":                       true,
-	"NSKeyedArchiver":              true,
-	"DDScannerResult":              true,
-	"NSDictionary0":                true,
-	"__kIMMessagePartAttributeName": true,
+	"streamtyped":                            true,
+	"NSObject":                               true,
+	"NSString":                               true,
+	"NSMutableString":                        true,
+	"NSAttributedString":                     true,
+	"NSMutableAttributedString":              true,
+	"NSDictionary":                           true,
+	"NSMutableDictionary":                    true,
+	"NSArray":                                true,
+	"NSMutableArray":                         true,
+	"NSData":                                 true,
+	"NSMutableData":                          true,
+	"NSNumber":                               true,
+	"NSValue":                                true,
+	"NSDate":                                 true,
+	"NSURL":                                  true,
+	"NSColor":                                true,
+	"NSFont":                                 true,
+	"NSKeyedArchiver":                        true,
+	"DDScannerResult":                        true,
+	"NSDictionary0":                          true,
+	"__kIMMessagePartAttributeName":          true,
 	"__kIMBaseWritingDirectionAttributeName": true,
 	"__kIMFileTransferGUIDAttributeName":     true,
 	"__kIMLinkAttributeName":                 true,
 	"__kIMDataDetectedAttributeName":         true,
 	"__kIMMentionConfirmedMention":           true,
 	"__kIMTextEffectAttributeName":           true,
-	"NS.string":                     true,
-	"NS.keys":                       true,
-	"NS.objects":                    true,
+	"NS.string":                              true,
+	"NS.keys":                                true,
+	"NS.objects":                             true,
 }
 
 // extractTextHeuristic is the fallback: find printable UTF-8 runs in
@@ -815,10 +797,18 @@ func extractTextHeuristic(body []byte) string {
 	}
 	parts := raw[:0]
 	for _, s := range raw {
-		if len(s) < 2 {
+		if len(s) >= 2 {
+			parts = append(parts, s)
 			continue
 		}
-		parts = append(parts, s)
+		// Single-char run: keep it only if it's alphanumeric — a real
+		// one-letter/digit message like "P" or "5". Lone punctuation /
+		// symbol runs at this length are typedstream framing artifacts
+		// (e.g. the "+" length header), not content, so drop those. This
+		// stops one-character texts from being filtered out entirely.
+		if c := s[0]; (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			parts = append(parts, s)
+		}
 	}
 	return strings.Join(parts, " ")
 }
@@ -998,7 +988,7 @@ func deliverOutbox(cfg Config, db *sql.DB) {
 	// Retry any previously-failed items that are due before polling for new ones.
 	flushRetryQueue(cfg, db)
 
-	req, _ := http.NewRequest(http.MethodGet, cfg.ServerURL+"/api/poll", nil)
+	req, _ := http.NewRequest(http.MethodGet, cfg.ServerURL+"/phantom/api/poll", nil)
 	req.Header.Set("X-API-Key", cfg.APIKey)
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -1059,14 +1049,48 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			os.Remove(tmpPath)
 			continue
 		}
-		// WebP and GIF (animated aside) are unreliable in iMessage cross-device
-		// delivery. Convert to JPEG using macOS sips before sending.
+		// Per-format delivery decisions:
+		//
+		//   - PNG / JPG: pass through as-is — first-class on iMessage.
+		//   - WebP: still flatten to JPEG via sips. Mostly used for
+		//     static images by the sources we ingest from; cross-
+		//     device reliability concerns about animated WebP and
+		//     mixed-fallback recipients haven't changed.
+		//   - GIF: preserve animation when it'll fit. iMessage handles
+		//     animated GIF natively on iOS/macOS; only the >~20MB cap
+		//     forces our hand. Under-cap files pass through. Over-cap
+		//     files transcode to MP4 (iMessage previews inline, much
+		//     smaller bytes-per-second of motion, still animated).
+		//     Both paths fail → fall back to the prior JPEG flatten
+		//     so we never DROP a delivery — better to send a still
+		//     than nothing.
 		sendPath := tmpPath
-		if ext == ".webp" || ext == ".gif" {
+		switch ext {
+		case ".webp":
 			if converted, err := convertToJPEG(tmpPath); err == nil {
 				sendPath = converted
 			} else {
-				nfo.Log("image %d convert warning: %v — sending original", i, err)
+				nfo.Log("image %d webp convert warning: %v — sending original", i, err)
+			}
+		case ".gif":
+			fi, _ := os.Stat(tmpPath)
+			size := int64(0)
+			if fi != nil {
+				size = fi.Size()
+			}
+			if size > 0 && size <= iMessageImageMaxBytes {
+				nfo.Log("image %d: gif under cap (%d bytes), sending animated", i, size)
+				// sendPath stays tmpPath — animated GIF passes through.
+			} else if mp4Path, err := convertGIFToMP4(tmpPath); err == nil {
+				sendPath = mp4Path
+				nfo.Log("image %d: gif %d bytes over cap, transcoded to mp4: %s", i, size, mp4Path)
+			} else {
+				nfo.Log("image %d: gif transcode failed (%v), falling back to JPEG flatten", i, err)
+				if converted, jerr := convertToJPEG(tmpPath); jerr == nil {
+					sendPath = converted
+				} else {
+					nfo.Log("image %d: jpeg fallback also failed (%v) — sending original gif", i, jerr)
+				}
 			}
 		}
 		if fi, err := os.Stat(sendPath); err == nil {
@@ -1275,7 +1299,7 @@ func (e *hookErr) Error() string { return e.msg }
 // Returns *hookErr so callers can distinguish skip vs retry.
 func postHook(cfg Config, payload HookPayload) error {
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, cfg.ServerURL+"/api/hook", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, cfg.ServerURL+"/phantom/api/hook", bytes.NewReader(body))
 	if err != nil {
 		return &hookErr{msg: err.Error(), skip: false}
 	}
@@ -1303,7 +1327,6 @@ func resolveChatID(dbPath, chatID string) string {
 	nfo.Log("resolveChatID: called with chatID=%q dbPath=%q", chatID, dbPath)
 	// The DB stores "any;-;..." GUIDs the same as the incoming chat ID,
 	// so there's nothing to resolve — just return the original.
-	return chatID
 	return chatID
 }
 
@@ -1378,6 +1401,47 @@ end run`
 	}
 
 	return fmt.Errorf("no working delivery path for handle=%q chatGUID=%q", handle, chatGUID)
+}
+
+// iMessageImageMaxBytes is the cap an image attachment must fit under
+// to pass through the bridge without re-encoding. iMessage refuses
+// attachments somewhere around ~20MB; 18MB gives headroom for the
+// container overhead added by Messages.app when it wraps the file.
+// Used by the GIF-passthrough decision in the image-send loop.
+const iMessageImageMaxBytes = 18 * 1024 * 1024
+
+// convertGIFToMP4 transcodes an animated GIF to MP4 using ffmpeg.
+// Used when a GIF is over the iMessage image cap — MP4 preserves the
+// animation, previews inline in Messages, and is dramatically smaller
+// than the equivalent GIF (typically 5-10x). Requires ffmpeg on PATH
+// of the bridge machine; an unavailable ffmpeg surfaces as the caller's
+// fallback path (JPEG flatten) so delivery isn't blocked.
+//
+// Encoder choices match what messaging clients reliably play: H.264
+// with yuv420p pixel format, even-dimension scaling (libx264 refuses
+// odd dimensions on some inputs), faststart so the moov atom is at
+// the front (Messages and recipients can preview before the whole
+// file transfers).
+func convertGIFToMP4(src string) (string, error) {
+	out, err := os.CreateTemp("", "phantom-gif-*.mp4")
+	if err != nil {
+		return "", err
+	}
+	outPath := out.Name()
+	out.Close()
+	cmd := exec.Command("ffmpeg",
+		"-y", "-i", src,
+		"-movflags", "+faststart",
+		"-pix_fmt", "yuv420p",
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+		"-c:v", "libx264", "-preset", "fast",
+		outPath,
+	)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		os.Remove(outPath)
+		return "", fmt.Errorf("ffmpeg: %s", strings.TrimSpace(string(b)))
+	}
+	return outPath, nil
 }
 
 // convertToJPEG uses macOS sips to convert an image file to JPEG in-place,
@@ -1499,7 +1563,6 @@ func latestMessageRowID(dbPath string) int64 {
 	return id
 }
 
-
 // appleTimeToRFC3339 converts Apple's epoch (nanoseconds since 2001-01-01) to RFC3339.
 // Older macOS versions used seconds; newer use nanoseconds. We detect by magnitude.
 func appleTimeToRFC3339(appleTime int64) string {
@@ -1518,313 +1581,3 @@ func appleTimeToRFC3339(appleTime int64) string {
 // --- Config ---
 
 // --- Contacts lookup ---
-
-var (
-	contactsMu    sync.RWMutex
-	contactsCache map[string]string // normalised phone/email → display name
-	contactsBuilt bool
-)
-
-var nonDigit = regexp.MustCompile(`\D`)
-
-// normalisePhone strips all non-digit characters and returns the last 10 digits,
-// which is sufficient to match US numbers stored in various formats.
-func normalisePhone(s string) string {
-	digits := nonDigit.ReplaceAllString(s, "")
-	if len(digits) > 10 {
-		digits = digits[len(digits)-10:]
-	}
-	return digits
-}
-
-// lookupContact returns the display name for a phone number or email address
-// by querying the macOS AddressBook SQLite databases. Results are cached.
-func lookupContact(handle string) string {
-	if handle == "" {
-		return ""
-	}
-
-	contactsMu.RLock()
-	if contactsBuilt {
-		name := contactsCache[strings.ToLower(handle)]
-		contactsMu.RUnlock()
-		return name
-	}
-	contactsMu.RUnlock()
-
-	buildContactsCache()
-
-	contactsMu.RLock()
-	defer contactsMu.RUnlock()
-	return contactsCache[strings.ToLower(handle)]
-}
-
-// buildContactsCache loads all contacts from all AddressBook sources into memory.
-func buildContactsCache() {
-	contactsMu.Lock()
-	defer contactsMu.Unlock()
-	if contactsBuilt {
-		return
-	}
-	contactsCache = map[string]string{}
-	contactsBuilt = true
-
-	home, _ := os.UserHomeDir()
-	// AddressBook databases live under ~/Library/Application Support/AddressBook/
-	// either directly or under per-source subdirectories.
-	pattern := filepath.Join(home, "Library", "Application Support", "AddressBook", "**", "AddressBook-v22.abcddb")
-	matches, _ := filepath.Glob(filepath.Join(home, "Library", "Application Support", "AddressBook", "AddressBook-v22.abcddb"))
-	// Also search one level of Sources subdirs.
-	sub, _ := filepath.Glob(filepath.Join(home, "Library", "Application Support", "AddressBook", "Sources", "*", "AddressBook-v22.abcddb"))
-	matches = append(matches, sub...)
-	_ = pattern
-
-	for _, dbPath := range matches {
-		loadAddressBook(dbPath)
-	}
-	nfo.Log("contacts: loaded %d entries", len(contactsCache))
-}
-
-// loadAddressBook reads one AddressBook database and merges contacts into the cache.
-func loadAddressBook(dbPath string) {
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=2000")
-	if err != nil {
-		return
-	}
-	defer db.Close()
-
-	// Build name map: Z_PK → display name
-	names := map[int]string{}
-	rows, err := db.Query(`SELECT Z_PK, ZFIRSTNAME, ZLASTNAME, ZNICKNAME, ZORGANIZATION FROM ZABCDRECORD`)
-	if err != nil {
-		return
-	}
-	for rows.Next() {
-		var pk int
-		var first, last, nick, org sql.NullString
-		if rows.Scan(&pk, &first, &last, &nick, &org) != nil {
-			continue
-		}
-		var name string
-		switch {
-		case first.Valid && last.Valid:
-			name = strings.TrimSpace(first.String + " " + last.String)
-		case first.Valid:
-			name = first.String
-		case last.Valid:
-			name = last.String
-		case nick.Valid:
-			name = nick.String
-		case org.Valid:
-			name = org.String
-		}
-		if name != "" {
-			names[pk] = name
-		}
-	}
-	rows.Close()
-
-	// Map phone numbers → name
-	rows, err = db.Query(`SELECT ZOWNER, ZFULLNUMBER, ZVALUE FROM ZABCDPHONENUMBER`)
-	if err == nil {
-		for rows.Next() {
-			var owner int
-			var full, val sql.NullString
-			if rows.Scan(&owner, &full, &val) != nil {
-				continue
-			}
-			name := names[owner]
-			if name == "" {
-				continue
-			}
-			for _, raw := range []string{full.String, val.String} {
-				if raw == "" {
-					continue
-				}
-				// Store both E.164 full form and normalised 10-digit form.
-				contactsCache[strings.ToLower(raw)] = name
-				norm := normalisePhone(raw)
-				if norm != "" {
-					contactsCache[norm] = name
-				}
-			}
-		}
-		rows.Close()
-	}
-
-	// Map email addresses → name
-	rows, err = db.Query(`SELECT ZOWNER, ZADDRESS FROM ZABCDEMAILADDRESS`)
-	if err == nil {
-		for rows.Next() {
-			var owner int
-			var addr sql.NullString
-			if rows.Scan(&owner, &addr) != nil {
-				continue
-			}
-			if addr.Valid && addr.String != "" {
-				name := names[owner]
-				if name != "" {
-					contactsCache[strings.ToLower(addr.String)] = name
-				}
-			}
-		}
-		rows.Close()
-	}
-}
-
-const launchdLabel = "com.gohort.phantom-bridge"
-
-func plistPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
-}
-
-func runInstall() {
-	exe, err := os.Executable()
-	if err != nil {
-		nfo.Fatal("cannot determine executable path: %v", err)
-	}
-	// Resolve symlinks so launchd gets the real binary path.
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
-	home, _ := os.UserHomeDir()
-	logFile := filepath.Join(home, "phantom-bridge.log")
-
-	// Verify the binary actually exists at that path before baking it into the plist.
-	if _, err := os.Stat(exe); err != nil {
-		nfo.Fatal("binary not found at %s: %v", exe, err)
-	}
-
-	plist := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>%s</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>%s</string>
-	</array>
-	<key>KeepAlive</key>
-	<true/>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>StandardOutPath</key>
-	<string>%s</string>
-	<key>StandardErrorPath</key>
-	<string>%s</string>
-</dict>
-</plist>
-`, launchdLabel, exe, logFile, logFile)
-
-	path := plistPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		nfo.Fatal("cannot create LaunchAgents dir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(plist), 0644); err != nil {
-		nfo.Fatal("cannot write plist: %v", err)
-	}
-	nfo.Log("binary:  %s", exe)
-	nfo.Log("plist:   %s", path)
-
-	// Validate the plist before attempting to load it.
-	if out, err := exec.Command("plutil", "-lint", path).CombinedOutput(); err != nil {
-		nfo.Log("plist validation failed: %s", strings.TrimSpace(string(out)))
-		nfo.Log("plist content:\n%s", plist)
-		nfo.Fatal("aborting install — fix the plist and retry")
-	}
-
-	uid := fmt.Sprintf("gui/%d", os.Getuid())
-	svcID := uid + "/" + launchdLabel
-
-	// Bootout first in case a previous version is already registered.
-	exec.Command("launchctl", "bootout", uid, path).Run()
-	// Re-enable in case bootout (or a prior unload) left the service marked disabled
-	// in launchd's internal database — bootstrap silently fails (error 5) if disabled.
-	exec.Command("launchctl", "enable", svcID).Run()
-
-	out, err := exec.Command("launchctl", "bootstrap", uid, path).CombinedOutput()
-	if err != nil {
-		nfo.Log("auto-load failed: %s", strings.TrimSpace(string(out)))
-		nfo.Log("")
-		nfo.Log("Load manually:")
-		nfo.Log("  launchctl enable %s", svcID)
-		nfo.Log("  launchctl bootstrap %s %s", uid, path)
-	} else {
-		nfo.Log("service loaded — phantom-bridge will start at login")
-	}
-
-	nfo.Log("")
-	nfo.Log("Manage the service with:")
-	nfo.Log("  Load:    launchctl bootstrap %s %s", uid, path)
-	nfo.Log("  Unload:  launchctl bootout %s %s", uid, path)
-	nfo.Log("  Status:  launchctl list | grep phantom")
-	nfo.Log("  Logs:    tail -f %s", logFile)
-}
-
-func runUninstall() {
-	path := plistPath()
-	uid := fmt.Sprintf("gui/%d", os.Getuid())
-	exec.Command("launchctl", "bootout", uid, path).Run()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		nfo.Fatal("cannot remove plist: %v", err)
-	}
-	nfo.Log("service removed: %s", path)
-}
-
-func configPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".phantom-bridge.cfg")
-}
-
-func expandHome(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
-}
-
-func loadConfig(path string) (Config, error) {
-	var store cfg.Store
-	if err := store.File(path); err != nil {
-		return Config{}, fmt.Errorf("cannot read %s: %w", path, err)
-	}
-	serverURL := store.SGet("phantom", "server_url")
-	apiKey := store.SGet("phantom", "api_key")
-	if serverURL == "" || apiKey == "" {
-		return Config{}, fmt.Errorf("server_url and api_key are required in %s", path)
-	}
-	pollSecs := int(store.GetInt("phantom", "poll_seconds"))
-	if pollSecs == 0 {
-		pollSecs = 10
-	}
-	return Config{ServerURL: serverURL, APIKey: apiKey, PollSecs: pollSecs}, nil
-}
-
-func runSetup(path string) {
-	// Pre-populate with existing values so the menu shows current config.
-	existing, _ := loadConfig(path)
-	if existing.PollSecs == 0 {
-		existing.PollSecs = 10
-	}
-
-	serverURL := existing.ServerURL
-	apiKey := existing.APIKey
-	pollSecs := existing.PollSecs
-
-	menu := nfo.NewOptions("--- Phantom Bridge Configuration ---", "(selection or 'q' to save & exit)", 'q')
-	menu.StringVar(&serverURL, "Gohort Server URL", serverURL, "Base URL of the phantom server (e.g. https://gohort.example.com).")
-	menu.SecretVar(&apiKey, "API Key", apiKey, "Generate one in the Phantom web UI under API Keys.")
-	menu.IntVar(&pollSecs, "Poll Interval (seconds)", pollSecs, "How often to check for new messages.", 5, 300)
-	menu.Select(false)
-
-	serverURL = strings.TrimRight(serverURL, "/")
-	content := fmt.Sprintf("[phantom]\nserver_url = %s\napi_key = %s\npoll_seconds = %d\n", serverURL, apiKey, pollSecs)
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		nfo.Fatal("cannot write config: %v", err)
-	}
-	nfo.Log("Config saved to %s", path)
-	nfo.Log("Next: run phantom-bridge --install to register the launchd service.")
-}
