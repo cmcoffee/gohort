@@ -464,7 +464,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// the full, final answer more than once. The complete answer lands
 	// exactly once, in the final tool-free step.
 	if len(tools) > 0 {
-		systemPrompt += "\n\n[Answering across tool rounds: narrating what you're doing as you work is fine — brief progress notes are welcome. But do NOT write your COMPLETE, final answer in any step that also calls a tool. Deliver the full user-facing answer exactly once: in your final step, the one with no tool call. Never produce two complete answers in one turn.]"
+		systemPrompt += "\n\n[Answering across tool rounds: NEVER emit answer text in the same step as a tool call. Call your tools first, wait for the results, THEN write your response — in a final step that has no tool call. A brief progress note as you work (\"checking that now…\") is fine; your actual answer is what must wait for the end, and it appears exactly once. Never two answers in one turn.]"
 	}
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
