@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -151,6 +152,19 @@ func loadAddressBook(dbPath string) {
 			name = nick.String
 		case org.Valid:
 			name = org.String
+		}
+		if name != "" {
+			// macOS-version diagnostic: if a name field comes back as
+			// non-UTF-8 bytes (the cause of the "�" U+FFFD the LLM sees —
+			// encoding/json replaces invalid bytes with the replacement
+			// char), log the raw hex so we can identify the encoding
+			// (UTF-16 / typedstream / ciphertext / …) and sanitize so the
+			// LLM gets clean text or nothing rather than garbage.
+			if !utf8.ValidString(name) {
+				nfo.Log("contacts: pk=%d name not valid UTF-8 — raw bytes: %x | first=%q last=%q nick=%q org=%q",
+					pk, []byte(name), first.String, last.String, nick.String, org.String)
+				name = strings.TrimSpace(strings.ToValidUTF8(name, ""))
+			}
 		}
 		if name != "" {
 			names[pk] = name

@@ -450,33 +450,25 @@ func (r *desktopRegistry) clientsFor(user string) []*desktopClient {
 // catalog as the user opens / closes the desktop client.
 const desktopKnownToolsTable = "desktop_known_tools"
 
-// persistDesktopKnownTools stores the union of the user's announced
+// persistDesktopKnownTools stores the connected desktop's announced
 // tool descriptors. Writes to RootDB so the data survives process
 // restarts and reaches every chat surface (desktop, browser, phantom)
 // uniformly.
+//
+// The announce is AUTHORITATIVE: it replaces the prior set rather than
+// unioning with it. An earlier version merged-to-avoid-shrinking (so a
+// partial plugin load wouldn't drop tools), but the desktop announces
+// its FULL catalog on connect, and the union meant a tool REMOVED from
+// a new build (e.g. a capability ripped out) lingered in the persisted
+// surface forever and kept being offered to the LLM. Replace fixes that
+// while preserving offline stability: the last announce persists for
+// the disconnect window, so the catalog doesn't flicker as the desktop
+// comes and goes — it only changes when the desktop says it changed.
 func persistDesktopKnownTools(user string, tools []DesktopToolDescriptor) {
 	if user == "" || RootDB == nil {
 		return
 	}
-	// Merge with any previously-known tools so a desktop that
-	// announces a smaller set this connect doesn't shrink the
-	// known surface (could be a partial plugin load). The intent
-	// is "everything the user has ever registered" — admins prune
-	// via a future surface, not the announce path.
-	var prior []DesktopToolDescriptor
-	RootDB.Get(desktopKnownToolsTable, user, &prior)
-	byName := map[string]DesktopToolDescriptor{}
-	for _, t := range prior {
-		byName[t.Name] = t
-	}
-	for _, t := range tools {
-		byName[t.Name] = t // overwrite with latest schema
-	}
-	merged := make([]DesktopToolDescriptor, 0, len(byName))
-	for _, t := range byName {
-		merged = append(merged, t)
-	}
-	RootDB.Set(desktopKnownToolsTable, user, merged)
+	RootDB.Set(desktopKnownToolsTable, user, tools)
 }
 
 // loadDesktopKnownTools returns the persisted tool surface for the

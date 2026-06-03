@@ -16,7 +16,7 @@ BRIDGEBUNDLE := $(OUTDIR)/$(BRIDGENAME).app
 BRIDGEBIN    := $(BRIDGEBUNDLE)/Contents/MacOS/gohort-bridge
 BRIDGE_ID    := com.gohort.bridge
 
-.PHONY: all build dev doctor universal clean install uninstall help bridge bridge-install bridge-setup install-all
+.PHONY: all build dev doctor universal clean install uninstall help bridge bridge-install bridge-setup install-all stop
 
 # Default target: native architecture build. For a distribution build
 # that runs on both Intel and Apple Silicon Macs in one binary, use
@@ -103,14 +103,9 @@ bridge:
 bridge-setup: bridge
 	"$(BRIDGEBIN)" --setup
 
-# Install BOTH apps to /Applications and register the bridge to run at
-# login. Gohort.app = the viewer (dock); Gohort-Bridge.app = the agent
-# (menu bar). Grant Full Disk Access to Gohort-Bridge.app for iMessage.
-install-all: install bridge
-	@if [ -d "$(INSTALL_DIR)/$(BRIDGENAME).app" ]; then rm -rf "$(INSTALL_DIR)/$(BRIDGENAME).app"; fi
-	cp -R "$(BRIDGEBUNDLE)" "$(INSTALL_DIR)/"
-	"$(INSTALL_DIR)/$(BRIDGENAME).app/Contents/MacOS/gohort-bridge" --install
-	@echo "Installed both apps. Grant Full Disk Access to $(BRIDGENAME).app for iMessage."
+# Back-compat alias — `install` now stops the running pair and installs
+# BOTH apps (viewer + bridge) on its own.
+install-all: install
 
 # Register the (already-installed) bridge to run at login.
 bridge-install: bridge
@@ -138,15 +133,34 @@ doctor:
 # rebuilds first so a stale binary can't ship — earlier this was
 # `install: $(APPBUNDLE)` which only rebuilt when the bundle was
 # missing, so post-edit installs silently shipped the previous build.
-install: build
-	@echo "Installing $(APPNAME).app to $(INSTALL_DIR)/"
-	@if [ -d "$(INSTALL_DIR)/$(APPNAME).app" ]; then \
-		echo "Removing existing $(INSTALL_DIR)/$(APPNAME).app"; \
-		rm -rf "$(INSTALL_DIR)/$(APPNAME).app"; \
-	fi
+# Stop the running viewer + bridge so a reinstall replaces clean bundles
+# and the fresh build takes over (new code, new tool catalog). The bridge
+# runs under launchd with KeepAlive — a plain kill is relaunched — so the
+# agent is booted out; `install` re-bootstraps it. All best-effort: the
+# leading "-" ignores errors, so it works whether or not they're running.
+stop:
+	@echo "Stopping running $(APPNAME) viewer + bridge…"
+	-@osascript -e 'quit app "$(APPNAME)"' >/dev/null 2>&1
+	-@killall "$(APPNAME)" >/dev/null 2>&1
+	-@launchctl bootout gui/$$(id -u)/$(BRIDGE_ID) >/dev/null 2>&1
+	-@killall gohort-bridge >/dev/null 2>&1
+	@sleep 1
+
+# One-command rebuild + reinstall of BOTH apps — the viewer (Gohort.app)
+# and the bridge (Gohort-Bridge.app). Stops the running pair first, then
+# replaces both bundles, re-registers the bridge so launchd launches the
+# fresh build, and reopens the viewer. After `make install` everything is
+# back up on the new code — nothing else to type.
+install: stop build bridge
+	@echo "Installing $(APPNAME).app + $(BRIDGENAME).app to $(INSTALL_DIR)/"
+	@if [ -d "$(INSTALL_DIR)/$(APPNAME).app" ]; then rm -rf "$(INSTALL_DIR)/$(APPNAME).app"; fi
 	cp -R "$(APPBUNDLE)" "$(INSTALL_DIR)/"
-	@echo "Installed. Launch from Applications, Spotlight (\"$(APPNAME)\"), or:"
-	@echo "  open $(INSTALL_DIR)/$(APPNAME).app"
+	@if [ -d "$(INSTALL_DIR)/$(BRIDGENAME).app" ]; then rm -rf "$(INSTALL_DIR)/$(BRIDGENAME).app"; fi
+	cp -R "$(BRIDGEBUNDLE)" "$(INSTALL_DIR)/"
+	"$(INSTALL_DIR)/$(BRIDGENAME).app/Contents/MacOS/gohort-bridge" --install
+	@open "$(INSTALL_DIR)/$(APPNAME).app"
+	@echo "Installed + relaunched the viewer; the bridge is running under launchd."
+	@echo "If you haven't yet, grant Full Disk Access to $(BRIDGENAME).app for iMessage."
 
 # Remove the installed .app from /Applications.
 uninstall:

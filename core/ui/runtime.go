@@ -2747,6 +2747,11 @@ body { min-height: 100vh; min-height: 100dvh; }
    * white reply. Sits between mute and text in luminance. */
   color: #b5bbc7;
 }
+/* Attachment-only user message: no text → empty body card, which
+ * otherwise renders as a blank styled box above the attachment.
+ * Collapse it so only the attachment shows. The attachment box is a
+ * sibling (appended to the bubble), so it stays visible. */
+.ui-agent-msg-user .ui-agent-msg-body:empty { display: none; }
 /* Mid-flight interjection — dim the body card until the agent
  * drains it, then solidify. The .consumed modifier is added by
  * the app's notes_consumed handler when the orchestrator picks
