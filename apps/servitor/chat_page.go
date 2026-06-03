@@ -1,5 +1,5 @@
 // Servitor chat page. AgentLoopPanel scoped to an appliance, a
-// workspaces list in the left rail, and a reserved terminal pane
+// chat-sessions list in the left rail, and a reserved terminal pane
 // in the bottom-right.
 //
 // runSession emits probeEvents into a per-session queue; chat_bridge.go
@@ -59,23 +59,19 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 			{
 				NoChrome: true,
 				Body: ui.AgentLoopPanel{
-					// Left rail = workspaces for the active appliance.
-					// {appliance_id} placeholder is substituted from
-					// the ExtraFields value below; changing the picker
-					// re-fetches the list.
-					//
-					// CONTEXT mode: workspaces are reference contexts,
-					// not chat sessions. Clicking one marks it active
-					// (ships as workspace_id on every send) but doesn't
-					// reset the conversation. Each chat creates a fresh
-					// server-side probe session independently.
-					ListURL:       "api/workspace/list?appliance_id={appliance_id}",
-					LoadURL:       "api/workspace/v2/{id}",
-					DeleteURL:     "api/workspace/{id}",
+					// Left rail = chat sessions for the active appliance,
+					// auto-created on the first message (see sessions.go).
+					// {appliance_id} is substituted from the ExtraFields
+					// value below; changing the picker re-fetches the list.
+					// SESSION mode (default): clicking a row replays its
+					// transcript and binds future sends to that session id;
+					// the id rides back as session_id on every send.
+					ListURL:       "api/sessions?appliance_id={appliance_id}",
+					LoadURL:       "api/sessions/{id}?appliance_id={appliance_id}",
+					DeleteURL:     "api/sessions/{id}?appliance_id={appliance_id}",
 					MessagesField: "messages",
-					RenameURL:     "api/workspace/rename",
-					ListTitle:     "Workspaces",
-					NewLabel:      "New workspace",
+					ListTitle:     "Sessions",
+					NewLabel:      "New session",
 					// Same chat-app layout orchestrate uses: rail
 					// extends full-height on the left, topbar lives
 					// in the chat pane, Appliance picker lifts into a
@@ -85,8 +81,6 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 					IDField:       "id",
 					TitleField:    "name",
 					DateField:     "updated",
-					ListIsContext: true,
-					ListBodyField: "workspace_id",
 
 					// SendURL returns JSON {session_id}; runtime then
 					// subscribes to EventsURL. This separation buys
@@ -138,8 +132,6 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "servitor_run_map", Variant: "primary"},
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",
 							Method: "client", URL: "servitor_run_mapapp"},
-						{Label: "Workspace", Title: "Open the active workspace's draft, supplements, and synthesis controls",
-							Method: "client", URL: "servitor_open_workspace"},
 						{Label: "Clear", Title: "Clear the conversation and activity panes",
 							Method: "client", URL: "servitor_clear"},
 						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
@@ -198,86 +190,6 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 			return true
 		}
 	})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleWorkspaceLoad returns a workspace shaped for AgentLoopPanel
-// consumption: the saved Q&A entries flattened into a Messages
-// array the runtime can replay into the conversation pane. The
-// legacy /api/workspace/{id} endpoint returns the raw DocWorkspace
-// (entries as Q/A pairs); this v2 form does the flattening so the
-// chat page sees a uniform message list.
-func (T *Servitor) handleWorkspaceLoad(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	id := r.URL.Path[len("/api/workspace/v2/"):]
-	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
-	}
-	ws, found := loadWorkspace(udb, id)
-	if !found {
-		http.Error(w, "workspace not found", http.StatusNotFound)
-		return
-	}
-	type msg struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-		Date    string `json:"date,omitempty"`
-	}
-	messages := make([]msg, 0, len(ws.Entries)*2)
-	for _, e := range ws.Entries {
-		if e.Question != "" {
-			messages = append(messages, msg{Role: "user", Content: e.Question, Date: e.Timestamp})
-		}
-		if e.Answer != "" {
-			messages = append(messages, msg{Role: "assistant", Content: e.Answer, Date: e.Timestamp})
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"id":       ws.ID,
-		"name":     ws.Name,
-		"updated":  ws.Updated,
-		"messages": messages,
-	})
-}
-
-// handleWorkspaceRename receives {id, name} from the AgentLoopPanel
-// rail's ✎ button and updates the workspace name in place. The
-// rest of the workspace record (entries, supplements, …) is
-// untouched.
-func (T *Servitor) handleWorkspaceRename(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	var body struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil ||
-		body.ID == "" || body.Name == "" {
-		http.Error(w, "id and name required", http.StatusBadRequest)
-		return
-	}
-	ws, found := loadWorkspace(udb, body.ID)
-	if !found {
-		http.Error(w, "workspace not found", http.StatusNotFound)
-		return
-	}
-	ws.Name = body.Name
-	saveWorkspace(udb, ws)
 	w.WriteHeader(http.StatusNoContent)
 }
 

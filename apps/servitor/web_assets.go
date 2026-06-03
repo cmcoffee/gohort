@@ -7,7 +7,7 @@
 //  2. JS registering block renderers for the four servitor event
 //     kinds that the chat_bridge.go translator routes through
 //     `kind: "block"`: servitor_intent, servitor_plan,
-//     servitor_notes_consumed, servitor_draft. The framework calls
+//     servitor_notes_consumed. The framework calls
 //     window.UIBlockRenderers[<type>] with the event data and
 //     expects a {wrap, body, onDone?} object back.
 //  3. JS registering client actions for the chat toolbar
@@ -108,25 +108,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
   color: var(--text-mute); text-decoration: line-through;
 }
 
-.ui-servitor-draft {
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0.55rem 0.75rem;
-  margin: 0.3rem 0;
-  align-self: flex-start;
-  max-width: 92%;
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.85rem;
-}
-.ui-servitor-draft-h {
-  font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--text-hi);
-  margin-bottom: 0.35rem;
-  font-family: inherit;
-}
-
 .ui-servitor-facts-list { margin-bottom: 0.6rem; }
 .ui-servitor-fact {
   padding: 0.35rem 0.5rem;
@@ -207,42 +188,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
   border-top: 1px solid var(--border);
 }
 
-.ui-servitor-supp-h {
-  font-size: 0.78rem; font-weight: 600;
-  color: var(--text-hi); text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 0.4rem;
-}
-.ui-servitor-supp-list { margin-bottom: 0.6rem; }
-.ui-servitor-supp-row {
-  padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
-}
-.ui-servitor-supp-hdr {
-  display: flex; gap: 0.5rem; align-items: center;
-  margin-bottom: 0.3rem;
-}
-.ui-servitor-supp-name {
-  flex: 1; font-weight: 600; color: var(--text-hi);
-  overflow-wrap: anywhere; word-break: break-word;
-}
-.ui-servitor-supp-status {
-  font-size: 0.72rem; color: var(--text-mute);
-}
-.ui-servitor-supp-attach {
-  display: flex; flex-direction: column; gap: 0.4rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border);
-}
-
-.ui-servitor-revs-list { margin-bottom: 0.6rem; }
-.ui-servitor-rev-row {
-  display: grid; grid-template-columns: 1fr auto auto auto;
-  gap: 0.5rem; align-items: center;
-  padding: 0.35rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-}
-.ui-servitor-rev-date { font-size: 0.85rem; color: var(--text-hi); }
-.ui-servitor-rev-size { font-size: 0.72rem; color: var(--text-mute); }
 .ui-servitor-interject-actions {
   display: flex; gap: 0.3rem; margin-top: 0.4rem;
   justify-content: flex-end;
@@ -264,16 +209,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
  * .consumed), the edit/delete affordances disappear — the note is
  * locked-in history. */
 .ui-agent-interjection.consumed .ui-servitor-interject-actions { display: none; }
-
-.ui-servitor-revs-preview {
-  margin-top: 0.5rem; padding: 0.6rem 0.8rem;
-  background: var(--bg-1); border-radius: 4px;
-  white-space: pre-wrap;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.82rem; line-height: 1.5;
-  max-height: 16em; overflow-y: auto;
-  overflow-wrap: anywhere; word-break: break-word;
-}
 
 .ui-servitor-save-row {
   display: flex; gap: 0.4rem; flex-wrap: wrap;
@@ -526,17 +461,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var wrap = el('div', {class: 'ui-agent-act ui-agent-act-status'},
         [n + ' note' + (n === 1 ? '' : 's') + ' picked up by agent']);
       return {wrap: wrap, body: null, pane: 'activity'};
-    });
-
-    // draft — workspace draft preview emitted when the user asks
-    // the agent to compose a writeup. For v1 we just dump the text
-    // into the conversation as a monospace block; the legacy
-    // "open the draft in a side panel" UX comes later.
-    window.uiRegisterBlockRenderer('servitor_draft', function(d) {
-      var wrap = el('div', {class: 'ui-servitor-draft'});
-      wrap.appendChild(el('div', {class: 'ui-servitor-draft-h'}, ['Draft']));
-      wrap.appendChild(document.createTextNode(d.text || ''));
-      return {wrap: wrap, body: null};
     });
 
     // --- Toolbar client actions -------------------------------------
@@ -950,7 +874,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         var delBtn = el('button', {class: 'ui-row-btn danger',
           style: 'margin-right: auto',
           onclick: async function() {
-            if (!(await window.uiConfirm('Delete this appliance? All saved facts, rules, and workspaces will remain but become orphaned.'))) return;
+            if (!(await window.uiConfirm('Delete this appliance? All saved facts, rules, and sessions will remain but become orphaned.'))) return;
             fetch('api/appliance/' + encodeURIComponent(rec.id),
               {method: 'DELETE'}).then(function() {
               m.close();
@@ -978,8 +902,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         });
     });
 
-    // Per-reply save buttons. Mirrors legacy's addChatMsg
-    // affordances: assistant replies get Workspace / TechWriter /
+    // Per-reply save buttons: assistant replies get TechWriter /
     // CodeWriter buttons depending on which destinations are
     // available. The destinations probe happens once per page.
     var saveDestinations = null;
@@ -990,24 +913,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         .catch(function() { saveDestinations = {}; });
     }
     loadSaveDestinations();
-
-    function getWorkspaceID() {
-      // Active workspace lives in the AgentLoopPanel rail; its id
-      // is the value of any session row carrying the 'active'
-      // class. Picked from the DOM at button-click time so a
-      // workspace switch mid-conversation reflects correctly.
-      var active = document.querySelector('.ui-chat-side-item.active');
-      if (!active) return '';
-      // The rail row stores nothing public, but its first text
-      // child is the title and the runtime sets activeContextId
-      // internally — we don't have direct access. Fall back to
-      // reading the URL's deep-link param (matches what the
-      // runtime mirrors there).
-      try {
-        var qs = new URL(window.location.href).searchParams;
-        return qs.get('session') || '';
-      } catch (_) { return ''; }
-    }
 
     window.uiRegisterMessageDecorator(function(m) {
       if (m.role !== 'assistant') return;
@@ -1024,89 +929,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       function decorate() {
         var row = document.createElement('div');
         row.className = 'ui-servitor-save-row';
-
-        var wsBtn = makeBtn(getWorkspaceID() ? 'Save to Workspace' : 'Create Workspace', function() {
-          var wsID = getWorkspaceID();
-          // Find the user question that preceded this assistant
-          // bubble — walk back through the convo log. Server's
-          // create endpoint requires a non-empty question to use
-          // as the workspace name.
-          var question = '';
-          var prev = m.wrap.previousElementSibling;
-          while (prev) {
-            if (prev.classList && prev.classList.contains('ui-agent-msg-user')) {
-              var body = prev.querySelector('.ui-agent-msg-body');
-              if (body) question = body.textContent.trim();
-              break;
-            }
-            prev = prev.previousElementSibling;
-          }
-          if (!question) question = 'Saved from chat';
-
-          wsBtn.disabled = true; wsBtn.textContent = 'Saving…';
-          if (wsID) {
-            // Append entry to existing workspace.
-            fetch('api/workspace/save', {
-              method: 'POST', headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({
-                workspace_id: wsID,
-                question:     question,
-                answer:       m.rawText,
-              }),
-            }).then(function(r) {
-              wsBtn.disabled = false;
-              wsBtn.textContent = r.ok ? 'Saved ✓' : 'Failed';
-              if (r.ok) wsBtn.classList.add('saved');
-            });
-            return;
-          }
-          // No active workspace — create one named after the user
-          // question (server truncates if too long). After success
-          // we navigate to the new workspace so future saves attach
-          // to it and the left rail picks it up.
-          var aid = getApplianceID();
-          if (!aid) {
-            window.uiAlert('Pick an appliance first');
-            wsBtn.disabled = false; wsBtn.textContent = 'Create Workspace';
-            return;
-          }
-          fetch('api/workspace/create', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-              appliance_id: aid,
-              question:     question,
-              answer:       m.rawText,
-            }),
-          }).then(function(r) {
-            if (!r.ok) { return r.text().then(function(t){ throw new Error(t); }); }
-            return r.json();
-          }).then(function(d) {
-            wsBtn.classList.add('saved');
-            wsBtn.textContent = '✓ Workspace Created';
-            // Navigate to the new workspace so it becomes the active
-            // context for future saves and shows up in the rail.
-            try {
-              var u = new URL(window.location.href);
-              u.searchParams.set('session', d.id);
-              window.history.replaceState({}, '', u.toString());
-              // Update labels on any other Save buttons still on
-              // the page so they read "Save to Workspace" now.
-              document.querySelectorAll('.ui-servitor-save-btn').forEach(function(b) {
-                if (!b.classList.contains('saved') && b.textContent === 'Create Workspace') {
-                  b.textContent = 'Save to Workspace';
-                }
-              });
-            } catch (_) {}
-            // Refresh the left rail so the new workspace shows up
-            // immediately. AgentLoopPanel matches by base URL so
-            // the {appliance_id}-templated source still gets hit.
-            window.uiInvalidate('api/workspace/list');
-          }).catch(function(err) {
-            wsBtn.disabled = false; wsBtn.textContent = 'Create Workspace';
-            window.uiAlert('Create workspace failed: ' + (err && err.message || err));
-          });
-        });
-        row.appendChild(wsBtn);
 
         if (saveDestinations.techwriter) {
           var twBtn = makeBtn('↗ TechWriter', function() {
@@ -1148,266 +970,9 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       }
     });
 
-    // Workspace modal — draft editing, synthesis, supplements.
-    // Same feature set as the legacy "Workspaces" / "Draft" panel
-    // (showWorkspaces + showDraftPanel), collapsed into one modal
-    // scoped to the currently active workspace.
-    window.uiRegisterClientAction('servitor_open_workspace', function(ctx) {
-      try {
-        var qs = new URL(window.location.href).searchParams;
-        var wsID = qs.get('session') || '';
-      } catch (_) { wsID = ''; }
-      if (!wsID) {
-        window.uiAlert('Pick a workspace from the left rail first (or create one with + New workspace).');
-        return;
-      }
-
-      var draftArea = el('textarea', {class: 'ui-form-input',
-        rows: 14, style: 'width:100%; font-family:monospace'});
-      var supplementsBox = el('div', {class: 'ui-servitor-supp-list'});
-      var statusLine = el('div', {class: 'ui-form-hint', style: 'min-height:1em'});
-
-      var fileIn = el('input', {type: 'file', class: 'ui-form-input'});
-      var promptIn = el('input', {type: 'text', class: 'ui-form-input',
-        placeholder: 'Usage instruction (how/when should the LLM reference this?)'});
-      var attachBtn = el('button', {class: 'ui-row-btn',
-        onclick: function() { attachSupplement(); }}, ['Attach Document']);
-      var attachRow = el('div', {class: 'ui-servitor-supp-attach'},
-        [fileIn, promptIn, attachBtn]);
-
-      var body = el('div', {class: 'ui-pl-modal-body'}, [
-        el('label', {}, ['Draft']), draftArea,
-        statusLine,
-        el('div', {class: 'ui-servitor-supp-h', style: 'margin-top:1rem'},
-          ['Supplements']),
-        supplementsBox,
-        attachRow,
-      ]);
-
-      var m = openModal('Workspace', body);
-
-      var saveBtn = el('button', {class: 'ui-row-btn',
-        onclick: function() { saveDraft(); }}, ['Save Draft']);
-      var genBtn = el('button', {class: 'ui-row-btn primary',
-        onclick: function() { generateDraft(); }}, ['Generate Draft']);
-      var viewBtn = el('button', {class: 'ui-row-btn',
-        onclick: function() {
-          window.open('api/workspace/view?id=' + encodeURIComponent(wsID),
-            '_blank', 'noopener');
-        }}, ['View Draft']);
-      var revBtn = el('button', {class: 'ui-row-btn',
-        onclick: function() { openRevisions(); }}, ['Revisions']);
-      var closeBtn = el('button', {class: 'ui-row-btn',
-        onclick: function(){ m.close(); }}, ['Close']);
-      m.footer(viewBtn, revBtn, closeBtn, saveBtn, genBtn);
-
-      // Revisions modal — list of prior drafts (newest first), each
-      // with Preview + Revert. Revert snapshots the current draft
-      // first so the revert is itself undoable (server-side behavior).
-      function openRevisions() {
-        var listBox = el('div', {class: 'ui-servitor-revs-list'},
-          [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
-        var preview = el('div', {class: 'ui-servitor-revs-preview',
-          style: 'display:none'});
-        var body = el('div', {class: 'ui-pl-modal-body'}, [listBox, preview]);
-        var rm = openModal('Revisions', body);
-
-        fetch('api/workspace/revisions?id=' + encodeURIComponent(wsID))
-          .then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          })
-          .then(function(revs) {
-            listBox.innerHTML = '';
-            if (!Array.isArray(revs) || !revs.length) {
-              listBox.appendChild(el('div', {class: 'ui-pl-empty'},
-                ['No revisions yet. Save the draft (or run Generate Draft) to create one.']));
-              return;
-            }
-            revs.forEach(function(rev) {
-              var row = el('div', {class: 'ui-servitor-rev-row'});
-              row.appendChild(el('div', {class: 'ui-servitor-rev-date',
-                text: rev.date || ''}));
-              var sizeKB = Math.max(1, Math.round((rev.body || '').length / 1024));
-              row.appendChild(el('div', {class: 'ui-servitor-rev-size',
-                text: sizeKB + ' KB'}));
-              var prevBtn = el('button', {class: 'ui-row-btn',
-                onclick: function() {
-                  preview.style.display = '';
-                  preview.textContent = rev.body || '';
-                }}, ['Preview']);
-              var revertBtn = el('button', {class: 'ui-row-btn primary',
-                onclick: async function() {
-                  if (!(await window.uiConfirm('Replace the current draft with this revision? The current draft will itself become a revision so this is undoable.'))) return;
-                  revertBtn.disabled = true; revertBtn.textContent = 'Reverting…';
-                  fetch('api/workspace/revert', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                      workspace_id: wsID, revision_id: rev.id,
-                    }),
-                  }).then(function(r) {
-                    if (!r.ok) throw new Error('revert failed');
-                    rm.close();
-                    // Refresh the underlying workspace modal so the
-                    // user sees the reverted draft text.
-                    loadWorkspace();
-                  }).catch(function(err) {
-                    revertBtn.disabled = false;
-                    revertBtn.textContent = 'Revert';
-                    window.uiAlert('Revert failed: ' + (err && err.message || err));
-                  });
-                }}, ['Revert']);
-              row.appendChild(prevBtn);
-              row.appendChild(revertBtn);
-              listBox.appendChild(row);
-            });
-          })
-          .catch(function(err) {
-            listBox.innerHTML = '';
-            listBox.appendChild(el('div', {class: 'ui-pl-empty'},
-              ['Failed to load: ' + (err && err.message || err)]));
-          });
-
-        rm.footer(el('button', {class: 'ui-row-btn',
-          onclick: function(){ rm.close(); }}, ['Done']));
-      }
-
-      function loadWorkspace() {
-        return fetch('api/workspace/' + encodeURIComponent(wsID))
-          .then(function(r){ return r.json(); })
-          .then(function(ws) {
-            draftArea.value = (ws && ws.draft) || '';
-            renderSupplements((ws && ws.supplements) || []);
-            return ws;
-          });
-      }
-      loadWorkspace().catch(function(err) {
-        statusLine.textContent = 'Load failed: ' + (err && err.message || err);
-      });
-
-      function saveDraft() {
-        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
-        fetch('api/workspace/draft', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({workspace_id: wsID, draft: draftArea.value}),
-        }).then(function(r) {
-          saveBtn.disabled = false;
-          saveBtn.textContent = r.ok ? 'Saved' : 'Failed';
-          setTimeout(function(){ saveBtn.textContent = 'Save Draft'; }, 1500);
-        });
-      }
-
-      function generateDraft() {
-        genBtn.disabled = true; genBtn.textContent = 'Generating…';
-        fetch('api/workspace/synthesize', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({workspace_id: wsID}),
-        }).then(function(r) {
-          if (!r.ok) { return r.text().then(function(t){ throw new Error(t); }); }
-          return r.json();
-        }).then(function(d) {
-          if (!d || !d.session_id) throw new Error('no session id');
-          // Tap the event stream so synthesis progress shows in
-          // the panel (status / cmd / output / activity). Close
-          // the modal so the user can watch it run; reload the
-          // draft when 'done' arrives.
-          m.close();
-          ctx.subscribe('api/chat/v2/events?id=' + encodeURIComponent(d.session_id));
-        }).catch(function(err) {
-          genBtn.disabled = false; genBtn.textContent = 'Generate Draft';
-          window.uiAlert('Synthesis failed: ' + (err && err.message || err));
-        });
-      }
-
-      function renderSupplements(list) {
-        supplementsBox.innerHTML = '';
-        if (!list || !list.length) {
-          supplementsBox.appendChild(el('div', {class: 'ui-pl-empty'},
-            ['No supplements attached.']));
-          return;
-        }
-        list.forEach(function(s) {
-          var head = el('div', {class: 'ui-servitor-supp-hdr'});
-          head.appendChild(el('span', {class: 'ui-servitor-supp-name',
-            text: s.name || ''}));
-          if (s.processing) {
-            head.appendChild(el('span', {class: 'ui-servitor-supp-status'},
-              ['Analyzing…']));
-          } else if (s.content) {
-            var kb = Math.max(1, Math.round((s.content || '').length / 1024));
-            head.appendChild(el('span', {class: 'ui-servitor-supp-status'},
-              [kb + ' KB']));
-          }
-          var delBtn = el('button', {class: 'ui-row-btn danger',
-            onclick: async function() {
-              if (!(await window.uiConfirm('Remove "' + s.name + '" from the workspace?'))) return;
-              fetch('api/workspace/supplement/delete', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({workspace_id: wsID, supplement_id: s.id}),
-              }).then(function() { loadWorkspace(); });
-            }}, ['Remove']);
-          head.appendChild(delBtn);
-
-          var promptArea = el('textarea', {class: 'ui-form-input', rows: 2,
-            placeholder: 'How/when should the LLM reference this document?'});
-          promptArea.value = s.sub_prompt || '';
-          var saveSubBtn = el('button', {class: 'ui-row-btn',
-            onclick: function() {
-              saveSubBtn.disabled = true; saveSubBtn.textContent = 'Saving…';
-              fetch('api/workspace/supplement/prompt', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                  workspace_id: wsID, supplement_id: s.id,
-                  sub_prompt: promptArea.value.trim(),
-                }),
-              }).then(function(r) {
-                saveSubBtn.disabled = false;
-                saveSubBtn.textContent = r.ok ? 'Saved' : 'Failed';
-                setTimeout(function(){ saveSubBtn.textContent = 'Save Instruction'; }, 1500);
-              });
-            }}, ['Save Instruction']);
-
-          var row = el('div', {class: 'ui-servitor-supp-row'},
-            [head, promptArea, saveSubBtn]);
-          supplementsBox.appendChild(row);
-        });
-        // If any supplement is still processing, poll until done.
-        if (list.some(function(s){ return s.processing; })) {
-          setTimeout(loadWorkspace, 5000);
-        }
-      }
-
-      function attachSupplement() {
-        if (!fileIn.files || !fileIn.files.length) {
-          window.uiAlert('Pick a file first.');
-          return;
-        }
-        attachBtn.disabled = true; attachBtn.textContent = 'Attaching…';
-        var fd = new FormData();
-        fd.append('workspace_id', wsID);
-        fd.append('sub_prompt', promptIn.value.trim());
-        fd.append('file', fileIn.files[0]);
-        fetch('api/workspace/supplement/add', {method: 'POST', body: fd})
-          .then(function(r) {
-            if (!r.ok) { return r.text().then(function(t){ throw new Error(t); }); }
-            return r.json();
-          })
-          .then(function() {
-            fileIn.value = ''; promptIn.value = '';
-            attachBtn.disabled = false; attachBtn.textContent = 'Attach Document';
-            loadWorkspace();
-          })
-          .catch(function(err) {
-            attachBtn.disabled = false; attachBtn.textContent = 'Attach Document';
-            window.uiAlert('Attach failed: ' + (err && err.message || err));
-          });
-      }
-    });
-
     window.uiRegisterClientAction('servitor_clear', function(ctx) {
-      // Mirrors legacy's clearChat + clearActivity. Server-side
-      // history (saved workspace entries) is untouched — this just
-      // wipes the on-screen panes.
+      // Mirrors legacy's clearChat + clearActivity. Saved sessions
+      // are untouched — this just wipes the on-screen panes.
       ctx.clearConvo();
       ctx.clearActivity();
     });
@@ -1647,14 +1212,14 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 
     // On reconnect, the bridge enriches the session event with the
     // session's appliance_id. Set the picker so the terminal + the
-    // workspace list scope to the right context automatically.
+    // session list scope to the right context automatically.
     window.addEventListener('ui-agent-session', function(ev) {
       var aid = ev.detail && ev.detail.appliance_id;
       if (!aid) return;
       var sel = document.querySelector('.ui-agent-extras select');
       if (!sel || sel.value === aid) return;
       sel.value = aid;
-      // Fire change so existing listeners (terminal + workspace
+      // Fire change so existing listeners (terminal + session
       // list refresh + facts badge) re-run for the new appliance.
       sel.dispatchEvent(new Event('change'));
     });

@@ -385,6 +385,7 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
+		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		OnStep:       func(info StepInfo) { telem.record(info) },
 		Confirm:      func(name, args string) bool { return true },
 		ChatOptions: []ChatOption{
@@ -592,6 +593,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
+		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:      func(name, args string) bool { return true },
 		// InjectionDrain (not OnRoundStart): the queue-drain closure
 		// returns nil when empty, so the loop's pre-finalize re-call

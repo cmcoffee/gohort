@@ -247,6 +247,17 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		for _, c := range cookie_jar.Cookies(upstream_url) {
 			req.AddCookie(c)
 		}
+		// Tag the request as coming from the desktop client itself, with the
+		// bridge API key. The server (core.DesktopClientUser) validates it to
+		// expose from_client.* tools ONLY to this desktop app — a remote
+		// browser/phone on the same account never carries it. Strip any value
+		// the webview might have set first, then write our authentic key
+		// (mirrors the Cookie handling above; the static X-Forwarded-For-
+		// Desktop marker above is spoofable and NOT used for this).
+		req.Header.Del("X-Gohort-Desktop-Client-Key")
+		if k := core.ReadBridgeConfig().APIKey; k != "" {
+			req.Header.Set("X-Gohort-Desktop-Client-Key", k)
+		}
 	}
 	// SSE / chunked: force per-write flush so the orchestrate chat
 	// streams live instead of buffering.

@@ -1312,12 +1312,25 @@ func (m *LiveSessionMap[T]) ScheduleCleanup(id string) {
 	m.ScheduleCleanupAfter(id, 10*time.Minute)
 }
 
-// ScheduleCleanupAfter removes a session after the given duration.
+// ScheduleCleanupAfter removes a session after the given duration —
+// but only if it hasn't been replaced by a newer run in the meantime.
+// Apps that reuse one stable id across sequential runs (e.g. a chat
+// session id doubling as the run id) re-Register the same key, which
+// overwrites the map entry with a fresh *LiveSession. Capturing the
+// current instance here and deleting only if it's still the live one
+// prevents a stale cleanup timer from yanking a later run out from
+// under the client. For unique-id callers the pointer always matches,
+// so this is a no-op.
 func (m *LiveSessionMap[T]) ScheduleCleanupAfter(id string, d time.Duration) {
+	m.mu.Lock()
+	current := m.sessions[id]
+	m.mu.Unlock()
 	go func() {
 		time.Sleep(d)
 		m.mu.Lock()
-		delete(m.sessions, id)
+		if m.sessions[id] == current {
+			delete(m.sessions, id)
+		}
 		m.mu.Unlock()
 	}()
 }

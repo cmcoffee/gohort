@@ -120,13 +120,16 @@ type AgentLoopConfig struct {
 	// Tool names are still logged; content is replaced with byte counts.
 	MaskDebugOutput bool
 
-	// NoDynamicThinkBudget disables the per-round thinking-budget growth
-	// that scales by prior input-token count. Default behavior (false)
-	// scales the budget upward as the conversation accumulates history
-	// so deep multi-round flows don't truncate mid-thought. Set true
-	// for short fixed-shape loops (classifiers, judges, single-tool
-	// orchestrators) where a small constant budget is correct.
-	NoDynamicThinkBudget bool
+	// ThinkBudget sets the thinking_budget_tokens for every round of this
+	// loop (e.g. a per-agent configured budget). 0 = inherit the
+	// operator-configured global default (admin "Thinking Budget" →
+	// llamacppBudget, default 4096). We no longer scale the budget by
+	// prior input-token count: prompt size is a poor proxy for task
+	// difficulty (a trivial tool call in a long history doesn't need more
+	// thinking), and Qwen's own best-practice guidance is a flat budget,
+	// not an input-scaled one. Callers needing a specific size set this;
+	// the resolution order is per-call WithThinkBudget > this > global.
+	ThinkBudget int
 
 	// SerialTools limits execution to one tool call per round. When the LLM
 	// returns multiple tool calls in a single response, only the first is
@@ -451,6 +454,18 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	if cfg.PromptTools && len(tools) > 0 {
 		systemPrompt += BuildToolPrompt(tools)
 	}
+	// Tool-round discipline — applies to EVERY tool-using agent loop
+	// (native or prompt-based tool calling), not just one app. The
+	// failure mode is the model writing a COMPLETE answer in a step
+	// that also calls a tool, then a SECOND complete answer in the
+	// final step — the user sees two full replies with a tool run
+	// wedged between. In-progress narration ("checking that now…",
+	// status notes) is fine and kept; what's forbidden is delivering
+	// the full, final answer more than once. The complete answer lands
+	// exactly once, in the final tool-free step.
+	if len(tools) > 0 {
+		systemPrompt += "\n\n[Answering across tool rounds: narrating what you're doing as you work is fine — brief progress notes are welcome. But do NOT write your COMPLETE, final answer in any step that also calls a tool. Deliver the full user-facing answer exactly once: in your final step, the one with no tool call. Never produce two complete answers in one turn.]"
+	}
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
 	// budget were infinite, then getting truncated). Only emit for
@@ -750,15 +765,23 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				opts = append(opts, WithThink(*think))
 			}
 		}
-		// Dynamic thinking-budget scaling: as the conversation grows
-		// (more history, more tool results, longer plans), the model
-		// needs more room to integrate it all. Scale based on the
-		// prior round's input-token count so quick first rounds stay
-		// cheap and deep multi-round flows get headroom automatically.
-		// Caller can opt out with cfg.NoDynamicThinkBudget (e.g.
-		// classifier loops where a fixed small budget is correct).
-		if !cfg.NoDynamicThinkBudget && lastResp != nil && lastResp.InputTokens > 0 {
-			opts = append(opts, WithThinkBudget(DynamicThinkBudget(lastResp.InputTokens)))
+		// Thinking budget (no input-scaling). Resolution, highest priority
+		// first:
+		//   1. explicit per-loop override (cfg.ThinkBudget, e.g. a per-agent
+		//      configured budget)
+		//   2. per-route configured budget (admin routing UI) via RouteKey —
+		//      symmetric with the RouteThink flag applied just above; without
+		//      this the admin's per-route budget is silently ignored in agent
+		//      loops (the old input-scaling formula used to mask the gap)
+		//   3. the operator-configured global default (client llamacppBudget,
+		//      default 4096, also a hard ceiling), applied inside the client
+		// See ThinkBudget's doc on AgentLoopConfig.
+		if cfg.ThinkBudget > 0 {
+			opts = append(opts, WithThinkBudget(cfg.ThinkBudget))
+		} else if cfg.RouteKey != "" {
+			if rb := RouteThinkBudget(cfg.RouteKey); rb != nil && *rb > 0 {
+				opts = append(opts, WithThinkBudget(*rb))
+			}
 		}
 		// If the previous round produced tool calls and ToolRoundOptions are
 		// configured, use them instead of ChatOptions for this round.
@@ -1620,6 +1643,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		}
 	}
 
+	// Reaching here means the for-loop ran to exhaustion — the round budget
+	// (MaxRounds + grace) was spent without a natural final answer. Flag it so
+	// callers can distinguish "done" from "out of rounds" and continue if the
+	// work is genuinely unfinished. (Natural completions return from inside
+	// the loop above and never reach this point.)
+	if lastResp != nil {
+		lastResp.HitRoundCap = true
+	}
 	return lastResp, history, nil
 }
 
@@ -2087,16 +2118,22 @@ func DynamicThinkBudget(inputTokens int) int {
 	const (
 		base      = 8192
 		threshold = 4096
-		ceiling   = 32768
-		// scaleNum/scaleDen = 512/1024 = 0.5 budget tokens per 1 input
-		// token above threshold. Tuned down from 1.0 after observing
-		// late-round debater inputs (23K–26K tokens) routinely
-		// allocating 27K–30K thinking budget — far above what Qwen 3.6
-		// actually consumes on focused tasks (~10–15K typical even on
-		// hard reasoning). 0.5 keeps dynamic scaling but stops the
-		// formula from saturating the ceiling on every large input.
-		// At 26K input the budget now lands ~19K instead of 30K.
-		scaleNum = 512
+		ceiling   = 12288
+		// scaleNum/scaleDen = 256/1024 = 0.25 budget tokens per 1 input
+		// token above threshold. Qwen's own best-practice card
+		// (Qwen3-*-Thinking-2507) is explicit: "To avoid overly verbose
+		// reasoning, we set the thinking budget to 8,192 tokens" — a FLAT
+		// number, not input-scaled. The model fills whatever budget it's
+		// handed, so input-size scaling made trivial tool calls sitting in
+		// a long history (e.g. a 21K-token agent turn) deliberate for
+		// ~16K tokens / 2+ minutes. We keep a gentle scale for genuinely
+		// large synthesis turns but anchor on 8192 and cap at 12288 (1.5×)
+		// rather than 32768 — note 32768 is Qwen's recommended TOTAL output
+		// length (thinking + answer), not the thinking budget. Callers that
+		// genuinely need deeper reasoning pass WithThinkBudget(N) explicitly.
+		// At 21K input the budget now lands ~12K instead of ~16.8K; at 26K,
+		// ~12.3K (capped) instead of ~19K.
+		scaleNum = 256
 		scaleDen = 1024
 	)
 	var budget int

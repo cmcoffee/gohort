@@ -156,9 +156,18 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 		// Operator turned off the budget cap — fall through to legacy
 		// per-call/global logic so they can still override per-call.
 	}
-	// Per-call budget override takes priority over global config.
+	// Per-call budget override (per-agent / per-route). The admin-configured
+	// global budget (c.llamacppBudget) is a hard CEILING, not just a default:
+	// an agent or route may request a SMALLER budget but never a larger one
+	// than the deployment allows, so a request above the ceiling is clamped
+	// down to it. A zero global means "no ceiling" (defer to the server) — the
+	// request passes through unclamped.
 	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
-		return cfg.ThinkBudget
+		b := *cfg.ThinkBudget
+		if c.llamacppBudget > 0 && b > c.llamacppBudget {
+			b = c.llamacppBudget
+		}
+		return &b
 	}
 	// Global configured budget.
 	if c.llamacppBudget > 0 {
@@ -171,45 +180,13 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 	return nil
 }
 
-// applyDynamicThinkBudget injects a DynamicThinkBudget-derived
-// thinking budget into cfg when:
-//   - the client is llama.cpp (the only provider where our formula is
-//     calibrated and where per-request thinking_budget_tokens is
-//     honored — assuming server's --reasoning-budget is unset)
-//   - thinking is explicitly enabled for this call
-//   - no explicit per-call budget was already set
-//
-// Token estimate covers the FULL prompt (system prompt + all messages
-// + tool definitions) so the formula sees what the model actually
-// sees. Earlier per-caller estimations missed pieces — debaters
-// included sysPrompt, consensus didn't, WorkerChat counted only
-// messages — producing inconsistent and often wrong-sized budgets.
-// Centralizing here means every caller gets identical, correct
-// sizing regardless of which entry point (Chat / ChatStream /
-// Session.ChatStream / WorkerChat / direct llm.Chat) they use.
-//
-// Callers that want a specific budget still pass WithThinkBudget(N)
-// per-call; this function is a no-op when ThinkBudget is already set.
-func (c *openAIClient) applyDynamicThinkBudget(cfg *ChatConfig, messages []Message) {
-	if !c.llamacpp {
-		return
-	}
-	if cfg.Think == nil || !*cfg.Think {
-		return
-	}
-	if cfg.ThinkBudget != nil {
-		return
-	}
-	inputTokens := EstimateTokens(cfg.SystemPrompt) + EstimateMessagesTokens(messages)
-	for _, t := range cfg.Tools {
-		inputTokens += EstimateTokens(t.Name) + EstimateTokens(t.Description)
-		for n, p := range t.Parameters {
-			inputTokens += EstimateTokens(n) + EstimateTokens(p.Description) + EstimateTokens(p.Type)
-		}
-	}
-	budget := DynamicThinkBudget(inputTokens)
-	cfg.ThinkBudget = &budget
-}
+// Thinking budgets are no longer auto-injected by input-token scaling.
+// Resolution is now: per-call WithThinkBudget(N) > AgentLoopConfig.ThinkBudget
+// (per-agent/per-loop) > the operator-configured global default
+// (llamacppBudget, default 4096, a hard ceiling) > the server's
+// --reasoning-budget. The
+// DynamicThinkBudget utility below stays available for any caller that
+// genuinely wants input-scaled sizing via WithThinkBudget(DynamicThinkBudget(n)).
 
 // applyNoThinkDirective prepends the `/no_think` soft-switch directive
 // to the system prompt and/or the most recent user message based on
@@ -949,7 +926,25 @@ func snoopOAIResponse(statusCode int, body []byte) {
 	}
 }
 
-func (c *openAIClient) doRequest(ctx context.Context, body []byte) (*http.Response, error) {
+// streamReadTimeout is the per-read idle deadline for streaming response
+// bodies: the stream idle-watchdog value, but never shorter than the
+// operator's RequestTimeout. Decoupled from the short header-wait
+// RequestTimeout so a slow FIRST token on a large/thinking generation
+// (prefill + reasoning before any byte) doesn't false-positive as a
+// "context deadline exceeded" mid-stream kill. The watchdog
+// (newStreamWatchdog) remains the real stall guard. See ChatStream.
+func (c *openAIClient) streamReadTimeout() time.Duration {
+	t := c.streamIdleTimeout
+	if t == 0 {
+		t = DefaultStreamIdleTimeout
+	}
+	if c.api.RequestTimeout > t {
+		t = c.api.RequestTimeout
+	}
+	return t
+}
+
+func (c *openAIClient) doRequest(ctx context.Context, body []byte, readTimeout time.Duration) (*http.Response, error) {
 	Debug("[%s]: Sending request to %s/chat/completions", c.provider(), c.endpoint)
 
 	// Extract the path portion from the endpoint for APIClient.
@@ -974,7 +969,7 @@ func (c *openAIClient) doRequest(ctx context.Context, body []byte) (*http.Respon
 		Debug("[%s]: Request failed: %v", c.provider(), err)
 	} else {
 		Debug("[%s]: Response status: %d", c.provider(), resp.StatusCode)
-		resp.Body = iotimeout.NewReadCloser(resp.Body, c.api.RequestTimeout)
+		resp.Body = iotimeout.NewReadCloser(resp.Body, readTimeout)
 	}
 	return resp, err
 }
@@ -1334,7 +1329,9 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 		return nil, err
 	}
 	defer resp.Body.Close()
-	resp.Body = iotimeout.NewReadCloser(resp.Body, c.api.RequestTimeout)
+	// Streaming: per-read idle deadline tracks the watchdog value, not
+	// the short header-wait RequestTimeout — see streamReadTimeout.
+	resp.Body = iotimeout.NewReadCloser(resp.Body, c.streamReadTimeout())
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
@@ -1468,7 +1465,6 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		cfg.Think = &f
 	}
 	applyVisionDefaults(&cfg, messages)
-	c.applyDynamicThinkBudget(&cfg, messages)
 	if c.shouldApplyNoThinkDirective(cfg) {
 		messages = c.applyNoThinkDirective(&cfg, messages)
 	}
@@ -1512,7 +1508,10 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 	c.snoopRequest(body, false)
 
 	Debug("[%s]: Sending request (body=%d bytes, think=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode)
-	resp, err := c.doRequest(ctx, body)
+	// Non-streaming: the whole body arrives as one read, so the
+	// operator's RequestTimeout (the header-wait / response budget)
+	// applies directly.
+	resp, err := c.doRequest(ctx, body, c.api.RequestTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -1678,7 +1677,6 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		cfg.Think = &f
 	}
 	applyVisionDefaults(&cfg, messages)
-	c.applyDynamicThinkBudget(&cfg, messages)
 	if c.shouldApplyNoThinkDirective(cfg) {
 		messages = c.applyNoThinkDirective(&cfg, messages)
 	}
@@ -1717,8 +1715,28 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 
 	c.snoopRequest(body, true)
 
-	Debug("[%s]: Sending stream request (body=%d bytes, think=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode)
-	resp, err := c.doRequest(ctx, body)
+	// Streaming per-read deadline. A slow FIRST token on a large /
+	// thinking generation is normal — prefill + reasoning happen before
+	// any byte is emitted — so the short header-wait RequestTimeout must
+	// NOT bound inter-token gaps. Doing so produced false "context
+	// deadline exceeded" kills mid-stream even though the server was
+	// healthily working (200 headers received, then prefilling). Use the
+	// stream idle-watchdog value as the per-read deadline (never shorter
+	// than RequestTimeout); newStreamWatchdog below is the real stall
+	// guard. Operators tune fail-fast via RequestTimeout without
+	// strangling legitimately-slow streams.
+	watchdogTimeout := c.streamIdleTimeout
+	if watchdogTimeout == 0 {
+		watchdogTimeout = DefaultStreamIdleTimeout
+	}
+	streamRead := c.streamReadTimeout()
+	ctxDeadline := "none"
+	if d, ok := ctx.Deadline(); ok {
+		ctxDeadline = time.Until(d).Round(time.Millisecond).String()
+	}
+	Debug("[%s]: Sending stream request (body=%d bytes, think=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
+		c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
+	resp, err := c.doRequest(ctx, body, streamRead)
 	if err != nil {
 		return nil, err
 	}

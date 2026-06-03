@@ -96,6 +96,14 @@ type Response struct {
 	// older code path didn't set it; callers fall back to their own
 	// tier context (e.g., Session.Tier).
 	Tier LLMTier
+
+	// HitRoundCap is set by RunAgentLoop when the loop terminated because
+	// it exhausted its round budget (MaxRounds + grace) rather than the
+	// model producing a natural final answer. Lets a caller distinguish
+	// "I'm done" from "I ran out of room" and react — e.g. grant another
+	// budget to continue a still-unfinished investigation. Zero value on
+	// every non-agent-loop Response and on natural completions.
+	HitRoundCap bool
 }
 
 // Capability describes the kind of side effect a tool can have. Apps use
@@ -735,7 +743,7 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 		// and nothing in content/tool_calls" — disabling thinking on
 		// retry strips its ability to decide on a tool, so we keep it
 		// and just nudge.
-		Debug("[retry] empty response (err=%v) — retrying with hint, thinking still enabled", err)
+		Debug("[retry] unusable response (err=%v, %s) — retrying with hint, thinking still enabled", err, respShape(resp))
 		hinted := append([]Message{}, messages...)
 		hinted = append(hinted, Message{
 			Role:    "user",
@@ -780,7 +788,7 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 			return resp, err
 		}
 		// First retry: keep thinking ON, append a hint message.
-		Debug("[retry] empty stream response (err=%v) — retrying with hint, thinking still enabled", err)
+		Debug("[retry] unusable stream response (err=%v, %s) — retrying with hint, thinking still enabled", err, respShape(resp))
 		hinted := append([]Message{}, messages...)
 		hinted = append(hinted, Message{
 			Role:    "user",
@@ -819,6 +827,20 @@ func (r *retryLLM) ContextSize() int {
 		return cs.ContextSize()
 	}
 	return 0
+}
+
+// respShape summarizes a response's actionable output for diagnostics. It
+// distinguishes a TRULY empty turn from a REASONING-ONLY one: Qwen sometimes
+// spends the whole turn inside a <think> block, which the streaming parser
+// routes to Reasoning, leaving Content empty. Such a turn has consumed output
+// tokens (so it "doesn't look empty" in the llama.cpp usage line) yet carries
+// nothing actionable, which is exactly when the retry fires.
+func respShape(resp *Response) string {
+	if resp == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("content=%d reasoning=%d tools=%d",
+		len(strings.TrimSpace(resp.Content)), len(resp.Reasoning), len(resp.ToolCalls))
 }
 
 // responseIsUseable reports whether resp has actionable output for the caller.

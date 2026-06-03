@@ -239,6 +239,11 @@ type chatTurn struct {
 	inferredDisabled bool
 	isNewSession     bool     // first turn for this session; gates background title generation
 	userImages       [][]byte // decoded image attachments from the chat panel; attached to the orchestrator's last user message
+	// fromDesktopClient is true when THIS request came from the gohort-desktop
+	// viewer (its proxy stamped the bridge key). Gates the from_client.* tool
+	// surface so local-machine capabilities are reachable only from the
+	// desktop app, never a remote browser/phone on the same account.
+	fromDesktopClient bool
 
 	// topic is the snake_case slug used to scope memory_save /
 	// memory_search to a per-subject bucket. The LLM picks the slug
@@ -1586,29 +1591,29 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			}
 		}
 	}
-	// Local tools from the user's gohort-desktop surface. Always added
-	// to the catalog as long as LocalToolsForUser returns anything —
-	// the user has at some point registered a desktop and announced
-	// these tools. When the desktop is offline at call time, the
-	// tool's wrapper returns a clean "open your desktop" error so the
-	// LLM can relay that to the user; the catalog itself doesn't
-	// churn as the desktop connects / disconnects. The approval
-	// modal on the desktop is the enforcement point — only someone
-	// at the desktop can approve a call, so a browser session asking
-	// "screenshot my Mac" still requires the Mac's user to consent.
-	// Keyed off the chat user (not the agent owner) so seed agents
-	// (Chat) get the surface for whoever is chatting.
+	// Local tools from the user's gohort-desktop surface (from_client.*).
+	// Exposed ONLY when this request came from the gohort-desktop viewer
+	// itself (its proxy stamps the bridge key — see t.fromDesktopClient). A
+	// remote browser / phone logged into the same account never sees them, so
+	// the local machine's filesystem / screenshot / contacts can't be reached
+	// remotely — not even with auto-approve on (the old "approval modal is the
+	// enforcement point" model failed exactly there). When the desktop is
+	// offline at call time the tool's wrapper still returns a clean "open your
+	// desktop" error. Keyed off the chat user so seed agents (Chat) get the
+	// surface for whoever is chatting at the desktop.
 	have := map[string]bool{}
 	for _, n := range toolNames {
 		have[n] = true
 	}
 	var fromClient []AgentToolDef
-	for _, lt := range LocalToolsForUser(t.user) {
-		if have[lt.Name()] {
-			continue
+	if t.fromDesktopClient {
+		for _, lt := range LocalToolsForUser(t.user) {
+			if have[lt.Name()] {
+				continue
+			}
+			fromClient = append(fromClient, ChatToolToAgentToolDef(lt))
+			toolNames = append(toolNames, lt.Name())
 		}
-		fromClient = append(fromClient, ChatToolToAgentToolDef(lt))
-		toolNames = append(toolNames, lt.Name())
 	}
 	// Wrap the client-bridge tools so tool_call / tool_result SSE
 	// events fire to the chat panel like every other tool. Without
@@ -2432,6 +2437,12 @@ func (t *chatTurn) emitStatus(text string) {
 // a slow ack is worse than none.
 const ackTimeout = 8 * time.Second
 
+// ackEnabled gates the concurrent "On it…" acknowledgment (see emitAck
+// and its launch site). Off by default — on small llama.cpp slot pools
+// the ack can't get a slot and is pure overhead; the "Thinking…" status
+// already covers the dead air. Set true on a server with spare slots.
+const ackEnabled = false
+
 // emitAck fires a fast, no-think worker call that produces a short
 // natural acknowledgment ("On it — checking that now.") and streams
 // it as a status the moment it returns. Runs as a goroutine launched
@@ -2453,6 +2464,11 @@ func (t *chatTurn) emitAck(ctx context.Context, userMsg string) {
 	resp, err := t.app.WorkerChat(cctx,
 		[]Message{{Role: "user", Content: userMsg}},
 		WithSystemPrompt(sys), WithMaxTokens(30), WithThink(false),
+		// Best-effort ack: never retry. The 8s ackTimeout is already
+		// blown by the time it fails, so a retry just re-pays the wait
+		// and spams "[retry] attempt failed" / "chat failed" for a call
+		// whose result is optional. A failed ack is a silent no-op.
+		WithMaxRetries(0),
 	)
 	if err != nil || resp == nil {
 		return
@@ -2582,7 +2598,7 @@ func (t *chatTurn) gatedPersona(prompt string) string {
 		// never get stripped regardless of admin allowlist.
 		"plan_set",
 		"ask_user", "ask_user_form", "respond_directly",
-		"knowledge_search", "fetch_knowledge_doc", "get_report",
+		"knowledge_search", "fetch_knowledge_doc",
 		"memory",
 		"store_fact", "forget_fact", "list_facts",
 	}, t.agent.AllowedTools...)
@@ -3283,6 +3299,10 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		inferredDisabled: req.InferredDisabled,
 		isNewSession:     isNewSession,
 		userImages:       decodeUserImages(req.Images),
+		// from_client.* tools are exposed only when the request came from the
+		// gohort-desktop viewer (its proxy stamps the bridge key) — never a
+		// remote browser/phone on the same account.
+		fromDesktopClient: user != "" && DesktopClientUser(r) == user,
 		// Flag the turn as having fresh external content if the user
 		// attached any document. The consolidation loop-break gate
 		// reads this to decide whether to ingest the synthesis.
@@ -3364,7 +3384,17 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	// greetings / trivial asks (the ack call returns NONE). Promotion
 	// turns already emit their own "Routing follow-up…" status and
 	// returned above, so this only runs on main-LLM turns.
-	go turn.emitAck(ctx, req.Message)
+	//
+	// DISABLED by default: the ack is a 3rd concurrent LLM call that
+	// competes with this turn's own lead + worker calls for the same
+	// backend slots. On constrained servers (llama.cpp --parallel <= 2)
+	// it never lands — it just queues, times out at ackTimeout, and adds
+	// latency + log noise — while its value is purely cosmetic and the
+	// "Thinking…" status below already fills the dead air. Flip
+	// ackEnabled to true on a server with spare slots to re-enable.
+	if ackEnabled {
+		go turn.emitAck(ctx, req.Message)
+	}
 
 	// --- Orchestrator round 1: respond directly, plan, or ask ---
 	turn.emitStatus("Thinking…")
@@ -4042,7 +4072,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// is shipped to the LLM verbatim — the model's own attention
 	// disambiguates better than a cosine-similarity classifier ever
 	// did, and a stateless trim broke follow-ups like "get me another"
-	// (turn 1 used get_meme; turn 2's bare text scored get_report
+	// (turn 1 used get_meme; turn 2's bare text scored a different tool
 	// higher and the LLM never saw get_meme). find_tools is still
 	// registered as the escape hatch for any future massive-catalog
 	// case (a 200-tool MCP plug-in); today's agents fit fine
@@ -4384,6 +4414,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// occasional double, so we err toward emitting: suppress only on an
 	// exact repeat of the last shown bubble.
 	var lastFinalizedText string
+	// lastTransientText holds the text of the most recent NON-final
+	// (tool-calling) round, which we clear from the live view rather than
+	// finalize as an answer card. Kept as a fallback: if the model
+	// front-loads its answer into a tool round and the final round comes
+	// back empty, we restore this so the reply isn't lost.
+	var lastTransientText string
 	streamHandler := func(chunk string) {
 		if chunk == "" {
 			return
@@ -4444,21 +4480,47 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				"text": cleaned,
 			})
 		}
-		// Tool-only round (no streamed text): keep the bubble open
-		// so subsequent rounds' tool calls fold into the same pill
-		// instead of materializing a fresh bubble per round. Once a
-		// round produces actual text, finalize as usual — that text
-		// is the orchestrator's narration and deserves its own card.
+		// Transient narration vs the answer. A round that ALSO calls
+		// tools (info.Done == false) is not the answer round — the model
+		// will continue and reply in a later, tool-free round. Any text
+		// it streamed here was live "working" narration, so we clear it
+		// from the bubble and do NOT finalize/persist it as an answer
+		// card. This is the deterministic half of the double-emit fix:
+		// without it, a model that writes a full answer in a tool round
+		// AND again in the final round produces two answer cards (we
+		// faithfully render both). Keep the bubble open so this round's
+		// tool pills stay and the next round folds in. Remember the text
+		// in case the model front-loaded its answer into a tool round
+		// and the final round comes back empty.
+		if !info.Done {
+			if cleaned != "" {
+				t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+				lastTransientText = cleaned
+			}
+			streamedBuf.Reset()
+			return
+		}
+		// Final (tool-free) round — this round's text is the answer.
+		// Edge: the model put its reply in an earlier tool round and
+		// produced nothing here. Restore the remembered text so the
+		// answer isn't lost.
+		if cleaned == "" && lastTransientText != "" {
+			cleaned = lastTransientText
+			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
+		}
+		// Tool-only final round with no prior narration: nothing to
+		// finalize — keep the bubble open (subsequent tool pills fold in).
 		if cleaned == "" {
 			streamedBuf.Reset()
 			return
 		}
+		lastTransientText = ""
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 		lastFinalizedID = id
 		lastFinalizedText = cleaned
-		// Persist this round's narration so a reloaded session replays
-		// the same bubble the user saw live. handleSend drains the
-		// buffer right before appending the final assistant message.
+		// Persist the answer so a reloaded session replays the same
+		// bubble the user saw live. handleSend drains the buffer right
+		// before appending the final assistant message.
 		t.captureMidTurnBubble(cleaned)
 		streamMsgID = ""
 		streamedBuf.Reset()
@@ -4626,7 +4688,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// explorer mode, then lets it run to orchHardCap. Most chat turns
 		// need 1-3 rounds; deep research / large builds bump via the
 		// agent's worker-rounds budget + enter_explorer_mode.
-		MaxRounds: orchHardCap,
+		MaxRounds:   orchHardCap,
+		ThinkBudget: t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		StopRound: func() bool {
 			orchRoundsUsed++
 			if t.explorerMode {
@@ -5118,6 +5181,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		Tools:        tools,
 		DynamicTools: t.dynamicNewTempTools(sess),
 		MaxRounds:    hardCap,
+		ThinkBudget:  t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Stream:       stream,
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at

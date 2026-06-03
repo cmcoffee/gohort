@@ -77,6 +77,7 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(agent),
+		ThinkBudget:  agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:      func(name, args string) bool { return true },
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),

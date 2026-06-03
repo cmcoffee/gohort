@@ -338,6 +338,10 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	}
 
+	// Expose servitor's appliances as a generic reference source so writer
+	// apps can ground drafts in gathered system knowledge. T.DB is final here.
+	RegisterReferenceSource(servitorSource{db: T.DB})
+
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -350,14 +354,15 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// existing probeSessions queue. See chat_bridge.go / chat_page.go.
 	sub.HandleFunc("/api/chat/v2/events", T.handleChatEvents)
 	sub.HandleFunc("/api/chat/v2/confirm", T.handleChatConfirm)
-	sub.HandleFunc("/api/workspace/rename", T.handleWorkspaceRename)
-	sub.HandleFunc("/api/workspace/v2/", T.handleWorkspaceLoad)
 	sub.HandleFunc("/api/profile", T.handleProfile)
 	sub.HandleFunc("/manage", T.handleManagePage)
 	sub.HandleFunc("/manage/", T.handleManagePage)
 	sub.HandleFunc("/api/appliances", T.handleAppliances)
 	sub.HandleFunc("/api/appliance/", T.handleAppliance)
 	sub.HandleFunc("/api/chat", T.handleChat)
+	// Persisted chat sessions back the left rail (see sessions.go).
+	sub.HandleFunc("/api/sessions", T.handleServitorSessionList)
+	sub.HandleFunc("/api/sessions/", T.handleServitorSessionOne)
 	sub.HandleFunc("/api/inject", T.handleInject)
 	sub.HandleFunc("/api/map", T.handleMap)
 	sub.HandleFunc("/api/mapapp", T.handleMapApp)
@@ -370,18 +375,6 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/save_snippet", T.handleSaveSnippet)
 	sub.HandleFunc("/api/rules", T.handleRules)
 	sub.HandleFunc("/api/rules/", T.handleRuleDelete)
-	sub.HandleFunc("/api/workspace/create", T.handleWorkspaceCreate)
-	sub.HandleFunc("/api/workspace/save", T.handleWorkspaceSave)
-	sub.HandleFunc("/api/workspace/list", T.handleWorkspaceList)
-	sub.HandleFunc("/api/workspace/draft", T.handleWorkspaceDraft)
-	sub.HandleFunc("/api/workspace/revisions", T.handleWorkspaceRevisions)
-	sub.HandleFunc("/api/workspace/revert", T.handleWorkspaceRevert)
-	sub.HandleFunc("/api/workspace/synthesize", T.handleWorkspaceSynthesize)
-	sub.HandleFunc("/api/workspace/supplement/add", T.handleSupplementAdd)
-	sub.HandleFunc("/api/workspace/supplement/delete", T.handleSupplementDelete)
-	sub.HandleFunc("/api/workspace/supplement/prompt", T.handleSupplementPrompt)
-	sub.HandleFunc("/api/workspace/view", T.handleWorkspaceView)
-	sub.HandleFunc("/api/workspace/", T.handleWorkspace)
 	MountSubMux(mux, prefix, sub)
 	go T.runWatchLoop(AppContext())
 	RegisterLiveProvider(func() []LiveEntry {
@@ -603,6 +596,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		ApplianceID string `json:"appliance_id"`
+		SessionID   string `json:"session_id"`
 		WorkspaceID string `json:"workspace_id"`
 		Message     string `json:"message"`
 		History     []struct {
@@ -634,20 +628,20 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load supplements from the active workspace, if any.
-	var supplements []WorkspaceSupplement
-	if req.WorkspaceID != "" {
-		if ws, ok := loadWorkspace(udb, req.WorkspaceID); ok {
-			supplements = ws.Supplements
-		}
-	}
 
 	label := appliance.Name + ": " + req.Message
 	if len(label) > 80 {
 		label = label[:80]
 	}
 
-	sid := UUIDv4()
+	// Resolve the persisted chat session — create one (titled from this
+	// message) on a fresh conversation, or continue the supplied one.
+	// The session id doubles as the run id, so it's stable across turns
+	// and the client's session_id / EventsURL / cancel / deep-link all
+	// key off this single value. The stale-cleanup race from reusing an
+	// id across runs is handled by the pointer-guard in
+	// LiveSessionMap.ScheduleCleanupAfter.
+	sid := ensureSession(udb, appliance.ID, req.SessionID, req.Message)
 	ctx, cancel := context.WithCancel(AppContext())
 	probeSessions.Register(sid, label, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
@@ -687,7 +681,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	// no per-queue cross-check — so the registration leaves Owner empty.
 	RegisterInjectionQueue(sid, "", "")
 
-	go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, false, supplements)
+	go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, false)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
@@ -850,7 +844,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 			appliance.Host, appliance.User,
 		)
 		hist := []Message{{Role: "user", Content: mapMsg}}
-		go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, true, nil)
+		go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, true)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1551,8 +1545,9 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 	b.WriteString("3. Each `probe` call has ONE clear goal; the investigator (you) decides the next step based on what it returns\n")
 	b.WriteString("4. Stop when you have: the system's purpose, its full architecture, working DB access for every engine, operational procedures\n\n")
 	b.WriteString("Quality over quantity: 15 focused probes that reveal real configuration beat 40 broad sweeps.\n\n")
-	b.WriteString("## Skip and revisit\n\n")
-	b.WriteString("If a step is stuck — you've tried 2-3 reasonable angles and they all dead-end — call `mark_step_blocked` with a short reason and move on to the next step. Don't burn rounds wrestling with one blocker while easier wins go untouched. Once you've worked through the rest of the plan, revisit the blocked steps with what you learned from the others; the answer is often hiding in a config file you've now read or a service you've now mapped. Coming back fresh is usually faster than continuing to grind.\n\n")
+	b.WriteString("## Pacing: defer, don't abandon\n\n")
+	b.WriteString("If a step is slow — you've tried 2-3 angles and it isn't advancing — move on to another step rather than grinding. Mark the next step `mark_step_in_progress` and work it; the slow step stays unfinished and you revisit it later with what you learned (the answer is often hiding in a config you've now read or a service you've now mapped). Coming back fresh is usually faster than continuing to grind.\n\n")
+	b.WriteString("**Running low on rounds is NOT a reason to block a step.** The investigation automatically receives additional rounds to finish any step still pending or in progress, so leaving a step unfinished is ALWAYS better than closing it out under time pressure. Never call `mark_step_blocked` with a reason like \"no time remaining\", \"ran out of rounds\", or \"out of time\" — that is invalid; just leave the step unfinished and keep working, and you'll be given the rounds to complete it. Reserve `mark_step_blocked` for GENUINE dead-ends only: no access, a required tool is missing, the target is unreachable, or every reasonable angle has been exhausted.\n\n")
 	b.WriteString("## Acronyms\n\n")
 	b.WriteString("Internal acronyms have org-specific meanings that rarely match training-data priors. Treat any acronym as an opaque label until you have verified its meaning from the system itself — a README, comment, config-file annotation, log message, or explicit statement in documentation. If you only know the letters, use the letters. Writing 'GMS (Game Management System)' when nothing on this system explained what GMS stands for is fabrication, even when the expansion 'sounds plausible'. Probe to find the meaning, or leave it unexpanded.\n\n")
 	b.WriteString("## Completion\n\n")
@@ -1658,7 +1653,7 @@ func buildMapSystemPrompt(base string, appliance Appliance) string {
 // buildLeadSystemPrompt constructs the prompt for the lead Knowledge Manager LLM.
 // The lead maintains structured knowledge docs about the system and dispatches the worker
 // on precise, context-rich investigations. It never runs SSH commands directly.
-func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries, supplementContext string, hasFreshImage bool) string {
+func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool) string {
 	var b strings.Builder
 	writePersona(&b, appliance)
 	b.WriteString(fmt.Sprintf("Current time: %s\n\n", time.Now().Format("2006-01-02 15:04 MST")))
@@ -1760,11 +1755,6 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	if cachedRules != "" {
 		b.WriteString("## Standing Instructions (set by the user — always follow these)\n\n")
 		b.WriteString(cachedRules)
-		b.WriteString("\n")
-	}
-	if supplementContext != "" {
-		b.WriteString("## Reference Documents (workspace supplements — background context, NOT the user's current attachment)\n\n")
-		b.WriteString(supplementContext)
 		b.WriteString("\n")
 	}
 	if hasFreshImage {
@@ -2048,7 +2038,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appl
 // runSession acquires a pooled SSH connection, runs the agent loop, and streams events.
 // The connection is NOT closed on return — it stays pooled for the next request.
 // saveProfile=true writes the final LLM reply and extracted log map back to the appliance record.
-func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool, supplements []WorkspaceSupplement) {
+func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
 	defer func() {
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
@@ -3163,7 +3153,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			mark_step_blocked_tool := AgentToolDef{
 				Tool: Tool{
 					Name:        "mark_step_blocked",
-					Description: "Mark a plan step as blocked — covers two cases: (1) genuine obstacles where the step can't be completed (no access / required tool missing / target service unreachable) and (2) stuck for now after 2-3 reasonable angles, where moving on to other steps is faster than continuing to grind. For case (2), revisit the blocked step later once you've learned more from the rest of the plan; the answer often surfaces from adjacent context. Do NOT use to hide difficulty on the first attempt — try a couple of angles first. The reason appears in the final report's gap section.",
+					Description: "Mark a plan step as a GENUINE dead-end — the step cannot be completed no matter how many more rounds you have: no access, a required tool is missing, the target service is unreachable, or every reasonable angle has been exhausted. Do NOT use this to hide difficulty on the first attempt (try a couple of angles first), and NEVER use it because you are low on rounds or 'out of time' — that is not a blocker. Unfinished steps should be left pending/in-progress, not blocked; the investigation automatically receives more rounds to finish pending work, and a slow step is faster revisited after you've worked the rest of the plan. The reason appears in the final report's gap section, so it must describe a real obstacle, never a time/round limit.",
 					Parameters: map[string]ToolParam{
 						"step_id": {Type: "integer", Description: "The step ID to mark blocked."},
 						"reason":  {Type: "string", Description: "Why the step couldn't be completed (e.g. 'sudo not available', 'mysql user lacks SHOW GRANTS permission', 'logfile rotated, no archive)."},
@@ -3489,6 +3479,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 
 			emit(id, probeEvent{Kind: "status", Text: "Investigator starting…"})
 			var invResp *Response
+			var invHistory []Message
 			var invErr error
 			investigatorTools := []AgentToolDef{
 				set_plan_tool, mark_step_in_progress_tool, record_step_findings_tool, mark_step_blocked_tool,
@@ -3544,8 +3535,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			// wrap-up nudge with most of the plan still pending.
 			//
 			// Thresholds:
-			//   - Soft nudge at 12 rounds on one step: "consider marking blocked"
-			//   - Firm nudge at 20 rounds: "mark blocked NOW and move on"
+			//   - Soft nudge at 12 rounds on one step: "move to another step, leave this pending"
+			//   - Firm nudge at 20 rounds: "switch steps NOW; don't block for pacing"
+			// The nudges push DEFER-and-revisit, not mark_step_blocked —
+			// blocking zeroes the pending count and defeats the continuation
+			// that grants unfinished plans more rounds. A slow step stays
+			// pending/in-progress and gets revisited with more budget.
 			//
 			// The nudges are one-shot per step transition — when the
 			// LLM advances to a new step, the counter resets and the
@@ -3579,34 +3574,72 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				if stuckRoundCount == 12 && !softNudgeFired {
 					softNudgeFired = true
 					return []Message{{Role: "user", Content: fmt.Sprintf(
-						"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. The skip-and-revisit pattern says — if 2-3 reasonable angles have dead-ended, call mark_step_blocked with a short reason and move to the next step. Coming back fresh after working other steps is faster than continuing to grind. Don't burn more than 8 more rounds here.",
+						"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now — call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
 						curStep, stepTitle)}}
 				}
 				if stuckRoundCount == 20 && !firmNudgeFired {
 					firmNudgeFired = true
 					return []Message{{Role: "user", Content: fmt.Sprintf(
-						"Hard pacing limit: you've spent 20 rounds on step %d (%q). Call mark_step_blocked NOW with whatever reason fits — you can revisit later if other steps reveal a new angle. Then call mark_step_in_progress on the next pending step. Continuing on this step costs the rest of the plan.",
-						curStep, stepTitle)}}
+						"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW — call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid — you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
+						curStep, stepTitle, curStep)}}
 				}
 				return nil
 			}
+			// One investigator pass = one round budget. Extracted so the
+			// continuation loop below can re-run it verbatim.
+			const (
+				investigatorRoundBudget = 75 // rounds per investigator pass
+				maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
+			)
+			invCfg := AgentLoopConfig{
+				SystemPrompt:    buildInvestigatorSystemPrompt(appliance),
+				Tools:           investigatorTools,
+				MaxRounds:       investigatorRoundBudget,
+				RouteKey:        "app.servitor",
+				MaskDebugOutput: true,
+				SerialTools:     true,
+				ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
+				OnRoundReset:    stepResetCb,
+				OnRoundStart:    stuckMsgFn,
+				PendingWorkFn:   pendingPlanWork,
+			}
 			withHeartbeat(ctx, id, "Investigator", func() {
-				invResp, _, invErr = a.RunAgentLoop(ctx,
-					[]Message{{Role: "user", Content: invMsg.String()}},
-					AgentLoopConfig{
-						SystemPrompt:    buildInvestigatorSystemPrompt(appliance),
-						Tools:           investigatorTools,
-						MaxRounds:       75,
-									RouteKey:        "app.servitor",
-						MaskDebugOutput: true,
-						SerialTools:     true,
-						ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
-						OnRoundReset:    stepResetCb,
-						OnRoundStart:    stuckMsgFn,
-						PendingWorkFn:   pendingPlanWork,
-					},
-				)
+				invResp, invHistory, invErr = a.RunAgentLoop(ctx,
+					[]Message{{Role: "user", Content: invMsg.String()}}, invCfg)
 			})
+			// Productive continuation — a single round budget often isn't
+			// enough to work a 10–15 step plan to completion, so the
+			// investigator kept "running out of rounds" and synthesizing a
+			// half-finished profile. When a pass exhausts its budget
+			// (HitRoundCap) with steps still PENDING, grant another budget —
+			// but only while it keeps resolving steps. A pass that clears
+			// nothing means it's genuinely stuck (every remaining step
+			// dead-ended), so stop and synthesize what we have rather than
+			// grinding in circles. Total work is bounded at
+			// (1 + maxInvestigatorPasses) budgets.
+			prevPending := -1
+			for pass := 0; pass < maxInvestigatorPasses && invErr == nil && ctx.Err() == nil; pass++ {
+				if invResp == nil || !invResp.HitRoundCap {
+					break // natural finish — not a cap hit
+				}
+				pending := pendingPlanWork()
+				if pending == 0 {
+					break // capped, but the plan is fully resolved — nothing left
+				}
+				if prevPending >= 0 && pending >= prevPending {
+					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+						"Investigator stalled with %d step(s) still pending — wrapping up with findings so far.", pending)})
+					break
+				}
+				prevPending = pending
+				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+					"Investigator reached its round budget with %d step(s) pending — continuing the investigation…", pending)})
+				// Fresh stuck-detector window for the new budget.
+				stuckTrackedStep, stuckRoundCount, softNudgeFired, firmNudgeFired = 0, 0, false, false
+				withHeartbeat(ctx, id, "Investigator (continued)", func() {
+					invResp, invHistory, invErr = a.RunAgentLoop(ctx, invHistory, invCfg)
+				})
+			}
 			if invErr != nil && ctx.Err() == nil {
 				emit(id, probeEvent{Kind: "error", Text: "Investigator error: " + invErr.Error()})
 				// Don't return — synthesize what was gathered.
@@ -3848,7 +3881,6 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		}
 
 		docs := allDocs(udb, appliance.ID)
-		supplementContext := buildSupplementContext(ctx, udb, supplements, messages, a.WorkerContextSize())
 		hasFreshImage := false
 		for i := len(messages) - 1; i >= 0; i-- {
 			if messages[i].Role == "user" {
@@ -3856,7 +3888,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				break
 			}
 		}
-		leadPrompt := buildLeadSystemPrompt(udb, appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries, supplementContext, hasFreshImage)
+		leadPrompt := buildLeadSystemPrompt(udb, appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries, hasFreshImage)
 		emit(id, probeEvent{Kind: "status", Text: "Investigator analyzing…"})
 
 		// Resolve the per-session injection queue so the orchestrator picks
@@ -3888,28 +3920,49 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		var err error
 		docInvestigatorTools := []AgentToolDef{read_doc_tool, update_doc_tool, probe_tool}
 		assertOnlyAllowedTools("servitor.doc_investigator", docInvestigatorTools, servitorOrchestratorToolAllowList)
+		const maxDocInvestigatorPasses = 2 // extra budgets while probes keep yielding new data
+		docInvCfg := AgentLoopConfig{
+			SystemPrompt:    leadPrompt,
+			Tools:           docInvestigatorTools,
+			MaxRounds:       75,
+			RouteKey:        "app.servitor",
+			MaskDebugOutput: true,
+			SerialTools:     true,
+			ChatOptions:     append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
+			// InjectionDrain (not OnRoundStart): drainInjections empties
+			// its queue and returns nil when nothing's pending, so the
+			// loop's pre-finalize re-call terminates cleanly. This also
+			// gets the pre-finalize protection — a note that lands during
+			// the final round is picked up before the answer is written.
+			InjectionDrain: drainInjections,
+			OnStep: func(step StepInfo) {
+				if step.Done && strings.TrimSpace(step.Content) != "" {
+					emit(id, probeEvent{Kind: "status", Text: "Investigator: synthesizing answer…"})
+				}
+			},
+		}
 		withHeartbeat(ctx, id, "Investigator: working", func() {
-			invResp, invHistory, err = a.RunAgentLoop(ctx, messages, AgentLoopConfig{
-				SystemPrompt:    leadPrompt,
-				Tools:           docInvestigatorTools,
-				MaxRounds:       75,
-					RouteKey:        "app.servitor",
-				MaskDebugOutput: true,
-				SerialTools:     true,
-				ChatOptions:     append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
-				// InjectionDrain (not OnRoundStart): drainInjections empties
-				// its queue and returns nil when nothing's pending, so the
-				// loop's pre-finalize re-call terminates cleanly. This also
-				// gets the pre-finalize protection — a note that lands during
-				// the final round is picked up before the answer is written.
-				InjectionDrain: drainInjections,
-				OnStep: func(step StepInfo) {
-					if step.Done && strings.TrimSpace(step.Content) != "" {
-						emit(id, probeEvent{Kind: "status", Text: "Investigator: synthesizing answer…"})
-					}
-				},
-			})
+			invResp, invHistory, err = a.RunAgentLoop(ctx, messages, docInvCfg)
 		})
+		// Productive continuation — the Q&A investigator has no plan to pace
+		// against, so it would simply cap and answer with whatever it had.
+		// When it exhausts its budget (HitRoundCap) but probes are still
+		// yielding NEW data, grant another budget; stop as soon as a pass
+		// gathers nothing new (stuck) or the model finishes naturally. Bounded
+		// at (1 + maxDocInvestigatorPasses) budgets.
+		for pass := 0; pass < maxDocInvestigatorPasses && err == nil && ctx.Err() == nil; pass++ {
+			if invResp == nil || !invResp.HitRoundCap {
+				break // natural finish — not a cap hit
+			}
+			before := len(allProbeResults)
+			emit(id, probeEvent{Kind: "status", Text: "Investigator reached its round budget — continuing the investigation…"})
+			withHeartbeat(ctx, id, "Investigator: working (continued)", func() {
+				invResp, invHistory, err = a.RunAgentLoop(ctx, invHistory, docInvCfg)
+			})
+			if len(allProbeResults) == before {
+				break // no new probe data this pass — stop rather than grind
+			}
+		}
 		_ = invHistory
 		if err != nil && ctx.Err() == nil {
 			emit(id, probeEvent{Kind: "error", Text: err.Error()})
@@ -3997,6 +4050,22 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	}
 	emit(id, probeEvent{Kind: "reply", Text: reply})
 
+	// Persist this turn to the chat session that backs the rail. Chat
+	// path only — map runs (saveProfile=true) write the profile, not a
+	// conversation. The run id IS the session id, so append the current
+	// user message + reply to it. listSessions then surfaces it on the
+	// 'done' refresh, exactly like orchestrate.
+	if !saveProfile && udb != nil {
+		var lastUser string
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "user" {
+				lastUser = messages[i].Content
+				break
+			}
+		}
+		appendTurn(udb, appliance.ID, id, lastUser, reply)
+	}
+
 	if consolidateFn != nil {
 		emit(id, probeEvent{Kind: "status", Text: "Background: consolidating knowledge..."})
 		go consolidateFn()
@@ -4013,33 +4082,6 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			udb.Set(applianceTable, appliance.ID, existing)
 			extractDocsFromProfile(udb, appliance.ID, reply)
 		}
-		// Mint a workspace for this map run so the user has a place
-		// to follow up — Q&A entries, supplements, synthesis — all
-		// anchored to the snapshot we just captured. The workspace
-		// seed entry pairs the mapping prompt as question and the
-		// freshly produced profile as answer, giving the user
-		// immediate context when they open it.
-		ts := time.Now()
-		dateStr := ts.Format("2006-01-02 15:04")
-		seedQuestion := "Initial mapping of " + appliance.Name
-		if strings.TrimSpace(appliance.Profile) != "" {
-			// appliance.Profile is the BEFORE-run snapshot (parameter
-			// to runSession), so non-empty means this is a re-map.
-			seedQuestion = "Re-mapping of " + appliance.Name
-		}
-		mapWS := DocWorkspace{
-			ID:          UUIDv4(),
-			ApplianceID: appliance.ID,
-			Name:        "Map: " + appliance.Name + " (" + dateStr + ")",
-			Created:     ts.Format(time.RFC3339),
-			Entries: []WorkspaceEntry{{
-				Question:  seedQuestion,
-				Answer:    reply,
-				Timestamp: ts.Format(time.RFC3339),
-			}},
-		}
-		saveWorkspace(udb, mapWS)
-		emit(id, probeEvent{Kind: "status", Text: "Workspace created: " + mapWS.Name})
 	}
 }
 

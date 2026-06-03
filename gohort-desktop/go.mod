@@ -5,7 +5,7 @@
 // Hosts gohort web surfaces (orchestrate chat today; phantom, admin,
 // future apps later) inside a native window via Wails v2. Adds
 // system-level capabilities the browser can't reach: filesystem
-// reads, native notifications, screenshots, menu-bar status.
+// reads, native notifications, menu-bar status.
 //
 // Architecture:
 //   - Wails v2 with embedded webview (WKWebView on macOS)

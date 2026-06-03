@@ -2916,6 +2916,16 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-agent-confirm-prompt { font-weight: 600; color: var(--text-hi); margin-bottom: 0.3rem; }
 .ui-agent-confirm-detail { color: var(--text-mute); font-size: 0.75rem; margin-bottom: 0.4rem; }
 .ui-agent-confirm-btns  { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+/* Resolved confirm card — the operator answered. Drop the warning
+ * tint to a neutral/settled look and stamp the chosen disposition so
+ * the card no longer reads as a pending, unacted prompt. */
+.ui-agent-confirm-resolved { background: var(--bg-2); border-color: var(--border); }
+.ui-agent-confirm-resolved.is-deny { border-color: var(--danger, #d44); }
+.ui-agent-confirm-status {
+  font-weight: 600; font-size: 0.82rem;
+  color: var(--ok, #4caf50);
+}
+.ui-agent-confirm-resolved.is-deny .ui-agent-confirm-status { color: var(--danger, #d44); }
 
 .ui-agent-extras {
   display: flex; gap: 0.6rem; padding: 0.4rem 0.7rem;
@@ -5526,6 +5536,17 @@ const runtimeJS = `
           input.appendChild(addInput);
         }
         renderTags();
+        // Suggest/template setter: accept an array (preferred) or a
+        // comma/newline-separated string, rebuild the chips, and persist.
+        fieldSetters[f.field] = function(v) {
+          if (Array.isArray(v)) {
+            values = v.map(function(x) { return String(x); });
+          } else {
+            values = String(v == null ? '' : v).split(/[,\n]/).map(function(x) { return x.trim(); }).filter(Boolean);
+          }
+          renderTags();
+          persistTags();
+        };
       } else if (t === 'rules') {
         // Rules-list editor — each line of the underlying string field
         // becomes a removable list item, with "+ Add rule" appending a
@@ -5966,6 +5987,33 @@ const runtimeJS = `
     function render() {
       wrap.innerHTML = '';
       fieldEls = {};
+      // "Start from template" — optional prefill dropdown. Picking a
+      // template applies its values through the same per-field setters
+      // the Suggest button uses, so every field type fills correctly.
+      // The user then edits (e.g. adds an API key) and saves normally.
+      // Reset to the blank option after applying so re-picking the same
+      // template re-applies it.
+      if (Array.isArray(cfg.templates) && cfg.templates.length) {
+        var tplRow = el('div', {class: 'ui-form-field'});
+        tplRow.appendChild(el('label', {class: 'ui-form-label'}, ['Start from template']));
+        var tplSel = el('select', {class: 'ui-form-input'});
+        tplSel.appendChild(el('option', {value: ''}, ['— choose a template —']));
+        cfg.templates.forEach(function(t, i) {
+          tplSel.appendChild(el('option', {value: String(i)}, [t.label || ('Template ' + (i + 1))]));
+        });
+        tplSel.addEventListener('change', function() {
+          var idx = parseInt(tplSel.value, 10);
+          tplSel.value = '';
+          if (isNaN(idx) || idx < 0 || idx >= cfg.templates.length) return;
+          var vals = (cfg.templates[idx] && cfg.templates[idx].values) || {};
+          Object.keys(vals).forEach(function(k) {
+            var s = fieldSetters[k];
+            if (s) s(vals[k]);
+          });
+        });
+        tplRow.appendChild(tplSel);
+        wrap.appendChild(tplRow);
+      }
       cfg.fields.forEach(function(f){ wrap.appendChild(renderField(f)); });
       applyVisibility();
       // Saving indicator gets attached to the parent section header.
@@ -8589,52 +8637,75 @@ const runtimeJS = `
         var qIdx = loaded.indexOf('?');
         var path = (qIdx >= 0 ? loaded.slice(0, qIdx) : loaded) + '/export' + (qIdx >= 0 ? loaded.slice(qIdx) : '');
         var prior = btn ? btn.textContent : '';
-        if (btn) { btn.disabled = true; btn.textContent = 'Copying…'; }
-        fetch(path).then(function(r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.text();
-        }).then(function(md) {
-          var done = function() {
-            if (btn) {
-              btn.textContent = 'Copied';
-              setTimeout(function() {
-                btn.disabled = false;
-                btn.textContent = prior;
-              }, 1100);
-            }
-          };
-          // Host-provided clipboard takes precedence. The desktop
-          // wrapper sets window.__uiClipboardImpl to a Promise-returning
-          // function backed by Wails' native runtime — needed because
-          // navigator.clipboard.writeText is restricted in WKWebView at
-          // the loopback proxy origin (silent failure, then the
-          // execCommand fallback also dies on a non-focusable hidden
-          // textarea). Plain browsers don't set this hook and fall
-          // through to the standard navigator.clipboard path.
-          if (typeof window.__uiClipboardImpl === 'function') {
-            window.__uiClipboardImpl(md).then(done).catch(function() {
-              fallback(md, done);
-            });
-          } else if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(md).then(done).catch(function() {
-              fallback(md, done);
-            });
-          } else {
-            fallback(md, done);
+        var setBusy = function() { if (btn) { btn.disabled = true; btn.textContent = 'Copying…'; } };
+        var setDone = function() {
+          if (btn) {
+            btn.textContent = 'Copied';
+            setTimeout(function() { btn.disabled = false; btn.textContent = prior; }, 1100);
           }
-        }).catch(function(err) {
+        };
+        var setFail = function(err) {
           if (btn) { btn.disabled = false; btn.textContent = prior; }
           var dispUrl = path.length > 120 ? path.slice(0, 117) + '…' : path;
           showToast('Copy failed: ' + (err && err.message || err) + ' (url: ' + dispUrl + ')');
-        });
-        function fallback(text, done) {
+        };
+        setBusy();
+        var fetchText = function() {
+          return fetch(path).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+            return r.text();
+          });
+        };
+        // Gesture-safe async clipboard. WKWebView (and Safari) drop the
+        // transient user-activation across an awaited fetch, so a
+        // post-fetch writeText / execCommand / host-clipboard call
+        // silently no-ops while still resolving — the "says Copied but
+        // pastes nothing" bug. (The per-message copy buttons work because
+        // they writeText synchronously inside the click, gesture intact.)
+        // Handing the fetch PROMISE to ClipboardItem keeps the activation
+        // valid until the text resolves — the one path that survives the
+        // async gap. Falls back to a plain fetch-then-write chain where
+        // promise-valued ClipboardItem isn't supported, and only ever
+        // reports success on a write that actually lands.
+        if (navigator.clipboard && navigator.clipboard.write && typeof window.ClipboardItem === 'function') {
+          try {
+            var item = new ClipboardItem({
+              'text/plain': fetchText().then(function(t) { return new Blob([t], {type: 'text/plain'}); }),
+            });
+            navigator.clipboard.write([item]).then(setDone).catch(function() { copyChain(); });
+            return;
+          } catch (_) { /* promise-valued ClipboardItem unsupported → chain */ }
+        }
+        copyChain();
+
+        function copyChain() {
+          fetchText().then(function(md) {
+            // Browser clipboard first — it's what the per-message copy
+            // buttons use and works in this webview — then the host-native
+            // Wails clipboard, then a hidden-textarea execCommand.
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              return navigator.clipboard.writeText(md).then(setDone).catch(function() { hostCopy(md); });
+            }
+            hostCopy(md);
+          }).catch(setFail);
+        }
+        function hostCopy(md) {
+          if (typeof window.__uiClipboardImpl === 'function') {
+            window.__uiClipboardImpl(md).then(setDone).catch(function() { legacyCopy(md); });
+            return;
+          }
+          legacyCopy(md);
+        }
+        function legacyCopy(md) {
           var ta = document.createElement('textarea');
-          ta.value = text;
+          ta.value = md;
           ta.style.position = 'fixed'; ta.style.opacity = '0';
           document.body.appendChild(ta);
           ta.select();
-          try { document.execCommand('copy'); done(); } catch (_) {}
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (_) {}
           document.body.removeChild(ta);
+          if (ok) { setDone(); } else { setFail(new Error('clipboard unavailable')); }
         }
       });
     }
@@ -10174,7 +10245,7 @@ const runtimeJS = `
         var cls = 'ui-row-btn';
         if (a.variant) cls += ' ' + a.variant;
         var b = el('button', {class: cls,
-          onclick: function() { submitConfirm(id, a.value, card); }},
+          onclick: function() { submitConfirm(id, a, card, b); }},
           [a.label || a.value || 'OK']);
         btns.appendChild(b);
       });
@@ -10189,16 +10260,36 @@ const runtimeJS = `
       scrollConvo(true);
     }
 
-    function submitConfirm(id, value, card) {
+    function submitConfirm(id, action, card, btn) {
       if (!cfg.confirm_url) return;
+      var value = (action && action.value) || '';
       // Disable all buttons immediately so a double-click doesn't
-      // submit the same answer twice.
+      // submit the same answer twice; flag the chosen one so the
+      // resolved state can highlight which way the operator went.
       card.querySelectorAll('button').forEach(function(b) { b.disabled = true; });
+      if (btn) btn.classList.add('chosen');
       fetchJSON(cfg.confirm_url, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({id: id, value: value}),
+      }).then(function() {
+        // Reflect the decision on the card instead of leaving greyed-
+        // out buttons that read as "nothing happened." The button row
+        // is replaced with a one-line resolution stamp (✓ Allowed /
+        // ✓ Always / ✕ Denied) and the card gets a value class so CSS
+        // can tint it. Label comes from the action so app-defined
+        // wording (Allow / Always allow / Deny) carries through.
+        card.classList.add('ui-agent-confirm-resolved', 'is-' + (value || 'done'));
+        var deny = value === 'deny' || value === 'no' || value === 'reject';
+        var label = (action && action.label) || value || 'Done';
+        var stamp = el('div', {class: 'ui-agent-confirm-status'},
+          [(deny ? '✕ ' : '✓ ') + label]);
+        var row = card.querySelector('.ui-agent-confirm-btns');
+        if (row) { row.replaceWith(stamp); } else { card.appendChild(stamp); }
       }).catch(function(err) {
+        // Failed to record — re-enable so the operator can retry.
+        card.querySelectorAll('button').forEach(function(b) { b.disabled = false; });
+        if (btn) btn.classList.remove('chosen');
         showToast('Confirm failed: ' + (err && err.message || err));
       });
     }
@@ -14197,7 +14288,35 @@ const runtimeJS = `
     var asstInput = el('textarea', {class: 'ui-chat-input', rows: '1',
       placeholder: 'Ask the assistant…'});
     var asstSend  = el('button', {class: 'ui-chat-send', onclick: function(){ doAssist(); }}, ['Send']);
+
+    // Generic reference picker — when the app wires reference_sources_url,
+    // surface every registered reference source in one dropdown. The chosen
+    // item rides along with each request as references; the app's handler
+    // injects that source's text into the model's context. Domain-agnostic:
+    // core/ui knows nothing about what a source contains — only the shape.
+    var selectedRef = null;
+    var refSelect = null;
+    if (cfg.reference_sources_url) {
+      refSelect = el('select', {class: 'ui-chat-mode', title: 'Ground replies in material gathered by another service',
+        onchange: function() {
+          var o = refSelect.options[refSelect.selectedIndex];
+          selectedRef = (o && o.value) ? {kind: o.getAttribute('data-kind'), item_id: o.value} : null;
+        }});
+      refSelect.appendChild(el('option', {value: ''}, ['Reference…']));
+      fetch(cfg.reference_sources_url).then(function(r){ return r.json(); }).then(function(groups) {
+        if (!groups || !groups.length) { refSelect.style.display = 'none'; return; }
+        groups.forEach(function(g) {
+          var og = el('optgroup', {label: g.label});
+          (g.items || []).forEach(function(it) {
+            og.appendChild(el('option', {value: it.id, 'data-kind': g.kind, title: it.desc || ''}, [it.name]));
+          });
+          refSelect.appendChild(og);
+        });
+      }).catch(function() { if (refSelect) refSelect.style.display = 'none'; });
+    }
+
     asstInputRow.appendChild(modeBtn);
+    if (refSelect) asstInputRow.appendChild(refSelect);
     asstInputRow.appendChild(asstInput);
     asstInputRow.appendChild(asstSend);
     asstWrap.appendChild(asstThread);
@@ -14538,6 +14657,7 @@ const runtimeJS = `
           message: msg,
           mode:    chatMode,
           history: historyForSend,
+          references: selectedRef ? [selectedRef] : [],
         }),
       }).then(function(d) {
         asstSending = false;
@@ -14908,6 +15028,15 @@ const runtimeJS = `
     }
 
     loadList();
+    // Deep link: open the article named in the URL (?article=<id>) so a
+    // handoff from another app that saves a doc then opens this editor with
+    // ?article=<id> lands directly in the editor instead of a blank page.
+    // The list still loads behind it; this just selects the handed-off
+    // article on arrival.
+    try {
+      var deepLinkArticle = new URLSearchParams(window.location.search).get('article');
+      if (deepLinkArticle) { openArticle(deepLinkArticle); }
+    } catch (e) {}
     return wrap;
   };
 

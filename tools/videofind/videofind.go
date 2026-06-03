@@ -104,16 +104,18 @@ func (t *FindVideoTool) Run(args map[string]any) (string, error) {
 	if count == 1 {
 		c := candidates[0]
 		return fmt.Sprintf(
-			"Found: %s\nTitle: %s\nSource: %s\n\nPass this URL to download_video to fetch the file.",
-			c.URL, c.Title, c.Source,
+			"Found a URL (NOTE: this is a web link only — NO file has been downloaded):\nURL: %s\nTitle: %s\nSource: %s\n\n"+
+				"There is NO video file in the workspace yet, so you CANNOT attach or send it and must NOT write an [ATTACH:] marker for it. "+
+				"To deliver the video, call video(action=\"download\", url=\"%s\") next — that fetches the file into the workspace and attaches it automatically.",
+			c.URL, c.Title, c.Source, c.URL,
 		), nil
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Found %d candidates:\n\n", len(candidates))
+	fmt.Fprintf(&sb, "Found %d candidate URLs (web links only — NO files downloaded yet):\n\n", len(candidates))
 	for i, c := range candidates {
 		fmt.Fprintf(&sb, "%d. %s\n   Title: %s\n   Source: %s\n\n", i+1, c.URL, c.Title, c.Source)
 	}
-	sb.WriteString("Pick the best fit and pass its URL to download_video.")
+	sb.WriteString("None of these can be attached or sent yet — they are not files. Pick the best fit and call video(action=\"download\", url=<URL>) to fetch it into the workspace and attach it automatically. Do not write an [ATTACH:] marker until download has run.")
 	return sb.String(), nil
 }
 

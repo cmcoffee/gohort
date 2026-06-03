@@ -5,13 +5,12 @@ package imagefetch
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
 	"image"
 	_ "image/gif"
-	_ "image/jpeg"
+	"image/jpeg"
 	_ "image/png"
 	"io"
 	"net/http"
@@ -22,8 +21,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/browser"
+	_ "golang.org/x/image/webp" // register the WebP decoder for image.Decode
 )
 
 func init() {
@@ -95,136 +97,114 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		return "", fmt.Errorf("no image results found for %q", query)
 	}
 
-	type candidate struct {
-		raw  []byte
-		b64  string
-		w, h int
-		meta SerperImageResult
+	// Save the chosen image to the session workspace and return its path with
+	// the standard delivery hint. No auto-attach; the LLM ships it via
+	// workspace(action="attach", path=..., cleanup=true).
+	saveAndReturn := func(data []byte, meta SerperImageResult) (string, error) {
+		wsDir, err := EnsureSessionWorkspace(sess)
+		if err != nil {
+			return "", fmt.Errorf("session workspace unavailable: %w", err)
+		}
+		name := "find-" + shortID() + extForMime(http.DetectContentType(data))
+		target := filepath.Join(wsDir, name)
+		if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return "", fmt.Errorf("create parent dir: %w", err)
+		}
+		if err := os.WriteFile(target, data, 0600); err != nil {
+			return "", fmt.Errorf("save image: %w", err)
+		}
+		Log("[imagefetch/find_image] query=%q delivered %q (title: %q, source: %s)", query, name, meta.Title, meta.Source)
+		return fmt.Sprintf(
+			"Stored at %q (title: %q, source: %s). If the user asked you to SEND / SHARE the image, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info about it (describe, identify, summarize), skip the attach — answer from context. When you do attach, cleanup=true keeps the workspace tidy (find results are typically one-shot).",
+			name, meta.Title, meta.Source, name,
+		), nil
 	}
-	var candidates []candidate
+
+	// LAZY short-circuit: evaluate results ONE AT A TIME and stop at the first
+	// that matches — no need to fetch + vision-score all five every time (the
+	// vision call is the expensive part). The first candidate that BOTH
+	// text-matches (page/title mentions the subject) AND visually depicts the
+	// query is the answer; we only look deeper on a miss. A best-vision-match
+	// fallback covers results whose title was too sparse to text-match but
+	// whose image is right. Per candidate: one page fetch, one image, one
+	// vision call — and usually just the first.
+	const maxFindCandidates = 6
+	var bestData []byte
+	var bestMeta SerperImageResult
+	bestScore := -1
+	usable := 0
 	for _, r := range results {
-		if len(candidates) >= 5 {
+		if usable >= maxFindCandidates {
 			break
 		}
-		// Pull the image from the SOURCE PAGE underneath the result, not the
-		// (often cached / thumbnail / google-hosted) search-result image URL:
-		// fetch the page, take its representative image (og:image / twitter:
-		// image), download that. Fall back to the result image URL if the page
-		// yields nothing or its image won't download.
-		imgURL := r.ImageURL
-		if pageImg := extractPageImage(r.Link); pageImg != "" {
-			imgURL = pageImg
+		ogImage, pageMentions := inspectPage(r.Link, query)
+		textMatch := pageMentions || pageMentionsSubject(strings.ToLower(r.Title), query)
+		// Prefer the page's real image; fall back to the (accessible) result
+		// image URL when the source blocks the direct fetch.
+		var data []byte
+		var ok bool
+		if ogImage != "" && ogImage != r.ImageURL {
+			data, _, _, ok = fetchValidImage(ogImage, r.Link)
 		}
-		data, err := FetchImageBytes(imgURL, r.Link, 20)
-		if err != nil {
-			if imgURL != r.ImageURL {
-				data, err = FetchImageBytes(r.ImageURL, r.Link, 20)
-			}
-			if err != nil {
-				continue
-			}
+		if !ok {
+			data, _, _, ok = fetchValidImage(r.ImageURL, r.Link)
 		}
-		// Validate the bytes are ACTUALLY an image — Serper sometimes
-		// returns URLs that 404, hot-link-protect, or redirect to
-		// HTML error pages. Without this check we'd save the HTML
-		// (or whatever non-image blob came back) as a candidate,
-		// the vision-LLM picker would fail to interpret it, and the
-		// chosen file lands in the workspace as garbage.
-		mime := http.DetectContentType(data)
-		if !strings.HasPrefix(mime, "image/") {
-			Log("[imagefetch/find_image] candidate skipped — URL %q returned %s (not an image)", r.ImageURL, mime)
+		if !ok {
+			Log("[imagefetch/find_image] candidate skipped — no usable image for %q (source blocked?)", r.Link)
 			continue
 		}
-		// Decode pixel dimensions (header only) so the picker can prefer a
-		// prominent full-size photo over a tiny thumbnail — the shape that
-		// lets a person search surface connection thumbnails.
-		w, h := 0, 0
-		if ic, _, derr := image.DecodeConfig(bytes.NewReader(data)); derr == nil {
-			w, h = ic.Width, ic.Height
-		}
-		candidates = append(candidates, candidate{
-			raw:  data,
-			b64:  base64.StdEncoding.EncodeToString(data),
-			w:    w,
-			h:    h,
-			meta: r,
-		})
-	}
-	if len(candidates) == 0 {
-		return "", fmt.Errorf("could not download any image results for %q", query)
-	}
-
-	// Vision verify-or-reject. Show the candidate(s) to the vision LLM and
-	// have it pick the one that GENUINELY depicts the query — or reject all
-	// (0). The old "choose 1 of N" forced a pick even when every result was
-	// wrong (a person search surfacing their connections, all with near-
-	// identical titles), returning a confidently-wrong image. Now it can say
-	// "none match", and a single result gets verified instead of returned
-	// blind. No vision LLM → can't verify, fall through to the first result.
-	chosen := 0
-	if sess.LLM != nil {
-		var rawImages [][]byte
-		var meta strings.Builder
-		for i, c := range candidates {
-			rawImages = append(rawImages, c.raw)
-			dim := ""
-			if c.w > 0 && c.h > 0 {
-				dim = fmt.Sprintf(", %dx%d px", c.w, c.h)
+		usable++
+		// No vision configured → can't screen the pixels; take the first
+		// text-matching result (or the first usable one at all).
+		if sess.LLM == nil {
+			if textMatch || bestScore < 0 {
+				return saveAndReturn(data, r)
 			}
-			fmt.Fprintf(&meta, "Image %d — title: %q, source: %s%s\n", i+1, c.meta.Title, c.meta.Source, dim)
+			continue
 		}
-		prompt := fmt.Sprintf(
-			"I searched for %q and downloaded %d candidate image(s). Metadata (title, source domain, pixel size) is below — weigh it alongside what you actually SEE.\n\n%s\n"+
-				"Identify which candidate GENUINELY depicts %q: the correct subject/identity, not a lookalike, a different person, or an unrelated result. "+
-				"A specific search (especially for a person) routinely surfaces near-duplicates and unrelated items with similar titles — e.g. a profile page listing other people's thumbnails — so prefer the prominent, correctly-identified subject (a larger image is likelier the real one than a small thumbnail), and be willing to reject everything. "+
-				"Reply with ONLY a number: 1 to %d for the genuine match, or 0 if NONE of them confidently depict %q.",
-			query, len(candidates), meta.String(), query, len(candidates), query,
-		)
-		resp, err := sess.LLM.Chat(context.Background(),
-			[]Message{{Role: "user", Content: prompt, Images: rawImages}},
-			WithCaller("imagefetch/find_image"),
-			WithMaxRetries(0),
-			WithThink(true),
-		)
-		if err == nil && resp != nil {
-			for _, tok := range strings.Fields(resp.Content) {
-				tok = strings.Trim(tok, ".,;:\"'")
-				if n, perr := strconv.Atoi(tok); perr == nil && n >= 0 && n <= len(candidates) {
-					if n == 0 {
-						Log("[imagefetch/find_image] query=%q — vision rejected all %d candidate(s) as non-matching", query, len(candidates))
-						return "", fmt.Errorf("found %d image(s) for %q but none confidently match — a specific search (especially for a person) can surface lookalikes, connections, or unrelated results with similar titles. Refine the query, or use fetch_image with a specific image URL", len(candidates), query)
+		score := scoreImageMatch(sess, data, query)
+		Log("[imagefetch/find_image] query=%q candidate %d (title %q) text=%v vision=%d/100", query, usable, r.Title, textMatch, score)
+		if textMatch && score >= imageMatchThreshold {
+			return saveAndReturn(data, r) // confident match — stop here
+		}
+		if score > bestScore {
+			bestData, bestMeta, bestScore = data, r, score
+		}
+		// Escalation: the page IS about the subject (text-matched) but the
+		// cheap image — a blocked source that fell back to Google's thumbnail,
+		// or a low-res cache — didn't pass vision. Render the page in the
+		// headless browser to pull its REAL image (bypasses hotlink
+		// protection) and re-score before abandoning this candidate. Getting
+		// the right image HERE is cheaper than paying a fresh page-fetch +
+		// vision call on the next candidate, so it's faster overall when it
+		// converts a multi-candidate search into a one-candidate hit.
+		if textMatch && score < imageMatchThreshold {
+			if raw, rerr := browser.FetchPageImage(r.Link); rerr == nil {
+				if rdata, _, _, rok := normalizeToJPEG(raw); rok {
+					rscore := scoreImageMatch(sess, rdata, query)
+					Log("[imagefetch/find_image] query=%q candidate %d browser-rendered image vision=%d/100 (cheap image was %d)", query, usable, rscore, score)
+					if rscore >= imageMatchThreshold {
+						return saveAndReturn(rdata, r)
 					}
-					chosen = n - 1
-					break
+					if rscore > bestScore {
+						bestData, bestMeta, bestScore = rdata, r, rscore
+					}
 				}
+			} else {
+				Log("[imagefetch/find_image] query=%q browser render failed for %q: %v", query, r.Link, rerr)
 			}
 		}
 	}
-
-	// Save to session workspace, return the path. No auto-attach;
-	// the LLM uses workspace(action="attach", path=..., cleanup=true)
-	// to deliver. The cleanup hint matches the one-shot lifecycle of
-	// find results — search, send, done.
-	wsDir, err := EnsureSessionWorkspace(sess)
-	if err != nil {
-		return "", fmt.Errorf("session workspace unavailable: %w", err)
+	// Nothing both text- and vision-matched. Use the best vision match if it's
+	// a confident depiction; otherwise reject rather than return a wrong image.
+	if bestScore >= imageMatchThreshold {
+		Log("[imagefetch/find_image] query=%q no text+vision match; using best vision match %d/100", query, bestScore)
+		return saveAndReturn(bestData, bestMeta)
 	}
-	ct := http.DetectContentType(candidates[chosen].raw)
-	ext := extForMime(ct)
-	name := "find-" + shortID() + ext
-	target := filepath.Join(wsDir, name)
-	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
-		return "", fmt.Errorf("create parent dir: %w", err)
+	if bestScore < 0 {
+		return "", fmt.Errorf("could not download any usable image for %q (sources may be blocking the fetch)", query)
 	}
-	if err := os.WriteFile(target, candidates[chosen].raw, 0600); err != nil {
-		return "", fmt.Errorf("save image: %w", err)
-	}
-	Log("[imagefetch/find_image] query=%q chose candidate %d/%d (title: %q, source: %s) → %s",
-		query, chosen+1, len(candidates), candidates[chosen].meta.Title, candidates[chosen].meta.Source, name)
-	return fmt.Sprintf(
-		"Stored at %q (title: %q, source: %s). If the user asked you to SEND / SHARE the image, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info about it (describe, identify, summarize), skip the attach — answer from context. When you do attach, cleanup=true keeps the workspace tidy (find results are typically one-shot).",
-		name, candidates[chosen].meta.Title, candidates[chosen].meta.Source, name,
-	), nil
+	return "", fmt.Errorf("found image(s) for %q but none clearly depict it (best visual match %d/100) — the search may have surfaced lookalikes or unrelated results; refine the query, or use fetch_image with a specific image URL", query, bestScore)
 }
 
 // --- GenerateImageTool ---
@@ -388,18 +368,20 @@ var pageImageRes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)<meta[^>]+name=["']twitter:image(?::src)?["'][^>]+content=["']([^"']+)["']`),
 }
 
-// extractPageImage fetches a source page and returns its representative
-// image URL (og:image / twitter:image), resolved to absolute — so
-// find_image grabs the real, full-size original from the page underneath a
-// search result instead of the cached / thumbnail result image. Returns ""
-// if the page can't be fetched or declares no such image.
-func extractPageImage(pageURL string) string {
+// inspectPage fetches a source page ONCE and reports (a) its representative
+// image URL (og:image / twitter:image, resolved absolute) and (b) whether
+// the page actually MENTIONS the search subject. find_image uses both: grab
+// the page's real image instead of the cached/thumbnail result image, and
+// trust it only when the page is genuinely about what we searched for — the
+// drill-in-and-verify step that discards mis-indexed / wrong results.
+// Returns ("", false) if the page can't be fetched.
+func inspectPage(pageURL, query string) (ogImage string, mentions bool) {
 	if pageURL == "" {
-		return ""
+		return "", false
 	}
 	req, err := http.NewRequest("GET", pageURL, nil)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	req.Header.Set("User-Agent", browserUA)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
@@ -407,26 +389,73 @@ func extractPageImage(pageURL string) string {
 	client := &http.Client{Timeout: 12 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		return "", false
 	}
-	const maxHTML = 1 << 20 // 1 MB reaches the <head> metas on any sane page
+	const maxHTML = 1 << 20 // 1 MB reaches the <head> metas + visible text on any sane page
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxHTML))
 	if err != nil {
-		return ""
+		return "", false
 	}
 	page := string(body)
+	mentions = pageMentionsSubject(strings.ToLower(page), query)
 	for _, re := range pageImageRes {
 		if m := re.FindStringSubmatch(page); len(m) > 1 && strings.TrimSpace(m[1]) != "" {
 			if abs := resolvePageURL(pageURL, html.UnescapeString(strings.TrimSpace(m[1]))); abs != "" {
-				return abs
+				ogImage = abs
+				break
 			}
 		}
 	}
-	return ""
+	return ogImage, mentions
+}
+
+// imageQueryFiller is generic query noise that shouldn't be required to
+// appear on a source page (a page about a red Ferrari needn't say "photo").
+var imageQueryFiller = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "from": true,
+	"photo": true, "photos": true, "image": true, "images": true,
+	"picture": true, "pictures": true, "pic": true, "pics": true,
+	"png": true, "jpg": true, "jpeg": true, "gif": true,
+}
+
+// significantQueryWords reduces a query to the tokens worth matching on a
+// page: alphanumeric, length >= 3, minus generic filler.
+func significantQueryWords(query string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if len(w) >= 3 && !imageQueryFiller[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// pageMentionsSubject reports whether a page (already lowercased) references
+// the search subject — every significant query word for short queries, a
+// ~60% majority for longer ones. An uncheckable query (no significant words)
+// passes so it never blocks the result.
+func pageMentionsSubject(pageLower, query string) bool {
+	toks := significantQueryWords(query)
+	if len(toks) == 0 {
+		return true
+	}
+	need := len(toks)
+	if need > 3 {
+		need = (len(toks)*3 + 4) / 5 // ~60%, rounded up
+	}
+	hit := 0
+	for _, t := range toks {
+		if strings.Contains(pageLower, t) {
+			hit++
+		}
+	}
+	return hit >= need
 }
 
 // resolvePageURL resolves a possibly-relative image ref against the page it
@@ -445,6 +474,93 @@ func resolvePageURL(base, ref string) string {
 		return ""
 	}
 	return abs.String()
+}
+
+// imageMatchThreshold is the minimum 0-100 vision score for find_image to
+// accept a candidate. Below it, the tool reports no confident match rather
+// than returning a wrong image. Tunable.
+const imageMatchThreshold = 50
+
+// scoreImageMatch asks the vision LLM to actually LOOK at ONE image and rate
+// 0-100 how well it depicts the query. Forcing a one-line description first
+// makes the model examine the pixels instead of guessing from metadata or
+// from a confusing multi-image prompt. Returns -1 if no usable score came back.
+func scoreImageMatch(sess *ToolSession, img []byte, query string) int {
+	prompt := fmt.Sprintf(
+		"Look closely at this image. In one sentence, describe what it ACTUALLY shows. "+
+			"Then rate from 0 to 100 how well it depicts: %q "+
+			"(0 = unrelated or the wrong subject, 100 = exactly that subject). "+
+			"Put the rating as a plain number on its own FINAL line.", query)
+	resp, err := sess.LLM.Chat(context.Background(),
+		[]Message{{Role: "user", Content: prompt, Images: [][]byte{img}}},
+		WithCaller("imagefetch/find_image"),
+		WithMaxRetries(0),
+		WithThink(true),
+	)
+	if err != nil || resp == nil {
+		return -1
+	}
+	return parseTrailingScore(resp.Content)
+}
+
+// parseTrailingScore extracts the last integer in [0,100] from the content
+// (the model is asked to end with the rating on its own line).
+func parseTrailingScore(s string) int {
+	fields := strings.Fields(s)
+	for i := len(fields) - 1; i >= 0; i-- {
+		tok := strings.Trim(fields[i], ".,;:%\"'()[]")
+		if n, err := strconv.Atoi(tok); err == nil && n >= 0 && n <= 100 {
+			return n
+		}
+	}
+	return -1
+}
+
+// fetchValidImage downloads a URL and returns the image RE-ENCODED AS JPEG
+// plus its pixel dimensions, only if it's a genuinely usable image. ok=false
+// for a download error (403 etc.), a non-image body (an HTML "access denied"
+// block page from a hotlink-protected source), or an undecodable image — the
+// caller then falls back to a more accessible URL.
+//
+// The JPEG re-encode is the fix for "the LLM isn't seeing what's attached":
+// llama.cpp's vision (stb_image) can't read WebP/AVIF — the dominant formats
+// on the web — so without normalizing it'd be handed bytes it can't decode
+// and would hallucinate a description for a blank/wrong image while the saved
+// file (the original webp) renders fine everywhere else. Decoding (webp via
+// golang.org/x/image/webp) and re-encoding JPEG guarantees the model scores
+// exactly what we save and attach.
+func fetchValidImage(rawURL, referer string) (data []byte, w, h int, ok bool) {
+	if rawURL == "" {
+		return nil, 0, 0, false
+	}
+	d, err := FetchImageBytes(rawURL, referer, 20)
+	if err != nil {
+		return nil, 0, 0, false
+	}
+	return normalizeToJPEG(d)
+}
+
+// normalizeToJPEG decodes image bytes (jpeg/png/gif/webp) and re-encodes them
+// as JPEG — the format the vision model can actually read — returning the
+// JPEG plus pixel dimensions. ok=false for a non-image body or an undecodable
+// image. Shared by the plain download path and the go-rod render escalation.
+func normalizeToJPEG(d []byte) (data []byte, w, h int, ok bool) {
+	if !strings.HasPrefix(http.DetectContentType(d), "image/") {
+		return nil, 0, 0, false
+	}
+	img, _, derr := image.Decode(bytes.NewReader(d))
+	if derr != nil {
+		return nil, 0, 0, false
+	}
+	b := img.Bounds()
+	if b.Dx() == 0 || b.Dy() == 0 {
+		return nil, 0, 0, false
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 88}); err != nil {
+		return nil, 0, 0, false
+	}
+	return buf.Bytes(), b.Dx(), b.Dy(), true
 }
 
 func downloadImageBytes(rawURL string) ([]byte, error) {

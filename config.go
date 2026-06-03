@@ -90,6 +90,12 @@ func (d dbCFG) llm() LLMProviderConfig {
 	global.db.Get(LLMTable, "endpoint", &c.Endpoint)
 	global.db.Get(LLMTable, "context_size", &c.ContextSize)
 	global.db.Get(LLMTable, "disable_thinking", &c.DisableThinking)
+	// Default thinking budget = 4096 (the Qwen 3.6 sweet spot in practice;
+	// the model card's 8192 is a safe ceiling but 4096 is plenty for our
+	// worker) when unset; operator overrides in --setup / admin, and this
+	// value also acts as the hard ceiling for any per-agent/route budget
+	// (0 = unlimited / no ceiling).
+	c.ThinkingBudget = 4096
 	global.db.Get(LLMTable, "thinking_budget", &c.ThinkingBudget)
 	global.db.Get(LLMTable, "native_tools", &c.NativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
@@ -126,6 +132,7 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	global.db.Get(LeadLLMTable, "api_key", &c.APIKey)
 	global.db.Get(LeadLLMTable, "endpoint", &c.Endpoint)
 	global.db.Get(LeadLLMTable, "disable_thinking", &c.DisableThinking)
+	c.ThinkingBudget = 4096 // default budget when unset (see worker load)
 	global.db.Get(LeadLLMTable, "thinking_budget", &c.ThinkingBudget)
 	global.db.Get(LeadLLMTable, "native_tools", &c.NativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
@@ -222,7 +229,7 @@ func setup_fuzz() {
 	var contextSize int
 	var requestTimeoutSec int
 	var disableThinking bool
-	var thinkingBudget int
+	thinkingBudget := 4096 // default: Qwen 3.6 sweet spot (0 = unlimited)
 	var nativeTools bool
 	var ollamaMaxParallel int
 	var llamacppMaxParallel int
@@ -266,7 +273,7 @@ func setup_fuzz() {
 	// Load current Lead LLM values.
 	var leadProvider, leadModel, leadAPIKey, leadEndpoint string
 	var leadDisableThinking bool
-	var leadThinkingBudget int
+	leadThinkingBudget := 4096 // default: Qwen 3.6 sweet spot (0 = unlimited)
 	var leadNativeTools bool
 	global.db.Get(LeadLLMTable, "provider", &leadProvider)
 	global.db.Get(LeadLLMTable, "model", &leadModel)

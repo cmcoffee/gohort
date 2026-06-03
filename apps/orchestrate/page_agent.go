@@ -128,6 +128,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				{Value: "off", Label: "Off — force no reasoning (faster)"},
 			},
 			Help: "Top-level conversational agents default On (reasoning helps planners / synthesizers). Sub-agent specialists default Off (faster lookups). Pick Auto only when you want the framework route to decide."},
+		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
+			Placeholder: "0",
+			Help:        "Max thinking tokens per LLM call for this agent. 0 = inherit the deployment default (4096). The admin global budget is a hard ceiling — this can only LOWER the budget (snappier turns); a value above the admin ceiling is clamped. Only applies when Think is on."},
 	}
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST

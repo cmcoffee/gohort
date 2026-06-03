@@ -51,6 +51,11 @@ func (T *TechWriterAgent) handleNewTechwriterPage(w http.ResponseWriter, r *http
 					RevisionsListURL: "api/revisions/{id}",
 					RevisionLoadURL:  "api/revision/{revid}",
 					ImageField:       "ImageURL",
+					// Reference picker — surfaces every registered
+					// reference source (servitor systems, collections,
+					// …) so a draft can be grounded in knowledge other
+					// services gathered. See core.ReferenceSource.
+					ReferenceSourcesURL: "api/reference-sources",
 					// Toolbar — declarative. Order in this slice =
 					// visual order on the bar. Each entry maps to a
 					// generic Method handler (post / open / redirect /

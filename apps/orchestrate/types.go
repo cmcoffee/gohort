@@ -92,6 +92,15 @@ type AgentRecord struct {
 	MaxPlanSteps    int `json:"max_plan_steps,omitempty"`
 	MaxWorkerRounds int `json:"max_worker_rounds,omitempty"`
 
+	// ThinkBudget overrides the thinking_budget_tokens for this agent's LLM
+	// calls (orchestrator + worker rounds). Zero = inherit the resolution
+	// chain (per-route budget, else the deployment default of 4096). The
+	// admin-configured global budget is a hard CEILING: setting this ABOVE it
+	// has no effect (the call is clamped down), so this can only LOWER an
+	// agent's budget for snappier turns. Only meaningful when thinking is on.
+	// Applied by passing it into AgentLoopConfig.ThinkBudget at each run path.
+	ThinkBudget int `json:"think_budget,omitempty"`
+
 	// Exposed publishes this agent under the public /agents/ surface
 	// (apps/agents) so non-admin users can chat with it. The exposed
 	// surface is a stripped chat pane — only the chat + per-user

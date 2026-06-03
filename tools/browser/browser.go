@@ -270,6 +270,103 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) 
 	return strings.TrimSpace(text), nil
 }
 
+// FetchPageImage renders pageURL in the headless browser and returns the
+// bytes of the page's representative image (og:image / twitter:image, else
+// the first <img>), fetched THROUGH the browser so referer-based hotlink
+// protection — which blocks a plain downloader — is bypassed. find_image
+// uses it as an escalation: when a result whose page mentions the subject has
+// a cheap/blocked image the vision pass rejected, render the page to pull the
+// real image and re-score. Returns an error (the caller falls through) on any
+// failure — never fatal.
+func FetchPageImage(pageURL string) ([]byte, error) { return shared.fetchImage(pageURL) }
+
+func (t *BrowsePageTool) fetchImage(pageURL string) ([]byte, error) {
+	t.launch()
+	if t.initErr != nil {
+		return nil, t.initErr
+	}
+	t.mu.Lock()
+	b := t.browser
+	t.mu.Unlock()
+
+	type result struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		var data []byte
+		var noImg bool
+		err := rod.Try(func() {
+			page := b.MustPage()
+			defer page.MustClose()
+			page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
+				UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+			})
+			page.Timeout(browsePageNavTimeout()).MustNavigate(pageURL)
+			_ = page.Timeout(browsePageIdleWait()).WaitIdle(500 * time.Millisecond)
+			// Prefer the social-share meta image (the page's canonical
+			// representative image); otherwise take the LARGEST rendered <img>
+			// (skipping icons/sprites), honoring lazy-load attrs + srcset.
+			obj, eerr := page.Eval(`() => {
+				var m = document.querySelector('meta[property="og:image"], meta[property="og:image:url"], meta[name="twitter:image"], meta[name="twitter:image:src"], link[rel="image_src"]');
+				if (m) { var c = m.getAttribute('content') || m.getAttribute('href'); if (c) return c; }
+				var best = '', bestArea = 0, imgs = document.querySelectorAll('img');
+				for (var i = 0; i < imgs.length; i++) {
+					var im = imgs[i];
+					var w = im.naturalWidth || im.width || 0, h = im.naturalHeight || im.height || 0;
+					if (w < 200 || h < 150) continue;
+					var src = im.currentSrc || im.src || im.getAttribute('data-src') || im.getAttribute('data-original') || '';
+					if (!src) continue;
+					var area = w * h;
+					if (area > bestArea) { bestArea = area; best = src; }
+				}
+				return best;
+			}`)
+			if eerr != nil {
+				panic(eerr)
+			}
+			imgURL := obj.Value.Str()
+			if imgURL == "" {
+				noImg = true // normal outcome (no extractable image) — not a panic
+				return
+			}
+			d, gerr := page.GetResource(imgURL)
+			if gerr != nil {
+				panic(gerr)
+			}
+			data = d
+		})
+		if err == nil && noImg {
+			err = fmt.Errorf("no extractable image on page")
+		}
+		ch <- result{data: data, err: err}
+	}()
+	select {
+	case r := <-ch:
+		if r.err != nil {
+			// rod.Try bakes a debug.Stack into *TryError.Error(); unwrap to
+			// the underlying value so the log line is a clean one-liner, not
+			// a goroutine dump.
+			msg := r.err.Error()
+			if te, ok := r.err.(*rod.TryError); ok {
+				if inner, isErr := te.Value.(error); isErr {
+					msg = inner.Error()
+				} else {
+					msg = fmt.Sprintf("%v", te.Value)
+				}
+			}
+			return nil, fmt.Errorf("browser image fetch: %s", msg)
+		}
+		if len(r.data) == 0 {
+			return nil, fmt.Errorf("browser image fetch returned no data")
+		}
+		return r.data, nil
+	case <-time.After(browsePageTotalBudget()):
+		return nil, fmt.Errorf("browser image fetch timed out after %v on %s", browsePageTotalBudget(), pageURL)
+	}
+}
+
 func (t *BrowsePageTool) IsInternetTool() bool { return true }
 
 func (t *BrowsePageTool) Run(args map[string]any) (string, error) {

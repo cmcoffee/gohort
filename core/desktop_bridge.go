@@ -183,6 +183,33 @@ func userFromAPIKey(r *http.Request) string {
 	return ""
 }
 
+// DesktopClientUser resolves the X-Gohort-Desktop-Client-Key header to a
+// username, proving the request came from the gohort-desktop VIEWER on the
+// same machine as the user's bridge (the viewer's reverse proxy stamps its
+// API key into this header). It gates the from_client.* tool surface so the
+// local machine's capabilities (filesystem, screenshot, contacts) are
+// reachable ONLY from the desktop app — never from a remote browser or phone
+// logged into the same account, even with auto-approve on. Returns "" when
+// the header is absent or unrecognized.
+//
+// Deliberately a DISTINCT header from X-API-Key: a normal API request
+// shouldn't silently gain local-machine tools; this surface is opt-in by the
+// desktop proxy alone.
+func DesktopClientUser(r *http.Request) string {
+	key := r.Header.Get("X-Gohort-Desktop-Client-Key")
+	if key == "" {
+		return ""
+	}
+	apiKeyValidatorsMu.RLock()
+	defer apiKeyValidatorsMu.RUnlock()
+	for _, fn := range apiKeyValidators {
+		if u, ok := fn(key); ok && u != "" {
+			return u
+		}
+	}
+	return ""
+}
+
 // DesktopBridgeUserOf is the auth resolver the desktop WS mount uses:
 // cookie session first (the viewer's logged-in webview), then the
 // X-API-Key header (the headless daemon). Returning "" rejects the

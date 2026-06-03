@@ -1114,6 +1114,168 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	})
 
+	// Source hooks — curated external sources (PubMed, OpenAlex, EDGAR,
+	// custom APIs / RAG). GET lists; POST upserts (or ?action=expose|hide
+	// toggles LLM-tool exposure); DELETE removes. A hook with
+	// expose_to_llm=true is auto-surfaced as a per-hook agent tool
+	// (BuildSourceHookAgentToolDefs, wired in the orchestrate runner).
+	sub.HandleFunc("/api/source-hooks", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			hooks := RegisteredSourceHooks()
+			type row struct {
+				Name            string   `json:"name"`
+				Type            string   `json:"type"`
+				Endpoint        string   `json:"endpoint"`
+				AuthType        string   `json:"auth_type"`
+				HasAuth         bool     `json:"has_auth"`
+				QueryParam      string   `json:"query_param"`
+				ResultsPath     string   `json:"results_path"`
+				TitleField      string   `json:"title_field"`
+				URLField        string   `json:"url_field"`
+				SnippetField    string   `json:"snippet_field"`
+				ContentField    string   `json:"content_field"`
+				Domains         []string `json:"domains"`
+				TriggerDomains  []string `json:"trigger_domains"`
+				AlwaysActive    bool     `json:"always_active"`
+				ExposeToLLM     bool     `json:"expose_to_llm"`
+				ToolName        string   `json:"tool_name"`
+				EffectiveTool   string   `json:"effective_tool"`
+				ToolDescription string   `json:"tool_description"`
+			}
+			out := make([]row, 0, len(hooks))
+			for _, h := range hooks {
+				eff := strings.TrimSpace(h.ToolName)
+				if eff == "" {
+					// Display approximation of the derived name (the real
+					// derivation lives in sourceHookToAgentToolDef).
+					eff = strings.ToLower(strings.ReplaceAll(strings.TrimSpace(h.Name), " ", "_")) + "_search"
+				}
+				out = append(out, row{
+					Name: h.Name, Type: string(h.Type), Endpoint: h.Endpoint,
+					AuthType: string(h.AuthType), HasAuth: strings.TrimSpace(h.AuthKey) != "",
+					QueryParam: h.QueryParam, ResultsPath: h.ResultsPath,
+					TitleField: h.TitleField, URLField: h.URLField,
+					SnippetField: h.SnippetField, ContentField: h.ContentField,
+					Domains: h.Domains, TriggerDomains: h.TriggerDomains,
+					AlwaysActive: h.AlwaysActive, ExposeToLLM: h.ExposeToLLM,
+					ToolName: h.ToolName, EffectiveTool: eff, ToolDescription: h.ToolDescription,
+				})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(out)
+		case http.MethodPost:
+			// Toggle LLM exposure: ?action=expose|hide&name=X.
+			if action := r.URL.Query().Get("action"); action != "" {
+				name := strings.TrimSpace(r.URL.Query().Get("name"))
+				if name == "" {
+					http.Error(w, "missing name", http.StatusBadRequest)
+					return
+				}
+				var target *SourceHook
+				for _, h := range RegisteredSourceHooks() {
+					if strings.EqualFold(h.Name, name) {
+						hh := h
+						target = &hh
+						break
+					}
+				}
+				if target == nil {
+					http.Error(w, "hook not found", http.StatusNotFound)
+					return
+				}
+				switch action {
+				case "expose":
+					target.ExposeToLLM = true
+				case "hide":
+					target.ExposeToLLM = false
+				default:
+					http.Error(w, "action must be expose|hide", http.StatusBadRequest)
+					return
+				}
+				SaveSourceHook(a.db, *target)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			var req struct {
+				Name            string   `json:"name"`
+				Type            string   `json:"type"`
+				Endpoint        string   `json:"endpoint"`
+				AuthType        string   `json:"auth_type"`
+				AuthKey         string   `json:"auth_key"`
+				QueryParam      string   `json:"query_param"`
+				ResultsPath     string   `json:"results_path"`
+				TitleField      string   `json:"title_field"`
+				URLField        string   `json:"url_field"`
+				SnippetField    string   `json:"snippet_field"`
+				ContentField    string   `json:"content_field"`
+				Domains         []string `json:"domains"`
+				TriggerDomains  []string `json:"trigger_domains"`
+				AlwaysActive    bool     `json:"always_active"`
+				MaxRPS          int      `json:"max_rps"`
+				ExposeToLLM     bool     `json:"expose_to_llm"`
+				ToolName        string   `json:"tool_name"`
+				ToolDescription string   `json:"tool_description"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			name := strings.TrimSpace(req.Name)
+			if name == "" {
+				http.Error(w, "name required", http.StatusBadRequest)
+				return
+			}
+			// Preserve an existing encrypted secret when the auth_key field
+			// is left blank on an edit (matches the password-placeholder
+			// convention — re-saving the form shouldn't wipe the secret).
+			authKey := strings.TrimSpace(req.AuthKey)
+			if authKey == "" || authKey == "(configured)" {
+				for _, h := range RegisteredSourceHooks() {
+					if strings.EqualFold(h.Name, name) {
+						authKey = h.AuthKey
+						break
+					}
+				}
+			}
+			h := SourceHook{
+				Name:            name,
+				Type:            SourceHookType(strings.TrimSpace(req.Type)),
+				Endpoint:        strings.TrimSpace(req.Endpoint),
+				AuthType:        SourceHookAuth(strings.TrimSpace(req.AuthType)),
+				AuthKey:         authKey,
+				QueryParam:      strings.TrimSpace(req.QueryParam),
+				ResultsPath:     strings.TrimSpace(req.ResultsPath),
+				TitleField:      strings.TrimSpace(req.TitleField),
+				URLField:        strings.TrimSpace(req.URLField),
+				SnippetField:    strings.TrimSpace(req.SnippetField),
+				ContentField:    strings.TrimSpace(req.ContentField),
+				Domains:         req.Domains,
+				TriggerDomains:  req.TriggerDomains,
+				AlwaysActive:    req.AlwaysActive,
+				MaxRPS:          req.MaxRPS,
+				ExposeToLLM:     req.ExposeToLLM,
+				ToolName:        strings.TrimSpace(req.ToolName),
+				ToolDescription: strings.TrimSpace(req.ToolDescription),
+			}
+			SaveSourceHook(a.db, h)
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			DeleteSourceHook(a.db, name)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// Persistent tools (created via create_temp_tool with persist=true).
 	// GET returns {pending: [...], active: [...]} for the current user.
 	// POST/DELETE mutate per the action query param. Each entry includes

@@ -375,6 +375,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		},
 		"max_plan_steps":    {Type: "integer", Description: "Optional 1-12. Default 5."},
 		"max_worker_rounds": {Type: "integer", Description: "Optional 1-20. Default 5."},
+		"think_budget":      {Type: "integer", Description: "Optional. Max thinking tokens (thinking_budget_tokens) per LLM call for this agent. 0 (default) = inherit the deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER the budget (for snappier agents) — setting it above the admin ceiling has no effect. Only applies when thinking is on."},
 		"gap_check":         {Type: "boolean", Description: "Optional. When true, the runner runs a structural-gap review pass after the plan finishes (research-style quality bar). Default false."},
 		"disable_explicit":  {Type: "boolean", Description: "Optional. When true, turn off the Explicit Memory layer — the always-in-prompt structured facts (store_fact / list_facts / forget_fact + the prompt block). Set for impersonal agents that shouldn't accumulate any always-in-prompt state (KB readers, one-shot transformers, stateless tools). Composes orthogonally with disable_inferred. Default false."},
 		"disable_inferred":  {Type: "boolean", Description: "Optional. When true, turn off the Reference Memory layer — the vector-grown store the LLM writes to via memory_save. memory_save / memory_search / memory_forget stripped from catalog; derived chunks excluded from recall. Use for agents that should answer from authoritative sources only and never grow their own fuzzy recall (KB readers, compliance bots). The per-turn Clean toggle on the chat surface is the same switch scoped to a single turn. Default false."},
@@ -429,6 +430,7 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 		AllowedTools:       stringSliceFromArgs(args, "allowed_tools"),
 		MaxPlanSteps:       intFromArgs(args, "max_plan_steps"),
 		MaxWorkerRounds:    intFromArgs(args, "max_worker_rounds"),
+		ThinkBudget:        intFromArgs(args, "think_budget"),
 		IntakeForm:         intakeFormFromArgs(args),
 		Tools:              agentScopedToolsFromArgs(args),
 		Evals:              evalsFromArgs(args),
@@ -540,6 +542,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["max_worker_rounds"]; ok && v != nil {
 		rec.MaxWorkerRounds = coerceInt(v)
+	}
+	if v, ok := args["think_budget"]; ok && v != nil {
+		rec.ThinkBudget = coerceInt(v)
 	}
 	if v, ok := args["gap_check"].(bool); ok {
 		rec.GapCheck = v

@@ -588,6 +588,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
+		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:      func(name, args string) bool { return true },
 		OnStep:       stepNotice,
 		ChatOptions: []ChatOption{

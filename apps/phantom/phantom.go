@@ -649,46 +649,56 @@ func ensurePhantomWorkspace(cfg PhantomConfig) string {
 // Handles single emojis, variation selectors, skin tone modifiers, ZWJ
 // compound sequences (e.g. 👨‍💻), and flag pairs (two regional indicators).
 func stripEmojis(s string) string {
-	found := 0        // number of base emoji clusters started
-	afterZWJ := false // true when previous char was ZWJ — next emoji continues the sequence
-	inFlag := false   // true after first regional indicator — next one completes the flag
-	return strings.Map(func(r rune) rune {
+	// Rune-slice walk (not strings.Map) because flags need ONE rune of
+	// look-ahead: a regional indicator is only meaningful as a pair. A lone
+	// one renders as a stray boxed letter (🇪→E, 🇷→R), which is how a reply
+	// that ended in a flag — or a flag split across message chunks — leaked a
+	// trailing "E"/"R". strings.Map is forward-only and committed the first
+	// half before knowing a second followed; this drops unpaired indicators.
+	runes := []rune(s)
+	var b strings.Builder
+	found := 0        // number of base emoji clusters kept (cap 1)
+	afterZWJ := false // previous char was ZWJ — next emoji continues the sequence
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
 		// ZWJ: extends the current emoji sequence, never starts a new one.
 		if r == 0x200D {
 			if found > 0 {
 				afterZWJ = true
-				return r
+				b.WriteRune(r)
 			}
-			return -1
+			continue
 		}
 		// Variation selector, keycap combiner: modifies the preceding char.
 		if r == 0xFE0F || r == 0x20E3 {
 			if found > 0 {
-				return r
+				b.WriteRune(r)
 			}
-			return -1
+			continue
 		}
 		// Fitzpatrick skin tone modifiers.
 		if r >= 0x1F3FB && r <= 0x1F3FF {
 			if found > 0 {
-				return r
+				b.WriteRune(r)
 			}
-			return -1
+			continue
 		}
-		// Regional indicators: two consecutive ones form a flag (one cluster).
+		// Regional indicators: keep a COMPLETE pair (a flag) only as the
+		// first cluster; drop any unpaired indicator so it can't surface as
+		// a stray letter.
 		if r >= 0x1F1E0 && r <= 0x1F1FF {
-			if inFlag {
-				inFlag = false
-				return r // second half — part of same cluster
+			paired := i+1 < len(runes) && runes[i+1] >= 0x1F1E0 && runes[i+1] <= 0x1F1FF
+			if paired {
+				if found < 1 {
+					found++
+					b.WriteRune(r)
+					b.WriteRune(runes[i+1])
+				}
+				i++ // consume both halves whether kept or dropped
 			}
-			if found < 1 {
-				found++
-				inFlag = true
-				return r
-			}
-			return -1
+			// lone indicator: drop it
+			continue
 		}
-		inFlag = false
 
 		// Base emoji codepoints.
 		isEmoji := (r >= 0x1F300 && r <= 0x1FAFF) ||
@@ -697,17 +707,19 @@ func stripEmojis(s string) string {
 		if isEmoji {
 			if afterZWJ {
 				afterZWJ = false
-				return r // ZWJ continuation — same cluster
+				b.WriteRune(r) // ZWJ continuation — same cluster
+				continue
 			}
 			if found < 1 {
 				found++
-				return r
+				b.WriteRune(r)
 			}
-			return -1
+			continue
 		}
 		afterZWJ = false
-		return r
-	}, s)
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // buildSystemPrompt combines Personality and Conversation Rules (SystemPrompt)

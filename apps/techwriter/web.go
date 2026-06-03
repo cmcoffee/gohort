@@ -191,6 +191,7 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/merge-source/", T.handleMergeSource)
 	sub.HandleFunc("/api/revisions/", T.handleRevisions)
 	sub.HandleFunc("/api/revision/", T.handleRevision)
+	sub.HandleFunc("/api/reference-sources", T.handleReferenceSources)
 	sub.HandleFunc("/api/suggest-title", T.handleSuggestTitle)
 	sub.HandleFunc("/api/prompt", T.handlePrompt)
 	sub.HandleFunc("/api/preview", T.handlePreview)
@@ -243,8 +244,25 @@ func (T *TechWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	}
 }
 
+// handleReferenceSources feeds the chat-pane reference picker: every
+// registered reference source's items available to this user, grouped. The
+// data is generic (core.ReferenceGroup) — techwriter doesn't know or care
+// which services contributed (servitor systems, collections, …).
+func (T *TechWriterAgent) handleReferenceSources(w http.ResponseWriter, r *http.Request) {
+	userID, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	groups := ReferenceGroups(userID)
+	if groups == nil {
+		groups = []ReferenceGroup{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(groups)
+}
+
 func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
+	userID, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -271,6 +289,11 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"history"`
+		// References are reference-source selections the user picked in the
+		// chat pane ([{kind, item_id}]). Each source's text is fetched via
+		// the core reference registry and injected into the system prompt so
+		// the draft can be grounded in knowledge gathered by other services.
+		References []ReferenceSelection `json:"references"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Message == "" {
 		http.Error(w, "message required", http.StatusBadRequest)
@@ -315,6 +338,17 @@ These rules prevent the output from reading as AI-generated. They should be part
 		// last so it wins when multiple rule blocks conflict.
 		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the article, not asking for it to be rewritten. Do NOT emit an ARTICLE: prefix. Do NOT return a revised or complete article body. Answer questions, explain your thinking, suggest approaches, or describe the change you'd make — all in conversational prose. If the user says \"make the change\" or similar, tell them to click Edit instead of Chat."
 	}
+
+	// Reference context — knowledge gathered by other services (servitor
+	// systems, collections, …) that the user selected in the chat pane.
+	// Injected last so it sits closest to the user message. Persona-edit is
+	// a different flow (editing rules, not drafting) — skip it there.
+	if !req.PersonaEdit && len(req.References) > 0 {
+		if ref := FetchReferences(r.Context(), userID, req.Message, req.References); ref != "" {
+			system_prompt += "\n\n" + ref
+		}
+	}
+
 	today := time.Now().Format("January 2, 2006")
 
 	// Build message list: prior turns (capped) then the current message

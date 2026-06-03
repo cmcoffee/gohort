@@ -381,6 +381,21 @@ type FormPanel struct {
 	// TestLabel — button text for the Test affordance. Defaults to
 	// "Test connectivity" when TestURL is set and this is empty.
 	TestLabel string `json:"test_label,omitempty"`
+
+	// Templates — optional named presets. When set, the form renders a
+	// "Start from template" dropdown above the fields; picking one
+	// applies its Values to the matching fields (via the same per-field
+	// setters the Suggest button uses), giving create-forms a
+	// known-good starting point the user can edit before saving. Keys
+	// in each template's Values are field names.
+	Templates []FormTemplate `json:"templates,omitempty"`
+}
+
+// FormTemplate is one named preset for a FormPanel's "Start from
+// template" dropdown. Values maps field names to prefill values.
+type FormTemplate struct {
+	Label  string         `json:"label"`
+	Values map[string]any `json:"values"`
 }
 
 func (FormPanel) componentType() string { return "form_panel" }
@@ -1515,6 +1530,13 @@ type ArticleEditor struct {
 	MergeSourceURL   string `json:"merge_source_url,omitempty"`   // GET/DELETE {id} → source
 	RevisionsListURL string `json:"revisions_list_url,omitempty"` // GET {id} → array of {id, date}
 	RevisionLoadURL  string `json:"revision_load_url,omitempty"`  // GET {revid} → revision record
+	// ReferenceSourcesURL, when set, renders a generic reference picker in
+	// the chat pane. GET → []core.ReferenceGroup
+	// ({kind, label, items:[{id, name, desc}]}). The selected item rides
+	// with each chat request as `references` ([{kind, item_id}]); the app's
+	// ChatURL handler injects that source's text into the model context.
+	// Domain-agnostic — see core.ReferenceSource / RegisterReferenceSource.
+	ReferenceSourcesURL string `json:"reference_sources_url,omitempty"`
 	// ImageField is the JSON field name on the article record that
 	// holds the header image URL. Default "ImageURL". Set blank to
 	// disable image persistence (the editor still surfaces images

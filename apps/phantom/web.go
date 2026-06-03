@@ -1701,6 +1701,11 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	// matches the orchestrate strip. LLM wasn't reaching for it
 	// reliably. Re-wire here when the dispatch path's
 	// discoverability is figured out.)
+	names := make([]string, 0, len(tools))
+	for _, td := range tools {
+		names = append(names, td.Tool.Name)
+	}
+	Debug("[phantom] conv %s tool catalog (%d): %s", chatID, len(tools), strings.Join(names, ", "))
 	return tools
 }
 
@@ -2330,6 +2335,30 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		// (file too large, missing, etc.) — the LLM may then transcode
 		// or rephrase instead of falsely claiming "I sent the file."
 		reply, attachFailures = applyAttachMarkers(sess, reply)
+		// Same-turn recovery: if an attachment STILL failed (after the
+		// freshest-image fallback in applyAttachMarkers), the draft reply may
+		// falsely claim "here you go" — and the user hasn't seen it yet.
+		// Regenerate honestly in THIS turn rather than only correcting on the
+		// next one, so we never send a delivery claim for something that
+		// didn't go through.
+		if len(attachFailures) > 0 && T.LLM != nil {
+			var fb strings.Builder
+			fb.WriteString("Your draft reply to the user was:\n\n")
+			fb.WriteString(reply)
+			fb.WriteString("\n\nBut these attachment(s) FAILED — the user will NOT receive them:\n")
+			for _, f := range attachFailures {
+				fmt.Fprintf(&fb, "- %s: %s\n", f.Name, f.Reason)
+			}
+			fb.WriteString("\nRewrite your reply so it is HONEST: do not claim or imply you sent those file(s). Briefly note you couldn't attach them and offer an alternative if it's natural. Plain text only — no markdown, no [ATTACH:] markers.")
+			if corrected, cerr := T.LLM.Chat(context.Background(),
+				[]Message{{Role: "user", Content: fb.String()}},
+				WithCaller("phantom/attach-recovery"), WithThink(false)); cerr == nil &&
+				corrected != nil && strings.TrimSpace(corrected.Content) != "" {
+				reply = strings.TrimSpace(stripEmojis(corrected.Content))
+				attachFailures = nil // handled this turn; skip the next-turn feedback
+				Log("[phantom] regenerated reply same-turn after attach failure(s) for %s", handle)
+			}
+		}
 		// Defensive cleanup of residual literal-prose mimics — when a
 		// model copies workspace(action="attach", ...) out of a tool
 		// description verbatim into its reply, strip it. The real tool

@@ -84,7 +84,14 @@ func (t *EmailTool) Run(args map[string]any) (string, error) {
 
 	err := smtp.SendMail(server, auth, from, []string{to}, []byte(msg))
 	if err != nil {
-		return "", fmt.Errorf("failed to send email: %w", err)
+		if cfg.Server == "" {
+			// No SMTP server configured — we fell back to localhost:25 and
+			// nothing answered. Make this explicit so the model relays a clear
+			// "email isn't set up on the server" instead of a cryptic dial
+			// error (which reads to the user as "the tool doesn't work").
+			return "", fmt.Errorf("email is not configured on this server — an admin must set the SMTP mail config (server, from address, credentials), or run a local mail server on localhost:25; underlying error: %w", err)
+		}
+		return "", fmt.Errorf("failed to send email via %s: %w", server, err)
 	}
 
 	return fmt.Sprintf("Email sent to %s.", to), nil

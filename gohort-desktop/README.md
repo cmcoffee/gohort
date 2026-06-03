@@ -11,7 +11,7 @@ targets):
 - **Gohort-Bridge.app** — the bridge. An always-on **menu-bar** daemon
   (`LSUIElement`, no dock icon) that owns every OS-level permission and
   capability. It hosts the WebSocket tool bridge to the gohort server, the
-  local tool catalog (filesystem, screenshot, contacts), an MCP host, and —
+  local tool catalog (filesystem, contacts), an MCP host, and —
   on macOS — the iMessage relay. Launches the viewer via its tray menu.
 
 The split exists because Wails and the system-tray library can't share one
@@ -23,7 +23,7 @@ needs). Two bundles with distinct bundle IDs also dodge the single-instance
 launchd / Run-key ── Gohort-Bridge.app (cmd/gohort-bridge; always on)
                        ├─ menu-bar icon (fyne.io/systray)
                        ├─ WS tool bridge → gohort  /api/desktop/ws   (X-API-Key)
-                       ├─ local tools: filesystem.* , screenshot.* , contacts.lookup
+                       ├─ local tools: filesystem.* , contacts.lookup
                        ├─ MCP host (configured stdio MCP servers → tools)
                        ├─ iMessage relay (macOS): chat.db → /phantom/api/hook,
                        │                          outbox poll → /phantom/api/poll
@@ -56,8 +56,7 @@ gohort-desktop/
 ├── tools/filesystem/     # filesystem.* tools (read_file, list_dir, query suite, write_file)
 ├── macos/                # darwin-only capabilities (//go:build darwin)
 │   ├── imsg/             # iMessage relay: chat.db watch + AppleScript send
-│   ├── contacts/         # AddressBook lookup → contacts.lookup core.Tool
-│   └── screenshot/       # screencapture + sips downscale → screenshot.capture
+│   └── contacts/         # AddressBook lookup → contacts.lookup core.Tool
 ├── mcp/                  # MCP host: stdio JSON-RPC client, adapts MCP tools → core.Tool
 ├── wsbridge/             # WebSocket client to gohort (X-API-Key, Approver iface)
 ├── bridge/               # the daemon: systray, services, consent, per-OS install
@@ -101,7 +100,7 @@ Local capabilities register against the shared `core.Tool` registry and are
 announced to the server over the WS bridge, where they're dispatched through
 the agent's allowlist like any server-side tool. Filesystem reads/writes go
 through per-folder consent (read and write are separate, stronger grants);
-a tool that returns a `data:image/...;base64,...` URI (screenshot, MCP image
+a tool that returns a `data:image/...;base64,...` URI (e.g. MCP image
 tools) is delivered to the LLM as a vision attachment automatically.
 
 ## Menu (viewer, "Account")

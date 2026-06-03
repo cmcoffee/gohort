@@ -10,8 +10,7 @@ import (
 
 	// macOS-only tools — imported here so they register into the catalog
 	// and never link into a non-Mac build.
-	_ "github.com/cmcoffee/gohort/gohort-desktop/macos/contacts"   // contacts.lookup
-	_ "github.com/cmcoffee/gohort/gohort-desktop/macos/screenshot" // screenshot.capture
+	_ "github.com/cmcoffee/gohort/gohort-desktop/macos/contacts" // contacts.lookup
 )
 
 // startNativeServices launches the iMessage relay once the sidecar has

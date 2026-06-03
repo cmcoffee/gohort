@@ -3833,7 +3833,7 @@ const orchestrateWebAssets = `<style>
         if (!window.uiRegisterBubbleAction) { setTimeout(registerExportToTechwriter, 50); return; }
         window.uiRegisterBubbleAction({
           role: 'assistant',
-          label: 'Techwriter',
+          label: '↗ Techwriter',
           title: 'Export this response to Techwriter as a new article',
           onclick: function(ctx) {
             var body = ctx.getText() || '';

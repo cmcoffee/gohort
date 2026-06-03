@@ -1,8 +1,11 @@
 package phantom
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/tools/workspace"
@@ -62,7 +65,13 @@ func applyAttachMarkers(sess *ToolSession, reply string) (string, []attachFailur
 		if name == "" {
 			continue
 		}
-		if summary, err := workspace.AttachWorkspaceFile(sess, name, "", cleanup); err != nil {
+		// Tolerate the model inventing a filename (it often emits a semantic
+		// name like "pride-celebration.jpg" instead of the find-<id>.jpg path
+		// find_image actually returned): if the named file is missing, fall
+		// back to the freshest workspace image so the picture delivers instead
+		// of silently vanishing. Display name stays the model's original.
+		target := resolveAttachName(sess, name)
+		if summary, err := workspace.AttachWorkspaceFile(sess, target, name, cleanup); err != nil {
 			Log("[phantom] attach marker %q failed: %v", name, err)
 			failures = append(failures, attachFailure{Name: name, Reason: err.Error()})
 		} else {
@@ -76,6 +85,58 @@ func applyAttachMarkers(sess *ToolSession, reply string) (string, []attachFailur
 	// doesn't end in a void.
 	clean := strings.TrimSpace(blankRunRe.ReplaceAllString(b.String(), "\n\n"))
 	return clean, failures
+}
+
+// resolveAttachName tolerates the model inventing a filename. If `name`
+// exists in the session workspace it's returned unchanged; otherwise, when a
+// fresh image was saved there recently (find_image / generate_image write
+// find-<id>.jpg, but the model frequently emits a semantic name), the
+// most-recently-modified image is returned so the attach still delivers.
+// Falls back to the original name (which then fails normally + surfaces to
+// the LLM) when there's no plausible recent image.
+func resolveAttachName(sess *ToolSession, name string) string {
+	ws, err := EnsureSessionWorkspace(sess)
+	if err != nil {
+		return name
+	}
+	if abs, err := ResolveWorkspacePath(ws, name); err == nil {
+		if _, err := os.Stat(abs); err == nil {
+			return name // the named file exists — use it as-is
+		}
+	}
+	entries, err := os.ReadDir(ws)
+	if err != nil {
+		return name
+	}
+	var best string
+	var bestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || !isImageFilename(e.Name()) {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestMod) {
+			best, bestMod = e.Name(), info.ModTime()
+		}
+	}
+	// Only substitute a genuinely fresh image — an old leftover isn't what
+	// the model meant.
+	if best != "" && time.Since(bestMod) < 10*time.Minute {
+		Log("[phantom] attach %q not found — substituting freshest workspace image %q", name, best)
+		return best
+	}
+	return name
+}
+
+func isImageFilename(n string) bool {
+	switch strings.ToLower(filepath.Ext(n)) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	}
+	return false
 }
 
 // blankRunRe collapses three-or-more consecutive newlines (left over

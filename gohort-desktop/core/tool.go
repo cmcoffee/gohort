@@ -36,7 +36,7 @@ type ToolHandler func(args map[string]any) (string, error)
 //
 // Name is the LLM-facing identifier; should be snake_case and
 // prefixed with the category (e.g. "filesystem.read_local_file",
-// "apps.open", "screenshot.capture") so the registry stays scannable
+// "apps.open", "contacts.lookup") so the registry stays scannable
 // as the catalog grows.
 //
 // Desc is what the LLM reads when deciding whether to call this
