@@ -161,6 +161,18 @@ func (c *wsClient) connectAndServe(serverURL string) error {
 	// Authenticate with the unified API key. Without one the server
 	// returns 401; back off and retry once the daemon is configured.
 	apiKey := c.cfg.APIKey()
+	// Diagnostic: surface what key the bridge resolved, from where, and
+	// which config dir it read — so a 401 traces to "no key / wrong key /
+	// dir mismatch" rather than guesswork. Key is masked.
+	keySrc := "settings"
+	if core.ReadAPIKeySidecar() != "" {
+		keySrc = "sidecar"
+	}
+	masked := "(empty)"
+	if len(apiKey) >= 6 {
+		masked = apiKey[:6] + "…"
+	}
+	core.Log("[wsbridge] auth: key_src=%s key=%s key_len=%d configdir=%s", keySrc, masked, len(apiKey), core.ConfigDir())
 	if apiKey == "" {
 		return errWSNotAuthenticated
 	}

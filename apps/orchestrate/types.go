@@ -31,6 +31,13 @@ type AgentRecord struct {
 	Owner       string `json:"owner"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// WhenToUse is the LLM-facing routing cue, auto-generated from
+	// Description on save (see core.GenerateWhenToUse). Description sells
+	// the agent to a human; this tells the orchestrator the concrete
+	// situations that should trigger a delegation. Shown UN-truncated in
+	// the "Available agents" block, where Description is capped at 140
+	// chars. Regenerated whenever Description changes.
+	WhenToUse string `json:"when_to_use,omitempty"`
 
 	// OrchestratorPrompt drives the thinking LLM that talks to the user,
 	// decomposes work into plan steps, AND briefs the worker per step
@@ -133,6 +140,13 @@ type AgentRecord struct {
 	// enough. Off by default — runaway round usage is the bigger
 	// risk for most agents.
 	AllowExplorer bool `json:"allow_explorer,omitempty"`
+
+	// ExplorerHardCap overrides the default explorer ceiling (50) for
+	// this agent. Only meaningful with AllowExplorer. Builder runs
+	// higher (80) because authoring against an unfamiliar API is
+	// exploration-heavy. 0 = inherit the default. See
+	// resolveExplorerHardCap.
+	ExplorerHardCap int `json:"explorer_hard_cap,omitempty"`
 
 	// (DisableKnowledge removed — Knowledge is always available; the
 	// layer is read-only and harmless when the corpus is empty.
@@ -439,15 +453,10 @@ type ChatSession struct {
 	// updating as each step's tool fires.
 	BuildPlan *BuildPlanState `json:"BuildPlan,omitempty"`
 
-	// ActiveSkillIDs holds the skill IDs the LLM has activated via
-	// activate_skill in this session. Sticky-across-turns: each new
-	// chatTurn rehydrates skillsActive from this list, so the skill's
-	// instructions stay injected into the system prompt, its
-	// AllowedTools stay in the catalog, and its AttachedCollections
-	// stay merged into RAG until the LLM explicitly calls
-	// deactivate_skill(name). Stored as IDs (not full records) so a
-	// later edit to the skill picks up on the next turn — the SkillRecord
-	// is re-loaded each turn from the user's skills store.
+	// ActiveSkillIDs is VESTIGIAL — skills are per-turn now (the LLM
+	// re-activates each turn it stays in-domain; nothing carries across
+	// turns), so this is no longer read or written. Kept only so older
+	// stored sessions that have the JSON deserialize cleanly.
 	ActiveSkillIDs []string `json:"ActiveSkillIDs,omitempty"`
 }
 

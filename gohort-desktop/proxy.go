@@ -255,7 +255,12 @@ func (gp *gohort_proxy) proxy_for(server_url string) *httputil.ReverseProxy {
 		// (mirrors the Cookie handling above; the static X-Forwarded-For-
 		// Desktop marker above is spoofable and NOT used for this).
 		req.Header.Del("X-Gohort-Desktop-Client-Key")
-		if k := core.ReadBridgeConfig().APIKey; k != "" {
+		// Use the shared resolver (sidecar-first) — the SAME key the daemon
+		// authenticates with, so the server's DesktopClientUser validates it.
+		// Reading ReadBridgeConfig().APIKey directly here was the bug that
+		// withheld from_client.* tools: the viewer stamped the stale manual
+		// key while the auto-provisioned sidecar key was the live one.
+		if k := core.BridgeAPIKey(); k != "" {
 			req.Header.Set("X-Gohort-Desktop-Client-Key", k)
 		}
 	}
@@ -513,6 +518,17 @@ const popup_shim_script = `<script>(function(){` +
 	`else{msg=document.createElement('div');msg.textContent=opts.msg||'';}` +
 	`msg.style.marginBottom='18px';msg.style.lineHeight='1.5';` +
 	`msg.style.whiteSpace=opts._customBody?'normal':'pre-wrap';msg.style.wordBreak='break-word';` +
+	// Prompt kind: a single-line text input between the message and the
+	// buttons. OK resolves to the input value, Cancel/Escape to null —
+	// matching window.prompt() semantics so uiPrompt callers are portable.
+	`var inp=null;` +
+	`if(opts.kind==='prompt'){` +
+	`inp=document.createElement('input');inp.type='text';inp.value=(opts.value!=null?opts.value:'');` +
+	`inp.style.width='100%';inp.style.boxSizing='border-box';inp.style.marginBottom='14px';` +
+	`inp.style.padding='7px 10px';inp.style.borderRadius='6px';` +
+	`inp.style.border='1px solid #30363d';inp.style.background='#0d1117';inp.style.color='#e6edf3';` +
+	`inp.style.font='13px -apple-system,system-ui,sans-serif';` +
+	`}` +
 	`var actions=document.createElement('div');` +
 	`actions.style.display='flex';actions.style.justifyContent='flex-end';actions.style.gap='8px';` +
 	`function done(v){` +
@@ -531,31 +547,45 @@ const popup_shim_script = `<script>(function(){` +
 	`b.onclick=function(){done(value);};` +
 	`return b;` +
 	`}` +
-	`if(opts.kind==='confirm'){` +
+	// _buttons: caller supplies its own button set [{label,primary,value}]
+	// for choices richer than yes/no (e.g. the approval modal's
+	// Deny / Allow once / Always allow). Resolves to the clicked value.
+	`if(opts._buttons&&opts._buttons.length){` +
+	`opts._buttons.forEach(function(bspec){actions.appendChild(mk_btn(bspec.label,!!bspec.primary,bspec.value));});` +
+	`}else if(opts.kind==='confirm'){` +
 	`actions.appendChild(mk_btn('Cancel',false,false));` +
 	`actions.appendChild(mk_btn(opts.ok||'OK',true,true));` +
+	`}else if(opts.kind==='prompt'){` +
+	`actions.appendChild(mk_btn('Cancel',false,null));` +
+	`var okb=mk_btn(opts.ok||'OK',true,null);` +
+	`okb.onclick=function(){done(inp?inp.value:null);};` +
+	`actions.appendChild(okb);` +
 	`}else{` +
 	`actions.appendChild(mk_btn('OK',true,undefined));` +
 	`}` +
-	`card.appendChild(msg);card.appendChild(actions);` +
+	`card.appendChild(msg);if(inp)card.appendChild(inp);card.appendChild(actions);` +
 	`overlay.appendChild(card);` +
 	`function on_key(ev){` +
-	`if(ev.key==='Escape'){ev.preventDefault();done(opts.kind==='confirm'?false:undefined);}` +
-	`else if(ev.key==='Enter'){ev.preventDefault();done(opts.kind==='confirm'?true:undefined);}` +
+	`if(opts._buttons&&opts._buttons.length){` +
+	`if(ev.key==='Escape'){ev.preventDefault();done(opts._escapeValue);}` +
+	`return;` +
+	`}` +
+	`if(ev.key==='Escape'){ev.preventDefault();done(opts.kind==='confirm'?false:(opts.kind==='prompt'?null:undefined));}` +
+	`else if(ev.key==='Enter'){ev.preventDefault();done(opts.kind==='confirm'?true:(opts.kind==='prompt'?(inp?inp.value:null):undefined));}` +
 	`}` +
 	`document.addEventListener('keydown',on_key,true);` +
 	`(document.body||document.documentElement).appendChild(overlay);` +
-	`var btns=actions.querySelectorAll('button');` +
-	`if(btns.length)btns[btns.length-1].focus();` +
+	`if(inp){inp.focus();try{inp.select();}catch(e){}}else{var btns=actions.querySelectorAll('button');if(btns.length)btns[btns.length-1].focus();}` +
 	`console.log('[gohort-desktop] modal open:',opts.kind,opts.msg);` +
 	`}catch(err){` +
 	`console.error('[gohort-desktop] modal error:',err);` +
-	`resolve(opts.kind==='confirm'?true:undefined);` +
+	`resolve(opts.kind==='confirm'?true:(opts.kind==='prompt'?null:undefined));` +
 	`}` +
 	`});` +
 	`}` +
 	`window.__uiConfirmImpl=function(msg){return __desktop_modal_open({kind:'confirm',msg:msg});};` +
 	`window.__uiAlertImpl=function(msg){return __desktop_modal_open({kind:'alert',msg:msg});};` +
+	`window.__uiPromptImpl=function(msg,def){return __desktop_modal_open({kind:'prompt',msg:msg,value:def});};` +
 	// --- clipboard implementation ---
 	// WKWebView restricts navigator.clipboard.writeText at non-https /
 	// non-user-gesture contexts; the loopback proxy origin trips both,
@@ -601,9 +631,16 @@ const popup_shim_script = `<script>(function(){` +
 	`argsBox.style.cssText='font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#0d1117;padding:8px 10px;border-radius:6px;margin:0;border:1px solid #30363d;color:#c9d1d9;max-height:200px;overflow:auto;white-space:pre-wrap;word-break:break-word;';` +
 	`argsBox.textContent=__desktop_pretty(req.args||{});` +
 	`msg.appendChild(argsBox);` +
-	`__desktop_modal_open({kind:'confirm',msg:'',ok:'Allow',_customBody:msg}).then(function(allow){` +
+	`var toolLabel=(req.name||'this tool');` +
+	`__desktop_modal_open({_customBody:msg,_escapeValue:'deny',_buttons:[` +
+	`{label:'Deny',primary:false,value:'deny'},` +
+	`{label:'Allow once',primary:false,value:'once'},` +
+	`{label:'Always allow '+toolLabel,primary:true,value:'always'}` +
+	`]}).then(function(choice){` +
+	`var allow=(choice==='once'||choice==='always');` +
+	`var always=(choice==='always');` +
 	`if(window.go&&window.go.main&&window.go.main.App&&window.go.main.App.ApproveInvoke){` +
-	`window.go.main.App.ApproveInvoke(req.id||'',!!allow);` +
+	`window.go.main.App.ApproveInvoke(req.id||'',!!allow,!!always);` +
 	`}` +
 	`});` +
 	`}` +
@@ -787,6 +824,92 @@ const popup_shim_script = `<script>(function(){` +
 	`}` +
 	`if(window.runtime&&window.runtime.EventsOn){` +
 	`window.runtime.EventsOn('show-allowed-folders',function(){__desktop_folders_open();});` +
+	`}` +
+	// --- always-allowed tools manager ---
+	// Lists the per-tool "Always allow" grants with a Revoke button per
+	// row. Driven from Account → Manage Tool Approvals via WindowExecJS
+	// (same as Show Logs — proxy pages lack the Wails runtime, so the
+	// menu injects the current list directly). When window.go IS present
+	// it refreshes/revokes live through the App bindings.
+	`function __desktop_tools_open(initial){` +
+	`var prev=document.getElementById('__desktop_tools');` +
+	`if(prev){prev.remove();}` +
+	`var overlay=document.createElement('div');` +
+	`overlay.id='__desktop_tools';` +
+	`overlay.style.position='fixed';overlay.style.top='0';overlay.style.left='0';` +
+	`overlay.style.right='0';overlay.style.bottom='0';overlay.style.zIndex='2147483645';` +
+	`overlay.style.background='rgba(0,0,0,0.7)';` +
+	`overlay.style.display='flex';overlay.style.alignItems='center';overlay.style.justifyContent='center';` +
+	`overlay.style.font='13px -apple-system,system-ui,sans-serif';` +
+	`var card=document.createElement('div');` +
+	`card.style.width='min(640px,92vw)';card.style.maxHeight='min(70vh,600px)';` +
+	`card.style.background='#0d1117';card.style.color='#c9d1d9';` +
+	`card.style.border='1px solid #30363d';card.style.borderRadius='10px';` +
+	`card.style.boxShadow='0 12px 40px rgba(0,0,0,0.6)';` +
+	`card.style.display='flex';card.style.flexDirection='column';overlay.appendChild(card);` +
+	`var head=document.createElement('div');` +
+	`head.style.padding='10px 14px';head.style.borderBottom='1px solid #30363d';` +
+	`head.style.display='flex';head.style.alignItems='center';head.style.gap='8px';` +
+	`var title=document.createElement('div');` +
+	`title.textContent='Always-Allowed Tools — gohort-desktop';title.style.flex='1';title.style.fontWeight='600';` +
+	`head.appendChild(title);` +
+	`var closeBtn=document.createElement('button');` +
+	`closeBtn.textContent='Close';` +
+	`closeBtn.style.cssText='padding:5px 12px;border-radius:6px;cursor:pointer;font:12px sans-serif;border:1px solid #3a6ea5;background:#3a6ea5;color:#fff;';` +
+	`head.appendChild(closeBtn);` +
+	`card.appendChild(head);` +
+	`var help=document.createElement('div');` +
+	`help.textContent='Tools you chose “Always allow” on. They run without prompting. Revoke one and it will ask again on its next call.';` +
+	`help.style.cssText='padding:10px 14px;border-bottom:1px solid #30363d;color:#8b949e;font-size:12px;line-height:1.45;';` +
+	`card.appendChild(help);` +
+	`var listEl=document.createElement('div');` +
+	`listEl.style.cssText='flex:1;overflow:auto;padding:6px 8px;';` +
+	`card.appendChild(listEl);` +
+	`function render(tools){` +
+	`listEl.innerHTML='';` +
+	`if(!tools||tools.length===0){` +
+	`var empty=document.createElement('div');` +
+	`empty.textContent='No always-allowed tools. Choose “Always allow” on an approval prompt to add one.';` +
+	`empty.style.cssText='padding:18px 14px;color:#8b949e;text-align:center;';` +
+	`listEl.appendChild(empty);return;` +
+	`}` +
+	`tools.forEach(function(name){` +
+	`var row=document.createElement('div');` +
+	`row.style.cssText='display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid #21262d;';` +
+	`var nameEl=document.createElement('div');` +
+	`nameEl.textContent=name;nameEl.style.cssText='flex:1;font:12px ui-monospace,Menlo,monospace;word-break:break-all;color:#79c0ff;';` +
+	`row.appendChild(nameEl);` +
+	`var rm=document.createElement('button');` +
+	`rm.textContent='Revoke';` +
+	`rm.style.cssText='padding:4px 10px;border-radius:5px;cursor:pointer;font:11px sans-serif;border:1px solid #4d2929;background:#3a1f1f;color:#ff9b9b;';` +
+	`rm.onclick=function(){` +
+	`if(!window.go||!window.go.main||!window.go.main.App||!window.go.main.App.RemoveAllowedTool){` +
+	`row.remove();return;` +
+	`}` +
+	`rm.disabled=true;rm.textContent='Revoking…';` +
+	`window.go.main.App.RemoveAllowedTool(name).then(function(res){` +
+	`if(res&&!res.ok){rm.disabled=false;rm.textContent='Revoke';return;}` +
+	`refresh();` +
+	`});` +
+	`};` +
+	`row.appendChild(rm);` +
+	`listEl.appendChild(row);` +
+	`});` +
+	`}` +
+	`function refresh(){` +
+	`if(window.go&&window.go.main&&window.go.main.App&&window.go.main.App.GetAllowedTools){` +
+	`window.go.main.App.GetAllowedTools().then(render);` +
+	`}` +
+	`}` +
+	`function teardown(){overlay.remove();document.removeEventListener('keydown',onKey,true);}` +
+	`function onKey(e){if(e.key==='Escape'){e.preventDefault();teardown();}}` +
+	`document.addEventListener('keydown',onKey,true);` +
+	`closeBtn.onclick=teardown;` +
+	`(document.body||document.documentElement).appendChild(overlay);` +
+	`render(initial||[]);refresh();` +
+	`}` +
+	`if(window.runtime&&window.runtime.EventsOn){` +
+	`window.runtime.EventsOn('show-tool-approvals',function(list){__desktop_tools_open(list||[]);});` +
 	`}` +
 	`console.log('[gohort-desktop] uiConfirm/uiAlert modal impl installed');` +
 	// Fallback for any legacy sync confirm()/alert() callers that

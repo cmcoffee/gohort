@@ -22,6 +22,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -94,6 +95,12 @@ type Collection struct {
 	Owner       string `json:"owner"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// WhenToUse is the LLM-facing routing cue, auto-generated from
+	// Description on save (see GenerateWhenToUse): it tells an LLM the
+	// concrete situations where this collection is the right one to
+	// search or attach. Surfaced in the collections(action="list") output
+	// the Builder reads. Regenerated whenever Description changes.
+	WhenToUse string `json:"when_to_use,omitempty"`
 	// Scope controls who can attach this collection. Empty or
 	// "user" = per-user (Owner has exclusive access); "deployment"
 	// = deployment-wide (any user's agent can attach). Deployment
@@ -238,6 +245,110 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 		hits = MergeHitsByScore(hits, search(RootDB, rootSources), k)
 	}
 	return hits
+}
+
+// FetchCollectionDoc assembles the full text of one document (by its
+// report/doc id) from the given collections, scoped exactly like
+// SearchCollections (user-scoped collections live in base, deployment ones
+// in RootDB). Returns "" when the doc isn't in those collections. Orders
+// chunks by section and caps at maxChars (default 10000 when <= 0). This is
+// the fetch counterpart to SearchCollections — apps use it to back a
+// "fetch full doc by id" tool scoped to a collection set.
+func FetchCollectionDoc(base Database, user string, collectionIDs []string, docID string, maxChars int) string {
+	docID = strings.TrimSpace(docID)
+	if docID == "" || len(collectionIDs) == 0 {
+		return ""
+	}
+	metaDB := UserDB(base, user)
+	baseSources := make(map[string]bool, len(collectionIDs))
+	rootSources := make(map[string]bool, len(collectionIDs))
+	for _, cid := range collectionIDs {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
+		}
+		c, ok := LoadCollection(metaDB, user, cid)
+		if !ok {
+			continue
+		}
+		src := CollectionSource(c.ID)
+		if IsDeploymentScope(c) {
+			rootSources[src] = true
+		} else {
+			baseSources[src] = true
+		}
+	}
+	collect := func(db Database, sources map[string]bool) []EmbeddedChunk {
+		if db == nil || len(sources) == 0 {
+			return nil
+		}
+		var out []EmbeddedChunk
+		for _, key := range db.Keys(EmbeddedChunks) {
+			var c EmbeddedChunk
+			if !db.Get(EmbeddedChunks, key, &c) {
+				continue
+			}
+			if c.ReportID != docID || !sources[c.Source] {
+				continue
+			}
+			out = append(out, c)
+		}
+		return out
+	}
+	chunks := collect(base, baseSources)
+	chunks = append(chunks, collect(RootDB, rootSources)...)
+	return AssembleChunkDoc(chunks, maxChars)
+}
+
+// AssembleChunkDoc reconstructs a readable document from its embedded
+// chunks: ordered by section, titled (prefers the stamped Title, else the
+// first section heading), section headers de-duplicated, non-authoritative
+// Kind tags inlined, and truncated to maxChars (default 10000) at a
+// paragraph boundary. Returns "" for no chunks.
+func AssembleChunkDoc(chunks []EmbeddedChunk, maxChars int) string {
+	if len(chunks) == 0 {
+		return ""
+	}
+	if maxChars <= 0 {
+		maxChars = 10000
+	}
+	sort.Slice(chunks, func(i, j int) bool {
+		if chunks[i].Section != chunks[j].Section {
+			return chunks[i].Section < chunks[j].Section
+		}
+		return chunks[i].ID < chunks[j].ID
+	})
+	docName := strings.TrimSpace(chunks[0].Title)
+	if docName == "" {
+		docName = strings.TrimSpace(strings.TrimPrefix(chunks[0].Section, "## "))
+	}
+	if docName == "" {
+		docName = "(unnamed document)"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", docName)
+	lastSection := ""
+	for _, c := range chunks {
+		section := strings.TrimSpace(strings.TrimPrefix(c.Section, "## "))
+		if section != lastSection && section != "" && section != docName {
+			fmt.Fprintf(&b, "## %s\n\n", section)
+			lastSection = section
+		}
+		if c.Kind != "" {
+			fmt.Fprintf(&b, "*[%s]* ", c.Kind)
+		}
+		b.WriteString(strings.TrimSpace(c.Text))
+		b.WriteString("\n\n")
+	}
+	out := strings.TrimSpace(b.String())
+	if len(out) > maxChars {
+		truncated := out[:maxChars]
+		if idx := strings.LastIndex(truncated, "\n\n"); idx > maxChars/2 {
+			truncated = truncated[:idx]
+		}
+		out = truncated + fmt.Sprintf("\n\n[…truncated; full document is %d chars. Search with a tighter query to find the section you need.]", len(out))
+	}
+	return out
 }
 
 // LoadCollection reads one collection by ID. Looks in the user's

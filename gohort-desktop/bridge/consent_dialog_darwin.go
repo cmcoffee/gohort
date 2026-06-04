@@ -30,6 +30,28 @@ static int showConsent(const char *title, const char *detail) {
     });
     return allowed;
 }
+
+// showConsent3 is the 3-way variant for tool approval: Deny / Allow once /
+// Always allow. Returns 0 (deny), 1 (allow once), 2 (always allow). Same
+// main-queue dispatch as showConsent.
+static int showConsent3(const char *title, const char *detail) {
+    __block int choice = 0;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:[NSString stringWithUTF8String:title]];
+        [alert setInformativeText:[NSString stringWithUTF8String:detail]];
+        [alert setAlertStyle:NSAlertStyleWarning];
+        [alert addButtonWithTitle:@"Deny"];         // first  = default
+        [alert addButtonWithTitle:@"Allow once"];   // second
+        [alert addButtonWithTitle:@"Always allow"]; // third
+        [NSApp activateIgnoringOtherApps:YES];
+        NSModalResponse resp = [alert runModal];
+        if (resp == NSAlertSecondButtonReturn) choice = 1;
+        else if (resp == NSAlertThirdButtonReturn) choice = 2;
+        else choice = 0;
+    });
+    return choice;
+}
 */
 import "C"
 
@@ -46,4 +68,14 @@ func nativeConfirm(title, detail string) bool {
 	cd := C.CString(detail)
 	defer C.free(unsafe.Pointer(cd))
 	return C.showConsent(ct, cd) == 1
+}
+
+// nativeApprove shows the 3-way tool-approval alert (Deny / Allow once /
+// Always allow). Returns 0=deny, 1=allow once, 2=always allow.
+func nativeApprove(title, detail string) int {
+	ct := C.CString(title)
+	defer C.free(unsafe.Pointer(ct))
+	cd := C.CString(detail)
+	defer C.free(unsafe.Pointer(cd))
+	return int(C.showConsent3(ct, cd))
 }

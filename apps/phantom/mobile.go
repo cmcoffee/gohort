@@ -223,6 +223,20 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							LabelField:    "name",
 							DescField:     "description",
 						}),
+						// Allowed Skills — which of the operator's skills the
+						// chat's LLM may pull in via activate_skill. Empty list
+						// hides the activate/deactivate tools + skills block for
+						// this chat. Options come from the operator's skill pool.
+						compactExpand("🎓", ui.ChipPicker{
+							OptionsSource: "/phantom/api/available-skills",
+							RecordSource:  "/phantom/api/conversation/{chat_id}?record=1",
+							Field:         "allowed_skills",
+							PostTo:        "/phantom/api/conversation/{chat_id}",
+							Method:        "PATCH",
+							NameField:     "id",
+							LabelField:    "name",
+							DescField:     "description",
+						}),
 						// Members + aliases editor — for group chats, plus
 						// conversation-level alias handles (phone/email that
 						// route to this same chat). Saves on blur via PATCH.

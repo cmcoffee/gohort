@@ -31,8 +31,13 @@ const (
 	// modal, short enough that a forgotten tab doesn't tie up the
 	// agent loop forever.
 	approvalDeadline = 60 * time.Second
-	// auto-approve setting key
+	// auto-approve setting key — the master "trust everything" toggle.
 	settingAutoApprove = "bridge_auto_approve"
+	// per-tool allow-list key — tools the user chose "Always allow" on.
+	// A []string of tool names; Request short-circuits to allow for any
+	// name in this list (the Claude-Desktop "remember this tool" model),
+	// independent of the master auto-approve toggle.
+	settingAllowedTools = "bridge_allowed_tools"
 )
 
 // ApprovalRequest is what the webview receives when a tool call
@@ -48,13 +53,21 @@ type ApprovalRequest struct {
 // invocations on the WS read pump's per-call goroutine.
 type approvalStore struct {
 	mu       sync.Mutex
-	pending  map[string]chan bool
+	pending  map[string]pendingApproval
 	settings *core.Settings
+}
+
+// pendingApproval is one in-flight request: the channel the waiting
+// Request goroutine reads, plus the tool name so Resolve can persist
+// an "Always allow <name>" decision without the caller re-passing it.
+type pendingApproval struct {
+	ch   chan bool
+	name string
 }
 
 func newApprovalStore(settings *core.Settings) *approvalStore {
 	return &approvalStore{
-		pending:  map[string]chan bool{},
+		pending:  map[string]pendingApproval{},
 		settings: settings,
 	}
 }
@@ -63,21 +76,68 @@ func newApprovalStore(settings *core.Settings) *approvalStore {
 // true, Request short-circuits to allow without notifying the
 // webview — the user opted out of the consent prompt entirely.
 func (s *approvalStore) AutoApprove() bool {
-	if s.settings == nil {
-		return false
-	}
-	var v bool
-	s.settings.GetBool(settingAutoApprove, &v)
-	return v
+	// Sidecar-backed so the DAEMON's approver (separate process) reads the
+	// same toggle — the viewer's settings store was invisible to it.
+	return core.ReadBridgeConfig().AutoApprove
 }
 
 // SetAutoApprove persists the toggle. Called from the Wails bridge
 // (App.SetAutoApprove) so the in-page settings UI can flip it.
 func (s *approvalStore) SetAutoApprove(on bool) error {
-	if s.settings == nil {
+	bc := core.ReadBridgeConfig()
+	bc.AutoApprove = on
+	return core.WriteBridgeConfig(bc)
+}
+
+// AllowedTools returns the per-tool always-allow list. These are the
+// tools the user clicked "Always allow" on; Request approves them
+// silently regardless of the master auto-approve toggle.
+func (s *approvalStore) AllowedTools() []string {
+	return core.ReadBridgeConfig().AllowedTools
+}
+
+// IsToolAllowed reports whether name is on the per-tool allow-list.
+func (s *approvalStore) IsToolAllowed(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, t := range s.AllowedTools() {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowTool adds name to the per-tool allow-list (no-op if already
+// present). This is the persistence half of the modal's "Always
+// allow <tool>" button.
+func (s *approvalStore) AllowTool(name string) error {
+	if name == "" {
 		return nil
 	}
-	return s.settings.SetBool(settingAutoApprove, on)
+	bc := core.ReadBridgeConfig()
+	for _, t := range bc.AllowedTools {
+		if t == name {
+			return nil
+		}
+	}
+	bc.AllowedTools = append(bc.AllowedTools, name)
+	return core.WriteBridgeConfig(bc)
+}
+
+// RemoveAllowedTool drops name from the allow-list — the revoke path
+// behind the Preferences manager. No-op if not present.
+func (s *approvalStore) RemoveAllowedTool(name string) error {
+	bc := core.ReadBridgeConfig()
+	next := make([]string, 0, len(bc.AllowedTools))
+	for _, t := range bc.AllowedTools {
+		if t != name {
+			next = append(next, t)
+		}
+	}
+	bc.AllowedTools = next
+	return core.WriteBridgeConfig(bc)
 }
 
 // Request registers a pending approval and waits for the verdict.
@@ -91,7 +151,10 @@ func (s *approvalStore) SetAutoApprove(on bool) error {
 // keeps approvalStore independent of the Wails runtime imports —
 // easier to test, cleaner separation.
 func (s *approvalStore) Request(req ApprovalRequest, deliver func(ApprovalRequest)) bool {
-	if s.AutoApprove() {
+	// Two silent-approve paths: the master "trust everything" toggle,
+	// and the per-tool allow-list (the user already chose "Always
+	// allow" for this specific tool). Either one skips the prompt.
+	if s.AutoApprove() || s.IsToolAllowed(req.Name) {
 		return true
 	}
 	s.mu.Lock()
@@ -103,7 +166,7 @@ func (s *approvalStore) Request(req ApprovalRequest, deliver func(ApprovalReques
 		return false
 	}
 	ch := make(chan bool, 1)
-	s.pending[req.ID] = ch
+	s.pending[req.ID] = pendingApproval{ch: ch, name: req.Name}
 	s.mu.Unlock()
 
 	defer func() {
@@ -125,10 +188,12 @@ func (s *approvalStore) Request(req ApprovalRequest, deliver func(ApprovalReques
 
 // Resolve delivers the user's verdict for a pending request. Called
 // from App.ApproveInvoke when the modal's button is clicked. No-op
-// on unknown / already-resolved IDs.
-func (s *approvalStore) Resolve(id string, allow bool) {
+// on unknown / already-resolved IDs. When allow && always, the tool
+// is added to the per-tool allow-list so future calls skip the prompt
+// (the "Always allow <tool>" button).
+func (s *approvalStore) Resolve(id string, allow, always bool) {
 	s.mu.Lock()
-	ch, ok := s.pending[id]
+	p, ok := s.pending[id]
 	if ok {
 		delete(s.pending, id)
 	}
@@ -136,8 +201,15 @@ func (s *approvalStore) Resolve(id string, allow bool) {
 	if !ok {
 		return
 	}
+	if allow && always && p.name != "" {
+		if err := s.AllowTool(p.name); err != nil {
+			core.Warn("[approval] persisting always-allow for %s failed: %v", p.name, err)
+		} else {
+			core.Log("[approval] always-allow added for %s", p.name)
+		}
+	}
 	select {
-	case ch <- allow:
+	case p.ch <- allow:
 	default:
 	}
 }

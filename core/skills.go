@@ -21,6 +21,8 @@
 package core
 
 import (
+	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +51,12 @@ type SkillRecord struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	// WhenToUse is the LLM-facing routing cue, auto-generated from
+	// Description on save (see GenerateWhenToUse). Shown UN-truncated in
+	// the "Available skills" block so the host LLM sees the full
+	// activation cue (Description is capped at 140 chars there).
+	// Regenerated whenever Description changes.
+	WhenToUse string `json:"when_to_use,omitempty"`
 	// Triggers are substring patterns matched against the user
 	// message (and attachment filenames). Glob-style `*.pdf` matches
 	// any attachment ending in .pdf; everything else is a plain
@@ -143,12 +151,28 @@ func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error)
 	if store == nil || username == "" {
 		return SkillRecord{}, errString("save skill requires user")
 	}
-	if s.ID == "" {
+	created := s.ID == ""
+	if created {
 		s.ID = "skill-" + UUIDv4()
 		s.Created = time.Now()
 	}
 	s.Owner = username
 	s.Updated = time.Now()
+	// (Re)generate the LLM-facing routing cue on a genuine description
+	// change (or a new skill with none yet). Best-effort; render falls
+	// back to Description when empty.
+	prevDescription := ""
+	if !created {
+		for _, e := range LoadSkills(db, username) {
+			if e.ID == s.ID {
+				prevDescription = e.Description
+				break
+			}
+		}
+	}
+	if (created && s.WhenToUse == "") || (!created && prevDescription != s.Description) {
+		s.WhenToUse = GenerateWhenToUse("skill", s.Name, s.Description)
+	}
 	// Description-embedding removed. Was used by the cosine
 	// gatekeeper / fuzzy classifier that auto-fired skills; with
 	// activation now exclusively LLM-driven via activate_skill, the
@@ -230,6 +254,343 @@ func SkillChunksDB(username string) Database {
 	// not by itself partition by user). No skill chunks are ingested or
 	// searched today; the only consumer is delete-cleanup.
 	return VectorDB
+}
+
+// --- shared skill runtime (orchestrate + phantom) ---
+//
+// A skill is a domain pack: instructions + (optionally) searchable
+// knowledge sources (attached collections and/or source-hooks). The LLM
+// reaches a skill three ways, none of which tracks state across turns:
+//   - read_skill(skill) — pull the skill's instructions to apply now;
+//   - skill_knowledge_search(skill, query) — search the skill's sources
+//     (collections + source-hooks, merged), with the instructions
+//     attached the first time the skill is touched this turn;
+//   - skill_knowledge_fetch_doc(skill, doc_id) — a full doc.
+// Plus, when a skill's Triggers match the turn, the framework surfaces a
+// soft HINT nudging the LLM to consult it (RenderSkillTriggerHints) — a
+// signal, not a forced injection; consulting via the tools is what loads
+// the instructions. A per-turn `delivered` set dedupes them so the LLM
+// sees a consulted skill's instructions once.
+
+// RenderAvailableSkills builds the "## Available skills" prompt block from
+// the skills an agent/conversation can reach, so the LLM knows what
+// read_skill / skill_knowledge_search can draw on. Empty when none.
+func RenderAvailableSkills(skills []SkillRecord) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Available skills\n\n")
+	b.WriteString("Domain packs you can draw on in your own context: read_skill(skill) returns its approach/instructions; skill_knowledge_search(skill, query) searches its sources (and attaches its approach the first time); skill_knowledge_fetch_doc(skill, doc_id) pulls a full document.\n\nRULE: when a listed skill covers the subject in front of you, consult it FIRST — call skill_knowledge_search (or read_skill) before web_search and before answering from memory. Its sources are authoritative for its domain and override your priors, so answering a covered question without it is a mistake even when you're confident. This fires on what you DISCOVER mid-task, not just the opening request: a repo that turns out to be Go → the Go skill, a tax-law doc → the tax skill, a PDF → the PDF skill, even if the user never named the domain. On FOLLOW-UPS the skill's instructions and what you already retrieved stay in your context — answer from that skill content, not your priors, and search the skill again only if the follow-up needs material you didn't pull. Skip a skill only for what it plainly doesn't cover or fast-changing facts (current events, latest figures). When a skill's trigger matches the turn you'll see a \"Likely relevant\" hint — treat it as a strong nudge to consult that skill, not a guarantee. Format: **name** — purpose.\n\n")
+	for _, s := range skills {
+		// Prefer the LLM-facing WhenToUse cue, shown in full. Fall back
+		// to the user-facing Description (still capped at 140).
+		desc := strings.TrimSpace(s.WhenToUse)
+		if desc == "" {
+			desc = strings.TrimSpace(s.Description)
+			if len(desc) > 140 {
+				desc = desc[:140] + "…"
+			}
+		}
+		if desc == "" {
+			desc = "(no description)"
+		}
+		b.WriteString("- **")
+		b.WriteString(s.Name)
+		b.WriteString("** — ")
+		b.WriteString(desc)
+		if trig := strings.TrimSpace(strings.Join(s.Triggers, ", ")); trig != "" {
+			b.WriteString(" (triggers: ")
+			b.WriteString(trig)
+			b.WriteString(")")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// SkillTriggersMatch reports whether a skill's Triggers match this turn: a
+// glob trigger (contains '*' or '?') matches against the attachment
+// filenames; any other trigger is a case-insensitive substring test against
+// the message text. A skill with NO triggers never matches. A match is a
+// relevance SIGNAL, not a command — it surfaces a HINT nudging the LLM to
+// consult the skill (see RenderSkillTriggerHints), it does NOT force-inject
+// the skill's instructions. Deterministic and framework-owned.
+func SkillTriggersMatch(s SkillRecord, message string, attachmentNames []string) bool {
+	if len(s.Triggers) == 0 {
+		return false
+	}
+	lowerMsg := strings.ToLower(message)
+	for _, t := range s.Triggers {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if strings.ContainsAny(t, "*?") {
+			pat := strings.ToLower(t)
+			for _, name := range attachmentNames {
+				if ok, _ := filepath.Match(pat, strings.ToLower(filepath.Base(name))); ok {
+					return true
+				}
+			}
+			continue
+		}
+		if strings.Contains(lowerMsg, strings.ToLower(t)) {
+			return true
+		}
+	}
+	return false
+}
+
+// RenderSkillTriggerHints returns a soft HINT block naming the allowed,
+// enabled skills whose Triggers match this turn — a per-turn nudge to
+// consult them, NOT the full instruction injection. A matched trigger is a
+// relevance signal; the LLM still decides to consult (read_skill /
+// skill_knowledge_search), and consulting is what actually loads the
+// skill's approach. We hint instead of force-inject because a wrong hint is
+// cheap (one line the LLM ignores) while a wrong injection is expensive (a
+// wall of off-topic instructions steering the whole reply). Returns "" when
+// nothing matches.
+func RenderSkillTriggerHints(db Database, owner string, allowed []string, message string, attachmentNames []string) string {
+	if owner == "" || len(allowed) == 0 {
+		return ""
+	}
+	allowSet := make(map[string]bool, len(allowed))
+	for _, id := range allowed {
+		allowSet[id] = true
+	}
+	var names []string
+	for _, s := range LoadSkills(db, owner) {
+		if s.Disabled || !allowSet[s.ID] {
+			continue
+		}
+		if SkillTriggersMatch(s, message, attachmentNames) {
+			names = append(names, s.Name)
+		}
+	}
+	return SkillTriggerHintBlock(names)
+}
+
+// SkillTriggerHintBlock formats the trigger-match hint line for the given
+// skill names. Empty names → "". Shared by orchestrate + phantom so the
+// nudge reads identically on both surfaces.
+func SkillTriggerHintBlock(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = "**" + n + "**"
+	}
+	return "\n\n[Likely relevant this turn (triggers matched): " + strings.Join(quoted, ", ") + " — consult the fitting one FIRST via skill_knowledge_search / read_skill before answering. A trigger match is a hint, not a guarantee: skip a skill that doesn't actually fit.]\n\n"
+}
+
+// resolveAllowedSkill looks up a skill by name (case-insensitive),
+// gated on the allowed-ID set. Shared by the three skill tools.
+func resolveAllowedSkill(db Database, owner string, allowed []string, name string) (*SkillRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("skill name is required")
+	}
+	allowSet := make(map[string]bool, len(allowed))
+	for _, id := range allowed {
+		allowSet[id] = true
+	}
+	for _, s := range LoadSkills(db, owner) {
+		if s.Disabled || !strings.EqualFold(s.Name, name) {
+			continue
+		}
+		if !allowSet[s.ID] {
+			return nil, fmt.Errorf("skill %q is not enabled here", s.Name)
+		}
+		sc := s
+		return &sc, nil
+	}
+	return nil, fmt.Errorf("no skill named %q (check the 'Available skills' block)", name)
+}
+
+// querySkillSourceHooks queries each source-hook the skill names in its
+// AllowedTools (e.g. "courtlistener_search") for the query and returns
+// their combined text, or "" when the skill has none / they're empty.
+// Reuses the registered source-hook tool's own handler so the adapter
+// logic lives in one place.
+func querySkillSourceHooks(skill SkillRecord, query string) string {
+	var b strings.Builder
+	for _, name := range skill.AllowedTools {
+		def, ok := SourceHookToolDefByName(name)
+		if !ok || def.Handler == nil {
+			continue
+		}
+		res, err := def.Handler(map[string]any{"query": query})
+		if err != nil || strings.TrimSpace(res) == "" {
+			continue
+		}
+		b.WriteString("\n\n— from ")
+		b.WriteString(name)
+		b.WriteString(" —\n")
+		b.WriteString(strings.TrimSpace(res))
+	}
+	return b.String()
+}
+
+// skillInstructionsBlock formats a skill's instructions as the lens to
+// apply to its knowledge, marking it delivered. Returns "" when the
+// instructions were already delivered this turn (via read_skill, a prior
+// search, or trigger-injection) or the skill has no body.
+func skillInstructionsBlock(skill SkillRecord, delivered map[string]bool) string {
+	if delivered != nil && delivered[skill.ID] {
+		return ""
+	}
+	body := strings.TrimSpace(skill.Instructions)
+	if delivered != nil {
+		delivered[skill.ID] = true
+	}
+	if body == "" {
+		return ""
+	}
+	return "Apply the \"" + skill.Name + "\" approach for the REST of this turn — it governs how you read these results AND how you reply, not just this one result:\n\n" + body + "\n\n---\n"
+}
+
+// BuildReadSkillTool builds read_skill(skill): returns the named skill's
+// instructions to apply this turn. One-shot, no state — for when the LLM
+// just wants the skill's approach (a PDF-handling method, an output
+// format). Marks the skill delivered so the search tool won't repeat the
+// instructions.
+func BuildReadSkillTool(db Database, owner string, allowed []string, delivered map[string]bool) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "read_skill",
+			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice) — not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off.",
+			Parameters: map[string]ToolParam{
+				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive)."},
+			},
+			Required: []string{"skill"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			found, err := resolveAllowedSkill(db, owner, allowed, stringArgSkill(args, "skill"))
+			if err != nil {
+				return "", err
+			}
+			body := strings.TrimSpace(found.Instructions)
+			if delivered != nil {
+				delivered[found.ID] = true
+			}
+			if body == "" {
+				return fmt.Sprintf("Skill %q has no instructions body — its value is its knowledge sources (use skill_knowledge_search).", found.Name), nil
+			}
+			return fmt.Sprintf("Skill %q — apply this approach for the REST of this turn, including your reply:\n\n%s", found.Name, body), nil
+		},
+	}
+}
+
+// BuildSkillKnowledgeSearchTool builds skill_knowledge_search(skill, query):
+// searches the named skill's sources — its attached collections (via the
+// app-provided searchCollections, which may be nil) AND its source-hooks,
+// merged. The skill's instructions are attached the FIRST time the skill is
+// touched this turn (deduped via delivered) so the LLM gets the lens with
+// the evidence even if it skipped read_skill.
+func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, delivered map[string]bool, searchCollections func(SkillRecord, string) string) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "skill_knowledge_search",
+			Description: "Search a named skill's reference sources (its document collections and live source APIs, merged and ranked) for material relevant to your query. Returns excerpts plus — the first time you touch the skill this turn — the skill's approach for interpreting them. Use when the request is in the skill's domain and you need grounded evidence. Pass a doc_id from the results to skill_knowledge_fetch_doc for the full document.",
+			Parameters: map[string]ToolParam{
+				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive)."},
+				"query": {Type: "string", Description: "Natural-language search query — phrase like a web search."},
+			},
+			Required: []string{"skill", "query"},
+			Caps:     []Capability{CapRead, CapNetwork},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			found, err := resolveAllowedSkill(db, owner, allowed, stringArgSkill(args, "skill"))
+			if err != nil {
+				return "", err
+			}
+			query := strings.TrimSpace(stringArgSkill(args, "query"))
+			if query == "" {
+				return "", fmt.Errorf("query is required")
+			}
+			var out strings.Builder
+			out.WriteString(skillInstructionsBlock(*found, delivered))
+			var collHits string
+			if searchCollections != nil {
+				collHits = strings.TrimSpace(searchCollections(*found, query))
+			}
+			hookHits := querySkillSourceHooks(*found, query)
+			if collHits == "" && hookHits == "" {
+				out.WriteString(fmt.Sprintf("No matches in the %q skill's sources for that query.", found.Name))
+				return out.String(), nil
+			}
+			if collHits != "" {
+				out.WriteString(collHits)
+			}
+			if hookHits != "" {
+				out.WriteString(hookHits)
+			}
+			// Grounding reminder at the point of results (the global
+			// grounding rule covers the same ground from the system prompt;
+			// this keeps it salient right where the citations are).
+			out.WriteString("\n\n[Grounding: cite only what appears in the results above — if a specific citation, number, name, or quote isn't here, say the sources don't specify it rather than supplying one from memory.]")
+			return out.String(), nil
+		},
+	}
+}
+
+// BuildSkillKnowledgeFetchDocTool builds skill_knowledge_fetch_doc(skill,
+// doc_id): pulls a full document from the skill's corpus via the app-
+// provided fetchDoc (nil → unsupported). Mirrors fetch_knowledge_doc.
+// Like the other skill tools, it attaches the skill's instructions on the
+// first touch this turn (deduped via delivered) — so even if the LLM jumps
+// straight to a fetch without read_skill / skill_knowledge_search first,
+// it still gets the skill's lens.
+func BuildSkillKnowledgeFetchDocTool(db Database, owner string, allowed []string, delivered map[string]bool, fetchDoc func(SkillRecord, string) (string, error)) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "skill_knowledge_fetch_doc",
+			Description: "Fetch the full text of a document from a skill's corpus, by the doc_id returned in a skill_knowledge_search result. Use when an excerpt isn't enough.",
+			Parameters: map[string]ToolParam{
+				"skill":  {Type: "string", Description: "Exact skill name (case-insensitive)."},
+				"doc_id": {Type: "string", Description: "The doc_id from a skill_knowledge_search hit."},
+			},
+			Required: []string{"skill", "doc_id"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			found, err := resolveAllowedSkill(db, owner, allowed, stringArgSkill(args, "skill"))
+			if err != nil {
+				return "", err
+			}
+			docID := strings.TrimSpace(stringArgSkill(args, "doc_id"))
+			if docID == "" {
+				return "", fmt.Errorf("doc_id is required")
+			}
+			if fetchDoc == nil {
+				return "", fmt.Errorf("document fetch isn't available for skill %q here", found.Name)
+			}
+			doc, err := fetchDoc(*found, docID)
+			if err != nil {
+				return "", err
+			}
+			return skillInstructionsBlock(*found, delivered) + doc, nil
+		},
+	}
+}
+
+// stringArgSkill extracts a string arg with a case-insensitive fallback.
+func stringArgSkill(args map[string]any, key string) string {
+	if v, ok := args[key].(string); ok {
+		return v
+	}
+	lower := strings.ToLower(key)
+	for k, v := range args {
+		if strings.ToLower(k) == lower {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+	}
+	return ""
 }
 
 // SkillPromptSection returns the skill's instructions formatted for

@@ -46,29 +46,65 @@ func BuildSourceHookAgentToolDefs(db Database) []AgentToolDef {
 	return out
 }
 
+// sourceHookToolName is the LLM-facing tool name for a hook: the
+// admin-authored ToolName, else a derived "<sanitized-name>_search".
+// Empty when the hook has no usable name. Shared by the auto-tool
+// builder and SourceHookToolDefByName so the name a skill references
+// matches the name the tool is registered under.
+func sourceHookToolName(h SourceHook) string {
+	if n := strings.TrimSpace(h.ToolName); n != "" {
+		return n
+	}
+	// Derive from the hook's display name. Lowercase + replace
+	// non-alphanumerics with underscores so we land on a valid tool
+	// name (LLM tool names need to match [a-zA-Z0-9_-]+).
+	n := sanitizeToolName(h.Name)
+	if n == "" {
+		return ""
+	}
+	return n + "_search"
+}
+
+// SourceHookToolDefByName builds the agent tool for the source hook
+// whose tool name matches `name`, REGARDLESS of ExposeToLLM — so a
+// skill can grant a source-hook tool contextually (name it in the
+// skill's AllowedTools) without flipping the hook always-on. Paywall
+// hooks are excluded (they augment fetch_url, not stand-alone search).
+// Returns ok=false when no hook matches. Used by the skill-tool
+// resolver (orchestrate + phantom) as a fallback when a name isn't a
+// registered ChatTool.
+func SourceHookToolDefByName(name string) (AgentToolDef, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return AgentToolDef{}, false
+	}
+	for _, h := range RegisteredSourceHooks() {
+		if h.Type == HookTypePaywall {
+			continue
+		}
+		if sourceHookToolName(h) == name {
+			return sourceHookToAgentToolDef(h)
+		}
+	}
+	return AgentToolDef{}, false
+}
+
 // sourceHookToAgentToolDef converts one SourceHook into an
 // AgentToolDef. Falls back to derived name/description when the
 // admin didn't author them. Returns false when the hook is
 // fundamentally unusable (empty Name, can't derive a valid tool name).
 func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
-	toolName := strings.TrimSpace(h.ToolName)
+	toolName := sourceHookToolName(h)
 	if toolName == "" {
-		// Derive from the hook's display name. Lowercase + replace
-		// non-alphanumerics with underscores so we land on a valid
-		// tool name (LLM tool names need to match [a-zA-Z0-9_-]+).
-		toolName = sanitizeToolName(h.Name)
-		if toolName == "" {
-			return AgentToolDef{}, false
-		}
-		toolName += "_search"
+		return AgentToolDef{}, false
 	}
 	desc := strings.TrimSpace(h.ToolDescription)
 	if desc == "" {
 		switch h.Type {
 		case HookTypeRAG:
-			desc = fmt.Sprintf("Search %s (a curated RAG knowledge source). Returns document chunks ranked by relevance. Use when the user's question is in this source's domain; prefer over web_search for material that's specifically covered here.", h.Name)
+			desc = fmt.Sprintf("Search %s (a curated knowledge source) — returns document chunks ranked by relevance. Cite ONLY specifics that appear in the returned chunks; if they don't contain the exact answer, this source doesn't cover it (say so, don't supply a number/cite from memory). Prefer it over web_search for material it actually covers.", h.Name)
 		default: // HookTypeAPI
-			desc = fmt.Sprintf("Search %s (a curated external API). Returns titled results with snippets. Use when the user's question is in this source's domain; prefer over web_search for specialized lookups.", h.Name)
+			desc = fmt.Sprintf("Search %s (a curated external API) — returns titled results with snippets. Cite ONLY what the results contain; if they don't answer the question, the source doesn't cover it (don't fill the gap from memory). Prefer it over web_search for the specialized lookups it covers.", h.Name)
 		}
 	}
 	// Capture the hook in the closure so the handler can call
@@ -103,6 +139,14 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 			if result == "" {
 				return fmt.Sprintf("No results from %s for %q.", captured.Name, query), nil
 			}
+			// Grounding guard: a curated source returning SOMETHING doesn't
+			// make the model's answer authoritative — the retrieved chunks
+			// may be merely topical (e.g. case law for a statute-number
+			// question) without containing the specific asked for. Without
+			// this, the model treats "I searched an authoritative source" as
+			// "my specific is authoritative" and fills the gap from memory.
+			// Mirrors the skill_knowledge_search append.
+			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results — a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
 			return result, nil
 		},
 	}

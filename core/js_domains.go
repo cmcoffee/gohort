@@ -107,3 +107,31 @@ func ShouldAutoBrowseURL(rawURL string) bool {
 	}
 	return true
 }
+
+// ThinResultMinChars is the readable-text floor below which a successful
+// HTTP response is treated as a JS-required skeleton / soft block worth
+// retrying via the headless browser.
+const ThinResultMinChars = 200
+
+// ShouldBrowserRetryResult is the POST-fetch counterpart to
+// ShouldAutoBrowseURL: ShouldAutoBrowseURL catches KNOWN JS-heavy hosts
+// before fetching; this catches the UNKNOWN ones after the fact, from the
+// shape of what came back. It reports whether a 200 response that
+// extracted to almost nothing is the JS-skeleton signature — an HTML
+// page (or unknown content-type) whose readable text fell below
+// ThinResultMinChars. A real browser runs the page's JS and usually
+// recovers the content (the findlaw / leginfo per-section case).
+//
+// Returns false for non-HTML content-types (JSON / PDF / images / other
+// binary) and for pages that extracted real text: those small results
+// are legitimate, not blocks, and rerouting them through Chromium would
+// add latency and corrupt structured payloads (a JSON API rendered in a
+// browser comes back as pretty-printed HTML, not parseable data).
+func ShouldBrowserRetryResult(contentType, extractedText string) bool {
+	ct := strings.ToLower(strings.TrimSpace(contentType))
+	// Non-HTML, known content-type → legitimate result, never reroute.
+	if ct != "" && !strings.Contains(ct, "html") {
+		return false
+	}
+	return len(strings.TrimSpace(extractedText)) < ThinResultMinChars
+}

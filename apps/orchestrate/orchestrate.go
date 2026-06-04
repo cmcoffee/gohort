@@ -175,6 +175,11 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/api/confirm               — operator confirm (Phase 1 no-op stub)
 //	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
 func (T *OrchestrateApp) Routes() {
+	// Wire the worker-backed WhenToUse generator before any save runs.
+	// (The boot migrations below re-save agents, but saveAgent only
+	// regenerates on a description CHANGE, so they won't trigger it.)
+	T.registerWhenToUseGenerator()
+
 	// Wire the scheduled-update handler before any session runs —
 	// the scheduler fires async so orchRef must be set by the time
 	// the loop ticks.

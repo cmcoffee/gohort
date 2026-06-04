@@ -22,16 +22,27 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// explorerHardCap is the absolute round ceiling once explorer mode
-// is active. Generous enough for a multi-step API exploration but
-// still bounded so a runaway loop self-terminates.
+// explorerHardCap is the DEFAULT absolute round ceiling once explorer
+// mode is active. Generous enough for a multi-step API exploration but
+// still bounded so a runaway loop self-terminates. Per-agent override
+// via AgentRecord.ExplorerHardCap (see resolveExplorerHardCap) — Builder
+// runs higher because authoring an unfamiliar API is exploration-heavy.
 const explorerHardCap = 50
+
+// resolveExplorerHardCap returns the agent's explorer ceiling: its
+// per-agent ExplorerHardCap when set, else the default explorerHardCap.
+func resolveExplorerHardCap(a AgentRecord) int {
+	if a.ExplorerHardCap > 0 {
+		return a.ExplorerHardCap
+	}
+	return explorerHardCap
+}
 
 func (t *chatTurn) enterExplorerModeToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "enter_explorer_mode",
-			Description: "Lift the round budget from the agent's normal limit up to the exploration hard cap (50 rounds) for the rest of this step. Call when you've STARTED an investigation and can already see it needs more than your normal budget of chained tool rounds — the trigger is concrete evidence in your current results, not speculation. Good fits include: (a) mapping an unfamiliar API where each endpoint reveals more sub-resources (you've fetched one, seen 12 child links, need to walk each); (b) figuring out HOW to do something multi-step that wasn't obvious up front — e.g. \"scrape this site for the video\" (find the video container, identify the streaming format, locate the manifest, resolve segment URLs, fetch + concatenate), \"reverse-engineer this app's auth flow\" (intercept the login, identify token shape, find the refresh path), \"figure out where this data lives in the system\" (grep the codebase, follow imports, identify the persistence layer); (c) iterative build/verify loops where the verify step keeps revealing more work; (d) discovery work where you don't know the shape of the answer until you've looked around; (e) troubleshooting a misbehaving tool — a tool returned a confusing error or wrong-shape output and you need to probe it (try variant args, inspect related state, narrow down the failure mode) before you can either work around it or report cleanly. Do NOT call speculatively at the start of a turn (\"just in case\") or for tasks that are routine multi-step — the elevated budget burns tokens, and burning the explorer budget when the work fits a normal round count is the failure mode admins audit for. Once activated, the elevated budget lasts for the rest of this step.",
+			Description: "Lift the round budget from the agent's normal limit up to its exploration hard cap for the rest of this step. Call when you've STARTED an investigation and can already see it needs more than your normal budget of chained tool rounds — the trigger is concrete evidence in your current results, not speculation. Good fits include: (a) mapping an unfamiliar API where each endpoint reveals more sub-resources (you've fetched one, seen 12 child links, need to walk each); (b) figuring out HOW to do something multi-step that wasn't obvious up front — e.g. \"scrape this site for the video\" (find the video container, identify the streaming format, locate the manifest, resolve segment URLs, fetch + concatenate), \"reverse-engineer this app's auth flow\" (intercept the login, identify token shape, find the refresh path), \"figure out where this data lives in the system\" (grep the codebase, follow imports, identify the persistence layer); (c) iterative build/verify loops where the verify step keeps revealing more work; (d) discovery work where you don't know the shape of the answer until you've looked around; (e) troubleshooting a misbehaving tool — a tool returned a confusing error or wrong-shape output and you need to probe it (try variant args, inspect related state, narrow down the failure mode) before you can either work around it or report cleanly. Do NOT call speculatively at the start of a turn (\"just in case\") or for tasks that are routine multi-step — the elevated budget burns tokens, and burning the explorer budget when the work fits a normal round count is the failure mode admins audit for. Once activated, the elevated budget lasts for the rest of this step.",
 			Parameters: map[string]ToolParam{
 				"reason": {
 					Type:        "string",
@@ -56,7 +67,7 @@ func (t *chatTurn) enterExplorerModeToolDef() AgentToolDef {
 			t.explorerReason = reason
 			Log("[orchestrate.explorer] activated agent=%s user=%s reason=%q",
 				t.agent.ID, t.user, reason)
-			return fmt.Sprintf("EXPLORER_OK round budget raised to %d for the rest of this step. Continue.", explorerHardCap), nil
+			return fmt.Sprintf("EXPLORER_OK round budget raised to %d for the rest of this step. Continue.", resolveExplorerHardCap(t.agent)), nil
 		},
 	}
 }

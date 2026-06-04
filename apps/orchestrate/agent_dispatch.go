@@ -230,9 +230,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 	if target.OwnedBy == "" {
 		extraTools = append(extraTools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
 	}
-	if !target.DisableSkills {
-		extraTools = append(extraTools, subTurn.activateSkillToolDef(), subTurn.deactivateSkillToolDef())
-	}
+	extraTools = append(extraTools, subTurn.skillToolDefs()...)
 	// Sub-agents also skip the Available agents block — no point
 	// telling a leaf about fleet peers it can't dispatch to. Saves
 	// tokens AND removes the "DELEGATE FIRST" nudge that would

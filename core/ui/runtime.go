@@ -364,6 +364,7 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-badge.warning { color: #d29922; border-color: #463b1f; background: #2a2218; }
 .ui-badge.danger  { color: var(--danger); border-color: #5a2929; background: #2a1b1b; }
 .ui-badge.mute    { color: var(--text-mute); border-color: var(--border); background: var(--bg-0); }
+.ui-badge.accent  { color: var(--accent-hi); border-color: #2a3f5f; background: #16203a; }
 /* Status dot — boolean status indicator without the pill chrome.
  * Uses the same badge color tokens for consistency: success = green,
  * warning = yellow, danger = red, mute = grey. Inline-flex so it
@@ -4196,6 +4197,18 @@ const runtimeJS = `
     }
     window.alert(msg);
     return Promise.resolve();
+  };
+  // uiPrompt — async text-input dialog. Resolves to the entered string,
+  // or null if cancelled (window.prompt semantics). Same host story as
+  // uiConfirm: WKWebView doesn't implement runJavaScriptTextInputPanel,
+  // so native prompt() returns null there; a host injects __uiPromptImpl
+  // (a CSS-modal with an input) to make it work. Real browsers fall
+  // through to native prompt(). Callers must await and null-check.
+  window.uiPrompt = function(msg, def) {
+    if (typeof window.__uiPromptImpl === 'function') {
+      return Promise.resolve(window.__uiPromptImpl(msg, def));
+    }
+    return Promise.resolve(window.prompt(msg, def != null ? def : ''));
   };
   // Data-source invalidation. Apps and components fire this when a
   // write completes so any list/table fetched from the same source

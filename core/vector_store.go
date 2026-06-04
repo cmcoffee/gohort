@@ -117,6 +117,7 @@ type EmbeddedChunk struct {
 	ID       string    `json:"id"`                // UUID, the kvlite key
 	Source   string    `json:"source"`            // app-provided origin tag for this chunk
 	ReportID string    `json:"report_id"`         // parent record ID in that source's table
+	Title    string    `json:"title,omitempty"`   // human-meaningful name of the PARENT document (e.g. the debate topic / research question) — the same for every chunk of one report. Lets browsers + recall label a chunk by what it's ABOUT, not just its section heading ("Verdict" → "<topic> — Verdict"). Empty on legacy chunks (fall back to Section).
 	Section  string    `json:"section"`           // section heading, e.g. "Executive Summary"
 	Text     string    `json:"text"`              // the chunk content
 	Vector   []float32 `json:"vector"`            // embedding
@@ -146,6 +147,7 @@ type SearchHit struct {
 	ID       string  `json:"id"`
 	Source   string  `json:"source"`
 	ReportID string  `json:"report_id"`
+	Title    string  `json:"title,omitempty"` // mirrored from EmbeddedChunk.Title — the parent document's human name (debate topic / research question) so recall can say what a hit is ABOUT, not just its section.
 	Section  string  `json:"section"`
 	Text     string  `json:"text"`
 	Score    float32 `json:"score"`
@@ -304,6 +306,59 @@ func IngestReport(ctx context.Context, db Database, source, reportID, report str
 // ("one commenter noted…" vs "the doc says…"). Pass kind="" for
 // default authoritative (equivalent to IngestReport).
 func IngestReportTagged(ctx context.Context, db Database, source, reportID, report, kind string) {
+	IngestReportTitled(ctx, db, source, reportID, "", report, kind)
+}
+
+// BackfillChunkTitles stamps Title onto pre-existing chunks of the
+// given Kind that have an empty Title, resolving each chunk's ReportID
+// to a document title via resolve(). Debate/research chunks live in the
+// deployment collection (Source = the collection), tagged by Kind
+// ("debate"/"research") — so the filter is on Kind, and ReportID is the
+// app record's ID. Idempotent: chunks that already have a Title are
+// skipped, so a one-time guard isn't strictly required for correctness
+// (only to avoid a needless full-table scan on every startup). resolve()
+// returns "" for unknown IDs (those chunks are left as-is). Returns the
+// number of chunks updated.
+func BackfillChunkTitles(db Database, kind string, resolve func(reportID string) string) int {
+	if db == nil || kind == "" || resolve == nil {
+		return 0
+	}
+	cache := map[string]string{}
+	updated := 0
+	for _, key := range db.Keys(EmbeddedChunks) {
+		var c EmbeddedChunk
+		if !db.Get(EmbeddedChunks, key, &c) {
+			continue
+		}
+		if c.Kind != kind || strings.TrimSpace(c.Title) != "" {
+			continue
+		}
+		title, seen := cache[c.ReportID]
+		if !seen {
+			title = strings.TrimSpace(resolve(c.ReportID))
+			cache[c.ReportID] = title
+		}
+		if title == "" {
+			continue
+		}
+		c.Title = title
+		db.Set(EmbeddedChunks, key, c)
+		updated++
+	}
+	if updated > 0 {
+		invalidateChunkCache()
+	}
+	return updated
+}
+
+// IngestReportTitled is IngestReportTagged plus a document Title — the
+// human-meaningful name of the parent record (e.g. a debate topic or a
+// research question) stamped onto every chunk. Without it, browsers and
+// recall can only show a chunk's section heading ("Verdict", "Executive
+// Summary"), which is meaningless without knowing what document it came
+// from. Pass title="" for sources that have no distinct document name
+// (equivalent to IngestReportTagged).
+func IngestReportTitled(ctx context.Context, db Database, source, reportID, title, report, kind string) {
 	if db == nil || reportID == "" {
 		return
 	}
@@ -351,6 +406,7 @@ func IngestReportTagged(ctx context.Context, db Database, source, reportID, repo
 				ID:       UUIDv4(),
 				Source:   source,
 				ReportID: reportID,
+				Title:    title,
 				Section:  sect,
 				Text:     p.Text,
 				Vector:   p.Vector,
@@ -867,6 +923,7 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 				ID:       c.ID,
 				Source:   c.Source,
 				ReportID: c.ReportID,
+				Title:    c.Title,
 				Section:  c.Section,
 				Text:     c.Text,
 				Score:    s,
@@ -931,6 +988,7 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 				ID:       c.ID,
 				Source:   c.Source,
 				ReportID: c.ReportID,
+				Title:    c.Title,
 				Section:  c.Section,
 				Text:     c.Text,
 				Score:    s,
@@ -977,6 +1035,7 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 			ID:       c.ID,
 			Source:   c.Source,
 			ReportID: c.ReportID,
+			Title:    c.Title,
 			Section:  c.Section,
 			Text:     c.Text,
 			Score:    0,
@@ -1069,6 +1128,7 @@ func SearchChunksInSources(db Database, allowed map[string]bool, query []float32
 				ID:       c.ID,
 				Source:   c.Source,
 				ReportID: c.ReportID,
+				Title:    c.Title,
 				Section:  c.Section,
 				Text:     c.Text,
 				Score:    s,
@@ -1115,6 +1175,7 @@ func SearchChunksSubstringInSources(db Database, allowed map[string]bool, query 
 			ID:       c.ID,
 			Source:   c.Source,
 			ReportID: c.ReportID,
+			Title:    c.Title,
 			Section:  c.Section,
 			Text:     c.Text,
 			Score:    0,
@@ -1166,6 +1227,7 @@ func SearchChunksBySource(db Database, sourcePrefix string, query []float32, k i
 				ID:       c.ID,
 				Source:   c.Source,
 				ReportID: c.ReportID,
+				Title:    c.Title,
 				Section:  c.Section,
 				Text:     c.Text,
 				Score:    s,
@@ -1225,6 +1287,7 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 			ID:       c.ID,
 			Source:   c.Source,
 			ReportID: c.ReportID,
+			Title:    c.Title,
 			Section:  c.Section,
 			Text:     c.Text,
 			Score:    1,

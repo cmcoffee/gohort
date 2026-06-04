@@ -129,8 +129,17 @@ func (c *Config) SetServerURL(url string) error {
 	return WriteServerURLSidecar(url)
 }
 
-// APIKey returns the unified daemon API key.
-func (c *Config) APIKey() string { return c.settings.APIKey() }
+// APIKey returns the bridge key for the daemon's WS client + iMessage
+// relay. Prefers the viewer-provisioned sidecar key (auto-negotiated from
+// the logged-in session) and falls back to a manually-set settings key
+// (headless / no-viewer setups). So the daemon picks up the auto-key with
+// no other change.
+func (c *Config) APIKey() string {
+	if k := ReadAPIKeySidecar(); k != "" {
+		return k
+	}
+	return c.settings.APIKey()
+}
 
 // SetAPIKey persists the unified daemon API key.
 func (c *Config) SetAPIKey(key string) error { return c.settings.SetAPIKey(key) }

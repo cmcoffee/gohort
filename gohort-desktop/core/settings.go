@@ -46,6 +46,13 @@ const (
 	// on every server-URL change so the viewer (which can't open the
 	// daemon-locked settings.db) can learn where to proxy.
 	SERVER_URL_SIDECAR = "server_url.txt"
+
+	// API_KEY_SIDECAR is the reverse handoff: the VIEWER (which has the
+	// logged-in session cookie) mints the bridge key from the server and
+	// writes it here, lock-free, so the daemon — which can't present a
+	// cookie — can read it without opening the viewer's store. This is
+	// what makes the key auto-negotiated instead of a manual setup step.
+	API_KEY_SIDECAR = "api_key.txt"
 )
 
 // StoredCookie pairs a cookie with the origin URL it came from. The
@@ -95,6 +102,17 @@ func settings_dir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, SETTINGS_DIR_NAME), nil
+}
+
+// ConfigDir returns the resolved config directory (where the sidecars
+// live). Exported for diagnostics — so a process can log WHICH directory
+// it's reading, to catch viewer/daemon dir mismatches.
+func ConfigDir() string {
+	d, err := settings_dir()
+	if err != nil {
+		return "(unresolved: " + err.Error() + ")"
+	}
+	return d
 }
 
 // ServerURL returns the persisted gohort server URL. Empty string
@@ -203,6 +221,36 @@ func ReadServerURLSidecar() string {
 		return ""
 	}
 	b, err := os.ReadFile(filepath.Join(dir, SERVER_URL_SIDECAR))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// WriteAPIKeySidecar writes the auto-provisioned bridge key to a plain,
+// lock-free file in the config dir so the daemon can read it without the
+// viewer's store. Called by the viewer after it mints the key from the
+// server with its session cookie. Best-effort.
+func WriteAPIKeySidecar(key string) error {
+	dir, err := settings_dir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, API_KEY_SIDECAR), []byte(key), 0o600)
+}
+
+// ReadAPIKeySidecar reads the bridge key the viewer last provisioned.
+// Returns "" if absent (never provisioned — daemon falls back to the
+// manually-set settings key).
+func ReadAPIKeySidecar() string {
+	dir, err := settings_dir()
+	if err != nil {
+		return ""
+	}
+	b, err := os.ReadFile(filepath.Join(dir, API_KEY_SIDECAR))
 	if err != nil {
 		return ""
 	}

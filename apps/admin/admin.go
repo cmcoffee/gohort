@@ -1125,6 +1125,22 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 		switch r.Method {
 		case http.MethodGet:
+			// GET-one (?name=X) backs the Edit form's pre-fill: return the
+			// raw hook in its editable shape with the secret blanked (the
+			// form's auth_key Help says leave blank to keep it). The list
+			// form (no name) returns the display rows below.
+			if one := strings.TrimSpace(r.URL.Query().Get("name")); one != "" {
+				for _, h := range RegisteredSourceHooks() {
+					if strings.EqualFold(h.Name, one) {
+						h.AuthKey = "" // never expose the stored secret to the edit form
+						w.Header().Set("Content-Type", "application/json")
+						json.NewEncoder(w).Encode(h)
+						return
+					}
+				}
+				http.Error(w, "hook not found", http.StatusNotFound)
+				return
+			}
 			hooks := RegisteredSourceHooks()
 			type row struct {
 				Name            string   `json:"name"`
@@ -1344,10 +1360,49 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				pending = nil
 				active = nil
 			}
+			// Agent-bundled tools — authored via add_tool, they ride
+			// inside an agent record's .Tools (NOT the temp-tool pools),
+			// so they never surfaced on this page before ("hidden tools").
+			// Read-only here: they're removed via Builder, not the admin.
+			// Walk every user's agent records and surface each bundled tool
+			// with its owning agent so nothing is invisible in the DB.
+			type bundledWithOwner struct {
+				Owner   string   `json:"owner"`
+				Agent   string   `json:"agent"`
+				AgentID string   `json:"agent_id"`
+				Tool    TempTool `json:"tool"`
+			}
+			var bundled []bundledWithOwner
+			orchestrateBase := a.db.Bucket("orchestrate")
+			for _, u := range AuthListUsers(a.db) {
+				udb := UserDB(orchestrateBase, u.Username)
+				if udb == nil {
+					continue
+				}
+				for _, key := range udb.Keys("orchestrate_agents") {
+					// Minimal struct — gob matches by field NAME, so ID /
+					// Name / Tools decode out of the full AgentRecord and
+					// the rest is ignored. TempTool is a core type.
+					var rec struct {
+						ID    string
+						Name  string
+						Tools []TempTool
+					}
+					if !udb.Get("orchestrate_agents", key, &rec) {
+						continue
+					}
+					for _, t := range rec.Tools {
+						bundled = append(bundled, bundledWithOwner{
+							Owner: u.Username, Agent: rec.Name, AgentID: rec.ID, Tool: t,
+						})
+					}
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"pending": pending,
 				"active":  active,
+				"bundled": bundled,
 			})
 		case http.MethodPost:
 			// owner query param tells the handler which user's pool
@@ -1504,8 +1559,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			out := make([]wire, 0, len(skills))
 			for _, s := range skills {
 				out = append(out, wire{
-					ID: s.ID, Name: s.Name, Description: s.Description,
-					Triggers: s.Triggers, AllowedTools: s.AllowedTools,
+					ID: s.ID, Name: s.Name,
+					Description: s.Description,
+					Triggers:    s.Triggers, AllowedTools: s.AllowedTools,
 					AttachedCollections: s.AttachedCollections,
 					Instructions:        s.Instructions, Disabled: s.Disabled,
 					Updated: s.Updated.Format("2006-01-02 15:04:05"),
@@ -3506,6 +3562,10 @@ const adminBody = `
     <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Active</h3>
     <div id="active-tools-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
     <div id="active-tools-empty" style="font-size:0.85rem;color:#8b949e">No active persistent tools.</div>
+    <h3 style="margin-top:1rem;font-size:0.95rem;color:#c9d1d9">Bundled into agents</h3>
+    <div class="setting-row"><span class="setting-desc">Tools authored via add_tool that live inside an agent's record (not the approval pools), so they didn't show here before. They load with their agent. Edit or remove them via Builder, not here — this is visibility only.</span></div>
+    <div id="bundled-tools-list" style="display:flex;flex-direction:column;gap:0.5rem;margin-top:0.4rem"></div>
+    <div id="bundled-tools-empty" style="font-size:0.85rem;color:#8b949e">No agent-bundled tools.</div>
   </div>
   <div class="section">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:1rem">
@@ -4839,9 +4899,28 @@ function loadPersistentTools() {
   fetch('api/persistent-tools').then(function(r){ return r.json(); }).then(function(d){
     renderPendingTools(d.pending || []);
     renderActiveTools(d.active || []);
+    renderBundledTools(d.bundled || []);
   }).catch(function(){
     renderPendingTools([]);
     renderActiveTools([]);
+    renderBundledTools([]);
+  });
+}
+
+function renderBundledTools(bundled) {
+  var list = document.getElementById('bundled-tools-list');
+  var empty = document.getElementById('bundled-tools-empty');
+  list.innerHTML = '';
+  if (!bundled.length) {
+    list.style.display = 'none';
+    empty.style.display = '';
+    return;
+  }
+  list.style.display = '';
+  empty.style.display = 'none';
+  bundled.forEach(function(b){
+    var meta = 'In agent ' + (b.agent || b.agent_id || '?') + ' • owner ' + (b.owner || '?');
+    list.appendChild(renderToolCard(b.tool, {meta: meta, pending: false, noDelete: true}));
   });
 }
 
@@ -5054,11 +5133,14 @@ function renderToolCard(tool, opts) {
     viewBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #30363d;border-radius:5px;color:#c9d1d9;font-size:0.8rem;cursor:pointer';
     viewBtn.onclick = function(){ showToolModal(tool, opts); };
     btns.appendChild(viewBtn);
-    var delBtn = document.createElement('button');
-    delBtn.textContent = 'Delete';
-    delBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #f85149;border-radius:5px;color:#f85149;font-size:0.8rem;cursor:pointer';
-    delBtn.onclick = function(){ deletePersistentTool(tool.name); };
-    btns.appendChild(delBtn);
+    // Bundled tools are removed via Builder, not the admin — no Delete.
+    if (!opts.noDelete) {
+      var delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete';
+      delBtn.style.cssText = 'padding:0.35rem 0.7rem;background:#21262d;border:1px solid #f85149;border-radius:5px;color:#f85149;font-size:0.8rem;cursor:pointer';
+      delBtn.onclick = function(){ deletePersistentTool(tool.name); };
+      btns.appendChild(delBtn);
+    }
   }
   head.appendChild(btns);
   card.appendChild(head);

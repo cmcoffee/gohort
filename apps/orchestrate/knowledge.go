@@ -658,10 +658,13 @@ func (T *OrchestrateApp) handleAgentKnowledgeSources(w http.ResponseWriter, r *h
 		if c.Date > g.latest {
 			g.latest = c.Date
 		}
-		// Prefer the SHORTEST section as the display name — the first
-		// chunk's section is the document title ("## <name>"); later
-		// chunks may be subsection titles within it.
-		if c.Section != "" && (g.name == "" || len(c.Section) < len(g.name)) {
+		// Prefer the document Title (topic/question stamped at ingest);
+		// fall back to the SHORTEST section for legacy chunks with no
+		// Title (the first chunk's section is the document title
+		// "## <name>"; later chunks may be subsection titles within it).
+		if c.Title != "" {
+			g.name = c.Title
+		} else if c.Section != "" && (g.name == "" || len(c.Section) < len(g.name)) {
 			g.name = c.Section
 		}
 	}
@@ -1118,6 +1121,15 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 // from memory_save / synthesis ingest live in Reference Memory and
 // have their own memory_search tool. Closure-bound to the chatTurn.
 func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
+	return t.knowledgeToolDefScoped(t.skillsActive)
+}
+
+// knowledgeToolDefScoped is searchKnowledgeToolDef parameterized by which
+// skills' AttachedCollections widen the search scope. The main turn passes
+// t.skillsActive (empty now that skills aren't in-context); a use_expert
+// worker passes []SkillRecord{expert} so the expert can search its OWN
+// attached corpus.
+func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "knowledge_search",
@@ -1158,7 +1170,7 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 			topic := normalizeTopic(stringArg(args, "topic"))
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
 			defer cancel()
-			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
 			filtered := hits[:0]
 			for _, h := range hits {
@@ -1187,7 +1199,14 @@ func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
 				if i > 0 {
 					b.WriteString("\n\n")
 				}
-				docName := chunkDocName(h.Section)
+				// Prefer the stamped document Title (the debate topic /
+				// research question) — it tells the LLM what the hit is
+				// ABOUT. Fall back to the section-derived name for legacy
+				// chunks with no Title.
+				docName := strings.TrimSpace(h.Title)
+				if docName == "" {
+					docName = chunkDocName(h.Section)
+				}
 				if docName == "" {
 					docName = "(unnamed document)"
 				}
@@ -1239,6 +1258,16 @@ const fetchKnowledgeDocCap = 30000
 // the chunks joined in section order. Truncates at max_chars with a
 // pointer back to knowledge_search for finer-grained retrieval.
 func (t *chatTurn) fetchKnowledgeDocToolDef() AgentToolDef {
+	return t.fetchKnowledgeDocScoped(t.skillsActive)
+}
+
+// fetchKnowledgeDocScoped is fetchKnowledgeDocToolDef parameterized by
+// which skills' AttachedCollections are in the allow-scope. The main
+// fetch passes t.skillsActive (empty); a skill_knowledge_fetch_doc call
+// passes []SkillRecord{skill} so a doc_id surfaced by that skill's
+// collection actually resolves here (the predicate must agree with the
+// search scope).
+func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "fetch_knowledge_doc",
@@ -1287,8 +1316,8 @@ func (t *chatTurn) fetchKnowledgeDocToolDef() AgentToolDef {
 			// knowledge_search returns a hit from a skill collection,
 			// the LLM tries fetch_knowledge_doc(doc_id), and gets
 			// "not found" because the predicate disagrees with the
-			// search scope. Same skillsActive list the search used.
-			for _, sk := range t.skillsActive {
+			// search scope. Same skill scope the search used.
+			for _, sk := range scopeSkills {
 				for _, cid := range sk.AttachedCollections {
 					if cid = strings.TrimSpace(cid); cid != "" {
 						exact[collectionSource(cid)] = true

@@ -101,8 +101,17 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 			}
 			t.session.BuildPlan = &BuildPlanState{ID: id, Steps: steps}
 			emitBuildPlanBlock(t.sse, t.session.BuildPlan)
-			return fmt.Sprintf("Build plan presented (%d step%s). The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.",
-				len(steps), plural(len(steps))), nil
+			// Grant the execution budget: lift the round cap to where we
+			// are now + buildPlanRoundsPerStep per step, so building +
+			// verifying the plan doesn't compete with whatever exploration
+			// already cost. max() — never lowers an existing grant.
+			if grant := t.currentRound + buildPlanRoundsPerStep*len(steps); grant > t.planBudgetCap {
+				t.planBudgetCap = grant
+			}
+			Log("[orchestrate.build_plan] plan presented: %d step(s), round budget lifted to %d (at round %d)",
+				len(steps), t.planBudgetCap, t.currentRound)
+			return fmt.Sprintf("Build plan presented (%d step%s) — round budget extended to %d for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.",
+				len(steps), plural(len(steps)), t.planBudgetCap), nil
 		},
 	}
 }

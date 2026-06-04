@@ -869,6 +869,12 @@ func ServeDashboard(addr string) error {
 	RegisterPublicPath("/api/desktop/ws")
 	mux.HandleFunc("/api/desktop/ws", HandleDesktopBridge(DesktopBridgeUserOf))
 
+	// Cookie-authed key provisioning: the desktop client (logged in via
+	// the webview) mints/fetches its bridge key here, instead of the user
+	// pasting one in. NOT a public path — cookie auth only, since it issues
+	// a credential. (Core-owned; phantom no longer owns the bridge key.)
+	mux.HandleFunc("/api/desktop/key", HandleDesktopKey)
+
 	// Restore persisted queue items after all apps are initialized
 	// so handlers are registered.
 	QueueRestore()

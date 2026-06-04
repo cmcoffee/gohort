@@ -88,6 +88,43 @@ func isCancelIntent(text string) bool {
 	return false
 }
 
+// forwardToDispatchToolDef lets the persona pass a RELEVANT interim
+// update to a task it dispatched that's still running — instead of the
+// framework auto-swallowing every message into the dispatch. The LLM
+// decides what's relevant; unrelated chatter just gets a normal reply.
+func (T *Phantom) forwardToDispatchToolDef(chatID string) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "forward_to_dispatch",
+			Description: "Forward a RELEVANT update to a task you dispatched to a specialist agent that's still running in the background. Use when the user adds something pertinent to that running task (\"oh, also check X\", \"make it Tuesday instead\", a correction). The note is handed to the agent between its rounds. Forward ONLY things relevant to the running task — for unrelated messages just reply normally and DON'T call this. No-op if nothing is running.",
+			Parameters: map[string]ToolParam{
+				"note": {Type: "string", Description: "The update to pass to the running agent, phrased as added context/instruction for its task."},
+			},
+			Required: []string{"note"},
+			Caps:     []Capability{CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			note := strings.TrimSpace(stringArgPhantom(args, "note"))
+			if note == "" {
+				return "", errors.New("note is required")
+			}
+			active := ActiveSubSessionsFor(chatID)
+			if len(active) == 0 {
+				return "Nothing is running right now, so there's no task to forward to.", nil
+			}
+			forwarded := 0
+			for _, s := range active {
+				if q := LookupSubSessionInjectionQueue(s.SubSessionID); q != nil {
+					q.Push(note)
+					forwarded++
+				}
+			}
+			Log("[phantom] forward_to_dispatch chat=%s → %d active dispatch(es)", chatID, forwarded)
+			return fmt.Sprintf("Forwarded to the running task (%d active).", forwarded), nil
+		},
+	}
+}
+
 // dispatchAgentToolDef is the DEFAULT (async, fire-and-forget)
 // dispatch tool. Handler validates the allowlist, kicks off a
 // background goroutine, and returns immediately with a "queued"
@@ -152,9 +189,33 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 			}
 			runtimeUser := phantomDispatchRuntimeUser(conv.ChatID)
 			subSessID := phantomSubSessionID(conv.ChatID, key)
-			// Track in SubSession lifecycle. Async — Mint marks active;
-			// the goroutine MarkSubSessionIdle's on completion so the
-			// next user turn can be promoted into the same agent.
+
+			// Hard in-flight guard. Claim the (chat, agent) slot
+			// ATOMICALLY before launching anything: whether the LLM fired
+			// two dispatch_agent calls in one turn or re-dispatched on a
+			// follow-up instead of forwarding, a second concurrent launch
+			// would race two goroutines on the same SubSession history and
+			// deliver duplicate answers. The cancel is created here (not in
+			// the goroutine) so the LoadOrStore is the single source of
+			// truth — no window where two callers both think they're first.
+			// If the slot is already held, fold this brief into the running
+			// dispatch as a forwarded note rather than starting over.
+			ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentAsyncTimeout)
+			if _, alreadyRunning := inflightDispatchCancels.LoadOrStore(subSessID, cancel); alreadyRunning {
+				cancel() // unused — the in-flight dispatch owns this slot
+				if q := LookupSubSessionInjectionQueue(subSessID); q != nil {
+					q.Push(brief)
+					Log("[phantom/dispatch_agent_async] chat=%s agent=%q already in-flight — folded new brief into running dispatch", conv.ChatID, key)
+					return "Already working on that — I passed your extra detail along to it. The answer's coming shortly; no need to dispatch again.", nil
+				}
+				Log("[phantom/dispatch_agent_async] chat=%s agent=%q already in-flight — ignored duplicate dispatch", conv.ChatID, key)
+				return "Already on it — that agent is still working and will reply shortly. No need to ask again.", nil
+			}
+
+			// We own the slot now. Track in SubSession lifecycle. Async —
+			// Mint marks active; the goroutine MarkSubSessionIdle's on
+			// completion so the next user turn can be promoted into the
+			// same agent.
 			MintSubSession(SubSession{
 				SubSessionID:  subSessID,
 				HostSessionID: conv.ChatID,
@@ -180,15 +241,12 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 						Log("[phantom/dispatch_agent_async] panic dispatching %q: %v", agentKey, r)
 						RetireSubSession(subSessID, "panic")
 					}
+					// Release the in-flight slot + cancel ctx (the /stop
+					// branch looks the cancel up here) when the run exits.
 					inflightDispatchCancels.Delete(subSessID)
+					cancel()
 					ReleaseSubSessionInjectionQueue(subSessID)
 				}()
-				ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentAsyncTimeout)
-				defer cancel()
-				// Register the cancel func so a "/stop" can tear this
-				// dispatch down mid-flight (see processMessage's stop
-				// branch). Removed in the deferred cleanup above.
-				inflightDispatchCancels.Store(subSessID, cancel)
 				out, err := orch.RunAgentSyncContinuing(ctx, ownerUsername, runtimeUser, agentKey, subSessID, SubSessionInjectionQueueKey(subSessID), briefMsg, fresh)
 
 				// User-initiated cancel (via /stop) surfaces as a
@@ -286,6 +344,11 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 					Text:      storedText,
 					Timestamp: now(),
 				})
+				// Defensive scrub: this text is delivered with no LLM
+				// re-render (direct-return), so strip any internal marker
+				// before it reaches the user. No-op on the normal path
+				// (the marker lives on storedText, not deliveredText).
+				deliveredText = scrubInternalScaffolding(deliveredText)
 				T.rememberRecentReply(deliveredText)
 				chunks := SplitMarkdownForDelivery(deliveredText, 1500)
 				for _, c := range chunks {
@@ -381,7 +444,7 @@ func buildAvailableAgentsPromptBlock(db Database, ownerUsername string, allowed 
 	if bullets == "" {
 		return ""
 	}
-	return "\n\nSPECIALIST AGENTS AVAILABLE: when the user asks about something that fits a specialist's purpose below, DELEGATE to them via dispatch_agent instead of answering inline — they have their own tools + memory + voice and produce better answers for their specialty. For ordinary chat (greetings, follow-ups, general questions you can handle), answer directly without delegating.\n\n" + bullets + "\n"
+	return "\n\nSPECIALIST AGENTS AVAILABLE: when the user asks about something that fits a specialist's purpose below, DELEGATE via dispatch_agent instead of answering inline — they have their own tools, memory, and grounded sources and answer their specialty better than you will. Dispatch as your FIRST move on such a question, EVEN WHEN you could answer it yourself: a specialist's domain is exactly where answering from your own memory yields confident-wrong specifics. Don't say you'll check and then answer from memory instead — dispatch, then send a short natural ack. Answer directly ONLY for genuinely general chat (greetings, opinions, follow-ups already covered) — NOT for specifics that land in a listed specialist's domain.\n\n" + bullets + "\n"
 }
 
 // summarizeAllowedAgents builds the "Agents you can dispatch to"

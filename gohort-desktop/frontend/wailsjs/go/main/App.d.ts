@@ -4,7 +4,9 @@ import {main} from '../models';
 
 export function AddReadRoot(arg1:string):Promise<main.save_result>;
 
-export function ApproveInvoke(arg1:string,arg2:boolean):Promise<void>;
+export function ApproveInvoke(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
+
+export function GetAllowedTools():Promise<Array<string>>;
 
 export function GetAutoApprove():Promise<boolean>;
 
@@ -25,6 +27,8 @@ export function ListTools():Promise<Array<main.tool_descriptor>>;
 export function LogOut():Promise<main.save_result>;
 
 export function PickReadRoot():Promise<main.pick_result>;
+
+export function RemoveAllowedTool(arg1:string):Promise<main.save_result>;
 
 export function RemoveReadRoot(arg1:string):Promise<main.save_result>;
 

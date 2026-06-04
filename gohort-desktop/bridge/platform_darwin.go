@@ -47,11 +47,19 @@ func promptWriteConsent(folder string) bool {
 		"The gohort server wants to CREATE and OVERWRITE files in:\n\n"+folder+"\n\nThis choice is remembered.")
 }
 
-// promptApproval shows the native Allow/Deny dialog for a
-// server-initiated tool call. Returns true only if the user allows.
-func promptApproval(name string, _ map[string]any) bool {
-	return nativeConfirm("Allow tool: "+name,
-		"The gohort server wants to run this tool on your Mac.")
+// promptApproval shows the native 3-way dialog for a server-initiated
+// tool call. allow=true on "Allow once" or "Always allow"; always=true
+// only on "Always allow" (the caller persists that to the allow-list).
+func promptApproval(name string, _ map[string]any) (allow, always bool) {
+	switch nativeApprove("Allow tool: "+name,
+		"The gohort server wants to run this tool on your Mac.") {
+	case 2:
+		return true, true
+	case 1:
+		return true, false
+	default:
+		return false, false
+	}
 }
 
 func plistPath(label string) string {

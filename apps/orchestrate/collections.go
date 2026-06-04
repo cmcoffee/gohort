@@ -171,6 +171,7 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 			Description: strings.TrimSpace(body.Description),
 			Created:     time.Now(),
 		}
+		c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 		saveCollection(udb, c)
 		Log("[orchestrate.collections] user=%q created collection %q (id=%s)", user, name, c.ID)
 		w.Header().Set("Content-Type", "application/json")
@@ -251,13 +252,22 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			if body.Description != nil {
-				c.Description = strings.TrimSpace(*body.Description)
+				newDesc := strings.TrimSpace(*body.Description)
+				if newDesc != c.Description {
+					c.Description = newDesc
+					c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
+				}
 			}
 			if body.FilterRules != nil {
 				c.FilterRules = strings.TrimSpace(*body.FilterRules)
 			}
 			if body.ClassifyOnAutofill != nil {
 				c.ClassifyOnAutofill = *body.ClassifyOnAutofill
+			}
+			// Backfill a missing cue on touch (legacy collections); a
+			// description change above already regenerated it.
+			if strings.TrimSpace(c.WhenToUse) == "" {
+				c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 			}
 			saveCollection(udb, c)
 			w.Header().Set("Content-Type", "application/json")
@@ -385,7 +395,13 @@ func (T *OrchestrateApp) handleCollectionSources(w http.ResponseWriter, r *http.
 		if ch.Date > g.latest {
 			g.latest = ch.Date
 		}
-		if sect := stripChunkPartSuffix(ch.Section); sect != "" && (g.name == "" || len(sect) < len(g.name)) {
+		// Prefer the document Title (the topic/question stamped at ingest)
+		// — it says what the doc is ABOUT. Title is uniform across a
+		// report's chunks, so this is stable. Fall back to the shortest
+		// section heading only for legacy chunks with no Title.
+		if ch.Title != "" {
+			g.name = ch.Title
+		} else if sect := stripChunkPartSuffix(ch.Section); sect != "" && (g.name == "" || len(sect) < len(g.name)) {
 			g.name = sect
 		}
 	}
@@ -774,30 +790,17 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 		if added >= body.MaxDocs {
 			break
 		}
-		raw, mime, ferr := fetchAutofillURL(ctx, cand.URL)
-		if ferr != nil {
-			failed++
-			results = append(results, summaryItem{URL: cand.URL, Status: "fetch_failed", Err: ferr.Error()})
-			continue
-		}
+		// Static fetch + extract, with a headless-browser fallback for
+		// JS-only / soft-blocked pages.
+		name, text, raw, mime, gerr := fetchAndExtractForIngest(ctx, cand.URL)
 		// Prefer the search-result title — it's human-curated and
 		// way more readable than nameFromURL's basename fallback.
-		name := strings.TrimSpace(cand.Title)
-		if name == "" {
-			name = nameFromURL(cand.URL, mime)
+		if t := strings.TrimSpace(cand.Title); t != "" {
+			name = t
 		}
-		text, eerr := ExtractDocument(ctx, DocumentAttachment{
-			Name: name, MimeType: mime, Data: raw,
-		})
-		if eerr != nil {
+		if gerr != nil {
 			failed++
-			results = append(results, summaryItem{URL: cand.URL, Status: "extract_failed", Name: name, Err: eerr.Error()})
-			continue
-		}
-		text = strings.TrimSpace(text)
-		if len(text) < 200 {
-			failed++
-			results = append(results, summaryItem{URL: cand.URL, Status: "too_short", Name: name})
+			results = append(results, summaryItem{URL: cand.URL, Status: "unusable", Name: name, Err: gerr.Error()})
 			continue
 		}
 		// Reject extracted blobs above a reasonable doc-text cap.
@@ -856,7 +859,7 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 		// reportID per kind so the chunker boundaries stay
 		// clean. Chunks carry Kind so consumers can frame
 		// hits appropriately at retrieval time.
-		if strings.HasPrefix(strings.ToLower(mime), "text/html") || strings.HasSuffix(strings.ToLower(name), ".html") || strings.HasSuffix(strings.ToLower(name), ".htm") {
+		if len(raw) > 0 && (strings.HasPrefix(strings.ToLower(mime), "text/html") || strings.HasSuffix(strings.ToLower(name), ".html") || strings.HasSuffix(strings.ToLower(name), ".htm")) {
 			if buckets, _ := ExtractHTMLByKind(raw); len(buckets) > 0 {
 				for kind, kindText := range buckets {
 					if kind == "" || len(kindText) < 100 {
@@ -1215,7 +1218,7 @@ to surface older PDFs that have accumulated more inbound links.
 Output: %d queries, one per line, no numbering or bullets, no quotes. Each query should be:
 - terse (2-7 words)
 - diverse (different angles on the topic, not synonyms of each other)
-- biased toward OFFICIAL sources (e.g. "kubernetes official documentation" not "kubernetes basics")
+- biased toward the PRIMARY / AUTHORITATIVE source, NOT secondary commentary. For laws & statutes, target the official code TEXT — "California Penal Code 459.5 full text", "site:leginfo.legislature.ca.gov penal code theft" — not law-firm blogs that paraphrase it. Same shape for regulations (the agency's own text), technical standards (the standards body), official forms, and product docs ("kubernetes official documentation", not "kubernetes basics"). The skill that uses this corpus will CITE from it, so a paraphrase is worse than the source itself.
 - biased toward fetchable PDF/HTML docs (e.g. "rfc 9110 pdf", "kubectl cheat sheet pdf")
 - year-tagged when the topic is an annual/versioned publication
 
@@ -1223,7 +1226,7 @@ If the user provided filter rules below, treat them as hard constraints —
 their "keep" notes should bias query phrasing, their "skip" notes should
 make you avoid query shapes that would surface that content.
 
-Skip news articles, opinions, tutorials about the topic. Aim for the canonical reference material.`, year, year, year, want)
+Skip news articles, opinions, tutorials, and explainer/commentary sites that merely SUMMARIZE the source (a law-firm article ABOUT a statute is not the statute). Aim for the canonical primary reference itself.`, year, year, year, want)
 	rulesBlock := strings.TrimSpace(c.FilterRules)
 	if rulesBlock == "" {
 		rulesBlock = "(none)"
@@ -1513,4 +1516,63 @@ func fetchAutofillURL(ctx context.Context, u string) ([]byte, string, error) {
 		return nil, "", fmt.Errorf("file exceeds %d-byte cap", autofillFetchLimit)
 	}
 	return raw, resp.Header.Get("Content-Type"), nil
+}
+
+// ingestMinChars is the floor below which a static fetch is treated as
+// "didn't really get the page" — JS-only skeletons, soft blocks, and
+// interstitials all extract to near-nothing. Below this we retry through
+// the headless browser.
+const ingestMinChars = 200
+
+// ingestBrowserMaxChars bounds how much rendered text the browser
+// fallback returns. Generous (full statute / spec pages run long); the
+// caller's own doc-size cap still applies downstream.
+const ingestBrowserMaxChars = 1 * 1024 * 1024
+
+// fetchAndExtractForIngest pulls a URL and returns a display name plus
+// extracted text ready for ingestion. It tries the cheap static HTTP
+// path first; when that extracts too little (JS-only page / soft block /
+// empty body) it falls back to the headless browser (BrowserFetchFunc),
+// which runs JS and ships normal browser headers — the same recovery
+// path fetch_url uses. Returns an error only when BOTH paths fail to
+// produce usable text.
+//
+// raw/mime carry the original static-fetch bytes for callers that want to
+// post-process the HTML (e.g. kind-tagged region extraction); they are
+// nil/"" when the browser fallback supplied the text (rendered text, not
+// source HTML).
+func fetchAndExtractForIngest(ctx context.Context, u string) (name, text string, raw []byte, mime string, err error) {
+	raw, mime, ferr := fetchAutofillURL(ctx, u)
+	if ferr == nil {
+		name = nameFromURL(u, mime)
+		if t, eerr := ExtractDocument(ctx, DocumentAttachment{Name: name, MimeType: mime, Data: raw}); eerr == nil {
+			text = strings.TrimSpace(t)
+		}
+	}
+	if len(text) >= ingestMinChars {
+		return name, text, raw, mime, nil
+	}
+	// Static path got a JS-only skeleton / soft block / nothing. Retry
+	// through the headless browser; keep whichever extraction is richer.
+	if BrowserFetchFunc != nil {
+		if rendered, berr := BrowserFetchFunc(u, ingestBrowserMaxChars); berr == nil {
+			if rendered = strings.TrimSpace(rendered); len(rendered) > len(text) {
+				if name == "" {
+					name = nameFromURL(u, "text/html")
+				}
+				// Rendered text, not source HTML — drop raw/mime so
+				// callers don't try to kind-extract plain text.
+				return name, rendered, nil, "", nil
+			}
+		} else {
+			Debug("[orchestrate.collections] browser fallback failed for %s: %v", u, berr)
+		}
+	}
+	if len(text) >= ingestMinChars {
+		return name, text, raw, mime, nil
+	}
+	if ferr != nil {
+		return "", "", nil, "", fmt.Errorf("fetch failed for %s: %w", u, ferr)
+	}
+	return "", "", nil, "", fmt.Errorf("extracted only %d chars from %s — JS-only or blocked even via headless browser; try a direct text/PDF URL", len(text), u)
 }

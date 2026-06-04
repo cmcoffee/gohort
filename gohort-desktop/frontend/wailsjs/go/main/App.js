@@ -6,8 +6,12 @@ export function AddReadRoot(arg1) {
   return window['go']['main']['App']['AddReadRoot'](arg1);
 }
 
-export function ApproveInvoke(arg1, arg2) {
-  return window['go']['main']['App']['ApproveInvoke'](arg1, arg2);
+export function ApproveInvoke(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ApproveInvoke'](arg1, arg2, arg3);
+}
+
+export function GetAllowedTools() {
+  return window['go']['main']['App']['GetAllowedTools']();
 }
 
 export function GetAutoApprove() {
@@ -48,6 +52,10 @@ export function LogOut() {
 
 export function PickReadRoot() {
   return window['go']['main']['App']['PickReadRoot']();
+}
+
+export function RemoveAllowedTool(arg1) {
+  return window['go']['main']['App']['RemoveAllowedTool'](arg1);
 }
 
 export function RemoveReadRoot(arg1) {

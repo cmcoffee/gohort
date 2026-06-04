@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/cmcoffee/gohort/apps/ollama_proxy"
@@ -18,10 +19,14 @@ import (
 // APPNAME is the application name.
 const APPNAME = "gohort"
 
-// VERSION holds the application's version string.
-//
 //go:embed version.txt
-var VERSION string
+var versionRaw string
+
+// VERSION holds the application's version string. version.txt carries a
+// trailing newline (most editors add one on save); trim it so the
+// embedded value is clean everywhere VERSION is interpolated — HTTP
+// headers, window titles, log banners, AppVersion.
+var VERSION = strings.TrimSpace(versionRaw)
 
 // global holds application-wide configuration and state.
 var global struct {

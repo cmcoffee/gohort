@@ -944,6 +944,22 @@ func (c *openAIClient) streamReadTimeout() time.Duration {
 	return t
 }
 
+// totalResponseBudget is the hard upper bound on a single generation —
+// the "give up on the response from the LLM" deadline. The header-wait
+// RequestTimeout bounds first-byte and the idle watchdog bounds
+// inter-token gaps, but neither caps TOTAL wall time: a model that keeps
+// trickling tokens within the idle window runs unbounded. This caps the
+// whole call (queue + prefill + thinking + streaming). Tracks
+// RequestTimeout so operators tune it via request_timeout_seconds (5 min
+// default); deep-thinking workloads that legitimately need longer bump
+// that knob and get a longer total budget too.
+func (c *openAIClient) totalResponseBudget() time.Duration {
+	if c.api.RequestTimeout > 0 {
+		return c.api.RequestTimeout
+	}
+	return 5 * time.Minute
+}
+
 func (c *openAIClient) doRequest(ctx context.Context, body []byte, readTimeout time.Duration) (*http.Response, error) {
 	Debug("[%s]: Sending request to %s/chat/completions", c.provider(), c.endpoint)
 
@@ -1436,6 +1452,13 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, 0, opts)
 
+	// Hard total-response deadline: give up on the LLM if the whole call
+	// (queue + prefill + thinking + streaming) exceeds the budget. The
+	// per-read/header timeouts don't bound a continuously-trickling
+	// generation; this does. See totalResponseBudget.
+	ctx, cancel := context.WithTimeout(ctx, c.totalResponseBudget())
+	defer cancel()
+
 	// Ollama runs locally with no per-token cost — always remove the
 	// token limit so the model generates until its natural stop token.
 	if c.isOllama() {
@@ -1653,6 +1676,12 @@ func estimateReasoningTokens(total int, reasoning, content string, toolCalls []T
 // ChatStream sends a streaming request.
 func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, 0, opts)
+
+	// Hard total-response deadline — see Chat(). A streaming generation
+	// that keeps emitting tokens within the idle window would otherwise
+	// run unbounded; this is the "give up on the response" cap.
+	ctx, cancel := context.WithTimeout(ctx, c.totalResponseBudget())
+	defer cancel()
 
 	// See Chat() — Ollama runs locally, no token limit needed.
 	if c.isOllama() {

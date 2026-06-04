@@ -149,7 +149,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if !subAgent {
 		fields = append(fields,
 			ui.FormField{Field: "allow_explorer", Type: "toggle", Label: "Allow explorer mode",
-				Help: "Lets the worker lift its round budget mid-turn (up to 50). For agents mapping unfamiliar APIs."},
+				Help: "Lets the worker lift its round budget mid-turn. For agents mapping unfamiliar APIs."},
+			ui.FormField{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",
+				Help: "Max rounds once explorer mode is active. Blank/0 = default 50. Only applies when explorer mode is allowed."},
 			ui.FormField{Type: "header", Label: "Memory",
 				Help: "What the agent remembers across turns. Knowledge (uploaded files) is always available."},
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode",
@@ -163,7 +165,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
 				Help: "Strips memory_save / memory_search / memory_forget from the catalog and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
 			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
-				Help: "Hides activate_skill from the catalog and drops the \"Available skills\" prompt block — no skills can be invoked regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
+				Help: "Hides read_skill / skill_knowledge_search / skill_knowledge_fetch_doc + the \"Available skills\" block AND stops trigger-injection — no skill applies, regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
 
 			ui.FormField{Type: "header", Label: "Publishing",
 				Help: "Who can use this agent and under what restrictions."},

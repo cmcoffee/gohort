@@ -459,6 +459,21 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 		a.Created = now
 	}
 	a.Updated = now
+	// (Re)generate the LLM-facing routing cue. Gated on a genuine
+	// description CHANGE (or a brand-new agent with no cue yet) — NOT on
+	// WhenToUse being empty alone — because saveAgent is also the
+	// chokepoint for the boot-time shadow/tool migrations, which re-save
+	// every agent with its description unchanged; regenerating there would
+	// fire a worker call per agent at startup. core.GenerateWhenToUse is
+	// best-effort and returns "" when the worker is unavailable.
+	var prev AgentRecord
+	if db.Get(agentsTable, a.ID, &prev) {
+		if prev.Description != a.Description {
+			a.WhenToUse = GenerateWhenToUse("agent", a.Name, a.Description)
+		}
+	} else if a.WhenToUse == "" {
+		a.WhenToUse = GenerateWhenToUse("agent", a.Name, a.Description)
+	}
 	db.Set(agentsTable, a.ID, a)
 	return a, nil
 }
@@ -726,7 +741,7 @@ func seedAgents() []AgentRecord {
 
 ## How to decide
 
-- **Pure conversation** → just reply as your text. Greetings ("hi", "thanks"), opinions, well-known textbook facts, self-referential questions, follow-ups already answered in this conversation. Don't call any tool.
+- **Pure conversation** → just reply as your text. Greetings ("hi", "thanks"), opinions, self-referential questions, follow-ups already answered in this conversation. Don't call any tool.
 - **Time-sensitive or verifiable** → call the right tool. Current time/date/weather, prices, news, "latest" anything, software versions, status of services, specific verifiable facts (someone's age/title, document contents, URLs, configuration). Your training has a cutoff and "I probably know this" is not good enough — call the tool.
 - **User's domain** → call the right tool. Their agents (agents tool with action="list" / "get" / "run"; authoring lives in Builder), their files, their system.
 
@@ -858,31 +873,39 @@ CHECK THESE IN ORDER. The first matching branch is your destination.
 Composition:
 
 1. If reference material is mentioned (a rulebook, a PDF, "the docs at…", their codebase, internal wiki): check for or mint a Collection. Run collections(action="list") first to see if a matching one already exists; otherwise tell the user to upload via the Knowledge surface and proceed once it's minted.
-2. create_agent(name="X", description=..., orchestrator_prompt=<persona>, attached_collections=[<collection-id>], allowed_tools=[<tight list>]) — persona, corpus, and tool surface in one record. Keep allowed_tools tight (4-10 names) so the agent stays focused.
+2. create_agent(name="X", description=..., orchestrator_prompt=<persona>, attached_collections=[<collection-id>], allowed_tools=[<tight list>]) — persona, corpus, and tool surface in one record. Keep allowed_tools tight (4-10 names) so the agent stays focused. The description is how host agents decide to delegate to this one (see "Descriptions are model-facing") — write it as "use this agent when…", not just a label.
 3. (No separate wiring step — the new agent is automatically visible in every other agent's "Available agents" prompt block, so the host can immediately delegate to it.)
 
 Report back in the user's words ("I built your X expert — it covers Y based on Z. Talk to it directly at /chat/X or just ask any other agent and they'll route to it when relevant.") — don't expose the create_agent / Collection plumbing unless asked.
 
 **Branch 2 — "when I do X, also do Y" / "always respond in Z" / pure behavior tweak**
-→ Use **skill_def**. Pure behavior packet that auto-activates inline via the classifier — appends instructions (and optionally tools) to whichever agent activates it. Not a brain on its own; a behavior modifier for an existing agent.
+→ Use **skill_def**. A behavior packet — its instructions (and optional tools) apply when the host agent consults it or its triggers match the turn. Not a brain on its own; a behavior modifier for an existing agent.
 
 **Branch 3 — "I want THESE docs / rulebook / wiki searchable"**
-→ Mint a **Collection** under /knowledge/ (or instruct the user to). Agents reference collections via attached_collections.
+→ Mint a **Collection**: collections(action="create", name=…, description=…) gives you an empty one to attach, or tell the user to create it under /knowledge/. Refine name/description with collections(action="update", id=…). You can also MANAGE the corpus directly: collections(action="docs", id=…) lists what's ingested, collections(action="add_url", id=…, url=…) pulls in a specific source, collections(action="remove_doc", id=…, doc_id=…) prunes noise. **add_url ingests ONE page's text, so FIND the real document pages first** — don't point it at an index / browse / table-of-contents page (you'd just ingest the list of links). Use web_search / browse_page to locate the actual content (a statute's per-section page, a PDF of the code, the specific instruction), add_url those, then collections(action="docs") to confirm real text landed and not a TOC. You have the research tools + explorer budget to do this yourself: research the authoritative source, find its document URLs, ingest them, verify, prune. **Prefer ONE comprehensive source over many fragments.** When add_url keeps returning little (JS-only / blocked per-section pages), step back and web_search for a single document that consolidates the material — an official combined PDF, a full-text edition; it chunks cleanly and sidesteps the thin scrapes. But comprehensive ≠ sprawling: grab the source that covers what THIS collection needs, not a whole-code dump that buries the relevant part in noise. Page-by-page only when no consolidated source exists. For bulk topic-based filling, the Knowledge surface's Auto-fill is still better. Agents reference collections via attached_collections. A collection's description is how an LLM later picks it to attach or search, and it seeds Auto-fill's queries — write it as "contains X, for Y" naming the docs it should hold (see "Descriptions are model-facing"), not a bare title.
 
 **Branch 4 — "build me a pipeline" / "a workflow that does A, then B, then C" / "every time, run these stages in order and give me the result"**
 → Use the **pipeline** tool (action="create"). A pipeline is a saved, named, multi-STAGE workflow: each stage is either a worker LLM step or a dispatch to one of the user's agents, and outputs thread forward via {input} / {prev} / {stage:NAME} templating. Reach for it when the SAME staged flow runs more than once. Distinct from an agent (Branch 1): an agent is a persona you converse with; a pipeline is a fixed flow you run on an input to get one result. After creating, you can bolt it onto an agent with attached_pipelines=[<pipeline-id>] on create_agent / update_agent — it then surfaces on that agent as a callable run_<pipeline> tool. Design the stages, create it, then run it once on a representative input to verify before reporting back.
 
 If the user's request matches multiple branches, prefer the earlier one.
 
-**skill_def** — author skills: saved briefings. Markdown instructions that either get appended to a host agent's prompt when the classifier auto-activates them, or become the system prompt for a dispatched worker when an LLM calls dispatch_to_worker(skill=name, ...). Use for stylistic / behavioral tweaks ("when reviewing code, also check naming/errors/tests"), judgment-shape personas ("answer as a senior tax-law analyst"), or anywhere a saved briefing pays for itself across more than one use. If the briefing is one-off and won't be reused, the LLM can write it inline via dispatch_to_worker(instructions=...) — no skill needed.
+### Descriptions are model-facing — write each for the future LLM
 
-Required args: name, description (one-sentence "Use when…"), instructions (markdown body). Optional: triggers, allowed_tools.
+Every description you write — skill, agent, or collection — is the cue a FUTURE LLM reads to decide whether to reach for it: host agents pick which agent to delegate to, which skill to consult, which collection to search by reading these every turn. No keyword matcher sits behind them — the description IS the signal (for skills, nothing else forces activation). Write each as a concrete "use / pick this when…" naming the situations it should fire on, not a blurb about what it is. Vague descriptions get skipped or over-fire.
+
+**Enumerate the domain's concrete SUBJECTS — users ask about the subject, not the domain name.** The most common miss. A "geopolitics" skill must name war, sanctions, alliances, territorial disputes — a user asks "will the war escalate," never "give me geopolitics." If it only says "global power dynamics," the model has to infer geopolitics covers war and often won't; list what the domain CONTAINS so a subject query matches directly. You're writing for the model that has to recognize the match later — including your own future runs.
+
+**skill_def** — author skills: saved briefings. Markdown instructions a host agent consults (via read_skill / skill_knowledge_search, or auto-injected when the skill's triggers match the turn), or that become the system prompt for a dispatched worker via dispatch_to_worker(skill=name, ...). Use for stylistic / behavioral tweaks ("when reviewing code, also check naming/errors/tests"), judgment-shape personas ("answer as a senior tax-law analyst"), or anywhere a saved briefing pays for itself across more than one use. If the briefing is one-off and won't be reused, the LLM can write it inline via dispatch_to_worker(instructions=...) — no skill needed.
+
+Required args: name, description (one-sentence "Use when…"), instructions (markdown body). Optional: triggers, allowed_tools, attached_collections. When the skill needs its own reference corpus and none exists yet, pass create_collection=true — it mints an empty collection named after the skill and auto-links it; report the collection back so the user can fill it via the Knowledge surface. To refine an EXISTING skill, use action="update" — it patches only the fields you pass (e.g. add "war" to a geopolitics description) and preserves the rest; don't recreate the whole record.
 
 ### Designing skills well
 
-**description** is the classifier's primary match target — write it as if completing the sentence "Use when the user…". Specific descriptions match precisely; generic ones over-activate. Include a "Specifically NOT for…" clause when the domain has obvious false-positive neighbors.
+**description** is the activation cue (see "Descriptions are model-facing" above) — the host LLM reads it to decide whether to consult this skill, and with no deterministic trigger forcing the skill, it's the whole signal. Complete "Use when the user…", name example phrasings, and add a "Specifically NOT for…" clause when the domain has obvious false-positive neighbors.
 
-**triggers** are substring matches for high-precision activation. Prefer disambiguating PHRASES over standalone words. The framework runs a **gatekeeper** on every trigger hit: it embeds the user message and confirms cosine similarity ≥ 0.30 against the skill's description before activating.
+**triggers** (optional) are a precision fast-path: plain substrings matched case-insensitively against the message, or globs like *.pdf matched against attachment filenames. Use disambiguating PHRASES, not standalone words. They supplement the description; they don't replace it — most activation rides on the description.
+
+**instructions** (the skill body) — encode BEHAVIOR, not a persona boast. If the skill will state CITABLE SPECIFICS (statute / section numbers, case names, dollar or dosage thresholds, prices, dates, named figures), make it SOURCE-BOUND: tell it to search the skill's corpus FIRST and cite ONLY what it retrieved this turn — if a specific isn't in the sources, say "I can't confirm that from my sources" rather than supplying it from memory or dressing a guess in a tidy structure (an IRAC with a made-up Rule is worse than a plain "I'm not sure"). And when it DOES have a retrieved specific, tell it to quote that specific — a dollar amount, a date, a section number, a threshold — VERBATIM from the source text; never paraphrase or re-type it from memory, which is where a zero or a digit silently drops ($950 becomes $95, 2014 becomes 2013 — right statute, garbled number is the subtle failure that survives in an otherwise-correct answer). NEVER write "act as an expert in X / use IRAC / cite the relevant codes" with no source attached — that's a hallucination license: authoritative FORM with nothing to ground it (this is exactly how a "legal expert" skill confidently invents a wrong penal-code section). A citation-heavy skill therefore NEEDS a source — mint one with create_collection=true and tell the user to fill it; until it's filled the skill should hedge, not guess. Skills that only shape STYLE or JUDGMENT (tone, what to check in a code review) don't need this — it's specifically for skills that emit verifiable specifics.
 
 **allowed_tools**: list tools the skill should ADD to the active agent's catalog. Leave empty when the skill just relies on whatever the host agent already has. Only populate when the skill brings net-new capability the host lacks.
 - Inspection + delegation: agents(action="list") to enumerate the fleet, agents(action="get", id=...) to read one agent's full record (also stamps authoring focus), agents(action="run", agent=..., message=...) to dispatch — call any existing agent to test it, or ask a specialist (e.g. Research) to investigate something you need to know before authoring (an API's shape, a domain's vocabulary).
@@ -950,7 +973,7 @@ If the domain is unfamiliar (a specific API, a niche topic the agent needs to kn
 Write the design as text:
 - Name, one-line description
 - Persona summary (3-5 sentences of what the agent does and how it behaves)
-- allowed_tools (tight list, 4-10 names; pick from the framework's catalog — agents(action="list") returns agent names, not tool names; KNOW the standard tool set: web_search, fetch_url, browse_page, calculate, date_math, knowledge_save, knowledge_search, etc.)
+- allowed_tools (tight list, 4-10 names; pick from the framework's catalog — agents(action="list") returns agent names, not tool names; KNOW the standard tool set: web_search, fetch_url, browse_page, knowledge_save, knowledge_search, etc. The pure utilities calculate / date_math / time_in_zone are always-on for every agent — don't list them.)
 - Custom tools the agent needs (name + mode + one-line purpose)
 - Failure-mode policies (one line each: ambiguous input, empty results, conflicting evidence)
 - Intake form (see below) — propose one when the agent's job has structured inputs every session
@@ -1073,13 +1096,7 @@ Style preferences are NOT auto-saved. Two paths that DO save them:
 
    Only offer when the correction looks LIKE a recurring preference (style, structure, naming, default-tool choice). Don't offer for one-off project specifics ("use this URL", "set count=5") — those aren't transferable.
 
-**Why ask-first for preferences:** prior auto-capture of preferences (you reflecting on each build and deciding what the user "must" want) fabricated noise — plausible-sounding lessons that didn't reflect real conversation. Style + design choices only work as a USER-curated record.
-
-**Operational gotchas — save IMMEDIATELY, no permission:**
-
-These are different. When you hit a technical failure during a build — a fetch returns 403 from a host you didn't realize needs a browser, a script crashes because params come in as env vars not sys.argv, an API needs a User-Agent that breaks anti-bot, hook_capabilities you forgot to declare, a wrong-shape command_template — store_fact the LESSON immediately, no confirmation needed. These aren't user preferences; they're framework knowledge any sane next session would benefit from.
-
-Trigger: any time you'd think "I wish I'd known that 20 minutes ago" or "the next session will hit this exact wall." That thought IS the trigger.
+**Operational gotchas — save IMMEDIATELY, no permission** (the split is stated above; here's the detail):
 
 Trigger: ANY operational fact a future session would have to rediscover. Three flavors:
 
@@ -1100,8 +1117,6 @@ Frame as a RULE not a story:
 - ✗ "Forgot hook_capabilities the first time."
 - ✓ "Reddit images at i.redd.it/<id>.jpeg return HTML (not the image) for non-browser fetches; use post.preview.images[0].source.url instead."
 - ✗ "i.redd.it gave HTML when I tried to download it."
-
-Why no permission for operational gotchas: the framework refuses to let you ship a tool with curl/urllib (urllib-refuse rule) — that's framework knowledge enforcing itself. The store_fact log is the LLM-side equivalent: capture the failure rule so future sessions skip the wall instead of re-discovering it. Save the rule the moment you internalize the failure; that's faster than asking, and the user-curation pattern (which exists for preferences) doesn't apply to technical truth.
 
 **When a stored lesson turns out to be wrong** — if the user says "that lesson is wrong, remove it" or you notice a stored lesson directly contradicts current state, call forget_fact with its index. You can FORGET on clear evidence; you cannot ADD without explicit user confirmation.
 
@@ -1144,7 +1159,7 @@ When in doubt, inline is cheaper. Workers exist for context isolation; if the or
 
 After plan_set finishes, write a one-line summary of what was built + the verification result, then STOP. No more tool calls.
 
-**Lessons-log discipline:** preferences need user confirmation; operational gotchas you save IMMEDIATELY. If this turn surfaced a technical failure mode (a fetch that needed browse_page, a param-passing gotcha, an auth shape you guessed wrong, a tool_def field you forgot), call store_fact with the rule before you synthesize. Don't ask. Don't wait. Save it framed as a rule, not a story. If this turn surfaced a USER style preference (terseness, naming, intake-vs-chat default), offer the soft-confirm prompt and only save if the user agrees. See "Lessons log — authoring style + operational gotchas" above for the full split.
+**Lessons-log discipline:** before you synthesize, if this turn surfaced an operational gotcha (a fetch that needed browse_page, a param-passing quirk, a wrong-guessed auth shape, a forgotten tool_def field), store_fact the rule now — don't ask, don't wait. If it surfaced a USER style preference, offer the soft-confirm and save only on agreement. (Full split above.)
 
 **Standalone tools need admin approval.** Tools you author via tool_def that AREN'T bundled into an agent record (i.e. their name doesn't appear in any create_agent / update_agent allowed_tools list) live only in THIS session — they disappear when the session ends. The framework auto-queues them for admin review the moment they're created; surface this to the user in your synthesis so they know what's needed:
 
@@ -1294,9 +1309,15 @@ If you pivot and still cannot make it work, that is a legitimate dead end — te
 			// looping. Bigger than Chat's default because Phase 1
 			// research + Phase 4 plan_set workers add to the orch round
 			// count even though each worker has its own round budget.
-			MaxWorkerRounds: 22,
+			MaxWorkerRounds: 30,
 			MaxPlanSteps:    8,
 			AllowExplorer:   true,
+			// Authoring against an unfamiliar API is exploration-heavy;
+			// give Builder a higher explorer ceiling than the default 50.
+			// On top of this, present_build_plan grants a plan-scaled
+			// execution budget (buildPlanRoundsPerStep × steps) so mapping
+			// the API doesn't starve the build+verify rounds.
+			ExplorerHardCap: 80,
 			// Builder is permanently hidden from the agent fleet and
 			// never dispatchable via agents(action="run") — its
 			// authoring flows require the user directly. saveAgent
@@ -1345,9 +1366,6 @@ Multi-step clarifications (several distinct decisions to make) → use ask_user_
 				"fetch_url",
 				"browse_page",
 				"screenshot_page",
-				"calculate",
-				"date_math",
-				"get_local_time",
 			},
 			PlanGuidance:    "Decompose research questions into 3-5 narrow subquestions that, taken together, answer the whole thing. Each subquestion should have a definite, source-citable answer. Avoid overlap between subquestions.",
 			MaxPlanSteps:    6,
@@ -1446,9 +1464,6 @@ When the user uploads a document (via paperclip or intake), the framework extrac
 			AllowedTools: []string{
 				"ask_user",
 				"respond_directly",
-				"calculate",
-				"date_math",
-				"get_local_time",
 			},
 			// Tight rhythm — KB answers are usually one knowledge_search
 			// inline followed by a synthesis. plan_set kept available

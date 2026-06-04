@@ -1,6 +1,6 @@
 // Package datemath provides a chat tool for computing date differences
 // and adding/subtracting day offsets from a given date. Complements the
-// localtime tool: localtime answers "when is now", datemath answers
+// timezone tool (current time + zone conversion): datemath answers
 // "how far between X and Y" and "X plus N days."
 package datemath
 

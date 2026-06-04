@@ -41,6 +41,12 @@ var (
 const (
 	defaultMaxPlanSteps    = 5
 	defaultMaxWorkerRounds = 5
+	// buildPlanRoundsPerStep is how many execution rounds each build-plan
+	// step grants once Builder calls present_build_plan. A step is
+	// typically draft script → test → fix → verify → mark_step_done, so
+	// ~4 rounds/step. The grant lands on top of the round count already
+	// spent exploring, giving execution its own runway.
+	buildPlanRoundsPerStep = 4
 )
 
 func resolveMaxPlanSteps(a AgentRecord) int {
@@ -360,16 +366,27 @@ type chatTurn struct {
 	explorerMode   bool
 	explorerReason string
 
-	// Skills the LLM has activated via activate_skill — sticky across
-	// turns. Rehydrated from session.ActiveSkillIDs at the start of each
-	// turn (re-loaded from the user's skills store so edits take effect
-	// immediately); the LLM grows the list via activate_skill and
-	// shrinks it via deactivate_skill. Each entry contributes its
-	// instructions to the system prompt (via appendActiveSkills), its
-	// AllowedTools to the round's catalog union, and its
-	// AttachedCollections to RAG search. The "Available skills" block
-	// hides already-active entries so the LLM doesn't re-activate.
+	// currentRound mirrors the orchestrator loop's round counter so
+	// mid-loop tool handlers (e.g. present_build_plan) know where they
+	// are in the budget. Updated at the top of every round.
+	currentRound int
+	// planBudgetCap is the absolute round number the budget is lifted to
+	// once Builder presents a build plan: set to currentRound +
+	// buildPlanRoundsPerStep × len(steps) when present_build_plan fires.
+	// 0 = no plan grant. Lets a plan's EXECUTION phase get its own rounds
+	// on top of whatever exploration already cost — so mapping the API
+	// doesn't starve the build+verify rounds. Never lowers the budget.
+	planBudgetCap int
+
+	// skillsActive is vestigial (always empty) — skills are no longer
+	// in-context-activated. Kept because the main knowledge_search passes
+	// it as the "scope skills" arg (empty = agent's own corpus only).
 	skillsActive []SkillRecord
+	// deliveredSkills tracks which skills' instructions have been shown
+	// THIS turn (via read_skill, skill_knowledge_search, or trigger
+	// injection) so they aren't repeated. Per-turn only — never persisted,
+	// so there's no cross-turn state for the LLM to track. Init'd per turn.
+	deliveredSkills map[string]bool
 
 	// Per-turn tool log + dedup cache. Wrapped handlers append to
 	// the log on first call and short-circuit to the cached result
@@ -394,7 +411,10 @@ type chatTurn struct {
 	// alongside CapNetwork tool calls — both count as "new info
 	// entered the conversation this turn."
 	userDocsThisTurn bool
-	toolCache        map[string]string // canonical(name, args) → result
+	// docNames holds the filenames of this turn's attached documents, so
+	// behavior-skill glob triggers (e.g. "*.pdf") can match against them.
+	docNames  []string
+	toolCache map[string]string // canonical(name, args) → result
 	// dispatchCounts tracks how many times each unique (name, args)
 	// pair has been DISPATCHED this turn — regardless of whether the
 	// result was successful or errored. Distinct from toolCache, which
@@ -457,91 +477,82 @@ func isNetworkTool(ct ChatTool) bool {
 // something, no framework-driven capture. The loop-break gate
 // this function fed isn't needed anymore.)
 
-// appendActiveSkills folds the instructions of any active skills
-// (rehydrated from session.ActiveSkillIDs at turn start, plus any
-// the LLM activates mid-turn) onto the supplied system prompt.
-// Shared by the orchestrator round and the synthesis call so both
-// see the same skill voice. No-op when skillsActive is empty.
-func (t *chatTurn) appendActiveSkills(sys string, _ []ChatMessage) string {
-	// Iterates t.skillsActive directly — every entry got there via
-	// either rehydrate (sticky from a prior turn) or the LLM's
-	// activate_skill tool call this turn. No classifier, no auto-
-	// activation; the LLM owns whether a skill is active.
-	if len(t.skillsActive) == 0 {
-		return sys
-	}
-	for _, s := range t.skillsActive {
-		section := SkillPromptSection(s)
-		sys += section
-		Debug("[orchestrate.skills] injected section for %q (%d chars)", s.Name, len(section))
-	}
-	return sys
-}
-
-// renderAvailableSkillsBlock produces a compact "Available skills"
-// section listing every skill the agent can reach (via AllowedSkills)
-// that's NOT currently active in this session. Parallel to the
-// "Available agents" block — same shape, same activation pattern:
-// LLM reads the catalog and pulls one in via activate_skill(name)
-// when it judges the current conversation needs the skill's
-// instructions or tools. Empty string when DisableSkills is on,
-// AllowedSkills is empty, or every allowed skill is already active.
-func (t *chatTurn) renderAvailableSkillsBlock() string {
-	if t == nil || t.agent.DisableSkills {
-		return ""
-	}
-	// Strict allowlist — only skills the agent has explicitly
-	// opted into can surface here. Without an allowlist there's
-	// nothing to render.
-	if len(t.agent.AllowedSkills) == 0 {
+// renderTriggeredSkills injects the FULL instructions of any allowed skill
+// the LLM DREW ON this turn (read_skill / skill_knowledge_search →
+// t.deliveredSkills), so a consulted skill's lens governs the whole turn —
+// the synthesis reply especially, which builds a fresh system prompt. A
+// mere trigger MATCH no longer injects here; it surfaces as a soft nudge
+// via renderSkillTriggerHints. Empty when DisableSkills, no allowlist, or
+// nothing was consulted.
+func (t *chatTurn) renderTriggeredSkills() string {
+	if t == nil || t.agent.DisableSkills || len(t.agent.AllowedSkills) == 0 {
 		return ""
 	}
 	allowed := make(map[string]bool, len(t.agent.AllowedSkills))
 	for _, id := range t.agent.AllowedSkills {
 		allowed[id] = true
 	}
-	skills := LoadSkills(t.udb, t.user)
-	if len(skills) == 0 {
-		return ""
-	}
-	activeIDs := map[string]bool{}
-	for _, a := range t.skillsActive {
-		activeIDs[a.ID] = true
-	}
-	var available []SkillRecord
-	for _, s := range skills {
-		if s.Disabled {
-			continue
-		}
-		if !allowed[s.ID] {
-			continue
-		}
-		if activeIDs[s.ID] {
-			continue
-		}
-		available = append(available, s)
-	}
-	if len(available) == 0 {
-		return ""
-	}
 	var b strings.Builder
-	b.WriteString("\n\n## Available skills\n\n")
-	b.WriteString("Skills you can pull in via `activate_skill(name)` when the conversation enters a domain a listed skill covers. Don't activate speculatively — only when the question or topic would benefit from the skill's instructions / tools. Activation is sticky: once active, the skill's instructions, tools, and attached corpus stay in scope on follow-up turns until you call `deactivate_skill(name)`. Format: **name** — one-sentence purpose.\n\n")
-	for _, s := range available {
-		desc := strings.TrimSpace(s.Description)
-		if len(desc) > 140 {
-			desc = desc[:140] + "…"
+	for _, s := range LoadSkills(t.udb, t.user) {
+		if s.Disabled || !allowed[s.ID] {
+			continue
 		}
-		if desc == "" {
-			desc = "(no description)"
+		if !t.deliveredSkills[s.ID] {
+			continue
 		}
-		b.WriteString("- **")
-		b.WriteString(s.Name)
-		b.WriteString("** — ")
-		b.WriteString(desc)
-		b.WriteString("\n")
+		b.WriteString(SkillPromptSection(s))
 	}
 	return b.String()
+}
+
+// renderSkillTriggerHints surfaces a soft HINT for allowed skills whose
+// triggers match this turn (last user message + attached doc filenames for
+// glob triggers like "*.pdf") but that the LLM hasn't consulted yet — a
+// nudge to reach for them, not an injection. Skills already delivered this
+// turn are skipped (no point hinting what's already loaded). The match is a
+// relevance signal; the LLM still decides.
+func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
+	if t == nil || t.agent.DisableSkills || len(t.agent.AllowedSkills) == 0 {
+		return ""
+	}
+	allowed := make(map[string]bool, len(t.agent.AllowedSkills))
+	for _, id := range t.agent.AllowedSkills {
+		allowed[id] = true
+	}
+	var names []string
+	for _, s := range LoadSkills(t.udb, t.user) {
+		if s.Disabled || !allowed[s.ID] || t.deliveredSkills[s.ID] {
+			continue
+		}
+		if SkillTriggersMatch(s, userMsg, t.docNames) {
+			names = append(names, s.Name)
+		}
+	}
+	return SkillTriggerHintBlock(names)
+}
+
+// renderAvailableSkillsBlock produces the "Available skills" section —
+// every skill the agent can reach (via AllowedSkills), which the LLM
+// draws on via read_skill / skill_knowledge_search / skill_knowledge_fetch_doc.
+// Empty when DisableSkills, no allowlist, or no allowed skill.
+func (t *chatTurn) renderAvailableSkillsBlock() string {
+	if t == nil || t.agent.DisableSkills || len(t.agent.AllowedSkills) == 0 {
+		return ""
+	}
+	allowed := make(map[string]bool, len(t.agent.AllowedSkills))
+	for _, id := range t.agent.AllowedSkills {
+		allowed[id] = true
+	}
+	var avail []SkillRecord
+	for _, s := range LoadSkills(t.udb, t.user) {
+		if s.Disabled || !allowed[s.ID] {
+			continue
+		}
+		avail = append(avail, s)
+	}
+	// Rendering lives in core (shared with phantom); this function only
+	// computes the per-agent available set.
+	return RenderAvailableSkills(avail)
 }
 
 // IsFrameworkToolDef reports whether an AgentToolDef wraps a
@@ -572,6 +583,65 @@ func (t *chatTurn) fleetView() (Database, string) {
 	return t.udb, t.user
 }
 
+// dispatchableFleet returns the agents this turn's agent may dispatch
+// to — the shared source of truth for BOTH the "Available agents"
+// prompt block AND the per-agent consult_<name> tools. Empty when the
+// current agent can't dispatch at all.
+//
+// Excludes: the current agent (don't dispatch to yourself), Builder
+// (separate routing concern — needs the user directly), and (in default
+// mode) Hidden agents. Returns nil for a sub-agent leaf (OwnedBy set —
+// no agents tool) or a restricted catalog without the `agents` tool, so
+// neither the block nor the consult tools tell an agent to do something
+// its catalog physically prevents.
+func (t *chatTurn) dispatchableFleet() []AgentRecord {
+	if t == nil || t.agent.OwnedBy != "" {
+		return nil
+	}
+	fleetDB, fleetUser := t.fleetView()
+	if fleetDB == nil || fleetUser == "" {
+		return nil
+	}
+	// The `agents` grouped tool is force-added to EVERY non-leaf agent's
+	// catalog (see the unconditional knowTools append in the catalog
+	// builder — it is NOT gated on AllowedTools). So an explicit
+	// AllowedTools list that doesn't happen to name "agents" still HAS
+	// dispatch. The old gate here checked for a literal "agents" in
+	// AllowedTools and bailed when absent — which silently suppressed the
+	// whole catalog for any agent with a materialized tool list (seed-chat
+	// after the first tool approval, every custom agent). The tool was
+	// present but the model never saw WHAT it could dispatch to, so it
+	// fell back to agents(action="list") or just didn't delegate. Gate
+	// only on the no-tools sentinel: an agent an admin set to zero tools
+	// genuinely shouldn't be told to delegate.
+	if isNoToolsSentinel(t.agent.AllowedTools) {
+		return nil
+	}
+	// AllowedDispatchTargets: empty = allow all (hide Hidden); non-empty
+	// = allowlist (explicit pick wins, even over Hidden).
+	linked := make(map[string]bool, len(t.agent.AllowedDispatchTargets))
+	for _, id := range t.agent.AllowedDispatchTargets {
+		linked[id] = true
+	}
+	restrictMode := len(linked) > 0
+	all := listAgents(fleetDB, fleetUser)
+	var available []AgentRecord
+	for _, a := range all {
+		if a.ID == t.agent.ID || isBuilderAgent(a.ID) {
+			continue
+		}
+		if restrictMode {
+			if !linked[a.ID] {
+				continue
+			}
+		} else if a.Hidden {
+			continue
+		}
+		available = append(available, a)
+	}
+	return available
+}
+
 // renderAvailableAgentsBlock surfaces the OTHER agents in the user's
 // fleet so the host LLM knows what it can dispatch to via
 // agents(action="run", agent=..., message=...). Without this block
@@ -580,87 +650,28 @@ func (t *chatTurn) fleetView() (Database, string) {
 // authored specialist agents (Pickleball Expert, Code Reviewer,
 // etc.) are effectively invisible. Empty when the user has no other
 // agents or the current agent is the only one.
-//
-// Excludes the current agent (don't suggest dispatching to yourself)
-// and Builder (Builder is a separate routing concern handled by the
-// "Building agents and tools — delegate to Builder" persona section).
 func (t *chatTurn) renderAvailableAgentsBlock() string {
 	if t == nil {
 		return ""
 	}
-	// Sub-agents (OwnedBy set) are leaves — they don't get the agents
-	// dispatch tool, so the Available agents block has no audience.
-	// Short-circuit before the fleet read to save tokens AND avoid the
-	// "DELEGATE FIRST" nudge contradicting the missing tool.
-	if t.agent.OwnedBy != "" {
-		return ""
-	}
-	fleetDB, fleetUser := t.fleetView()
-	if fleetDB == nil || fleetUser == "" {
-		return ""
-	}
-	// Agents that can't dispatch (no `agents` tool in their resolved
-	// catalog) shouldn't be told to "DELEGATE FIRST" — the block would
-	// be telling them to do something their catalog physically prevents.
-	// KB's ForcePrivate + restricted AllowedTools is the canonical case;
-	// the persona explicitly says "no sub-agents" and used to fight this
-	// block. Default-pool agents (empty AllowedTools) include `agents`,
-	// so the block still fires for Chat / Research / user customs.
-	if len(t.agent.AllowedTools) > 0 {
-		hasAgents := false
-		for _, n := range t.agent.AllowedTools {
-			if n == "agents" {
-				hasAgents = true
-				break
-			}
-		}
-		if !hasAgents {
-			return ""
-		}
-	}
-	// Build the caller's explicit-link set once. AllowedDispatchTargets
-	// has two modes depending on emptiness:
-	//   - Empty (default): "allow all" — every non-Hidden agent is
-	//     visible.
-	//   - Non-empty: "allowlist" — ONLY listed agents are visible
-	//     (regardless of their Hidden status; the explicit pick wins).
-	linked := make(map[string]bool, len(t.agent.AllowedDispatchTargets))
-	for _, id := range t.agent.AllowedDispatchTargets {
-		linked[id] = true
-	}
-	restrictMode := len(linked) > 0
-	all := listAgents(fleetDB, fleetUser)
-	available := all[:0]
-	for _, a := range all {
-		if a.ID == t.agent.ID {
-			continue
-		}
-		if isBuilderAgent(a.ID) {
-			continue
-		}
-		if restrictMode {
-			// Allowlist mode — show only what's explicitly picked.
-			if !linked[a.ID] {
-				continue
-			}
-		} else {
-			// Default mode — hide Hidden agents from the fleet block.
-			if a.Hidden {
-				continue
-			}
-		}
-		available = append(available, a)
-	}
+	available := t.dispatchableFleet()
 	if len(available) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available agents\n\n")
-	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST — answer yourself only when no agent's description matches the question.** Each one is a focused brain with its own persona, tool surface, and reference material; they handle their domains better than you will from general knowledge.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **Each dispatch is stateless** — the agent has no memory of prior dispatches in this session. When you need a follow-up (\"go deeper on point 3\", \"what about X variant?\"), include the prior context in the brief itself: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
+	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for — when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools — for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question — don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits — NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **Each dispatch is stateless** — the agent has no memory of prior dispatches in this session. A RELATED FOLLOW-UP goes back to the SAME agent — don't interpret or answer it yourself from the earlier result. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
 	for _, a := range available {
-		desc := strings.TrimSpace(a.Description)
-		if len(desc) > 140 {
-			desc = desc[:140] + "…"
+		// Prefer the LLM-facing WhenToUse cue (shown in full — it's
+		// written FOR this routing decision). Fall back to the
+		// user-facing Description, still capped at 140 since that copy
+		// can run long and isn't tuned for the model.
+		desc := strings.TrimSpace(a.WhenToUse)
+		if desc == "" {
+			desc = strings.TrimSpace(a.Description)
+			if len(desc) > 140 {
+				desc = desc[:140] + "…"
+			}
 		}
 		if desc == "" {
 			desc = "(no description)"
@@ -756,148 +767,30 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	return b.String()
 }
 
-// activateSkillToolDef builds the activate_skill tool. Looks up a
-// skill by name (case-insensitive), appends it to the turn's active
-// set AND to session.ActiveSkillIDs so the activation carries across
-// follow-up turns (sticky semantics), and returns the skill's
-// instructions as the tool result so the LLM has them in this turn's
-// context too. Skill-attached tools join the catalog from the next
-// round via the dynamic-tools feed.
-//
-// chatTurn-bound (mutates t.skillsActive + t.session.ActiveSkillIDs).
-// Stripped when the agent has DisableSkills=true.
-func (t *chatTurn) activateSkillToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "activate_skill",
-			Description: "Activate a named skill from the 'Available skills' list. Sticky — the skill stays active across follow-up turns in this session until you call deactivate_skill(name). Use when the conversation enters a domain a listed skill covers. The skill's instructions are returned in the tool result so you can apply them immediately; the skill's attached tools (if any) join your catalog next round. Don't activate speculatively or for skills already active — re-activation is a no-op.",
-			Parameters: map[string]ToolParam{
-				"name": {
-					Type:        "string",
-					Description: "The exact skill name from the 'Available skills' block (case-insensitive).",
-				},
-			},
-			Required: []string{"name"},
-			Caps:     []Capability{CapRead},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			name := strings.TrimSpace(stringArg(args, "name"))
-			if name == "" {
-				return "", errors.New("name is required")
-			}
-			skills := LoadSkills(t.udb, t.user)
-			var found *SkillRecord
-			for i := range skills {
-				if skills[i].Disabled {
-					continue
-				}
-				if strings.EqualFold(skills[i].Name, name) {
-					tmp := skills[i]
-					found = &tmp
-					break
-				}
-			}
-			if found == nil {
-				return "", fmt.Errorf("no skill named %q (check the 'Available skills' block in your system prompt)", name)
-			}
-			// Allowlist gate — match the renderAvailableSkillsBlock
-			// filter. LLM shouldn't be able to bypass scoping by
-			// guessing names of skills that weren't opted into.
-			allowed := false
-			for _, id := range t.agent.AllowedSkills {
-				if id == found.ID {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				return "", fmt.Errorf("skill %q is not enabled for this agent — ask the admin to add it via the Knowledge button's Skills picker", found.Name)
-			}
-			for _, a := range t.skillsActive {
-				if a.ID == found.ID {
-					return fmt.Sprintf("Skill %q is already active — no-op.", found.Name), nil
-				}
-			}
-			t.skillsActive = append(t.skillsActive, *found)
-			// Sticky: record on the session so the next turn picks
-			// it up. Dedup against any prior ID that resolved out and
-			// got pruned during rehydrate.
-			if t.session != nil {
-				already := false
-				for _, id := range t.session.ActiveSkillIDs {
-					if id == found.ID {
-						already = true
-						break
-					}
-				}
-				if !already {
-					t.session.ActiveSkillIDs = append(t.session.ActiveSkillIDs, found.ID)
-				}
-			}
-			Log("[orchestrate.skills] activate_skill %q (agent=%s user=%s)", found.Name, t.agent.ID, t.user)
-			body := strings.TrimSpace(found.Instructions)
-			if body == "" {
-				body = "(this skill has no instructions body — its value is in attached tools / corpus.)"
-			}
-			return fmt.Sprintf("Skill %q activated. Apply these instructions until you call deactivate_skill(%q):\n\n%s\n\nAttached tools (if any) will appear in your catalog next round.", found.Name, found.Name, body), nil
-		},
+// skillToolDefs builds the per-turn skill tools (read_skill,
+// skill_knowledge_search, skill_knowledge_fetch_doc) gated on the agent's
+// skill allowlist. All three are stateless one-shot calls in the agent's
+// OWN context — no sub-agent, no activation. The search/fetch callbacks
+// reuse the agent's own scoped knowledge tooling so a skill's collections
+// search the same way the agent's corpus does; the per-turn deliveredSkills
+// set dedupes instruction delivery across read_skill / search / triggers.
+// Returns nil when skills are disabled or none are allowed.
+func (t *chatTurn) skillToolDefs() []AgentToolDef {
+	if t == nil || t.agent.DisableSkills || len(t.agent.AllowedSkills) == 0 {
+		return nil
 	}
-}
-
-// deactivateSkillToolDef builds the deactivate_skill tool. Removes a
-// skill from the session's sticky active list and from this turn's
-// active set so its instructions, tools, and attached collections
-// stop flowing into the prompt / catalog / RAG. Use when topic shifts
-// and the previously activated skill no longer applies.
-//
-// chatTurn-bound (mutates t.skillsActive + t.session.ActiveSkillIDs).
-// Stripped when the agent has DisableSkills=true.
-func (t *chatTurn) deactivateSkillToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "deactivate_skill",
-			Description: "Turn off a skill that's currently active in this session. Use when the conversation has moved off the skill's domain and its instructions / tools / corpus are no longer relevant. Pair with activate_skill — skills stay sticky until explicitly deactivated. Idempotent (deactivating an already-off skill is a no-op).",
-			Parameters: map[string]ToolParam{
-				"name": {
-					Type:        "string",
-					Description: "The exact skill name to deactivate (case-insensitive).",
-				},
-			},
-			Required: []string{"name"},
-			Caps:     []Capability{CapRead},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			name := strings.TrimSpace(stringArg(args, "name"))
-			if name == "" {
-				return "", errors.New("name is required")
-			}
-			var removed *SkillRecord
-			next := t.skillsActive[:0]
-			for i := range t.skillsActive {
-				if strings.EqualFold(t.skillsActive[i].Name, name) && removed == nil {
-					tmp := t.skillsActive[i]
-					removed = &tmp
-					continue
-				}
-				next = append(next, t.skillsActive[i])
-			}
-			t.skillsActive = next
-			if removed == nil {
-				return fmt.Sprintf("Skill %q wasn't active — no-op.", name), nil
-			}
-			if t.session != nil {
-				ids := t.session.ActiveSkillIDs[:0]
-				for _, id := range t.session.ActiveSkillIDs {
-					if id == removed.ID {
-						continue
-					}
-					ids = append(ids, id)
-				}
-				t.session.ActiveSkillIDs = ids
-			}
-			Log("[orchestrate.skills] deactivate_skill %q (agent=%s user=%s)", removed.Name, t.agent.ID, t.user)
-			return fmt.Sprintf("Skill %q deactivated. Its instructions, tools, and attached collections stop applying as of next round.", removed.Name), nil
-		},
+	allowed := t.agent.AllowedSkills
+	return []AgentToolDef{
+		BuildReadSkillTool(t.udb, t.user, allowed, t.deliveredSkills),
+		BuildSkillKnowledgeSearchTool(t.udb, t.user, allowed, t.deliveredSkills,
+			func(skill SkillRecord, query string) string {
+				res, _ := t.knowledgeToolDefScoped([]SkillRecord{skill}).Handler(map[string]any{"query": query})
+				return res
+			}),
+		BuildSkillKnowledgeFetchDocTool(t.udb, t.user, allowed, t.deliveredSkills,
+			func(skill SkillRecord, docID string) (string, error) {
+				return t.fetchKnowledgeDocScoped([]SkillRecord{skill}).Handler(map[string]any{"doc_id": docID})
+			}),
 	}
 }
 
@@ -916,7 +809,7 @@ func roundShapePreamble(maxSteps int) string {
 		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with one of: **ask_user / ask_user_form** (pause for input), **respond_directly** (terminate with reply), or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
 		"**Don't speculate-then-correct.** If you're about to call a tool, do NOT first write a full answer from training that you'll then revise after the result comes back — the user sees both, and it reads as confused. Before tools fire, say nothing or something terse (\"Looking that up…\"). Save the answer for AFTER you have the result.\n\n" +
 		"**Delivering files.** Producer tools (find_image, fetch_image, generate_image, download_video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
-		"Pure conversation (greetings, opinions, well-known textbook concepts, follow-ups already answered): just reply as text. Time-sensitive or verifiable facts: call the tool; don't answer from training.\n\n"
+		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text. Time-sensitive or verifiable facts: call the tool; don't answer from training.\n\n"
 }
 
 // drainNotes pulls all queued interjections and persists them as
@@ -1351,6 +1244,9 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 		// (they augment fetch_url, not stand-alone). Cheap call —
 		// reads from in-memory sourceHookRegistry.
 		out = append(out, BuildSourceHookAgentToolDefs(t.app.DB)...)
+		// (No skill-granted tools here anymore. Experts run as dispatched
+		// use_expert workers with their own catalog; behavior skills only
+		// inject instructions. Neither puts tools in the MAIN catalog.)
 		// Private-mode backstop. The dynamic feed re-introduces tools
 		// that the static catalog filter already dropped:
 		//   - mid-turn temp tools (LLM authored after runPlan started)
@@ -1477,6 +1373,19 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	if !isNoToolsSentinel(t.agent.AllowedTools) && !slices.Contains(toolNames, "workspace") {
 		toolNames = append(toolNames, "workspace")
 	}
+	// Framework utility tools — pure CapRead helpers (calculate, date_math,
+	// time_in_zone) kept always-on so an agent never fails basic math /
+	// dates / timezones just because nobody allowlisted them. Hidden from
+	// the curation UI (frameworkUtilityTools); force-included here like
+	// workspace. Added BEFORE the Private-mode filter — they're non-network
+	// so they survive it. Skip on the no-tools sentinel (admin wants none).
+	if !isNoToolsSentinel(t.agent.AllowedTools) {
+		for _, n := range frameworkUtilityTools {
+			if !slices.Contains(toolNames, n) {
+				toolNames = append(toolNames, n)
+			}
+		}
+	}
 	// Per-turn Private mode drops tools that contact the internet.
 	// Applied AFTER the agent's allowlist so non-network tools the
 	// agent allowed (list_agents, calculate, …) keep working.
@@ -1548,49 +1457,11 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			toolNames = append(toolNames, td.Tool.Name)
 		}
 	}
-	// Active skills can bring extra tools into the catalog. Resolve
-	// each one through the same registry path — missing names are
-	// silently dropped (e.g. a skill that names create_agent on a
-	// non-Builder agent just doesn't add it, preserving exclusivity).
-	// skillsActive is rehydrated each turn from session.ActiveSkillIDs;
-	// the LLM grows it via activate_skill and shrinks it via
-	// deactivate_skill. No auto-classification.
-	if skills := t.skillsActive; len(skills) > 0 {
-		have := make(map[string]bool, len(toolNames))
-		for _, n := range toolNames {
-			have[n] = true
-		}
-		addByName := func(name string) {
-			if have[name] {
-				return
-			}
-			// Private-mode guard: when the user toggled Private on,
-			// the agent's catalog was already stripped of internet-
-			// capable tools earlier in this function. Skills must
-			// respect that — without this check a skill that lists
-			// web_search / fetch_url / etc. in its allowed_tools
-			// would silently re-enable internet access mid-turn,
-			// silently violating the user's Private-mode contract.
-			if t.privateMode {
-				if ct, ok := FindChatTool(name); ok {
-					if isNetworkTool(ct) {
-						Debug("[orchestrate.skills] skipping %q for skill — private mode active", name)
-						return
-					}
-				}
-			}
-			if td, err := GetAgentToolsWithSession(sess, name); err == nil && len(td) > 0 {
-				tools = append(tools, td[0])
-				toolNames = append(toolNames, name)
-				have[name] = true
-			}
-		}
-		for _, s := range skills {
-			for _, name := range s.AllowedTools {
-				addByName(name)
-			}
-		}
-	}
+	// (Skill-granted tools are NOT resolved here anymore. Activation is
+	// per-turn: t.skillsActive is empty when this static catalog is built
+	// at turn start. A skill's tools are surfaced by the per-round
+	// DynamicTools feed (dynamicNewTempTools → AppendSkillGrantedTools) the
+	// round AFTER activate_skill fires, so they appear this same turn.)
 	// Local tools from the user's gohort-desktop surface (from_client.*).
 	// Exposed ONLY when this request came from the gohort-desktop viewer
 	// itself (its proxy stamps the bridge key — see t.fromDesktopClient). A
@@ -2740,7 +2611,7 @@ func (t *chatTurn) drainMidTurnBubbles() []ChatMessage {
 // short turns (one round of tool calls, then a final reply with the
 // same text) silently lose every tool record when the mid-turn
 // bubble that carried them gets dedup'd against the final reply.
-// "What time is it?" → get_local_time called → assistant emits the
+// "What time is it?" → time_in_zone called → assistant emits the
 // answer once → final reply equals the bubble → bubble dropped →
 // tool call invisible in the saved transcript was the symptom.
 func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply string) []PersistedToolCall {
@@ -3307,44 +3178,16 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// attached any document. The consolidation loop-break gate
 		// reads this to decide whether to ingest the synthesis.
 		userDocsThisTurn: len(req.Documents) > 0,
+		deliveredSkills:  map[string]bool{},
 	}
-	// Rehydrate sticky skill activations from the session. activate_skill
-	// writes IDs onto sess.ActiveSkillIDs; this loop re-loads the records
-	// each turn so any edits to the skill (name, instructions, tools,
-	// collections) take effect immediately. Skills the LLM activated in a
-	// prior turn stay active until deactivate_skill is called or the user
-	// starts a new session. Disabled / deleted / no-longer-allowed skills
-	// drop silently (allowlist drift is normal as agents are edited).
-	if len(sess.ActiveSkillIDs) > 0 && !agent.DisableSkills {
-		all := LoadSkills(udb, user)
-		allowed := make(map[string]bool, len(agent.AllowedSkills))
-		for _, id := range agent.AllowedSkills {
-			allowed[id] = true
+	for _, d := range req.Documents {
+		if n := strings.TrimSpace(d.Name); n != "" {
+			turn.docNames = append(turn.docNames, n)
 		}
-		kept := make([]string, 0, len(sess.ActiveSkillIDs))
-		for _, id := range sess.ActiveSkillIDs {
-			for _, s := range all {
-				if s.ID != id || s.Disabled {
-					continue
-				}
-				// Allowlist drift: if the agent's AllowedSkills was
-				// edited to drop this skill (or emptied entirely)
-				// after activation, the stickiness should drop with
-				// it — otherwise we'd be carrying a skill the LLM
-				// couldn't re-activate. Matches the available-skills
-				// block's "empty allowlist = no skills" rule.
-				if !allowed[s.ID] {
-					continue
-				}
-				turn.skillsActive = append(turn.skillsActive, s)
-				kept = append(kept, s.ID)
-				break
-			}
-		}
-		// Prune any IDs that no longer resolve so the session stays
-		// honest about what's actually carrying forward.
-		sess.ActiveSkillIDs = kept
 	}
+	// (Skills are per-turn now: turn.skillsActive starts empty and is
+	// populated only by activate_skill calls THIS turn. Nothing is
+	// rehydrated from the session — activation is not sticky across turns.)
 	// Reset the session's "awaiting user confirm" flag — the two-turn
 	// gate that read this is removed. Kept here to clear stale state
 	// from older sessions that may have set it; if THIS turn ends with
@@ -3734,8 +3577,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	defer func() {
 		softCap := resolveMaxWorkerRounds(t.agent)
 		hardCap := softCap
-		if t.agent.AllowExplorer && softCap < explorerHardCap {
-			hardCap = explorerHardCap
+		if t.agent.AllowExplorer {
+			if ec := resolveExplorerHardCap(t.agent); ec > hardCap {
+				hardCap = ec
+			}
 		}
 		exitReason := classifyOrchestratorExit(
 			err,
@@ -3772,9 +3617,20 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// but a fresh prompt build (e.g. round-2 re-entry after a
 	// catalog change) wouldn't carry that history forward without
 	// this anchor.
-	sys = t.appendActiveSkills(sys, msgs)
-	// "Available skills" block — lists every skill the agent can
-	// reach. The LLM decides when to activate via activate_skill(name).
+	// Triggered skills: inject the instructions of any allowed skill whose
+	// triggers match this turn (deterministic — framework decides by
+	// trigger match, not the LLM). No-op when none match.
+	triggerMsg := ""
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			triggerMsg = msgs[i].Content
+			break
+		}
+	}
+	sys += t.renderTriggeredSkills()       // full instructions for skills already consulted
+	sys += t.renderSkillTriggerHints(triggerMsg) // soft nudge for skills whose triggers matched
+	// "Available skills" block — lists the skills the agent can reach. The
+	// LLM draws on one via read_skill / skill_knowledge_search.
 	// No-op when DisableSkills is set or AllowedSkills is empty.
 	sys += t.renderAvailableSkillsBlock()
 	// "Available agents" block — lists the user's OTHER agents so
@@ -4151,15 +4007,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},
 	})
-	// activate_skill / deactivate_skill — sticky LLM-driven activation.
-	// Once activated, the skill stays in scope (instructions, tools,
-	// attached collections) across turns until deactivate_skill is
-	// called. Both gated on DisableSkills (no tools when the agent
-	// has skills off).
-	if !t.agent.DisableSkills {
-		knowTools = append(knowTools, t.activateSkillToolDef())
-		knowTools = append(knowTools, t.deactivateSkillToolDef())
-	}
+	// Skill tools — read_skill / skill_knowledge_search /
+	// skill_knowledge_fetch_doc. Stateless one-shot calls in the agent's
+	// own context. skillToolDefs returns nil when skills are off.
+	knowTools = append(knowTools, t.skillToolDefs()...)
 	// (dispatch_to_worker temporarily unmounted — the LLM wasn't
 	// reaching for it reliably and the surface area was diluting
 	// agent dispatch. Skills still auto-activate inline via the
@@ -4414,12 +4265,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// occasional double, so we err toward emitting: suppress only on an
 	// exact repeat of the last shown bubble.
 	var lastFinalizedText string
-	// lastTransientText holds the text of the most recent NON-final
-	// (tool-calling) round, which we clear from the live view rather than
-	// finalize as an answer card. Kept as a fallback: if the model
-	// front-loads its answer into a tool round and the final round comes
-	// back empty, we restore this so the reply isn't lost.
-	var lastTransientText string
 	streamHandler := func(chunk string) {
 		if chunk == "" {
 			return
@@ -4493,28 +4338,34 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// in case the model front-loaded its answer into a tool round
 		// and the final round comes back empty.
 		if !info.Done {
+			// Text streamed in a tool round is KEPT as its own settled card —
+			// short narration OR substantive interim content, regardless of
+			// length. We no longer clear long text here: that "front-loaded
+			// answer" heuristic dropped legitimate text the model emitted
+			// alongside a tool call but never repeated. Double-emit is now
+			// prevented at the source by the emit-discipline prompt (don't
+			// write the full answer in a tool round); the final-reply
+			// transcript dedup is the backstop. Worst case is a rare double
+			// card — far better than silently losing real content.
 			if cleaned != "" {
-				t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
-				lastTransientText = cleaned
+				t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+				lastFinalizedID = id
+				lastFinalizedText = cleaned
+				streamMsgID = ""
+				t.setCurrentMsgID("")
 			}
 			streamedBuf.Reset()
 			return
 		}
 		// Final (tool-free) round — this round's text is the answer.
-		// Edge: the model put its reply in an earlier tool round and
-		// produced nothing here. Restore the remembered text so the
-		// answer isn't lost.
-		if cleaned == "" && lastTransientText != "" {
-			cleaned = lastTransientText
-			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
-		}
-		// Tool-only final round with no prior narration: nothing to
-		// finalize — keep the bubble open (subsequent tool pills fold in).
+		// (Any text the model emitted in earlier tool rounds was already
+		// settled as its own card above, so there's nothing to restore.)
+		// Tool-only final round with no text: nothing to finalize — keep
+		// the bubble open (subsequent tool pills fold in).
 		if cleaned == "" {
 			streamedBuf.Reset()
 			return
 		}
-		lastTransientText = ""
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 		lastFinalizedID = id
 		lastFinalizedText = cleaned
@@ -4541,19 +4392,33 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// inline, so a build that runs short can't self-extend. Non-explorer
 	// agents keep orchHardCap == maxR, so StopRound is a plain cap.
 	orchHardCap := maxR
-	if t.agent.AllowExplorer && maxR < explorerHardCap {
-		orchHardCap = explorerHardCap
+	if t.agent.AllowExplorer {
+		if ec := resolveExplorerHardCap(t.agent); ec > orchHardCap {
+			orchHardCap = ec
+		}
 	}
+	// absoluteCeiling is the loop's hard MaxRounds — set high enough that
+	// StopRound (the dynamic governor: soft cap → explorer cap →
+	// plan-scaled cap) always decides first. present_build_plan can lift
+	// the budget above the explorer ceiling, so add the maximum plan grant
+	// on top. Non-plan agents never reach it — StopRound stops earlier.
+	absoluteCeiling := orchHardCap + buildPlanRoundsPerStep*resolveMaxPlanSteps(t.agent)
 	var orchRoundsUsed int
 	roundCounter := 0
 	onRoundStartHandler := func() []Message {
 		roundCounter++
+		t.currentRound = roundCounter
 		// Pace against the SOFT cap normally; once the LLM has flipped
 		// explorer mode, pace against the hard cap (StopRound lets it run
-		// there). Explorer NUDGES only fire when NOT already exploring.
+		// there); once a build plan is presented, pace against the
+		// plan-scaled cap. Explorer NUDGES only fire when NOT already
+		// exploring.
 		cap := maxR
 		if t.explorerMode {
 			cap = orchHardCap
+		}
+		if t.planBudgetCap > cap {
+			cap = t.planBudgetCap
 		}
 		remaining := cap - roundCounter
 		canExtend := t.agent.AllowExplorer && !t.explorerMode
@@ -4584,8 +4449,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return []Message{{
 				Role: "user",
 				Content: fmt.Sprintf(
-					"[Round %d/%d — only %d round%s left. enter_explorer_mode extends your budget to 50 rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\" — find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool — probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
-					roundCounter, cap, remaining, plural(remaining),
+					"[Round %d/%d — only %d round%s left. enter_explorer_mode extends your budget to %d rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\" — find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool — probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
+					roundCounter, cap, remaining, plural(remaining), orchHardCap,
 				),
 			}}
 		}
@@ -4688,14 +4553,23 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// explorer mode, then lets it run to orchHardCap. Most chat turns
 		// need 1-3 rounds; deep research / large builds bump via the
 		// agent's worker-rounds budget + enter_explorer_mode.
-		MaxRounds:   orchHardCap,
+		MaxRounds:   absoluteCeiling,
 		ThinkBudget: t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		// StopRound is the dynamic governor (MaxRounds is just the safety
+		// ceiling). Effective cap = soft cap, raised to the explorer cap
+		// once explorer mode is on, raised again to the plan-scaled cap
+		// once a build plan is presented. max() semantics — a later phase
+		// never lowers the budget a prior one granted.
 		StopRound: func() bool {
 			orchRoundsUsed++
+			cap := maxR
 			if t.explorerMode {
-				return false // explorer mode: run on to MaxRounds (orchHardCap)
+				cap = orchHardCap
 			}
-			return orchRoundsUsed > maxR // soft-cap stop unless extended
+			if t.planBudgetCap > cap {
+				cap = t.planBudgetCap
+			}
+			return orchRoundsUsed > cap
 		},
 		// Auto-confirm any NeedsConfirm tool (delete_agent) so the
 		// orchestrator can act without a stdin prompt hanging the
@@ -4914,8 +4788,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	defer func() {
 		softCap := resolveMaxWorkerRounds(t.agent)
 		hardCap := softCap
-		if t.agent.AllowExplorer && softCap < explorerHardCap {
-			hardCap = explorerHardCap
+		if t.agent.AllowExplorer {
+			if ec := resolveExplorerHardCap(t.agent); ec > hardCap {
+				hardCap = ec
+			}
 		}
 		exitReason := classifyWorkerExit(stepErr, telem.rounds, softCap, len(stepOut))
 		label := fmt.Sprintf("orchestrate.worker step=%d", cur.ID)
@@ -4989,9 +4865,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// Memory layer when it's enabled. Knowledge is always available.
 	tools = append(tools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
 	toolNames = append(toolNames, "knowledge_search", "fetch_knowledge_doc")
-	if !t.agent.DisableSkills {
-		tools = append(tools, t.activateSkillToolDef(), t.deactivateSkillToolDef())
-		toolNames = append(toolNames, "activate_skill", "deactivate_skill")
+	for _, td := range t.skillToolDefs() {
+		tools = append(tools, td)
+		toolNames = append(toolNames, td.Tool.Name)
 	}
 	// (dispatch_to_worker temporarily unmounted on the worker step
 	// too — same reason as the orchestrator catalog: discoverability
@@ -5321,7 +5197,12 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// here so a skill that prescribed a tone or reference convention
 	// governs both planning and reply. No-op when no skills active.
 	synthSys := prependAgentContext(t.gatedPersona(t.agent.OrchestratorPrompt), t.agent, t.facts())
-	synthSys = t.appendActiveSkills(synthSys, nil)
+	// Re-inject any trigger-matched skill instructions so a skill that
+	// prescribed a tone/convention governs the synthesis reply too.
+	// Re-inject the full instructions of any skill the LLM consulted this
+	// turn so its lens governs the synthesis reply. No trigger hints here —
+	// synthesis has no tools, so a "go consult it" nudge would be useless.
+	synthSys += t.renderTriggeredSkills()
 	resp, err := t.app.LLM.ChatStream(t.ctx,
 		msgs,
 		handler,

@@ -28,6 +28,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -73,6 +74,79 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		core.Log("[gohort-desktop] no server URL set — first-run configure page will render")
 	}
+	// Auto-negotiate the daemon's bridge key from the viewer's session.
+	a.startBridgeKeyProvisioning()
+}
+
+// provisionBridgeKey mints (or fetches) this user's bridge key from the
+// server using the viewer's logged-in session cookie, and writes it to the
+// sidecar the daemon reads. This is what auto-negotiates the key — no
+// manual "Set Bridge API Key" step. One attempt; returns an error so the
+// caller can retry (first run has no session until the user logs in
+// through the webview).
+func (a *App) provisionBridgeKey() error {
+	base := strings.TrimRight(a.config.ServerURL(), "/")
+	if base == "" {
+		return fmt.Errorf("no server URL configured")
+	}
+	req, err := http.NewRequest(http.MethodGet, base+"/api/desktop/key", nil)
+	if err != nil {
+		return err
+	}
+	// Attach the session cookies for the server origin — the webview login
+	// lives in this jar, so the request authenticates as the logged-in user.
+	if a.cookies != nil {
+		if u, e := url.Parse(base); e == nil {
+			for _, c := range a.cookies.Cookies(u) {
+				req.AddCookie(c)
+			}
+		}
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %d (not logged in yet?)", resp.StatusCode)
+	}
+	var out struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return err
+	}
+	if strings.TrimSpace(out.Key) == "" {
+		return fmt.Errorf("server returned an empty key")
+	}
+	if err := core.WriteAPIKeySidecar(out.Key); err != nil {
+		return err
+	}
+	core.Log("[gohort-desktop] auto-provisioned bridge key → sidecar (the daemon picks it up)")
+	return nil
+}
+
+// startBridgeKeyProvisioning keeps the bridge-key sidecar current in the
+// background. It provisions on startup (retrying fast until the user is
+// logged in through the webview), then REFRESHES periodically — so if the
+// server's key store ever changes (rotation, a data reset), the sidecar
+// re-syncs within the refresh window instead of going stale until the next
+// app restart. provisionBridgeKey's write is idempotent, so re-running is
+// cheap and harmless.
+func (a *App) startBridgeKeyProvisioning() {
+	go func() {
+		for {
+			wait := 15 * time.Minute // refresh cadence once provisioned
+			if err := a.provisionBridgeKey(); err != nil {
+				// Surface WHY so a stale sidecar can be traced to "not
+				// logged in (401)" vs "no server URL" vs a transport error,
+				// rather than failing silently.
+				core.Log("[gohort-desktop] bridge-key provisioning failed: %v (retrying)", err)
+				wait = 20 * time.Second
+			}
+			time.Sleep(wait)
+		}
+	}()
 }
 
 // shutdown is called when the user quits. Closes the settings DB so
@@ -140,12 +214,13 @@ type settings_view struct {
 }
 
 // GetSettings returns the current visible settings to the webview. The
-// api_key_set flag reflects the bridge config sidecar (the agent's key),
-// not the viewer's own store.
+// api_key_set flag reflects the bridge's effective key (core.BridgeAPIKey:
+// auto-provisioned sidecar first, then the manual bridge config), not the
+// viewer's own store.
 func (a *App) GetSettings() settings_view {
 	return settings_view{
 		ServerURL: a.config.ServerURL(),
-		APIKeySet: core.ReadBridgeConfig().APIKey != "",
+		APIKeySet: core.BridgeAPIKey() != "",
 	}
 }
 
@@ -275,13 +350,36 @@ func (a *App) LogOut() save_result {
 // --- bridge approval surface (see approvals.go + ws_client.go) ---
 
 // ApproveInvoke resolves a pending tool-invocation approval. The
-// modal in the page calls this with the request ID + the user's
-// verdict (true=Allow, false=Deny). No-op on unknown / already-
-// resolved IDs.
-func (a *App) ApproveInvoke(id string, allow bool) {
+// modal in the page calls this with the request ID, the user's
+// verdict (true=Allow, false=Deny), and whether the choice should
+// stick (always=true → "Always allow <tool>": the tool is added to
+// the per-tool allow-list and won't prompt again). No-op on unknown
+// / already-resolved IDs.
+func (a *App) ApproveInvoke(id string, allow bool, always bool) {
 	if a.approvals != nil {
-		a.approvals.Resolve(id, allow)
+		a.approvals.Resolve(id, allow, always)
 	}
+}
+
+// GetAllowedTools returns the per-tool always-allow list, for the
+// Preferences manager (Account → Manage Tool Approvals).
+func (a *App) GetAllowedTools() []string {
+	if a.approvals == nil {
+		return nil
+	}
+	return a.approvals.AllowedTools()
+}
+
+// RemoveAllowedTool revokes a tool's always-allow grant — it will
+// prompt again on its next invocation.
+func (a *App) RemoveAllowedTool(name string) save_result {
+	if a.approvals == nil {
+		return save_result{Error: "approval store not ready"}
+	}
+	if err := a.approvals.RemoveAllowedTool(name); err != nil {
+		return save_result{Error: err.Error()}
+	}
+	return save_result{OK: true}
 }
 
 // GetAutoApprove returns the persisted "skip the prompt and

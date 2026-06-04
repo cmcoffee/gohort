@@ -246,6 +246,15 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", fmt.Errorf("agent %q is not yours — clone it first to customize", id)
 	}
 	mergeAgentArgs(&existing, args)
+	// Backfill the LLM-facing cue for a legacy agent that predates the
+	// field: an explicit update is a fine moment to fill a MISSING cue
+	// even when the description didn't change (saveAgent only regenerates
+	// on a description change — deliberately, to stay boot-migration-safe;
+	// this handler is never on that path). A genuine description change
+	// still regenerates via saveAgent.
+	if strings.TrimSpace(existing.WhenToUse) == "" {
+		existing.WhenToUse = GenerateWhenToUse("agent", existing.Name, existing.Description)
+	}
 	// Auto-copy session tools into the agent when allowed_tools picks up
 	// a name that exists in this session's draft pool — same rule as
 	// create_agent. Lets the LLM extend an agent's tool set across the

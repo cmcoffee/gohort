@@ -56,9 +56,9 @@ func promptWriteConsent(folder string) bool {
 // so tools never run unprompted. Users enable the auto_approve setting
 // to allow server-initiated tool calls. (A native toast/dialog is a
 // follow-up.)
-func promptApproval(name string, _ map[string]any) bool {
+func promptApproval(name string, _ map[string]any) (allow, always bool) {
 	core.Warn("[approval] denying %q — no Windows prompt yet; set auto_approve to allow", name)
-	return false
+	return false, false
 }
 
 // installAutostart adds an HKCU Run entry so the daemon starts at login.

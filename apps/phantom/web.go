@@ -60,6 +60,7 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/memory/", T.handleMemory)
 	sub.HandleFunc("/api/knowledge/", T.handleKnowledge)
 	sub.HandleFunc("/api/available-agents", T.handleAvailableAgents)
+	sub.HandleFunc("/api/available-skills", T.handleAvailableSkills)
 	sub.HandleFunc("/api/conversation-clear/", T.handleConversationClear)
 	sub.HandleFunc("/api/personas", T.handlePersonas)
 	sub.HandleFunc("/api/personas/", T.handlePersonas)
@@ -513,6 +514,34 @@ func (T *Phantom) handleAvailableAgents(w http.ResponseWriter, r *http.Request) 
 	jsonOK(w, out)
 }
 
+// handleAvailableSkills lists the operator's skills (the admin's pool)
+// for the per-chat AllowedSkills chip picker. Empty array when no owner
+// or no skills, so the UI shows a clean empty state instead of an error.
+func (T *Phantom) handleAvailableSkills(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type skillInfo struct {
+		Name        string `json:"name"`        // chip label
+		ID          string `json:"id"`          // chip value (stored in AllowedSkills)
+		Description string `json:"description"` // chip tooltip
+	}
+	out := []skillInfo{}
+	if owner := phantomAgentOwner(T.DB); owner != "" {
+		for _, s := range LoadSkills(T.DB, owner) {
+			if s.Disabled {
+				continue
+			}
+			out = append(out, skillInfo{Name: s.Name, ID: s.ID, Description: s.Description})
+		}
+	}
+	jsonOK(w, out)
+}
+
 // handleKnowledge handles GET (count) and DELETE (wipe-all) for the
 // per-chat vector knowledge namespace.
 // GET    /api/knowledge/{chatID} → {count: N, source: "phantom:<id>"}
@@ -689,6 +718,7 @@ func (T *Phantom) handleConversation(w http.ResponseWriter, r *http.Request) {
 			AliasHandles        *[]string     `json:"alias_handles"`
 			ProactiveEnabled    *bool         `json:"proactive_enabled"`
 			AllowedAgents       *[]string     `json:"allowed_agents"`
+			AllowedSkills       *[]string     `json:"allowed_skills"`
 			MessageHistoryDepth *int          `json:"message_history_depth"`
 			CompactionEnabled   *bool         `json:"compaction_enabled"`
 		}
@@ -770,6 +800,9 @@ func (T *Phantom) handleConversation(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.AllowedAgents != nil {
 			conv.AllowedAgents = *req.AllowedAgents
+		}
+		if req.AllowedSkills != nil {
+			conv.AllowedSkills = *req.AllowedSkills
 		}
 		T.DB.Set(conversationTable, chatID, conv)
 		jsonOK(w, conv)
@@ -868,7 +901,7 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, ok := validateAPIKey(T.DB, r.Header.Get("X-API-Key")); !ok {
+	if !bridgeKeyValid(T.DB, r) { // hook
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -1153,7 +1186,7 @@ func (T *Phantom) handlePoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if _, ok := validateAPIKey(T.DB, r.Header.Get("X-API-Key")); !ok {
+	if !bridgeKeyValid(T.DB, r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -1679,6 +1712,13 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 			// more about that lookup"). Pattern B stores raw results
 			// in side storage; this tool is the retrieval surface.
 			tools = append(tools, buildRecallDispatchResultTool(T.DB, chatID))
+			// While a dispatch is actually in flight, expose
+			// forward_to_dispatch so the persona can pass along a relevant
+			// interim update instead of the framework auto-swallowing every
+			// message. Only surfaced when something's running.
+			if len(ActiveSubSessionsFor(chatID)) > 0 {
+				tools = append(tools, T.forwardToDispatchToolDef(chatID))
+			}
 		}
 	}
 	if toolEnabled("follow_up") {
@@ -1743,19 +1783,19 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	//
 	// Before the main phantom LLM gets the turn, check whether a
 	// dispatched sub-agent should handle this message instead. Three
-	// cases:
+	// cases (RELAY model — the persona always holds the conversation; the
+	// framework no longer hands messages to the sub-agent):
 	//   - User typed "/back" or "/phantom": retire all idle sub-sessions
 	//     for this chat and fall through to the main LLM with the
-	//     prefix stripped (deliberate exit from a side-conversation).
-	//   - There's an ACTIVE sub-session (async dispatch in flight):
-	//     push the message into the sub-session's injection queue so
-	//     the running sub-agent picks it up between rounds, and send
-	//     a short ack via the outbox. The main LLM does NOT run for
-	//     this turn.
-	//   - There's an IDLE sub-session within the promotion window:
-	//     route the message synchronously through the sub-agent (load
-	//     prior messages, append, run, persist, deliver reply). The
-	//     main LLM does NOT run for this turn.
+	//     prefix stripped.
+	//   - There's an ACTIVE sub-session (async dispatch in flight) OR an
+	//     IDLE one within the promotion window: fall through to the main
+	//     LLM. It keeps chatting; for an active dispatch it sees a
+	//     forward_to_dispatch tool (pass along relevant updates) + an
+	//     awareness note; for an idle one it can re-dispatch (dispatch_agent
+	//     continues the same sub-session) or answer / recall the result.
+	//     The framework no longer auto-swallows messages into the dispatch
+	//     or runs the sub-agent synchronously.
 	//
 	// Sub-sessions are minted by dispatch_agent / dispatch_agent_inline
 	// (see tool_dispatch_agent.go). Without a prior dispatch, all
@@ -1819,70 +1859,27 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		}
 		switch action {
 		case RouteInject:
-			q := LookupSubSessionInjectionQueue(sub.SubSessionID)
-			if q != nil {
-				q.Push(text)
-				Log("[phantom] mid-flight injection → sub=%s (%d in queue)", sub.SubSessionID, q.Len())
-			}
-			ack := "Got it, applying that."
-			storeMessage(T.DB, PhantomMessage{
-				ID:        now() + "-" + newID(),
-				ChatID:    chatID,
-				Role:      "assistant",
-				Text:      ack,
-				Timestamp: now(),
-			})
-			enqueueOutbox(T.DB, OutboxItem{
-				ID:      newID(),
-				ChatID:  deliverChatID,
-				Handle:  handle,
-				Text:    ack,
-				Type:    "reply",
-				Created: now(),
-			})
-			return
+			// A dispatch is in flight. We do NOT swallow the message into
+			// the dispatch with a canned "Got it, applying that" and go
+			// silent anymore. Instead, fall through to the main LLM (below):
+			// the persona keeps the conversation, sees the active dispatch +
+			// a forward_to_dispatch tool, and decides whether THIS message
+			// is actually relevant to pass along. The framework no longer
+			// guesses that "dispatch active ⇒ route everything in."
+			Log("[phantom] message during active dispatch sub=%s — main LLM handles + may forward", sub.SubSessionID)
+			// no return: control falls out of the switch to the main LLM
 		case RoutePromote:
-			orch := findOrchestrate()
-			if orch == nil {
-				// Orchestrate isn't available — fall through to main LLM.
-				Log("[phantom] promotion target sub=%s but orchestrate runtime unavailable — falling back to main LLM", sub.SubSessionID)
-				break
-			}
-			MarkSubSessionActive(sub.SubSessionID)
-			ctx, cancel := context.WithTimeout(context.Background(), dispatchAgentTimeout)
-			// Promotion path is always a follow-up by definition (the
-			// user is replying to a sub-agent's last answer), so never
-			// pass freshSession=true here — preserves the continuity
-			// the user is relying on when they say "tell me more".
-			out, err := orch.RunAgentSyncContinuing(ctx, sub.OwnerUser, phantomDispatchRuntimeUser(chatID), sub.AgentID, sub.SubSessionID, SubSessionInjectionQueueKey(sub.SubSessionID), text, false)
-			cancel()
-			if err != nil {
-				RetireSubSession(sub.SubSessionID, "promotion_error")
-				Log("[phantom] promotion sub=%s err=%v — falling back to main LLM", sub.SubSessionID, err)
-				break
-			}
-			reply := strings.TrimSpace(out)
-			if reply == "" {
-				MarkSubSessionIdle(sub.SubSessionID)
-				return
-			}
-			storeMessage(T.DB, PhantomMessage{
-				ID:        now() + "-" + newID(),
-				ChatID:    chatID,
-				Role:      "assistant",
-				Text:      reply,
-				Timestamp: now(),
-			})
-			enqueueOutbox(T.DB, OutboxItem{
-				ID:      newID(),
-				ChatID:  deliverChatID,
-				Handle:  handle,
-				Text:    reply,
-				Type:    "reply",
-				Created: now(),
-			})
-			MarkSubSessionIdle(sub.SubSessionID)
-			return
+			// IDLE dispatch — the agent already answered and the user is
+			// following up. We no longer hand the follow-up SYNCHRONOUSLY to
+			// the sub-agent (the old side-conversation model). NEW (relay
+			// model): fall through to the main LLM, which holds the
+			// conversation and decides whether to re-dispatch — dispatch_agent
+			// continues the SAME sub-session by default (freshSession=false),
+			// so "tell me more" still preserves the thread — or to answer /
+			// recall_dispatch_result itself. The idle sub-session is left in
+			// place precisely so a re-dispatch can continue it.
+			Log("[phantom] follow-up after idle dispatch sub=%s — main LLM handles (relay model)", sub.SubSessionID)
+			// no return: falls through to the main LLM
 		}
 	}
 
@@ -2141,7 +2138,7 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 
 	sysPrompt := fmt.Sprintf(
 		"Current date and time: %s\n\nYour name is %s. The person messaging you is %s.\n\n%s%s%s\n\n"+
-			"When you know someone's name, use it naturally in conversation. Never use more than one emoji in a message, and use them sparingly. "+
+			"When you know someone's name, use it naturally in conversation. "+
 			"Keep responses varied — avoid falling into repetitive patterns of jokes or phrases even across a long conversation. "+
 			"When you learn something worth remembering about the person — their name, preferences, relationships, or important facts — call memory(action=\"save\", note=\"...\") before replying. "+
 			"When asked about something you can look up or do with a tool, use the tool — never say you can't do something if a tool can do it. "+
@@ -2185,6 +2182,15 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 			}
 		}
 	}
+	// Skills: stateless. Triggered skills inject deterministically; the LLM
+	// draws on others via read_skill / skill_knowledge_search. deliveredSkills
+	// dedupes instruction delivery this message (shared with the skill tools
+	// added below). Per-message only — nothing tracked across messages.
+	deliveredSkills := map[string]bool{}
+	if !conv.DisableSkills {
+		sysPrompt += RenderSkillTriggerHints(T.DB, phantomAgentOwner(T.DB), conv.AllowedSkills, cleaned, nil)
+		sysPrompt += T.phantomAvailableSkillsBlock(conv)
+	}
 	// Surface the model's last few assistant replies as an explicit
 	// "do NOT repeat these" callout. The history already contains
 	// these messages, but Qwen-class models pattern-match heavily and
@@ -2193,6 +2199,17 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	// prompt (closest to generation) raises the signal.
 	if dontRepeat := recentAssistantReplies(history, 4); dontRepeat != "" {
 		sysPrompt += dontRepeat
+	}
+
+	// Dispatch-in-flight awareness. A background specialist run is going;
+	// the persona keeps the conversation and only forwards RELEVANT updates
+	// (it is no longer the framework auto-swallowing every message).
+	if active := ActiveSubSessionsFor(chatID); len(active) > 0 {
+		names := make([]string, 0, len(active))
+		for _, s := range active {
+			names = append(names, s.AgentName)
+		}
+		sysPrompt += "\n\nA task you handed to " + strings.Join(names, ", ") + " is running in the background right now; its answer will arrive as its own message shortly. Keep chatting normally — do NOT re-dispatch that task or act like you already have the result. If the user says something RELEVANT to that running task (an extra detail, a change of plan, a correction), call forward_to_dispatch(note) to pass it to the running agent. For anything unrelated, just reply as usual — don't forward chit-chat."
 	}
 
 	sess := &ToolSession{
@@ -2288,6 +2305,49 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		})
 	}
 	tools := T.buildConvTools(chatID, handle, conv, cfg, sess, true)
+	// recall_conversation — search this conversation's folded-in older
+	// history (compaction writes aged-out exchanges into a private,
+	// per-conversation searchable store). The LLM reaches for it when the
+	// recent window + summary don't have a specific older detail.
+	tools = append(tools, T.recallConversationToolDef(chatID))
+	// Skill tools: read_skill / skill_knowledge_search / skill_knowledge_fetch_doc.
+	// Stateless one-shot calls. skill_knowledge_search searches the skill's
+	// attached collections (core SearchCollections) AND its source-hooks, merged
+	// — matching orchestrate.
+	if !conv.DisableSkills && len(conv.AllowedSkills) > 0 {
+		hasReadSkill := false
+		for _, td := range tools {
+			if td.Tool.Name == "read_skill" {
+				hasReadSkill = true
+				break
+			}
+		}
+		if !hasReadSkill {
+			owner := phantomAgentOwner(T.DB)
+			tools = append(tools,
+				BuildReadSkillTool(T.DB, owner, conv.AllowedSkills, deliveredSkills),
+				BuildSkillKnowledgeSearchTool(T.DB, owner, conv.AllowedSkills, deliveredSkills,
+					func(skill SkillRecord, query string) string {
+						if len(skill.AttachedCollections) == 0 {
+							return ""
+						}
+						hits := SearchCollections(context.Background(), CollectionsDB(), owner, skill.AttachedCollections, query, 5)
+						return formatSkillCollectionHits(hits)
+					}),
+				BuildSkillKnowledgeFetchDocTool(T.DB, owner, conv.AllowedSkills, deliveredSkills,
+					func(skill SkillRecord, docID string) (string, error) {
+						if len(skill.AttachedCollections) == 0 {
+							return fmt.Sprintf("The %q skill has no document collections to fetch from.", skill.Name), nil
+						}
+						doc := FetchCollectionDoc(CollectionsDB(), owner, skill.AttachedCollections, docID, 10000)
+						if doc == "" {
+							return fmt.Sprintf("No document with doc_id=%q in the %q skill's collections.", docID, skill.Name), nil
+						}
+						return doc, nil
+					}),
+			)
+		}
+	}
 
 	Log("[phantom] processing reply for %s (%d history msgs, %d tools)", senderDesc, len(msgs), len(tools))
 
@@ -2295,11 +2355,11 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	resp, _, err := T.RunAgentLoop(context.Background(), msgs, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
-		MaxRounds:    15,
-		RouteKey:     "app.phantom",
-		PromptTools:  T.PromptTools,
-		ChatOptions:  phantomChatOpts,
-		Confirm:      func(string, string) bool { return true },
+		MaxRounds:   15,
+		RouteKey:    "app.phantom",
+		PromptTools: T.PromptTools,
+		ChatOptions: phantomChatOpts,
+		Confirm:     func(string, string) bool { return true },
 		// Drain any view-images deposited by tools (view_video,
 		// download_video frame sampling) into a follow-up user message
 		// at the next round so the LLM sees them. Images go to the LLM

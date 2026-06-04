@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"math"
 	"math/rand"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -180,7 +181,23 @@ type Conversation struct {
 	// catalog. Names + descriptions for these agents come from the
 	// per-instance DispatchOwnerUsername's agent store.
 	AllowedAgents []string `json:"allowed_agents,omitempty"`
-	Updated       string   `json:"updated"`
+
+	// AllowedSkills is the strict allowlist of skill IDs (from the
+	// operator's skill pool) the LLM in THIS chat may pull in via
+	// activate_skill. Empty = skills disabled for this chat (the
+	// activate/deactivate tools drop out and no skills block renders).
+	// Mirrors orchestrate's per-agent AllowedSkills.
+	AllowedSkills []string `json:"allowed_skills,omitempty"`
+	// ActiveSkillIDs is VESTIGIAL — skills are per-turn now (the LLM
+	// re-activates each message it stays in-domain; nothing carries
+	// across messages), so this is no longer read or written. Kept only
+	// so older stored conversations with the JSON deserialize cleanly.
+	ActiveSkillIDs []string `json:"active_skill_ids,omitempty"`
+	// DisableSkills hard-mutes skills for this chat regardless of
+	// AllowedSkills (parity with orchestrate's per-agent toggle).
+	DisableSkills bool `json:"disable_skills,omitempty"`
+
+	Updated string `json:"updated"`
 
 	// MessageHistoryDepth overrides the global PhantomConfig depth
 	// for THIS conversation. Lets per-contact tuning: quick contacts
@@ -521,6 +538,20 @@ func validateAPIKey(db Database, secret string) (APIKey, bool) {
 	return APIKey{}, false
 }
 
+// bridgeKeyValid accepts the X-API-Key for phantom's hook/poll if it's
+// EITHER a legacy phantom APIKey OR the core desktop bridge key
+// (LookupDesktopKey). Phantom is now a CONSUMER of the core-owned desktop
+// key, not the owner — the daemon's auto-provisioned key works here too,
+// and existing phantom keys keep working for backward compatibility.
+func bridgeKeyValid(db Database, r *http.Request) bool {
+	key := r.Header.Get("X-API-Key")
+	if _, ok := validateAPIKey(db, key); ok {
+		return true
+	}
+	_, ok := LookupDesktopKey(key)
+	return ok
+}
+
 // defaultConfig returns the persona config, falling back to defaults if none saved.
 func defaultConfig(db Database) PhantomConfig {
 	var cfg PhantomConfig
@@ -566,13 +597,11 @@ const followThroughRule = "FOLLOW-THROUGH: if you say 'let me try', 'I'll figure
 
 const learnAndSaveRule = "LEARN-AND-SAVE: as soon as you figure out a working API call (especially after iterating through 4xx errors), IMMEDIATELY wrap it as a persistent tool via create_api_tool with persist=true — hardcode the discovered url_template/method/body_template, expose only the variable bits as params. Pending approval from the operator, but it stops you from re-discovering the same schema next session. The operator notices when they have to teach you the same API twice; it feels broken. Same applies to multi-step shell flows worth saving: create_temp_tool with persist=true."
 
-const freshTurnRule = "FRESH-TURN-EVAL: each `--- NEW MESSAGE` is a separate request — re-read what is actually being asked NOW. Tool intent does NOT carry across turns: if you called download_video on a prior message and the new message is just a photo or a 'thanks', you do NOT call download_video again. If you delegated on a prior turn and the new message is a follow-up clarification, you do NOT delegate again. If you ran web_search on the prior turn and the new message is unrelated, you do NOT search again. Inspect the current message's content + any [CURRENT ATTACHMENT: ...] tag in isolation, then pick the right tool (or no tool) for THIS turn's actual content. Earlier conversation is context, not standing instructions."
-
-const answerFromHistoryRule = "ANSWER-FROM-HISTORY: when the user asks about something you already did in a prior turn, answer from your conversation history — do NOT re-execute the tool to answer the meta-question. If the user asks 'what did you say in that call?' you do NOT place_vapi_call again — you read the prior call's transcript from history. If they ask 'what did the search find?' you do NOT web_search again — you summarize the prior result. If they ask 'did you save that?' you do NOT re-save — you confirm or correct based on what you actually did. If they ask 'what was in that picture earlier?', answer from your prior description in history; if that genuinely doesn't cover the detail, ask them to re-send it (you can only see attachments from the current turn). The pattern: prior turn = action; new turn asking about it = retrieval, not re-execution. Re-running a tool only to answer a meta-question wastes the tool call and confuses the user (they get a duplicate action instead of an answer)."
+const freshTurnRule = "FRESH-TURN-EVAL: each `--- NEW MESSAGE` is its own request — read what's being asked NOW. Tool intent does NOT carry across turns: a prior download_video / delegate / web_search does not repeat just because the conversation continues. Inspect THIS message's content + any [CURRENT ATTACHMENT: ...] tag in isolation and pick the right tool (or none) for it. When the new message ASKS ABOUT prior work ('what did that call say?', 'what did the search find?', 'did you save that?'), answer from your conversation history — do NOT re-run the tool to answer a question about it. For a past picture, answer from your earlier description; you only see the current turn's attachments, so ask them to re-send if needed. Earlier conversation is context, not standing instructions."
 
 const attachRule = "ATTACH FILES VIA MARKER: when you want to send a file from your workspace to the user (image, video, screenshot, generated picture, document), append a marker on its own line at the END of your reply in this exact form: `[ATTACH: filename.ext]`. Add `, cleanup=true` (e.g. `[ATTACH: meme.jpg, cleanup=true]`) for one-shot files produced by find_image / fetch_image / generate_image / screenshot_page that you don't need to keep around. Use ONE marker per file; multiple markers are fine for multiple files. DO NOT write the tool-call syntax as text (e.g. `workspace(action=\"attach\", ...)`); that is a real tool call, not something to type into your reply. The marker is the canonical way to deliver a file; the framework strips it from the visible message and ships the file."
 
-const sideEffectGuardRule = "SIDE-EFFECT GUARD — STRICT: any tool that contacts external humans or changes external state (placing phone calls, sending messages/emails/SMS, making payments, posting to feeds, scheduling appointments, anything where another person is on the other end or an irreversible state change happens) is NEVER called a second time on a follow-up turn unless the user EXPLICITLY says 'call them again' / 'send another' / 'try again' / names a different recipient. When in doubt, do NOT call. If the user references a prior side-effect action ('how did the call go?', 'what did they say?', 'did you tell them X?', 'thanks'), those are signals to READ the prior action's outcome from history — NOT to re-execute. Calling someone twice when they only asked once is a real harm (unwanted second contact, burned trust), not a UX nit. Identify which of your tools are side-effect-laden by their descriptions: tools that POST/PUT/DELETE to external services, place calls, or send messages all qualify. If you see one of those tools in your prior-turn tool history for THIS conversation, treat it as 'done' and not safely repeatable. Read-only tools (GET requests, search, fetch) don't trigger this guard — they can be re-called freely."
+const sideEffectGuardRule = "SIDE-EFFECT GUARD — STRICT: never repeat a tool that contacts a person or changes external state (placing calls, sending messages/emails/SMS, payments, posting to feeds, scheduling) on a follow-up turn unless the user EXPLICITLY says so ('call them again' / 'send another' / names a different recipient). When in doubt, do NOT call — re-contacting someone they only asked about once is real harm (unwanted second contact, burned trust), not a UX nit. Read-only tools (GET, search, fetch) are exempt and can be re-called freely."
 
 // phantomWorkspaceID returns a stable, filesystem-safe identifier for
 // the workspace shared across all phantom conversations on this host.
@@ -737,7 +766,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + answerFromHistoryRule + " " + sideEffectGuardRule + " " + attachRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + sideEffectGuardRule + " " + attachRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}

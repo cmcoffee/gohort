@@ -101,6 +101,21 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		})
 	_ = autoCb
 
+	// Manage the per-tool "Always allow" grants. Mirrors Show Logs:
+	// proxy-served pages don't carry the Wails runtime, so we inject the
+	// current list straight into the in-page manager via WindowExecJS
+	// rather than relying on an EventsEmit the page may never receive.
+	custom.AddText("Manage Tool Approvals…", nil, func(_ *wails_menu.CallbackData) {
+		if app.ctx == nil {
+			return
+		}
+		data, err := json.Marshal(app.GetAllowedTools())
+		if err != nil {
+			data = []byte("[]")
+		}
+		wails_runtime.WindowExecJS(app.ctx, "window.__desktop_tools_open && window.__desktop_tools_open("+string(data)+")")
+	})
+
 	custom.AddSeparator()
 
 	// Bridge agent management — install/remove the separate

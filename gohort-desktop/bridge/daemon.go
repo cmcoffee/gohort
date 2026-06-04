@@ -32,7 +32,7 @@ var appIcon []byte
 type sidecarCfg struct{}
 
 func (sidecarCfg) ServerURL() string { return core.ReadBridgeConfig().ServerURL }
-func (sidecarCfg) APIKey() string    { return core.ReadBridgeConfig().APIKey }
+func (sidecarCfg) APIKey() string    { return core.BridgeAPIKey() }
 
 // Run is the agent's main loop: start the native services (iMessage
 // relay on macOS) + the WS tool bridge from the sidecar config, then
@@ -97,7 +97,7 @@ func Run() {
 // daemonStatus is the one-line status shown (disabled) in the menu.
 func daemonStatus() string {
 	c := core.ReadBridgeConfig()
-	if c.ServerURL == "" || c.APIKey == "" {
+	if c.ServerURL == "" || core.BridgeAPIKey() == "" {
 		return "Not configured — set up in Gohort"
 	}
 	return "Connected"

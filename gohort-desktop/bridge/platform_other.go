@@ -47,9 +47,9 @@ func promptWriteConsent(folder string) bool {
 }
 
 // promptApproval denies by default; no native dialog on these platforms.
-func promptApproval(name string, _ map[string]any) bool {
+func promptApproval(name string, _ map[string]any) (allow, always bool) {
 	core.Warn("[approval] denying %q — no prompt on this platform; set auto_approve to allow", name)
-	return false
+	return false, false
 }
 
 func installAutostart() error {

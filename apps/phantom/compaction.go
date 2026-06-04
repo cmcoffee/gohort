@@ -104,6 +104,13 @@ func (T *Phantom) maybeCompact(chatID string, conv Conversation, cfg PhantomConf
 		ctx, cancel := context.WithTimeout(context.Background(), compactionTimeout)
 		defer cancel()
 
+		// Fold the same aging span into the conversation's searchable
+		// recall store BEFORE the (lossy) summary pass — so even if the
+		// summary LLM call fails, the specifics are preserved and
+		// recall_conversation can find them. Complements the summary; the
+		// summary is for continuity, this is for exact recall.
+		T.ingestAgingToKnowledge(chatID, conv, aging)
+
 		// Build the prompt — keep it terse, the worker LLM doesn't
 		// need much hand-holding for narrative summarization.
 		var sb strings.Builder

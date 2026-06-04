@@ -486,9 +486,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if target.OwnedBy == "" {
 		tools = append(tools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
 	}
-	if !target.DisableSkills {
-		tools = append(tools, subTurn.activateSkillToolDef(), subTurn.deactivateSkillToolDef())
-	}
+	tools = append(tools, subTurn.skillToolDefs()...)
 
 	// V1 — wrap the sub-agent's tools so their calls emit into the
 	// caller's SSE activity pane. Reuses the parent's wiring (cmd

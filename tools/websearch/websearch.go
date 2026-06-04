@@ -1249,6 +1249,25 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 		} else {
 			text = extractReadableText(html_str)
 		}
+		// Post-fetch recovery: an HTML page that rendered to almost
+		// nothing is the JS-required-skeleton / soft-block signature.
+		// Retry through the headless browser — the same recovery path the
+		// tool description tells the LLM to take manually, done
+		// automatically so a thin result doesn't get answered from a stub
+		// (the findlaw / leginfo per-section case). Targeted by content
+		// shape, not body size, so legitimate small JSON/text results are
+		// left alone (see ShouldBrowserRetryResult). Keep whichever
+		// extraction is richer.
+		if ShouldBrowserRetryResult(content_type, text) {
+			if rendered, berr := browser.Fetch(target_url, max_chars); berr == nil {
+				if rendered = strings.TrimSpace(rendered); len(rendered) > len(strings.TrimSpace(text)) {
+					Debug("[fetch] thin static result (%d chars) — recovered %d via browse_page: %s", len(text), len(rendered), target_url)
+					text = rendered
+				}
+			} else {
+				Debug("[fetch] browser recovery failed for %s: %v", target_url, berr)
+			}
+		}
 	}
 	if max_chars > 0 && len(text) > max_chars {
 		// Truncate at a word boundary.

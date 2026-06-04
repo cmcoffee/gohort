@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -54,6 +55,16 @@ var frameworkInfrastructureTools = map[string]bool{
 	"mark_step_done":     true,
 }
 
+// frameworkUtilityTools are pure, deterministic, side-effect-free helpers
+// (CapRead) the framework keeps ALWAYS-ON for every agent — arithmetic,
+// date math, timezone conversion. There's no reason to ever withhold them
+// (and the calculator in particular guards against the LLM's unreliable
+// mental math), so they're force-included into the catalog (see runner.go,
+// next to workspace) and hidden from the curation UI / default pool — the
+// admin never manages them, but the model always has them. Keep this set to
+// genuinely pure utilities; anything touching network/state stays curated.
+var frameworkUtilityTools = []string{"calculate", "date_math", "time_in_zone"}
+
 func availableWorkerToolOptions(user string) []ui.SelectOption {
 	pool := FilterChatTools(BlockedTools)
 	defs := make([]AgentToolDef, 0, len(pool))
@@ -65,6 +76,9 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		}
 		if frameworkInfrastructureTools[t.Name()] {
 			continue
+		}
+		if slices.Contains(frameworkUtilityTools, t.Name()) {
+			continue // always-on utilities — never curated, hidden from the picker + default pool
 		}
 		defs = append(defs, ChatToolToAgentToolDefWithSession(t, nil))
 	}

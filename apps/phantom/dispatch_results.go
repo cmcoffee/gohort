@@ -109,12 +109,40 @@ func summarizeDispatchResult(llm LLM, agentName, brief, raw string) string {
 }
 
 // truncateForSummaryFallback returns the first N chars of raw plus a
-// marker so the chat LLM knows the summary was a fallback truncation.
+// short "trimmed" note. This text is delivered DIRECTLY to the user (the
+// dispatch direct-return path), so the note must read for THEM — never
+// name an internal tool. The LLM still learns it can pull the full report
+// from the [#dispatch:<id>] marker appended to chat history, not from
+// this line; an earlier version leaked "via recall_dispatch_result" into
+// the user's message whenever the worker summarizer fell back here.
 func truncateForSummaryFallback(raw string, n int) string {
 	if len(raw) <= n {
 		return raw
 	}
-	return strings.TrimSpace(raw[:n]) + "\n\n[truncated — full report available via recall_dispatch_result]"
+	return strings.TrimSpace(raw[:n]) + "\n\n(Trimmed for length — say the word if you want the full details.)"
+}
+
+// scrubInternalScaffolding strips any internal dispatch markers from text
+// that's about to be delivered DIRECTLY to the user. The async dispatch
+// path delivers the summary with no LLM re-render, so there's no model in
+// the loop to drop these — this is the safety net. Today only the
+// trailing [#dispatch:<id>] marker is structured-internal (it's appended
+// to STORED history, not delivered text, so this should be a no-op in the
+// normal path); kept defensive so a future change that accidentally
+// delivers the stored variant can't leak the marker to a user's message.
+func scrubInternalScaffolding(text string) string {
+	for {
+		open := strings.Index(text, "[#dispatch:")
+		if open < 0 {
+			break
+		}
+		end := strings.IndexByte(text[open:], ']')
+		if end < 0 {
+			break
+		}
+		text = text[:open] + text[open+end+1:]
+	}
+	return strings.TrimSpace(text)
 }
 
 // storeDispatchResult persists the raw report and returns the stored

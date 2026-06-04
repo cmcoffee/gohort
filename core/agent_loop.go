@@ -463,8 +463,27 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// status notes) is fine and kept; what's forbidden is delivering
 	// the full, final answer more than once. The complete answer lands
 	// exactly once, in the final tool-free step.
-	if len(tools) > 0 {
+	// emitDisciplinePrompt gates the "no two answers in one turn" prompt
+	// block. RE-ENABLED: the deterministic runner-side drop of long text in
+	// tool rounds was removed because it dropped legitimate content the
+	// model emitted alongside a tool call but never repeated (false
+	// positives). Preventing the double at the SOURCE — telling the model to
+	// hold its full answer until the final tool-free round — is the right
+	// trade: in-progress narration is still allowed, only the full answer
+	// must wait, so nothing legitimate gets dropped.
+	const emitDisciplinePrompt = true
+	if emitDisciplinePrompt && len(tools) > 0 {
 		systemPrompt += "\n\n[Answering across tool rounds: NEVER emit answer text in the same step as a tool call. Call your tools first, wait for the results, THEN write your response — in a final step that has no tool call. A brief progress note as you work (\"checking that now…\") is fine; your actual answer is what must wait for the end, and it appears exactly once. Never two answers in one turn.]"
+	}
+	// Grounding discipline — every tool-using loop. The failure mode: the
+	// model retrieves real sources, then embellishes with specifics pulled
+	// from memory — a wrong statute/instruction number, a plausible-but-
+	// fabricated case cite, an invented figure, date, or quote. For a
+	// research / legal / medical assistant that's the dangerous one: a
+	// fabricated citation that reads as authoritative. Pin specifics to
+	// what was actually retrieved or provided.
+	if len(tools) > 0 {
+		systemPrompt += "\n\n[Grounding: state a precise specific — a number, a name, a citation or reference (statute, case, version, ID), a date, a figure, a dosage, a direct quote — ONLY when it appears in a tool result or in material the user gave you THIS turn. Never from memory, even when you're confident: a plausible-looking specific you can't point to is worse than not having one. This holds in CASUAL conversation as much as in formal answers — you may state the general shape of the answer, but do NOT attach a specific identifier you can't source right now; if you can't verify the exact one, say you're not certain rather than guessing. If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing — never quietly supply it from memory. And if the user CORRECTS a specific you gave, do NOT swap in another from memory or invent a rationale for the mistake — admit you're not certain and offer to look it up. A confident wrong specific, then a confident second wrong one, is the failure to avoid.]"
 	}
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if

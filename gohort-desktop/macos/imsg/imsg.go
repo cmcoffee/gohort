@@ -42,10 +42,10 @@ const defaultDB = "~/Library/Messages/chat.db"
 // the /phantom prefix is appended by the service, unlike the old INI
 // which baked it in.
 type Config struct {
-	ServerURL string // bare gohort origin, e.g. "https://gohort.example.com"
-	APIKey    string
-	PollSecs  int    // chat.db poll interval, seconds
-	DBPath    string // path to chat.db (for resolving "any;-;..." chat IDs)
+	ServerURL string        // bare gohort origin, e.g. "https://gohort.example.com"
+	APIKey    func() string // live getter — read per request so a rotated / auto-provisioned (sidecar) key is picked up without restarting the relay
+	PollSecs  int           // chat.db poll interval, seconds
+	DBPath    string        // path to chat.db (for resolving "any;-;..." chat IDs)
 }
 
 // expandHome expands a leading ~/ to the user's home directory.
@@ -989,7 +989,7 @@ func deliverOutbox(cfg Config, db *sql.DB) {
 	flushRetryQueue(cfg, db)
 
 	req, _ := http.NewRequest(http.MethodGet, cfg.ServerURL+"/phantom/api/poll", nil)
-	req.Header.Set("X-API-Key", cfg.APIKey)
+	req.Header.Set("X-API-Key", cfg.APIKey())
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		nfo.Log("poll: %v", err)
@@ -1304,7 +1304,7 @@ func postHook(cfg Config, payload HookPayload) error {
 		return &hookErr{msg: err.Error(), skip: false}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", cfg.APIKey)
+	req.Header.Set("X-API-Key", cfg.APIKey())
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return &hookErr{msg: err.Error(), skip: false}

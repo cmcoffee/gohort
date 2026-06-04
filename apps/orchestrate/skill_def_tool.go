@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -25,19 +26,19 @@ type skillDefImpl struct{}
 
 func (skillDefImpl) Name() string { return "skill_def" }
 func (skillDefImpl) Desc() string {
-	return "Manage skills — conditional prompt addendums that auto-activate based on the user's message. Actions: list (every skill in the user's pool), get (one skill by name), create (upsert a skill with description, triggers, instructions, optional allowed_tools), delete (drop a skill), help (full usage). Skills are like dynamic personas: their instructions get appended to the active agent's system prompt only when the classifier matches the user's message against the skill's description + triggers."
+	return "Manage skills — saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a skill with description, triggers, instructions, optional allowed_tools), update (patch an existing skill — only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search) — so the description is the activation signal. Triggers, when set, are an optional deterministic fast-path (substring/glob match on the message/attachments) that injects a skill's instructions without the LLM deciding."
 }
 func (skillDefImpl) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"action": {Type: "string", Description: "list | get | create | delete | help"},
+		"action": {Type: "string", Description: "list | get | create | update | delete | help"},
 		"name":   {Type: "string", Description: "(get / create / delete) Skill name. Human-readable; doubles as the lookup key for get / delete."},
 		"description": {
 			Type:        "string",
-			Description: "(create) One-sentence \"when to use this skill\" hint. The classifier embeds this and matches it against the user's message — write it as if completing the sentence \"Use when the user…\". Specific descriptions match precisely; generic ones over-activate.",
+			Description: "(create) The activation cue: the host LLM reads this in its skill list and decides whether to consult the skill, so it's the primary activation signal. Write it as if completing \"Use when the user…\", naming the situations it should fire on. Specific descriptions get picked at the right time; generic ones get skipped or over-fire.",
 		},
 		"triggers": {
 			Type:        "array",
-			Description: "(create) Optional explicit-match patterns. Plain substrings, case-insensitive, matched against the user message (and any inlined attachment header). Use for high-precision activation like `.pdf`, `gh pr`, `SELECT `. Empty triggers = embedding-only activation. Adding triggers is a precision boost; the embedding still runs as fallback for fuzzy variants.",
+			Description: "(create) Optional deterministic fast-path. Plain substrings, case-insensitive, matched against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match injects the skill's instructions WITHOUT the LLM deciding. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"allowed_tools": {
@@ -47,8 +48,12 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"attached_collections": {
 			Type:        "array",
-			Description: "(create) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the classifier doesn't pick this skill, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list).",
+			Description: "(create) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list).",
 			Items:       &ToolParam{Type: "string"},
+		},
+		"create_collection": {
+			Type:        "boolean",
+			Description: "(create) When true, mint a NEW empty knowledge collection named after the skill and auto-attach it (added to attached_collections). Use when the skill needs its own reference corpus and one doesn't exist yet — you get back the collection ID; tell the user to populate it via the Knowledge surface (upload docs or Auto-fill). To link an EXISTING collection instead, pass its ID in attached_collections and leave this off.",
 		},
 		"instructions": {
 			Type:        "string",
@@ -75,10 +80,12 @@ func (s skillDefImpl) RunWithSession(args map[string]any, sess *ToolSession) (st
 		return skillDefGet(args, sess)
 	case "create":
 		return skillDefCreate(args, sess)
+	case "update":
+		return skillDefUpdate(args, sess)
 	case "delete":
 		return skillDefDelete(args, sess)
 	default:
-		return "", fmt.Errorf("unknown action %q. valid: list, get, create, delete, help", action)
+		return "", fmt.Errorf("unknown action %q. valid: list, get, create, update, delete, help", action)
 	}
 }
 
@@ -94,12 +101,22 @@ action="get", name="<skill name>"
 
 action="create", name=..., description=..., instructions=...,
                  triggers=[...]?, allowed_tools=[...]?,
-                 attached_collections=[...]?
+                 attached_collections=[...]?, create_collection=true?
   Upsert a skill. If a skill with this name already exists in the
-  user's pool, it gets replaced (same record, new content). Skill is
-  embedded automatically for the fuzzy-match classifier.
+  user's pool, it gets replaced (same record, new content).
   attached_collections ships domain corpus alongside the skill —
   searchable via knowledge_search only when the skill is active.
+  create_collection=true mints a fresh empty collection named
+  "<skill> Knowledge" and auto-links it; the user then fills it via
+  the Knowledge surface. Link an existing collection instead by
+  passing its ID in attached_collections.
+
+action="update", name=..., [description / instructions / triggers /
+                 allowed_tools / attached_collections]
+  PATCH an existing skill — only the fields you pass are overwritten;
+  everything else is preserved. Use to tweak one thing (e.g. add "war"
+  to a geopolitics skill's description) without re-supplying the whole
+  record. Errors if no skill with that name exists.
 
 action="delete", name=...
   Drop a skill from the pool by name.
@@ -107,12 +124,14 @@ action="delete", name=...
 action="help"
   This text.
 
-What skills do: at the start of every turn (for non-Builder agents),
-the classifier scans the user's message against every skill's triggers
-and embedded description. Matches above threshold (capped at 3 active
-skills per turn) get their instructions appended to the active agent's
-system prompt, and their allowed_tools get unioned into the catalog
-for that turn only.
+What skills do: every allowed skill's name + description is listed in
+the host agent's prompt. The LLM reads that list and, when a skill's
+domain fits the task, consults it (read_skill / skill_knowledge_search)
+— activation is the model's call, and the description is what it judges
+against. If a skill has triggers, a substring/glob match on the message
+or an attachment filename ALSO injects its instructions deterministically
+(no LLM decision) — an optional precision fast-path, not a classifier.
+An activated skill's allowed_tools join the catalog for that turn.
 
 Think of skills as dynamic personas: "if the user is doing X, also
 know Y." Keep them focused — one skill, one capability. Multiple small
@@ -166,7 +185,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	description := strings.TrimSpace(stringArg(args, "description"))
 	if description == "" {
-		return "", errors.New("description is required — the classifier embeds it to match against user messages")
+		return "", errors.New("description is required — the host LLM reads it to decide whether to consult this skill")
 	}
 	instructions := stringArg(args, "instructions")
 	if strings.TrimSpace(instructions) == "" {
@@ -175,6 +194,30 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	triggers := stringSliceFromArgs(args, "triggers")
 	allowedTools := stringSliceFromArgs(args, "allowed_tools")
 	attachedCollections := stringSliceFromArgs(args, "attached_collections")
+
+	// create_collection: mint a fresh empty collection for this skill and
+	// auto-link it, so authoring a skill + giving it a corpus is one step.
+	createColl := false
+	switch v := args["create_collection"].(type) {
+	case bool:
+		createColl = v
+	case string:
+		createColl = strings.EqualFold(strings.TrimSpace(v), "true")
+	}
+	mintedCollection := ""
+	if createColl {
+		c := Collection{
+			ID:          UUIDv4(),
+			Owner:       sess.Username,
+			Name:        name + " Knowledge",
+			Description: description,
+			Created:     time.Now(),
+		}
+		saveCollection(sess.DB, c)
+		attachedCollections = append(attachedCollections, c.ID)
+		mintedCollection = c.ID
+		Log("[orchestrate.skill_def] minted collection %q (id=%s) for skill %q user=%q", c.Name, c.ID, name, sess.Username)
+	}
 
 	// Upsert by name. If an existing skill matches, reuse its ID +
 	// Created so the record's identity is preserved across edits.
@@ -203,7 +246,73 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if len(saved.Embedding) == 0 {
 		embedNote = " (embedding unavailable — only trigger-match activation will fire until next re-save)"
 	}
-	return fmt.Sprintf("Skill %q %s%s. Active when triggers match OR the embedded description scores above 0.55 against the user message.", saved.Name, verb, embedNote), nil
+	collNote := ""
+	if mintedCollection != "" {
+		collNote = fmt.Sprintf(" Created and linked an empty knowledge collection %q Knowledge (id=%s) — it has no documents yet, so tell the user to populate it via the Knowledge surface (upload docs or Auto-fill) before the skill's knowledge_search returns anything.", saved.Name, mintedCollection)
+	}
+	return fmt.Sprintf("Skill %q %s%s. Active when triggers match OR the embedded description scores above 0.55 against the user message.%s", saved.Name, verb, embedNote, collNote), nil
+}
+
+// skillDefUpdate patches an EXISTING skill in place: only the fields
+// present in args are overwritten; everything else is preserved. This is
+// the "tweak one thing" path (e.g. add "war" to a geopolitics skill's
+// description) so callers don't have to re-supply instructions / triggers
+// / collections and risk wiping them, which a full create-upsert would do.
+func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(stringArg(args, "name"))
+	if name == "" {
+		return "", errors.New("name is required for action=update")
+	}
+	existing, ok := FindSkillByName(sess.DB, sess.Username, name)
+	if !ok {
+		return "", fmt.Errorf("skill %q not found — use action=create to make a new one", name)
+	}
+	rec := existing
+	var changed []string
+	if _, has := args["description"]; has {
+		if s := strings.TrimSpace(stringArg(args, "description")); s != "" {
+			rec.Description = s
+			changed = append(changed, "description")
+		}
+	}
+	if _, has := args["instructions"]; has {
+		if s := strings.TrimSpace(stringArg(args, "instructions")); s != "" {
+			rec.Instructions = stringArg(args, "instructions")
+			changed = append(changed, "instructions")
+		}
+	}
+	if _, has := args["triggers"]; has {
+		rec.Triggers = stringSliceFromArgs(args, "triggers")
+		changed = append(changed, "triggers")
+	}
+	if _, has := args["allowed_tools"]; has {
+		rec.AllowedTools = stringSliceFromArgs(args, "allowed_tools")
+		changed = append(changed, "allowed_tools")
+	}
+	if _, has := args["attached_collections"]; has {
+		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
+		changed = append(changed, "attached_collections")
+	}
+	if len(changed) == 0 {
+		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections")
+	}
+	// Backfill a missing LLM-facing cue on touch (legacy skills). When the
+	// description itself changed, SaveSkill regenerates it, so only fill
+	// here if it didn't — avoids a double generation.
+	descChanged := false
+	for _, c := range changed {
+		if c == "description" {
+			descChanged = true
+		}
+	}
+	if !descChanged && strings.TrimSpace(rec.WhenToUse) == "" {
+		rec.WhenToUse = GenerateWhenToUse("skill", rec.Name, rec.Description)
+	}
+	saved, err := SaveSkill(sess.DB, sess.Username, rec)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Skill %q updated (%s). All other fields preserved.", saved.Name, strings.Join(changed, ", ")), nil
 }
 
 func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {

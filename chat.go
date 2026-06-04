@@ -197,10 +197,10 @@ func newChatSession(llm LLM, privateMode bool) *chatSession {
 		},
 		{
 			Name:        "get_tool_info",
-			Description: "Get detailed usage info for a tool. Requires a tool name. Example: get_tool_info(name=\"get_local_time\") or get_tool_info(name=\"run_healthcheck\").",
+			Description: "Get detailed usage info for a tool. Requires a tool name. Example: get_tool_info(name=\"time_in_zone\") or get_tool_info(name=\"run_healthcheck\").",
 			Required:    []string{"name"},
 			Parameters: map[string]ToolParam{
-				"name": {Type: "string", Description: "The tool name to look up, e.g. 'get_local_time' or 'run_healthcheck'. Get names from list_tools."},
+				"name": {Type: "string", Description: "The tool name to look up, e.g. 'time_in_zone' or 'run_healthcheck'. Get names from list_tools."},
 			},
 		},
 		{

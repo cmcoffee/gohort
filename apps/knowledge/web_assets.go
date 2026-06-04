@@ -102,14 +102,22 @@ const documentsListAssets = `<style>
   }
 
   newBtn.addEventListener('click', function() {
-    var dlg = document.createElement('dialog');
-    dlg.style.cssText = 'background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;max-width:560px;width:92%;max-height:88vh;display:flex;flex-direction:column';
+    // Div-overlay modal instead of a native <dialog>/showModal(): WKWebView
+    // (gohort-desktop) renders dynamically-built <dialog> content
+    // unreliably (the body doesn't expand), which is why the framework's
+    // own modals are div overlays too. overlay = full-screen scrim; dlg =
+    // the card.
+    var overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483646;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center';
+    var dlg = document.createElement('div');
+    dlg.style.cssText = 'background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;max-width:560px;width:92%;max-height:88vh;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,0.6)';
+    overlay.appendChild(dlg);
     var h = document.createElement('h3');
     h.textContent = 'New collection';
     h.style.cssText = 'margin:0 0 0.6rem';
     dlg.appendChild(h);
     var bodyWrap = document.createElement('div');
-    bodyWrap.style.cssText = 'overflow-y:auto;flex:1;padding-right:0.3rem';
+    bodyWrap.style.cssText = 'padding-right:0.3rem';
     dlg.appendChild(bodyWrap);
     var form = document.createElement('div');
     form.className = 'docs-modal-form';
@@ -134,7 +142,7 @@ const documentsListAssets = `<style>
 
     draftBtn.addEventListener('click', function() {
       var name = inpN.value.trim();
-      if (!name) { alert('Enter a name first — that\'s what the AI uses to draft.'); return; }
+      if (!name) { window.uiAlert('Enter a name first — that\'s what the AI uses to draft.'); return; }
       draftBtn.disabled = true;
       draftStatus.style.color = 'var(--text-mute)';
       draftStatus.textContent = 'Drafting…';
@@ -160,11 +168,11 @@ const documentsListAssets = `<style>
     var actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';
     var cancel = document.createElement('button'); cancel.className = 'ui-row-btn'; cancel.textContent = 'Cancel';
-    cancel.addEventListener('click', function(){ dlg.close(); dlg.remove(); });
+    cancel.addEventListener('click', function(){ overlay.remove(); });
     var create = document.createElement('button'); create.className = 'ui-row-btn primary'; create.textContent = 'Create';
     create.addEventListener('click', function() {
       var name = inpN.value.trim();
-      if (!name) { alert('Name required'); return; }
+      if (!name) { window.uiAlert('Name required'); return; }
       create.disabled = true;
       fetch(api('/api/collections'), {
         method: 'POST', credentials: 'same-origin',
@@ -177,17 +185,18 @@ const documentsListAssets = `<style>
         if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
         return r.json();
       }).then(function(c) {
-        dlg.close(); dlg.remove();
+        overlay.remove();
         window.location.href = '/knowledge/c/' + encodeURIComponent(c.id);
       }).catch(function(err) {
         create.disabled = false;
-        alert('Create failed: ' + (err && err.message || err));
+        window.uiAlert('Create failed: ' + (err && err.message || err));
       });
     });
     actions.appendChild(cancel); actions.appendChild(create);
     dlg.appendChild(actions);
-    document.body.appendChild(dlg);
-    if (typeof dlg.showModal === 'function') dlg.showModal();
+    // Click the scrim (outside the card) to dismiss.
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
     setTimeout(function(){ inpN.focus(); }, 0);
   });
 
@@ -604,8 +613,8 @@ const documentsDetailAssets = `<style>
           var del = document.createElement('button'); del.className = 'ui-row-btn';
           del.style.cssText = 'color:var(--danger,#ff7b72);font-size:0.78rem;padding:0.2rem 0.5rem';
           del.textContent = 'Remove';
-          del.onclick = function() {
-            if (!confirm('Remove ' + nm.textContent + ' from this collection?')) return;
+          del.onclick = async function() {
+            if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from this collection?'))) return;
             // Optimistic UI — hide the row immediately so the
             // click feels instant. Restore if the DELETE fails.
             var displayWas = row.style.display;
@@ -623,7 +632,7 @@ const documentsDetailAssets = `<style>
               })
               .catch(function(err){
                 row.style.display = displayWas;
-                alert('Remove failed: ' + (err && err.message || err));
+                window.uiAlert('Remove failed: ' + (err && err.message || err));
               });
           };
           row.appendChild(sel); row.appendChild(nm); row.appendChild(meta); row.appendChild(del);
@@ -636,11 +645,11 @@ const documentsDetailAssets = `<style>
   // immediately, then fire DELETEs in parallel (one per source).
   // Failed rows get restored + reported in the status line.
   // Single confirm covers the whole batch.
-  document.addEventListener('click', function(ev) {
+  document.addEventListener('click', async function(ev) {
     if (!ev.target || ev.target.id !== 'docs-bulk-delete') return;
     var ids = Object.keys(selectedSources);
     if (ids.length === 0) return;
-    if (!confirm('Remove ' + ids.length + ' document' + (ids.length === 1 ? '' : 's') + ' from this collection? This deletes their chunks permanently.')) return;
+    if (!(await window.uiConfirm('Remove ' + ids.length + ' document' + (ids.length === 1 ? '' : 's') + ' from this collection? This deletes their chunks permanently.'))) return;
     var btn = ev.target;
     var st = $('#docs-bulk-status');
     btn.disabled = true;
@@ -759,12 +768,12 @@ const documentsDetailAssets = `<style>
     reader.readAsDataURL(f);
   });
 
-  $('#docs-autofill').addEventListener('click', function() {
+  $('#docs-autofill').addEventListener('click', async function() {
     var maxInput = $('#docs-autofill-max');
     var maxDocs = parseInt(maxInput && maxInput.value, 10);
     if (isNaN(maxDocs) || maxDocs < 1) maxDocs = 10;
     if (maxDocs > 50) maxDocs = 50;
-    if (!confirm('Auto-fill this collection from the web?\n\nThe framework will generate search queries from the name + description, fetch up to ' + maxDocs + ' document' + (maxDocs === 1 ? '' : 's') + ', extract text, and ingest into this collection.\n\nLarger batches take longer (~30 sec per 10 docs). URLs already pulled previously will be skipped.')) {
+    if (!(await window.uiConfirm('Auto-fill this collection from the web?\n\nThe framework will generate search queries from the name + description, fetch up to ' + maxDocs + ' document' + (maxDocs === 1 ? '' : 's') + ', extract text, and ingest into this collection.\n\nLarger batches take longer (~30 sec per 10 docs). URLs already pulled previously will be skipped.'))) {
       return;
     }
     var btn = $('#docs-autofill');
@@ -841,19 +850,19 @@ const documentsDetailAssets = `<style>
   $('#docs-go').addEventListener('click', runSearch);
   $('#docs-q').addEventListener('keydown', function(ev) { if (ev.key === 'Enter') runSearch(); });
 
-  $('#docs-rename').addEventListener('click', function() {
-    var newName = prompt('Rename collection to:', $('#docs-name').textContent || '');
+  $('#docs-rename').addEventListener('click', async function() {
+    var newName = await window.uiPrompt('Rename collection to:', $('#docs-name').textContent || '');
     if (!newName || !newName.trim()) return;
     fetch(api('/api/collections/' + encodeURIComponent(cid)), {
       method: 'PATCH', credentials: 'same-origin',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: newName.trim()}),
     }).then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); loadDetail(); })
-      .catch(function(err){ alert('Rename failed: ' + (err && err.message || err)); });
+      .catch(function(err){ window.uiAlert('Rename failed: ' + (err && err.message || err)); });
   });
 
-  $('#docs-delete').addEventListener('click', function() {
-    if (!confirm('Delete this collection? All documents in it will be removed and detached from any agents using it.')) return;
+  $('#docs-delete').addEventListener('click', async function() {
+    if (!(await window.uiConfirm('Delete this collection? All documents in it will be removed and detached from any agents using it.'))) return;
     // Fire-and-forget the DELETE so navigation feels instant —
     // wiping a many-chunk collection can take several seconds and
     // the detail page is already useless. The list page re-fetches

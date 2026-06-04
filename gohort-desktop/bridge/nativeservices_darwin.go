@@ -27,10 +27,14 @@ func startNativeServices() {
 	go func() {
 		for {
 			c := core.ReadBridgeConfig()
-			if c.ServerURL != "" && c.APIKey != "" {
+			// Start once we have a server URL and *some* key (sidecar or
+			// manual). core.BridgeAPIKey() is the single live resolver both
+			// this relay and the WS bridge share — so a rotated /
+			// auto-provisioned key is picked up without restarting.
+			if c.ServerURL != "" && core.BridgeAPIKey() != "" {
 				imsg.Run(imsg.Config{
 					ServerURL: c.ServerURL, // bare origin; imsg appends /phantom
-					APIKey:    c.APIKey,
+					APIKey:    core.BridgeAPIKey,
 					PollSecs:  c.PollSecs,
 				}, false, false)
 				return
