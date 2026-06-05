@@ -831,7 +831,11 @@ const popup_shim_script = `<script>(function(){` +
 	// (same as Show Logs — proxy pages lack the Wails runtime, so the
 	// menu injects the current list directly). When window.go IS present
 	// it refreshes/revokes live through the App bindings.
-	`function __desktop_tools_open(initial){` +
+	// Attached to window (NOT a bare function): the whole shim runs inside
+	// an IIFE, so a bare `function __desktop_tools_open` would be local and
+	// the Account → "Manage Tool Approvals…" menu (which calls
+	// window.__desktop_tools_open via WindowExecJS) would silently no-op.
+	`window.__desktop_tools_open=function(initial){` +
 	`var prev=document.getElementById('__desktop_tools');` +
 	`if(prev){prev.remove();}` +
 	`var overlay=document.createElement('div');` +
@@ -909,7 +913,7 @@ const popup_shim_script = `<script>(function(){` +
 	`render(initial||[]);refresh();` +
 	`}` +
 	`if(window.runtime&&window.runtime.EventsOn){` +
-	`window.runtime.EventsOn('show-tool-approvals',function(list){__desktop_tools_open(list||[]);});` +
+	`window.runtime.EventsOn('show-tool-approvals',function(list){window.__desktop_tools_open(list||[]);});` +
 	`}` +
 	`console.log('[gohort-desktop] uiConfirm/uiAlert modal impl installed');` +
 	// Fallback for any legacy sync confirm()/alert() callers that
