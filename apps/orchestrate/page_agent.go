@@ -99,6 +99,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			SuggestURL: "../api/agents/suggest"},
 		{Field: "description", Type: "text", Label: "Description", Placeholder: "What this agent is for.",
 			SuggestURL: "../api/agents/suggest"},
+		{Field: "triggers", Type: "tags", Label: "Dispatch triggers (optional)",
+			Help: "Patterns that, when matched in the user's message, nudge the host to dispatch to THIS agent FIRST that turn — a salient per-turn hint, stronger than the description alone for domains the host has priors in (law, medicine, finance). A pattern with * or ? matches attachment filenames; anything else is a case-insensitive substring of the message. Author SPECIFIC patterns the domain's questions actually contain (a criminal-law agent: \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\") — loose ones over-fire and get tuned out. Empty = no per-turn nudge (the agent is still in the catalog)."},
 		{Type: "header", Label: "Persona",
 			Help: "How the agent thinks and decomposes work."},
 		{Field: "orchestrator_prompt", Type: "textarea", Label: "Orchestrator prompt", Rows: 8,

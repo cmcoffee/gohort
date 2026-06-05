@@ -65,6 +65,22 @@ var frameworkInfrastructureTools = map[string]bool{
 // genuinely pure utilities; anything touching network/state stays curated.
 var frameworkUtilityTools = []string{"calculate", "date_math", "time_in_zone"}
 
+// supersededWorkerTools are standalone registered tools whose function is
+// fully covered by a grouped tool, so showing both just bloats the schema
+// and invites LLM oscillation between near-duplicates. find_video /
+// view_video / download_video / transcribe are all subsumed by the
+// `video` action-grouped tool (find | download | view | transcribe |
+// transcode). They stay REGISTERED — phantom (its own surface) and any
+// agent that explicitly allowlists one keep working — but are dropped
+// from orchestrate's default pool + curation picker so a default-pool
+// agent sees one `video` tool instead of five near-duplicates.
+var supersededWorkerTools = []string{
+	// video family → the `video` grouped tool
+	"find_video", "view_video", "download_video", "transcribe",
+	// image family → the `image` grouped tool
+	"find_image", "fetch_image", "generate_image",
+}
+
 func availableWorkerToolOptions(user string) []ui.SelectOption {
 	pool := FilterChatTools(BlockedTools)
 	defs := make([]AgentToolDef, 0, len(pool))
@@ -79,6 +95,9 @@ func availableWorkerToolOptions(user string) []ui.SelectOption {
 		}
 		if slices.Contains(frameworkUtilityTools, t.Name()) {
 			continue // always-on utilities — never curated, hidden from the picker + default pool
+		}
+		if slices.Contains(supersededWorkerTools, t.Name()) {
+			continue // covered by a grouped tool (video) — registered but out of the default pool
 		}
 		defs = append(defs, ChatToolToAgentToolDefWithSession(t, nil))
 	}

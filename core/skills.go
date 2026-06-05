@@ -51,12 +51,6 @@ type SkillRecord struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	// WhenToUse is the LLM-facing routing cue, auto-generated from
-	// Description on save (see GenerateWhenToUse). Shown UN-truncated in
-	// the "Available skills" block so the host LLM sees the full
-	// activation cue (Description is capped at 140 chars there).
-	// Regenerated whenever Description changes.
-	WhenToUse string `json:"when_to_use,omitempty"`
 	// Triggers are substring patterns matched against the user
 	// message (and attachment filenames). Glob-style `*.pdf` matches
 	// any attachment ending in .pdf; everything else is a plain
@@ -151,28 +145,12 @@ func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error)
 	if store == nil || username == "" {
 		return SkillRecord{}, errString("save skill requires user")
 	}
-	created := s.ID == ""
-	if created {
+	if s.ID == "" {
 		s.ID = "skill-" + UUIDv4()
 		s.Created = time.Now()
 	}
 	s.Owner = username
 	s.Updated = time.Now()
-	// (Re)generate the LLM-facing routing cue on a genuine description
-	// change (or a new skill with none yet). Best-effort; render falls
-	// back to Description when empty.
-	prevDescription := ""
-	if !created {
-		for _, e := range LoadSkills(db, username) {
-			if e.ID == s.ID {
-				prevDescription = e.Description
-				break
-			}
-		}
-	}
-	if (created && s.WhenToUse == "") || (!created && prevDescription != s.Description) {
-		s.WhenToUse = GenerateWhenToUse("skill", s.Name, s.Description)
-	}
 	// Description-embedding removed. Was used by the cosine
 	// gatekeeper / fuzzy classifier that auto-fired skills; with
 	// activation now exclusively LLM-driven via activate_skill, the
@@ -283,15 +261,9 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 	b.WriteString("\n\n## Available skills\n\n")
 	b.WriteString("Domain packs you can draw on in your own context: read_skill(skill) returns its approach/instructions; skill_knowledge_search(skill, query) searches its sources (and attaches its approach the first time); skill_knowledge_fetch_doc(skill, doc_id) pulls a full document.\n\nRULE: when a listed skill covers the subject in front of you, consult it FIRST — call skill_knowledge_search (or read_skill) before web_search and before answering from memory. Its sources are authoritative for its domain and override your priors, so answering a covered question without it is a mistake even when you're confident. This fires on what you DISCOVER mid-task, not just the opening request: a repo that turns out to be Go → the Go skill, a tax-law doc → the tax skill, a PDF → the PDF skill, even if the user never named the domain. On FOLLOW-UPS the skill's instructions and what you already retrieved stay in your context — answer from that skill content, not your priors, and search the skill again only if the follow-up needs material you didn't pull. Skip a skill only for what it plainly doesn't cover or fast-changing facts (current events, latest figures). When a skill's trigger matches the turn you'll see a \"Likely relevant\" hint — treat it as a strong nudge to consult that skill, not a guarantee. Format: **name** — purpose.\n\n")
 	for _, s := range skills {
-		// Prefer the LLM-facing WhenToUse cue, shown in full. Fall back
-		// to the user-facing Description (still capped at 140).
-		desc := strings.TrimSpace(s.WhenToUse)
-		if desc == "" {
-			desc = strings.TrimSpace(s.Description)
-			if len(desc) > 140 {
-				desc = desc[:140] + "…"
-			}
-		}
+		// Full description — descriptions are model-facing; show it
+		// un-truncated so the whole activation cue is visible.
+		desc := strings.TrimSpace(s.Description)
 		if desc == "" {
 			desc = "(no description)"
 		}
@@ -317,11 +289,21 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 // consult the skill (see RenderSkillTriggerHints), it does NOT force-inject
 // the skill's instructions. Deterministic and framework-owned.
 func SkillTriggersMatch(s SkillRecord, message string, attachmentNames []string) bool {
-	if len(s.Triggers) == 0 {
+	return TriggersMatch(s.Triggers, message, attachmentNames)
+}
+
+// TriggersMatch reports whether any of the given triggers match this turn:
+// a glob trigger (contains '*' or '?') matches against the attachment
+// filenames; any other trigger is a case-insensitive substring test
+// against the message. Empty triggers never match. Generic + framework-
+// owned — shared by skills (SkillTriggersMatch) and agents (the per-turn
+// dispatch hint) so trigger semantics read identically across both.
+func TriggersMatch(triggers []string, message string, attachmentNames []string) bool {
+	if len(triggers) == 0 {
 		return false
 	}
 	lowerMsg := strings.ToLower(message)
-	for _, t := range s.Triggers {
+	for _, t := range triggers {
 		t = strings.TrimSpace(t)
 		if t == "" {
 			continue

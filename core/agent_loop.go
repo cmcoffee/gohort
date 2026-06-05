@@ -244,6 +244,17 @@ type AgentLoopConfig struct {
 	// just means "no extras this round."
 	DynamicTools func() []AgentToolDef
 
+	// ToolFallbackResolver, when set, is consulted when the model calls a
+	// tool name that ISN'T in the round's catalog. It lets an app route a
+	// call to a tool whose SCHEMA is intentionally lazy (kept out of the
+	// LLM tool array to save tokens) but whose HANDLER is still valid —
+	// e.g. a custom tool the model already learned via load_tool on a
+	// prior turn and now calls directly from context. Return (handler,
+	// true) to run it; (nil, false) to fall through to the normal
+	// "unknown tool" error. The resolver may also mark the tool loaded so
+	// its schema rejoins the catalog next round.
+	ToolFallbackResolver func(name string) (ToolHandlerFunc, bool)
+
 	// RoundToolFilter, when set, is called at the top of each round for
 	// every candidate tool name; returning false drops that tool from the
 	// round's catalog. Use to SUPPRESS a tool mid-turn — e.g. after it has
@@ -473,7 +484,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// must wait, so nothing legitimate gets dropped.
 	const emitDisciplinePrompt = true
 	if emitDisciplinePrompt && len(tools) > 0 {
-		systemPrompt += "\n\n[Answering across tool rounds: NEVER emit answer text in the same step as a tool call. Call your tools first, wait for the results, THEN write your response — in a final step that has no tool call. A brief progress note as you work (\"checking that now…\") is fine; your actual answer is what must wait for the end, and it appears exactly once. Never two answers in one turn.]"
+		systemPrompt += "\n\n[Answering across tool rounds: NEVER emit answer text in the same step as a tool call. Call your tools FIRST, wait for the results, THEN write your answer from those results — in a final step that has no tool call. Do NOT pre-write an answer from training/memory and then also fetch tools: an answer composed before the results is exactly the double-emit to avoid. Answer after tools, not before. A brief progress note as you work (\"checking that now…\") is fine; your actual answer waits for the end and appears exactly once. Never two answers in one turn.]"
 	}
 	// Grounding discipline — every tool-using loop. The failure mode: the
 	// model retrieves real sources, then embellishes with specifics pulled
@@ -484,7 +495,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// what was actually retrieved or provided.
 	if len(tools) > 0 {
 		systemPrompt += "\n\n[Grounding: state a precise specific — a number, a name, a citation or reference (statute, case, version, ID), a date, a figure, a dosage, a direct quote — ONLY when it appears in a tool result or in material the user gave you THIS turn. Never from memory, even when you're confident: a plausible-looking specific you can't point to is worse than not having one. This holds in CASUAL conversation as much as in formal answers — you may state the general shape of the answer, but do NOT attach a specific identifier you can't source right now; if you can't verify the exact one, say you're not certain rather than guessing. If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing — never quietly supply it from memory. And if the user CORRECTS a specific you gave, do NOT swap in another from memory or invent a rationale for the mistake — admit you're not certain and offer to look it up. A confident wrong specific, then a confident second wrong one, is the failure to avoid.]"
+		systemPrompt += "\n\n[Numbers: when you state a figure, price, count, or measurement from a source, reproduce it exactly as written, keep its unit or currency attached, and keep it bound to the specific thing it describes (which item, which date, which place) so you never swap two values that appeared in the same source. Do not perform multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: if a calculation matters, show the steps so it can be checked, or use a tool. If two sources disagree on a number, say so rather than silently picking one. Prices and other time-sensitive figures go stale: when you quote a price, make sure it is current, note when it was observed if the source says, and never present an old or cached figure as today's price — if you cannot confirm it is current, say so or re-check rather than stating it as fact.]"
 	}
+	// Output style — universal (every reply, with or without tools).
+	// Suppresses persistent LLM lexical/punctuation tics the user flagged.
+	// The rule itself is written WITHOUT em-dashes so it doesn't model the
+	// behavior it forbids.
+	systemPrompt += "\n\n[Style: (1) Stop reaching for the word \"classic\"; you lean on it as filler. Drop it unless it's literally accurate (a \"classic car\", a named \"classic\" edition), never as a generic intensifier for something ordinary. (2) Do NOT use em-dashes (the \"—\" character, U+2014) at all. Where you'd reach for one, use a comma, parentheses, a colon, or two sentences instead.]"
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
 	// budget were infinite, then getting truncated). Only emit for
@@ -1336,6 +1353,15 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			}
 
 			handler, ok := handlers[tc.Name]
+			if !ok && cfg.ToolFallbackResolver != nil {
+				// The name isn't in this round's catalog, but it may be a
+				// lazy tool whose handler is still valid (model knows the
+				// schema from context and called it directly — no re-load).
+				if fb, found := cfg.ToolFallbackResolver(tc.Name); found {
+					Debug("[agent_loop] tool %q resolved via fallback (lazy/known tool called directly)", tc.Name)
+					handler, ok = fb, true
+				}
+			}
 			if !ok {
 				errMsg := fmt.Sprintf("Error: unknown tool '%s'", tc.Name)
 				Debug("[agent_loop] %s", errMsg)

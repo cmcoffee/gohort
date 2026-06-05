@@ -819,6 +819,11 @@ type VectorIndexStats struct {
 	Embedded int            `json:"embedded"`
 	Empty    int            `json:"empty"`
 	BySource map[string]int `json:"by_source"`
+	// BySourceText is a stable, source-sorted "src=N, src2=M" rendering of
+	// BySource. App-specific map formatting belongs server-side so the
+	// generic declarative DisplayPanel can show the breakdown as a plain
+	// labeled value instead of teaching the renderer about maps.
+	BySourceText string `json:"by_source_text"`
 }
 
 // VectorStats walks the EmbeddedChunks table once and summarizes how
@@ -846,6 +851,18 @@ func VectorStats(db Database) VectorIndexStats {
 			src = "unknown"
 		}
 		stats.BySource[src]++
+	}
+	if len(stats.BySource) > 0 {
+		keys := make([]string, 0, len(stats.BySource))
+		for k := range stats.BySource {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := make([]string, 0, len(keys))
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%d", k, stats.BySource[k]))
+		}
+		stats.BySourceText = strings.Join(parts, ", ")
 	}
 	return stats
 }

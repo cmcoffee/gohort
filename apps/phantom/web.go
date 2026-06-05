@@ -2177,9 +2177,24 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	// instead of the chat persona trying to answer inline.
 	if len(conv.AllowedAgents) > 0 {
 		if owner := phantomAgentOwner(T.DB); owner != "" {
+			// Audit (mirrors orchestrate's available-agents log): the tool +
+			// catalog are gated on the SAME condition here so they can't
+			// drift the way orchestrate's did, but log the render outcome so
+			// a stale AllowedAgents allowlist (entries that no longer resolve
+			// → empty catalog while the tool is present) self-reports
+			// instead of silently under-delegating.
 			if block := buildAvailableAgentsPromptBlock(T.DB, owner, conv.AllowedAgents); block != "" {
 				sysPrompt += block
+				Debug("[phantom] available-agents catalog: rendered for chat=%s (%d allowed)", conv.ChatID, len(conv.AllowedAgents))
+			} else {
+				Debug("[phantom] available-agents catalog: EMPTY for chat=%s despite %d AllowedAgents — none resolved to a dispatchable agent (stale allowlist?)", conv.ChatID, len(conv.AllowedAgents))
 			}
+			// Per-turn dispatch nudge: when this message matches an allowed
+			// agent's triggers, hint "dispatch FIRST" right after the
+			// catalog — the salient turn-specific signal the static block
+			// alone doesn't give (mirrors orchestrate). Soft; no-op when
+			// nothing matches.
+			sysPrompt += buildAgentTriggerHint(T.DB, owner, conv.AllowedAgents, cleaned, nil)
 		}
 	}
 	// Skills: stateless. Triggered skills inject deterministically; the LLM

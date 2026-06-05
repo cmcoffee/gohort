@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -239,9 +240,45 @@ func buildParamSchema(p ToolParam) map[string]interface{} {
 		schema["properties"] = props
 	}
 	if len(p.Required) > 0 {
-		schema["required"] = p.Required
+		schema["required"] = sortedCopy(p.Required)
 	}
 	return schema
+}
+
+// sortedCopy returns an alphabetically-sorted copy of s without mutating
+// the original. Used wherever a slice goes into an LLM-facing JSON schema:
+// json.Marshal preserves slice order (unlike map keys, which it sorts), so
+// an unsorted / map-derived "required" list would serialize differently
+// across turns and break the worker's prompt-cache prefix (the tools block
+// diverges → full re-prefill every turn).
+func sortedCopy(s []string) []string {
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
+}
+
+// buildToolParamsSchema renders a tool's parameters as a JSON-schema object
+// for the wire. This is the SINGLE serialization chokepoint every tool
+// passes through (built-in, grouped, temp, toolbox, and anything added
+// later), so it is the right place to GUARANTEE a deterministic, byte-stable
+// schema: json.Marshal sorts the properties map's keys, and sortedCopy sorts
+// required. Doing it here means no upstream tool builder has to remember to
+// sort — non-deterministic ordering anywhere upstream is normalized on the
+// way out, which is what keeps the prompt cache reusable across turns.
+func buildToolParamsSchema(t Tool) json.RawMessage {
+	schema := map[string]interface{}{"type": "object"}
+	if len(t.Parameters) > 0 {
+		props := make(map[string]interface{}, len(t.Parameters))
+		for name, p := range t.Parameters {
+			props[name] = buildParamSchema(p)
+		}
+		schema["properties"] = props
+	}
+	if len(t.Required) > 0 {
+		schema["required"] = sortedCopy(t.Required)
+	}
+	raw, _ := json.Marshal(schema)
+	return raw
 }
 
 // ToolCall represents the LLM's request to invoke a tool.

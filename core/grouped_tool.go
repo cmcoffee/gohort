@@ -166,7 +166,17 @@ func (g *GroupedTool) Params() map[string]ToolParam {
 	// Union of every action's params. JSON-schema-wise, all are
 	// optional at the top level — per-action required validation
 	// happens in the dispatcher.
-	for _, a := range g.actions {
+	//
+	// Iterate actions in SORTED order, not raw map order. When two
+	// actions share a param name (e.g. "path", "id"), this union keeps
+	// the first writer's definition — so map-random iteration would let
+	// a DIFFERENT action's description win on each call, changing the
+	// serialized tool schema every turn. That silently breaks the worker
+	// model's prompt-cache prefix (the tools block diverges), forcing a
+	// full ~16k re-prefill on every chat turn. Sorted order makes the
+	// winning description deterministic so the schema is byte-stable.
+	for _, name := range g.sortedActionNames() {
+		a := g.actions[name]
 		for k, v := range a.Params {
 			if _, exists := out[k]; !exists {
 				out[k] = v

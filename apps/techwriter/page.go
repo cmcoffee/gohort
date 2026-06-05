@@ -1,7 +1,8 @@
-// Stage-1 framework migration: articles list, editor, save/delete, and
-// inline chat assistant via core/ui's ArticleEditor component. Persona
-// management, revisions, export/import, merge, and image generation
-// still live at /techwriter/legacy until they're ported in stage 2.
+// Framework techwriter page (core/ui ArticleEditor): articles list,
+// editor, save/delete, inline chat assistant, revisions, merge,
+// reference sources, image generation, export/import, reprocess, and
+// preview. This is the only techwriter UI — the hand-rolled legacy
+// surface and its persona feature have been retired.
 
 package techwriter
 
@@ -86,6 +87,8 @@ func (T *TechWriterAgent) handleNewTechwriterPage(w http.ResponseWriter, r *http
 							Method: "client", URL: "techwriter_suggest_title"},
 						{Label: "Generate image", Title: "Generate a header image",
 							Method: "client", URL: "techwriter_generate_image"},
+						{Label: "Import", Title: "Import an article from an exported HTML file",
+							Method: "client", URL: "techwriter_import"},
 					},
 				},
 			},

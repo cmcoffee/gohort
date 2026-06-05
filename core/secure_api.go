@@ -111,9 +111,30 @@ type SecureCredential struct {
 	// window, counted from the audit log. 0 = unlimited (legacy).
 	// When the cap is hit the dispatcher rejects with a clear "daily
 	// cap of N reached for <name>" error so the operator sees it.
-	MaxCallsPerDay int       `json:"max_calls_per_day,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	LastUsedAt     time.Time `json:"last_used_at,omitempty"`
+	MaxCallsPerDay int `json:"max_calls_per_day,omitempty"`
+	// OAuth2 (Type == "oauth2"). Grant selects the flow; the encrypted
+	// secret holds the grant's sensitive material (client_secret for
+	// client_credentials, RSA private key for jwt_bearer, refresh token for
+	// refresh_token). The minted access token is stored encrypted + cached
+	// (apiclient TokenStore) and injected as Authorization: Bearer. See
+	// secure_api_oauth.go.
+	Grant       string `json:"grant,omitempty"`        // client_credentials | jwt_bearer | refresh_token
+	TokenURL    string `json:"token_url,omitempty"`    // OAuth token endpoint (https)
+	ClientID    string `json:"client_id,omitempty"`    // client_credentials / refresh_token
+	Scope       string `json:"scope,omitempty"`        // requested scopes (space-separated)
+	JWTIssuer   string `json:"jwt_issuer,omitempty"`   // jwt_bearer: iss claim
+	JWTSubject  string `json:"jwt_subject,omitempty"`  // jwt_bearer: sub claim (optional)
+	JWTAudience string `json:"jwt_audience,omitempty"` // jwt_bearer: aud (defaults to token_url)
+	JWTKeyID    string `json:"jwt_key_id,omitempty"`   // jwt_bearer: kid header (optional)
+	CreatedAt   time.Time `json:"created_at"`
+	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
+
+	// Pending is a computed (non-persisted) flag set by List() for an
+	// oauth2 credential whose secret is still the "(pending)" draft
+	// placeholder — i.e. Builder authored the config but the admin
+	// hasn't filled in the client secret yet. Drives the "needs secret"
+	// badge in the admin UI.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // secureCredSecretKey is the DB key under which the encrypted secret
@@ -251,8 +272,26 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	}
 	switch c.Type {
 	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
+	case SecureCredOAuth2:
+		switch c.Grant {
+		case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken:
+		default:
+			return fmt.Errorf("oauth2 credential needs a grant: client_credentials, jwt_bearer, or refresh_token")
+		}
+		if strings.TrimSpace(c.TokenURL) == "" {
+			return fmt.Errorf("oauth2 credential needs a token_url (the https token endpoint)")
+		}
+		if !strings.HasPrefix(strings.ToLower(c.TokenURL), "https://") {
+			return fmt.Errorf("oauth2 token_url must be https")
+		}
+		if c.Grant == OAuthGrantJWTBearer && strings.TrimSpace(c.JWTIssuer) == "" {
+			return fmt.Errorf("jwt_bearer grant needs jwt_issuer (the iss claim)")
+		}
+		// Config may have changed: drop any cached client + stored token so
+		// the next call rebuilds from the new config.
+		invalidateOAuthClient(c.Name)
 	default:
-		return fmt.Errorf("type must be bearer, header, query, basic_auth, or none")
+		return fmt.Errorf("type must be bearer, header, query, basic_auth, oauth2, or none")
 	}
 	if (c.Type == SecureCredHeader || c.Type == SecureCredQuery) && strings.TrimSpace(c.ParamName) == "" {
 		return fmt.Errorf("type %q requires a param_name", c.Type)
@@ -271,6 +310,12 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	if exists {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
+		// Disabled + Restricted are owned by the enable/disable and
+		// secure/open action endpoints, never the upsert form (which
+		// doesn't carry those fields). Preserve them so editing a
+		// credential's config can't silently re-enable or un-secure it.
+		c.Disabled = existing.Disabled
+		c.Restricted = existing.Restricted
 	} else {
 		c.CreatedAt = time.Now()
 	}
@@ -334,6 +379,9 @@ func (s *SecureAPI) List() []SecureCredential {
 		}
 		var c SecureCredential
 		if s.db.Get(secureAPITable, k, &c) {
+			if c.Type == SecureCredOAuth2 {
+				c.Pending = s.OAuthDraftPending(c.Name)
+			}
 			out = append(out, c)
 		}
 	}
@@ -794,6 +842,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		req.Header.Set("Content-Type", "application/json")
 	}
 
+	var oauthBearer string // captured for redaction
 	switch c.Type {
 	case SecureCredBearer:
 		req.Header.Set("Authorization", "Bearer "+secret)
@@ -810,6 +859,14 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		}
 		auth := base64.StdEncoding.EncodeToString([]byte(secret))
 		req.Header.Set("Authorization", "Basic "+auth)
+	case SecureCredOAuth2:
+		// apiclient mints/caches/refreshes the access token and sets the
+		// Authorization header; we capture the token for redaction.
+		tok, oerr := s.oauthSetToken(c, secret, req)
+		if oerr != nil {
+			return "", fmt.Errorf("oauth token for %q: %w", c.Name, oerr)
+		}
+		oauthBearer = tok
 	case SecureCredNone:
 		// Public unauthenticated endpoint — no auth header injected.
 	default:
@@ -823,6 +880,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	redactList := []string{secret}
 	if c.Type == SecureCredBasicAuth {
 		redactList = append(redactList, base64.StdEncoding.EncodeToString([]byte(secret)))
+	}
+	if oauthBearer != "" {
+		redactList = append(redactList, oauthBearer)
 	}
 	redact := func(s string) string {
 		for _, sec := range redactList {

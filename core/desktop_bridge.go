@@ -38,6 +38,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -523,9 +524,21 @@ func LocalToolsForUser(user string) []ChatTool {
 	if len(seen) == 0 {
 		return nil
 	}
+	// Emit in NAME-SORTED order. `seen` is a map, so a raw range would
+	// order the from_client.* tools randomly every call — and tool ORDER
+	// (not just per-tool schema) is part of the prompt the worker caches,
+	// so a shuffling catalog breaks the prompt-cache prefix and forces a
+	// full re-prefill every turn (the Chat-only cache thrash: only the
+	// desktop client surfaces these tools). Sorting keeps the catalog
+	// byte-stable across turns.
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	out := make([]ChatTool, 0, len(seen))
-	for _, t := range seen {
-		out = append(out, &desktopChatTool{user: user, desc: t})
+	for _, name := range names {
+		out = append(out, &desktopChatTool{user: user, desc: seen[name]})
 	}
 	return out
 }

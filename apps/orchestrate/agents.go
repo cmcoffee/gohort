@@ -459,21 +459,6 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 		a.Created = now
 	}
 	a.Updated = now
-	// (Re)generate the LLM-facing routing cue. Gated on a genuine
-	// description CHANGE (or a brand-new agent with no cue yet) — NOT on
-	// WhenToUse being empty alone — because saveAgent is also the
-	// chokepoint for the boot-time shadow/tool migrations, which re-save
-	// every agent with its description unchanged; regenerating there would
-	// fire a worker call per agent at startup. core.GenerateWhenToUse is
-	// best-effort and returns "" when the worker is unavailable.
-	var prev AgentRecord
-	if db.Get(agentsTable, a.ID, &prev) {
-		if prev.Description != a.Description {
-			a.WhenToUse = GenerateWhenToUse("agent", a.Name, a.Description)
-		}
-	} else if a.WhenToUse == "" {
-		a.WhenToUse = GenerateWhenToUse("agent", a.Name, a.Description)
-	}
 	db.Set(agentsTable, a.ID, a)
 	return a, nil
 }
@@ -742,8 +727,9 @@ func seedAgents() []AgentRecord {
 ## How to decide
 
 - **Pure conversation** → just reply as your text. Greetings ("hi", "thanks"), opinions, self-referential questions, follow-ups already answered in this conversation. Don't call any tool.
+- **A specialist agent's domain** → DELEGATE to it as your FIRST move; don't answer from memory or web_search it yourself. When the question fits one of the agents in "Available agents" below, dispatch via agents(action="run", agent="<name>", message="<brief>"). Its persona, tools, and grounded sources beat your general knowledge — and feeling you "could answer this" is exactly when you'd give a weaker or wrong answer, so confidence is not a reason to skip. Send related follow-ups back to the same agent (re-dispatch with the prior context), don't answer them yourself. Decide this BEFORE the two rules below — a specialist's domain wins over both "I can chat about it" and "I'll just look it up."
 - **Time-sensitive or verifiable** → call the right tool. Current time/date/weather, prices, news, "latest" anything, software versions, status of services, specific verifiable facts (someone's age/title, document contents, URLs, configuration). Your training has a cutoff and "I probably know this" is not good enough — call the tool.
-- **User's domain** → call the right tool. Their agents (agents tool with action="list" / "get" / "run"; authoring lives in Builder), their files, their system.
+- **User's domain** → call the right tool. Their agents (agents tool — action="list" / "get" to inspect the fleet, "run" to delegate per the rule above; authoring lives in Builder), their files, their system.
 
 ## Inline tools vs plan_set
 
@@ -1195,10 +1181,8 @@ Every attachment now follows the same shape: a PRODUCER tool writes the file int
 
 Built-in producer tools (use these for plain fetch/find/generate):
 
-- **find_image(query)** — search the web, framework picks best match via vision-LLM, save to workspace. Returns the saved path.
-- **fetch_image(url)** — download a specific URL into workspace. Returns the saved path.
-- **generate_image(prompt)** — image-gen API call, save to workspace. Returns the saved path.
-- **download_video(url)** — yt-dlp wrapper, save to workspace. Returns the saved path.
+- **image(action=find|fetch|generate)** — find (web search, vision-LLM picks best match), fetch (download a URL), or generate (image-gen API) — saves to workspace. Returns the saved path.
+- **video(action=download, url=…)** — yt-dlp wrapper (also action=find/view/transcribe/transcode), save to workspace. Returns the saved path.
 - **screenshot_page(url)** — headless browser snapshot, save to workspace. Returns the saved path.
 
 The follow-up step in every case:
@@ -1209,7 +1193,7 @@ Use cleanup=true for one-shot deliveries (find/fetch/generate/download/screensho
 
 ### Inspecting before attaching (optional)
 
-If you want to verify a file before delivering, call workspace(action="view_image", path=...) — runs a vision-LLM on the file and returns a description. Useful when find_image returned multiple candidates earlier or when the LLM picker's choice needs sanity-checking.
+If you want to verify a file before delivering, call workspace(action="view_image", path=...) — runs a vision-LLM on the file and returns a description. Useful when image(action=find) returned multiple candidates earlier or when the LLM picker's choice needs sanity-checking.
 
 ### When you DO need a custom attachment-producing tool
 

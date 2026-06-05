@@ -171,7 +171,6 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 			Description: strings.TrimSpace(body.Description),
 			Created:     time.Now(),
 		}
-		c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 		saveCollection(udb, c)
 		Log("[orchestrate.collections] user=%q created collection %q (id=%s)", user, name, c.ID)
 		w.Header().Set("Content-Type", "application/json")
@@ -252,22 +251,13 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			if body.Description != nil {
-				newDesc := strings.TrimSpace(*body.Description)
-				if newDesc != c.Description {
-					c.Description = newDesc
-					c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
-				}
+				c.Description = strings.TrimSpace(*body.Description)
 			}
 			if body.FilterRules != nil {
 				c.FilterRules = strings.TrimSpace(*body.FilterRules)
 			}
 			if body.ClassifyOnAutofill != nil {
 				c.ClassifyOnAutofill = *body.ClassifyOnAutofill
-			}
-			// Backfill a missing cue on touch (legacy collections); a
-			// description change above already regenerated it.
-			if strings.TrimSpace(c.WhenToUse) == "" {
-				c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 			}
 			saveCollection(udb, c)
 			w.Header().Set("Content-Type", "application/json")

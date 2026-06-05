@@ -245,24 +245,10 @@ func buildGeminiTools(tools []Tool) []gemTool {
 	}
 	var decls []gemFunctionDecl
 	for _, t := range tools {
-		schema := map[string]interface{}{
-			"type": "object",
-		}
-		if len(t.Parameters) > 0 {
-			props := make(map[string]interface{})
-			for name, p := range t.Parameters {
-				props[name] = buildParamSchema(p)
-			}
-			schema["properties"] = props
-		}
-		if len(t.Required) > 0 {
-			schema["required"] = t.Required
-		}
-		raw, _ := json.Marshal(schema)
 		decls = append(decls, gemFunctionDecl{
 			Name:        t.Name,
 			Description: t.Description,
-			Parameters:  json.RawMessage(raw),
+			Parameters:  buildToolParamsSchema(t),
 		})
 	}
 	return []gemTool{{FunctionDeclarations: decls}}

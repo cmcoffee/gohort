@@ -556,7 +556,16 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		"text": fmt.Sprintf("[%s] dispatched (stateless)", target.Name),
 	})
 
-	ctx, cancel := context.WithTimeout(t.ctx, knowledgeIngestTimeout*4)
+	// Bound the sub-agent run by its OWN round cap (MaxRounds below) + the
+	// per-call LLM budget — same as a top-level turn — NOT an arbitrary
+	// wall-clock cap. The previous WithTimeout(knowledgeIngestTimeout*4 =
+	// 3m) reused a knowledge-INGEST constant for agent EXECUTION, and 3m is
+	// SHORTER than a single LLM call's 5m budget, so any non-trivial or
+	// nested sub-agent blew it. The deadline then surfaced as the parent's
+	// agents(run) tool result ("context deadline exceeded"), looking like
+	// the MAIN agent failed. WithCancel keeps cleanup + client-disconnect
+	// cancellation (t.ctx) without the bogus deadline.
+	ctx, cancel := context.WithCancel(t.ctx)
 	defer cancel()
 	// ForcePrivate enforcement — same shape as the external dispatch
 	// paths. The parent's network connector already propagates via

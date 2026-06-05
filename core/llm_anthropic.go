@@ -233,24 +233,10 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 func buildAnthTools(tools []Tool) []anthTool {
 	var out []anthTool
 	for _, t := range tools {
-		schema := map[string]interface{}{
-			"type": "object",
-		}
-		if len(t.Parameters) > 0 {
-			props := make(map[string]interface{})
-			for name, p := range t.Parameters {
-				props[name] = buildParamSchema(p)
-			}
-			schema["properties"] = props
-		}
-		if len(t.Required) > 0 {
-			schema["required"] = t.Required
-		}
-		raw, _ := json.Marshal(schema)
 		out = append(out, anthTool{
 			Name:        t.Name,
 			Description: t.Description,
-			InputSchema: json.RawMessage(raw),
+			InputSchema: buildToolParamsSchema(t),
 		})
 	}
 	return out

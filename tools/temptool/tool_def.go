@@ -420,7 +420,9 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		actRequired := stringSliceArg(m["required"])
 		if len(actRequired) == 0 {
 			// Default to every declared param being required, same as
-			// shell/api mode tools.
+			// shell/api mode tools. Order is normalized at the wire
+			// serialization boundary (buildToolParamsSchema), so no sort
+			// is needed here.
 			for k := range actParams {
 				actRequired = append(actRequired, k)
 			}

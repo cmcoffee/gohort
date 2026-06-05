@@ -25,6 +25,9 @@
 package orchestrate
 
 import (
+	"fmt"
+	"strings"
+
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
@@ -62,6 +65,10 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 		// agents (attached_collections=[...]). Mutating
 		// collections still happens via the Knowledge surface.
 		ChatToolToAgentToolDefWithSession(collectionsListTool(), sess),
+		// draft_oauth_credential — Builder scaffolds an OAuth2 credential
+		// config from the API's docs; the admin pastes the secret + enables
+		// it in the admin UI.
+		draftOAuthCredentialToolDef(),
 	}
 	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
@@ -69,6 +76,61 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 	// temp tool record.
 	tools = append(tools, Secure().BuildTools(sess)...)
 	return tools
+}
+
+// draftOAuthCredentialToolDef lets Builder scaffold an OAuth2 API
+// credential ("Builder builds out, admin fills in"). Builder researches
+// the API's OAuth flow (grant, token endpoint, scopes, allowed URLs) and
+// fills the config; the credential is created DISABLED with no secret, and
+// the admin pastes the secret + enables it in Admin > APIs. Builder never
+// handles the secret.
+func draftOAuthCredentialToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "draft_oauth_credential",
+			Description: "Scaffold an OAuth2 API credential for the admin to finish. YOU research the API's OAuth (grant type, https token endpoint, scopes, the URL space it covers) from its docs and fill the config in; the credential is created DISABLED and the admin pastes the SECRET in Admin > APIs and enables it. Use when the user wants to wire up an authenticated API (eBay, Google, etc.). You never see or handle the secret. After drafting, tell the user WHICH secret the admin must paste: client_secret (e.g. eBay Cert ID) for client_credentials, the RSA private key for jwt_bearer, the refresh token for refresh_token.",
+			Parameters: map[string]ToolParam{
+				"name":                {Type: "string", Description: "Short lowercase id (letters/digits/underscores), e.g. \"ebay\". Becomes fetch_url_<name> once live."},
+				"grant":               {Type: "string", Enum: []string{"client_credentials", "jwt_bearer", "refresh_token"}, Description: "The grant the API uses: eBay/most vendor APIs = client_credentials; Google service accounts = jwt_bearer."},
+				"token_url":           {Type: "string", Description: "The https token endpoint, e.g. https://api.ebay.com/identity/v1/oauth2/token."},
+				"allowed_url_pattern": {Type: "string", Description: "Glob bounding which URLs this credential may call, e.g. https://api.ebay.com/buy/browse/**. Scope it tight to what's needed."},
+				"scope":               {Type: "string", Description: "(optional) Requested scopes, space-separated, e.g. https://api.ebay.com/oauth/api_scope."},
+				"client_id":           {Type: "string", Description: "(optional) The non-secret client/app ID, if the user gave it; otherwise the admin adds it."},
+				"jwt_issuer":          {Type: "string", Description: "(jwt_bearer) the iss claim, e.g. the service-account email."},
+				"jwt_subject":         {Type: "string", Description: "(jwt_bearer, optional) the sub claim."},
+				"jwt_audience":        {Type: "string", Description: "(jwt_bearer, optional) the aud claim; defaults to token_url."},
+				"jwt_key_id":          {Type: "string", Description: "(jwt_bearer, optional) the kid header."},
+				"description":         {Type: "string", Description: "(optional) What this credential is for."},
+			},
+			Required: []string{"name", "grant", "token_url", "allowed_url_pattern"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			c := SecureCredential{
+				Name:              strings.TrimSpace(stringArg(args, "name")),
+				Type:              SecureCredOAuth2,
+				Grant:             strings.TrimSpace(stringArg(args, "grant")),
+				TokenURL:          strings.TrimSpace(stringArg(args, "token_url")),
+				AllowedURLPattern: strings.TrimSpace(stringArg(args, "allowed_url_pattern")),
+				Scope:             strings.TrimSpace(stringArg(args, "scope")),
+				ClientID:          strings.TrimSpace(stringArg(args, "client_id")),
+				JWTIssuer:         strings.TrimSpace(stringArg(args, "jwt_issuer")),
+				JWTSubject:        strings.TrimSpace(stringArg(args, "jwt_subject")),
+				JWTAudience:       strings.TrimSpace(stringArg(args, "jwt_audience")),
+				JWTKeyID:          strings.TrimSpace(stringArg(args, "jwt_key_id")),
+				Description:       strings.TrimSpace(stringArg(args, "description")),
+			}
+			if err := Secure().SaveOAuthDraft(c); err != nil {
+				return "", err
+			}
+			secretNeeded := map[string]string{
+				OAuthGrantClientCredentials: "the client secret (e.g. eBay Cert ID)",
+				OAuthGrantJWTBearer:         "the RSA private key (PEM or JWK)",
+				OAuthGrantRefreshToken:      "the refresh token",
+			}[c.Grant]
+			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. To finish: in Admin > APIs open %q, paste %s into the secret field, add the client/app ID if it's not set, enable it, then hit Test. It goes live as fetch_url_%s.",
+				c.Name, c.Grant, c.Name, secretNeeded, c.Name), nil
+		},
+	}
 }
 
 // builderWorkerResearchTools is the small set of EXTRA tools workers

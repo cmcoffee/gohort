@@ -31,13 +31,18 @@ type AgentRecord struct {
 	Owner       string `json:"owner"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// WhenToUse is the LLM-facing routing cue, auto-generated from
-	// Description on save (see core.GenerateWhenToUse). Description sells
-	// the agent to a human; this tells the orchestrator the concrete
-	// situations that should trigger a delegation. Shown UN-truncated in
-	// the "Available agents" block, where Description is capped at 140
-	// chars. Regenerated whenever Description changes.
-	WhenToUse string `json:"when_to_use,omitempty"`
+
+	// Triggers are substring/glob patterns (same shape as a skill's
+	// Triggers) matched against the user message each turn. When one
+	// matches, the framework injects a per-turn HINT next to the message —
+	// "this turn is <agent>'s domain, dispatch FIRST" — far more salient
+	// than the static Available-agents block (which the model reads but
+	// often doesn't act on for domains it has priors in). A SOFT nudge: the
+	// model still decides. Empty = no per-turn hint (the agent is still in
+	// the catalog, just no trigger nudge). Author specific patterns
+	// ("penal code", "PC ", "felony") — loose ones over-fire and train the
+	// model to ignore the hint.
+	Triggers []string `json:"triggers,omitempty"`
 
 	// OrchestratorPrompt drives the thinking LLM that talks to the user,
 	// decomposes work into plan steps, AND briefs the worker per step

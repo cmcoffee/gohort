@@ -29,9 +29,61 @@ import (
 )
 
 func init() {
+	RegisterChatTool(new(ImageTool))
 	RegisterChatTool(new(FetchImageTool))
 	RegisterChatTool(new(FindImageTool))
 	RegisterChatTool(new(GenerateImageTool))
+}
+
+// --- ImageTool (grouped) ---
+//
+// Single entry point for image work — find | fetch | generate — picked by
+// `action`, mirroring the `video` grouped tool. Collapses three
+// near-identical schemas into one. The standalone find_image / fetch_image
+// / generate_image stay registered (phantom + explicit allowlists use
+// them); orchestrate drops them from its default pool in favor of this
+// (see supersededWorkerTools). The handler just delegates to the existing
+// per-action tools, so behavior is identical.
+
+type ImageTool struct{}
+
+func (t *ImageTool) Name() string { return "image" }
+func (t *ImageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} }
+func (t *ImageTool) IsInternetTool() bool { return true }
+func (t *ImageTool) Desc() string {
+	return "Work with images — single entry point; pick the action matching intent. " +
+		"actions: find (search the web for a picture/meme/GIF/photo by description and save the best match — use whenever the user wants a picture of something and has no URL), " +
+		"fetch (download a specific image URL you already have), " +
+		"generate (create a NEW image from a text prompt — DALL·E / Stable Diffusion / whatever's wired; generation makes things up, so NOT for real-world reference), " +
+		"help. " +
+		"Each saves into your session workspace and returns the path — it does NOT deliver; follow up with workspace(action=\"attach\", path=..., cleanup=true) to ship the file. " +
+		"Decision: wants a picture of something, no URL → find. Gave an image URL → fetch. Wants something drawn / created / imagined → generate."
+}
+func (t *ImageTool) Params() map[string]ToolParam {
+	return map[string]ToolParam{
+		"action": {Type: "string", Enum: []string{"find", "fetch", "generate"}, Description: "find | fetch | generate."},
+		"query":  {Type: "string", Description: "(find) Description of the image to find (e.g. 'funny cat meme', 'golden gate bridge sunset', 'surprised pikachu')."},
+		"url":    {Type: "string", Description: "(fetch) Direct URL of the image to download (must resolve to an image file: jpg, png, gif, webp, etc.)."},
+		"prompt": {Type: "string", Description: "(generate) Detailed description of the image to create."},
+	}
+}
+
+func (t *ImageTool) Run(args map[string]any) (string, error) {
+	return "", fmt.Errorf("image requires a session context — use GetAgentToolsWithSession")
+}
+func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(StringArg(args, "action"))) {
+	case "find":
+		return (&FindImageTool{}).RunWithSession(args, sess)
+	case "fetch":
+		return (&FetchImageTool{}).RunWithSession(args, sess)
+	case "generate":
+		return (&GenerateImageTool{}).RunWithSession(args, sess)
+	case "", "help":
+		return "image actions: find (query) | fetch (url) | generate (prompt). Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...).", nil
+	default:
+		return "", fmt.Errorf("unknown action %q for image — use find | fetch | generate", StringArg(args, "action"))
+	}
 }
 
 // --- FetchImageTool ---

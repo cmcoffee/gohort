@@ -4084,6 +4084,15 @@ const runtimeJS = `
     s = s.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>');
     s = s.replace(/\[([^\]]+)\]\(([?#/][^)]+)\)/g, '<a href="$2">$1</a>');
+    // CommonMark angle-bracket autolinks — <https://url>. The escape
+    // pass above turned the brackets into &lt; / &gt;, so match those.
+    // This MUST run before the bare-URL pass: otherwise that pass's
+    // [^\s<)] char class (which doesn't exclude &) swallows the
+    // trailing &gt; into the href, producing a broken link ending in
+    // a literal '>'. Non-greedy so the URL stops at its own &gt;
+    // closer rather than a later one on the same line.
+    s = s.replace(/&lt;(https?:\/\/[^\s<]+?)&gt;/g,
+      '<a href="$1" target="_blank" rel="noopener">$1</a>');
     // Auto-link bare http/https URLs that didn't go through the
     // [text](url) replacement above. The (^|[^"'>=]) prefix avoids
     // matching URLs already inside href="..." attributes or as the
@@ -6914,6 +6923,13 @@ const runtimeJS = `
     var color = match ? (match.color || 'mute') : 'mute';
     var cell = el('div', {class: 'ui-table-cell'});
     if (col.flex) cell.style.flex = col.flex;
+    // No matching badge and no meaningful value → render an empty cell, not
+    // an empty pill. Lets a column carry an "only when true" badge (e.g. a
+    // draft "Needs secret" flag mapped solely for Value:true) without
+    // boxing every other row with a blank badge.
+    if (!match && (value == null || value === false || value === '')) {
+      return cell;
+    }
     cell.appendChild(el('span', {class: 'ui-badge ' + color}, [label]));
     return cell;
   }

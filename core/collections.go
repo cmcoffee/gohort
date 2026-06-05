@@ -95,12 +95,6 @@ type Collection struct {
 	Owner       string `json:"owner"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
-	// WhenToUse is the LLM-facing routing cue, auto-generated from
-	// Description on save (see GenerateWhenToUse): it tells an LLM the
-	// concrete situations where this collection is the right one to
-	// search or attach. Surfaced in the collections(action="list") output
-	// the Builder reads. Regenerated whenever Description changes.
-	WhenToUse string `json:"when_to_use,omitempty"`
 	// Scope controls who can attach this collection. Empty or
 	// "user" = per-user (Owner has exclusive access); "deployment"
 	// = deployment-wide (any user's agent can attach). Deployment

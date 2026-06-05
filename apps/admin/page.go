@@ -91,6 +91,137 @@ func sourceHookFormTemplates() []ui.FormTemplate {
 	return out
 }
 
+// credentialFormFields is the shared field list for the API Credentials
+// add (modal) and edit (row Expand) forms. Type-specific inputs collapse
+// via value-matched ShowWhen so a bearer token doesn't surface OAuth /
+// JWT fields. The secret is a password that stays blank on edit — leaving
+// it blank keeps the stored secret; the OAuth config of an existing draft
+// is preserved server-side when only the secret is resent.
+func credentialFormFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "ident", Type: "header", Label: "Identity"},
+		{Field: "name", Label: "Name", Placeholder: "github_api", Help: "snake_case. Becomes call_<name> in the LLM catalog. Re-using a name updates that credential."},
+		{Field: "type", Label: "Type", Type: "select", Options: []ui.SelectOption{
+			{Value: "bearer", Label: "Bearer (Authorization: Bearer ...)"},
+			{Value: "header", Label: "Custom header"},
+			{Value: "query", Label: "Query param"},
+			{Value: "basic_auth", Label: "HTTP Basic (user:pass)"},
+			{Value: "oauth2", Label: "OAuth2 (token-minting)"},
+		}},
+		{Field: "param_name", Label: "Header / Param name", Placeholder: "X-Api-Key or api_key", ShowWhen: "type:header|query"},
+
+		{Field: "oauth_hdr", Type: "header", Label: "OAuth2 config", ShowWhen: "type:oauth2"},
+		{Field: "grant", Label: "Grant", Type: "select", ShowWhen: "type:oauth2", Options: []ui.SelectOption{
+			{Value: "client_credentials", Label: "client_credentials"},
+			{Value: "jwt_bearer", Label: "jwt_bearer"},
+			{Value: "refresh_token", Label: "refresh_token"},
+		}},
+		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2"},
+		{Field: "token_url", Label: "Token URL (https)", Placeholder: "https://api.ebay.com/identity/v1/oauth2/token", ShowWhen: "type:oauth2"},
+		{Field: "scope", Label: "Scope (optional)", Placeholder: "https://api.ebay.com/oauth/api_scope", ShowWhen: "type:oauth2"},
+		{Field: "jwt_issuer", Label: "JWT issuer (iss)", Placeholder: "service-account@project.iam.gserviceaccount.com", ShowWhen: "type:oauth2;grant:jwt_bearer"},
+		{Field: "jwt_subject", Label: "JWT subject (sub, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
+		{Field: "jwt_audience", Label: "JWT audience (aud, optional)", Placeholder: "defaults to token URL", ShowWhen: "type:oauth2;grant:jwt_bearer"},
+		{Field: "jwt_key_id", Label: "JWT key id (kid, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
+
+		{Field: "secret", Label: "Secret", Type: "password", Help: "Token / API key / client secret / RSA private key / refresh token, depending on type. Stored encrypted. Leave blank when editing to keep the existing secret."},
+
+		{Field: "safety", Type: "header", Label: "Safety + limits"},
+		{Field: "allowed_url_pattern", Label: "Allowed URL pattern", Placeholder: "https://api.github.com/**", Help: "The linchpin safety property: requests to URLs that don't match are rejected before the secret is attached. * matches up to next slash; ** matches arbitrary chars."},
+		{Field: "denied_url_patterns", Label: "Denied URL patterns", Type: "tags", Help: "Optional explicit denies, checked before the allow pattern."},
+		{Field: "allowed_methods", Label: "Allowed methods", Type: "tags", Help: "e.g. GET, POST. Blank = all methods allowed."},
+		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},
+		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle"},
+		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to the LLM as the call_<name> tool description."},
+	}
+}
+
+// databaseBrowserCard is the read-only kvlite table/key/record browser.
+// A 3-pane drill-down is app-specific developer tooling, not a generic
+// primitive, so it rides the sanctioned Card escape hatch (raw HTML +
+// inline script) and talks to the existing /api/db/{tables,keys,record}
+// endpoints. Self-contained: scoped CSS + DOM-built rows (textContent, no
+// innerHTML injection). No backticks inside this raw string per repo rule.
+func databaseBrowserCard() ui.Card {
+	return ui.Card{HTML: `
+<style>
+.dbb { display:flex; gap:0.75rem; margin-top:0.25rem; min-height:200px; }
+.dbb-pane { display:flex; flex-direction:column; min-width:0; }
+.dbb-label { font-size:0.72rem; color:var(--text-mute,#8b949e); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:0.35rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.dbb-list { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; overflow-y:auto; max-height:380px; flex:1; }
+.dbb-item { padding:0.35rem 0.6rem; font-size:0.8rem; color:var(--text,#c9d1d9); border-bottom:1px solid #161b22; cursor:pointer; word-break:break-all; line-height:1.4; }
+.dbb-item:last-child { border-bottom:none; }
+.dbb-item:hover { background:#21262d; }
+.dbb-item.active { background:#1f3047; color:#79c0ff; }
+.dbb-empty { padding:0.5rem 0.6rem; font-size:0.8rem; color:#8b949e; font-style:italic; }
+.dbb-record { background:var(--bg-0,#0d1117); border:1px solid var(--border,#30363d); border-radius:6px; padding:0.6rem 0.75rem; overflow:auto; max-height:380px; font-size:0.78rem; color:var(--text,#c9d1d9); margin:0; white-space:pre; font-family:monospace; line-height:1.5; }
+</style>
+<div class="dbb">
+  <div class="dbb-pane" style="width:180px;flex-shrink:0">
+    <div class="dbb-label">Tables</div>
+    <div class="dbb-list" id="dbb-tables"><div class="dbb-empty">Loading...</div></div>
+  </div>
+  <div class="dbb-pane" id="dbb-keys-pane" style="width:200px;flex-shrink:0;display:none">
+    <div class="dbb-label" id="dbb-keys-label">Keys</div>
+    <div class="dbb-list" id="dbb-keys"></div>
+  </div>
+  <div class="dbb-pane" id="dbb-rec-pane" style="flex:1;display:none">
+    <div class="dbb-label" id="dbb-rec-label">Record</div>
+    <pre class="dbb-record" id="dbb-rec"></pre>
+  </div>
+</div>
+<script>
+(function(){
+  var activeTable = '';
+  function mkItem(text, onclick){
+    var d = document.createElement('div');
+    d.className = 'dbb-item';
+    d.textContent = text;
+    d.addEventListener('click', function(){ onclick(d); });
+    return d;
+  }
+  function clearActive(sel){ document.querySelectorAll(sel).forEach(function(e){ e.classList.remove('active'); }); }
+  function loadTables(){
+    fetch('api/db/tables').then(function(r){ return r.json(); }).then(function(tables){
+      var list = document.getElementById('dbb-tables');
+      list.innerHTML = '';
+      if(!tables || !tables.length){ list.innerHTML = '<div class="dbb-empty">No tables found.</div>'; return; }
+      tables.forEach(function(t){ list.appendChild(mkItem(t, function(el){ selectTable(t, el); })); });
+    }).catch(function(){ var l=document.getElementById('dbb-tables'); if(l) l.innerHTML='<div class="dbb-empty">Failed to load tables.</div>'; });
+  }
+  function selectTable(table, el){
+    activeTable = table;
+    clearActive('#dbb-tables .dbb-item');
+    if(el) el.classList.add('active');
+    document.getElementById('dbb-keys-pane').style.display = '';
+    document.getElementById('dbb-rec-pane').style.display = 'none';
+    document.getElementById('dbb-keys-label').textContent = table;
+    var keyList = document.getElementById('dbb-keys');
+    keyList.innerHTML = '<div class="dbb-empty">Loading...</div>';
+    fetch('api/db/keys?table=' + encodeURIComponent(table)).then(function(r){ return r.json(); }).then(function(keys){
+      keyList.innerHTML = '';
+      if(!keys || !keys.length){ keyList.innerHTML = '<div class="dbb-empty">No keys.</div>'; return; }
+      keys.forEach(function(k){ keyList.appendChild(mkItem(k, function(el){ loadRecord(k, el); })); });
+    }).catch(function(){ keyList.innerHTML = '<div class="dbb-empty">Failed to load keys.</div>'; });
+  }
+  function loadRecord(key, el){
+    clearActive('#dbb-keys .dbb-item');
+    if(el) el.classList.add('active');
+    document.getElementById('dbb-rec-pane').style.display = '';
+    document.getElementById('dbb-rec-label').textContent = key;
+    var view = document.getElementById('dbb-rec');
+    view.textContent = 'Loading...';
+    fetch('api/db/record?table=' + encodeURIComponent(activeTable) + '&key=' + encodeURIComponent(key)).then(function(r){
+      if(!r.ok) return r.text().then(function(t){ throw new Error(t); });
+      return r.json();
+    }).then(function(v){ view.textContent = JSON.stringify(v, null, 2); }).catch(function(err){ view.textContent = 'Error: ' + err.message; });
+  }
+  loadTables();
+})();
+</script>
+`}
+}
+
 func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	if !a.requireAdmin(w, r) {
 		return
@@ -629,72 +760,100 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "API Credentials",
-				Subtitle: "Secure-API credentials the LLM can call via tools. Status badges show the current state at a glance. \"Secure\" hides the direct call_<name> tool but leaves wrapped temp tools working; \"Disable\" suspends the credential entirely.",
-				Body: ui.Table{
-					Source: "api/secure-api",
-					RowKey: "name",
-					Columns: []ui.Col{
-						{Field: "name", Flex: 1},
-						{Field: "type", Mute: true},
-						// Status badges — at-a-glance current state.
-						{
-							Field: "disabled", Type: "badge",
-							Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Disabled", Color: "danger"},
-								{Value: false, Label: "Enabled", Color: "success"},
+				Subtitle: "Secure-API credentials the LLM can call via tools. The LLM never sees the secret — it's injected server-side, and the Allowed URL pattern rejects off-target requests before the secret is attached. \"Secure\" hides the direct call_<name> tool but leaves wrapped temp tools working; \"Disable\" suspends the credential entirely. OAuth2 credentials mint + refresh their own bearer token; a \"Needs secret\" badge marks a Builder-authored draft awaiting its client secret.",
+				Body: ui.Stack{
+					Children: []ui.Component{
+						ui.Table{
+							Source: "api/secure-api",
+							RowKey: "name",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								{Field: "type", Mute: true},
+								// Status badges — at-a-glance current state.
+								{
+									Field: "disabled", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Disabled", Color: "danger"},
+										{Value: false, Label: "Enabled", Color: "success"},
+									},
+								},
+								{
+									Field: "restricted", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Secured", Color: "warning"},
+										{Value: false, Label: "Open", Color: "mute"},
+									},
+								},
+								// Pending = oauth2 draft missing its secret.
+								// Only renders the badge when true (mute/blank
+								// otherwise keeps non-oauth rows uncluttered).
+								{
+									Field: "pending", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Needs secret", Color: "warning"},
+									},
+								},
 							},
+							RowActions: []ui.RowAction{
+								// Edit — full add/edit form, OAuth-aware. Source
+								// fetches the single record; secret stays blank so
+								// leaving it untouched keeps the stored secret.
+								ui.Expand("Edit", ui.FormPanel{
+									Source:      "api/secure-api?name={name}",
+									PostURL:     "api/secure-api",
+									TestURL:     "api/secure-api/test",
+									TestLabel:   "Test token (oauth2)",
+									SubmitLabel: "Save changes",
+									Fields:      credentialFormFields(),
+								}),
+								// Enable/Disable pair — only one renders depending on
+								// current state. Disable uses warning (amber) so it
+								// reads as suspend-not-destroy, distinct from Delete.
+								{Type: "button", Label: "Enable",
+									PostTo: "api/secure-api?action=enable&name={name}",
+									Method: "POST", OnlyIf: "disabled", Variant: "success"},
+								{Type: "button", Label: "Disable",
+									PostTo:  "api/secure-api?action=disable&name={name}",
+									Method:  "POST",
+									HideIf:  "disabled",
+									Variant: "warning"},
+								// Open/Secure pair — Secure (formerly Restrict) reads
+								// more naturally for "lock down to wrapped tools only".
+								{Type: "button", Label: "Open",
+									PostTo: "api/secure-api?action=open&name={name}",
+									Method: "POST", OnlyIf: "restricted", Variant: "success"},
+								{Type: "button", Label: "Secure",
+									PostTo:  "api/secure-api?action=restrict&name={name}",
+									Method:  "POST",
+									HideIf:  "restricted",
+									Variant: "warning"},
+								// Delete stays red — irreversible destruction.
+								{Type: "button", Label: "Delete",
+									PostTo:  "api/secure-api?name={name}",
+									Method:  "DELETE",
+									Confirm: "Delete this credential? The encrypted secret goes with it.",
+									Variant: "danger"},
+							},
+							EmptyText: "No credentials registered. Add one with the button below.",
 						},
-						{
-							Field: "restricted", Type: "badge",
-							Badges: []ui.BadgeMapping{
-								{Value: true, Label: "Secured", Color: "warning"},
-								{Value: false, Label: "Open", Color: "mute"},
+						// Add lives in the same card; pops the create form in a
+						// modal. Edit an existing credential from its row (leave
+						// the secret blank to keep the stored value).
+						ui.ModalButton{
+							Label:    "Add credential",
+							Title:    "Add API credential",
+							Subtitle: "Pick a type. Bearer / header / query / basic attach a static secret; OAuth2 mints + refreshes a bearer token from a grant.",
+							Variant:  "primary",
+							Width:    "640px",
+							Body: ui.FormPanel{
+								PostURL:     "api/secure-api",
+								TestURL:     "api/secure-api/test",
+								TestLabel:   "Test token (oauth2)",
+								SubmitLabel: "Create credential",
+								Fields:      credentialFormFields(),
 							},
 						},
 					},
-					RowActions: []ui.RowAction{
-						ui.Expand("Details", ui.RecordView{
-							Pairs: []ui.DisplayPair{
-								{Label: "Name", Field: "name", Mono: true},
-								{Label: "Type", Field: "type"},
-								{Label: "Description", Field: "description"},
-								{Label: "Allowed URL pattern", Field: "allowed_url_pattern", Mono: true},
-								{Label: "Param name", Field: "param_name", Mono: true},
-								{Label: "Requires confirm", Field: "requires_confirm"},
-								{Label: "Disabled", Field: "disabled"},
-								{Label: "Restricted", Field: "restricted"},
-								{Label: "Max calls / day", Field: "max_calls_per_day"},
-							},
-						}),
-						// Enable/Disable pair — only one renders depending on
-						// current state. Disable uses warning (amber) so it
-						// reads as suspend-not-destroy, distinct from Delete.
-						{Type: "button", Label: "Enable",
-							PostTo: "api/secure-api?action=enable&name={name}",
-							Method: "POST", OnlyIf: "disabled", Variant: "success"},
-						{Type: "button", Label: "Disable",
-							PostTo:  "api/secure-api?action=disable&name={name}",
-							Method:  "POST",
-							HideIf:  "disabled",
-							Variant: "warning"},
-						// Open/Secure pair — Secure (formerly Restrict) reads
-						// more naturally for "lock down to wrapped tools only".
-						{Type: "button", Label: "Open",
-							PostTo: "api/secure-api?action=open&name={name}",
-							Method: "POST", OnlyIf: "restricted", Variant: "success"},
-						{Type: "button", Label: "Secure",
-							PostTo:  "api/secure-api?action=restrict&name={name}",
-							Method:  "POST",
-							HideIf:  "restricted",
-							Variant: "warning"},
-						// Delete stays red — irreversible destruction.
-						{Type: "button", Label: "Delete",
-							PostTo:  "api/secure-api?name={name}",
-							Method:  "DELETE",
-							Confirm: "Delete this credential? The encrypted secret goes with it.",
-							Variant: "danger"},
-					},
-					EmptyText: "No credentials registered yet — add one via the legacy admin's API Credentials section.",
 				},
 			},
 			{
@@ -1162,6 +1321,25 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					},
 					EmptyText: "No migrations have run on this deployment yet.",
 				},
+			},
+			{
+				Title:    "Vector Index",
+				Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced.",
+				Body: ui.DisplayPanel{
+					Source: "api/vector-stats",
+					Pairs: []ui.DisplayPair{
+						{Label: "Total chunks", Field: "total"},
+						{Label: "Embedded", Field: "embedded"},
+						{Label: "Empty (embed failed)", Field: "empty"},
+						{Label: "By source", Field: "by_source_text", Mono: true},
+					},
+				},
+			},
+			{
+				Title:     "Database Browser",
+				Subtitle:  "Read-only view of the server database. Click a table to list its keys, click a key to inspect the record.",
+				Collapsed: true,
+				Body:      databaseBrowserCard(),
 			},
 		},
 	}

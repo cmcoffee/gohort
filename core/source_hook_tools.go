@@ -153,6 +153,133 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 	return def, true
 }
 
+// --- query_source: the single dispatcher (the agents pattern) ---
+//
+// Instead of N always-on per-hook tools (one schema each — unbounded
+// growth as admin exposes more sources), ALL globally-exposed hooks
+// collapse to ONE name-keyed dispatcher (query_source) plus a shown
+// "Available sources" catalog block (RenderAvailableSourcesBlock) —
+// mirroring agents(action="run") + the available-agents block. The block
+// carries the per-source "use when" intent the old per-tool descriptions
+// held; the model reads it, picks a source, and calls query_source.
+//
+// Skills that grant a SPECIFIC hook still get a focused per-hook tool via
+// SourceHookToolDefByName — that scoping is correct for a skill's domain
+// and is intentionally unaffected by this collapse.
+
+// exposedQueryableHooks returns the hooks eligible for the query_source
+// dispatcher + catalog block: ExposeToLLM and non-paywall (paywall hooks
+// augment fetch_url, not stand-alone search).
+func exposedQueryableHooks() []SourceHook {
+	var out []SourceHook
+	for _, h := range RegisteredSourceHooks() {
+		if !h.ExposeToLLM || h.Type == HookTypePaywall {
+			continue
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
+// QuerySourceToolDef builds the single query_source dispatcher over all
+// exposed source hooks. Returns ok=false when none are exposed (caller
+// skips it). `source` is constrained to an enum of the available source
+// names; RenderAvailableSourcesBlock supplies the "use when" detail.
+func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
+	hooks := exposedQueryableHooks()
+	if len(hooks) == 0 {
+		return AgentToolDef{}, false
+	}
+	// Resolution map (display name + derived tool-name, case-insensitive)
+	// and the enum of canonical names the model picks from.
+	byKey := make(map[string]SourceHook, len(hooks)*2)
+	names := make([]string, 0, len(hooks))
+	for _, h := range hooks {
+		name := strings.TrimSpace(h.Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+		byKey[strings.ToLower(name)] = h
+		if tn := sourceHookToolName(h); tn != "" {
+			byKey[strings.ToLower(tn)] = h
+		}
+	}
+	if len(names) == 0 {
+		return AgentToolDef{}, false
+	}
+	def := AgentToolDef{
+		Tool: Tool{
+			Name:        "query_source",
+			Description: "Search one of the curated knowledge sources the admin wired up — see \"Available sources\" for what each covers and when to prefer it over web_search. Pick the source whose domain fits the question and pass a natural-language query; cite ONLY specifics that appear in the returned results.",
+			Parameters: map[string]ToolParam{
+				"source": {Type: "string", Enum: names, Description: "Which source to query — one of the names listed under \"Available sources\"."},
+				"query":  {Type: "string", Description: "Natural-language search query. Phrase like a web search; the source's adapter handles any specialized syntax."},
+			},
+			Required: []string{"source", "query"},
+			Caps:     []Capability{CapNetwork, CapRead},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			source := strings.TrimSpace(stringArgForHook(args, "source"))
+			query := strings.TrimSpace(stringArgForHook(args, "query"))
+			if source == "" || query == "" {
+				return "", fmt.Errorf("source and query are required")
+			}
+			h, ok := byKey[strings.ToLower(source)]
+			if !ok {
+				return fmt.Sprintf("Unknown source %q. Available: %s.", source, strings.Join(names, ", ")), nil
+			}
+			result, err := QuerySourceHook(h, query)
+			if err != nil {
+				return "", fmt.Errorf("source %q failed: %w", h.Name, err)
+			}
+			result = strings.TrimSpace(result)
+			if result == "" {
+				return fmt.Sprintf("No results from %s for %q.", h.Name, query), nil
+			}
+			// Same grounding guard the per-hook tools carried.
+			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results — a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
+			return result, nil
+		},
+	}
+	return def, true
+}
+
+// RenderAvailableSourcesBlock lists the exposed source hooks as a
+// system-prompt catalog (name — "use when…"), mirroring the available-
+// agents block. It's the menu the model reads to pick a `source` for
+// query_source. Empty when no hooks are exposed.
+func RenderAvailableSourcesBlock(db Database) string {
+	hooks := exposedQueryableHooks()
+	if len(hooks) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Available sources\n\n")
+	b.WriteString("Curated knowledge sources the admin wired up. When a question fits one of these, prefer query_source(source, query) over web_search — they're authoritative for their domain, and you should cite ONLY what their results contain. Format: **name** — what it covers / when to use.\n\n")
+	for _, h := range hooks {
+		name := strings.TrimSpace(h.Name)
+		if name == "" {
+			continue
+		}
+		desc := strings.TrimSpace(h.ToolDescription)
+		if desc == "" {
+			switch h.Type {
+			case HookTypeRAG:
+				desc = "curated knowledge corpus — returns ranked document chunks."
+			default:
+				desc = "curated external API — returns titled results with snippets."
+			}
+		}
+		b.WriteString("- **")
+		b.WriteString(name)
+		b.WriteString("** — ")
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // stringArgForHook extracts a string arg with a small case-insensitive
 // fallback to match the framework's general arg-canonicalization
 // posture (LLMs sometimes capitalize differently than the declared

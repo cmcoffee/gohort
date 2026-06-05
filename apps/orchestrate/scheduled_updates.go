@@ -214,14 +214,14 @@ func ListOrchestrateUpdates(sessionID string) []orchUpdatePayload {
 	return out
 }
 
-// ScheduleOrchestrateUpdate is the public helper the schedule_recurring
+// ScheduleOrchestrateUpdate is the public helper the recurring(schedule)
 // tool calls. Validates input, enforces guardrails, schedules.
 func ScheduleOrchestrateUpdate(sessionID, agentID, username, prompt string, intervalSeconds int) (string, error) {
 	if sessionID == "" || agentID == "" || username == "" {
-		return "", errors.New("schedule_recurring needs session, agent, and user")
+		return "", errors.New("recurring(schedule) needs session, agent, and user")
 	}
 	if strings.TrimSpace(prompt) == "" {
-		return "", errors.New("schedule_recurring requires a prompt")
+		return "", errors.New("recurring(schedule) requires a prompt")
 	}
 	if time.Duration(intervalSeconds)*time.Second < orchUpdateMinInterval {
 		return "", fmt.Errorf("interval too small — minimum %s", orchUpdateMinInterval)

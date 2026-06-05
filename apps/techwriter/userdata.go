@@ -6,24 +6,18 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// techWriterUserData exposes techwriter article history and personas for
-// the admin reassign/purge flow. Registered once T.DB is wired.
+// techWriterUserData exposes techwriter article history for the admin
+// reassign/purge flow. Registered once T.DB is wired.
 type techWriterUserData struct {
 	agent *TechWriterAgent
 }
 
-var techWriterTables = []string{HistoryTable, personaTable}
+var techWriterTables = []string{HistoryTable}
 
 func techWriterMove(src, dst Database, tbl, key string) {
 	switch tbl {
 	case HistoryTable:
 		var v ArticleRecord
-		if src.Get(tbl, key, &v) {
-			dst.Set(tbl, key, v)
-			src.Unset(tbl, key)
-		}
-	case personaTable:
-		var v Persona
 		if src.Get(tbl, key, &v) {
 			dst.Set(tbl, key, v)
 			src.Unset(tbl, key)
@@ -44,7 +38,6 @@ func (h *techWriterUserData) Describe(uid string) UserDataSummary {
 		return sum
 	}
 	sum.Counts["articles"] = udb.CountKeys(HistoryTable)
-	sum.Counts["personas"] = udb.CountKeys(personaTable)
 	return sum
 }
 
@@ -86,7 +79,6 @@ func (h *techWriterUserData) OrphanCounts() map[string]int {
 	}
 	return map[string]int{
 		"articles": h.agent.DB.CountKeys(HistoryTable),
-		"personas": h.agent.DB.CountKeys(personaTable),
 	}
 }
 

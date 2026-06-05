@@ -40,7 +40,6 @@ func collectionsListTool() ChatTool {
 				ID          string `json:"id"`
 				Name        string `json:"name"`
 				Description string `json:"description,omitempty"`
-				WhenToUse   string `json:"when_to_use,omitempty"`
 				Documents   int    `json:"documents"`
 				Chunks      int    `json:"chunks"`
 			}
@@ -80,7 +79,6 @@ func collectionsListTool() ChatTool {
 					ID:          c.ID,
 					Name:        c.Name,
 					Description: c.Description,
-					WhenToUse:   c.WhenToUse,
 					Documents:   s.docs,
 					Chunks:      s.chunks,
 				})
@@ -137,10 +135,6 @@ func collectionsListTool() ChatTool {
 				Description: strings.TrimSpace(stringArg(args, "description")),
 				Created:     time.Now(),
 			}
-			// LLM-facing selection cue from the description. Done at the
-			// handler (not in saveCollection) so the autofill loop's
-			// per-ingest saves don't trigger generation.
-			c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 			saveCollection(sess.DB, c)
 			Log("[orchestrate.collections] user=%q created collection %q (id=%s) via collections tool", sess.Username, name, c.ID)
 			b, _ := json.Marshal(c)
@@ -178,17 +172,10 @@ func collectionsListTool() ChatTool {
 			}
 			if _, has := args["description"]; has {
 				c.Description = strings.TrimSpace(stringArg(args, "description"))
-				c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 				changed = append(changed, "description")
 			}
 			if len(changed) == 0 {
 				return "", errors.New("nothing to update — pass name and/or description")
-			}
-			// Backfill a missing cue on touch (legacy collections). A
-			// description change above already regenerated it; this only
-			// fires when it's still empty.
-			if strings.TrimSpace(c.WhenToUse) == "" {
-				c.WhenToUse = GenerateWhenToUse("collection", c.Name, c.Description)
 			}
 			saveCollection(sess.DB, c)
 			Log("[orchestrate.collections] user=%q updated collection %q (id=%s): %s", sess.Username, c.Name, c.ID, strings.Join(changed, ", "))

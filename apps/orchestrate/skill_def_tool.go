@@ -296,18 +296,6 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	if len(changed) == 0 {
 		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections")
 	}
-	// Backfill a missing LLM-facing cue on touch (legacy skills). When the
-	// description itself changed, SaveSkill regenerates it, so only fill
-	// here if it didn't — avoids a double generation.
-	descChanged := false
-	for _, c := range changed {
-		if c == "description" {
-			descChanged = true
-		}
-	}
-	if !descChanged && strings.TrimSpace(rec.WhenToUse) == "" {
-		rec.WhenToUse = GenerateWhenToUse("skill", rec.Name, rec.Description)
-	}
 	saved, err := SaveSkill(sess.DB, sess.Username, rec)
 	if err != nil {
 		return "", err

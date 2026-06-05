@@ -143,7 +143,7 @@ func (T *Phantom) forwardToDispatchToolDef(chatID string) AgentToolDef {
 // the result.
 func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv Conversation, ownerUsername string) AgentToolDef {
 	allowedSummary := summarizeAllowedAgents(db, ownerUsername, conv.AllowedAgents)
-	desc := "When the user asks about something that fits a specialist agent's purpose, USE THIS instead of answering inline. Specialist agents have their own tools, memory, and voice tuned to their specialty — they produce better answers for the work they're built for than the chat persona ad-libbing. Returns immediately; the agent's answer arrives in this chat as a separate message when it's done (right for the texting cadence — user gets a quick ack now, the answer later). The agent doesn't see this chat's history, so make the brief self-contained.\n\nAfter calling this, REPLY TO THE USER WITH A SHORT, NATURAL ACKNOWLEDGMENT — \"On it.\" / \"Looking that up for you.\" / \"Standby — checking now.\" DO NOT recap what tool you called, do not name the agent, do not explain that something is running in the background. Treat it like a text reply where the person just said \"I'll go look\" — they wouldn't narrate the mechanics."
+	desc := "When the user asks about something that fits a specialist agent's purpose, USE THIS instead of answering inline. Specialist agents have their own tools, memory, and voice tuned to their specialty — they produce better answers for the work they're built for than the chat persona ad-libbing. Returns immediately; the agent's answer arrives in this chat as a separate message when it's done (right for the texting cadence — user gets a quick ack now, the answer later). The agent doesn't see this chat's history, so make the brief self-contained.\n\nAfter calling this, REPLY TO THE USER WITH A SHORT, NATURAL, FIRST-PERSON ACKNOWLEDGMENT that signals YOU'RE on it and will follow up — \"On it, give me a sec.\" / \"Looking into that now, back shortly.\" / \"Let me pull that up — one moment.\" Speak as though YOU are doing the work yourself: do NOT recap the tool, do NOT say you're consulting/contacting/asking a specialist or expert, do NOT name the agent, do NOT explain that something's running in the background. To the user, you are the one handling it. ONE EXCEPTION: if the user EXPLICITLY asked for that agent by name (\"ask the Criminal Law Expert…\", \"have the researcher check…\"), it's fine to acknowledge it (\"Sure, checking with them now\"). Otherwise treat it like a text where you just said \"I'll go look\" — they don't see the fleet."
 	if allowedSummary != "" {
 		desc += "\n\nAgents you can dispatch to in this chat:\n" + allowedSummary
 	}
@@ -305,10 +305,17 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 						deliveredText = "Looked, but nothing came back for that."
 						storedText = deliveredText
 					} else {
-						// Summarize via worker LLM, store the raw
-						// under a short ID so recall_dispatch_result
-						// can fetch it later.
-						summary := markdownToPlain(summarizeDispatchResult(T.LLM, agentKey, briefMsg, raw))
+						// Synthesize the sub-agent's report in phantom's
+						// OWN persona voice (phantom answers, not the
+						// agent's context), then deliver. Faithfulness is
+						// constrained inside wrapAsyncDispatchResult's prompt
+						// (relay specifics verbatim) rather than a separate
+						// verify pass — enough for a texting surface where
+						// the full report is one recall away. The RAW is
+						// stored under a short ID so recall_dispatch_result
+						// can fetch exact details later, so synthesis never
+						// loses anything — it just reshapes for the thread.
+						reply := markdownToPlain(T.wrapAsyncDispatchResult(conv, agentKey, briefMsg, raw))
 						resultID := newDispatchResultID(chatID, agentKey, briefMsg)
 						storeDispatchResult(db, dispatchResult{
 							ID:      resultID,
@@ -316,12 +323,12 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 							Agent:   agentKey,
 							Brief:   briefMsg,
 							Raw:     raw,
-							Summary: summary,
+							Summary: reply,
 							Created: time.Now(),
 						})
-						Log("[phantom/dispatch_agent_async] agent=%q OK raw_chars=%d summary_chars=%d id=%s",
-							agentKey, len(raw), len(summary), resultID)
-						deliveredText = strings.TrimSpace(summary)
+						Log("[phantom/dispatch_agent_async] agent=%q OK raw_chars=%d reply_chars=%d id=%s",
+							agentKey, len(raw), len(reply), resultID)
+						deliveredText = strings.TrimSpace(reply)
 						// Stored history carries a trailing dispatch
 						// marker so the main LLM can call
 						// recall_dispatch_result(<id>) on a follow-up
@@ -344,10 +351,11 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 					Text:      storedText,
 					Timestamp: now(),
 				})
-				// Defensive scrub: this text is delivered with no LLM
-				// re-render (direct-return), so strip any internal marker
-				// before it reaches the user. No-op on the normal path
-				// (the marker lives on storedText, not deliveredText).
+				// Defensive scrub: strip any internal marker before it
+				// reaches the user. No-op on the normal path (the marker
+				// lives on storedText, not deliveredText) — kept as a
+				// belt-and-suspenders guard now that synthesis re-renders
+				// the reply.
 				deliveredText = scrubInternalScaffolding(deliveredText)
 				T.rememberRecentReply(deliveredText)
 				chunks := SplitMarkdownForDelivery(deliveredText, 1500)
@@ -365,7 +373,7 @@ func (T *Phantom) dispatchAgentToolDef(db Database, chatID, handle string, conv 
 					})
 				}
 			}(key, brief, freshSession)
-			return "Queued. Reply with a short natural acknowledgment (\"On it.\" / \"Standby.\" / etc.) — do not explain the dispatch.", nil
+			return "Queued. Reply with a short FIRST-PERSON acknowledgment that you're on it and will follow up (\"On it, one sec.\" / \"Looking into that now.\") — as if YOU'RE doing the work. Don't name or mention a specialist/agent or explain the dispatch (unless the user explicitly asked for that agent by name).", nil
 		},
 	}
 }
@@ -392,7 +400,7 @@ func (T *Phantom) wrapAsyncDispatchResult(conv Conversation, agentKey, brief, ra
 		personaName = "AI Assistant"
 	}
 	sysPrompt := fmt.Sprintf(
-		"You are %s, replying via text message. You delegated a task to a specialist agent and just got the agent's full report back. Compose a SHORT text-message reply that delivers the answer naturally — like you went, looked it up, and are texting back what you found.\n\nRules:\n- Plain text only. No markdown, no headers, no bullet lists.\n- Lead with the punchline. If the user asked a question, answer it directly in the first sentence.\n- Keep it to 1-4 sentences for simple findings; up to a short paragraph for richer ones. NEVER paste the full report.\n- Do NOT say \"the agent found\" / \"the researcher reports\" / \"according to the report.\" You're answering the user yourself.\n- If the report says \"I couldn't find X,\" relay that plainly: \"Couldn't find anything on X.\"",
+		"You are %s, replying via text message. You delegated a task to a specialist agent and just got the agent's full report back. Compose a SHORT text-message reply that delivers the answer naturally — like you went, looked it up, and are texting back what you found.\n\nRules:\n- Plain text only. No markdown, no headers, no bullet lists.\n- Lead with the punchline. If the user asked a question, answer it directly in the first sentence.\n- Keep it to 1-4 sentences for simple findings; up to a short paragraph for richer ones. NEVER paste the full report.\n- Answer in the FIRST PERSON, as though YOU did the work yourself. Do NOT say \"the agent found\" / \"the researcher reports\" / \"according to the report\" / \"I consulted…\" — you are the one delivering the answer, not relaying someone else's.\n- Relay the report's SPECIFICS — numbers, names, dates, prices, statute/case citations — EXACTLY as written. Never re-type a number from memory, round it, or change it ($950 stays $950, not $95 or \"about a grand\"). If you're unsure of a detail, quote it verbatim rather than paraphrasing. Add NOTHING the report doesn't contain.\n- If the report says \"I couldn't find X,\" relay that plainly: \"Couldn't find anything on X.\"",
 		personaName,
 	)
 	userPrompt := fmt.Sprintf(
@@ -445,6 +453,53 @@ func buildAvailableAgentsPromptBlock(db Database, ownerUsername string, allowed 
 		return ""
 	}
 	return "\n\nSPECIALIST AGENTS AVAILABLE: when the user asks about something that fits a specialist's purpose below, DELEGATE via dispatch_agent instead of answering inline — they have their own tools, memory, and grounded sources and answer their specialty better than you will. Dispatch as your FIRST move on such a question, EVEN WHEN you could answer it yourself: a specialist's domain is exactly where answering from your own memory yields confident-wrong specifics. Don't say you'll check and then answer from memory instead — dispatch, then send a short natural ack. Answer directly ONLY for genuinely general chat (greetings, opinions, follow-ups already covered) — NOT for specifics that land in a listed specialist's domain.\n\n" + bullets + "\n"
+}
+
+// buildAgentTriggerHint returns a SOFT per-turn nudge for allowed agents
+// whose Triggers match this message — "dispatch to it FIRST" — the
+// salient, turn-specific signal the static available-agents block alone
+// doesn't provide (the model reads the block, agrees, and answers inline
+// anyway for domains it has priors in). Mirrors orchestrate's
+// renderAgentTriggerHints; uses the SHARED core.TriggersMatch so trigger
+// semantics read identically on both surfaces. Empty when nothing matches.
+func buildAgentTriggerHint(db Database, ownerUsername string, allowed []string, message string, attachmentNames []string) string {
+	if len(allowed) == 0 || ownerUsername == "" || strings.TrimSpace(message) == "" {
+		return ""
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		return ""
+	}
+	agents := orch.AgentsForUser(ownerUsername)
+	byID := map[string]orchestrate.AgentRecord{}
+	byName := map[string]orchestrate.AgentRecord{}
+	for _, a := range agents {
+		byID[a.ID] = a
+		byName[strings.ToLower(a.Name)] = a
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, key := range allowed {
+		a, ok := byID[key]
+		if !ok {
+			a, ok = byName[strings.ToLower(key)]
+		}
+		if !ok || a.OwnedBy != "" || seen[a.Name] {
+			continue
+		}
+		if TriggersMatch(a.Triggers, message, attachmentNames) {
+			names = append(names, a.Name)
+			seen[a.Name] = true
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = "**" + n + "**"
+	}
+	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain — dispatch to it via dispatch_agent as your FIRST move (then send a short natural ack), instead of answering inline or web_searching yourself. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
 }
 
 // summarizeAllowedAgents builds the "Agents you can dispatch to"

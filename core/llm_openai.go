@@ -851,26 +851,12 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 func buildOAITools(tools []Tool) []oaiTool {
 	var out []oaiTool
 	for _, t := range tools {
-		schema := map[string]interface{}{
-			"type": "object",
-		}
-		if len(t.Parameters) > 0 {
-			props := make(map[string]interface{})
-			for name, p := range t.Parameters {
-				props[name] = buildParamSchema(p)
-			}
-			schema["properties"] = props
-		}
-		if len(t.Required) > 0 {
-			schema["required"] = t.Required
-		}
-		raw, _ := json.Marshal(schema)
 		out = append(out, oaiTool{
 			Type: "function",
 			Function: oaiFunction{
 				Name:        t.Name,
 				Description: t.Description,
-				Parameters:  json.RawMessage(raw),
+				Parameters:  buildToolParamsSchema(t),
 			},
 		})
 	}

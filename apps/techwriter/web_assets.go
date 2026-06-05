@@ -214,6 +214,36 @@ const twWebAssets = `<script>
       a.rel = 'noopener';
       a.click();
     });
+
+    // Import the reverse of Export: upload a previously-exported HTML
+    // file; the server parses it back to a markdown article and stores
+    // it. The editor handle has no list-reload hook, so reload the page
+    // on success — the new article then shows up in the sidebar list.
+    window.uiRegisterClientAction('techwriter_import', function(ctx) {
+      var ed = ctx.editor;
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.html,.htm,text/html';
+      input.addEventListener('change', function() {
+        var f = input.files && input.files[0];
+        if (!f) return;
+        var fd = new FormData();
+        fd.append('file', f);
+        ed.toast('Importing ' + f.name + '…');
+        fetch(urlFor('api/import'), {method: 'POST', body: fd})
+          .then(function(r) {
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+            return r.json();
+          })
+          .then(function(d) {
+            if (!d || !d.id) { ed.toast('Import failed'); return; }
+            ed.toast('Imported "' + (d.subject || 'article') + '" — reloading…');
+            setTimeout(function(){ window.location.reload(); }, 600);
+          })
+          .catch(function(err) { ed.toast('Import failed: ' + (err && err.message || err)); });
+      });
+      input.click();
+    });
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', register);

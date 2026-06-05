@@ -285,6 +285,12 @@ type chatTurn struct {
 	// the schema + mark it loaded without rebuilding the temp-tool set.
 	lazyCustomToolDefs map[string]AgentToolDef
 
+	// agentOwnTools is the set of custom tools UNIQUELY attached to this
+	// agent (appended from agent.Tools), excluding ones skipped because
+	// they're already in the user's persistent pool. The agent's deliberate
+	// kit — first-classed in the lazy split; pool-shared tools stay lazy.
+	agentOwnTools map[string]bool
+
 	// activeWorkspaceID carries the session's active managed-workspace ID
 	// ACROSS the per-step / inline sessions of a single turn. Each call to
 	// newToolSession() mints a fresh ToolSession whose WorkspaceDir defaults
@@ -595,11 +601,20 @@ func (t *chatTurn) fleetView() (Database, string) {
 // neither the block nor the consult tools tell an agent to do something
 // its catalog physically prevents.
 func (t *chatTurn) dispatchableFleet() []AgentRecord {
-	if t == nil || t.agent.OwnedBy != "" {
+	if t == nil {
+		return nil
+	}
+	// Audit trail (Debug): the available-agents catalog silently not
+	// rendering was a costly bug, so every exit point says what happened.
+	// Grep "available-agents" to confirm it shows N agents each turn, or
+	// catch a suppression (and its reason) if it ever regresses.
+	if t.agent.OwnedBy != "" {
+		Debug("[orchestrate] available-agents: suppressed for agent=%q — sub-agent leaf (no dispatch surface)", t.agent.ID)
 		return nil
 	}
 	fleetDB, fleetUser := t.fleetView()
 	if fleetDB == nil || fleetUser == "" {
+		Debug("[orchestrate] available-agents: suppressed for agent=%q — no fleet view (db/user unresolved)", t.agent.ID)
 		return nil
 	}
 	// The `agents` grouped tool is force-added to EVERY non-leaf agent's
@@ -615,6 +630,7 @@ func (t *chatTurn) dispatchableFleet() []AgentRecord {
 	// only on the no-tools sentinel: an agent an admin set to zero tools
 	// genuinely shouldn't be told to delegate.
 	if isNoToolsSentinel(t.agent.AllowedTools) {
+		Debug("[orchestrate] available-agents: suppressed for agent=%q — no-tools sentinel (admin set zero tools)", t.agent.ID)
 		return nil
 	}
 	// AllowedDispatchTargets: empty = allow all (hide Hidden); non-empty
@@ -639,6 +655,15 @@ func (t *chatTurn) dispatchableFleet() []AgentRecord {
 		}
 		available = append(available, a)
 	}
+	if len(available) == 0 {
+		Debug("[orchestrate] available-agents: 0 in catalog for agent=%q — no OTHER dispatchable agents in the fleet (not a bug if the user has none)", t.agent.ID)
+	} else {
+		names := make([]string, 0, len(available))
+		for _, a := range available {
+			names = append(names, a.Name)
+		}
+		Debug("[orchestrate] available-agents: %d in catalog for agent=%q this turn: %s", len(available), t.agent.ID, strings.Join(names, ", "))
+	}
 	return available
 }
 
@@ -662,17 +687,10 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	b.WriteString("\n\n## Available agents\n\n")
 	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for — when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools — for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question — don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits — NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **Each dispatch is stateless** — the agent has no memory of prior dispatches in this session. A RELATED FOLLOW-UP goes back to the SAME agent — don't interpret or answer it yourself from the earlier result. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
 	for _, a := range available {
-		// Prefer the LLM-facing WhenToUse cue (shown in full — it's
-		// written FOR this routing decision). Fall back to the
-		// user-facing Description, still capped at 140 since that copy
-		// can run long and isn't tuned for the model.
-		desc := strings.TrimSpace(a.WhenToUse)
-		if desc == "" {
-			desc = strings.TrimSpace(a.Description)
-			if len(desc) > 140 {
-				desc = desc[:140] + "…"
-			}
-		}
+		// Full description — it's the routing cue (descriptions are
+		// model-facing, per the Builder guidance), shown un-truncated so
+		// no part of the cue is hidden from the dispatch decision.
+		desc := strings.TrimSpace(a.Description)
 		if desc == "" {
 			desc = "(no description)"
 		}
@@ -683,6 +701,45 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// renderAgentTriggerHints surfaces a SOFT per-turn nudge for dispatchable
+// agents whose Triggers match this turn — "this turn is <agent>'s domain,
+// dispatch FIRST" — placed right after the catalog (near the user
+// message, the highest-salience spot). The static Available-agents block
+// alone doesn't bind a model with strong priors in the domain: it reads
+// the block, agrees, and web_searches anyway (observed on PC-372 legal
+// Qs). A trigger match is a relevance signal, not a command — a wrong
+// hint is one line the model ignores. Mirrors the skill trigger-hint
+// mechanism. Empty when nothing matches or the agent can't dispatch.
+func (t *chatTurn) renderAgentTriggerHints(userMsg string) string {
+	if t == nil {
+		return ""
+	}
+	fleet := t.dispatchableFleet()
+	if len(fleet) == 0 {
+		return ""
+	}
+	var names []string
+	for _, a := range fleet {
+		if TriggersMatch(a.Triggers, userMsg, t.docNames) {
+			names = append(names, a.Name)
+		}
+	}
+	return agentTriggerHintBlock(names)
+}
+
+// agentTriggerHintBlock formats the per-turn dispatch nudge for the given
+// agent names. Empty names → "". Mirrors SkillTriggerHintBlock's shape.
+func agentTriggerHintBlock(names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = "**" + n + "**"
+	}
+	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain — dispatch to it via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\") as your FIRST move, before web_search or answering from memory. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
 }
 
 // renderBuilderExistingToolsBlock lists the user's persistent (admin-
@@ -808,8 +865,8 @@ func roundShapePreamble(maxSteps int) string {
 	return "## How this round works\n\n" +
 		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with one of: **ask_user / ask_user_form** (pause for input), **respond_directly** (terminate with reply), or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
 		"**Don't speculate-then-correct.** If you're about to call a tool, do NOT first write a full answer from training that you'll then revise after the result comes back — the user sees both, and it reads as confused. Before tools fire, say nothing or something terse (\"Looking that up…\"). Save the answer for AFTER you have the result.\n\n" +
-		"**Delivering files.** Producer tools (find_image, fetch_image, generate_image, download_video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
-		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text. Time-sensitive or verifiable facts: call the tool; don't answer from training.\n\n"
+		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
+		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text. When a listed specialist agent (see Available agents) covers the question, dispatch to it FIRST — don't answer or web_search it yourself; that wins over both chatting about it and looking it up. Otherwise, for time-sensitive or verifiable facts: call the tool; don't answer from training.\n\n"
 }
 
 // drainNotes pulls all queued interjections and persists them as
@@ -1043,6 +1100,12 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// resolve). These don't go through the approval queue — they
 	// live inside the AgentRecord and inherit its trust boundary.
 	agentToolsSkipped := 0
+	// agentOwnTools = the tools UNIQUELY attached to this agent (actually
+	// appended below), NOT the ones skipped because they're already in the
+	// user's persistent pool. This is the agent's deliberate kit; the lazy
+	// split first-classes exactly these and leaves pool-shared tools (e.g.
+	// seed-chat's accumulated toolbox) on the normal lazy path.
+	t.agentOwnTools = map[string]bool{}
 	for i := range t.agent.Tools {
 		tool := t.agent.Tools[i]
 		if t.privateMode && tool.Mode == TempToolModeAPI {
@@ -1067,15 +1130,21 @@ func (t *chatTurn) newToolSession() *ToolSession {
 			agentToolsSkipped++
 			continue
 		}
+		// Uniquely attached (not already in the persistent pool) — the
+		// agent's own kit.
+		t.agentOwnTools[tool.Name] = true
 		if err := sess.AppendTempTool(&tool); err != nil {
 			Log("[orchestrate.tools] agent-scoped tool %q failed to load: %v", tool.Name, err)
 		}
 	}
+	// Accurate accounting: how many were actually attached vs already
+	// present from the pool (the old "loaded N" line printed len(agent.Tools)
+	// regardless of skips, which read as a contradiction next to the skip log).
 	if agentToolsSkipped > 0 {
-		Debug("[orchestrate.tools] skipped %d agent-scoped tool(s) already loaded from persistent pool for agent=%s", agentToolsSkipped, t.agent.ID)
+		Debug("[orchestrate.tools] %d agent-scoped tool(s) already present from the persistent pool (not re-loaded) for agent=%s", agentToolsSkipped, t.agent.ID)
 	}
-	if n := len(t.agent.Tools); n > 0 {
-		Log("[orchestrate.tools] loaded %d agent-scoped tool(s) for agent=%s", n, t.agent.ID)
+	if n := len(t.agentOwnTools); n > 0 {
+		Log("[orchestrate.tools] attached %d uniquely-agent-scoped tool(s) for agent=%s", n, t.agent.ID)
 	}
 	// Session-scoped tool drafts — the LLM authored these in THIS
 	// conversation (e.g. for_agent-attached pipeline + bundled inline
@@ -1159,41 +1228,85 @@ func (t *chatTurn) loadToolToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "load_tool",
-			Description: "Load one of your custom tools so you can call it. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass the tool name; this returns its parameters and makes it callable on your next step. Only needed for custom tools shown as needing a load — built-in tools are always ready.",
+			Description: "Load one or more of your custom tools so you can call them. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass ALL the tools you expect to need for the task in ONE call (names[]) — batching loads them in a single round instead of one round per tool. Returns their parameters and makes them callable on your next step. Only needed for custom tools shown as needing a load — built-in tools are always ready.",
 			Parameters: map[string]ToolParam{
-				"name": {Type: "string", Description: "Exact name of the custom tool to load (from the \"Your custom tools\" list)."},
+				"names": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Exact names of the custom tools to load (from the \"Your custom tools\" list). Pass every tool you anticipate needing — one or many."},
 			},
-			Required: []string{"name"},
+			Required: nil, // validated in the handler (also tolerates a singular `name`)
 			Caps:     nil, // control/meta — no side effects of its own
 		},
 		Handler: func(args map[string]any) (string, error) {
-			name := strings.TrimSpace(stringArg(args, "name"))
-			if name == "" {
-				return "", errors.New("name is required")
+			// Collect from names[] plus a tolerated singular `name` (LLMs
+			// fall back to the old singular form out of habit), dedupe.
+			raw := stringSliceFromArgs(args, "names")
+			if single := strings.TrimSpace(stringArg(args, "name")); single != "" {
+				raw = append(raw, single)
 			}
-			td, ok := t.lazyCustomToolDefs[name]
-			if !ok {
-				// Either it's already a directly-callable tool, or the
-				// name is wrong. Tell the LLM plainly so it doesn't loop.
-				if t.staticTempToolNames[name] {
-					return fmt.Sprintf("%q is already loaded — call it directly.", name), nil
+			seen := make(map[string]bool, len(raw))
+			var want []string
+			for _, n := range raw {
+				if n = strings.TrimSpace(n); n != "" && !seen[n] {
+					seen[n] = true
+					want = append(want, n)
 				}
-				return fmt.Sprintf("No custom tool named %q. Check the exact name in the \"Your custom tools\" list, or call find_tools to search.", name), nil
 			}
-			t.loadedCustomTools[name] = true
-			// Return the schema so the LLM can call it correctly this
-			// turn (the def also enters the catalog next round via the
-			// DynamicTools feed).
-			schema := map[string]any{
-				"name":        td.Tool.Name,
-				"description": td.Tool.Description,
-				"parameters":  td.Tool.Parameters,
-				"required":    td.Tool.Required,
+			if len(want) == 0 {
+				return "", errors.New("pass at least one tool name in names[]")
 			}
-			b, _ := json.Marshal(schema)
-			return fmt.Sprintf("Loaded %q. It's now callable. Schema:\n%s", name, string(b)), nil
+			// Partial success: load every valid name, bucket the rest, so
+			// one bad name doesn't sink the batch or make the LLM loop.
+			var loaded, already, unknown []string
+			schemas := make([]map[string]any, 0, len(want))
+			for _, n := range want {
+				td, ok := t.lazyCustomToolDefs[n]
+				if !ok {
+					if t.staticTempToolNames[n] {
+						already = append(already, n)
+					} else {
+						unknown = append(unknown, n)
+					}
+					continue
+				}
+				t.loadedCustomTools[n] = true
+				loaded = append(loaded, n)
+				schemas = append(schemas, map[string]any{
+					"name":        td.Tool.Name,
+					"description": td.Tool.Description,
+					"parameters":  td.Tool.Parameters,
+					"required":    td.Tool.Required,
+				})
+			}
+			var b strings.Builder
+			if len(loaded) > 0 {
+				sb, _ := json.Marshal(schemas)
+				fmt.Fprintf(&b, "Loaded %s — now callable. Schemas:\n%s\n", strings.Join(loaded, ", "), string(sb))
+			}
+			if len(already) > 0 {
+				fmt.Fprintf(&b, "Already loaded (call directly): %s\n", strings.Join(already, ", "))
+			}
+			if len(unknown) > 0 {
+				fmt.Fprintf(&b, "Unknown — check the \"Your custom tools\" list or call find_tools: %s\n", strings.Join(unknown, ", "))
+			}
+			return strings.TrimSpace(b.String()), nil
 		},
 	}
+}
+
+// lazyToolFallback resolves a direct call to a lazy custom tool that
+// isn't in this round's catalog. The model learned the tool's schema on a
+// prior turn (via load_tool) and is now calling it straight from context,
+// so forcing a re-load would be pointless friction — its schema is lazy
+// (kept out of the LLM tool array to save tokens), but its handler is
+// still valid. Returns the (already activity-wrapped) handler and marks
+// the tool loaded so its schema also rejoins the catalog next round.
+// Wired as the agent loop's ToolFallbackResolver.
+func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
+	td, ok := t.lazyCustomToolDefs[name]
+	if !ok {
+		return nil, false
+	}
+	t.loadedCustomTools[name] = true
+	return td.Handler, true
 }
 
 // dynamicTempTools returns a DynamicTools callback that exposes the
@@ -1238,12 +1351,16 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 			}
 			out = append(out, td)
 		}
-		// Source-hook auto-tools: walked per-round so admin
-		// add/remove/toggle takes effect without a process restart.
-		// Filtered to ExposeToLLM hooks; paywall hooks excluded
-		// (they augment fetch_url, not stand-alone). Cheap call —
-		// reads from in-memory sourceHookRegistry.
-		out = append(out, BuildSourceHookAgentToolDefs(t.app.DB)...)
+		// Source-hook dispatcher: ONE query_source tool over all exposed
+		// hooks (the agents pattern) instead of N per-hook tools — see
+		// RenderAvailableSourcesBlock for the shown "Available sources"
+		// menu that carries each source's "use when". Walked per-round so
+		// admin add/remove/toggle takes effect without a restart; cheap
+		// (reads the in-memory sourceHookRegistry). Skills still grant a
+		// SPECIFIC hook as a focused per-hook tool via the skill path.
+		if qs, ok := QuerySourceToolDef(t.app.DB); ok {
+			out = append(out, qs)
+		}
 		// (No skill-granted tools here anymore. Experts run as dispatched
 		// use_expert workers with their own catalog; behavior skills only
 		// inject instructions. Neither puts tools in the MAIN catalog.)
@@ -3627,8 +3744,17 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			break
 		}
 	}
-	sys += t.renderTriggeredSkills()       // full instructions for skills already consulted
-	sys += t.renderSkillTriggerHints(triggerMsg) // soft nudge for skills whose triggers matched
+	// Per-turn, MESSAGE-DEPENDENT content (triggered-skill instructions +
+	// skill/agent trigger hints) is collected into turnContext and appended
+	// to the LAST user message below — deliberately NOT spliced into the
+	// system prompt. Message-varying text in the sys prefix changes the
+	// prefix every turn, which forces a full KV-cache re-prefill on the
+	// recurrent/hybrid worker model (the orchestrate turn-latency bug: every
+	// turn re-prefilled ~16k instead of reusing the cached prefix). Keeping
+	// sys byte-stable lets turns 2+ reuse the prefix; the hints also belong
+	// next to the user message (highest salience) per their own design intent.
+	turnContext := t.renderTriggeredSkills()       // full instructions for skills already consulted
+	turnContext += t.renderSkillTriggerHints(triggerMsg) // soft nudge for skills whose triggers matched
 	// "Available skills" block — lists the skills the agent can reach. The
 	// LLM draws on one via read_skill / skill_knowledge_search.
 	// No-op when DisableSkills is set or AllowedSkills is empty.
@@ -3639,6 +3765,19 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// this block the LLM has to call agents(action="list") to
 	// discover them, which it almost never does speculatively.
 	sys += t.renderAvailableAgentsBlock()
+	// Per-turn dispatch nudge: when this turn matches an agent's triggers,
+	// hint "dispatch to it FIRST" right after the catalog — the salient,
+	// turn-specific signal the static block alone doesn't provide. Soft;
+	// the model still decides. No-op when no agent's triggers match.
+	turnContext += t.renderAgentTriggerHints(triggerMsg) // see turnContext note above — appended to user msg, not sys
+	// "Available sources" block — the catalog for query_source: lists each
+	// admin-exposed source hook (name — what it covers / when to use), so
+	// the model picks a source and calls query_source(source, query). One
+	// dispatcher + this menu instead of N per-hook tools (the agents
+	// pattern). No-op when no hooks are exposed.
+	if t.app != nil {
+		sys += RenderAvailableSourcesBlock(t.app.DB)
+	}
 	// Builder-only: list the user's existing persistent custom tools
 	// as READ-ONLY awareness. They're hidden from Builder's executable
 	// catalog (see newToolSession's isBuilderAgent skip) — this block
@@ -4076,7 +4215,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Recurring tasks — background work that posts back into this
 		// session at a fixed interval. Mirror of chat's schedule_chat_update
 		// flow, scoped per-(user, agent).
-		t.scheduleRecurringToolDef(), t.listRecurringToolDef(), t.cancelRecurringToolDef(),
+		t.recurringToolDef(),
 		// Explorer mode — LLM-triggered round-budget lift for
 		// API-mapping tasks. No-op unless AllowExplorer is set on
 		// the agent.
@@ -4116,10 +4255,19 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	t.lazyCustomToolNames = map[string]bool{}
 	t.loadedCustomTools = map[string]bool{}
 	t.lazyCustomToolDefs = map[string]AgentToolDef{}
-	var directCustomTools []AgentToolDef // zero-arg → callable now
-	var lazyCustomTools []AgentToolDef   // has-args → name+desc + load_tool
+	// An agent's UNIQUELY-attached tools (t.agentOwnTools, populated when
+	// they were appended above) are the author's DELIBERATE kit — keep them
+	// FIRST-CLASS even when they take args, instead of behind load_tool. An
+	// agent you built WITH a tool should just be able to call it. NOTE: we
+	// use agentOwnTools, NOT all of agent.Tools — tools that are also in the
+	// user's persistent pool (e.g. seed-chat's accumulated general toolbox)
+	// were skipped during attach and stay on the normal lazy path, so the
+	// default Chat isn't re-bloated by 10 first-classed general tools.
+	agentKit := t.agentOwnTools
+	var directCustomTools []AgentToolDef // zero-arg OR agent kit → callable now
+	var lazyCustomTools []AgentToolDef   // has-args opportunistic → name+desc + load_tool
 	for _, td := range allCustomTools {
-		if len(td.Tool.Parameters) == 0 {
+		if len(td.Tool.Parameters) == 0 || agentKit[td.Tool.Name] {
 			directCustomTools = append(directCustomTools, td)
 			t.staticTempToolNames[td.Tool.Name] = true
 		} else {
@@ -4134,7 +4282,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if len(lazyCustomTools) > 0 {
 		var b strings.Builder
 		b.WriteString("\n\n## Your custom tools (load before use)\n")
-		b.WriteString("These tools exist but their full definitions aren't loaded. To use one, call `load_tool(\"<name>\")` first — that returns its parameters and makes it callable. Then call it normally.\n\n")
+		b.WriteString("These tools exist but their full definitions aren't loaded. To use them, call `load_tool(names=[\"<name>\", ...])` first — pass ALL the ones you'll need in that one call; it returns their parameters and makes them callable. Then call them normally.\n\n")
 		for _, td := range lazyCustomTools {
 			desc := strings.TrimSpace(td.Tool.Description)
 			if len(desc) > 200 {
@@ -4454,6 +4602,22 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				),
 			}}
 		}
+		// General pacing nudge — ONLY when the budget is actually getting
+		// tight. On early rounds with ample budget this note is (a) noise and
+		// (b) a CACHE POISON. OnRoundStart appends it right after the user
+		// message, but it's ephemeral: next turn the persisted assistant reply
+		// occupies that slot instead, so the prompt prefix diverges at exactly
+		// that point and the (recurrent/hybrid) worker re-prefills the ENTIRE
+		// prompt instead of reusing the cached prefix — the orchestrate turn-2
+		// latency bug (every follow-up turn paid a full ~16k re-prefill).
+		// Returning nil on ample-budget rounds keeps the prefix byte-stable so
+		// the worker's context checkpoint stays usable across turns. The
+		// FINAL-round and explorer nudges above still fire near the cap, where
+		// an occasional cache miss is irrelevant.
+		const pacerNudgeWithin = 8 // rounds-left threshold below which to start pacing aloud
+		if remaining > pacerNudgeWithin {
+			return nil
+		}
 		return []Message{{
 			Role: "user",
 			Content: fmt.Sprintf(
@@ -4476,6 +4640,25 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			}
 		}
 	}
+	// Append per-turn, message-dependent content (skill/agent trigger hints +
+	// triggered-skill instructions, collected into turnContext during sys
+	// assembly) onto the LAST user message — AFTER the stable system prompt +
+	// tools + history. This keeps the cacheable prefix byte-identical across
+	// turns so the worker model reuses it instead of re-prefilling ~16k every
+	// turn. The new user message is new each turn anyway, so carrying the
+	// hints there costs nothing in cache terms.
+	if tc := strings.TrimSpace(turnContext); tc != "" {
+		for i := len(llmMsgs) - 1; i >= 0; i-- {
+			if llmMsgs[i].Role == "user" {
+				if strings.TrimSpace(llmMsgs[i].Content) == "" {
+					llmMsgs[i].Content = tc
+				} else {
+					llmMsgs[i].Content += "\n\n" + tc
+				}
+				break
+			}
+		}
+	}
 
 	// (Auto-inject removed — knowledge retrieval is now exclusively
 	// pull-driven via knowledge_search. The LLM decides when to query,
@@ -4489,7 +4672,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		SystemPrompt: sys,
 		Tools:        allTools,
-		DynamicTools: t.dynamicNewTempTools(sess),
+		DynamicTools:         t.dynamicNewTempTools(sess),
+		ToolFallbackResolver: t.lazyToolFallback,
 		Stream:       streamHandler,
 		OnStep:       onStepHandler,
 		OnRoundStart: onRoundStartHandler,
@@ -4890,7 +5074,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// dispatches to the new agent with a representative input"), and
 	// stripping run here breaks that pattern.
 	tools = append(tools, t.agentsGroupedToolDef(true))
-	tools = append(tools, t.scheduleRecurringToolDef(), t.listRecurringToolDef(), t.cancelRecurringToolDef())
+	tools = append(tools, t.recurringToolDef())
 	tools = append(tools, t.enterExplorerModeToolDef())
 	// Include persistent temp tools in the static set so the group
 	// rewriter (called below) can collapse them when they're members
@@ -5055,7 +5239,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	resp, _, err := t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: stepUser}}, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
-		DynamicTools: t.dynamicNewTempTools(sess),
+		DynamicTools:         t.dynamicNewTempTools(sess),
+		ToolFallbackResolver: t.lazyToolFallback,
 		MaxRounds:    hardCap,
 		ThinkBudget:  t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Stream:       stream,
