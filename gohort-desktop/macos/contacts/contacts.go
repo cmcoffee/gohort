@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
@@ -70,6 +71,63 @@ func normalisePhone(s string) string {
 		digits = digits[len(digits)-10:]
 	}
 	return digits
+}
+
+// sanitizeName scrubs a raw AddressBook name so the LLM (and iMessage
+// display path) never receive garbage. Two failure modes are handled,
+// with the raw bytes logged once so we can identify the source encoding:
+//
+//   - INVALID UTF-8: encoding/json would turn the bad bytes into U+FFFD
+//     ("�"). Dropped via ToValidUTF8.
+//   - VALID-UTF-8 CONTROL BYTES: this is the subtle one. NUL and other
+//     control characters are *valid* UTF-8, so utf8.ValidString passes
+//     them through — a UTF-16-laid-out name like "J\x00o\x00h\x00n" or a
+//     typedstream-framed value reads as valid UTF-8 yet renders as
+//     garbage. We strip control runes (keeping normal whitespace) so the
+//     remaining text is clean; e.g. interspersed NULs collapse back to
+//     "John".
+//
+// Returns the cleaned, trimmed name (possibly "" if nothing survives).
+func sanitizeName(name string, pk int, first, last, nick, org string) string {
+	bad := false
+	if !utf8.ValidString(name) {
+		bad = true
+		name = strings.ToValidUTF8(name, "")
+	}
+	if hasControlRunes(name) {
+		bad = true
+		name = strings.Map(func(r rune) rune {
+			// Keep printable runes and ordinary spacing; drop NUL and
+			// other control characters that are valid UTF-8 but garbage.
+			if r == '\t' || r == ' ' {
+				return r
+			}
+			if unicode.IsControl(r) || r == 0xFFFD {
+				return -1
+			}
+			return r
+		}, name)
+	}
+	if bad {
+		nfo.Log("contacts: pk=%d sanitized garbage name — raw bytes: %x | first=%q last=%q nick=%q org=%q -> %q",
+			pk, []byte(strings.TrimSpace(first+" "+last+" "+nick+" "+org)), first, last, nick, org, name)
+	}
+	return strings.TrimSpace(name)
+}
+
+// hasControlRunes reports whether s contains any control character other
+// than tab. NUL-interspersed (UTF-16-shaped) values trip this even when
+// utf8.ValidString is happy.
+func hasControlRunes(s string) bool {
+	for _, r := range s {
+		if r == '\t' {
+			continue
+		}
+		if unicode.IsControl(r) || r == 0xFFFD {
+			return true
+		}
+	}
+	return false
 }
 
 // lookupContact returns the display name for a phone number or email address
@@ -154,17 +212,7 @@ func loadAddressBook(dbPath string) {
 			name = org.String
 		}
 		if name != "" {
-			// macOS-version diagnostic: if a name field comes back as
-			// non-UTF-8 bytes (the cause of the "�" U+FFFD the LLM sees —
-			// encoding/json replaces invalid bytes with the replacement
-			// char), log the raw hex so we can identify the encoding
-			// (UTF-16 / typedstream / ciphertext / …) and sanitize so the
-			// LLM gets clean text or nothing rather than garbage.
-			if !utf8.ValidString(name) {
-				nfo.Log("contacts: pk=%d name not valid UTF-8 — raw bytes: %x | first=%q last=%q nick=%q org=%q",
-					pk, []byte(name), first.String, last.String, nick.String, org.String)
-				name = strings.TrimSpace(strings.ToValidUTF8(name, ""))
-			}
+			name = sanitizeName(name, pk, first.String, last.String, nick.String, org.String)
 		}
 		if name != "" {
 			names[pk] = name

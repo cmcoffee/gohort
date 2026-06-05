@@ -911,7 +911,13 @@ const popup_shim_script = `<script>(function(){` +
 	`closeBtn.onclick=teardown;` +
 	`(document.body||document.documentElement).appendChild(overlay);` +
 	`render(initial||[]);refresh();` +
-	`}` +
+	// Terminating semicolon is REQUIRED: __desktop_tools_open is an
+	// assignment expression (window.X=function(){...}), not a function
+	// declaration, so without the `;` the trailing `}` abuts the next
+	// `if(` on the single-line injected shim and JavaScriptCore throws
+	// "Unexpected token if" — failing the WHOLE IIFE, so every popup
+	// (uiConfirm/uiAlert impls, approvals manager, popup routing) dies.
+	`};` +
 	`if(window.runtime&&window.runtime.EventsOn){` +
 	`window.runtime.EventsOn('show-tool-approvals',function(list){window.__desktop_tools_open(list||[]);});` +
 	`}` +
