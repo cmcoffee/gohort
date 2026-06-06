@@ -23,7 +23,7 @@ needs). Two bundles with distinct bundle IDs also dodge the single-instance
 launchd / Run-key ── Gohort-Bridge.app (cmd/gohort-bridge; always on)
                        ├─ menu-bar icon (fyne.io/systray)
                        ├─ WS tool bridge → gohort  /api/desktop/ws   (X-API-Key)
-                       ├─ local tools: filesystem.* , contacts.lookup
+                       ├─ local tools: filesystem.* , contacts.lookup / contacts.search
                        ├─ MCP host (configured stdio MCP servers → tools)
                        ├─ iMessage relay (macOS): chat.db → /phantom/api/hook,
                        │                          outbox poll → /phantom/api/poll

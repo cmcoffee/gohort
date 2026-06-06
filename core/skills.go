@@ -391,6 +391,29 @@ func resolveAllowedSkill(db Database, owner string, allowed []string, name strin
 	return nil, fmt.Errorf("no skill named %q (check the 'Available skills' block)", name)
 }
 
+// allowedSkillNames returns the names of the existing, non-disabled skills
+// in the allowed set, sorted. Used to close the skill-tool `skill`
+// parameter to an enum so the model can only name a skill that actually
+// exists — it can't invent one or address an agent (e.g. a former skill
+// that's now an agent) through the skill tools. Empty (e.g. all allowed
+// IDs are orphans) yields no enum, leaving the handler's rejection as the
+// backstop.
+func allowedSkillNames(db Database, owner string, allowed []string) []string {
+	allowSet := make(map[string]bool, len(allowed))
+	for _, id := range allowed {
+		allowSet[id] = true
+	}
+	var names []string
+	for _, s := range LoadSkills(db, owner) {
+		if s.Disabled || !allowSet[s.ID] {
+			continue
+		}
+		names = append(names, s.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // querySkillSourceHooks queries each source-hook the skill names in its
 // AllowedTools (e.g. "courtlistener_search") for the query and returns
 // their combined text, or "" when the skill has none / they're empty.
@@ -444,7 +467,7 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 			Name:        "read_skill",
 			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice) — not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off.",
 			Parameters: map[string]ToolParam{
-				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive)."},
+				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
 			},
 			Required: []string{"skill"},
 			Caps:     []Capability{CapRead},
@@ -478,7 +501,7 @@ func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, 
 			Name:        "skill_knowledge_search",
 			Description: "Search a named skill's reference sources (its document collections and live source APIs, merged and ranked) for material relevant to your query. Returns excerpts plus — the first time you touch the skill this turn — the skill's approach for interpreting them. Use when the request is in the skill's domain and you need grounded evidence. Pass a doc_id from the results to skill_knowledge_fetch_doc for the full document.",
 			Parameters: map[string]ToolParam{
-				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive)."},
+				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
 				"query": {Type: "string", Description: "Natural-language search query — phrase like a web search."},
 			},
 			Required: []string{"skill", "query"},
@@ -532,7 +555,7 @@ func BuildSkillKnowledgeFetchDocTool(db Database, owner string, allowed []string
 			Name:        "skill_knowledge_fetch_doc",
 			Description: "Fetch the full text of a document from a skill's corpus, by the doc_id returned in a skill_knowledge_search result. Use when an excerpt isn't enough.",
 			Parameters: map[string]ToolParam{
-				"skill":  {Type: "string", Description: "Exact skill name (case-insensitive)."},
+				"skill":  {Type: "string", Description: "Exact skill name (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
 				"doc_id": {Type: "string", Description: "The doc_id from a skill_knowledge_search hit."},
 			},
 			Required: []string{"skill", "doc_id"},

@@ -136,6 +136,37 @@ func credentialFormFields() []ui.FormField {
 	}
 }
 
+// mcpServerFormFields is the shared field list for the MCP Servers add
+// (modal) and edit (row Expand) forms. Auth-specific inputs collapse via
+// ShowWhen so a bearer token field doesn't surface in secure_api mode.
+// The token is a password that stays blank on edit — leaving it blank
+// keeps the stored token.
+func mcpServerFormFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "ident", Type: "header", Label: "Server"},
+		{Field: "name", Label: "Name", Placeholder: "confluence", Help: "[a-z0-9_-]. Namespaces its tools as <name>.<tool>. Re-using a name updates that server."},
+		{Field: "url", Label: "Endpoint URL (https)", Placeholder: "https://mcp.example.com/mcp", Help: "The remote MCP server's Streamable-HTTP endpoint."},
+
+		{Field: "auth_hdr", Type: "header", Label: "Authentication"},
+		{Field: "auth_mode", Label: "Auth mode", Type: "select", Options: []ui.SelectOption{
+			{Value: "", Label: "None (public)"},
+			{Value: "bearer", Label: "Bearer token (static)"},
+			{Value: "secure_api", Label: "SecureAPI OAuth2 credential"},
+			{Value: "oauth", Label: "OAuth 2.1 hosted login (per-user)"},
+		}},
+		{Field: "token", Label: "Bearer token", Type: "password", ShowWhen: "auth_mode:bearer", Help: "Stored encrypted. Leave blank when editing to keep the existing token."},
+		{Field: "secure_cred", Label: "SecureAPI credential name", Placeholder: "confluence_oauth", ShowWhen: "auth_mode:secure_api", Help: "An OAuth2 credential configured under API Credentials. Its bearer token is minted/refreshed per request."},
+		{Field: "oauth_note", Type: "header", Label: "Hosted login: Save first, then click Connect on the server's row to authorize. Each user connects their own account. The callback host must be https or localhost.", ShowWhen: "auth_mode:oauth"},
+
+		{Field: "expose_hdr", Type: "header", Label: "Exposure"},
+		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
+		{Field: "expose_reference", Label: "Expose as a reference source", Type: "toggle", Help: "Make the server selectable in writer/research source pickers (uses the Search tool below)."},
+		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", Help: "MCP tool called for reference lookups. Only used when 'Expose as a reference source' is on. Defaults to 'search'."},
+
+		{Field: "enabled", Label: "Enabled", Type: "toggle", Help: "Connect on startup and on save. Disable to suspend without deleting."},
+	}
+}
+
 // databaseBrowserCard is the read-only kvlite table/key/record browser.
 // A 3-pane drill-down is app-specific developer tooling, not a generic
 // primitive, so it rides the sanctioned Card escape hatch (raw HTML +
@@ -851,6 +882,98 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								TestLabel:   "Test token (oauth2)",
 								SubmitLabel: "Create credential",
 								Fields:      credentialFormFields(),
+							},
+						},
+					},
+				},
+			},
+			{
+				Title:    "MCP Servers",
+				Subtitle: "Remote Model Context Protocol servers (e.g. Confluence) the gohort SERVER connects to over HTTP. \"Expose tools\" registers each server's tools as <name>.<tool> for agents; \"Expose as a reference source\" makes it selectable in writer/research source pickers. Bearer tokens are stored encrypted; secure_api mode mints + refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability + auth before you enable.",
+				Body: ui.Stack{
+					Children: []ui.Component{
+						ui.Table{
+							Source: "api/mcp-servers",
+							RowKey: "name",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								{Field: "url", Mute: true, Flex: 1},
+								{Field: "auth_mode", Label: "Auth", Mute: true},
+								{
+									Field: "expose_tools", Type: "badge", Label: "Tools",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Exposed", Color: "success"},
+										{Value: false, Label: "Off", Color: "mute"},
+									},
+								},
+								{
+									Field: "expose_reference", Type: "badge", Label: "Reference",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Source", Color: "success"},
+										{Value: false, Label: "Off", Color: "mute"},
+									},
+								},
+								{
+									Field: "enabled", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Enabled", Color: "success"},
+										{Value: false, Label: "Disabled", Color: "danger"},
+									},
+								},
+								{
+									Field: "connected", Type: "badge", Label: "Conn",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Connected", Color: "success"},
+										{Value: false, Label: "—", Color: "mute"},
+									},
+								},
+							},
+							RowActions: []ui.RowAction{
+								ui.Expand("Edit", ui.FormPanel{
+									Source:      "api/mcp-servers?name={name}",
+									PostURL:     "api/mcp-servers",
+									TestURL:     "api/mcp-servers/test",
+									TestLabel:   "Test connection",
+									SubmitLabel: "Save changes",
+									Fields:      mcpServerFormFields(),
+								}),
+								{Type: "button", Label: "Enable",
+									PostTo: "api/mcp-servers?action=enable&name={name}",
+									Method: "POST", HideIf: "enabled", Variant: "success"},
+								{Type: "button", Label: "Disable",
+									PostTo:  "api/mcp-servers?action=disable&name={name}",
+									Method:  "POST",
+									OnlyIf:  "enabled",
+									Variant: "warning"},
+								// Connect (oauth servers only): a GET button that opens
+								// the start endpoint in a new tab; it 302-redirects to the
+								// hosted login. Authorizes the CURRENT user.
+								{Type: "button", Label: "Connect",
+									Method:         "GET",
+									PostTo:         "api/mcp-servers/oauth/start?name={name}",
+									RedirectTarget: "_blank",
+									OnlyIf:         "is_oauth",
+									Variant:        "primary"},
+								{Type: "button", Label: "Delete",
+									PostTo:  "api/mcp-servers?name={name}",
+									Method:  "DELETE",
+									Confirm: "Delete this MCP server? Its encrypted token goes with it. Already-registered tools stay until the next restart but stop working.",
+									Variant: "danger"},
+							},
+							EmptyText: "No MCP servers configured. Add one with the button below.",
+						},
+						ui.ModalButton{
+							Label:    "Add MCP server",
+							Title:    "Add MCP server",
+							Subtitle: "Point at a remote MCP server's Streamable-HTTP endpoint. Test before enabling.",
+							Variant:  "primary",
+							Width:    "640px",
+							Body: ui.FormPanel{
+								PostURL:     "api/mcp-servers",
+								TestURL:     "api/mcp-servers/test",
+								TestLabel:   "Test connection",
+								SubmitLabel: "Add server",
+								Fields:      mcpServerFormFields(),
 							},
 						},
 					},

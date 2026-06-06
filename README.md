@@ -35,6 +35,7 @@ Apps register themselves via `init()` and compose framework primitives (`FormPan
 - **Local-model fair-queueing** — configurable global parallelism caps for Ollama and llama.cpp with round-robin dispatch across caller sessions.
 - **Agent loop with framework guardrails** — round-budget awareness (the LLM is told its budget upfront), midpoint and wrap-up nudges, failure-streak pivot when N consecutive rounds all error, action-promise correction for "let me try" Qwen-style stalls, and tool-round discipline (no full answer until the final, tool-free step — prevents double replies).
 - **Source hooks** — admin-managed external sources (PubMed, OpenAlex, EDGAR, or any custom API/RAG endpoint, from templates or hand-rolled). Each can be exposed as a per-hook agent tool (`pubmed_search`, …) that surfaces live in every agent's catalog, and/or auto-queried by topic in research/debate pipelines. Auth stored encrypted; paywall hooks transparently add headers to `fetch_url`.
+- **Remote MCP servers (server-side client)** — admin-registered Model Context Protocol servers reachable over Streamable HTTP. Each server's tools surface as native `<server>.<tool>` agent tools and, optionally, as a reference source in the writer/research source picker. Auth modes: static bearer, SecureAPI OAuth2 (client_credentials / jwt_bearer), and per-user OAuth 2.1 — authorization_code + PKCE + dynamic client registration — for hosted SaaS like Atlassian Cloud. Tokens are stored encrypted; OAuth connections are per-user so results respect each user's own permissions.
 - **Vision + multimodal** — image and video attachments flow through to vision-capable models with sensible per-call defaults.
 
 ### Web platform
@@ -196,12 +197,12 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 
 | App | Purpose |
 |-----|---------|
-| `admin` | Administrator panel — user management, app permissions, secure-API credentials, pending-tool approval, skills curation, tool groups, pipeline view/delete (across all users), **all service config** (LLM, embeddings, STT, image gen, search, SMTP, network, cost rates), maintenance one-shots, scheduled tasks |
+| `admin` | Administrator panel — user management, app permissions, secure-API credentials, remote MCP servers (incl. per-user OAuth connect), pending-tool approval, skills curation, tool groups, pipeline view/delete (across all users), **all service config** (LLM, embeddings, STT, image gen, search, SMTP, network, cost rates), maintenance one-shots, scheduled tasks |
 | `orchestrate` | Agency — central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory + knowledge; plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; attachable pipelines surfaced as callable tools; SSE streaming + interjections |
 | `agents` | Public per-agent surface — exposed agents from Agency get individual `/agents/<slug>/` URLs (admins flip Exposed=true; end-users get a chat surface scoped to that one agent) |
 | `knowledge` | Document Collections — shared / per-user RAG buckets agents attach to. Upload PDFs/DOCX/text; autofill from web with optional LLM judge; FilterRules-driven scope |
-| `phantom` | iMessage assistant — gatekeeper, per-conversation curation, chat-scoped vector knowledge, async agent dispatch with SMS-friendly digestion, scheduled callbacks |
-| `servitor` | SSH-based system investigator with plan-driven flow (set_plan / execute / revise / gap-detect / skip-and-revisit), persistent technique recording, private-only routing, xterm terminal pane |
+| `phantom` | iMessage assistant — gatekeeper, per-conversation curation, chat-scoped vector knowledge, async agent dispatch with SMS-friendly digestion, interactive progress narration (tool/agent-call status), scheduled callbacks |
+| `servitor` | SSH-based system investigator with plan-driven flow (set_plan / execute / revise / gap-detect / skip-and-revisit), persistent technique recording, mapping runs saved as sessions, exportable knowledge brief (`.md`, secrets redacted), private-only routing, xterm terminal pane |
 | `techwriter` | Technical documentation co-editor |
 | `codewriter` | Script/query co-author with saved snippets, reusable values, and saved context blocks |
 | `hello` | Minimal scaffold app — canonical reference for authoring a new app with the declarative `core/ui` framework |

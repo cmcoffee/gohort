@@ -368,6 +368,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/mapapp", T.handleMapApp)
 	sub.HandleFunc("/api/terminal", T.handleTerminal)
 	sub.HandleFunc("/api/facts", T.handleFacts)
+	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
 	sub.HandleFunc("/api/memory/clear", T.handleMemoryClear)
 	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
 	sub.HandleFunc("/api/save_destinations", T.handleSaveDestinations)
@@ -844,6 +845,11 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 			appliance.Host, appliance.User,
 		)
 		hist := []Message{{Role: "user", Content: mapMsg}}
+		// Persist the map as a session so it shows in the left rail and its
+		// reconnaissance summary stays reviewable, not just streamed live.
+		// The run id IS the session id; runSession appends the transcript on
+		// done. Each Map System run is its own rail entry (timestamped).
+		saveSession(udb, appliance.ID, chatSession{ID: sid, Name: "Map: " + appliance.Name})
 		go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, true)
 	}
 
@@ -4050,12 +4056,14 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	}
 	emit(id, probeEvent{Kind: "reply", Text: reply})
 
-	// Persist this turn to the chat session that backs the rail. Chat
-	// path only — map runs (saveProfile=true) write the profile, not a
-	// conversation. The run id IS the session id, so append the current
-	// user message + reply to it. listSessions then surfaces it on the
-	// 'done' refresh, exactly like orchestrate.
-	if !saveProfile && udb != nil {
+	// Persist this turn to the chat session that backs the rail. Includes
+	// map runs (saveProfile=true): handleMap pre-creates the session
+	// record, so the reconnaissance prompt + final summary land in the rail
+	// and stay reviewable, not just streamed live. The run id IS the
+	// session id; appendTurn no-ops if no record exists (so a saveProfile
+	// run without a pre-created session simply isn't persisted). listSessions
+	// surfaces it on the 'done' refresh, exactly like orchestrate.
+	if udb != nil {
 		var lastUser string
 		for i := len(messages) - 1; i >= 0; i-- {
 			if messages[i].Role == "user" {

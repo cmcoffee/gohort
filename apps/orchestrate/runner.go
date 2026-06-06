@@ -2206,7 +2206,11 @@ func summarizeToolArgs(args map[string]any) string {
 		case string:
 			s = vv
 		case []any:
-			s = fmt.Sprintf("[%d]", len(vv))
+			elems := make([]string, 0, len(vv))
+			for _, e := range vv {
+				elems = append(elems, fmt.Sprintf("%v", e))
+			}
+			s = "[" + strings.Join(elems, ", ") + "]"
 		case map[string]any:
 			s = "{…}"
 		case nil:
@@ -5625,7 +5629,11 @@ func formatToolCall(name string, args map[string]any) string {
 		case string:
 			s = vv
 		case []any:
-			s = fmt.Sprintf("[%d]", len(vv))
+			elems := make([]string, 0, len(vv))
+			for _, e := range vv {
+				elems = append(elems, fmt.Sprintf("%v", e))
+			}
+			s = "[" + strings.Join(elems, ", ") + "]"
 		case map[string]any:
 			s = "{…}"
 		case nil:

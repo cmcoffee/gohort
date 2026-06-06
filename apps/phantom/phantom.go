@@ -175,6 +175,12 @@ type Conversation struct {
 	AliasHandles     []string     `json:"alias_handles,omitempty"`     // handles/chat_ids that route into this conversation
 	AliasOf          string       `json:"alias_of,omitempty"`          // cached: this chat_id is an alias of the named primary
 	ProactiveEnabled bool         `json:"proactive_enabled,omitempty"` // opt-in to global proactive messaging
+	// ProgressUpdates controls the interactive "working out loud" status
+	// pings ("searching…", "checking your calendar…") sent during a
+	// multi-round turn. nil/true = on, false = off. Only the interactive
+	// hook path emits these; autonomous (scheduled/proactive) turns never
+	// do, regardless of this flag.
+	ProgressUpdates *bool `json:"progress_updates,omitempty"`
 	// AllowedAgents is the allowlist of Agency agent IDs that the LLM
 	// in THIS chat may dispatch to via the dispatch_agent tool. Empty
 	// disables the surface for this chat — the tool drops out of the

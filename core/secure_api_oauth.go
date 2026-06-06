@@ -235,6 +235,35 @@ func (s *SecureAPI) oauthSetToken(c SecureCredential, secret string, req *http.R
 	return strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "), nil
 }
 
+// AuthorizeRequest attaches an OAuth2 bearer token for the named
+// credential to req, minting/refreshing it as needed. It's the exported
+// entry point for outbound integrations that authenticate with a
+// configured SecureAPI credential WITHOUT going through tool dispatch —
+// notably the server-side MCP client (see core/mcp_manager.go). Only
+// oauth2 credentials are supported; the token is never logged here.
+func (s *SecureAPI) AuthorizeRequest(credName string, req *http.Request) error {
+	if !s.ready() {
+		return fmt.Errorf("secure-api store not initialized")
+	}
+	credName = strings.TrimSpace(credName)
+	c, ok := s.Load(credName)
+	if !ok {
+		return fmt.Errorf("secure-api credential %q not found", credName)
+	}
+	if c.Disabled {
+		return fmt.Errorf("secure-api credential %q is disabled", credName)
+	}
+	if c.Type != SecureCredOAuth2 {
+		return fmt.Errorf("secure-api credential %q is not oauth2", credName)
+	}
+	secret, ok := s.loadSecret(credName)
+	if !ok || secret == "" || secret == "(pending)" {
+		return fmt.Errorf("secure-api credential %q has no secret set", credName)
+	}
+	_, err := s.oauthSetToken(c, secret, req)
+	return err
+}
+
 // SaveOAuthDraft persists an oauth2 credential's CONFIG without a secret:
 // the "Builder scaffolds, admin completes" path. Stored DISABLED (inert,
 // not dispatchable) with a "(pending)" secret placeholder so the admin UI

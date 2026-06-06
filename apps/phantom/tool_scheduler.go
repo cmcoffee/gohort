@@ -859,6 +859,14 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 	var replyText string
 	if resp != nil {
 		replyText = strings.TrimSpace(stripEmojis(resp.Content))
+		// Consume [ATTACH: ...] markers: attach the referenced file onto
+		// sess (so it flows into sessionImages below) and strip the marker
+		// from the visible text. The interactive path does this in
+		// processMessage; without it here the marker leaked as raw text and
+		// the file never attached. Failures are logged inside
+		// applyAttachMarkers; a proactive turn has no next turn to feed back
+		// to, so we don't thread them further.
+		replyText, _ = applyAttachMarkers(sess, replyText)
 	}
 	sessionImages := filterNewImages(sess.Images)
 	sessionVideos := filterNewVideos(sess.Videos)

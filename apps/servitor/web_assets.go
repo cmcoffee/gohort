@@ -1076,6 +1076,31 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       });
     });
 
+    // Export the appliance's accumulated knowledge as a downloadable .md
+    // (credentials/secrets excluded server-side) for handing to Claude or
+    // another LLM to help build/improve a support tool for this system.
+    window.uiRegisterClientAction('servitor_export_knowledge', function() {
+      var aid = getApplianceID();
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      fetch('api/knowledge/export?appliance_id=' + encodeURIComponent(aid))
+        .then(function(r) {
+          if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
+          return r.text();
+        })
+        .then(function(text) {
+          if (!text) { window.uiAlert('Nothing to export yet — map the system first.'); return; }
+          var blob = new Blob([text], {type: 'text/markdown'});
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = aid + '-knowledge.md';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function() { URL.revokeObjectURL(url); a.remove(); }, 0);
+        })
+        .catch(function(err) { window.uiAlert('Export failed: ' + (err && err.message || err)); });
+    });
+
     // --- xterm.js terminal wiring -------------------------------------
     // The framework's AgentLoopPanel reserves the bottom-right pane
     // when Terminal is configured (see chat_page.go). xterm itself

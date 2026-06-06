@@ -732,6 +732,12 @@ func ServeDashboard(addr string) error {
 	// during RegisterRoutes are in place before any tasks can fire.
 	StartGlobalScheduler(AppContext())
 
+	// Connect configured remote MCP servers and register their tools
+	// (and, later, reference sources). Non-blocking: each server is
+	// brought up in the background, so a slow/dead endpoint never stalls
+	// startup.
+	MCP().Reload()
+
 	// Sort by WebOrder (if implemented), then alphabetically.
 	sort.Slice(apps, func(i, j int) bool {
 		oi, oj := 50, 50

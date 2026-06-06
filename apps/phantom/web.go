@@ -1772,6 +1772,30 @@ func stringArgPhantom(args map[string]any, key string) string {
 // deliverChatID is the address the outbound reply is delivered to (may equal
 // convChatID, but for aliased inbound it's the original incoming address so
 // the reply lands in the user's actual thread).
+// phantomStatusLine returns the LLM's OWN brief progress narration for a
+// round, to text as an interim "working on it" update. Gated to rounds
+// that actually call a tool/agent (no narration on idle rounds) and to the
+// model's real words — never a templated filler. Returns "" when the model
+// said nothing this round, when only a control marker was present, or when
+// the content is long enough to be a full answer (which the final reply
+// carries) rather than a short progress note.
+func phantomStatusLine(info StepInfo) string {
+	if len(info.ToolCalls) == 0 {
+		return ""
+	}
+	c := strings.TrimSpace(stripEmojis(markdownToPlain(info.Content)))
+	// Strip any [ATTACH: ...] delivery marker so it never leaks raw; those
+	// are parsed only on the final reply.
+	c = strings.TrimSpace(attachMarkerRe.ReplaceAllString(c, ""))
+	if c == "" || strings.Contains(c, "[ATTACH") {
+		return ""
+	}
+	if len(c) > 500 {
+		return "" // that's an answer, not a progress note — let the final reply carry it
+	}
+	return c
+}
+
 func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string, conv Conversation, shouldSend func() bool) {
 	chatID := convChatID // legacy local name used throughout the body for storage/history
 	if T.LLM == nil {
@@ -2366,15 +2390,48 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 
 	Log("[phantom] processing reply for %s (%d history msgs, %d tools)", senderDesc, len(msgs), len(tools))
 
+	// Interactive "working out loud": as the agent grinds through tool
+	// rounds, text short status lines ("searching…", "checking your
+	// calendar…") so a live chat gets a back-and-forth instead of
+	// silence-then-answer. INTERACTIVE-ONLY by construction — this is the
+	// hook path; the autonomous scheduler/proactive loop has its own
+	// RunAgentLoop with no OnStep, so it stays quiet. OnStep is called once
+	// per round from the loop's single goroutine (after parallel tools
+	// join), so the counters need no locking. Anti-spam: skip the final
+	// round, only narrate rounds that call tools, cap at 3, dedupe.
+	progressOn := conv.ProgressUpdates == nil || *conv.ProgressUpdates
+	statusSent := 0
+	lastStatus := ""
+	onStep := func(info StepInfo) {
+		if !progressOn || info.Done || len(info.ToolCalls) == 0 {
+			return
+		}
+		line := phantomStatusLine(info)
+		if line == "" || line == lastStatus || statusSent >= 3 {
+			return
+		}
+		statusSent++
+		lastStatus = line
+		enqueueOutbox(T.DB, OutboxItem{
+			ID:      now() + "-" + newID(),
+			ChatID:  deliverChatID,
+			Handle:  handle,
+			Text:    line,
+			Type:    "announce",
+			Created: now(),
+		})
+	}
+
 	phantomChatOpts := buildThinkOpts("app.phantom")
 	resp, _, err := T.RunAgentLoop(context.Background(), msgs, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
-		MaxRounds:   15,
-		RouteKey:    "app.phantom",
-		PromptTools: T.PromptTools,
-		ChatOptions: phantomChatOpts,
-		Confirm:     func(string, string) bool { return true },
+		MaxRounds:    15,
+		RouteKey:     "app.phantom",
+		PromptTools:  T.PromptTools,
+		ChatOptions:  phantomChatOpts,
+		OnStep:       onStep,
+		Confirm:      func(string, string) bool { return true },
 		// Drain any view-images deposited by tools (view_video,
 		// download_video frame sampling) into a follow-up user message
 		// at the next round so the LLM sees them. Images go to the LLM
