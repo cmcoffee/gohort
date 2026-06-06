@@ -50,15 +50,38 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 		}
 		return seed, true
 	}
+	// Other seeds (seed-chat, seed-research, ...): the framework owns the
+	// PROMPT; the deployment owns operational state. A shadow gets created
+	// the moment a user approves a tool for the agent (the approval path
+	// persists an expanded AllowedTools list, see the seed-chat tool-enable
+	// helper above) or saves Rules. The OLD behavior had that shadow win
+	// ENTIRELY, which froze the OrchestratorPrompt at that instant, so
+	// framework prompt updates never reached the deployment (the symptom:
+	// a flat input-token count across redeploys even after prompt edits).
+	// We now keep the shadow as the BASE (preserving AllowedTools, Rules,
+	// think budget, attached skills/collections, exposure, etc.) and ALWAYS
+	// refresh the prompt-bearing fields from the in-code seed, so prompt
+	// improvements land without discarding the user's customizations. A
+	// seed's OrchestratorPrompt is never user-editable in place (clone_agent
+	// is the path for that), so this only ever replaces a stale framework
+	// prompt with the current one. Builder above is the stricter sibling:
+	// fully locked, so it rebases everything except Rules onto code.
+	if seed, ok := seedAgentByID(id); ok {
+		var shadow AgentRecord
+		if db.Get(agentsTable, id, &shadow) {
+			shadow.OrchestratorPrompt = seed.OrchestratorPrompt
+			shadow.Description = seed.Description
+			shadow = selfHealAllowedTools(db, shadow)
+			return enforceSubAgentPosture(shadow), true
+		}
+		// No shadow exists: return the framework default.
+		return enforceSubAgentPosture(seed), true
+	}
+	// Non-seed (user-created / cloned) agent: the DB record is authoritative.
 	if db.Get(agentsTable, id, &a) {
 		a = selfHealAllowedTools(db, a)
 		a = enforceSubAgentPosture(a)
 		return a, true
-	}
-	// Fall back to the in-code seed when the DB had nothing — this
-	// is the "no shadow exists" branch. Returns the framework default.
-	if seed, ok := seedAgentByID(id); ok {
-		return enforceSubAgentPosture(seed), true
 	}
 	return a, false
 }
@@ -766,7 +789,7 @@ Concrete reply shape:
 
 That's the whole answer. Don't try to gather requirements yourself, don't dispatch, don't decompose into plan_set. Builder takes it from there once the user clicks over.
 
-**Recognize gaps, offer to build.** When a question lands in a specialized or high-stakes domain (medical, legal, financial, safety, deep technical) that NO listed agent covers and you can't answer it reliably from sources, do not ad-lib a confident answer. Say plainly you don't have a specialist for it, give only what you can stand behind (noting it isn't expert-grounded), and offer to build one. Example: "I don't have a specialist for that. Want to build one? Open Builder and it can set up a grounded agent for this that you'd then have going forward." Offer it; never auto-create it, since a specialist is only worth having if Builder authors it properly with the user (a persona alone, ungrounded, just sounds confident without being right).`,
+**Recognize gaps, offer to build.** When a question lands in a specialized or high-stakes domain (medical, legal, financial, safety, deep technical) that NO listed agent covers and you can't answer it reliably from sources, do not ad-lib a confident answer. Say plainly you don't have a specialist for it, give only what you can stand behind (noting it isn't expert-grounded), and offer to build one. Example: "I don't have a specialist for that. Want to build one? Open Builder and it can set up a grounded agent for this that you'd then have going forward." Offer it; never auto-create it, since a specialist is only worth having if Builder authors it properly with the user (a persona alone, ungrounded, just sounds confident without being right). PROACTIVELY catch one specific shape: when the user asks you to be their ongoing reference, advisor, or go-to for a specialized area (signals: "be my go-to", "going forward", "from now on", "always" + a real domain like a company 401(k), legal contracts, a medical regimen, internal runbooks), that is a standing-specialist request. Do NOT default to volunteering yourself and gathering their details into saved facts — that domain belongs in a dedicated grounded agent that holds the real documents and is reusable across chats. LEAD with the build offer: say plainly a dedicated agent is the right home for this and point them to Builder. Storing a quick fact that they want it is fine, but the build offer is the headline, not an afterthought, and you do not wait for them to ask "should this be an agent?" first.`,
 			// AllowedTools left empty on purpose — the runner reads
 			// empty as "use the default pool" (every non-blocked
 			// chat tool with Read or Network cap plus the unannotated

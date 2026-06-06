@@ -143,6 +143,16 @@ func (s *server) call(method string, params any, timeout time.Duration) (json.Ra
 		return nil, fmt.Errorf("mcp server %q is not running", s.name)
 	}
 	s.mu.Lock()
+	// Re-check under the lock: markDead() sets the flag before it closes
+	// pending channels, so a call() that slips past the unlocked check
+	// above could otherwise register its channel AFTER markDead's close
+	// loop has run — that channel would never be closed and the caller
+	// would block until timeout instead of failing fast. Checking here,
+	// while holding the same lock markDead takes, closes that window.
+	if s.dead.Load() {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("mcp server %q is not running", s.name)
+	}
 	s.nextID++
 	id := s.nextID
 	ch := make(chan rpcResponse, 1)

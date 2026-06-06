@@ -31,6 +31,7 @@ package wsbridge
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -318,11 +319,33 @@ func (c *wsClient) handleInvoke(conn *websocket.Conn, id, name string, args map[
 	c.sendResult(conn, id, result, "")
 }
 
+// maxResultBytes caps a plain tool result before it goes over the bridge
+// WS. A runaway result (read_file on a huge file, a query that returns
+// everything) otherwise buffers fully in RAM on both ends and floods the
+// agent's context. 256 KB is already far more text than is useful in a
+// single tool result.
+const maxResultBytes = 256 * 1024
+
+// capResult truncates an oversized plain-text result and appends a notice
+// so the agent knows the result was clipped (rather than silently acting on
+// a partial blob). data: URIs are exempt: image/file tools return base64
+// data URIs through this same path for vision/attachment delivery, and a
+// truncated base64 string is a corrupt payload, not shorter text. The
+// truncation is snapped to a valid UTF-8 boundary so the JSON frame stays
+// clean.
+func capResult(result string) string {
+	if len(result) <= maxResultBytes || strings.HasPrefix(result, "data:") {
+		return result
+	}
+	head := strings.ToValidUTF8(result[:maxResultBytes], "")
+	return head + fmt.Sprintf("\n\n[gohort-bridge: result truncated — was %d bytes, showing the first %d]", len(result), len(head))
+}
+
 func (c *wsClient) sendResult(conn *websocket.Conn, id, result, errMsg string) {
 	frame, _ := json.Marshal(map[string]any{
 		"type":   "result",
 		"id":     id,
-		"result": result,
+		"result": capResult(result),
 		"error":  errMsg,
 	})
 	c.writeMu.Lock()
