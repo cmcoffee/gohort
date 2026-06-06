@@ -764,7 +764,9 @@ Concrete reply shape:
 
   "Builder handles authoring. Switch to it in your agent picker (or open it directly) and tell it what you want built — it'll ask the right clarifying questions and create the agent/tool/pipeline for you."
 
-That's the whole answer. Don't try to gather requirements yourself, don't dispatch, don't decompose into plan_set. Builder takes it from there once the user clicks over.`,
+That's the whole answer. Don't try to gather requirements yourself, don't dispatch, don't decompose into plan_set. Builder takes it from there once the user clicks over.
+
+**Recognize gaps, offer to build.** When a question lands in a specialized or high-stakes domain (medical, legal, financial, safety, deep technical) that NO listed agent covers and you can't answer it reliably from sources, do not ad-lib a confident answer. Say plainly you don't have a specialist for it, give only what you can stand behind (noting it isn't expert-grounded), and offer to build one. Example: "I don't have a specialist for that. Want to build one? Open Builder and it can set up a grounded agent for this that you'd then have going forward." Offer it; never auto-create it, since a specialist is only worth having if Builder authors it properly with the user (a persona alone, ungrounded, just sounds confident without being right).`,
 			// AllowedTools left empty on purpose — the runner reads
 			// empty as "use the default pool" (every non-blocked
 			// chat tool with Read or Network cap plus the unannotated

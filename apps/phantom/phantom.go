@@ -757,6 +757,12 @@ func stripEmojis(s string) string {
 	return b.String()
 }
 
+// gapRule keeps phantom honest when it's out of its depth: a specialized
+// or high-stakes question with no specialist agent to cover it should get
+// an honest "not my area" + an offer to set one up, not a confident
+// ad-lib (and never an invented skill/agent).
+const gapRule = "OUT-OF-DEPTH HONESTY: when a question is in a specialized or high-stakes domain (medical, legal, financial, safety, deep technical) that none of your available specialist agents covers and you can't answer it reliably, do NOT ad-lib a confident answer. Say plainly you're not the right tool for it, give only what you can stand behind (noting it isn't expert-grounded), and suggest setting up a dedicated specialist for it in Agency so future questions like it get a real answer. Never invent a skill or agent name to use; when there's no specialist and no tool that grounds it, an honest 'I can't verify this' beats a confident guess."
+
 // buildSystemPrompt combines Personality and Conversation Rules (SystemPrompt)
 // into the final system prompt. Personality is prepended; either may be empty.
 // The emoji and case rules are always appended.
@@ -772,7 +778,7 @@ func buildSystemPrompt(personality, rules string) string {
 	default:
 		base = rules
 	}
-	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + sideEffectGuardRule + " " + attachRule
+	trailing := emojiRule + " " + caseRule + " " + statusRule + " " + followThroughRule + " " + learnAndSaveRule + " " + freshTurnRule + " " + sideEffectGuardRule + " " + gapRule + " " + attachRule
 	if base != "" {
 		return base + "\n\n" + trailing
 	}
@@ -1093,9 +1099,16 @@ func looksLikeNSKey(s string) bool {
 		}
 		return true
 	}
-	if s[0] == 'N' && s[1] == 'S' && len(s) >= 3 {
-		c := s[2]
-		return c >= 'A' && c <= 'Z'
+	// Real NSKeyedArchiver class names are PascalCase: "NS" + an uppercase
+	// initial + a lowercase letter (NSString, NSDictionary, NSAttributedString,
+	// NSData, NSDate, NSValue, NSError, NSSet, ...). Requiring s[3] to be
+	// lowercase keeps every real class name matching while no longer false-
+	// positiving on all-caps acronyms a user actually types, e.g. "NSAIDs"
+	// (NS + "AID...") — a medical term that was being silently dropped — or
+	// "NSA". The bare-3-char "NS?" case is intentionally dropped too: a real
+	// class name is always longer, and "NSA"-style acronyms are legitimate.
+	if s[0] == 'N' && s[1] == 'S' && len(s) >= 4 {
+		return s[2] >= 'A' && s[2] <= 'Z' && s[3] >= 'a' && s[3] <= 'z'
 	}
 	return false
 }

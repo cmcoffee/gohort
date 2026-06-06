@@ -553,7 +553,82 @@ func extractTextFromBody(body []byte) string {
 	if s := bplistNSString(body); s != "" {
 		return stripStreamtypedFraming(s)
 	}
+	if s := streamtypedNSString(body); s != "" {
+		return s
+	}
 	return extractTextHeuristic(body)
+}
+
+// streamtypedNSString extracts the message text from a legacy NSArchiver
+// ("streamtyped") attributedBody blob by reading the first NSString
+// value's length-prefixed byte payload directly, instead of scavenging
+// printable runs. iMessage stores the message text as the backing string
+// of an NSMutableAttributedString; in the typedstream format that string
+// is a '+' (0x2B) byte-array marker followed by a length integer and the
+// UTF-8 bytes. Reading EXACTLY length bytes is what makes this correct:
+//   - it stops at the true end, so the attribute-run metadata that
+//     follows (NSNumber run lengths, attribute dicts, a second class
+//     chain) never leaks in as trailing garbage; and
+//   - it consumes the length byte rather than treating it as text, so a
+//     length that happens to be a printable ASCII byte (e.g. 51 == 0x33
+//     == '3', 49 == 0x31 == '1') does not bleed into the output and
+//     truncate the message — the failure mode the printable-run
+//     heuristic exhibited on any text whose length landed in 0x20..0x7E.
+//
+// typedstream integer encoding: a single byte for 0..0x80; a 0x81 prefix
+// for a following little-endian int16; a 0x82 prefix for int32.
+func streamtypedNSString(body []byte) string {
+	head := 64
+	if len(body) < head {
+		head = len(body)
+	}
+	if !bytes.Contains(body[:head], []byte("streamtyped")) {
+		return ""
+	}
+	anchor := bytes.Index(body, []byte("NSString"))
+	if anchor < 0 {
+		anchor = bytes.Index(body, []byte("NSMutableString"))
+	}
+	if anchor < 0 {
+		return ""
+	}
+	// The '+' byte-array value marker introduces the text payload.
+	rel := bytes.IndexByte(body[anchor:], '+')
+	if rel < 0 {
+		return ""
+	}
+	p := anchor + rel + 1 // first byte after '+'
+	if p >= len(body) {
+		return ""
+	}
+	var length, dataOff int
+	switch b := body[p]; {
+	case b == 0x81:
+		if p+3 > len(body) {
+			return ""
+		}
+		length = int(binary.LittleEndian.Uint16(body[p+1 : p+3]))
+		dataOff = p + 3
+	case b == 0x82:
+		if p+5 > len(body) {
+			return ""
+		}
+		length = int(binary.LittleEndian.Uint32(body[p+1 : p+5]))
+		dataOff = p + 5
+	case b < 0x80:
+		length = int(b)
+		dataOff = p + 1
+	default:
+		return ""
+	}
+	if length <= 0 || dataOff+length > len(body) {
+		return ""
+	}
+	s := string(body[dataOff : dataOff+length])
+	if !utf8.ValidString(s) {
+		return ""
+	}
+	return s
 }
 
 // stripStreamtypedFraming removes the NSStreamTyped '+' + length-byte header that

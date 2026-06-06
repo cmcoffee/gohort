@@ -139,6 +139,44 @@ func isImageFilename(n string) bool {
 	return false
 }
 
+func isVideoFilename(n string) bool {
+	switch strings.ToLower(filepath.Ext(n)) {
+	case ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi":
+		return true
+	}
+	return false
+}
+
+// dropCoveredAttachFailures removes [ATTACH:] marker failures whose media
+// is already being delivered to the user through the session this turn.
+// Image tools (generate_image / find_image) auto-attach their output to
+// the session; the model frequently ALSO emits an [ATTACH:] marker that
+// points at a stale, semantic, or already-cleaned-up filename. That marker
+// "fails" even though the picture is going out via the session — and the
+// failure then drives an honest-recovery rewrite, so the user receives the
+// image AND a contradictory "it didn't attach properly" apology. A failure
+// is only real if the user won't otherwise receive that kind of media, so
+// suppress image failures when an image is already queued and video
+// failures when a video is. Unknown / non-media names are always kept.
+func dropCoveredAttachFailures(failures []attachFailure, haveImages, haveVideos bool) []attachFailure {
+	if len(failures) == 0 {
+		return failures
+	}
+	var kept []attachFailure
+	for _, f := range failures {
+		if isImageFilename(f.Name) && haveImages {
+			Log("[phantom] attach marker %q failed but an image is already being delivered this turn — treating as covered", f.Name)
+			continue
+		}
+		if isVideoFilename(f.Name) && haveVideos {
+			Log("[phantom] attach marker %q failed but a video is already being delivered this turn — treating as covered", f.Name)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept
+}
+
 // blankRunRe collapses three-or-more consecutive newlines (left over
 // after stripping markers) down to a paragraph break.
 var blankRunRe = regexp.MustCompile(`\n{3,}`)

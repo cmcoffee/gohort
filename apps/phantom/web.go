@@ -2467,6 +2467,16 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		// (file too large, missing, etc.) — the LLM may then transcode
 		// or rephrase instead of falsely claiming "I sent the file."
 		reply, attachFailures = applyAttachMarkers(sess, reply)
+		// Drop bogus failures: image tools (generate_image / find_image)
+		// auto-attach their output to the session, and the model often ALSO
+		// emits a redundant [ATTACH:] marker pointing at a stale or
+		// already-cleaned-up filename. That marker "fails" even though the
+		// picture is going out via the session — without this the user gets
+		// the image AND a contradictory "it didn't attach" apology below.
+		if len(attachFailures) > 0 {
+			attachFailures = dropCoveredAttachFailures(attachFailures,
+				len(filterNewImages(sess.Images)) > 0, len(filterNewVideos(sess.Videos)) > 0)
+		}
 		// Same-turn recovery: if an attachment STILL failed (after the
 		// freshest-image fallback in applyAttachMarkers), the draft reply may
 		// falsely claim "here you go" — and the user hasn't seen it yet.
