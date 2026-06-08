@@ -326,9 +326,14 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 	}
 	out := []apprRow{}
 	for _, a := range ListAuthorizations(RootDB, user) {
+		agent, action := a.Agent, a.Brief
+		if a.Action == "send_message" {
+			agent = a.Handle
+			action = "text: " + a.Text
+		}
 		out = append(out, apprRow{
-			Agent:     a.Agent,
-			Action:    a.Brief,
+			Agent:     agent,
+			Action:    action,
 			Requested: a.Requested.Local().Format("Jan 2 3:04 PM"),
 			ID:        a.ID,
 		})
@@ -349,10 +354,24 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "no such authorization", http.StatusNotFound)
 		return
 	}
+	DeleteAuthorization(RootDB, user, a.ID)
+	// send_message: deliver the queued text to the contact via the phantom
+	// bridge. ("Always allow" doesn't pre-authorize a contact — each outbound
+	// to a real person stays a deliberate approval.)
+	if a.Action == "send_message" {
+		if link, ok := ActivePhantomLink(); ok {
+			if err := link.SendToHandle(a.Owner, a.Handle, a.Text); err != nil {
+				Log("[operator.approval] send_message to %q failed: %v", a.Handle, err)
+			}
+		} else {
+			Log("[operator.approval] phantom bridge unavailable; dropped message to %q", a.Handle)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	if always {
 		SetDelegationPreAuthorized(RootDB, user, a.Agent, true)
 	}
-	DeleteAuthorization(RootDB, user, a.ID)
 	go RunDelegation(context.Background(), RootDB, a.Owner, a.Agent, a.Brief)
 	w.WriteHeader(http.StatusNoContent)
 }

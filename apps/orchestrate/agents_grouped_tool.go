@@ -68,7 +68,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		}
 		params["message"] = ToolParam{
 			Type:        "string",
-			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly — the sub-agent has its own persona and will frame the response.",
+			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base across calls, but it does NOT see your prior dispatches this session, so include any context it needs in the brief.",
 		}
 		// CapNetwork is tagged here even though the bare tool itself
 		// doesn't make HTTP calls: the `run` action dispatches into a
@@ -394,12 +394,14 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if t.session != nil {
 		parentSessID = t.session.ID
 	}
-	// Deterministic per-(parent, target) sub-session ID so repeat
-	// dispatches to the same target re-thread prior messages (V2
-	// continuity below). Orchestrate does NOT register this in the
-	// SubSession lifecycle index — that index drives async promotion,
-	// which orchestrate doesn't do (dispatch is sync). Registering
-	// here would just leak idle records nobody reads or retires.
+	// Deterministic per-(parent, target) sub-session ID, used only to scope
+	// the sub-agent's workspace + session temp tools. NOTE: dispatch is
+	// conversationally STATELESS (see the stateless contract below) — prior
+	// messages are NOT loaded and the exchange is NOT saved, so this id is not
+	// a continuity ledger. The target's own facts/knowledge/persona DO load,
+	// so the sub-agent isn't a blank slate; only this conversation isn't shared.
+	// Not registered in the SubSession lifecycle index — that drives async
+	// promotion, which orchestrate doesn't do (dispatch is sync).
 	subSessID := "dispatch:" + parentSessID + ":" + target.ID
 	subSess := &ToolSession{
 		LLM:            t.app.LLM,

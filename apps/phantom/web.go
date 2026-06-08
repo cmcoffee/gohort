@@ -19,6 +19,11 @@ import (
 func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	migrateFromRelay(T.DB)
 
+	// Expose this bridge to the Operator (and any app) via the core
+	// PhantomLink seam: read conversations + send messages, gated to the
+	// device owner. See operator_link.go.
+	T.registerOperatorLink()
+
 	// Agent endpoints authenticate with X-API-Key, not a session cookie.
 	// Register them as public so AuthMiddleware doesn't redirect to /login.
 	RegisterPublicPath(prefix + "/api/hook")

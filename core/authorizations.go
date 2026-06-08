@@ -23,12 +23,18 @@ const (
 	delegationPreauthTable = "delegation_preauth"        // <owner>:<agent> -> bool
 )
 
-// Authorization is a pending delegation awaiting the user's approval.
+// Authorization is a pending Operator action awaiting the user's approval.
+// Action selects what approval runs:
+//   - "" / "delegate": delegate Brief to Agent (the default).
+//   - "send_message":  text Handle the contents of Text via the phantom bridge.
 type Authorization struct {
 	ID        string    `json:"id"`
 	Owner     string    `json:"owner"`
-	Agent     string    `json:"agent"` // target agent name/id
-	Brief     string    `json:"brief"` // what the delegate should do
+	Action    string    `json:"action,omitempty"`
+	Agent     string    `json:"agent"`            // delegate: target agent name/id
+	Brief     string    `json:"brief"`            // delegate: what the delegate should do
+	Handle    string    `json:"handle,omitempty"` // send_message: recipient handle
+	Text      string    `json:"text,omitempty"`   // send_message: message body
 	Requested time.Time `json:"requested"`
 }
 

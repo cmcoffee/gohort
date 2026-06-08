@@ -351,6 +351,128 @@ func operatorManagementTools(sess *ToolSession) []AgentToolDef {
 		},
 		{
 			Tool: Tool{
+				Name:        "list_phantom_chats",
+				Description: "List the user's phantom (iMessage) conversations — contact/handle and chat id — so you can read or message one. Read-only.",
+				Parameters:  map[string]ToolParam{"limit": {Type: "number", Description: "Max conversations (default 20)."}},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				link, ok := ActivePhantomLink()
+				if !ok {
+					return "", fmt.Errorf("the phantom bridge is not available")
+				}
+				limit := oArgInt(args, "limit")
+				if limit <= 0 {
+					limit = 20
+				}
+				chats, err := link.ListChats(owner, limit)
+				if err != nil {
+					return "", err
+				}
+				if len(chats) == 0 {
+					return "No phantom conversations found.", nil
+				}
+				var b strings.Builder
+				for _, c := range chats {
+					name := c.DisplayName
+					if name == "" {
+						name = c.Handle
+					}
+					fmt.Fprintf(&b, "- %s (%s) [chat_id: %s]", name, c.Handle, c.ChatID)
+					if !c.LastAt.IsZero() {
+						fmt.Fprintf(&b, " last %s", c.LastAt.Local().Format("Jan 2 3:04 PM"))
+					}
+					b.WriteString("\n")
+				}
+				return strings.TrimSpace(b.String()), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "read_phantom_chat",
+				Description: "Read recent messages from one phantom (iMessage) conversation. Use a chat_id from list_phantom_chats. Read-only.",
+				Parameters: map[string]ToolParam{
+					"chat_id": {Type: "string", Description: "The conversation's chat id."},
+					"limit":   {Type: "number", Description: "How many recent messages (default 20)."},
+				},
+				Required: []string{"chat_id"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				link, ok := ActivePhantomLink()
+				if !ok {
+					return "", fmt.Errorf("the phantom bridge is not available")
+				}
+				chatID := strings.TrimSpace(oArgStr(args, "chat_id"))
+				if chatID == "" {
+					return "", fmt.Errorf("chat_id is required")
+				}
+				msgs, err := link.ReadChat(owner, chatID, oArgInt(args, "limit"))
+				if err != nil {
+					return "", err
+				}
+				if len(msgs) == 0 {
+					return "No messages in that conversation (or it isn't yours).", nil
+				}
+				var b strings.Builder
+				for _, m := range msgs {
+					who := "them"
+					if m.FromMe {
+						who = "me"
+					}
+					fmt.Fprintf(&b, "[%s] %s: %s\n", m.At.Local().Format("Jan 2 3:04 PM"), who, m.Text)
+				}
+				return strings.TrimSpace(b.String()), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "notify_me",
+				Description: "Send a text to the USER'S OWN phone via phantom (a notification to yourself / the owner). No approval needed — it only goes to the owner. Use this to push an alert or a monitor result to the user's phone.",
+				Parameters:  map[string]ToolParam{"text": {Type: "string", Description: "The message to send to the owner."}},
+				Required:    []string{"text"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				link, ok := ActivePhantomLink()
+				if !ok {
+					return "", fmt.Errorf("the phantom bridge is not available")
+				}
+				text := strings.TrimSpace(oArgStr(args, "text"))
+				if text == "" {
+					return "", fmt.Errorf("text is required")
+				}
+				self, ok := link.OwnerHandle(owner)
+				if !ok {
+					return "", fmt.Errorf("no owner phone configured in phantom (set Owner phone in phantom settings)")
+				}
+				if err := link.SendToHandle(owner, self, text); err != nil {
+					return "", err
+				}
+				return "Sent to your phone.", nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "message_contact",
+				Description: "Send an iMessage to a CONTACT (someone other than the owner). This contacts a real person, so it ALWAYS queues for the user's approval in the Authorizations pane — it does not send immediately. Identify the recipient by handle (phone/email); use list_phantom_chats to find one.",
+				Parameters: map[string]ToolParam{
+					"handle": {Type: "string", Description: "Recipient phone/email handle."},
+					"text":   {Type: "string", Description: "The message to send."},
+				},
+				Required: []string{"handle", "text"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				handle := strings.TrimSpace(oArgStr(args, "handle"))
+				text := strings.TrimSpace(oArgStr(args, "text"))
+				if handle == "" || text == "" {
+					return "", fmt.Errorf("handle and text are required")
+				}
+				a := SaveAuthorization(RootDB, Authorization{
+					Owner: owner, Action: "send_message", Handle: handle, Text: text,
+				})
+				return fmt.Sprintf("Queued a message to %q for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", handle, a.ID), nil
+			},
+		},
+		{
+			Tool: Tool{
 				Name:        "list_event_monitors",
 				Description: "List the user's event monitors (webhook + poll) with their kind, schedule, paused state, and when each last fired.",
 			},
