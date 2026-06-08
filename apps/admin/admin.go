@@ -280,6 +280,14 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		a.handleStatus(w, r)
 	})
 
+	// Vector Index snapshot — backs the admin DisplayPanel (page.go).
+	sub.HandleFunc("/api/vector-stats", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleVectorStats(w, r)
+	})
+
 	// API: settings (signup toggle, etc.).
 	sub.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -2808,6 +2816,57 @@ func (a *AdminApp) handleUserDataAction(w http.ResponseWriter, r *http.Request, 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleVectorStats returns a snapshot of the semantic-search index for the
+// admin Vector Index panel: total chunks, how many carry an embedding, how
+// many failed to embed, and a per-source breakdown.
+func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
+	db := VectorDB
+	if db == nil {
+		db = RootDB
+	}
+	var total, embedded, empty int
+	bySource := map[string]int{}
+	if db != nil {
+		for _, k := range db.Keys(EmbeddedChunks) {
+			var c EmbeddedChunk
+			if !db.Get(EmbeddedChunks, k, &c) {
+				continue
+			}
+			total++
+			if len(c.Vector) > 0 {
+				embedded++
+			} else {
+				empty++
+			}
+			src := c.Source
+			if src == "" {
+				src = "(unspecified)"
+			}
+			bySource[src]++
+		}
+	}
+	srcs := make([]string, 0, len(bySource))
+	for s := range bySource {
+		srcs = append(srcs, s)
+	}
+	sort.Strings(srcs)
+	var b strings.Builder
+	for _, s := range srcs {
+		fmt.Fprintf(&b, "%s: %d\n", s, bySource[s])
+	}
+	byText := strings.TrimSpace(b.String())
+	if byText == "" {
+		byText = "(no chunks yet)"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"total":          total,
+		"embedded":       embedded,
+		"empty":          empty,
+		"by_source_text": byText,
+	})
+}
+
 func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {
 	var allow_signup bool
 	a.db.Get(WebTable, "allow_signup", &allow_signup)
@@ -3268,4 +3327,3 @@ func truncStr(s string, n int) string {
 	}
 	return string(r[:n]) + "…"
 }
-
