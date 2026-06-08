@@ -108,16 +108,16 @@ func (T *OrchestrateApp) SaveAgentForUser(user string, rec AgentRecord) (string,
 // phantom-dispatched compliance-locked agent reached the internet
 // freely. Three things happen here when ForcePrivate is on:
 //
-//   1. ctx gets a blocked NetworkConnector attached so any callee
-//      that gates on NetworkAllowedFromContext (sandbox shell hook,
-//      direct HTTP helpers) sees the block.
-//   2. subSess.Network points at the same connector so tools that
-//      gate on ToolSession.NetworkAllowed() (web_search, fetch_url,
-//      browse_page) refuse the call up front.
-//   3. CapNetwork-tagged AgentToolDefs are removed from the catalog
-//      so the LLM never sees web_search / fetch_url / browse_page /
-//      etc. in the first place — the cleanest signal that this turn
-//      runs offline.
+//  1. ctx gets a blocked NetworkConnector attached so any callee
+//     that gates on NetworkAllowedFromContext (sandbox shell hook,
+//     direct HTTP helpers) sees the block.
+//  2. subSess.Network points at the same connector so tools that
+//     gate on ToolSession.NetworkAllowed() (web_search, fetch_url,
+//     browse_page) refuse the call up front.
+//  3. CapNetwork-tagged AgentToolDefs are removed from the catalog
+//     so the LLM never sees web_search / fetch_url / browse_page /
+//     etc. in the first place — the cleanest signal that this turn
+//     runs offline.
 //
 // No-op when ForcePrivate is false. Returns ctx + the (possibly
 // filtered) tool slice so the caller can replace its local references.
@@ -257,6 +257,15 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 }
 
 func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUser, agentKey, message string) (string, error) {
+	// Dispatch sub-agents auto-approve tool calls — a parent agent (with a
+	// human behind it) initiated the dispatch. Standing/autonomous runs must
+	// NOT auto-approve; they call runAgentSyncConfirm with a deny-by-default
+	// confirm so high-consequence tools route through approval instead.
+	return T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
+		func(string, string) bool { return true })
+}
+
+func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool) (string, error) {
 	if T == nil || T.LLM == nil {
 		return "", errors.New("orchestrate runtime not initialized")
 	}
@@ -317,6 +326,15 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 	// seed ID — a non-Builder target never receives the appendage.
 	if isBuilderAgent(target.ID) {
 		tools = append(tools, builderAuthoringTools(subSess)...)
+	}
+	// Orchestrator (Operator) targets get their exclusive fleet-management +
+	// delegation + event-monitor catalog here too, so a dispatched/woken
+	// Operator behaves the same as on its own chat surface. Mirrors the
+	// runner.go catalog hook. Drop the generic interval scheduler (it
+	// schedules through the fleet instead).
+	if target.Mode == "orchestrator" {
+		tools = append(tools, operatorManagementTools(subSess)...)
+		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Phantom dispatches: pin the local target's posture flags AND
 	// skip the facts-load so prependAgentContext can't inject any
@@ -385,7 +403,7 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 		MaxRounds:    resolveMaxWorkerRounds(target),
 		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		OnStep:       func(info StepInfo) { telem.record(info) },
-		Confirm:      func(name, args string) bool { return true },
+		Confirm:      confirm,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),
@@ -497,6 +515,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	}
 	if isBuilderAgent(target.ID) {
 		tools = append(tools, builderAuthoringTools(subSess)...)
+	}
+	// Orchestrator (Operator) targets get their fleet-management + delegation +
+	// event-monitor catalog here too — this is the WAKE path (event monitors
+	// run the Operator on operator-thread through RunAgentSyncContinuing), so
+	// without it a woken Operator would have no delegate / monitor tools.
+	if target.Mode == "orchestrator" {
+		tools = append(tools, operatorManagementTools(subSess)...)
+		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Phantom dispatches: force the sub-agent posture (no memory layer,
 	// no facts layer) on the LOCAL target so prependAgentContext below

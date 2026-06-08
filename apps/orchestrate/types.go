@@ -32,6 +32,15 @@ type AgentRecord struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 
+	// Mode selects how the agent is presented. Empty / "chat" (default) =
+	// session-based chat — the standard Agency surface with a session list.
+	// "orchestrator" = a single ongoing-thread console (the Operator): one
+	// continuous conversation plus the controller nav (Chat / Enabled agents
+	// / Authorizations). A general per-agent property; any controller-style
+	// agent can opt in. Differentiates an ongoing-conversation orchestrator
+	// from the session-based chat agents.
+	Mode string `json:"mode,omitempty"`
+
 	// Triggers are substring/glob patterns (same shape as a skill's
 	// Triggers) matched against the user message each turn. When one
 	// matches, the framework injects a per-turn HINT next to the message —

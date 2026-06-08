@@ -41,9 +41,12 @@ fi
 #   chat — ChatPanel primitive, .ui-chat CSS namespace, chatMode field
 #   dual — Codewriter dual-pane / dual-mode chat
 #   admin — generic admin pages, AdminAgent registry
+#   agents — the core domain primitive: nearly every panel, field, and
+#            comment in core/ui refers to "agents" generically; collides
+#            with the apps/agents app but is not app-specific behavior.
 # If you add a new app whose name is a common UI noun, add it here
 # rather than weakening the hook.
-excluded="chat dual admin"
+excluded="chat dual admin agents"
 candidate_dirs=$(
   {
     ls -d apps/*/ 2>/dev/null || true

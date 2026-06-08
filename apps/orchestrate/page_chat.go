@@ -33,11 +33,16 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	}
 	agents := listAgents(udb, user)
 	builtInOrder := map[string]int{
-		"seed-builder":  0,
-		"seed-chat":     1,
-		"seed-research": 2,
-		"seed-kb":       3,
+		"seed-operator": 0,
+		"seed-builder":  1,
+		"seed-chat":     2,
+		"seed-research": 3,
+		"seed-kb":       4,
 	}
+	// orchestratorAgents collects agent IDs whose Mode is "orchestrator" so
+	// the client can swap the session list for the orchestrator nav when one
+	// is selected (operator-only; normal agents keep their sessions).
+	orchestratorAgents := map[string]bool{}
 	type pickerRow struct {
 		ID    string
 		Name  string
@@ -53,6 +58,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	subAgentsByParent := map[string][]map[string]string{}
 	var builtIns, customs []pickerRow
 	for _, a := range agents {
+		if a.Mode == "orchestrator" {
+			orchestratorAgents[a.ID] = true
+		}
 		// Sub-agents (OwnedBy set → Hidden=true via enforceSubAgentPosture)
 		// stay out of the main picker — they appear in the secondary
 		// picker keyed by parent ID.
@@ -119,9 +127,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// (no sub-agents in the fleet) is fine — the JS hides the picker
 	// when the selected parent has no children.
 	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
+	orchAgentsJSON, _ := json.Marshal(orchestratorAgents)
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
+		";\nwindow.ORCH_ORCHESTRATOR_AGENTS = " + string(orchAgentsJSON) +
 		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	page := ui.Page{
@@ -138,12 +148,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// substitutes it from the ExtraFields select value
 					// every fetch. Sessions live in their agent's bucket
 					// so switching the picker swaps the rail contents.
-					ListURL:       "api/sessions?agent_id={agent_id}",
-					LoadURL:       "api/sessions/{id}?agent_id={agent_id}",
-					DeleteURL:     "api/sessions/{id}?agent_id={agent_id}",
-					TruncateURL:   "api/sessions/{id}?agent_id={agent_id}",
-					ListTitle:     "Sessions",
-					NewLabel:      "New session",
+					ListURL:     "api/sessions?agent_id={agent_id}",
+					LoadURL:     "api/sessions/{id}?agent_id={agent_id}",
+					DeleteURL:   "api/sessions/{id}?agent_id={agent_id}",
+					TruncateURL: "api/sessions/{id}?agent_id={agent_id}",
+					ListTitle:   "Sessions",
+					NewLabel:    "New session",
 					// Same chat-app layout the public /agents/ surface
 					// uses: sessions rail extends full-height on the
 					// left, topbar lives inside the chat pane (not
@@ -155,24 +165,52 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// the active agent, so the picker reads naturally
 					// as a rail header rather than a topbar control.
 					ExtraFieldsInSidebar: true,
-					SendURL:       "api/send",
-					CancelURL:     "api/cancel",
-					ConfirmURL:    "api/confirm",
-					InjectURL:     "api/inject",
+					SendURL:              "api/send",
+					CancelURL:            "api/cancel",
+					ConfirmURL:           "api/confirm",
+					InjectURL:            "api/inject",
 					// Enables the run-resume probe in the chat panel:
 					// on session-load the runtime asks
 					// api/runs/active?session_id=… and, if there's an
 					// in-flight run, opens api/runs/<id>/stream to pick
 					// up live where the prior client left off. See
 					// runs.go / runs_http.go for the server contract.
-					RunsURLBase: "api/runs/",
+					RunsURLBase:   "api/runs/",
 					DeepLinkParam: "session",
 					LockActivity:  true,
 					EmptyText:     "Pick an agent from the rail, then ask anything. The orchestrator plans the steps, the worker runs each one (tool calls appear inline), then the orchestrator replies.",
 					Placeholder:   "What do you want to do?",
-					Markdown:      true,
-					BulkSelect:    true,
-					Attachments:   true,
+					// Orchestrator-mode agents (the Operator) swap the session
+					// list for this nav; normal agents ignore it entirely.
+					OrchestratorNav: []ui.OrchestratorNavItem{
+						{Label: "Chat"},
+						{Label: "History", Source: "api/console/history", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Delete", Method: "DELETE", URL: "api/console/history", Variant: "danger", Confirm: "Delete this turn from the conversation?"},
+						}},
+						{Label: "Enabled agents", Source: "api/console/agents", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause"},
+							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
+						}},
+						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause"},
+							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
+						}},
+						{Label: "Authorizations", Source: "api/console/approvals", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", Confirm: "Approve and run this delegation?"},
+							{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", Confirm: "Approve, run, and always allow delegations to this agent?"},
+							{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger"},
+						}},
+					},
+					// core/ui is domain-agnostic: it reads the opt-in agent set
+					// from the named window-global this app sets, and pins those
+					// agents to one ongoing thread.
+					AltNavFlag:          "ORCH_ORCHESTRATOR_AGENTS",
+					AltNavPinnedSession: operatorPinnedSession,
+					Markdown:            true,
+					BulkSelect:          true,
+					Attachments:         true,
 					ExtraFields: []ui.ChatField{
 						{
 							Name:        "agent_id",

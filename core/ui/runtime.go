@@ -1143,6 +1143,12 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-chat.side-collapsed .ui-chat-side { display: none; }
 .ui-chat.side-collapsed .ui-tw-expand { display: block; }
 .ui-chat.side-collapsed .ui-chat-main { margin-left: 32px; }
+/* Single mode — one ongoing thread, no sidebar at all. Collapse to one
+ * column and fill the host container (e.g. a nav_shell content pane)
+ * rather than forcing viewport height, so the chat doesn't sit in the
+ * empty first grid column ("only on the left"). */
+.ui-chat.ui-chat-single { grid-template-columns: 1fr; height: 100%; min-height: 0; }
+.ui-chat.ui-chat-single .ui-chat-side { display: none; }
 .ui-chat-side {
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
   display: flex; flex-direction: column; overflow: hidden;
@@ -6940,6 +6946,98 @@ const runtimeJS = `
     return wrap;
   };
 
+  // nav_shell — app-shell layout: left rail of nav buttons, a content pane
+  // that swaps to the selected item's body, and an optional header pinned at
+  // the top of the content pane (always visible — e.g. a live activity
+  // strip). Each item body is a plain component, mounted via mountComponent.
+  // The first item is active by default, so the heaviest body (a ChatPanel)
+  // should be first to avoid a hidden initial mount.
+  components.nav_shell = function(cfg, ctx) {
+    // Fill the viewport below the page header so the content pane reaches
+    // the window bottom. min-height keeps it usable when dvh is unreliable.
+    var outer = el('div', {class: 'ui-navshell', style: 'display:flex;flex-direction:column;height:calc(100dvh - 70px);min-height:420px;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;overflow:hidden'});
+
+    // Optional top control bar — a horizontal row of controls/dials.
+    if (cfg.toolbar && cfg.toolbar.length) {
+      var bar = el('div', {style: 'display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap;padding:0.4rem 0.6rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06))'});
+      cfg.toolbar.forEach(function(c) { mountComponent(c, bar, ctx); });
+      outer.appendChild(bar);
+    }
+
+    var body = el('div', {style: 'display:flex;flex:1;min-height:0'});
+    var rail = el('div', {style: 'display:flex;flex-direction:column;gap:0.25rem;padding:0.5rem;min-width:190px;border-right:1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06));overflow:auto'});
+    var right = el('div', {style: 'flex:1;display:flex;flex-direction:column;min-width:0'});
+
+    // Pinned activity strip — always visible regardless of selection.
+    if (cfg.header) {
+      var hdr = el('div', {style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3));padding:0.4rem 0.6rem;background:var(--bg-1, rgba(127,127,127,0.06));max-height:34vh;overflow:auto'});
+      mountComponent(cfg.header, hdr, ctx);
+      right.appendChild(hdr);
+    }
+
+    var content = el('div', {style: 'flex:1;padding:0.75rem;overflow:auto;min-width:0'});
+    right.appendChild(content);
+
+    var entries = [];
+    function activate(idx) {
+      entries.forEach(function(e, i) {
+        var on = (i === idx);
+        e.panel.style.display = on ? '' : 'none';
+        e.btn.style.background = on ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
+        e.btn.style.fontWeight = on ? '600' : '400';
+      });
+    }
+
+    (cfg.items || []).forEach(function(item, i) {
+      var panel = el('div', {style: 'display:none;height:100%'});
+      mountComponent(item.body, panel, ctx);
+      content.appendChild(panel);
+
+      var btn = el('button', {
+        type: 'button',
+        style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+        onclick: function() { activate(i); },
+      }, [item.label || ('Item ' + (i + 1))]);
+      rail.appendChild(btn);
+
+      entries.push({btn: btn, panel: panel});
+    });
+
+    body.appendChild(rail);
+    body.appendChild(right);
+    outer.appendChild(body);
+    if (entries.length) activate(0);
+    return outer;
+  };
+
+  // toolbar — a standalone horizontal row of action buttons (ToolbarAction
+  // shape). Lets any page or nav_shell host a reusable control bar; client
+  // actions dispatch via window.UIClientActions (the same registry the panel
+  // toolbars use), so a specialized seed agent's config controls work here.
+  components.toolbar = function(cfg) {
+    var bar = el('div', {style: 'display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap'});
+    (cfg.actions || []).forEach(function(a) {
+      var cls = 'ui-row-btn';
+      if (a.variant) cls += ' ' + a.variant;
+      var btn = el('button', {type: 'button', class: cls, title: a.title || '', onclick: async function() {
+        if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+        var method = a.method || 'POST';
+        var url = a.url || '';
+        if (method === 'client') {
+          var fn = window.UIClientActions && window.UIClientActions[url];
+          if (typeof fn === 'function') fn({button: btn, action: a});
+          else console.error('toolbar: no handler for client action ' + url);
+          return;
+        }
+        if (method.toUpperCase() === 'GET') { window.location.href = url; return; }
+        fetch(url, {method: method, headers: {'Content-Type': 'application/json'}, body: '{}'})
+          .catch(function(err){ console.error('toolbar action failed: ' + err.message); });
+      }}, [a.label || '?']);
+      bar.appendChild(btn);
+    });
+    return bar;
+  };
+
   // ModalButton — a button that, on click, pops a <dialog> hosting an
   // inner component (typically a FormPanel). Framework owns the dialog
   // chrome (header, subtitle, scrollable body, Close, backdrop,
@@ -7058,6 +7156,11 @@ const runtimeJS = `
     var titleF = cfg.session_title_field  || 'Title';
     var lastF  = cfg.session_last_at_field || 'LastAt';
     var msgF   = cfg.session_messages_field || 'Messages';
+    // single = one pinned, ongoing conversation: no sessions sidebar,
+    // no New / picker / delete. The init path opens the first (and only)
+    // session the list returns. Generic — any "one room" surface (an
+    // Operator console, an always-on assistant) uses it.
+    var single = !!cfg.single;
 
     var wrap     = el('div', {class: 'ui-chat'});
     var side     = el('div', {class: 'ui-chat-side'});
@@ -7121,7 +7224,7 @@ const runtimeJS = `
     });
     var mobileTitle    = drawer.mobileTitle;
     var drawerBackdrop = drawer.backdrop;
-    main.appendChild(drawer.mobileHdr);
+    if (!single) main.appendChild(drawer.mobileHdr);
 
     // Mode-toggles row above the thread (Private, Explorer, etc.).
     // Each pill's state is server-persisted
@@ -7314,10 +7417,11 @@ const runtimeJS = `
       onclick: function(){ toggleCollapse(); },
     }, ['›']);
 
-    wrap.appendChild(side);
+    if (!single) wrap.appendChild(side);
     wrap.appendChild(main);
-    wrap.appendChild(expandTab);
-    wrap.appendChild(drawerBackdrop);
+    if (!single) wrap.appendChild(expandTab);
+    if (!single) wrap.appendChild(drawerBackdrop);
+    if (single) wrap.classList.add('ui-chat-single');
 
     // Apply persisted collapse state after the wrap is built.
     if (sideCollapsed) {
@@ -8312,7 +8416,16 @@ const runtimeJS = `
     });
 
     buildModes();
-    loadSessions();
+    if (single) {
+      // One pinned thread: open the first (and only) session the list
+      // returns. No New / picker / delete chrome to load.
+      fetchJSON(cfg.sessions_list_url).then(function(list) {
+        var first = (list && list.length) ? list[0] : null;
+        openSession(first ? first[idF] : null);
+      }).catch(function(){ openSession(null); });
+    } else {
+      loadSessions();
+    }
 
     // When the host page swaps the active agent (Agency dropdown,
     // or any surface that updates window.GOHORT_AGENT_ID + dispatches
@@ -8341,6 +8454,16 @@ const runtimeJS = `
     // The left rail is opt-in. Apps that don't supply list/load/
     // delete URLs get a single-column panel (no sidebar).
     var hasList = !!(cfg.list_url && cfg.load_url && cfg.delete_url);
+
+    // Alternate-nav mode (domain-agnostic): for designated agents the host
+    // app can replace the session list with a fixed nav and pin the panel to
+    // ONE ongoing thread. The app names a JS global (alt_nav_flag) whose keys
+    // are the agent ids that opt in, and the pinned session id
+    // (alt_nav_pinned_session). core/ui hardcodes neither — both come from cfg.
+    var altNavFlag = cfg.alt_nav_flag || '';
+    var altPinnedSession = cfg.alt_nav_pinned_session || '';
+    function altNavAgents() { return (altNavFlag && window[altNavFlag]) || null; }
+    function isAltNavAgent(agentId) { var m = altNavAgents(); return !!(m && agentId && m[agentId]); }
 
     var activeSessionId = '';
     // activeRunId — server-issued run identifier for the current
@@ -8383,7 +8506,7 @@ const runtimeJS = `
     var wrap = el('div', {class: 'ui-agent' + (hasList ? '' : ' ui-agent-no-list')});
 
     // --- Optional list sidebar -------------------------------------------
-    var side = null, sideList = null, sideSearch = null, drawer = null;
+    var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null;
     function closeDrawer() {
       if (!side) return;
       side.classList.remove('open');
@@ -8436,6 +8559,106 @@ const runtimeJS = `
       side.appendChild(sideSearch);
       side.appendChild(sideList);
 
+      // --- Orchestrator sidebar nav (operator-mode only) -----------------
+      // For agents the host app opts in (via the alt_nav_flag global), swap
+      // the session list for cfg.orchestrator_nav. Strictly gated — every
+      // other agent is untouched and keeps its session list. Renders the nav
+      // + hides sessions; non-chat items overlay the main pane with a table.
+      sideHdrEl = sideHdrBuilt.elt;
+      var orchBtns = [];
+      function renderOrchTable(rows, item, reload) {
+        orchView.innerHTML = '';
+        if (!rows || !rows.length) {
+          orchView.appendChild(el('div', {style: 'color:var(--text-mute, #999);padding:0.5rem'}, ['Nothing here yet.']));
+          return;
+        }
+        // Columns = the row's keys minus any "_"-prefixed (hidden, e.g. _id).
+        var cols = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
+        var actions = (item && item.row_actions) || [];
+        var tbl = el('table', {style: 'width:100%;border-collapse:collapse;font-size:0.9rem'});
+        var hr = el('tr');
+        cols.forEach(function(c) {
+          hr.appendChild(el('th', {style: 'text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3));color:var(--text-mute, #999)'}, [c]));
+        });
+        if (actions.length) hr.appendChild(el('th', {style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'}, ['']));
+        tbl.appendChild(hr);
+        rows.forEach(function(row) {
+          var tr = el('tr');
+          cols.forEach(function(c) {
+            var v = row[c];
+            tr.appendChild(el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));vertical-align:top'}, [v == null ? '' : String(v)]));
+          });
+          if (actions.length) {
+            var cell = el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));white-space:nowrap'});
+            actions.forEach(function(a) {
+              var cls = 'ui-row-btn compact';
+              if (a.variant) cls += ' ' + a.variant;
+              var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function() {
+                if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                fetch(a.url + '?id=' + encodeURIComponent(row._id), {method: a.method || 'POST'})
+                  .then(function() { if (reload) reload(); })
+                  .catch(function(err) { console.error('row action failed: ' + err.message); });
+              }}, [a.label]);
+              cell.appendChild(btn);
+            });
+            tr.appendChild(cell);
+          }
+          tbl.appendChild(tr);
+        });
+        orchView.appendChild(tbl);
+      }
+      function selectOrchNav(idx) {
+        orchBtns.forEach(function(b, i) {
+          b.style.background = (i === idx) ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
+          b.style.fontWeight = (i === idx) ? '600' : '400';
+        });
+        var item = (cfg.orchestrator_nav || [])[idx] || {};
+        if (!orchView) return;
+        if (item.source) {
+          // A data view (History / Enabled agents / Authorizations): overlay
+          // the chat pane with the fetched table.
+          orchView.style.display = '';
+          orchView.textContent = 'Loading…';
+          var reload = function() { selectOrchNav(idx); };
+          fetch(item.source).then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) { renderOrchTable(rows, item, reload); })
+            .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
+        } else {
+          // The Chat view: hide the overlay so the conversation shows.
+          orchView.style.display = 'none';
+        }
+      }
+      navEl = el('div', {class: 'ui-orch-nav', style: 'display:none;flex-direction:column;gap:0.25rem;padding:0.5rem'});
+      (cfg.orchestrator_nav || []).forEach(function(item, i) {
+        var b = el('button', {type: 'button', class: 'ui-orch-nav-btn',
+          style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+          onclick: function() { selectOrchNav(i); }}, [item.label || ('View ' + (i + 1))]);
+        navEl.appendChild(b);
+        orchBtns.push(b);
+      });
+      side.appendChild(navEl);
+      function applyOrchMode(agentId) {
+        var isOrch = isAltNavAgent(agentId);
+        if (sideList) sideList.style.display = isOrch ? 'none' : '';
+        if (sideSearch) sideSearch.style.display = isOrch ? 'none' : '';
+        if (sideHdrEl) sideHdrEl.style.display = isOrch ? 'none' : '';
+        navEl.style.display = isOrch ? '' : 'none';
+        if (!isOrch && orchView) orchView.style.display = 'none';
+        if (isOrch && orchBtns.length) selectOrchNav(0);
+        // Single ongoing thread: resume one pinned session so the
+        // conversation (and its server-side compaction) persists across
+        // visits, instead of starting a fresh session each time.
+        if (isOrch && altPinnedSession && currentSessionId !== altPinnedSession) {
+          openSession(altPinnedSession);
+        }
+      }
+      window.addEventListener('gohort-agent-id-changed', function(e) {
+        applyOrchMode(e && e.detail && e.detail.agent_id);
+      });
+      // web_assets dispatches the change event after picker init; apply now
+      // too in case the default-selected agent is already an orchestrator.
+      setTimeout(function() { applyOrchMode(window.GOHORT_AGENT_ID || ''); }, 0);
+
       // Mobile top bar carries the hamburger + active session title +
       // a "+ N" new-session button. The rail header also has a "+ New"
       // (visible when the drawer is open), but the always-visible
@@ -8457,6 +8680,12 @@ const runtimeJS = `
     var gridRow = el('div', {class: 'ui-agent-grid'});
 
     var main = el('div', {class: 'ui-agent-main'});
+    main.style.position = 'relative';
+    // Orchestrator table view — overlays the chat pane when a non-chat nav
+    // item (Enabled agents / Authorizations) is selected; hidden for the Chat
+    // view and for every normal agent.
+    orchView = el('div', {class: 'ui-orch-view', style: 'display:none;position:absolute;inset:0;overflow:auto;background:var(--bg-1, #1b1b2b);padding:0.85rem;z-index:5'});
+    main.appendChild(orchView);
     if (drawer) main.appendChild(drawer.mobileHdr);
 
     // Floating expand-tab shown when the left rail is collapsed on
@@ -11153,6 +11382,13 @@ const runtimeJS = `
     }
 
     function openSession(sid) {
+      // Alt-nav agents are a single pinned thread: force EVERY session
+      // open/switch/new to the fixed id, so no entry point (initial load,
+      // deep link, "+ New", loadSessions auto-open) can fork a fresh chat.
+      // Client mirror of the server-side pin in the app's send/load handlers.
+      if (altPinnedSession && isAltNavAgent(window.GOHORT_AGENT_ID)) {
+        sid = altPinnedSession;
+      }
       // Any session open / switch / new collapses the mobile drawer —
       // done at the top so it fires for EVERY entry point (row click,
       // rail-header "+ New", mobile-top-bar "+", deep link). No-op on

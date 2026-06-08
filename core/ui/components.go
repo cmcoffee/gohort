@@ -32,7 +32,7 @@ func (p PanicBar) MarshalJSON() ([]byte, error) {
 // the entire updated document back to Source — server is the source of
 // truth, the runtime just round-trips.
 type ToggleGroup struct {
-	Source  string   `json:"source"`           // GET + POST endpoint
+	Source  string   `json:"source"` // GET + POST endpoint
 	Toggles []Toggle `json:"toggles"`
 }
 
@@ -59,15 +59,15 @@ type Toggle struct {
 // full updated array back to PostTo on blur. Used by phantom's
 // per-conversation members editor for group chats.
 type MemberEditor struct {
-	Source        string `json:"source"`
-	PostTo        string `json:"post_to"`
-	Method        string `json:"method,omitempty"`         // default POST
-	Field         string `json:"field,omitempty"`          // default "members"
-	HandleField   string `json:"handle_field,omitempty"`   // default "handle"
-	NameField     string `json:"name_field,omitempty"`     // default "name"
-	AliasesField  string `json:"aliases_field,omitempty"`  // default "aliases"
+	Source            string `json:"source"`
+	PostTo            string `json:"post_to"`
+	Method            string `json:"method,omitempty"`              // default POST
+	Field             string `json:"field,omitempty"`               // default "members"
+	HandleField       string `json:"handle_field,omitempty"`        // default "handle"
+	NameField         string `json:"name_field,omitempty"`          // default "name"
+	AliasesField      string `json:"aliases_field,omitempty"`       // default "aliases"
 	AliasHandlesField string `json:"alias_handles_field,omitempty"` // optional sibling field on the parent record (e.g. "alias_handles") — comma-sep textbox
-	EmptyText     string `json:"empty_text,omitempty"`
+	EmptyText         string `json:"empty_text,omitempty"`
 }
 
 func (MemberEditor) componentType() string { return "member_editor" }
@@ -91,16 +91,16 @@ func (m MemberEditor) MarshalJSON() ([]byte, error) {
 // CreateURL  POST {name: "..."} → {ID, Name, Key, Created, ...}
 // DeleteURL  DELETE — id is appended to the URL
 type KeyManager struct {
-	ListURL     string `json:"list_url"`
-	CreateURL   string `json:"create_url"`
-	DeleteURL   string `json:"delete_url"`
-	NameField   string `json:"name_field,omitempty"`   // default "name"
-	IDField     string `json:"id_field,omitempty"`     // default "id"
-	SecretField string `json:"secret_field,omitempty"` // default "key"
-	CreatedField string `json:"created_field,omitempty"` // default "created"
+	ListURL       string `json:"list_url"`
+	CreateURL     string `json:"create_url"`
+	DeleteURL     string `json:"delete_url"`
+	NameField     string `json:"name_field,omitempty"`      // default "name"
+	IDField       string `json:"id_field,omitempty"`        // default "id"
+	SecretField   string `json:"secret_field,omitempty"`    // default "key"
+	CreatedField  string `json:"created_field,omitempty"`   // default "created"
 	LastSeenField string `json:"last_seen_field,omitempty"` // default "last_seen"
-	NewLabel    string `json:"new_label,omitempty"`    // default "+ New API key"
-	EmptyText   string `json:"empty_text,omitempty"`
+	NewLabel      string `json:"new_label,omitempty"`       // default "+ New API key"
+	EmptyText     string `json:"empty_text,omitempty"`
 	// SecretHint is the helper text shown next to the freshly-revealed
 	// secret. Use to remind the user that this is the only chance to
 	// copy it (per-app phrasing — "use in the macOS bridge config" /
@@ -122,21 +122,21 @@ func (k KeyManager) MarshalJSON() ([]byte, error) {
 // support inline actions (toggle, button, expand) and the table itself
 // supports auto-refresh and pull-to-refresh.
 type Table struct {
-	Source        string           `json:"source"`
-	RowKey        string           `json:"row_key"`           // primary-key field on each record
-	Columns       []Col            `json:"columns"`
-	RowActions    []RowAction      `json:"row_actions,omitempty"`
-	EmptyText     string           `json:"empty_text,omitempty"`
-	AutoRefreshMS int              `json:"auto_refresh_ms,omitempty"`
-	PullToRefresh bool             `json:"pull_to_refresh,omitempty"`
-	SortBy        string           `json:"sort_by,omitempty"`     // field to sort by (descending if SortDesc)
-	SortDesc      bool             `json:"sort_desc,omitempty"`
+	Source        string      `json:"source"`
+	RowKey        string      `json:"row_key"` // primary-key field on each record
+	Columns       []Col       `json:"columns"`
+	RowActions    []RowAction `json:"row_actions,omitempty"`
+	EmptyText     string      `json:"empty_text,omitempty"`
+	AutoRefreshMS int         `json:"auto_refresh_ms,omitempty"`
+	PullToRefresh bool        `json:"pull_to_refresh,omitempty"`
+	SortBy        string      `json:"sort_by,omitempty"` // field to sort by (descending if SortDesc)
+	SortDesc      bool        `json:"sort_desc,omitempty"`
 	// RecordsField extracts the rows from a specific key of the GET
 	// response. Use when one endpoint returns multiple lists in a
 	// shaped object (e.g. `{pending: [...], active: [...]}`) and you
 	// want a Table for each. Empty = auto-detect (top-level array,
 	// then `.conversations`, then first-key list).
-	RecordsField  string           `json:"records_field,omitempty"`
+	RecordsField string `json:"records_field,omitempty"`
 }
 
 // Refresh sets AutoRefreshMS from a time.Duration for ergonomic Go.
@@ -159,10 +159,10 @@ func (t Table) MarshalJSON() ([]byte, error) {
 // Type values:
 //   - ""        — plain text (default), formatted via Format
 //   - "badge"   — render as a colored badge. Uses Badges to map the
-//                 record's field value to {label, color}. Ideal for
-//                 boolean state indicators ("Open" / "Secured",
-//                 "Enabled" / "Disabled"). Color values: "success",
-//                 "warning", "danger", "mute".
+//     record's field value to {label, color}. Ideal for
+//     boolean state indicators ("Open" / "Secured",
+//     "Enabled" / "Disabled"). Color values: "success",
+//     "warning", "danger", "mute".
 type Col struct {
 	Field  string         `json:"field"`
 	Label  string         `json:"label,omitempty"`
@@ -284,11 +284,11 @@ type HistoryPanel struct {
 	Source       string `json:"source"`
 	Header       string `json:"header,omitempty"`
 	EmptyText    string `json:"empty_text,omitempty"`
-	MaxMessages  int    `json:"max_messages,omitempty"` // trim before render; 0 = unlimited
-	RoleField    string `json:"role_field,omitempty"`   // default "role"
-	TextField    string `json:"text_field,omitempty"`   // default "text"
-	WhoField     string `json:"who_field,omitempty"`    // default "display_name"
-	TimeField    string `json:"time_field,omitempty"`   // default "timestamp"
+	MaxMessages  int    `json:"max_messages,omitempty"`  // trim before render; 0 = unlimited
+	RoleField    string `json:"role_field,omitempty"`    // default "role"
+	TextField    string `json:"text_field,omitempty"`    // default "text"
+	WhoField     string `json:"who_field,omitempty"`     // default "display_name"
+	TimeField    string `json:"time_field,omitempty"`    // default "timestamp"
 	AssistantTag string `json:"assistant_tag,omitempty"` // role value that means "AI"; default "assistant"
 }
 
@@ -305,10 +305,10 @@ func (h HistoryPanel) MarshalJSON() ([]byte, error) {
 // is bound to a field on a parent record (used inside expand actions
 // for things like per-conversation tool selection).
 type ChipPicker struct {
-	OptionsSource string `json:"options_source"` // GET — array of options
-	RecordSource  string `json:"record_source"`  // GET — current record
-	Field         string `json:"field"`          // array field on record
-	PostTo        string `json:"post_to"`        // destination for updated record
+	OptionsSource string `json:"options_source"`   // GET — array of options
+	RecordSource  string `json:"record_source"`    // GET — current record
+	Field         string `json:"field"`            // array field on record
+	PostTo        string `json:"post_to"`          // destination for updated record
 	Method        string `json:"method,omitempty"` // default POST; use PATCH for partial-update endpoints
 	// NameField is the option key whose value gets STORED in the
 	// record's selection array (e.g. "/phantom" path string).
@@ -415,48 +415,48 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 //   - "number"   — numeric input with Min/Max bounds
 //   - "select"   — single-choice dropdown with Options
 //   - "checklist" — multi-select vertical checkbox list with Options;
-//                   saves as a JSON string array of checked Values.
-//                   Each option may carry a Help line that renders as
-//                   a small subtitle under its label. For "allowlist
-//                   N items from this fixed set" configs.
+//     saves as a JSON string array of checked Values.
+//     Each option may carry a Help line that renders as
+//     a small subtitle under its label. For "allowlist
+//     N items from this fixed set" configs.
 //   - "tel"      — phone number (better mobile keyboard)
 //   - "rules"    — line-separated list editor (one input per row,
-//                  saves as a newline-joined string)
+//     saves as a newline-joined string)
 //   - "tags"     — compact chip array editor (saves as a JSON
-//                  string array), suited for keyword-style fields
+//     string array), suited for keyword-style fields
 //   - "toggle"   — iOS-style switch bound to a boolean field
 //   - "password" — masked input (renders as <input type="password">).
-//                  Pair with a server convention where GET returns
-//                  the placeholder "(configured)" for an existing
-//                  secret and POST only updates when the field
-//                  differs from that placeholder; otherwise the user
-//                  re-saving the form would overwrite the stored
-//                  secret with the placeholder.
+//     Pair with a server convention where GET returns
+//     the placeholder "(configured)" for an existing
+//     secret and POST only updates when the field
+//     differs from that placeholder; otherwise the user
+//     re-saving the form would overwrite the stored
+//     secret with the placeholder.
 //   - "header"   — visual section divider; no input, no value binding.
-//                  Renders Label as a section title and Help as an
-//                  optional subtitle below it. Use to split a long
-//                  FormPanel into grouped chunks (Identity / Persona /
-//                  Memory / Privacy / etc.) without breaking the
-//                  single-save pattern. Field name is ignored.
+//     Renders Label as a section title and Help as an
+//     optional subtitle below it. Use to split a long
+//     FormPanel into grouped chunks (Identity / Persona /
+//     Memory / Privacy / etc.) without breaking the
+//     single-save pattern. Field name is ignored.
 //   - "hidden"   — contributes Default to the save payload but renders
-//                  nothing. Use for context-derived values the page
-//                  knows up front (e.g. "owned_by = <parent_id>" on a
-//                  new sub-agent form). Default is seeded into the
-//                  form state immediately so the first save POSTs it.
+//     nothing. Use for context-derived values the page
+//     knows up front (e.g. "owned_by = <parent_id>" on a
+//     new sub-agent form). Default is seeded into the
+//     form state immediately so the first save POSTs it.
 type FormField struct {
-	Field       string         `json:"field"`
-	Label       string         `json:"label,omitempty"`
-	Type        string         `json:"type,omitempty"`
-	Placeholder string         `json:"placeholder,omitempty"`
-	Help        string         `json:"help,omitempty"`
-	Rows        int            `json:"rows,omitempty"`
-	Min         int            `json:"min,omitempty"`
-	Max         int            `json:"max,omitempty"`
+	Field       string `json:"field"`
+	Label       string `json:"label,omitempty"`
+	Type        string `json:"type,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
+	Help        string `json:"help,omitempty"`
+	Rows        int    `json:"rows,omitempty"`
+	Min         int    `json:"min,omitempty"`
+	Max         int    `json:"max,omitempty"`
 	// Decimals enables float input on a "number" field. 0 = integer
 	// only (default). >0 = parseFloat with that many decimal places
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
-	Decimals    int            `json:"decimals,omitempty"`
-	Options     []SelectOption `json:"options,omitempty"`
+	Decimals int            `json:"decimals,omitempty"`
+	Options  []SelectOption `json:"options,omitempty"`
 	// ShowWhen names another field in the same FormPanel; this field
 	// is rendered (and saves are wired) only when that field's current
 	// value is truthy. Use to collapse irrelevant configuration when a
@@ -469,19 +469,19 @@ type FormField struct {
 	// preset value to the field. Designed for things like persona
 	// pickers where users want fast access to saved presets plus
 	// optional AI-assisted creation of new ones.
-	ChipsSource     string `json:"chips_source,omitempty"`     // GET → [{id, name, <value-field>, builtin?}]
+	ChipsSource     string `json:"chips_source,omitempty"`      // GET → [{id, name, <value-field>, builtin?}]
 	ChipsValueField string `json:"chips_value_field,omitempty"` // field on each chip whose value goes into the input (default "value")
 	// ChipsCreate enables "+ New" affordance. POSTed body =
 	// {name, <value-field>: "..."}. Server returns updated list.
-	ChipsCreateURL  string `json:"chips_create_url,omitempty"`
+	ChipsCreateURL string `json:"chips_create_url,omitempty"`
 	// ChipsDeleteURL deletes a custom chip. {id} substituted at click.
 	// Only fires for non-builtin chips (double-click to delete).
-	ChipsDeleteURL  string `json:"chips_delete_url,omitempty"`
+	ChipsDeleteURL string `json:"chips_delete_url,omitempty"`
 	// ChipsAssistURL takes a seed (POST {seed}) and returns plain
 	// text — used for the "AI Assist" button inside the create dialog.
-	ChipsAssistURL  string `json:"chips_assist_url,omitempty"`
+	ChipsAssistURL string `json:"chips_assist_url,omitempty"`
 	// ChipsAddLabel — text on the "+ New" chip; defaults to "+ New".
-	ChipsAddLabel   string `json:"chips_add_label,omitempty"`
+	ChipsAddLabel string `json:"chips_add_label,omitempty"`
 	// ChipsAlsoSet — additional form fields to populate when a chip
 	// is picked. Map keys name target form fields; values name the
 	// property on the chip record to read. Example: persona chips
@@ -548,9 +548,9 @@ type SelectOption struct {
 // beneath the pairs — same URL templating as Source so {placeholders}
 // resolve from the row/page context.
 type DisplayPanel struct {
-	Source        string         `json:"source"`
-	Pairs         []DisplayPair  `json:"pairs"`
-	AutoRefreshMS int            `json:"auto_refresh_ms,omitempty"`
+	Source        string          `json:"source"`
+	Pairs         []DisplayPair   `json:"pairs"`
+	AutoRefreshMS int             `json:"auto_refresh_ms,omitempty"`
 	Actions       []ToolbarAction `json:"actions,omitempty"`
 }
 
@@ -649,12 +649,12 @@ func (a ApiKeyPanel) MarshalJSON() ([]byte, error) {
 //     row of buttons under the article/status view.
 //   - ErrorStage marks the pipeline failed (default "error").
 type PipelineWatchPanel struct {
-	InfoURL    string `json:"info_url"`
-	EventsURL  string `json:"events_url"`
-	CancelURL  string `json:"cancel_url,omitempty"`
-	AppName    string `json:"app_name,omitempty"`
-	TopicField string `json:"topic_field,omitempty"` // default "topic"
-	DoneField  string `json:"done_field,omitempty"`  // default "done"
+	InfoURL    string       `json:"info_url"`
+	EventsURL  string       `json:"events_url"`
+	CancelURL  string       `json:"cancel_url,omitempty"`
+	AppName    string       `json:"app_name,omitempty"`
+	TopicField string       `json:"topic_field,omitempty"` // default "topic"
+	DoneField  string       `json:"done_field,omitempty"`  // default "done"
 	Stages     []WatchStage `json:"stages,omitempty"`
 	// Stage names that get special treatment. Empty values fall back
 	// to the documented defaults so the simplest config can omit them.
@@ -670,10 +670,10 @@ type PipelineWatchPanel struct {
 
 // WatchStage describes one stage pill in PipelineWatchPanel's top bar.
 type WatchStage struct {
-	Key              string `json:"key"`               // matches data.stage
-	Label            string `json:"label,omitempty"`   // visible text; defaults to capitalized Key
-	Icon             string `json:"icon,omitempty"`    // emoji prefix
-	SubPattern       string `json:"sub_pattern,omitempty"` // regex on data.message — match → spawn sub-pill
+	Key              string `json:"key"`                          // matches data.stage
+	Label            string `json:"label,omitempty"`              // visible text; defaults to capitalized Key
+	Icon             string `json:"icon,omitempty"`               // emoji prefix
+	SubPattern       string `json:"sub_pattern,omitempty"`        // regex on data.message — match → spawn sub-pill
 	SubLabelTemplate string `json:"sub_label_template,omitempty"` // default "$1"
 }
 
@@ -709,11 +709,11 @@ func (p PipelineWatchPanel) MarshalJSON() ([]byte, error) {
 // QuestionField / HookField name the keys on each returned item to
 // render as the title and muted-second-line hook respectively.
 type SuggestPanel struct {
-	URL            string `json:"url"`             // POST returns []{question, hook}
-	Method         string `json:"method,omitempty"` // default POST
+	URL            string `json:"url"`                       // POST returns []{question, hook}
+	Method         string `json:"method,omitempty"`          // default POST
 	DirectionField string `json:"direction_field,omitempty"` // body field name for the input value (default "direction")
 	Placeholder    string `json:"placeholder,omitempty"`
-	SuggestLabel   string `json:"suggest_label,omitempty"`   // default "Suggest"
+	SuggestLabel   string `json:"suggest_label,omitempty"` // default "Suggest"
 	// QuestionField — key on each list item rendered as the topic.
 	// Defaults to "question". Falls through to "topic" or "text" if
 	// the field is missing on the response.
@@ -781,14 +781,14 @@ func (s SuggestPanel) MarshalJSON() ([]byte, error) {
 // share remaining width evenly. Optional Format applies to bar value
 // labels (e.g. "$%.4f").
 type BarChart struct {
-	Source     string `json:"source"`
-	XField     string `json:"x_field"`     // label per bar
-	YField     string `json:"y_field"`     // numeric height
-	YPrefix    string `json:"y_prefix,omitempty"`    // e.g. "$"
-	YDecimals  int    `json:"y_decimals,omitempty"`  // default 2
-	HeightPx   int    `json:"height_px,omitempty"`   // default 200
-	EmptyText  string `json:"empty_text,omitempty"`
-	XFormat    string `json:"x_format,omitempty"`    // "date" formats YYYY-MM-DD as "Mon DD"
+	Source    string `json:"source"`
+	XField    string `json:"x_field"`              // label per bar
+	YField    string `json:"y_field"`              // numeric height
+	YPrefix   string `json:"y_prefix,omitempty"`   // e.g. "$"
+	YDecimals int    `json:"y_decimals,omitempty"` // default 2
+	HeightPx  int    `json:"height_px,omitempty"`  // default 200
+	EmptyText string `json:"empty_text,omitempty"`
+	XFormat   string `json:"x_format,omitempty"` // "date" formats YYYY-MM-DD as "Mon DD"
 	// Breakdown adds detail rows to the hover tooltip beyond the
 	// headline X/Y. Each pair shows "Label: value" formatted per its
 	// Format ("thousands", "reltime", "bytes", "duration", or plain).
@@ -814,12 +814,12 @@ func (b BarChart) MarshalJSON() ([]byte, error) {
 // item before firing the request.
 type ActionList struct {
 	Source     string `json:"source"`
-	LabelField string `json:"label_field,omitempty"`  // default "Label"
-	DescField  string `json:"desc_field,omitempty"`   // default "Desc"
-	PostTo     string `json:"post_to"`                // e.g. "api/maintenance?key={Label}"
-	Method     string `json:"method,omitempty"`       // default POST
+	LabelField string `json:"label_field,omitempty"` // default "Label"
+	DescField  string `json:"desc_field,omitempty"`  // default "Desc"
+	PostTo     string `json:"post_to"`               // e.g. "api/maintenance?key={Label}"
+	Method     string `json:"method,omitempty"`      // default POST
 	Confirm    string `json:"confirm,omitempty"`
-	ButtonText string `json:"button_text,omitempty"`  // default "Run"
+	ButtonText string `json:"button_text,omitempty"` // default "Run"
 	EmptyText  string `json:"empty_text,omitempty"`
 }
 
@@ -838,8 +838,8 @@ func (a ActionList) MarshalJSON() ([]byte, error) {
 // payload). When mounted inside an Expand, the record context comes
 // from the parent row — no fetch required.
 type JSONView struct {
-	Field string `json:"field"`            // field on the parent record
-	Title string `json:"title,omitempty"`  // optional header above the block
+	Field string `json:"field"`           // field on the parent record
+	Title string `json:"title,omitempty"` // optional header above the block
 }
 
 func (JSONView) componentType() string { return "json_view" }
@@ -872,7 +872,7 @@ func (r RecordView) MarshalJSON() ([]byte, error) {
 // useful for Expand panels that want to show both a RecordView and a
 // JSONView, or any other combination.
 type Stack struct {
-	Children []Component `json:"-"`
+	Children []Component       `json:"-"`
 	Items    []json.RawMessage `json:"items"`
 }
 
@@ -888,6 +888,75 @@ func (s Stack) MarshalJSON() ([]byte, error) {
 		Type  string            `json:"type"`
 		Items []json.RawMessage `json:"items"`
 	}{"stack", s.Items})
+}
+
+// NavShell is an app-shell layout: a left rail of nav buttons, a content
+// pane on the right that swaps to the selected item's Body, and an optional
+// Header component pinned at the top of the content pane (always visible
+// regardless of selection — e.g. a live activity strip).
+//
+// Generic by design: any multi-view console (Operator, a future admin
+// workbench) composes it from existing components — each NavItem.Body is a
+// plain Component (ChatPanel, Table, FormPanel, Stack, ...). The first item
+// is selected by default; put the heaviest body (e.g. a ChatPanel) first so
+// it mounts visible rather than hidden.
+type NavShell struct {
+	Toolbar []Component // top control bar, rendered as a horizontal row above everything; nil = no bar
+	Header  Component   // pinned at the top of the content pane; nil = no strip
+	Items   []NavItem
+}
+
+// NavItem is one entry in a NavShell's left rail.
+type NavItem struct {
+	Label string    // rail button text
+	Key   string    // stable id (optional; for deep-linking later)
+	Body  Component // rendered in the content pane when selected
+}
+
+func (NavShell) componentType() string { return "nav_shell" }
+func (n NavShell) MarshalJSON() ([]byte, error) {
+	type itemJSON struct {
+		Label string          `json:"label"`
+		Key   string          `json:"key,omitempty"`
+		Body  json.RawMessage `json:"body"`
+	}
+	items := make([]itemJSON, len(n.Items))
+	for i, it := range n.Items {
+		items[i] = itemJSON{Label: it.Label, Key: it.Key, Body: marshalComponent(it.Body)}
+	}
+	var hdr json.RawMessage
+	if n.Header != nil {
+		hdr = marshalComponent(n.Header)
+	}
+	var toolbar []json.RawMessage
+	for _, c := range n.Toolbar {
+		toolbar = append(toolbar, marshalComponent(c))
+	}
+	return json.Marshal(struct {
+		Type    string            `json:"type"`
+		Toolbar []json.RawMessage `json:"toolbar,omitempty"`
+		Header  json.RawMessage   `json:"header,omitempty"`
+		Items   []itemJSON        `json:"items"`
+	}{"nav_shell", toolbar, hdr, items})
+}
+
+// Toolbar is a standalone horizontal row of action buttons — the same
+// ToolbarAction shape the panels use, but as a top-level Component so any
+// page (or a NavShell.Toolbar slot) can host a reusable control bar. Client
+// actions dispatch via window.UIClientActions, the same registry the panel
+// toolbars use, so a specialized agent's config controls work identically
+// wherever the bar is placed.
+type Toolbar struct {
+	Actions []ToolbarAction `json:"actions"`
+}
+
+func (Toolbar) componentType() string { return "toolbar" }
+func (t Toolbar) MarshalJSON() ([]byte, error) {
+	type alias Toolbar
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"toolbar", alias(t)})
 }
 
 // ModalButton renders as an inline button that, on click, pops a
@@ -967,9 +1036,9 @@ type ChatPanel struct {
 	// Field names for the session summary records — defaults match
 	// chat's ChatSession schema. Override only when migrating an app
 	// with a different shape.
-	SessionIDField      string `json:"session_id_field,omitempty"`      // default "ID"
-	SessionTitleField   string `json:"session_title_field,omitempty"`   // default "Title"
-	SessionLastAtField  string `json:"session_last_at_field,omitempty"` // default "LastAt"
+	SessionIDField     string `json:"session_id_field,omitempty"`      // default "ID"
+	SessionTitleField  string `json:"session_title_field,omitempty"`   // default "Title"
+	SessionLastAtField string `json:"session_last_at_field,omitempty"` // default "LastAt"
 	// Field on the loaded session that holds the messages array.
 	// Default "Messages".
 	SessionMessagesField string `json:"session_messages_field,omitempty"`
@@ -1013,6 +1082,12 @@ type ChatPanel struct {
 	// returns a JSON array of {name, desc}. Useful for showing the
 	// LLM's available tool catalog at a glance.
 	ToolsURL string `json:"tools_url,omitempty"`
+	// Single renders the panel as ONE ongoing conversation: no
+	// sessions sidebar, no New / picker / delete. The init path opens
+	// the first (and only) session SessionsListURL returns. Generic —
+	// any "one room" surface (an Operator console, an always-on
+	// assistant) uses it instead of faking a one-item session list.
+	Single bool `json:"single,omitempty"`
 }
 
 // ChatField defines one extra form field rendered in the chat
@@ -1043,7 +1118,7 @@ type ChatMode struct {
 	Title   string `json:"title,omitempty"` // tooltip
 	GetURL  string `json:"get_url"`
 	PostURL string `json:"post_url"`
-	Field   string `json:"field"`           // bool field name on GET / POST body
+	Field   string `json:"field"` // bool field name on GET / POST body
 	// SendField is the body field name when sending the chat message
 	// — defaults to Field. Use when the server's send-handler key
 	// differs from the settings-endpoint key.
@@ -1099,10 +1174,10 @@ type PipelinePanel struct {
 	// PrefillListQuestionField (default "question") for the value
 	// inserted into the field, and PrefillListHookField (default
 	// "hook") for an optional muted second line shown alongside.
-	PrefillURL    string `json:"prefill_url,omitempty"`
-	PrefillLabel  string `json:"prefill_label,omitempty"`
-	PrefillTarget string `json:"prefill_target,omitempty"` // field name to populate
-	PrefillMode   string `json:"prefill_mode,omitempty"`   // "text" (default) | "list"
+	PrefillURL               string `json:"prefill_url,omitempty"`
+	PrefillLabel             string `json:"prefill_label,omitempty"`
+	PrefillTarget            string `json:"prefill_target,omitempty"` // field name to populate
+	PrefillMode              string `json:"prefill_mode,omitempty"`   // "text" (default) | "list"
 	PrefillListQuestionField string `json:"prefill_list_question_field,omitempty"`
 	PrefillListHookField     string `json:"prefill_list_hook_field,omitempty"`
 	// PrefillMethod — HTTP method used to fetch suggestions.
@@ -1117,9 +1192,9 @@ type PipelinePanel struct {
 	PrefillBody string `json:"prefill_body,omitempty"`
 
 	// Field name overrides for sidebar records.
-	SessionIDField    string `json:"session_id_field,omitempty"`    // default "ID"
-	SessionTitleField string `json:"session_title_field,omitempty"` // default "Title"
-	SessionDateField  string `json:"session_date_field,omitempty"`  // default "Date"
+	SessionIDField     string `json:"session_id_field,omitempty"`     // default "ID"
+	SessionTitleField  string `json:"session_title_field,omitempty"`  // default "Title"
+	SessionDateField   string `json:"session_date_field,omitempty"`   // default "Date"
 	SessionBlocksField string `json:"session_blocks_field,omitempty"` // default "Blocks"
 
 	// SessionMetaFields list extra fields to surface under each
@@ -1209,7 +1284,7 @@ type PipelineAction struct {
 type PipelineField struct {
 	Name        string   `json:"name"`
 	Label       string   `json:"label,omitempty"`
-	Type        string   `json:"type"`         // "text" | "textarea" | "number" | "select"
+	Type        string   `json:"type"` // "text" | "textarea" | "number" | "select"
 	Placeholder string   `json:"placeholder,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Options     []string `json:"options,omitempty"`
@@ -1311,9 +1386,9 @@ type AgentLoopPanel struct {
 	//     it as the active context — the id rides on every send
 	//     body under ListBodyField — but does not clear or
 	//     replay the conversation.
-	ListURL    string `json:"list_url,omitempty"`    // GET → []record
-	LoadURL    string `json:"load_url,omitempty"`    // GET {id} → record (+messages in SESSION mode)
-	DeleteURL  string `json:"delete_url,omitempty"`  // DELETE {id}
+	ListURL   string `json:"list_url,omitempty"`   // GET → []record
+	LoadURL   string `json:"load_url,omitempty"`   // GET {id} → record (+messages in SESSION mode)
+	DeleteURL string `json:"delete_url,omitempty"` // DELETE {id}
 	// RenameURL — optional. When set, each rail row gets a ✎ button.
 	// Clicking prompts for a new name; the runtime POSTs {id, name}
 	// to RenameURL, then refreshes the list. Useful for workspaces /
@@ -1326,8 +1401,8 @@ type AgentLoopPanel struct {
 	// resends; Delete just truncates. The URL template substitutes
 	// {id} with the active session id at click time.
 	TruncateURL string `json:"truncate_url,omitempty"`
-	NewLabel  string `json:"new_label,omitempty"`  // default "New"
-	ListTitle string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
+	NewLabel    string `json:"new_label,omitempty"`  // default "New"
+	ListTitle   string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
 	// ListPosition picks where the sessions list lives:
 	//   "rail" (default) — persistent left rail, collapsible.
 	//   "top"            — no inline rail; topbar gets a "Sessions"
@@ -1453,6 +1528,42 @@ type AgentLoopPanel struct {
 	// adopt the same per-turn-toggle pattern without porting to
 	// ChatPanel.
 	Modes []ChatMode `json:"modes,omitempty"`
+
+	// OrchestratorNav, when set, replaces the session list with these nav
+	// items for agents the host app opts in (see AltNavFlag). Every other
+	// agent is untouched and keeps its session list. Each item is a sidebar
+	// view: empty Source = the chat; a Source URL = a table view swapped into
+	// the main pane. The picker + toolbar stay as-is.
+	OrchestratorNav []OrchestratorNavItem `json:"orchestrator_nav,omitempty"`
+	// AltNavFlag names a window-global object the host page sets, whose keys
+	// are the agent ids that get the OrchestratorNav (instead of the session
+	// list). Empty = the feature is off. core/ui hardcodes no app-specific
+	// global; the app owns the name and the membership.
+	AltNavFlag string `json:"alt_nav_flag,omitempty"`
+	// AltNavPinnedSession is the single session id alt-nav agents are pinned
+	// to (one ongoing thread). Empty = no pinning.
+	AltNavPinnedSession string `json:"alt_nav_pinned_session,omitempty"`
+}
+
+// OrchestratorNavItem is one sidebar nav entry for an orchestrator-mode agent
+// (see AgentLoopPanel.OrchestratorNav).
+type OrchestratorNavItem struct {
+	Label  string `json:"label"`
+	Source string `json:"source,omitempty"` // GET → table rows; empty = the chat view
+	// RowActions render as per-row buttons in the table. Each fires
+	// "<Method> <URL>?id=<row._id>" then reloads the view. Rows carry their
+	// target in a hidden "_id" field (e.g. a Delete button, or an
+	// Approve / Deny pair).
+	RowActions []OrchestratorRowAction `json:"row_actions,omitempty"`
+}
+
+// OrchestratorRowAction is one per-row button in an orchestrator nav view.
+type OrchestratorRowAction struct {
+	Label   string `json:"label"`
+	URL     string `json:"url"`               // POST/DELETE <url>?id=<row._id>
+	Method  string `json:"method,omitempty"`  // default POST
+	Variant string `json:"variant,omitempty"` // "success" | "danger" | ""
+	Confirm string `json:"confirm,omitempty"`
 }
 
 // AgentTerminal configures the optional bottom-right terminal pane
@@ -1494,7 +1605,7 @@ func (c ChatPanel) MarshalJSON() ([]byte, error) {
 // confirmation dialog showing diff stats).
 type ArticleEditor struct {
 	ListURL   string `json:"list_url"`
-	LoadURL   string `json:"load_url"`   // template with {id}
+	LoadURL   string `json:"load_url"` // template with {id}
 	SaveURL   string `json:"save_url"`
 	DeleteURL string `json:"delete_url"` // template with {id}
 	ChatURL   string `json:"chat_url"`
@@ -1651,11 +1762,11 @@ type CodeWriterPanel struct {
 	Languages []string `json:"languages,omitempty"`
 
 	// Empty-state copy + placeholder text.
-	EmptyText        string `json:"empty_text,omitempty"`
-	PlaceholderName  string `json:"placeholder_name,omitempty"`
-	PlaceholderCode  string `json:"placeholder_code,omitempty"`
-	PlaceholderCtx   string `json:"placeholder_ctx,omitempty"`
-	PlaceholderChat  string `json:"placeholder_chat,omitempty"`
+	EmptyText       string `json:"empty_text,omitempty"`
+	PlaceholderName string `json:"placeholder_name,omitempty"`
+	PlaceholderCode string `json:"placeholder_code,omitempty"`
+	PlaceholderCtx  string `json:"placeholder_ctx,omitempty"`
+	PlaceholderChat string `json:"placeholder_chat,omitempty"`
 }
 
 func (CodeWriterPanel) componentType() string { return "codewriter_panel" }

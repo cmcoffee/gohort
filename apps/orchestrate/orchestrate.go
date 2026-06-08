@@ -180,6 +180,24 @@ func (T *OrchestrateApp) Routes() {
 	// the loop ticks.
 	registerOrchestrateScheduledUpdates(T)
 
+	// Wire the standing-agent runner: core owns the schedule + run-ledger;
+	// this supplies the agent-execution closure (loads the agent and runs it
+	// with a deny-by-default confirm so unattended runs never auto-approve
+	// high-consequence tools).
+	registerStandingRunner(T)
+
+	// Wire the event-monitor engine: webhook + poll triggers that WAKE the
+	// Operator (inject into its thread + run a turn) when something happens.
+	// core owns the store + poll schedule; this supplies the waker (run the
+	// Operator on operator-thread) and the poller (run a checker agent).
+	registerOperatorWake(T)
+
+	// Orchestrator console: agents with Mode "orchestrator" (seed-operator)
+	// present as a single-ongoing-thread console at /orchestrate/console,
+	// reusing the agent runtime for chat + the shared core spine for the
+	// fleet/activity panels.
+	T.registerConsoleRoutes()
+
 	// One-shot Builder shadow migration. Walks every user's store,
 	// finds existing seed-builder shadows, re-writes them with the
 	// current in-code seed (preserving only the shadow's Rules).
@@ -242,6 +260,11 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/cancel", g(T.handleCancelRouter))
 	T.HandleFunc("/api/confirm", g(T.handleConfirmRouter))
 	T.HandleFunc("/api/inject", g(T.handleInject))
+	// Operator event webhook — PUBLIC (the unguessable per-monitor token is the
+	// credential), so it bypasses cookie auth. External watchers POST here to
+	// wake the Operator. Registered ungated + as a public path.
+	T.HandleFunc("/api/operator/event/", T.handleOperatorEvent)
+	RegisterPublicPath(T.WebPath() + "/api/operator/event/")
 	// Run-registry endpoints (see runs.go / runs_http.go) — let a
 	// reconnecting client discover and resume the in-flight stream
 	// for a session after disconnect.

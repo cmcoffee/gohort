@@ -1574,6 +1574,23 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			toolNames = append(toolNames, td.Tool.Name)
 		}
 	}
+	// Orchestrator (Operator) agents get the exclusive fleet-management
+	// catalog on their conversational turn — create/list/run/pause standing
+	// agents + read the run-ledger. Not globally registered; appended here
+	// only for Mode=="orchestrator", same shape as Builder's authoring tools.
+	if t.agent.Mode == "orchestrator" && forOrchestrator {
+		om := operatorManagementTools(sess)
+		tools = append(tools, om...)
+		for _, td := range om {
+			toolNames = append(toolNames, td.Tool.Name)
+		}
+		// Drop the generic interval scheduler — the Operator schedules through
+		// the fleet (create_standing_agent), which does proper cron / start+
+		// interval timing and surfaces in Enabled agents. Without this the LLM
+		// reaches for "recurring" (interval-from-now → "not exactly 8am") and
+		// bypasses the fleet.
+		tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
+	}
 	// (Skill-granted tools are NOT resolved here anymore. Activation is
 	// per-turn: t.skillsActive is empty when this static catalog is built
 	// at turn start. A skill's tools are surfaced by the per-round
@@ -3073,11 +3090,22 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		return
 	}
 
+	// Orchestrator agents keep one ongoing thread; pin every send to the
+	// fixed session id so the conversation accumulates in one place
+	// regardless of what the client thinks its session id is.
+	if agent.Mode == "orchestrator" {
+		req.SessionID = operatorPinnedSession
+	}
 	// Resolve session (create on first turn, otherwise load).
 	sess, _ := loadChatSession(udb, agent.ID, req.SessionID)
 	isNewSession := sess.ID == ""
 	if isNewSession {
 		sess = ChatSession{
+			// Honor the requested id so a pinned session (the Operator's
+			// "operator-thread") is actually CREATED under that id on its
+			// first turn. Empty req.SessionID (a normal new chat) falls
+			// through to saveChatSession minting a fresh UUID.
+			ID:      req.SessionID,
 			AgentID: agent.ID,
 			Title:   titleFromFirstMessage(req.Message),
 			Created: time.Now(),
@@ -3203,6 +3231,13 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	sess.Messages = append(sess.Messages, userMsg)
 	if saved, err := saveChatSession(udb, sess); err == nil {
 		sess = saved
+	}
+	// Ongoing-conversation compaction (Operator only): storage keeps the full
+	// history (saved above); the RUN sees a bounded view — a running summary +
+	// the recent tail. Folds aging turns into the summary and evicts durable
+	// facts into the agent's memory. No-op below threshold; normal agents skip.
+	if agent.Mode == "orchestrator" {
+		sess.Messages = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
 	}
 
 	if T.LLM == nil {

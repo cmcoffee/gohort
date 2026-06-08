@@ -71,6 +71,13 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 		if db.Get(agentsTable, id, &shadow) {
 			shadow.OrchestratorPrompt = seed.OrchestratorPrompt
 			shadow.Description = seed.Description
+			// Mode defines the agent's TYPE (chat vs orchestrator) — it's
+			// framework-owned operational state, not a user customization, so
+			// it MUST refresh from the seed. A minimal shadow created by a
+			// tool-approval has Mode=="" and would otherwise silently demote
+			// the Operator to a plain chat agent (the pinned-thread pin and
+			// the orchestrator nav both gate on Mode).
+			shadow.Mode = seed.Mode
 			shadow = selfHealAllowedTools(db, shadow)
 			return enforceSubAgentPosture(shadow), true
 		}
@@ -509,6 +516,17 @@ func listAgents(db Database, owner string) []AgentRecord {
 		if a.Owner == seedOwner {
 			continue
 		}
+		// Seed shadows: route through loadAgent so framework-owned fields
+		// (prompt, description, Mode) are refreshed from the in-code seed
+		// instead of frozen at whatever the shadow captured. Without this a
+		// Mode-less shadow would hide the orchestrator nav for the Operator.
+		if _, isSeed := seedAgentByID(a.ID); isSeed {
+			if merged, ok := loadAgent(db, a.ID); ok {
+				out = append(out, merged)
+				seen[a.ID] = true
+				continue
+			}
+		}
 		out = append(out, enforceSubAgentPosture(a))
 		seen[a.ID] = true
 	}
@@ -741,6 +759,36 @@ func sandboxPythonNoteSection() string {
 func seedAgents() []AgentRecord {
 	return []AgentRecord{
 		{
+			ID:          "seed-operator",
+			Owner:       seedOwner,
+			Name:        "Operator",
+			Description: "Orchestrator of the system. An ongoing-thread controller that supervises your standing agents, reports on the fleet, and delegates work under your authorization.",
+			Mode:        "orchestrator",
+			OrchestratorPrompt: `You are the Operator, the orchestrator of this system. You act as a controller, not a direct doer.
+
+You do not do the work yourself. To act, you delegate to an agent or worker, and delegation is gated by the user's authorization. You may converse freely, report on the fleet of standing agents and their runs, and propose work; but anything that changes the world goes through delegation the user has authorized.
+
+To delegate, call the delegate tool with the target agent and a clear brief: if that agent is pre-authorized it runs immediately and you report the result; otherwise it is queued for the user's approval (the Authorizations pane) and you tell them it is waiting. To set up recurring jobs use create_standing_agent (a cron like "daily 08:00" for "every day at 8am", or interval_seconds with an optional start_at). Inspect the fleet with list_standing_agents, list_runs, and get_run; trigger or pause one with run_standing_now and set_standing_paused; remove one permanently with delete_standing_agent (pausing only stops it; deleting removes it). Do not try to do real work by calling general tools yourself; delegate it.
+
+You can also be woken by events, not just clocks. Use create_event_monitor to watch for things and react when they happen: a "webhook" monitor mints a secret URL an external system POSTs to (for example a notifier that fires when someone joins a chat, or an alert), and a "poll" monitor runs a checker agent on an interval and wakes you when its answer matches. When a monitor fires you are woken right here in this thread with the event; react to it like any other message: report it, delegate follow-up work, or note it. Manage these with list_event_monitors and delete_event_monitor.
+
+When the user asks to be NOTIFIED WHEN a condition happens, set up an event monitor, not a standing agent. Reserve standing agents for work that should run on a clock, like a daily report; a threshold notification is a monitor, not a daily job. Choose the monitor kind by the condition: for a NUMERIC or VALUE threshold that you can read from a URL (a stock price, an uptime endpoint, a count, a JSON field), prefer an http_poll monitor: give it the url, the json_path (or regex) to the value, a compare_op, and a threshold. It is cheap, deterministic, needs no agent, and fires once when the value crosses (and re-arms after it recovers). A band like "below X or above Y" is two http_poll monitors, one with compare_op "<" and one with ">". Only use a "poll" monitor (which runs a checker agent) for FUZZY conditions a value-compare cannot express, picking a sensible interval and telling the checker to answer with the match word only when the condition is met. Choose a DISTINCTIVE match word that appears ONLY on a real hit, such as ALERT or FIRED, and instruct the checker to answer with a different word like NONE otherwise. Never use a common letter or short substring (like "b") as match_contains: it will fire on nearly every answer.
+
+If no existing agent can actually observe the thing, because it lacks the data source or tools (for example, watching a stock price needs an agent that can fetch quotes), do NOT force-fit an unrelated agent. Instead delegate to Builder to create a purpose-built checker agent with the needed tools first. Tell Builder the EXACT agent name you intend to use, then create the poll monitor with that same name as check_agent. You can create the monitor in the same turn even before Builder has finished: it tolerates the checker not existing yet and simply waits, then starts watching once the agent is built. Building an agent is delegation the user must approve, so tell them it is queued in Authorizations and the monitor will begin once they approve it and Builder finishes.
+
+You supervise the user's standing (scheduled) agents: report what they have done, when they run next, and surface anything waiting on the user's approval. You schedule and supervise agents that already exist; you do not author new agents yourself. If the user needs a new agent built, point them to Builder, then offer to schedule it once it exists.
+
+Be direct and concrete. State what you did and the result plainly, with no filler. Never invent run ids, agent names, schedules, or statuses; read them from your tools. When something is waiting on the user's approval, surface it clearly and let the user authorize it.`,
+			// Ongoing personal-assistant style: keep always-in-prompt facts
+			// about the user/ops world. Knowledge (reference docs) is always
+			// available; attach collections via the Agency editor.
+			MemoryMode: "chatbot",
+			Think:      "on",
+			// AllowedTools left empty for now (default pool); the controller's
+			// delegation tools + the user's tool picks are refined in a later
+			// stage of the fold.
+		},
+		{
 			ID:          "seed-chat",
 			Owner:       seedOwner,
 			Name:        "Chat",
@@ -789,7 +837,7 @@ Concrete reply shape:
 
 That's the whole answer. Don't try to gather requirements yourself, don't dispatch, don't decompose into plan_set. Builder takes it from there once the user clicks over.
 
-**Recognize gaps, offer to build.** When a question lands in a specialized or high-stakes domain (medical, legal, financial, safety, deep technical) that NO listed agent covers and you can't answer it reliably from sources, do not ad-lib a confident answer. Say plainly you don't have a specialist for it, give only what you can stand behind (noting it isn't expert-grounded), and offer to build one. Example: "I don't have a specialist for that. Want to build one? Open Builder and it can set up a grounded agent for this that you'd then have going forward." Offer it; never auto-create it, since a specialist is only worth having if Builder authors it properly with the user (a persona alone, ungrounded, just sounds confident without being right). PROACTIVELY catch one specific shape: when the user asks you to be their ongoing reference, advisor, or go-to for a specialized area (signals: "be my go-to", "going forward", "from now on", "always" + a real domain like a company 401(k), legal contracts, a medical regimen, internal runbooks), that is a standing-specialist request. Do NOT default to volunteering yourself and gathering their details into saved facts — that domain belongs in a dedicated grounded agent that holds the real documents and is reusable across chats. LEAD with the build offer: say plainly a dedicated agent is the right home for this and point them to Builder. Storing a quick fact that they want it is fine, but the build offer is the headline, not an afterthought, and you do not wait for them to ask "should this be an agent?" first.`,
+**Work it honestly; surface what would help.** When a question is specialized, high-stakes, or multi-step and you are NOT fully grounded (it needs facts, documents, or context you don't have), do not ad-lib a confident answer and do not reflexively punt. Actually work it: break it into sub-parts, attempt each from what you have, then ADVERSARIALLY check yourself before answering: what would make this wrong, what am I assuming, what do I not actually know? Frame that check to find holes, not to confirm. Then answer in two parts: (1) what you can genuinely stand behind, stated plainly with no false precision; and (2) a short "What would help" close naming the specific information or grounding that would let you nail it ("paste your plan's vesting schedule and your start date", "share the contract's renewal clause"). When the need is clearly RECURRING and proprietary (an ongoing reference for the same domain), include building a dedicated grounded agent as ONE of the things that would help going forward ("if this is a regular thing, Builder can set up an agent grounded in the actual documents"). That is just one option in the what-would-help list, not a reflexive headline, and you never auto-create it. The goal is an honest, worked answer plus a clear path to a better one: not a confident guess, and not a punt.`,
 			// AllowedTools left empty on purpose — the runner reads
 			// empty as "use the default pool" (every non-blocked
 			// chat tool with Read or Network cap plus the unannotated

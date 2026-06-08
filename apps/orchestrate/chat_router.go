@@ -190,6 +190,12 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	// Orchestrator agents keep one ongoing thread; pin every session
+	// operation (load / delete / patch) to that fixed id so visits resume
+	// the same conversation instead of forking a new chat each time.
+	if agent.Mode == "orchestrator" {
+		sid = operatorPinnedSession
+	}
 	switch r.Method {
 	case http.MethodGet:
 		// External-source row (e.g. ?source=phantom&chat_id=…)?
@@ -211,8 +217,16 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		}
 		s, ok := loadChatSession(udb, agent.ID, sid)
 		if !ok {
-			http.NotFound(w, r)
-			return
+			// Orchestrator agents use a single pinned session ("operator-
+			// thread"); on the first visit it doesn't exist yet, so return an
+			// empty session instead of 404 so the client opens a fresh thread
+			// rather than erroring.
+			if agent.Mode == "orchestrator" {
+				s = ChatSession{ID: sid}
+			} else {
+				http.NotFound(w, r)
+				return
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s)
