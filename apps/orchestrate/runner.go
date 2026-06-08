@@ -685,7 +685,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available agents\n\n")
-	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for — when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools — for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question — don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits — NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **Each dispatch is a fresh task, but the agent is NOT a blank slate.** It keeps its own persona, its saved facts, and its knowledge base across calls, so that long-term memory persists between dispatches. What it does NOT carry over is THIS conversation: it cannot see your prior dispatches this session, so include any conversational context it needs in the brief. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
+	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for — when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools — for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question — don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits — NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **The agent remembers within this session.** It re-threads your prior dispatches to it this session (ephemeral continuity) on top of its own persona, saved facts, and knowledge base, so a follow-up to the same agent can be brief without repeating earlier context. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. This dispatch memory is ephemeral, scoped to this session. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
 	for _, a := range available {
 		// Full description — it's the routing cue (descriptions are
 		// model-facing, per the Builder guidance), shown un-truncated so
@@ -3792,7 +3792,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// turn re-prefilled ~16k instead of reusing the cached prefix). Keeping
 	// sys byte-stable lets turns 2+ reuse the prefix; the hints also belong
 	// next to the user message (highest salience) per their own design intent.
-	turnContext := t.renderTriggeredSkills()       // full instructions for skills already consulted
+	turnContext := t.renderTriggeredSkills()             // full instructions for skills already consulted
 	turnContext += t.renderSkillTriggerHints(triggerMsg) // soft nudge for skills whose triggers matched
 	// "Available skills" block — lists the skills the agent can reach. The
 	// LLM draws on one via read_skill / skill_knowledge_search.
@@ -4709,13 +4709,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	orchStart := time.Now()
 	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
-		SystemPrompt: sys,
-		Tools:        allTools,
+		SystemPrompt:         sys,
+		Tools:                allTools,
 		DynamicTools:         t.dynamicNewTempTools(sess),
 		ToolFallbackResolver: t.lazyToolFallback,
-		Stream:       streamHandler,
-		OnStep:       onStepHandler,
-		OnRoundStart: onRoundStartHandler,
+		Stream:               streamHandler,
+		OnStep:               onStepHandler,
+		OnRoundStart:         onRoundStartHandler,
 		// Drain mid-flight user injections EACH ROUND so the orchestrator
 		// incorporates them during inline work — not just at plan-step
 		// boundaries / synthesis. Without this, a note injected while the
@@ -5276,13 +5276,13 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	}
 	roundsUsed := 0
 	resp, _, err := t.app.RunAgentLoop(t.ctx, []Message{{Role: "user", Content: stepUser}}, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
+		SystemPrompt:         sysPrompt,
+		Tools:                tools,
 		DynamicTools:         t.dynamicNewTempTools(sess),
 		ToolFallbackResolver: t.lazyToolFallback,
-		MaxRounds:    hardCap,
-		ThinkBudget:  t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Stream:       stream,
+		MaxRounds:            hardCap,
+		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Stream:               stream,
 		// OnStep feeds telemetry — rounds, tool calls, dup-args
 		// fingerprints. Summary log fires from the deferred block at
 		// the top of runWorkerStep.

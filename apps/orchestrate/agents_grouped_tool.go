@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -68,7 +69,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		}
 		params["message"] = ToolParam{
 			Type:        "string",
-			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base across calls, but it does NOT see your prior dispatches this session, so include any context it needs in the brief.",
+			Description: "(run) The question or task to send to the target agent. Phrase it as the user would phrase it directly; the sub-agent has its own persona and will frame the response. The sub-agent keeps its persona, saved facts, and knowledge base, and it re-threads your prior dispatches to it this session (ephemeral continuity), so a follow-up can be brief without repeating earlier context.",
 		}
 		// CapNetwork is tagged here even though the bare tool itself
 		// doesn't make HTTP calls: the `run` action dispatches into a
@@ -279,26 +280,21 @@ func slimAgentJSON(a AgentRecord) []byte {
 	return b
 }
 
-// agentsRunAction dispatches to the target agent — a stateless
-// function call from the parent's perspective. The sub-agent has no
-// session storage of its own under this path; the parent owns all
-// context.
+// agentsRunAction dispatches to the target agent. State model: EPHEMERAL
+// continuity — a follow-up to the same agent in the same parent session
+// re-threads the prior exchange (so "now tell me more" just works), but the
+// continuity is bounded to this parent session and lives in the parent's own
+// namespace (not a hidden cross-session ledger). The target's long-term
+// facts/knowledge/persona load on every dispatch regardless.
 //
-// Live activity: the sub-agent's tool calls + step progress emit
-// into the parent turn's SSE so the user sees "[<target name>]
-// web_search(...)" appear in the activity pane as the sub-agent
-// works. Without this the sub-agent would be invisible until its
-// final synthesis returned.
+// Live activity: the sub-agent's tool calls + step progress emit into the
+// parent turn's SSE so the user sees "[<target name>] web_search(...)" appear
+// in the activity pane as the sub-agent works. Without this the sub-agent
+// would be invisible until its final synthesis returned.
 //
-// Stateless contract: prior dispatches in the same parent session
-// leave no trace the sub-agent can read. Follow-up dispatches that
-// want context must include it in the brief ("Earlier you summarized
-// X as <Y>. Now…"). This keeps the parent in charge — every fact
-// the sub-agent works from arrived in the brief, every change to
-// context is the parent's next dispatch. Direct chat with a sub-
-// agent via Agency's secondary picker is a SEPARATE code path
-// (handleSend) and DOES persist its ChatSession normally — that's
-// the testing/iteration surface, not the dispatch surface.
+// Direct chat with a sub-agent via Agency's secondary picker is a SEPARATE
+// code path (handleSend) with normal ChatSession persistence — that's the
+// testing/iteration surface, not the dispatch surface.
 func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if t.dispatchDepth >= maxDispatchDepth {
 		return "", fmt.Errorf("agents(run): depth limit %d exceeded", maxDispatchDepth)
@@ -394,14 +390,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if t.session != nil {
 		parentSessID = t.session.ID
 	}
-	// Deterministic per-(parent, target) sub-session ID, used only to scope
-	// the sub-agent's workspace + session temp tools. NOTE: dispatch is
-	// conversationally STATELESS (see the stateless contract below) — prior
-	// messages are NOT loaded and the exchange is NOT saved, so this id is not
-	// a continuity ledger. The target's own facts/knowledge/persona DO load,
-	// so the sub-agent isn't a blank slate; only this conversation isn't shared.
-	// Not registered in the SubSession lifecycle index — that drives async
-	// promotion, which orchestrate doesn't do (dispatch is sync).
+	// Deterministic per-(parent, target) sub-session ID: keys the EPHEMERAL
+	// dispatch continuity (the prior exchange is re-threaded on follow-ups,
+	// see below) and scopes the sub-agent's workspace + session temp tools.
+	// Not registered in the SubSession lifecycle index; that index drives
+	// async promotion, which orchestrate doesn't do (dispatch is sync).
 	subSessID := "dispatch:" + parentSessID + ":" + target.ID
 	subSess := &ToolSession{
 		LLM:            t.app.LLM,
@@ -509,28 +502,25 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		target, subFacts,
 	)
 
-	// Sub-agent dispatches are STATELESS — each agents(action="run")
-	// is a fresh function call from the parent. The parent owns the
-	// conversation context and must include any prior context in the
-	// brief itself ("Earlier I asked you about Acme Corp and you told
-	// me X. Now tell me more about their B2B presence."). Same shape
-	// as Claude Code's Agent() subagent dispatches.
-	//
-	// Why not V2 continuity: sub-agent state under phantom:<chatID>
-	// (or under the parent's user) was a hidden ledger the parent
-	// couldn't see or control — context "changes" happened inside the
-	// sub-agent without the parent's knowledge, and a phantom thread
-	// accumulated sub-agent threads of its own. Stateless dispatches
-	// keep the parent in charge: every fact the sub-agent works from
-	// arrived in the brief; every change to context is the parent's
-	// next dispatch.
-	//
-	// Doesn't affect direct Agency chat with a sub-agent (different
-	// code path — that goes through handleSend, normal ChatSession
-	// persistence applies). Only the agents(run) parent→sub-agent
-	// dispatch is ephemeral.
+	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
+	// SAME parent session re-threads the prior exchange, so the parent can
+	// ask "now tell me more about their B2B presence" without re-briefing.
+	// Scoped to dispatch:<parentSessID>:<target.ID> in the parent's OWN db
+	// (t.udb) and capped to recent turns, so it's:
+	//   - ephemeral: bounded to this parent session, not a permanent ledger;
+	//   - visible/controllable: lives in the parent's namespace, not a hidden
+	//     phantom:<chatID> store the parent can't see (the contamination the
+	//     old stateless design avoided);
+	//   - additive: the target's long-term facts/knowledge/persona already
+	//     load above; this only adds the running conversation.
+	// Direct Agency chat with a sub-agent is a separate path (handleSend).
+	prior, _ := loadChatSession(t.udb, target.ID, subSessID)
 	deliveredMsg := markAsDelegated(msg)
-	llmMessages := []Message{{Role: "user", Content: deliveredMsg}}
+	llmMessages := make([]Message, 0, len(prior.Messages)+1)
+	for _, m := range prior.Messages {
+		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
+	}
+	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMsg})
 
 	// V1 — per-step status emit. Hooks the orchestrator's per-round
 	// progress callback so the user sees "[<target>] round N (X tool
@@ -555,7 +545,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		"kind": "activity",
 		"type": "status",
 		"id":   activityCheapID(),
-		"text": fmt.Sprintf("[%s] dispatched (stateless)", target.Name),
+		"text": fmt.Sprintf("[%s] dispatched", target.Name),
 	})
 
 	// Bound the sub-agent run by its OWN round cap (MaxRounds below) + the
@@ -614,8 +604,25 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		return "", errors.New("agents(run): target returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
-	// No sub-session save — stateless. The reply is the entire
-	// contract: it appears in the parent's tool-call history as the
-	// agents(run) result, and that's the only persistence.
+	// Persist the exchange for the next follow-up. Store the RAW brief (not
+	// the delegated wrapper) so re-threaded history reads cleanly, and cap to
+	// the most recent turns to keep continuity cheap and ephemeral.
+	if prior.ID == "" {
+		prior.ID = subSessID
+		prior.AgentID = target.ID
+		prior.Created = time.Now()
+	}
+	tnow := time.Now()
+	prior.Messages = append(prior.Messages,
+		ChatMessage{Role: "user", Content: msg, Created: tnow},
+		ChatMessage{Role: "assistant", Content: cleanReply, Created: tnow},
+	)
+	const maxDispatchTurns = 24 // ~12 exchanges of ephemeral continuity
+	if len(prior.Messages) > maxDispatchTurns {
+		prior.Messages = prior.Messages[len(prior.Messages)-maxDispatchTurns:]
+	}
+	if _, err := saveChatSession(t.udb, prior); err != nil {
+		Log("[orchestrate.agents.run] WARN persist dispatch sub-session %s: %v", subSessID, err)
+	}
 	return fmt.Sprintf("From %s:\n\n%s", target.Name, cleanReply), nil
 }
