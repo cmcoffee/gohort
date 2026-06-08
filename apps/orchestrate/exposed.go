@@ -130,6 +130,15 @@ type ExposedAgentEntry struct {
 // Performance: O(users × agents) per call. Fine at gohort scale
 // (<100 users, <20 agents/user); add a deployment-wide index if a
 // scan becomes noticeable.
+// publiclyExposable reports whether an agent may be served on the public
+// /agents/ surface. Orchestrator-mode agents (the Operator) are admin consoles
+// whose nav reaches admin-gated fleet-management endpoints; they are NEVER
+// public, regardless of the Exposed flag. Enforced at the read points so the
+// rule holds even if a record drifts to Exposed=true.
+func publiclyExposable(a AgentRecord) bool {
+	return a.Exposed && a.Mode != "orchestrator"
+}
+
 func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	if T.DB == nil || AuthDB == nil {
 		return nil
@@ -148,7 +157,7 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	for _, u := range AuthListUsers(authDB) {
 		udb := UserDB(T.DB, u.Username)
 		for _, a := range listAgents(udb, u.Username) {
-			if !a.Exposed {
+			if !publiclyExposable(a) {
 				continue
 			}
 			slug := ExposedSlug(a)
@@ -207,7 +216,7 @@ func (T *OrchestrateApp) LookupExposedAgent(slug string) (AgentRecord, string, b
 	for _, u := range AuthListUsers(authDB) {
 		udb := UserDB(T.DB, u.Username)
 		for _, a := range listAgents(udb, u.Username) {
-			if !a.Exposed {
+			if !publiclyExposable(a) {
 				continue
 			}
 			if ExposedSlug(a) == slug {
