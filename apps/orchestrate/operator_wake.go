@@ -60,6 +60,21 @@ func registerOperatorWake(app *OrchestrateApp) {
 		}
 	})
 
+	// Watch-tool invoker: lets a "watch" monitor poll OWNER-SCOPED tools that
+	// only exist as per-session closures (read_phantom_chat, list_phantom_chats,
+	// etc.) — InvokeWatcherTool can only reach globally-registered + secure-API
+	// tools. We rebuild the management toolset for the monitor's owner and
+	// dispatch the named tool; anything not found falls back to the global path.
+	RegisterWatchToolInvoker(func(owner, toolName string, toolArgs map[string]any) (string, error) {
+		sess := &ToolSession{Username: owner}
+		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
+			if td.Tool.Name == toolName {
+				return td.Handler(toolArgs)
+			}
+		}
+		return "", ErrWatchToolNotHandled
+	})
+
 	// Poller: run the checker agent fresh and return its answer. If the named
 	// checker doesn't exist (e.g. the LLM set check_agent to a conversational
 	// nickname rather than a real agent), fall back to the default channel

@@ -1423,6 +1423,12 @@ body { min-height: 100vh; min-height: 100dvh; }
   font-size: 0.9rem; line-height: 1;
 }
 .ui-chat-side-ren:hover { color: var(--text-hi); background: var(--bg-2); }
+/* Rename (✎) stays hidden until the session row is hovered, to keep the
+ * rail uncluttered. visibility (not display) so the reserved space doesn't
+ * shift on hover and the button isn't clickable while hidden. */
+.ui-chat-side-ren { visibility: hidden; }
+.ui-chat-side-item:hover .ui-chat-side-ren,
+.ui-chat-side-ren:focus-visible { visibility: visible; }
 /* Rows that carry a rename button (✎) need extra right padding
  * so the title doesn't run under both ✎ and × buttons. */
 .ui-chat-side-item.ui-chat-side-item-renable { padding-right: 3.2rem; }
@@ -11469,7 +11475,7 @@ const runtimeJS = `
                   if (next == null) return;
                   next = next.trim();
                   if (!next || next === ttl) return;
-                  fetchJSON(cfg.rename_url, {
+                  fetchJSON(substituteExtras(cfg.rename_url), {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({id: sid, name: next}),

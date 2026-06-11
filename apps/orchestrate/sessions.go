@@ -106,6 +106,27 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 	return out
 }
 
+// renameChatSession sets a session's Title. Writes directly (NOT via
+// saveChatSession) so it does NOT bump LastAt — renaming isn't activity and
+// shouldn't reorder the session to the top. No-op if the session is missing or
+// the name is blank.
+func renameChatSession(db Database, agentID, sessionID, name string) {
+	name = strings.TrimSpace(name)
+	if db == nil || agentID == "" || sessionID == "" || name == "" {
+		return
+	}
+	if len(name) > 120 {
+		name = name[:120]
+	}
+	tbl := sessionTable(agentID)
+	var s ChatSession
+	if !db.Get(tbl, sessionID, &s) {
+		return
+	}
+	s.Title = name
+	db.Set(tbl, sessionID, s)
+}
+
 // markAllSessionsSeen clears the unread state on every session of an agent —
 // the "mark all read" action. Like markSessionSeen it writes LastSeen only
 // (never bumps LastAt), so it doesn't count as activity. Returns how many it

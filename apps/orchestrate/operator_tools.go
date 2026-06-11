@@ -354,12 +354,14 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "create_event_monitor",
-				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Kinds: \"webhook\" mints a secret URL an external system POSTs to (chat-join / alert notifier); \"http_poll\" fetches a URL on an interval, extracts a value, and wakes you when it crosses a threshold (BEST for numeric/value conditions like a stock price or uptime — no agent needed, cheap and deterministic, fires once on the crossing); \"poll\" runs a checker agent on an interval for FUZZY conditions a value-compare can't express. On wake you react in this thread (report / delegate).",
+				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change — deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM — best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does — best for \"tell me when X changes\", e.g. a chat via read_phantom_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive — reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate).",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this monitor, e.g. \"nvda-below\" or \"ts-join\"."},
-					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", or \"poll\"."},
+					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\" — prefer the cheapest that fits (see the tool description)."},
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction)."},
-					"interval_seconds": {Type: "number", Description: "http_poll/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
+					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
+					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_phantom_chat for a chat). No LLM runs between changes — the cheapest detection."},
+					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
 					"check_agent":      {Type: "string", Description: "poll only: name/id of an existing agent that checks the condition each interval."},
 					"check":            {Type: "string", Description: "poll only: the question/brief given to the checker. Tell it to answer with the match string when the event has happened."},
 					"match_contains":   {Type: "string", Description: "poll only: fire when the checker's answer contains this (case-insensitive). Default \"YES\"."},
@@ -377,8 +379,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if name == "" {
 					return "", fmt.Errorf("name is required")
 				}
-				if kind != EventKindWebhook && kind != EventKindPoll && kind != EventKindHTTP {
-					return "", fmt.Errorf("kind must be %q, %q, or %q", EventKindWebhook, EventKindHTTP, EventKindPoll)
+				if kind != EventKindWebhook && kind != EventKindPoll && kind != EventKindHTTP && kind != EventKindWatch {
+					return "", fmt.Errorf("kind must be %q, %q, %q, or %q", EventKindWebhook, EventKindHTTP, EventKindWatch, EventKindPoll)
 				}
 				if _, exists := GetEventMonitor(RootDB, owner, name); exists {
 					return "", fmt.Errorf("a monitor named %q already exists", name)
@@ -435,6 +437,32 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return fmt.Sprintf("HTTP monitor %q created: every %ds I fetch %s, read %s, and wake you when the value %s %s. Fires once on the crossing (and re-arms after it recovers). Next check: %s.",
 						name, got.IntervalSeconds, m.URL, extractDesc, m.CompareOp, m.Threshold,
 						got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
+				}
+				if kind == EventKindWatch {
+					m.ToolName = strings.TrimSpace(oArgStr(args, "tool_name"))
+					if ta, ok := args["tool_args"].(map[string]any); ok {
+						m.ToolArgs = ta
+					}
+					m.IntervalSeconds = oArgInt(args, "interval_seconds")
+					if m.IntervalSeconds <= 0 {
+						m.IntervalSeconds = 60
+					}
+					if m.ToolName == "" {
+						return "", fmt.Errorf("watch monitors need tool_name (the tool whose output is hashed)")
+					}
+					// Seed the change baseline now from a known-good probe, so the
+					// first poll detects a REAL change instead of firing on the
+					// initial content.
+					if body, perr := InvokeWatchTool(owner, m.ToolName, m.ToolArgs); perr == nil {
+						m.LastHash = HashWatcherBody(body)
+					}
+					SaveEventMonitor(RootDB, m)
+					if err := ScheduleEventMonitor(RootDB, m); err != nil {
+						return "", fmt.Errorf("saved but scheduling failed: %w", err)
+					}
+					got, _ := GetEventMonitor(RootDB, owner, name)
+					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes — no LLM runs in between. Next check: %s.",
+						name, got.IntervalSeconds, m.ToolName, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
 				}
 				wantAgent := strings.TrimSpace(oArgStr(args, "check_agent"))
 				m.Check = strings.TrimSpace(oArgStr(args, "check"))

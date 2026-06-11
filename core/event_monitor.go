@@ -36,12 +36,19 @@ const (
 	eventMonitorsTable = "event_monitors" // <owner>:<name> -> EventMonitor
 	eventPollKind      = "event.poll"
 
-	// The monitor kinds. webhook = external POST; poll = LLM checker agent on
-	// an interval; http_poll = fetch a URL, extract a value, compare to a
-	// threshold (no LLM, deterministic — best for numeric/value conditions).
+	// The monitor kinds, cheapest-first:
+	//   webhook   = external POST wakes it (push, no polling).
+	//   http_poll = fetch a URL, extract a value, compare to a threshold. No
+	//               LLM — deterministic; best for numeric/value conditions.
+	//   watch     = invoke a captured TOOL each interval, hash its output, and
+	//               wake ONLY when the hash changes. No LLM until something
+	//               changes; the cheap "tell me when X changes" path.
+	//   poll      = run an LLM checker agent every interval. Most expensive;
+	//               reserve for FUZZY conditions a value/hash can't capture.
 	EventKindWebhook = "webhook"
 	EventKindPoll    = "poll"
 	EventKindHTTP    = "http_poll"
+	EventKindWatch   = "watch"
 
 	// minPollInterval floors the poll cadence so a misconfigured monitor can't
 	// hammer the checker agent.
@@ -70,6 +77,11 @@ type EventMonitor struct {
 	Regex     string `json:"regex,omitempty"`      // alternative extraction: first capture group (or whole match)
 	CompareOp string `json:"compare_op,omitempty"` // < > <= >= == != contains
 	Threshold string `json:"threshold,omitempty"`  // value compared against the extracted one
+
+	// watch kind — capture a tool call, hash its output, wake on change.
+	ToolName string         `json:"tool_name,omitempty"` // tool invoked each interval; its output is hashed
+	ToolArgs map[string]any `json:"tool_args,omitempty"` // args passed to the tool every invocation
+	LastHash string         `json:"last_hash,omitempty"` // sha256 of the last output (the change baseline)
 
 	Paused       bool      `json:"paused"`
 	Created      time.Time `json:"created"`
@@ -201,9 +213,9 @@ func eventMatch(answer, match string) bool {
 }
 
 // isScheduledKind reports whether a monitor runs on the interval scheduler
-// (both LLM poll and http_poll do; webhook is push-only).
+// (poll, http_poll, and watch do; webhook is push-only).
 func isScheduledKind(kind string) bool {
-	return kind == EventKindPoll || kind == EventKindHTTP
+	return kind == EventKindPoll || kind == EventKindHTTP || kind == EventKindWatch
 }
 
 func nextPoll(m EventMonitor, from time.Time) time.Time {
@@ -279,6 +291,8 @@ func StartEventMonitorScheduler() {
 				executeEventPoll(ctx, RootDB, m)
 			case EventKindHTTP:
 				executeHTTPPoll(ctx, RootDB, m)
+			case EventKindWatch:
+				executeWatchPoll(ctx, RootDB, m)
 			}
 		}
 		// Reschedule the recurring cadence (re-read in case it was paused or
@@ -378,6 +392,41 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 		cur.LastResult = val
 		SaveEventMonitor(db, cur)
 	}
+}
+
+// executeWatchPoll invokes the captured tool, hashes its output, and wakes the
+// channel agent ONLY when the hash differs from the stored baseline — the cheap
+// "tell me when X changes" path with zero LLM until something actually changes.
+// The first observation just records the baseline (no wake), so creating a
+// watch on an already-populated source doesn't spuriously fire. Reuses the
+// watcher engine's InvokeWatcherTool + sha256Sum (same core package).
+func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
+	body, err := InvokeWatchTool(m.Owner, m.ToolName, m.ToolArgs)
+	if err != nil {
+		Log("[event] watch %s/%s tool %q failed: %v", m.Owner, m.Name, m.ToolName, err)
+		return
+	}
+	hash := sha256Sum(body)
+	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
+	if !ok {
+		return
+	}
+	if hash == cur.LastHash {
+		return // no change — stay quiet, no LLM
+	}
+	firstObservation := cur.LastHash == ""
+	cur.LastHash = hash
+	cur.LastResult = truncateEvent(body, 400)
+	if firstObservation {
+		// Baseline only — don't wake on the very first poll.
+		SaveEventMonitor(db, cur)
+		return
+	}
+	cur.LastFired = time.Now()
+	SaveEventMonitor(db, cur)
+	summary := fmt.Sprintf("Watch monitor %q detected a change. Current output:\n%s",
+		m.Name, truncateEvent(body, 1500))
+	fireWake(ctx, db, m.Owner, m.Name, summary, "watch")
 }
 
 // fetchAndExtract GETs the monitor's URL and pulls out the value to compare,

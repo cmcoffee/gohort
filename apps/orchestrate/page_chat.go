@@ -152,6 +152,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					LoadURL:        "api/sessions/{id}?agent_id={agent_id}",
 					DeleteURL:      "api/sessions/{id}?agent_id={agent_id}",
 					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
+					RenameURL:      "api/sessions/rename?agent_id={agent_id}",
 					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
 					ListTitle:   "Sessions",
 					NewLabel:    "New session",

@@ -28,6 +28,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -360,6 +361,37 @@ func InvokeWatcherTool(toolName string, toolArgs map[string]any) (string, error)
 		return st.RunWithSession(toolArgs, nil)
 	}
 	return t.Run(toolArgs)
+}
+
+// ErrWatchToolNotHandled signals that a registered WatchToolInvoker doesn't own
+// the named tool, so the caller should fall back to the global invocation path.
+var ErrWatchToolNotHandled = errors.New("watch tool not handled by invoker")
+
+// WatchToolInvoker lets an app resolve OWNER-SCOPED tools a watch monitor wants
+// to poll — ones that only exist as per-session closures and so aren't in the
+// global chat-tool registry (e.g. read_phantom_chat, which needs the owner to
+// reach the right bridge). The app registers one at startup; it returns
+// ErrWatchToolNotHandled for tools it doesn't own so the global path can try.
+type WatchToolInvoker func(owner, toolName string, toolArgs map[string]any) (string, error)
+
+var watchToolInvoker WatchToolInvoker
+
+// RegisterWatchToolInvoker installs the owner-aware invoker. Call once at
+// startup. Optional — without it, watch monitors can only poll globally
+// registered tools + call_<cred> secure APIs.
+func RegisterWatchToolInvoker(fn WatchToolInvoker) { watchToolInvoker = fn }
+
+// InvokeWatchTool resolves a watch monitor's captured tool WITH owner context:
+// the registered owner-aware invoker first (session-scoped tools), then the
+// global InvokeWatcherTool (registered chat tools + call_<cred> secure APIs).
+func InvokeWatchTool(owner, toolName string, toolArgs map[string]any) (string, error) {
+	if watchToolInvoker != nil {
+		out, err := watchToolInvoker(owner, toolName, toolArgs)
+		if !errors.Is(err, ErrWatchToolNotHandled) {
+			return out, err
+		}
+	}
+	return InvokeWatcherTool(toolName, toolArgs)
 }
 
 // ----------------------------------------------------------------------

@@ -156,6 +156,31 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// /api/sessions/rename — POST {id, name}: rename a session (the id is in
+	// the body, not the path, since core/ui's rename affordance POSTs it that
+	// way). Lets the user label a thread, e.g. "Phantom Monitor", so the
+	// sessions where monitor wakes land are identifiable in the rail.
+	if sid == "rename" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		var body struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		}
+		if json.NewDecoder(r.Body).Decode(&body) != nil || strings.TrimSpace(body.ID) == "" {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		renameChatSession(udb, agent.ID, body.ID, body.Name)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Detect /api/sessions/{sid}/export — a sub-action that dumps
 	// the full session as JSON or markdown for sharing / debugging.
 	if strings.HasSuffix(sid, "/export") {
