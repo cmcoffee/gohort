@@ -1297,19 +1297,12 @@ type ToolSession struct {
 	// stock-tracker style features). Empty for non-chat apps.
 	ChatSessionID string
 
-	// RoutingTarget is a generic "where should follow-ups go?" identifier
-	// the host app stamps onto the session at construction time. Format
-	// is "<prefix>:<ref>" — e.g. "phantom:iMessage;-;+14155551234",
-	// "chat:<sessionID>", "discord:<channel_id>". Tools that need to
-	// schedule a follow-up back into the originating context (notably
-	// watcher, but applicable to any "fire-and-forget then call me back"
-	// tool) capture this verbatim and later look up a registered
-	// WatcherResultRouter / similar dispatcher to deliver the payload.
-	//
-	// New apps wire themselves in by (a) setting this field on every
-	// session they build, and (b) registering their router via
-	// RegisterWatcherResultRouter for the matching prefix. No tool-side
-	// changes required.
+	// RoutingTarget is a generic "where does this session belong?" identifier
+	// the host app stamps on at construction time. Format is "<prefix>:<ref>"
+	// — e.g. "phantom:iMessage;-;+14155551234", "chat:<sessionID>". It scopes
+	// session-bound state for tools that act on behalf of an originating
+	// context; today it keys the managed workspace (see workspace_managed.go)
+	// so files a tool writes for a phantom conversation land in a stable spot.
 	RoutingTarget string
 
 	// Files holds generic file attachments the LLM produced via
