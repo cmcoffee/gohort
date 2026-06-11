@@ -45,9 +45,50 @@ type PhantomLink interface {
 	// (resolving to an existing conversation when one matches, else starting a
 	// new thread).
 	SendToHandle(owner, handle, text string) error
+	// DeliverMessage sends a message to a chat on the caller's behalf, routing
+	// by whether phantom's persona is live for that chat:
+	//   - persona ACTIVE (the chat is auto-reply enabled / phantom answers it):
+	//     phantom's per-chat LLM composes the message in its established voice
+	//     and conversation context from `text` (treated as the intent), then
+	//     sends it.
+	//   - persona INACTIVE (phantom doesn't answer that chat): `text` is sent
+	//     verbatim — a raw passthrough.
+	// images are base64-encoded attachments (the caller's generated files) to
+	// send alongside the text; nil/empty for a text-only message. Any phantom
+	// control markers (e.g. [ATTACH: ...]) in `text` are stripped before send
+	// so agent-internal directives never leak into the message.
+	// Prefer chatID (unambiguous; required for groups); handle is the
+	// new-individual fallback. Returns the text actually delivered.
+	DeliverMessage(owner, chatID, handle, text string, images []string) (sent string, err error)
 	// OwnerHandle returns the device owner's own number (for self-notify), or
 	// ("", false) when it isn't configured.
 	OwnerHandle(owner string) (string, bool)
+	// DescribeChat resolves one chat id to its summary (handle + display name)
+	// so callers can render a human-readable recipient — e.g. an approval row
+	// for a group addressed only by chat_id. ok is false when no such chat.
+	DescribeChat(owner, chatID string) (PhantomChatSummary, bool)
+	// ResolveRecipient turns a loose recipient string — a contact/group display
+	// name, a handle (phone/email), or a chat_id, ANY identifier the caller saw
+	// in ListChats — into a concrete chat. This lets a caller (the Operator's
+	// LLM) address a recipient the natural way ("WiWee") instead of tracking an
+	// opaque chat id. Returns the matched summary (ChatID set for a known
+	// conversation, or just Handle for a brand-new handle-shaped recipient). ok
+	// is false when the string matches no conversation and isn't handle-shaped.
+	ResolveRecipient(owner, to string) (PhantomChatSummary, bool)
+	// StartGoalConversation asks phantom to run an autonomous, multi-turn
+	// conversation with `handle` toward `goal`, on behalf of the caller (the
+	// Operator). Phantom sends the opening message, then drives the exchange
+	// as the contact replies (async — nobody blocks), and when the goal is met
+	// or it's stuck it calls back into the caller's agent thread.
+	//
+	// Address the recipient by chatID (preferred — unambiguous; from ListChats)
+	// or, when chatID is empty, by handle (a brand-new 1:1 not yet in a thread).
+	//
+	// operatorAgent + operatorThread name that back-edge target as plain data
+	// so core needn't know the caller's session constants: phantom injects the
+	// outcome as a turn into operatorThread (run under operatorAgent). Returns
+	// a task id for correlation.
+	StartGoalConversation(owner, chatID, handle, goal, operatorAgent, operatorThread string) (taskID string, err error)
 }
 
 var (

@@ -27,6 +27,48 @@ type phantomCallPayload struct {
 	IsProactive   bool   `json:"is_proactive,omitempty"`   // set by admin config, never by the LLM tool
 }
 
+// splitRules splits a newline-separated rules string (as saved by a "rules"
+// FormField) into trimmed, non-empty lines.
+func splitRules(s string) []string {
+	var out []string
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			out = append(out, ln)
+		}
+	}
+	return out
+}
+
+// buildProactiveInstruction composes the wake-up instruction for a proactive
+// fire. ProactivePrompt supplies the style/voice guidance (the HOW);
+// ProactiveAlways lists actions performed every wake; ProactiveActions is a
+// pool from which one action is drawn at random each wake (for variety).
+// Returns "" only when nothing is configured, in which case the caller keeps
+// the task's existing prompt so the legacy single-prompt behavior is preserved.
+func buildProactiveInstruction(cfg PhantomConfig) string {
+	always := splitRules(cfg.ProactiveAlways)
+	pool := splitRules(cfg.ProactiveActions)
+
+	var b strings.Builder
+	if s := strings.TrimSpace(cfg.ProactivePrompt); s != "" {
+		b.WriteString(s)
+		b.WriteString("\n\n")
+	}
+	if len(always) > 0 {
+		b.WriteString("Every time, do all of the following:\n")
+		for i, a := range always {
+			fmt.Fprintf(&b, "%d. %s\n", i+1, a)
+		}
+		b.WriteString("\n")
+	}
+	if len(pool) > 0 {
+		b.WriteString("Also do this one thing, chosen for this occasion:\n")
+		fmt.Fprintf(&b, "- %s\n", pool[rand.Intn(len(pool))])
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // rescheduleProactive cancels any existing proactive task for the given
 // conversation and schedules a new one. Stores the scheduler task ID so
 // it can be cancelled later. This is the single authority for proactive
@@ -49,10 +91,14 @@ func (T *Phantom) rescheduleProactive(chatID, handle string, cfg PhantomConfig) 
 		Log("[phantom/proactive] window error for %s: %v", chatID, err)
 		return
 	}
+	prompt := buildProactiveInstruction(cfg)
+	if prompt == "" {
+		prompt = cfg.ProactivePrompt
+	}
 	payload := phantomCallPayload{
 		ChatID:      chatID,
 		Handle:      handle,
-		Prompt:      cfg.ProactivePrompt,
+		Prompt:      prompt,
 		IsProactive: true,
 	}
 	sid, err := ScheduleTask(phantomTaskKind, payload, next)
@@ -728,9 +774,13 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 			return
 		}
 	}
-	// For proactive tasks, use the current config prompt (may have been updated).
-	if p.IsProactive && cfg.ProactivePrompt != "" {
-		p.Prompt = cfg.ProactivePrompt
+	// For proactive tasks, recompose the instruction from the current config
+	// (the action pool, always-do list, and mode may have changed since the
+	// task was scheduled). The window is always refreshed for the reschedule.
+	if p.IsProactive {
+		if instr := buildProactiveInstruction(cfg); instr != "" {
+			p.Prompt = instr
+		}
 		p.RepeatRandomWindow = cfg.ProactiveWindow
 	}
 

@@ -52,9 +52,11 @@ const (
 type EventMonitor struct {
 	Name      string `json:"name"`
 	Owner     string `json:"owner"`
-	Kind      string `json:"kind"`            // EventKindWebhook | EventKindPoll
-	WakeBrief string `json:"wake_brief"`      // guidance handed to the Operator on each wake
-	Token     string `json:"token,omitempty"` // webhook secret (URL path segment)
+	Kind      string `json:"kind"`                 // EventKindWebhook | EventKindPoll
+	WakeBrief   string `json:"wake_brief"`             // guidance handed to the woken agent on each wake
+	WakeAgent   string `json:"wake_agent,omitempty"`   // channel agent woken when this fires; empty = deployment default channel agent
+	WakeSession string `json:"wake_session,omitempty"` // session the monitor was created in; the wake lands here. Empty = the agent's channel home thread
+	Token     string `json:"token,omitempty"`      // webhook secret (URL path segment)
 
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition
@@ -75,6 +77,7 @@ type EventMonitor struct {
 	LastFired    time.Time `json:"last_fired,omitempty"`
 	LastResult   string    `json:"last_result,omitempty"`   // last answer/value seen (poll debounce / http display)
 	LastBreached bool      `json:"last_breached,omitempty"` // http_poll edge-trigger: was the condition met last check
+	LastMatched  bool      `json:"last_matched,omitempty"`  // poll edge-trigger: did the checker answer match last check
 	SchedulerID  string    `json:"scheduler_id,omitempty"`
 }
 
@@ -291,6 +294,22 @@ func StartEventMonitorScheduler() {
 // executeEventPoll runs the checker agent and, when its answer matches and
 // differs from the last answer that fired (debounce), wakes the Operator.
 // Factored out so it's unit-testable without the scheduler loop.
+// executeEventPoll runs the checker agent and wakes the Operator on the
+// TRANSITION into a match — edge-triggered, mirroring executeHTTPPoll. It fires
+// once when the checker's answer first matches and will NOT fire again until a
+// later answer does NOT match, which re-arms it.
+//
+// This bounds the damage a loose match_contains can do: a checker whose "no
+// news" answers happen to contain the match token produces at most one wake,
+// not one per interval. The old path was level-triggered with a byte-exact
+// debounce — any answer that matched and differed textually from the last fired
+// one re-fired, so a verbose checker (slightly different build refs each poll)
+// flooded the Operator's single pinned thread with near-duplicate wakes.
+//
+// The contract the checker must honor (see the create_event_monitor guidance):
+// answer the NON-match word (e.g. NONE) whenever the condition is absent, so the
+// monitor re-arms between real onsets. A checker that keeps emitting the match
+// token will fire once and then stay silent until it stops.
 func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 	eventMu.RLock()
 	poller := eventPoller
@@ -304,19 +323,24 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 		Log("[event] poll %s/%s check failed: %v", m.Owner, m.Name, err)
 		return
 	}
-	if !eventMatch(answer, m.MatchContains) {
+	matched := eventMatch(answer, m.MatchContains)
+	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
+	if !ok {
 		return
 	}
-	// Debounce: don't re-fire while the condition reports the same answer.
-	if strings.TrimSpace(answer) == strings.TrimSpace(m.LastResult) {
-		return
-	}
-	if cur, ok := GetEventMonitor(db, m.Owner, m.Name); ok {
+	switch {
+	case matched && !cur.LastMatched:
+		cur.LastMatched = true
+		cur.LastResult = answer
 		cur.LastFired = time.Now()
+		SaveEventMonitor(db, cur)
+		fireWake(ctx, db, m.Owner, m.Name, answer, "poll")
+	case !matched && cur.LastMatched:
+		// Condition cleared — re-arm so the next onset fires again. No wake.
+		cur.LastMatched = false
 		cur.LastResult = answer
 		SaveEventMonitor(db, cur)
 	}
-	fireWake(ctx, db, m.Owner, m.Name, answer, "poll")
 }
 
 // executeHTTPPoll fetches the monitor's URL, extracts a value, compares it to

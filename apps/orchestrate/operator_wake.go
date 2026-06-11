@@ -35,19 +35,42 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// queue, so auto-approve at the loop level is safe here.
 	RegisterEventWaker(func(ctx context.Context, owner, monitorName, summary string) {
 		brief := ""
-		if m, ok := GetEventMonitor(RootDB, owner, monitorName); ok && strings.TrimSpace(m.WakeBrief) != "" {
-			brief = "\n\nWhat to do: " + m.WakeBrief
+		// The monitor names the agent to wake (WakeAgent) and the session it
+		// was created in (WakeSession), so the event lands back where the user
+		// set it up. Fall back to the deployment default channel agent and its
+		// home thread when unset (legacy monitors created before the fields).
+		wakeAgent := defaultConsoleAgent
+		wakeSession := ""
+		if m, ok := GetEventMonitor(RootDB, owner, monitorName); ok {
+			if strings.TrimSpace(m.WakeBrief) != "" {
+				brief = "\n\nWhat to do: " + m.WakeBrief
+			}
+			if a := strings.TrimSpace(m.WakeAgent); a != "" {
+				wakeAgent = a
+			}
+			wakeSession = strings.TrimSpace(m.WakeSession)
+		}
+		if wakeSession == "" {
+			wakeSession = channelSessionID(wakeAgent)
 		}
 		msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
 			monitorName, summary, brief)
-		if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, defaultConsoleAgent, operatorPinnedSession, "", msg, false); err != nil {
+		if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, wakeAgent, wakeSession, "", msg, false); err != nil {
 			Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 		}
 	})
 
-	// Poller: run the checker agent fresh and return its answer.
+	// Poller: run the checker agent fresh and return its answer. If the named
+	// checker doesn't exist (e.g. the LLM set check_agent to a conversational
+	// nickname rather than a real agent), fall back to the default channel
+	// agent so the monitor still works instead of erroring every interval.
 	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
-		return app.RunAgentSync(ctx, owner, owner, agentID, check)
+		out, err := app.RunAgentSync(ctx, owner, owner, agentID, check)
+		if err != nil && strings.Contains(err.Error(), "not found") && agentID != defaultConsoleAgent {
+			Log("[operator.poll] checker %q not found — falling back to %s", agentID, defaultConsoleAgent)
+			return app.RunAgentSync(ctx, owner, owner, defaultConsoleAgent, check)
+		}
+		return out, err
 	})
 
 	StartEventMonitorScheduler()

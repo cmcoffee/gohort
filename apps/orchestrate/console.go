@@ -2,11 +2,11 @@
 // feed (run-ledger), and pending authorizations. These back the orchestrator's
 // "Enabled agents" / "Authorizations" controls.
 //
-// Decision (model A): the Operator is NOT a bespoke console. It's a normal
-// Agency agent (seed-operator) and reuses Agency's full agent surface — picker,
-// toolbar, chat — wholesale (see page_chat.go). Its orchestrator-specific
-// controls are added as toolbar actions backed by these endpoints, so it has
-// every feature a normal agent has plus the fleet/authorization views.
+// Decision (model A): a channel agent is NOT a bespoke console. It's a normal
+// Agency agent (Chat is the primary one) and reuses Agency's full agent surface
+// — picker, toolbar, chat — wholesale (see page_chat.go). Its channel-specific
+// controls are added as sidebar nav backed by these endpoints, so it has every
+// feature a normal agent has plus the fleet/authorization views.
 //
 // Owner-scoped, reusing the shared core spine (run-ledger + standing-agent
 // store). Approvals + delegation (model A) wiring lands in a later stage.
@@ -15,6 +15,7 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -24,13 +25,31 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// operatorPinnedSession is the single session id the Operator's ongoing thread
-// uses. MUST match the literal in core/ui/runtime.go's applyOrchMode.
-const operatorPinnedSession = "operator-thread"
+// legacyOperatorThread is the pre-split single session id the Operator used.
+// Retained only as the migration SOURCE — the one-time Operator→Chat fold
+// copies this thread into seed-chat's channel session. New code derives the
+// per-agent channel session via channelSessionID.
+const legacyOperatorThread = "operator-thread"
 
-// defaultConsoleAgent is the orchestrator agent the console endpoints default
-// to when no ?agent= is supplied.
-const defaultConsoleAgent = "seed-operator"
+// channelSessionID is the session id of a channel agent's persistent home
+// thread. Per-agent so every channel agent has its own ongoing conversation.
+// The client gets this value (per agent) from the host page, so it never
+// hardcodes the scheme. seed-operator is bridged to its pre-split thread id
+// so the existing Operator conversation isn't orphaned by the id-scheme
+// change; this special case is removed when the Operator→Chat fold migrates
+// that thread.
+func channelSessionID(agentID string) string {
+	if agentID == "seed-operator" {
+		return legacyOperatorThread
+	}
+	return "channel:" + agentID
+}
+
+// defaultConsoleAgent is the channel agent the console endpoints — and the
+// event-monitor wake fallback — default to when no agent is specified. Chat is
+// the primary channel agent now (the Operator folded into it), so legacy
+// monitors with an empty WakeAgent wake Chat's channel automatically.
+const defaultConsoleAgent = "seed-chat"
 
 func consoleAgentID(r *http.Request) string {
 	if a := strings.TrimSpace(r.URL.Query().Get("agent")); a != "" {
@@ -56,6 +75,112 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/approvals/always", g(T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", g(T.handleApprovalDeny))
 	T.HandleFunc("/api/console/history", g(T.handleConsoleHistory))
+	T.HandleFunc("/api/console/channel/clear", g(T.handleChannelClear))
+	T.HandleFunc("/api/console/channel/decommission", g(T.handleChannelDecommission))
+	T.HandleFunc("/api/console/grants", g(T.handleConsoleGrants))
+	T.HandleFunc("/api/console/grants/revoke", g(T.handleGrantRevoke))
+}
+
+// handleConsoleGrants lists the owner's STANDING authorizations — the "Always
+// allow" grants that let future delegations/messages skip the approval queue.
+// Distinct from the pending queue (/api/console/approvals): those are one-time
+// and vanish once acted on; these persist until revoked. Each row carries a
+// "_id" of "<kind>:<target>" the Revoke action round-trips. GET only.
+func (T *OrchestrateApp) handleConsoleGrants(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	out := []map[string]any{}
+	for _, agent := range ListDelegationPreAuthorizations(RootDB, user) {
+		out = append(out, map[string]any{"_id": "agent:" + agent, "Kind": "Agent", "Target": agent})
+	}
+	for _, handle := range ListContactPreAuthorizations(RootDB, user) {
+		out = append(out, map[string]any{"_id": "contact:" + handle, "Kind": "Contact", "Target": handle})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// handleGrantRevoke clears one standing grant. id = "<kind>:<target>" from the
+// grants list; future actions to that agent/contact queue for approval again.
+func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	kind, target, found := strings.Cut(id, ":")
+	if !found || target == "" {
+		http.Error(w, "bad grant id", http.StatusBadRequest)
+		return
+	}
+	switch kind {
+	case "agent":
+		SetDelegationPreAuthorized(RootDB, user, target, false)
+	case "contact":
+		SetContactPreAuthorized(RootDB, user, target, false)
+	default:
+		http.Error(w, "unknown grant kind", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChannelClear wipes a channel agent's home-thread conversation and its
+// rolling summary / fold cursor — the cheap fix for a crystallized thread.
+// Operational state (monitors, standing agents, approvals) is left untouched;
+// that's Decommission's job. POST ?agent=<id>.
+func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	agentID := consoleAgentID(r)
+	sid := channelSessionID(agentID)
+	deleteChatSession(udb, agentID, sid)
+	deleteCompactState(udb, agentID, sid)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleChannelDecommission tears down the owner's standing fleet — every event
+// monitor, standing agent, and pending authorization. Destructive and explicit
+// (confirm-gated client-side); the channel conversation itself is left intact
+// (use Clear channel for that). POST ?agent=<id>.
+func (T *OrchestrateApp) handleChannelDecommission(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	for _, m := range ListEventMonitors(RootDB, user) {
+		DeleteEventMonitor(RootDB, user, m.Name)
+	}
+	for _, s := range ListStandingAgents(RootDB, user) {
+		DeleteStandingAgent(RootDB, user, s.Name)
+	}
+	for _, a := range ListAuthorizations(RootDB, user) {
+		DeleteAuthorization(RootDB, user, a.ID)
+	}
+	// Standing grants too — a clean slate means future actions all re-queue.
+	for _, agent := range ListDelegationPreAuthorizations(RootDB, user) {
+		SetDelegationPreAuthorized(RootDB, user, agent, false)
+	}
+	for _, handle := range ListContactPreAuthorizations(RootDB, user) {
+		SetContactPreAuthorized(RootDB, user, handle, false)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleConsoleHistory powers the orchestrator's History nav: GET returns the
@@ -71,7 +196,7 @@ func (T *OrchestrateApp) handleConsoleHistory(w http.ResponseWriter, r *http.Req
 		return
 	}
 	agentID := consoleAgentID(r)
-	sess, _ := loadChatSession(udb, agentID, operatorPinnedSession)
+	sess, _ := loadChatSession(udb, agentID, channelSessionID(agentID))
 
 	if r.Method == http.MethodDelete {
 		idx, _ := strconv.Atoi(r.URL.Query().Get("id"))
@@ -79,10 +204,17 @@ func (T *OrchestrateApp) handleConsoleHistory(w http.ResponseWriter, r *http.Req
 			sess.Messages = append(sess.Messages[:idx], sess.Messages[idx+1:]...)
 			_, _ = saveChatSession(udb, sess)
 			// Keep the compaction marker aligned when deleting a turn that
-			// was already folded into the summary.
-			if st := loadCompactState(udb, agentID, operatorPinnedSession); idx < st.SummarizedThrough {
+			// was already folded into the summary. When the marker reaches
+			// zero, every summarized turn has been scrubbed, so the summary no
+			// longer reflects anything in the thread — clear its text too,
+			// otherwise a stale digest keeps re-priming the conversation.
+			if st := loadCompactState(udb, agentID, channelSessionID(agentID)); idx < st.SummarizedThrough {
 				st.SummarizedThrough--
-				saveCompactState(udb, agentID, operatorPinnedSession, st)
+				if st.SummarizedThrough <= 0 {
+					st.SummarizedThrough = 0
+					st.Summary = ""
+				}
+				saveCompactState(udb, agentID, channelSessionID(agentID), st)
 			}
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -328,8 +460,12 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 	for _, a := range ListAuthorizations(RootDB, user) {
 		agent, action := a.Agent, a.Brief
 		if a.Action == "send_message" {
-			agent = a.Handle
+			agent = operatorApprovalRecipient(user, a)
 			action = "text: " + a.Text
+		}
+		if a.Action == "converse_contact" {
+			agent = operatorApprovalRecipient(user, a)
+			action = "converse toward: " + a.Brief
 		}
 		out = append(out, apprRow{
 			Agent:     agent,
@@ -339,6 +475,33 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 		})
 	}
 	writeJSON(w, out)
+}
+
+// operatorApprovalRecipient renders a human-readable recipient for a phantom
+// messaging approval. When the message was addressed by chat_id (e.g. a group,
+// which has no single handle), it resolves the chat to its display name/handle
+// via the bridge so the approval row names WHO it's going to — otherwise the
+// row would show a bare chat id (or nothing) and the user couldn't tell.
+func operatorApprovalRecipient(owner string, a Authorization) string {
+	if strings.TrimSpace(a.Handle) != "" {
+		return a.Handle
+	}
+	if strings.TrimSpace(a.ChatID) != "" {
+		if link, ok := ActivePhantomLink(); ok {
+			if s, ok := link.DescribeChat(owner, a.ChatID); ok {
+				switch {
+				case s.DisplayName != "" && s.Handle != "":
+					return s.DisplayName + " (" + s.Handle + ")"
+				case s.DisplayName != "":
+					return s.DisplayName
+				case s.Handle != "":
+					return s.Handle
+				}
+			}
+		}
+		return a.ChatID
+	}
+	return "(unknown recipient)"
 }
 
 // resolveApproval approves a queued delegation: optionally pre-authorizes the
@@ -359,12 +522,40 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// bridge. ("Always allow" doesn't pre-authorize a contact — each outbound
 	// to a real person stays a deliberate approval.)
 	if a.Action == "send_message" {
+		recip := operatorRecipientKey(a.ChatID, a.Handle)
+		// "Always allow" pre-authorizes THIS recipient, so future texts (and
+		// autonomous conversations) to the same chat/handle send without
+		// re-queuing.
+		if always {
+			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
+		}
 		if link, ok := ActivePhantomLink(); ok {
-			if err := link.SendToHandle(a.Owner, a.Handle, a.Text); err != nil {
-				Log("[operator.approval] send_message to %q failed: %v", a.Handle, err)
+			if _, err := operatorDeliverMessage(link, a.Owner, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
+				Log("[operator.approval] send_message to %s failed: %v", recip, err)
 			}
 		} else {
-			Log("[operator.approval] phantom bridge unavailable; dropped message to %q", a.Handle)
+			Log("[operator.approval] phantom bridge unavailable; dropped message to %s", recip)
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// converse_contact: hand the goal to phantom, which runs the autonomous
+	// multi-turn conversation and wakes the Operator back here when done.
+	// (Like send_message, "Always allow" does NOT pre-authorize a contact —
+	// each conversation stays a deliberate approval.)
+	if a.Action == "converse_contact" {
+		recip := operatorRecipientKey(a.ChatID, a.Handle)
+		// "Always allow" pre-authorizes THIS recipient (shared with one-shot
+		// texts), so future conversations/texts start without re-queuing.
+		if always {
+			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
+		}
+		if link, ok := ActivePhantomLink(); ok {
+			if _, err := link.StartGoalConversation(a.Owner, a.ChatID, a.Handle, a.Brief, defaultConsoleAgent, channelSessionID(defaultConsoleAgent)); err != nil {
+				Log("[operator.approval] converse_contact with %s failed: %v", recip, err)
+			}
+		} else {
+			Log("[operator.approval] phantom bridge unavailable; dropped conversation with %s", recip)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return

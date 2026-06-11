@@ -30,6 +30,13 @@ type CompactionConfig struct {
 	KeepRecent      int // verbatim tail kept after a fold (default 12)
 	Trigger         int // fold when the unsummarized tail exceeds this (default KeepRecent*3)
 	MaxSummaryChars int // cap on the running summary; oldest trimmed (default 4000)
+
+	// OnFold, when set, is called with the raw span being folded into the
+	// summary and the absolute index of its first message, right after a
+	// successful fold. Lets a caller ARCHIVE the aging content elsewhere — a
+	// searchable history index — so it stays recoverable after it leaves both
+	// the verbatim window and the (lossy) summary. Optional; nil = no archiving.
+	OnFold func(folded []Message, firstIndex int)
 }
 
 func (c CompactionConfig) withDefaults() CompactionConfig {
@@ -98,6 +105,10 @@ func CompactConversation(ctx context.Context, msgs []Message, st CompactState, c
 	// Trim runaway summaries, preserving the END (latest narrative).
 	if len(summary) > cfg.MaxSummaryChars {
 		summary = "[...older summary trimmed...]\n" + summary[len(summary)-cfg.MaxSummaryChars:]
+	}
+	// Hand the raw folded span to any archiver before it's lost to the summary.
+	if cfg.OnFold != nil {
+		cfg.OnFold(msgs[through:foldEnd], through)
 	}
 	return CompactState{Summary: summary, SummarizedThrough: foldEnd}, facts, true, nil
 }

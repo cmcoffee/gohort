@@ -99,6 +99,15 @@ const (
 	// and return a short ack to the user. The sub-agent loop will
 	// drain the note between rounds and integrate it into its work.
 	RouteInject
+
+	// RouteGoal — an AUTONOMOUS sub-session (SubSessionKindAutonomous)
+	// owns this host. The incoming message belongs to the task's OWN
+	// turn loop, NOT the host persona: the host must hand it to the
+	// task's runner and return — it must NOT fall through to its main
+	// LLM the way RoutePromote/RouteInject do. Unlike those two, an
+	// autonomous record is never window/cap-retired here; the task
+	// decides when it's done.
+	RouteGoal
 )
 
 // ResolveDispatchRoute is the tri-state successor to the simpler
@@ -147,6 +156,11 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 	// for a record nobody's actually serving — which would ack every
 	// future user message forever.
 	if active := mostRecentActive(hostSessionID); active != nil {
+		// An autonomous task that's mid-turn (briefly active) owns its
+		// own loop — route to it, never inject-then-relay to the host.
+		if active.Kind == SubSessionKindAutonomous {
+			return active, RouteGoal
+		}
 		if subSessionIsLive(active.SubSessionID) {
 			return active, RouteInject
 		}
@@ -159,6 +173,15 @@ func ResolveDispatchRoute(hostSessionID string) (*SubSession, RouteAction) {
 	}
 	now := time.Now()
 	for _, s := range idle {
+		// Autonomous tasks (e.g. an operator-goal contact conversation)
+		// suspend idle between turns while waiting on an external party,
+		// often for hours. They are exempt from window/cap retirement —
+		// the message re-drives the task's runner instead of promoting
+		// to the host persona. The task retires itself on finish/cap, or
+		// a timeout sweep retires it.
+		if s.Kind == SubSessionKindAutonomous {
+			return &s, RouteGoal
+		}
 		if shouldRetire(s, now) {
 			RetireSubSession(s.SubSessionID, retireReason(s, now))
 			continue

@@ -170,19 +170,68 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 	return out
 }
 
-// SearchMemoryFacts is a substring scan across the namespace —
-// case-insensitive on the Note. Used by recall-style tools that
-// take a free-form query. Empty query returns all (sorted by
-// ListMemoryFacts's oldest-first order).
+// factSearchMinScore is the cosine floor for a fact to count as a semantic
+// match in SearchMemoryFacts. Well below the dedup threshold (0.90, "same
+// fact") — recall wants "related enough to be worth showing," not "identical."
+const factSearchMinScore = 0.35
+
+// factSearchTopK caps how many semantic matches SearchMemoryFacts returns —
+// enough for the LLM to find the relevant one without dumping the namespace.
+const factSearchTopK = 8
+
+// SearchMemoryFacts recalls facts for a free-form query. Semantic-first when
+// embeddings are enabled: it ranks facts by cosine to the query and returns the
+// most relevant — so "what's Emily's phone" surfaces a fact stored as "wife's
+// number is +1415…" that a substring scan would miss. Falls back to a
+// case-insensitive substring scan when embeddings are off, or when semantic
+// finds nothing above the floor (which still catches exact-token matches a low
+// cosine can miss). Empty query returns all (oldest-first).
+//
+// Facts are short and a namespace holds few of them, so embedding them on the
+// fly per search is cheap (local server) — the same on-the-fly pattern
+// StoreMemoryFact already uses for dedup, with no stored-vector schema.
 func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
 	all := ListMemoryFacts(db, namespace)
-	q := strings.ToLower(strings.TrimSpace(query))
+	q := strings.TrimSpace(query)
 	if q == "" {
 		return all
 	}
+	if cfg := GetEmbeddingConfig(); cfg.Enabled && len(all) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if qVec, err := Embed(ctx, q); err == nil && len(qVec) > 0 {
+			type scored struct {
+				fact  MemoryFact
+				score float32
+			}
+			var ranked []scored
+			for _, f := range all {
+				fVec, err := Embed(ctx, f.Note)
+				if err != nil || len(fVec) != len(qVec) {
+					continue
+				}
+				if s := Cosine(qVec, fVec); s >= factSearchMinScore {
+					ranked = append(ranked, scored{f, s})
+				}
+			}
+			if len(ranked) > 0 {
+				sort.Slice(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+				if len(ranked) > factSearchTopK {
+					ranked = ranked[:factSearchTopK]
+				}
+				out := make([]MemoryFact, len(ranked))
+				for i, r := range ranked {
+					out[i] = r.fact
+				}
+				return out
+			}
+			// Nothing above the floor — fall through to substring.
+		}
+	}
+	ql := strings.ToLower(q)
 	var out []MemoryFact
 	for _, f := range all {
-		if strings.Contains(strings.ToLower(f.Note), q) {
+		if strings.Contains(strings.ToLower(f.Note), ql) {
 			out = append(out, f)
 		}
 	}

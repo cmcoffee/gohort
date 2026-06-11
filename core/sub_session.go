@@ -77,6 +77,33 @@ const (
 	SubSessionModeAsync SubSessionMode = "async"
 )
 
+// SubSessionKind separates "follow-up" sub-sessions (the default —
+// promotion/injection semantics, a host-persona conversation the user
+// drifts back into) from self-driving BACKGROUND tasks that own their
+// own turn loop and must never be promoted to the host persona.
+//
+//   normal     — promotion router applies: an idle record is joinable
+//                via RoutePromote, ages out of the stickiness window,
+//                and falls through to the host's main LLM.
+//   autonomous — a long-lived task that drives its OWN runner when a
+//                message arrives (RouteGoal) and is NEVER handed to the
+//                host persona. It is exempt from the promotion-window /
+//                turn-cap auto-retirement, because it spends most of its
+//                life idle waiting on an external party (a human texting
+//                back) — five minutes is the wrong yardstick. Retirement
+//                is the task's own responsibility (it finishes, hits its
+//                cap, or a timeout sweep retires it).
+//
+// Kept generic on purpose: core never names the app or the task. Phantom's
+// operator-goal conversations are the first user; any later background-task
+// surface reuses the same kind. See ResolveDispatchRoute.
+type SubSessionKind string
+
+const (
+	SubSessionKindNormal     SubSessionKind = ""
+	SubSessionKindAutonomous SubSessionKind = "autonomous"
+)
+
 // SubSession is the lifecycle index record. It does NOT carry the
 // sub-agent's message history — that lives in the per-app storage
 // (orchestrate's ChatSession, phantom's dispatchResult, etc.) and
@@ -90,6 +117,7 @@ type SubSession struct {
 	AgentName       string           `json:"agent_name,omitempty"`         // for log lines / UI; not load-bearing
 	OwnerUser       string           `json:"owner_user,omitempty"`         // user account that minted this dispatch
 	Mode            SubSessionMode   `json:"mode"`                         // sync or async
+	Kind            SubSessionKind   `json:"kind,omitempty"`               // "" normal (promotion); "autonomous" self-driving background task
 	Status          SubSessionStatus `json:"status"`                       // active / idle / retired
 	Started         time.Time        `json:"started"`                      // when the dispatch first ran
 	LastReplyAt     time.Time        `json:"last_reply_at,omitempty"`      // most recent sub-agent reply (drives promotion window)

@@ -155,6 +155,22 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		T.handleSessionExport(w, r, agent.ID, sid)
 		return
 	}
+	// Detect /api/sessions/{sid}/send-to-builder — stage an improvement
+	// brief (framing + full transcript) and hand it to the Builder
+	// agent so it can diagnose where this agent fell short and fix it.
+	if strings.HasSuffix(sid, "/send-to-builder") {
+		sid = strings.TrimSuffix(sid, "/send-to-builder")
+		if sid == "" || strings.Contains(sid, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		T.handleSendToBuilder(w, r, agent, sid)
+		return
+	}
 	// Detect /api/sessions/{sid}/tools[/{name}] — visibility +
 	// admin-driven promotion of session-scoped temp tools out of the
 	// per-session draft pool into either the agent's bundled tools
@@ -190,12 +206,11 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	// Orchestrator agents keep one ongoing thread; pin every session
-	// operation (load / delete / patch) to that fixed id so visits resume
-	// the same conversation instead of forking a new chat each time.
-	if agent.Mode == "orchestrator" {
-		sid = operatorPinnedSession
-	}
+	// Channel agents no longer force every visit onto one thread — they have
+	// a channel thread AND normal sessions. The channel thread is just a
+	// specific session id (channelSessionID) the client opens via the
+	// Channel row; ad-hoc sessions pass through with their own ids. So we
+	// don't rewrite sid here anymore.
 	switch r.Method {
 	case http.MethodGet:
 		// External-source row (e.g. ?source=phantom&chat_id=…)?
@@ -217,17 +232,20 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		}
 		s, ok := loadChatSession(udb, agent.ID, sid)
 		if !ok {
-			// Orchestrator agents use a single pinned session ("operator-
-			// thread"); on the first visit it doesn't exist yet, so return an
-			// empty session instead of 404 so the client opens a fresh thread
-			// rather than erroring.
-			if agent.Mode == "orchestrator" {
+			// The channel thread doesn't exist until its first turn; when the
+			// Channel row opens it, return an empty session instead of 404 so
+			// the client opens a fresh thread rather than erroring. Ad-hoc
+			// sessions still 404 on a miss.
+			if agent.Channel && sid == channelSessionID(agent.ID) {
 				s = ChatSession{ID: sid}
 			} else {
 				http.NotFound(w, r)
 				return
 			}
 		}
+		// Opening a session clears its unread state (a background wake that
+		// landed here is now seen). Writes LastSeen only — not activity.
+		markSessionSeen(udb, agent.ID, sid)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s)
 	case http.MethodDelete:
@@ -267,6 +285,13 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		if _, err := saveChatSession(udb, s); err != nil {
 			http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
 			return
+		}
+		// Truncating the whole thread away (At==0) must also drop the rolling
+		// summary — otherwise the orchestrator's compaction digest survives the
+		// clear and re-primes every turn (the "stuck personality" trap). No-op
+		// for agents with no compact-state row.
+		if body.At == 0 {
+			deleteCompactState(udb, agent.ID, sid)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"at": body.At, "messages_remaining": len(s.Messages)})

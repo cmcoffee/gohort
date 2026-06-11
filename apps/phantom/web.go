@@ -225,6 +225,27 @@ func (T *Phantom) handleConfig(w http.ResponseWriter, r *http.Request) {
 			go T.syncProactiveTasks(cfg)
 		}
 		jsonOK(w, cfg)
+	case http.MethodPatch:
+		// Partial update — merges only the provided fields onto the stored
+		// config (mirrors the conversation PATCH pattern). Used by the
+		// global "Default agents" chip-picker, which posts just its field
+		// and must not clobber the rest of the config the way a whole-struct
+		// POST would. Loads the RAW stored config (not defaultConfig) so
+		// re-saving doesn't bake injected defaults onto disk.
+		var cfg PhantomConfig
+		T.DB.Get(configTable, configKey, &cfg)
+		var req struct {
+			DefaultAllowedAgents *[]string `json:"default_allowed_agents"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if req.DefaultAllowedAgents != nil {
+			cfg.DefaultAllowedAgents = *req.DefaultAllowedAgents
+		}
+		T.DB.Set(configTable, configKey, cfg)
+		jsonOK(w, cfg)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -1138,9 +1159,13 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	// the primary — that lets a user opt in on either side. For non-alias
 	// primaries the incomingConv IS the conv, so checking it twice is just
 	// noise; gate on isAlias to keep the intent obvious.
-	autoReply := conv.AutoReply || (isAlias && incomingConv.AutoReply)
-	Log("[phantom] hook from %s — enabled=%v auto_reply_all=%v conv_auto_reply=%v alias=%v primary=%v active=%s",
-		req.Handle, cfg.Enabled, cfg.AutoReplyAll, autoReply, isAlias, routingResolved && !isAlias, activeChatID)
+	// A live operator-goal conversation forces processing of the contact's
+	// replies regardless of the chat's auto-reply setting — the runner needs
+	// every reply, and these contacts are typically not auto-reply-enabled.
+	goalLive := hasLiveGoalConversation(T.DB, activeChatID)
+	autoReply := conv.AutoReply || (isAlias && incomingConv.AutoReply) || goalLive
+	Log("[phantom] hook from %s — enabled=%v auto_reply_all=%v conv_auto_reply=%v alias=%v primary=%v goal=%v active=%s",
+		req.Handle, cfg.Enabled, cfg.AutoReplyAll, autoReply, isAlias, routingResolved && !isAlias, goalLive, activeChatID)
 	// Only run the gatekeeper + LLM processing when phantom is enabled AND
 	// this chat is set to auto-reply. A chat that isn't auto-reply-enabled
 	// won't respond regardless, so running the gatekeeper LLM on its
@@ -1155,15 +1180,20 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		// resolution labels owner-handle messages as the owner, so the
 		// rule can "always allow if from owner" or wake-word-gate the
 		// owner, operator's choice.
-		Log("[phantom] gatekeeper: calling for handle=%q chatID=%q msg=%q",
-			req.Handle, activeChatID, truncateStr(cleanMessageText(req.Text), 60))
-		if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
-			senderTag := req.Handle
-			if senderTag == "" {
-				senderTag = "owner"
+		// A live goal conversation bypasses the gatekeeper: the runner must
+		// see every contact reply to drive the exchange, and the contact was
+		// already authorized when the user approved the conversation.
+		if !goalLive {
+			Log("[phantom] gatekeeper: calling for handle=%q chatID=%q msg=%q",
+				req.Handle, activeChatID, truncateStr(cleanMessageText(req.Text), 60))
+			if !T.gatekeeperAllow(cfg, conv, activeChatID, req.Handle, req.DisplayName, req.Text, len(req.Images)+len(req.Videos)) {
+				senderTag := req.Handle
+				if senderTag == "" {
+					senderTag = "owner"
+				}
+				Log("[phantom] gatekeeper blocked message from %s", senderTag)
+				return
 			}
-			Log("[phantom] gatekeeper blocked message from %s", senderTag)
-			return
 		}
 		// For self-messages (empty handle), reply to the original sender
 		// address rather than the resolved primary — unless the incoming
@@ -1694,14 +1724,17 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		tools = append(tools, knowledgeGroupedToolDef(T.DB, chatID))
 	}
 	// Dispatch-to-Agency-agent: synchronous delegation to a named
-	// orchestrate agent. AllowedAgents IS the toggle — when the
-	// chat config's 🛰 picker has any agent chip selected, the tool
-	// appears in the catalog; otherwise it's hidden. No separate
-	// dispatch_agent entry in the EnabledTools picker is needed
-	// (would be redundant with AllowedAgents being non-empty).
+	// orchestrate agent. The effective allowlist is the chat's own
+	// 🛰 selection, or the global DefaultAllowedAgents fallback when
+	// the chat has selected none — so an admin can opt the fleet in
+	// once instead of hand-enabling agents on every chat. A non-empty
+	// list (from either source) is the toggle: the tool appears in the
+	// catalog, hidden otherwise. conv is a local copy here, so folding
+	// the default into it never persists onto the conversation record.
 	// The tool's description is composed from the allowlist + the
 	// owner's agent records so the LLM sees the agents by name +
 	// one-line purpose.
+	conv.AllowedAgents = effectiveAllowedAgents(conv, cfg)
 	if len(conv.AllowedAgents) > 0 {
 		if owner := phantomAgentOwner(T.DB); owner != "" {
 			// Async-only. Phantom's texting cadence never wants the
@@ -1887,6 +1920,14 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 			return
 		}
 		switch action {
+		case RouteGoal:
+			// An operator-goal conversation owns this (contact) chat. The
+			// contact's reply belongs to the goal runner's OWN loop — drive it
+			// and RETURN. It must never fall through to phantom's owner-facing
+			// persona (unlike RouteInject/RoutePromote below).
+			Log("[phantom] contact reply for goal conversation sub=%s — running goal turn", sub.SubSessionID)
+			T.runGoalTurn(chatID, handle, text, *sub)
+			return
 		case RouteInject:
 			// A dispatch is in flight. We do NOT swallow the message into
 			// the dispatch with a canned "Got it, applying that" and go
@@ -2204,26 +2245,39 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	// considering tool calls — this block elevates the awareness so
 	// specialist questions naturally route to the right agent
 	// instead of the chat persona trying to answer inline.
-	if len(conv.AllowedAgents) > 0 {
+	// Effective allowlist = the chat's own selection, or the global
+	// DefaultAllowedAgents fallback. Kept in a local (not folded into
+	// conv) so it can't persist onto the conversation record. Must match
+	// the gate in buildConvTools so the tool and the catalog never drift.
+	effAgents := effectiveAllowedAgents(conv, cfg)
+	if len(effAgents) > 0 {
 		if owner := phantomAgentOwner(T.DB); owner != "" {
 			// Audit (mirrors orchestrate's available-agents log): the tool +
 			// catalog are gated on the SAME condition here so they can't
 			// drift the way orchestrate's did, but log the render outcome so
-			// a stale AllowedAgents allowlist (entries that no longer resolve
+			// a stale allowlist (entries that no longer resolve
 			// → empty catalog while the tool is present) self-reports
 			// instead of silently under-delegating.
-			if block := buildAvailableAgentsPromptBlock(T.DB, owner, conv.AllowedAgents); block != "" {
+			if block := buildAvailableAgentsPromptBlock(T.DB, owner, effAgents); block != "" {
 				sysPrompt += block
-				Debug("[phantom] available-agents catalog: rendered for chat=%s (%d allowed)", conv.ChatID, len(conv.AllowedAgents))
+				Debug("[phantom] available-agents catalog: rendered for chat=%s (%d allowed)", conv.ChatID, len(effAgents))
 			} else {
-				Debug("[phantom] available-agents catalog: EMPTY for chat=%s despite %d AllowedAgents — none resolved to a dispatchable agent (stale allowlist?)", conv.ChatID, len(conv.AllowedAgents))
+				Debug("[phantom] available-agents catalog: EMPTY for chat=%s despite %d allowed agents — none resolved to a dispatchable agent (stale allowlist?)", conv.ChatID, len(effAgents))
 			}
 			// Per-turn dispatch nudge: when this message matches an allowed
 			// agent's triggers, hint "dispatch FIRST" right after the
 			// catalog — the salient turn-specific signal the static block
 			// alone doesn't give (mirrors orchestrate). Soft; no-op when
 			// nothing matches.
-			sysPrompt += buildAgentTriggerHint(T.DB, owner, conv.AllowedAgents, cleaned, nil)
+			sysPrompt += buildAgentTriggerHint(T.DB, owner, effAgents, cleaned, nil)
+			// Active dispatch threads: remind the persona of agents it
+			// already delegated to in THIS chat so a follow-up re-dispatches
+			// (continuing the thread) instead of being answered from memory —
+			// the prior answer is in history with no sign it came from an
+			// agent, and a generic follow-up won't re-match the agent's
+			// triggers. Mirrors orchestrate's renderActiveDispatchThreads.
+			// No-op when this chat has no prior dispatch to a still-allowed agent.
+			sysPrompt += buildActiveDispatchThreadsBlock(T.DB, owner, effAgents, conv.ChatID)
 		}
 	}
 	// Skills: stateless. Triggered skills inject deterministically; the LLM
@@ -2636,7 +2690,15 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 	//      pass (rare but possible on deterministic small models).
 	// The recentReplies map is shared with the loop-back guard from
 	// hookHandler — same TTL, same exact-match semantics.
-	if T.matchesRecentReply(reply) {
+	// Only treat a text match as a droppable duplicate when the reply carries
+	// NO attachments. An image/video/file is the real payload, and identical
+	// caption text ("here you go", "got it", or an empty caption) is normal
+	// across attachment sends — dropping on text-match alone swallowed the
+	// attachment and the user received nothing. The replay guard still protects
+	// the text-only case it was built for (the agent-loop empty-response rescue
+	// re-emitting a stale prior turn).
+	hasAttachments := len(sessionImages) > 0 || len(sessionVideos) > 0 || len(sess.Files) > 0
+	if !hasAttachments && T.matchesRecentReply(reply) {
 		Log("[phantom] dropping duplicate reply (matches recently-sent text) for %s", handle)
 		return
 	}

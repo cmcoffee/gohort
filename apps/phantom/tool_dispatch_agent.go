@@ -502,6 +502,82 @@ func buildAgentTriggerHint(db Database, ownerUsername string, allowed []string, 
 	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain — dispatch to it via dispatch_agent as your FIRST move (then send a short natural ack), instead of answering inline or web_searching yourself. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
 }
 
+// buildActiveDispatchThreadsBlock surfaces the specialist threads this chat
+// already has going — agents that answered earlier in THIS conversation — so
+// the persona re-dispatches a follow-up to the SAME agent instead of
+// answering it inline. Phantom's relay model falls a follow-up through to the
+// main LLM (RoutePromote), and the prior answer sits in chat history stripped
+// of any sign it came from an agent, so without this cue "tell me more" reads
+// as something the persona can answer itself — and it does, from memory,
+// instead of continuing the thread. Mirrors orchestrate's
+// renderActiveDispatchThreads. Empty when no prior dispatch in this chat
+// resolves to a still-allowed agent.
+func buildActiveDispatchThreadsBlock(db Database, ownerUsername string, allowed []string, chatID string) string {
+	if db == nil || len(allowed) == 0 || ownerUsername == "" || chatID == "" {
+		return ""
+	}
+	results := listDispatchResultsForChat(db, chatID)
+	if len(results) == 0 {
+		return ""
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		return ""
+	}
+	byID := map[string]orchestrate.AgentRecord{}
+	byName := map[string]orchestrate.AgentRecord{}
+	for _, a := range orch.AgentsForUser(ownerUsername) {
+		byID[a.ID] = a
+		byName[strings.ToLower(a.Name)] = a
+	}
+	// One entry per agent — newest brief wins (results are newest-first).
+	seen := map[string]bool{}
+	var parts []string
+	for _, r := range results {
+		a, ok := byID[r.Agent]
+		if !ok {
+			a, ok = byName[strings.ToLower(r.Agent)]
+		}
+		if !ok || seen[a.ID] || !isAgentAllowed(db, ownerUsername, allowed, r.Agent) {
+			continue
+		}
+		seen[a.ID] = true
+		part := "**" + a.Name + "**"
+		if topic := shortDispatchTopic(r.Brief); topic != "" {
+			part += " (last: " + topic + ")"
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\nACTIVE SPECIALIST THREADS (this chat): you've already delegated to " +
+		strings.Join(parts, "; ") +
+		". If the user's message is a FOLLOW-UP to one of these — \"tell me more\", \"what about X\", drilling into the same topic — re-dispatch it to that SAME agent via dispatch_agent (leave fresh_session false so it continues the thread), then send a short natural ack; do NOT answer it yourself from memory. You delegated it before because it's that agent's domain — that hasn't changed. For an exact detail from the earlier answer (a number, name, address), call recall_dispatch_result instead of guessing.\n"
+}
+
+// shortDispatchTopic trims a dispatch brief to a one-line label for the
+// active-threads cue so the persona can tell which thread a follow-up
+// belongs to.
+func shortDispatchTopic(brief string) string {
+	t := strings.ReplaceAll(strings.TrimSpace(brief), "\n", " ")
+	if len(t) > 80 {
+		t = strings.TrimSpace(t[:80]) + "…"
+	}
+	return t
+}
+
+// effectiveAllowedAgents resolves which agents a conversation may dispatch
+// to: its own AllowedAgents when set, otherwise the global default from
+// config. Single authority so the tool gate, the prompt block, and the
+// dispatch validation all agree on the same list.
+func effectiveAllowedAgents(conv Conversation, cfg PhantomConfig) []string {
+	if len(conv.AllowedAgents) > 0 {
+		return conv.AllowedAgents
+	}
+	return cfg.DefaultAllowedAgents
+}
+
 // summarizeAllowedAgents builds the "Agents you can dispatch to"
 // bullet list for the tool description. Names + first sentence of
 // description so the LLM has enough to pick the right one without

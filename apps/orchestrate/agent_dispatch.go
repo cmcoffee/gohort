@@ -327,13 +327,14 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if isBuilderAgent(target.ID) {
 		tools = append(tools, builderAuthoringTools(subSess)...)
 	}
-	// Orchestrator (Operator) targets get their exclusive fleet-management +
-	// delegation + event-monitor catalog here too, so a dispatched/woken
-	// Operator behaves the same as on its own chat surface. Mirrors the
-	// runner.go catalog hook. Drop the generic interval scheduler (it
-	// schedules through the fleet instead).
-	if target.Mode == "orchestrator" {
-		tools = append(tools, operatorManagementTools(subSess)...)
+	// Fleet targets get their exclusive fleet-management + delegation +
+	// event-monitor catalog here too, so a dispatched/woken fleet agent
+	// behaves the same as on its own chat surface. Mirrors the runner.go
+	// catalog hook. Drop the generic interval scheduler (it schedules
+	// through the fleet instead).
+	if target.Fleet {
+		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
+		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Phantom dispatches: pin the local target's posture flags AND
@@ -516,12 +517,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	if isBuilderAgent(target.ID) {
 		tools = append(tools, builderAuthoringTools(subSess)...)
 	}
-	// Orchestrator (Operator) targets get their fleet-management + delegation +
-	// event-monitor catalog here too — this is the WAKE path (event monitors
-	// run the Operator on operator-thread through RunAgentSyncContinuing), so
-	// without it a woken Operator would have no delegate / monitor tools.
-	if target.Mode == "orchestrator" {
-		tools = append(tools, operatorManagementTools(subSess)...)
+	// Fleet targets get their fleet-management + delegation + event-monitor
+	// catalog here too — this is the WAKE path (event monitors run the
+	// channel agent on its channel thread through RunAgentSyncContinuing),
+	// so without it a woken fleet agent would have no delegate / monitor
+	// tools.
+	if target.Fleet {
+		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
+		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Phantom dispatches: force the sub-agent posture (no memory layer,

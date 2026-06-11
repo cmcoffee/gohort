@@ -91,17 +91,40 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 			continue
 		}
 		// Don't leak messages into the listing payload — sidebar only
-		// needs ID / Title / LastAt. Saves bandwidth on long sessions.
+		// needs ID / Title / LastAt + the computed unread flag. Saves
+		// bandwidth on long sessions.
 		out = append(out, ChatSession{
 			ID:      s.ID,
 			AgentID: agentID,
 			Title:   s.Title,
 			Created: s.Created,
 			LastAt:  s.LastAt,
+			Unread:  s.LastAt.After(s.LastSeen),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastAt.After(out[j].LastAt) })
 	return out
+}
+
+// markSessionSeen records that the user has now viewed a session: it sets
+// LastSeen to the session's current LastAt, clearing the unread state. It
+// writes directly (NOT via saveChatSession) so it does NOT bump LastAt —
+// viewing a thread is not activity on it. Idempotent and cheap: a no-op when
+// the session is already seen or doesn't exist.
+func markSessionSeen(db Database, agentID, sessionID string) {
+	if db == nil || agentID == "" || sessionID == "" {
+		return
+	}
+	tbl := sessionTable(agentID)
+	var s ChatSession
+	if !db.Get(tbl, sessionID, &s) {
+		return
+	}
+	if !s.LastAt.After(s.LastSeen) {
+		return // already seen
+	}
+	s.LastSeen = s.LastAt
+	db.Set(tbl, sessionID, s)
 }
 
 // deleteChatSession removes one session from an agent's bucket and
@@ -114,6 +137,11 @@ func deleteChatSession(db Database, agentID, sessionID string) {
 	db.Unset(sessionTable(agentID), sessionID)
 	clearAuthoringInProgress(db, sessionID)
 	DeleteSessionTempTools(db, sessionID)
+	// Also drop the rolling-summary / fold cursor for this session, so
+	// clearing an orchestrator thread is a COMPLETE wipe. Otherwise the
+	// summary (prepended to every turn) outlives the history and re-primes
+	// the thread with its old context. No-op when no compact-state row exists.
+	deleteCompactState(db, agentID, sessionID)
 }
 
 // dropChatSessionBucket wipes every session for an agent. Called from

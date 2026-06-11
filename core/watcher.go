@@ -292,6 +292,45 @@ func SetWatcherEnabled(id string, enabled bool) error {
 	return nil
 }
 
+// ClearWatcherError resets a watcher's error state immediately, so the
+// admin status badge returns to healthy without waiting for the next
+// successful poll (which never comes if the watcher is disabled or its
+// interval hasn't elapsed). Trailing tool-failure markers (error-only
+// results — see fireWatcherPoll) are dropped; if the most recent
+// remaining result is an evaluator-error fire (it carries a Trigger or
+// Reply), only its Error is cleared and the fire record is kept. Returns
+// true if anything changed.
+func ClearWatcherError(id string) (bool, error) {
+	w, ok := LoadWatcher(id)
+	if !ok {
+		return false, fmt.Errorf("watcher %q not found", id)
+	}
+	changed := false
+	// Drop any run of trailing tool-failure markers (no Trigger/Reply).
+	for len(w.Results) > 0 {
+		last := w.Results[len(w.Results)-1]
+		if last.Error != "" && last.Trigger == "" && last.Reply == "" {
+			w.Results = w.Results[:len(w.Results)-1]
+			changed = true
+			continue
+		}
+		break
+	}
+	// Clear a lingering error on the most recent real fire, keeping its
+	// Trigger/Reply so the fire history stays intact.
+	if n := len(w.Results); n > 0 && w.Results[n-1].Error != "" {
+		w.Results[n-1].Error = ""
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := SaveWatcher(w); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ----------------------------------------------------------------------
 // Tool invocation
 // ----------------------------------------------------------------------
@@ -395,6 +434,21 @@ func fireWatcherPoll(ctx context.Context, w Watcher) {
 	Debug("[watcher] %s: invoked %s, %d bytes, hash=%s",
 		w.Name, w.ToolName, len(body), hash[:12])
 	Trace("[watcher] %s: response body=%q", w.Name, truncateForTrigger(body))
+
+	// The tool just succeeded, so any prior tool-failure marker (an
+	// error-only result, no Trigger/Reply — see the err branch above) is
+	// stale health noise. Drop it and persist so the admin status badge
+	// recovers to healthy. Without this, a recovered-but-unchanged poll
+	// returns early on the hash check below and the error pins forever.
+	// Genuine evaluator-error fires carry Trigger/Reply and stay in history.
+	if n := len(w.Results); n > 0 {
+		last := w.Results[n-1]
+		if last.Error != "" && last.Trigger == "" && last.Reply == "" {
+			w.Results = w.Results[:n-1]
+			_ = SaveWatcher(w)
+		}
+	}
+
 	if hash == w.LastResultHash {
 		Debug("[watcher] %s: no change (hash matches), nothing to do", w.Name)
 		return

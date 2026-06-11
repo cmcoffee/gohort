@@ -1535,14 +1535,13 @@ type AgentLoopPanel struct {
 	// view: empty Source = the chat; a Source URL = a table view swapped into
 	// the main pane. The picker + toolbar stay as-is.
 	OrchestratorNav []OrchestratorNavItem `json:"orchestrator_nav,omitempty"`
-	// AltNavFlag names a window-global object the host page sets, whose keys
-	// are the agent ids that get the OrchestratorNav (instead of the session
-	// list). Empty = the feature is off. core/ui hardcodes no app-specific
-	// global; the app owns the name and the membership.
+	// AltNavFlag names a window-global object the host page sets: a map whose
+	// keys are the agent ids that get the OrchestratorNav (instead of the
+	// session list) and whose values are each agent's pinned session id (the
+	// one ongoing thread to resume). Empty = the feature is off. core/ui
+	// hardcodes no app-specific global or session-id scheme; the app owns the
+	// name, the membership, and the per-agent session.
 	AltNavFlag string `json:"alt_nav_flag,omitempty"`
-	// AltNavPinnedSession is the single session id alt-nav agents are pinned
-	// to (one ongoing thread). Empty = no pinning.
-	AltNavPinnedSession string `json:"alt_nav_pinned_session,omitempty"`
 }
 
 // OrchestratorNavItem is one sidebar nav entry for an orchestrator-mode agent
@@ -1555,6 +1554,13 @@ type OrchestratorNavItem struct {
 	// target in a hidden "_id" field (e.g. a Delete button, or an
 	// Approve / Deny pair).
 	RowActions []OrchestratorRowAction `json:"row_actions,omitempty"`
+	// ActionURL makes this item a BUTTON that POSTs to the URL (with the
+	// current agent id appended as ?agent=<id>) after an optional Confirm,
+	// instead of opening a chat or table view — for channel-level operations
+	// (clear the thread, decommission). Empty = not an action item.
+	ActionURL string `json:"action_url,omitempty"`
+	Confirm   string `json:"confirm,omitempty"`   // confirmation prompt before an ActionURL POST
+	Variant   string `json:"variant,omitempty"`   // "danger" | "warning" | "" — styles an action item
 }
 
 // OrchestratorRowAction is one per-row button in an orchestrator nav view.

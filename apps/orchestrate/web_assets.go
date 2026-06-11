@@ -1460,6 +1460,53 @@ const orchestrateWebAssets = `<style>
     }
     watchInterjections();
 
+    // --- Send to Builder handoff -----------------------------------
+    // When we land on Builder with a ?builder_brief=<id> param, the
+    // "Builder" toolbar button on another agent just staged an
+    // improvement brief. Fetch it (one-shot server-side) and auto-send
+    // it as Builder's first message so Builder responds immediately
+    // instead of waiting for the user to re-type anything.
+    function autoSendToChat(text) {
+      var tries = 0;
+      (function attempt() {
+        var input = document.querySelector('.ui-chat-input');
+        var sendBtn = document.querySelector('.ui-chat-send');
+        // offsetParent !== null → the send button is visible (not
+        // swapped out for Cancel mid-send), i.e. the panel is idle and
+        // ready to accept a fresh turn.
+        if (input && sendBtn && sendBtn.offsetParent !== null) {
+          input.value = text;
+          input.dispatchEvent(new Event('input', {bubbles: true}));
+          sendBtn.click();
+          return;
+        }
+        if (tries++ < 40) { setTimeout(attempt, 150); }
+      })();
+    }
+    function consumeBuilderBrief() {
+      var id;
+      try { id = new URL(window.location.href).searchParams.get('builder_brief'); } catch (_) { id = null; }
+      if (!id) return;
+      // Strip the param up front so a refresh can't re-fire (the brief
+      // is one-shot server-side regardless, but keep the URL clean).
+      try {
+        var u = new URL(window.location.href);
+        u.searchParams.delete('builder_brief');
+        window.history.replaceState({}, '', u.toString());
+      } catch (_) {}
+      fetch('api/builder-brief/' + encodeURIComponent(id))
+        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(d) {
+          var text = (d && d.text) || '';
+          if (!text) throw new Error('empty brief');
+          autoSendToChat(text);
+        })
+        .catch(function(err) {
+          window.uiAlert('Could not load the Builder brief: ' + (err && err.message || err));
+        });
+    }
+    consumeBuilderBrief();
+
     // --- Toolbar client actions ------------------------------------
     // Each one pivots off the active agent in the dropdown (mirror
     // of servitor's getApplianceID pattern). Navigation goes through
@@ -1656,6 +1703,42 @@ const orchestrateWebAssets = `<style>
         document.body.appendChild(a);
         a.click();
         setTimeout(function() { a.remove(); }, 0);
+      });
+
+      // Send to Builder — bundle the current session and hand it to the
+      // Builder agent so it can diagnose where this agent fell short and
+      // improve it. Stages the brief server-side (transcript is too big
+      // for a URL), then deep-links into a fresh Builder session that
+      // auto-sends the brief (see consumeBuilderBrief above).
+      window.uiRegisterClientAction('orchestrate_send_to_builder', function(ctx) {
+        var agentID = getAgentID();
+        if (!agentID) { window.uiAlert('Pick an agent first.'); return; }
+        if (agentID === 'seed-builder') {
+          window.uiAlert('Builder improves other agents. Open the agent you had to correct, then send its session to Builder.');
+          return;
+        }
+        var sessionID = (ctx && ctx.sessionId) || '';
+        if (!sessionID) { window.uiAlert('Open a session first — there is nothing to send yet.'); return; }
+        fetch('api/sessions/' + encodeURIComponent(sessionID) +
+              '/send-to-builder?agent_id=' + encodeURIComponent(agentID), {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: '{}',
+        }).then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+          return r.json();
+        }).then(function(d) {
+          // Land on Builder with the brief id; consumeBuilderBrief picks
+          // it up on load. Drop any session deep-link so Builder opens a
+          // fresh thread for this review.
+          var u = new URL(window.location.href);
+          u.searchParams.set('agent', d.builder_agent_id || 'seed-builder');
+          u.searchParams.set('builder_brief', d.brief_id);
+          u.searchParams.delete('session');
+          window.location.href = u.toString();
+        }).catch(function(err) {
+          window.uiAlert('Send to Builder failed: ' + (err && err.message || err));
+        });
       });
 
       window.uiRegisterClientAction('orchestrate_import_agent', function() {

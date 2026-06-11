@@ -298,11 +298,25 @@ type PhantomConfig struct {
 	Enabled          bool     `json:"enabled"`
 	EnabledTools     []string `json:"enabled_tools"`     // tool names to give the persona
 	GatekeeperPrompt string   `json:"gatekeeper_prompt"` // if set, LLM decides whether to respond
+	// DefaultAllowedAgents is the global fallback allowlist of Agency
+	// agent IDs a conversation may dispatch to. A conversation with a
+	// non-empty AllowedAgents overrides this; a conversation that has
+	// selected none inherits this default. Empty here AND on the conv
+	// means dispatch is unavailable for that chat. Lets an admin opt
+	// the fleet in once instead of hand-enabling agents on every chat.
+	DefaultAllowedAgents []string `json:"default_allowed_agents,omitempty"`
 	// Proactive messaging — admin-configured only, never LLM-triggered.
 	ProactiveEnabled   bool   `json:"proactive_enabled"`
 	ProactiveWindow    string `json:"proactive_window"`      // "HH:MM-HH:MM" daily window
-	ProactivePrompt    string `json:"proactive_prompt"`      // language rules / what to say
+	ProactivePrompt    string `json:"proactive_prompt"`      // style/voice guidance — HOW to talk when unprompted
 	ProactiveMaxPerDay int    `json:"proactive_max_per_day"` // 0 = unlimited
+	// Proactive action menu — the WHAT, layered on top of ProactivePrompt's
+	// HOW. ProactiveAlways is a newline list performed on every wake;
+	// ProactiveActions is a newline pool from which one action is drawn at
+	// random each wake (for variety). When both are empty the legacy single
+	// ProactivePrompt instruction still applies, so this is additive.
+	ProactiveActions string `json:"proactive_actions"`
+	ProactiveAlways  string `json:"proactive_always"`
 	// SecureAPIEnabled is the master switch for secure-API tools in
 	// phantom. When false, BuildSecureAPITools is skipped during
 	// buildConvTools so no credential is reachable via phantom even

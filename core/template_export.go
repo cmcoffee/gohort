@@ -101,3 +101,9 @@ func scanForEmbeddedSecret(s string) bool {
 	}
 	return secretLikeRe.MatchString(s)
 }
+
+// ContainsLikelySecret reports whether s holds a literal secret-shaped value
+// (Bearer tokens, key=… / token: … forms). Exported wrapper over the template
+// scanner so other packages — e.g. history archiving — can refuse to index
+// credential-bearing text.
+func ContainsLikelySecret(s string) bool { return scanForEmbeddedSecret(s) }

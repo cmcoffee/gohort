@@ -66,24 +66,16 @@ func (T *Phantom) ingestAgingToKnowledge(chatID string, conv Conversation, aging
 	}
 	reportID := "convo-" + chatID + "-" + aging[len(aging)-1].ID
 	title := "Conversation with " + contact
-	IngestReportTitled(context.Background(), VectorDB, phantomConvoKnowledgeSource(chatID), reportID, title, body, "phantom_convo")
+	// Shared core primitive: redacts secret-shaped lines, then ingests.
+	IngestRecallSpan(context.Background(), VectorDB, phantomConvoKnowledgeSource(chatID), reportID, title, body, "phantom_convo")
 	Log("[phantom/convo-knowledge] chat=%s folded %d msg(s) into recall store", chatID, len(aging))
 }
 
-// searchConvoKnowledge searches a conversation's folded-in history,
-// semantic when embeddings are on, substring otherwise.
+// searchConvoKnowledge searches a conversation's folded-in history via the
+// shared core recall primitive (semantic when embeddings are on, substring
+// otherwise), scoped to this chat_id's source.
 func searchConvoKnowledge(chatID, query string, k int) []SearchHit {
-	if VectorDB == nil || strings.TrimSpace(query) == "" || k <= 0 {
-		return nil
-	}
-	source := phantomConvoKnowledgeSource(chatID)
-	allow := func(c EmbeddedChunk) bool { return c.Source == source }
-	if GetEmbeddingConfig().Enabled {
-		if vec, err := Embed(context.Background(), query); err == nil && len(vec) > 0 {
-			return SearchChunksByPredicate(VectorDB, allow, vec, k)
-		}
-	}
-	return SearchChunksSubstringByPredicate(VectorDB, allow, query, k)
+	return SearchRecall(VectorDB, phantomConvoKnowledgeSource(chatID), query, k)
 }
 
 // recallConversationToolDef builds recall_conversation(query) — the LLM's

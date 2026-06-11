@@ -37,6 +37,18 @@ func saveCompactState(db Database, agentID, sessID string, st CompactState) {
 	}
 }
 
+// deleteCompactState drops a session's rolling summary + fold cursor. Without
+// this, clearing the chat history leaves the summary behind — and since the
+// summary is prepended to every turn, the thread keeps its old "personality"
+// even after a wipe (e.g. a flood of one monitor's wakes that crystallized into
+// the summary). Called from deleteChatSession so "clear thread" is complete.
+// Harmless no-op for non-orchestrator agents (their sessions have no row here).
+func deleteCompactState(db Database, agentID, sessID string) {
+	if db != nil {
+		db.Unset(operatorCompactStateTable, compactStateKey(agentID, sessID))
+	}
+}
+
 // compactOperatorHistory returns the bounded run-view of the conversation: a
 // leading running-summary message (when one exists) + the recent tail. Folds +
 // stores facts when the thread has grown past the trigger. Run-only — storage
@@ -50,7 +62,14 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		cm[i] = Message{Role: m.Role, Content: m.Content}
 	}
 	st := loadCompactState(udb, agent.ID, sessID)
-	cfg := CompactionConfig{} // defaults
+	cfg := CompactionConfig{
+		// Archive each folded span into a searchable history index so aged
+		// content stays recoverable via recall_history / expand_history,
+		// instead of surviving only as the lossy running summary.
+		OnFold: func(folded []Message, firstIndex int) {
+			T.archiveOperatorSpan(udb, agent.ID, sessID, folded, firstIndex)
+		},
+	}
 	fold := func(ctx context.Context, aging []Message, prior string) (string, []string, error) {
 		return T.operatorFold(ctx, aging, prior)
 	}
@@ -73,12 +92,66 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	if through > len(msgs) {
 		through = len(msgs)
 	}
-	tail := msgs[through:]
+	tail := collapseMonitorWakes(msgs[through:], 3)
 	out := make([]ChatMessage, 0, len(tail)+1)
 	if strings.TrimSpace(block) != "" {
 		out = append(out, ChatMessage{Role: "user", Content: block})
 	}
 	out = append(out, tail...)
+	return out
+}
+
+// monitorWakePrefix marks a turn injected by an event-monitor wake (see the
+// waker in operator_wake.go). A frequently-firing monitor would otherwise
+// flood the verbatim tail with near-identical wake turns, which trains the
+// worker model to mimic the wake pattern — reflexive list_runs + a canned
+// greeting — instead of engaging the user on their next real message. That is
+// exactly the "channel crystallized" failure. We collapse long runs.
+const monitorWakePrefix = "[EVENT — monitor"
+
+// collapseMonitorWakes replaces a maximal CONTIGUOUS run of monitor-wake turns
+// (each a wake user-message plus its assistant reply) with a single marker,
+// keeping only the most recent keepRecent wakes verbatim. Non-wake turns and
+// short runs pass through untouched; order is preserved. Only contiguous runs
+// collapse, so a wake the user actually replied to between is never folded.
+func collapseMonitorWakes(msgs []ChatMessage, keepRecent int) []ChatMessage {
+	if keepRecent < 0 {
+		keepRecent = 0
+	}
+	isWakeUser := func(m ChatMessage) bool {
+		return m.Role == "user" && strings.HasPrefix(strings.TrimSpace(m.Content), monitorWakePrefix)
+	}
+	out := make([]ChatMessage, 0, len(msgs))
+	i := 0
+	for i < len(msgs) {
+		if !isWakeUser(msgs[i]) {
+			out = append(out, msgs[i])
+			i++
+			continue
+		}
+		// Gather a maximal contiguous run of wake units (wake user + its reply).
+		var units [][]ChatMessage
+		for i < len(msgs) && isWakeUser(msgs[i]) {
+			end := i + 1
+			if end < len(msgs) && msgs[end].Role == "assistant" {
+				end++
+			}
+			units = append(units, msgs[i:end])
+			i = end
+		}
+		if len(units) <= keepRecent {
+			for _, u := range units {
+				out = append(out, u...)
+			}
+			continue
+		}
+		omitted := len(units) - keepRecent
+		out = append(out, ChatMessage{Role: "user",
+			Content: fmt.Sprintf("[%d earlier monitor wakes omitted — already handled, nothing pending]", omitted)})
+		for _, u := range units[len(units)-keepRecent:] {
+			out = append(out, u...)
+		}
+	}
 	return out
 }
 
@@ -111,6 +184,48 @@ func (T *OrchestrateApp) operatorFold(ctx context.Context, aging []Message, prio
 	}
 	summary, facts := splitSummaryAndFacts(resp.Content)
 	return summary, facts, nil
+}
+
+// operatorLCMSource is the vector-store source tag for one operator thread's
+// archived history spans — stable per (agent, session) so recall can filter to
+// exactly this thread's continuity archive.
+func operatorLCMSource(agentID, sessID string) string {
+	return "lcm:" + agentID + ":" + sessID
+}
+
+// archiveOperatorSpan ingests a folded conversation span into the searchable
+// history index (the LCM-style "continuity archive"), so content that has left
+// both the verbatim window and the running summary stays recoverable via
+// recall_history / expand_history. Stored in the SAME per-user db as the session
+// and its facts. Messages that look like they carry a credential are redacted
+// before indexing (defense-in-depth — the thread is the owner's, but tool output
+// can contain secrets, mirroring the MaskDebugOutput posture).
+func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID string, folded []Message, firstIndex int) {
+	if udb == nil || len(folded) == 0 {
+		return
+	}
+	var b strings.Builder
+	for _, m := range folded {
+		text := strings.TrimSpace(m.Content)
+		if text == "" {
+			continue
+		}
+		role := m.Role
+		if role == "" {
+			role = "user"
+		}
+		fmt.Fprintf(&b, "[%s] %s\n\n", role, text)
+	}
+	body := strings.TrimSpace(b.String())
+	if body == "" {
+		return
+	}
+	source := operatorLCMSource(agentID, sessID)
+	reportID := fmt.Sprintf("%s#%d", source, firstIndex)
+	title := fmt.Sprintf("operator history — messages %d–%d", firstIndex, firstIndex+len(folded)-1)
+	// Shared core primitive: redacts secret-shaped lines, then ingests.
+	IngestRecallSpan(context.Background(), udb, source, reportID, title, body, "lcm")
+	Log("[operator.lcm] archived span %s (%d msgs)", reportID, len(folded))
 }
 
 // splitSummaryAndFacts pulls the trailing "FACTS: a; b; c" line off the model

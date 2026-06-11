@@ -12,7 +12,11 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +24,99 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-func operatorManagementTools(sess *ToolSession) []AgentToolDef {
+// operatorAttachMarkerRe matches the phantom [ATTACH: file] delivery marker an
+// agent may embed in a message it hands to a contact. Same shape as phantom's
+// own marker so the two surfaces agree. The marker text is stripped at delivery
+// (DeliverMessage); here we use it to resolve the referenced file from the
+// agent's workspace and carry it as a real attachment.
+var operatorAttachMarkerRe = regexp.MustCompile(`\[ATTACH:\s*([^\],]+?)(?:\s*,\s*cleanup\s*=\s*(true|false))?\s*\]`)
+
+// collectMessageAttachments gathers the base64 images to send with an
+// agent-originated phantom message. Two sources, both honored: (1) files the
+// agent attached via workspace(action="attach") (sess.Images), and (2) files
+// referenced by an [ATTACH: name] marker in the text, resolved against the
+// agent's workspace dir. Without (2), an agent that used the marker convention
+// instead of workspace(attach) would leak the marker as text and send nothing.
+func collectMessageAttachments(sess *ToolSession, text string) []string {
+	var out []string
+	if sess != nil {
+		out = append(out, sess.Images...)
+	}
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
+		return out
+	}
+	for _, m := range operatorAttachMarkerRe.FindAllStringSubmatch(text, -1) {
+		name := strings.TrimSpace(m[1])
+		clean := filepath.Clean(name)
+		if name == "" || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
+			continue // never escape the workspace
+		}
+		b, err := os.ReadFile(filepath.Join(sess.WorkspaceDir, clean))
+		if err != nil {
+			continue
+		}
+		out = append(out, base64.StdEncoding.EncodeToString(b))
+	}
+	return out
+}
+
+// resolveCheckAgent maps a user-supplied poll-monitor checker reference to a
+// real agent id. Tries: exact id, then case-insensitive display-name match,
+// then falls back to the creating channel agent (always valid). This prevents
+// a monitor from being saved with a checker that doesn't exist — the failure
+// the LLM hits when it sets check_agent to a conversational nickname.
+func resolveCheckAgent(sess *ToolSession, owner, want, fallback string) string {
+	if sess == nil || sess.DB == nil {
+		return fallback
+	}
+	if _, ok := loadAgent(sess.DB, want); ok {
+		return want
+	}
+	for _, a := range listAgents(sess.DB, owner) {
+		if strings.EqualFold(strings.TrimSpace(a.Name), want) {
+			return a.ID
+		}
+	}
+	return fallback
+}
+
+// operatorRecipientKey is the stable identity used for pre-authorization and
+// display when the Operator messages someone via phantom: the chat_id when
+// targeting a known conversation or group, else the raw handle. Pre-auth keys
+// on this so "Always allow" whitelists exactly the recipient that was approved
+// (a group's chat_id, or an individual's handle) — never a different person.
+func operatorRecipientKey(chatID, handle string) string {
+	if c := strings.TrimSpace(chatID); c != "" {
+		return c
+	}
+	return strings.TrimSpace(handle)
+}
+
+// operatorRecipientLabel renders a resolved recipient for user-facing messages:
+// "DisplayName (handle)" when both are known, else whichever is present.
+func operatorRecipientLabel(s PhantomChatSummary) string {
+	switch {
+	case s.DisplayName != "" && s.Handle != "":
+		return s.DisplayName + " (" + s.Handle + ")"
+	case s.DisplayName != "":
+		return s.DisplayName
+	case s.Handle != "":
+		return s.Handle
+	default:
+		return s.ChatID
+	}
+}
+
+// operatorDeliverMessage sends one message via the bridge's DeliverMessage,
+// which addresses the recipient by chat_id (unambiguous; the ONLY correct way
+// to reach a group) or handle, and routes by the chat's persona: when phantom
+// answers that chat its LLM composes in voice, otherwise the text goes verbatim.
+// Returns the text actually delivered.
+func operatorDeliverMessage(link PhantomLink, owner, chatID, handle, text string, images []string) (string, error) {
+	return link.DeliverMessage(owner, chatID, handle, text, images)
+}
+
+func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 	owner := ""
 	if sess != nil {
 		owner = sess.Username
@@ -289,6 +385,17 @@ func operatorManagementTools(sess *ToolSession) []AgentToolDef {
 				}
 				m := EventMonitor{
 					Name: name, Owner: owner, Kind: kind,
+					// Wake the agent that created this monitor, IN the session it
+					// was created in, so the event lands back where the user set
+					// it up (not a hardcoded default thread). WakeSession falls
+					// back to the agent's channel home thread when unknown.
+					WakeAgent: agentID,
+					WakeSession: func() string {
+						if sess != nil {
+							return sess.ChatSessionID
+						}
+						return ""
+					}(),
 					WakeBrief: strings.TrimSpace(oArgStr(args, "wake_brief")), Created: time.Now(),
 				}
 				if kind == EventKindWebhook {
@@ -329,13 +436,19 @@ func operatorManagementTools(sess *ToolSession) []AgentToolDef {
 						name, got.IntervalSeconds, m.URL, extractDesc, m.CompareOp, m.Threshold,
 						got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
 				}
-				m.CheckAgent = strings.TrimSpace(oArgStr(args, "check_agent"))
+				wantAgent := strings.TrimSpace(oArgStr(args, "check_agent"))
 				m.Check = strings.TrimSpace(oArgStr(args, "check"))
 				m.MatchContains = strings.TrimSpace(oArgStr(args, "match_contains"))
 				m.IntervalSeconds = oArgInt(args, "interval_seconds")
-				if m.CheckAgent == "" || m.Check == "" {
+				if wantAgent == "" || m.Check == "" {
 					return "", fmt.Errorf("poll monitors need check_agent and check")
 				}
+				// Resolve the checker to a REAL agent. The LLM may pass a display
+				// name or its own conversational nickname that isn't an actual
+				// agent id; resolve by id, then by name, and finally fall back to
+				// the channel agent creating the monitor (which exists and can
+				// self-check with its own tools) so the monitor never saves broken.
+				m.CheckAgent = resolveCheckAgent(sess, owner, wantAgent, agentID)
 				SaveEventMonitor(RootDB, m)
 				if err := ScheduleEventMonitor(RootDB, m); err != nil {
 					return "", fmt.Errorf("saved but scheduling failed: %w", err)
@@ -452,23 +565,81 @@ func operatorManagementTools(sess *ToolSession) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "message_contact",
-				Description: "Send an iMessage to a CONTACT (someone other than the owner). This contacts a real person, so it ALWAYS queues for the user's approval in the Authorizations pane — it does not send immediately. Identify the recipient by handle (phone/email); use list_phantom_chats to find one.",
+				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_phantom_chats — a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id — the name works. Delivery routes automatically: if phantom's assistant is active for that chat your message is delivered in that chat's established voice, otherwise your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow'), then sends once approved.",
 				Parameters: map[string]ToolParam{
-					"handle": {Type: "string", Description: "Recipient phone/email handle."},
-					"text":   {Type: "string", Description: "The message to send."},
+					"to":   {Type: "string", Description: "Recipient as shown by list_phantom_chats: a contact/group name, a handle (phone/email), or a chat_id. Required — never omit it."},
+					"text": {Type: "string", Description: "The message to send. To attach a file you generated (image, etc.), first save it to your workspace and call workspace(action=\"attach\", path=\"<file>\"), then send the message — the attachment rides along automatically. Do NOT type delivery markers like [ATTACH: ...] into this text; that is a different surface's convention and is stripped before sending."},
 				},
-				Required: []string{"handle", "text"},
+				Required: []string{"to", "text"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				handle := strings.TrimSpace(oArgStr(args, "handle"))
+				to := strings.TrimSpace(oArgStr(args, "to"))
 				text := strings.TrimSpace(oArgStr(args, "text"))
-				if handle == "" || text == "" {
-					return "", fmt.Errorf("handle and text are required")
+				if to == "" || text == "" {
+					return "", fmt.Errorf("to and text are required")
+				}
+				link, ok := ActivePhantomLink()
+				if !ok {
+					return "", fmt.Errorf("the phantom bridge is not available")
+				}
+				rec, ok := link.ResolveRecipient(owner, to)
+				if !ok {
+					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact/group name, handle, or chat_id exactly as shown by list_phantom_chats", to)
+				}
+				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
+				label := operatorRecipientLabel(rec)
+				images := collectMessageAttachments(sess, text)
+				// Pre-authorized recipient: send immediately, skip the queue.
+				if IsContactPreAuthorized(RootDB, owner, recip) {
+					if _, err := operatorDeliverMessage(link, owner, rec.ChatID, rec.Handle, text, images); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
 				}
 				a := SaveAuthorization(RootDB, Authorization{
-					Owner: owner, Action: "send_message", Handle: handle, Text: text,
+					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images,
 				})
-				return fmt.Sprintf("Queued a message to %q for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", handle, a.ID), nil
+				return fmt.Sprintf("Queued a message to %s for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "converse_with_contact",
+				Description: "Hand off a GOAL to an individual contact and let me run the back-and-forth text conversation autonomously until it's done or I'm stuck — then I report back in this thread. Use this instead of message_contact when the task needs a real multi-turn exchange (scheduling, confirming details, negotiating), not a single message. Set `to` to the contact as shown by list_phantom_chats — a name, handle, or chat_id (this is for 1:1 conversations; to message a group use message_contact). Contacting a real person is consequential, so this queues ONE upfront approval to converse toward the goal (UNLESS the user pre-authorized this recipient via 'Always allow', in which case it starts right away); once approved I message and reply on my own, without asking per message.",
+				Parameters: map[string]ToolParam{
+					"to":   {Type: "string", Description: "The contact as shown by list_phantom_chats: a name, handle (phone/email), or chat_id. Required."},
+					"goal": {Type: "string", Description: "The objective to accomplish through the conversation, with any specifics I need (dates, constraints, what counts as done). I run the exchange toward this."},
+				},
+				Required: []string{"to", "goal"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				to := strings.TrimSpace(oArgStr(args, "to"))
+				goal := strings.TrimSpace(oArgStr(args, "goal"))
+				if to == "" || goal == "" {
+					return "", fmt.Errorf("to and goal are required")
+				}
+				link, ok := ActivePhantomLink()
+				if !ok {
+					return "", fmt.Errorf("the phantom bridge is not available")
+				}
+				rec, ok := link.ResolveRecipient(owner, to)
+				if !ok {
+					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact name, handle, or chat_id exactly as shown by list_phantom_chats", to)
+				}
+				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
+				label := operatorRecipientLabel(rec)
+				// Pre-authorized recipient: start immediately (grant shared with
+				// one-shot texts), skip the queue.
+				if IsContactPreAuthorized(RootDB, owner, recip) {
+					if _, err := link.StartGoalConversation(owner, rec.ChatID, rec.Handle, goal, agentID, channelSessionID(agentID)); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Started the conversation with %s toward the goal (you've pre-authorized this recipient) — I'll run the exchange and report back here when it's done or I'm stuck.", label), nil
+				}
+				a := SaveAuthorization(RootDB, Authorization{
+					Owner: owner, Action: "converse_contact", ChatID: rec.ChatID, Handle: rec.Handle, Brief: goal,
+				})
+				return fmt.Sprintf("Queued a request to converse with %s toward the goal for the user's approval — it's in the Authorizations pane (id %s). Once approved I run the whole exchange and report back here when it's done or I'm stuck.", label, a.ID), nil
 			},
 		},
 		{

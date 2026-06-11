@@ -186,16 +186,17 @@ func (T *OrchestrateApp) Routes() {
 	// high-consequence tools).
 	registerStandingRunner(T)
 
-	// Wire the event-monitor engine: webhook + poll triggers that WAKE the
-	// Operator (inject into its thread + run a turn) when something happens.
-	// core owns the store + poll schedule; this supplies the waker (run the
-	// Operator on operator-thread) and the poller (run a checker agent).
+	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
+	// channel agent (inject into its home thread + run a turn) when something
+	// happens. core owns the store + poll schedule; this supplies the waker
+	// (run the monitor's WakeAgent on its channel) and the poller (run a
+	// checker agent).
 	registerOperatorWake(T)
 
-	// Orchestrator console: agents with Mode "orchestrator" (seed-operator)
-	// present as a single-ongoing-thread console at /orchestrate/console,
-	// reusing the agent runtime for chat + the shared core spine for the
-	// fleet/activity panels.
+	// Channel console: agents with Channel on (Chat is the primary one) get a
+	// channel sidebar — a home-thread row + the fleet/monitor/authorization
+	// management box — reusing the agent runtime for chat + the shared core
+	// spine for the data panels.
 	T.registerConsoleRoutes()
 
 	// One-shot Builder shadow migration. Walks every user's store,
@@ -256,6 +257,10 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
 	T.HandleFunc("/api/sessions", g(T.handleSessionList))
 	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))
+	// Staged improvement-brief retrieval for the "Send to Builder"
+	// handoff (see send_to_builder.go). The brief is created by the
+	// /api/sessions/{sid}/send-to-builder sub-action and consumed here.
+	T.HandleFunc("/api/builder-brief/", g(T.handleBuilderBrief))
 	T.HandleFunc("/api/send", g(T.handleSendRouter))
 	T.HandleFunc("/api/cancel", g(T.handleCancelRouter))
 	T.HandleFunc("/api/confirm", g(T.handleConfirmRouter))

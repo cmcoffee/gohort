@@ -41,6 +41,26 @@ type AgentRecord struct {
 	// from the session-based chat agents.
 	Mode string `json:"mode,omitempty"`
 
+	// Channel, when true, gives the agent a persistent "home thread" that
+	// it resumes alongside (not instead of) its normal sessions: a single
+	// ongoing conversation where event-monitor wakes and standing-agent
+	// reports land, with ongoing-thread compaction (running summary +
+	// recent tail) applied to keep it bounded. Channel agents also get the
+	// channel sidebar (a Channel row + the Authorizations / Enabled agents
+	// / Event monitors management box) and are never publicly exposable.
+	// Independent of Fleet — an agent can have a channel without delegation
+	// tools, or vice versa. This is the generalized form of what used to be
+	// Mode == "orchestrator".
+	Channel bool `json:"channel,omitempty"`
+
+	// Fleet, when true, attaches the fleet-management toolset to the agent:
+	// delegate, create/list/run/pause/delete standing agents, the run
+	// ledger, event-monitor management, and history recall. Independent of
+	// Channel. Unlike the old orchestrator Mode, Fleet does NOT impose a
+	// "controller, not a doer" restriction (that was only prompt wording) —
+	// it just grants the tools; the agent still does work directly.
+	Fleet bool `json:"fleet,omitempty"`
+
 	// Triggers are substring/glob patterns (same shape as a skill's
 	// Triggers) matched against the user message each turn. When one
 	// matches, the framework injects a per-turn HINT next to the message —
@@ -435,6 +455,16 @@ type ChatSession struct {
 	Plans    []PlanSnapshot `json:"Plans,omitempty"`
 	Created  time.Time      `json:"Created"`
 	LastAt   time.Time      `json:"LastAt"`
+
+	// LastSeen is when the user last viewed this session (set on open and
+	// after their own turn). A background append — a monitor wake, a
+	// standing-agent report, a goal-conversation completion — bumps LastAt
+	// but NOT LastSeen, so the session reads unread until reopened. Per-user
+	// already (sessions live in the user's db).
+	LastSeen time.Time `json:"LastSeen,omitempty"`
+	// Unread is computed at list time (LastAt.After(LastSeen)) for the
+	// sidebar's unread dot. Not persisted — derived from the two timestamps.
+	Unread bool `json:"unread,omitempty"`
 
 	// AwaitingUserConfirm is set when the previous orchestrator turn
 	// ended via ask_user / ask_user_form. The next user message is

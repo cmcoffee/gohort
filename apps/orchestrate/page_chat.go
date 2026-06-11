@@ -33,16 +33,16 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	}
 	agents := listAgents(udb, user)
 	builtInOrder := map[string]int{
-		"seed-operator": 0,
+		"seed-chat":     0,
 		"seed-builder":  1,
-		"seed-chat":     2,
-		"seed-research": 3,
-		"seed-kb":       4,
+		"seed-research": 2,
+		"seed-kb":       3,
 	}
-	// orchestratorAgents collects agent IDs whose Mode is "orchestrator" so
-	// the client can swap the session list for the orchestrator nav when one
-	// is selected (operator-only; normal agents keep their sessions).
-	orchestratorAgents := map[string]bool{}
+	// channelAgents maps each channel agent's id (a.Channel) to its home-thread
+	// session id, so the client both knows which agents get the channel nav AND
+	// what session to pin them to — without core/ui hardcoding the id scheme.
+	// A present key = channel agent; the value = its pinned session.
+	channelAgents := map[string]string{}
 	type pickerRow struct {
 		ID    string
 		Name  string
@@ -58,8 +58,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	subAgentsByParent := map[string][]map[string]string{}
 	var builtIns, customs []pickerRow
 	for _, a := range agents {
-		if a.Mode == "orchestrator" {
-			orchestratorAgents[a.ID] = true
+		if a.Channel {
+			channelAgents[a.ID] = channelSessionID(a.ID)
 		}
 		// Sub-agents (OwnedBy set → Hidden=true via enforceSubAgentPosture)
 		// stay out of the main picker — they appear in the secondary
@@ -127,11 +127,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// (no sub-agents in the fleet) is fine — the JS hides the picker
 	// when the selected parent has no children.
 	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
-	orchAgentsJSON, _ := json.Marshal(orchestratorAgents)
+	channelAgentsJSON, _ := json.Marshal(channelAgents)
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
-		";\nwindow.ORCH_ORCHESTRATOR_AGENTS = " + string(orchAgentsJSON) +
+		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(channelAgentsJSON) +
 		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	page := ui.Page{
@@ -183,7 +183,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// Orchestrator-mode agents (the Operator) swap the session
 					// list for this nav; normal agents ignore it entirely.
 					OrchestratorNav: []ui.OrchestratorNavItem{
-						{Label: "Chat"},
+						{Label: "Channel"},
 						{Label: "History", Source: "api/console/history", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Delete", Method: "DELETE", URL: "api/console/history", Variant: "danger", Confirm: "Delete this turn from the conversation?"},
 						}},
@@ -202,15 +202,23 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", Confirm: "Approve, run, and always allow delegations to this agent?"},
 							{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger"},
 						}},
+						{Label: "Active grants", Source: "api/console/grants", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Revoke", Method: "POST", URL: "api/console/grants/revoke", Variant: "danger", Confirm: "Revoke this standing authorization? Future actions to this target will queue for your approval again."},
+						}},
+						{Label: "Clear channel", ActionURL: "api/console/channel/clear", Variant: "warning",
+							Confirm: "Clear this channel's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
+						{Label: "Decommission", ActionURL: "api/console/channel/decommission", Variant: "danger",
+							Confirm: "Decommission: permanently delete this channel's event monitors and standing agents, and cancel all pending approvals? This cannot be undone."},
 					},
 					// core/ui is domain-agnostic: it reads the opt-in agent set
-					// from the named window-global this app sets, and pins those
-					// agents to one ongoing thread.
-					AltNavFlag:          "ORCH_ORCHESTRATOR_AGENTS",
-					AltNavPinnedSession: operatorPinnedSession,
-					Markdown:            true,
-					BulkSelect:          true,
-					Attachments:         true,
+					// from the named window-global this app sets — an agentId→
+					// pinned-session map — so it knows which agents get the nav
+					// and what thread to pin each to, without hardcoding the id
+					// scheme.
+					AltNavFlag: "ORCH_CHANNEL_AGENTS",
+					Markdown:   true,
+					BulkSelect: true,
+					Attachments: true,
 					ExtraFields: []ui.ChatField{
 						{
 							Name:        "agent_id",
@@ -269,6 +277,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_rules_modal"},
 						{Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",
 							Method: "client", URL: "orchestrate_export_session"},
+						{Label: "Builder", Title: "Had to correct this agent? Send the session to Builder so it can see where the agent went wrong and improve its prompt, rules, or tools.",
+							Method: "client", URL: "orchestrate_send_to_builder"},
 						{Label: "Delete", Title: "Delete the active agent",
 							Method: "client", URL: "orchestrate_delete_agent", Variant: "danger"},
 					},

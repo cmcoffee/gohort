@@ -2355,8 +2355,13 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}
+			case "clear_error":
+				if _, err := ClearWatcherError(id); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
 			default:
-				http.Error(w, "action must be enable|disable", http.StatusBadRequest)
+				http.Error(w, "action must be enable|disable|clear_error", http.StatusBadRequest)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent)

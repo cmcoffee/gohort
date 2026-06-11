@@ -15,26 +15,34 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
 const (
 	authorizationsTable    = "delegation_authorizations" // <owner>:<id> -> Authorization
 	delegationPreauthTable = "delegation_preauth"        // <owner>:<agent> -> bool
+	contactPreauthTable    = "contact_preauth"           // <owner>:<handle> -> bool (phantom messaging)
 )
 
 // Authorization is a pending Operator action awaiting the user's approval.
 // Action selects what approval runs:
-//   - "" / "delegate": delegate Brief to Agent (the default).
-//   - "send_message":  text Handle the contents of Text via the phantom bridge.
+//   - "" / "delegate":     delegate Brief to Agent (the default).
+//   - "send_message":      text Handle the contents of Text via the phantom bridge.
+//   - "converse_contact":  hand a GOAL (Brief) to phantom and let it run an
+//                          autonomous multi-turn conversation with Handle — one
+//                          upfront approval authorizes the whole exchange, not
+//                          each message. Reuses Handle (recipient) + Brief (goal).
 type Authorization struct {
 	ID        string    `json:"id"`
 	Owner     string    `json:"owner"`
 	Action    string    `json:"action,omitempty"`
-	Agent     string    `json:"agent"`            // delegate: target agent name/id
-	Brief     string    `json:"brief"`            // delegate: what the delegate should do
-	Handle    string    `json:"handle,omitempty"` // send_message: recipient handle
-	Text      string    `json:"text,omitempty"`   // send_message: message body
+	Agent     string    `json:"agent"`             // delegate: target agent name/id
+	Brief     string    `json:"brief"`             // delegate: what the delegate should do; converse_contact: the goal
+	ChatID    string    `json:"chat_id,omitempty"` // send_message / converse_contact: target conversation (preferred; REQUIRED for groups)
+	Handle    string    `json:"handle,omitempty"`  // send_message / converse_contact: recipient handle (new-individual fallback)
+	Text      string    `json:"text,omitempty"`    // send_message: message body
+	Images    []string  `json:"images,omitempty"`  // send_message: base64 attachments captured at queue time (survive until approval)
 	Requested time.Time `json:"requested"`
 }
 
@@ -119,6 +127,67 @@ func SetDelegationPreAuthorized(db Database, owner, agent string, on bool) {
 		db.Set(delegationPreauthTable, preauthKey(owner, agent), true)
 	} else {
 		db.Unset(delegationPreauthTable, preauthKey(owner, agent))
+	}
+}
+
+// ListDelegationPreAuthorizations returns the agents the owner has granted
+// standing delegation authorization to (the "Always allow" agents), sorted.
+func ListDelegationPreAuthorizations(db Database, owner string) []string {
+	return listPreauthTargets(db, delegationPreauthTable, owner)
+}
+
+// ListContactPreAuthorizations returns the contact handles the owner has
+// granted standing messaging authorization to, sorted.
+func ListContactPreAuthorizations(db Database, owner string) []string {
+	return listPreauthTargets(db, contactPreauthTable, owner)
+}
+
+// listPreauthTargets scans a preauth table for the owner's granted (true)
+// keys and returns the target portion (the part after "<owner>:").
+func listPreauthTargets(db Database, table, owner string) []string {
+	if db == nil || owner == "" {
+		return nil
+	}
+	prefix := owner + ":"
+	var out []string
+	for _, k := range db.Keys(table) {
+		if len(k) < len(prefix) || k[:len(prefix)] != prefix {
+			continue
+		}
+		var on bool
+		if db.Get(table, k, &on) && on {
+			out = append(out, k[len(prefix):])
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func contactPreauthKey(owner, handle string) string { return owner + ":" + strings.TrimSpace(handle) }
+
+// IsContactPreAuthorized reports whether the user has granted standing
+// authorization for the Operator to message this contact handle via phantom
+// (set by "Always allow" on a send_message / converse_contact approval). When
+// true, both one-shot texts and autonomous conversations to this handle run
+// immediately instead of queuing. Scope is PER CONTACT — a new handle still
+// queues. (The grant is shared across the two messaging actions by design.)
+func IsContactPreAuthorized(db Database, owner, handle string) bool {
+	if db == nil || owner == "" || strings.TrimSpace(handle) == "" {
+		return false
+	}
+	var on bool
+	db.Get(contactPreauthTable, contactPreauthKey(owner, handle), &on)
+	return on
+}
+
+func SetContactPreAuthorized(db Database, owner, handle string, on bool) {
+	if db == nil || owner == "" || strings.TrimSpace(handle) == "" {
+		return
+	}
+	if on {
+		db.Set(contactPreauthTable, contactPreauthKey(owner, handle), true)
+	} else {
+		db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
 	}
 }
 

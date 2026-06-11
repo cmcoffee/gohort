@@ -742,6 +742,71 @@ func agentTriggerHintBlock(names []string) string {
 	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain — dispatch to it via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\") as your FIRST move, before web_search or answering from memory. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
 }
 
+// renderActiveDispatchThreads surfaces the agents this session has ALREADY
+// dispatched to, so the host LLM knows it has live, re-threadable
+// conversations open. The dispatch continuity (the prior exchange) lives
+// only on the sub-agent side (dispatch:<sess>:<agentID>); the host's own
+// history hides delegation entirely ("integrate as your own, don't say 'I
+// asked X'"), so without this cue a follow-up like "tell me more" reads to
+// the host as a question it can answer from its own memory — and it does,
+// instead of re-dispatching to the agent that actually has the context. The
+// trigger-hint nudge doesn't cover this: a generic follow-up rarely matches
+// the original agent's keyword triggers. This block is the missing signal:
+// name the open threads + the directive to send follow-ups back to the same
+// agent. Empty when this session has no open dispatch threads.
+func (t *chatTurn) renderActiveDispatchThreads() string {
+	if t == nil || t.udb == nil || t.session == nil || t.session.ID == "" {
+		return ""
+	}
+	fleet := t.dispatchableFleet()
+	if len(fleet) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, a := range fleet {
+		subSessID := "dispatch:" + t.session.ID + ":" + a.ID
+		sess, ok := loadChatSession(t.udb, a.ID, subSessID)
+		if !ok || len(sess.Messages) == 0 {
+			continue
+		}
+		part := "**" + a.Name + "**"
+		if topic := lastDispatchTopic(sess.Messages); topic != "" {
+			part += " (last: " + topic + ")"
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\n[Active dispatch threads (this session): you've already delegated to " +
+		strings.Join(parts, "; ") +
+		". If the user's message is a FOLLOW-UP to one of these — \"tell me more\", \"what about X\", drilling into the same topic — re-dispatch it to that SAME agent with the prior context via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\"); do NOT answer it yourself from the earlier result. You delegated it before because it's that agent's domain — that hasn't changed, and the agent re-threads its own prior turns so a brief follow-up is enough.]\n\n"
+}
+
+// lastDispatchTopic returns a short label for a dispatch thread — the most
+// recent user brief sent to that agent, with the delegation marker stripped
+// and truncated. Used only for the active-threads hint so the host can tell
+// which open thread a follow-up belongs to. Empty when no user message.
+func lastDispatchTopic(msgs []ChatMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != "user" {
+			continue
+		}
+		topic := strings.TrimSpace(msgs[i].Content)
+		// Briefs are wrapped by markAsDelegated as "[DELEGATED INVOCATION]
+		// …\n\nBrief: <text>"; show just the brief.
+		if idx := strings.LastIndex(topic, "Brief: "); idx >= 0 {
+			topic = strings.TrimSpace(topic[idx+len("Brief: "):])
+		}
+		topic = strings.ReplaceAll(topic, "\n", " ")
+		if len(topic) > 80 {
+			topic = strings.TrimSpace(topic[:80]) + "…"
+		}
+		return topic
+	}
+	return ""
+}
+
 // renderBuilderExistingToolsBlock lists the user's persistent (admin-
 // approved) custom tools as READ-ONLY awareness for Builder. Builder's
 // executable catalog hides these on purpose — see the persistent-tool
@@ -1574,12 +1639,13 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			toolNames = append(toolNames, td.Tool.Name)
 		}
 	}
-	// Orchestrator (Operator) agents get the exclusive fleet-management
-	// catalog on their conversational turn — create/list/run/pause standing
-	// agents + read the run-ledger. Not globally registered; appended here
-	// only for Mode=="orchestrator", same shape as Builder's authoring tools.
-	if t.agent.Mode == "orchestrator" && forOrchestrator {
-		om := operatorManagementTools(sess)
+	// Fleet agents get the exclusive fleet-management catalog on their
+	// conversational turn — delegate + create/list/run/pause standing
+	// agents + read the run-ledger + event-monitor management + history
+	// recall. Not globally registered; appended here only when Fleet is on,
+	// same shape as Builder's authoring tools.
+	if t.agent.Fleet && forOrchestrator {
+		om := append(operatorManagementTools(sess, t.agent.ID), operatorHistoryTools(sess, t.agent.ID)...)
 		tools = append(tools, om...)
 		for _, td := range om {
 			toolNames = append(toolNames, td.Tool.Name)
@@ -3090,12 +3156,10 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		return
 	}
 
-	// Orchestrator agents keep one ongoing thread; pin every send to the
-	// fixed session id so the conversation accumulates in one place
-	// regardless of what the client thinks its session id is.
-	if agent.Mode == "orchestrator" {
-		req.SessionID = operatorPinnedSession
-	}
+	// Channel agents no longer force every send onto one thread — the client
+	// sends the channel session id (channelSessionID) when the Channel row is
+	// open, and ordinary session ids otherwise. The channel thread is created
+	// under its requested id on first turn just like any session.
 	// Resolve session (create on first turn, otherwise load).
 	sess, _ := loadChatSession(udb, agent.ID, req.SessionID)
 	isNewSession := sess.ID == ""
@@ -3120,6 +3184,13 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 			return
 		}
 	}
+
+	// The user is actively in this session for the whole turn, so clear its
+	// unread once the turn (and its final reply-save) is done. Registered
+	// early so it runs LAST (LIFO), after every other save; reads the freshest
+	// persisted LastAt. Background wakes use RunAgentSyncContinuing instead —
+	// they never mark seen, which is what leaves a wake unread.
+	defer func() { markSessionSeen(udb, agent.ID, sess.ID) }()
 
 	// Build the attachment preamble now that the chat session (and a
 	// resolvable workspace path) is available. Large extractions spill
@@ -3232,11 +3303,13 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	if saved, err := saveChatSession(udb, sess); err == nil {
 		sess = saved
 	}
-	// Ongoing-conversation compaction (Operator only): storage keeps the full
-	// history (saved above); the RUN sees a bounded view — a running summary +
-	// the recent tail. Folds aging turns into the summary and evicts durable
-	// facts into the agent's memory. No-op below threshold; normal agents skip.
-	if agent.Mode == "orchestrator" {
+	// Ongoing-conversation compaction (channel home thread only): storage
+	// keeps the full history (saved above); the RUN sees a bounded view — a
+	// running summary + the recent tail. Folds aging turns into the summary
+	// and evicts durable facts into memory. Gated to the channel thread so a
+	// channel agent's ordinary ad-hoc sessions stay verbatim (they're
+	// disposable; only the persistent home thread needs the running summary).
+	if agent.Channel && sess.ID == channelSessionID(agent.ID) {
 		sess.Messages = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
 	}
 
@@ -3809,6 +3882,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// turn-specific signal the static block alone doesn't provide. Soft;
 	// the model still decides. No-op when no agent's triggers match.
 	turnContext += t.renderAgentTriggerHints(triggerMsg) // see turnContext note above — appended to user msg, not sys
+	// Active dispatch threads: remind the host of agents it already
+	// delegated to THIS session so a follow-up re-dispatches instead of
+	// being answered inline (the host's own history hides the delegation,
+	// and a generic follow-up won't re-match the agent's triggers). Near
+	// the user message for salience, like the trigger hint. No-op when no
+	// dispatch thread is open this session.
+	turnContext += t.renderActiveDispatchThreads()
 	// "Available sources" block — the catalog for query_source: lists each
 	// admin-exposed source hook (name — what it covers / when to use), so
 	// the model picks a source and calls query_source(source, query). One
@@ -4251,15 +4331,21 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Builder→Builder and Builder→Chat→Builder loops; everything
 		// else is fair game.
 		t.agentsGroupedToolDef(true),
-		// Recurring tasks — background work that posts back into this
-		// session at a fixed interval. Mirror of chat's schedule_chat_update
-		// flow, scoped per-(user, agent).
-		t.recurringToolDef(),
 		// Explorer mode — LLM-triggered round-budget lift for
 		// API-mapping tasks. No-op unless AllowExplorer is set on
 		// the agent.
 		t.enterExplorerModeToolDef(),
 	)
+	// Recurring per-session interval tasks — but NOT for Fleet agents. A Fleet
+	// agent schedules recurring work through create_standing_agent (real cron
+	// timing, and it surfaces in the Enabled-agents console where the user can
+	// pause/cancel it); the generic per-session "recurring" scheduler bypasses
+	// the fleet and stays invisible to the console, so we keep it off them.
+	// (The earlier dropToolsByName in resolveWorkerTools was dead — recurring
+	// is added HERE, after that assembly, so it was never in that list.)
+	if !t.agent.Fleet {
+		knowTools = append(knowTools, t.recurringToolDef())
+	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.
 	// Having both visible caused pattern-match loops (LLM oscillated
@@ -5113,7 +5199,11 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// dispatches to the new agent with a representative input"), and
 	// stripping run here breaks that pattern.
 	tools = append(tools, t.agentsGroupedToolDef(true))
-	tools = append(tools, t.recurringToolDef())
+	if !t.agent.Fleet {
+		// Fleet agents schedule through create_standing_agent, not the generic
+		// per-session recurring scheduler — see runPlan's note.
+		tools = append(tools, t.recurringToolDef())
+	}
 	tools = append(tools, t.enterExplorerModeToolDef())
 	// Include persistent temp tools in the static set so the group
 	// rewriter (called below) can collapse them when they're members

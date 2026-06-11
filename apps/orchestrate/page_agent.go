@@ -169,6 +169,13 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
 				Help: "Hides read_skill / skill_knowledge_search / skill_knowledge_fetch_doc + the \"Available skills\" block AND stops trigger-injection — no skill applies, regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
 
+			ui.FormField{Type: "header", Label: "Channel & fleet",
+				Help: "Always-on behaviors. Independent of each other."},
+			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a channel",
+				Help: "Gives the agent a persistent home thread it resumes alongside its normal sessions — where event-monitor wakes and standing-agent reports land — with a rolling summary so it stays bounded. Adds the channel sidebar (Channel row + Authorizations / Enabled agents / Event monitors). Channel agents are never published publicly."},
+			ui.FormField{Field: "fleet", Type: "toggle", Label: "Fleet management tools",
+				Help: "Grants delegation + standing-agent + event-monitor + run-ledger + history-recall tools. Unlike the old orchestrator mode it does NOT stop the agent doing work itself — it just adds the tools."},
+
 			ui.FormField{Type: "header", Label: "Publishing",
 				Help: "Who can use this agent and under what restrictions."},
 			ui.FormField{Field: "exposed", Type: "toggle", Label: "Publish as public app",

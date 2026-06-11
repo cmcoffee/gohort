@@ -131,12 +131,13 @@ type ExposedAgentEntry struct {
 // (<100 users, <20 agents/user); add a deployment-wide index if a
 // scan becomes noticeable.
 // publiclyExposable reports whether an agent may be served on the public
-// /agents/ surface. Orchestrator-mode agents (the Operator) are admin consoles
-// whose nav reaches admin-gated fleet-management endpoints; they are NEVER
-// public, regardless of the Exposed flag. Enforced at the read points so the
-// rule holds even if a record drifts to Exposed=true.
+// /agents/ surface. Channel agents (a personal ongoing thread + the
+// management box that reaches admin-gated fleet endpoints) and Fleet agents
+// (delegation tools) are NEVER public, regardless of the Exposed flag.
+// Enforced at the read points so the rule holds even if a record drifts to
+// Exposed=true.
 func publiclyExposable(a AgentRecord) bool {
-	return a.Exposed && a.Mode != "orchestrator"
+	return a.Exposed && !a.Channel && !a.Fleet
 }
 
 func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {

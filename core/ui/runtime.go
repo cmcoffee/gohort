@@ -8457,13 +8457,16 @@ const runtimeJS = `
 
     // Alternate-nav mode (domain-agnostic): for designated agents the host
     // app can replace the session list with a fixed nav and pin the panel to
-    // ONE ongoing thread. The app names a JS global (alt_nav_flag) whose keys
-    // are the agent ids that opt in, and the pinned session id
-    // (alt_nav_pinned_session). core/ui hardcodes neither — both come from cfg.
+    // ONE ongoing thread per agent. The app names a JS global (alt_nav_flag)
+    // that maps each opted-in agent id to its pinned session id. core/ui
+    // hardcodes neither the global name nor the session-id scheme.
     var altNavFlag = cfg.alt_nav_flag || '';
-    var altPinnedSession = cfg.alt_nav_pinned_session || '';
     function altNavAgents() { return (altNavFlag && window[altNavFlag]) || null; }
     function isAltNavAgent(agentId) { var m = altNavAgents(); return !!(m && agentId && m[agentId]); }
+    // The alt-nav global maps agentId -> pinned session id, so each alt-nav
+    // agent resumes its OWN ongoing thread (core/ui stays agnostic of the
+    // app's session-id scheme). Empty string for non-alt-nav agents.
+    function altPinnedSession(agentId) { var m = altNavAgents(); return (m && agentId && m[agentId]) || ''; }
 
     var activeSessionId = '';
     // activeRunId — server-issued run identifier for the current
@@ -8566,6 +8569,8 @@ const runtimeJS = `
       // + hides sessions; non-chat items overlay the main pane with a table.
       sideHdrEl = sideHdrBuilt.elt;
       var orchBtns = [];
+      var orchBadges = [];
+      var channelUnreadDot = null; // dot on the Channel row; toggled from the channel thread's unread
       function renderOrchTable(rows, item, reload) {
         orchView.innerHTML = '';
         if (!rows || !rows.length) {
@@ -8608,11 +8613,23 @@ const runtimeJS = `
         orchView.appendChild(tbl);
       }
       function selectOrchNav(idx) {
+        var item = (cfg.orchestrator_nav || [])[idx] || {};
+        // Action items are buttons (clear / decommission): POST to the URL
+        // for the current agent after an optional confirm, then refresh.
+        if (item.action_url) {
+          (async function() {
+            if (item.confirm && window.uiConfirm && !(await window.uiConfirm(item.confirm))) return;
+            var url = item.action_url + (item.action_url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+            fetch(url, {method: 'POST'})
+              .then(function() { refreshChannelBadges(); if (orchBtns.length) selectOrchNav(0); })
+              .catch(function(err) { console.error('channel action failed: ' + err.message); });
+          })();
+          return;
+        }
         orchBtns.forEach(function(b, i) {
           b.style.background = (i === idx) ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
           b.style.fontWeight = (i === idx) ? '600' : '400';
         });
-        var item = (cfg.orchestrator_nav || [])[idx] || {};
         if (!orchView) return;
         if (item.source) {
           // A data view (History / Enabled agents / Authorizations): overlay
@@ -8624,32 +8641,73 @@ const runtimeJS = `
             .then(function(rows) { renderOrchTable(rows, item, reload); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
         } else {
-          // The Chat view: hide the overlay so the conversation shows.
+          // The Channel (chat) row: hide the overlay so the conversation
+          // shows, and resume this agent's pinned home thread.
           orchView.style.display = 'none';
+          var altSid = altPinnedSession(window.GOHORT_AGENT_ID);
+          if (altSid && currentSessionId !== altSid) openSession(altSid);
         }
       }
-      navEl = el('div', {class: 'ui-orch-nav', style: 'display:none;flex-direction:column;gap:0.25rem;padding:0.5rem'});
+      // refreshChannelBadges fetches each management view's row count and
+      // shows it as a badge on that row (hidden when zero). core/ui stays
+      // agnostic: any nav item with a source gets a count badge.
+      function refreshChannelBadges() {
+        (cfg.orchestrator_nav || []).forEach(function(item, i) {
+          var badge = orchBadges[i];
+          if (!item.source || !badge) return;
+          fetch(item.source).then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) {
+              var n = (rows && rows.length) || 0;
+              badge.textContent = n ? String(n) : '';
+              badge.style.display = n ? '' : 'none';
+            })
+            .catch(function() {});
+        });
+      }
+      // The channel box sits ABOVE the normal session list (not replacing
+      // it). Row 0 is the Channel (the no-source chat item) → opens the home
+      // thread. Rows with a source are management views (Enabled agents /
+      // Event monitors / Authorizations) rendered with a live count badge.
+      navEl = el('div', {class: 'ui-channel-box', style: 'display:none;flex-direction:column;gap:0.1rem;padding:0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'});
       (cfg.orchestrator_nav || []).forEach(function(item, i) {
-        var b = el('button', {type: 'button', class: 'ui-orch-nav-btn',
-          style: 'text-align:left;padding:0.5rem 0.7rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
-          onclick: function() { selectOrchNav(i); }}, [item.label || ('View ' + (i + 1))]);
+        var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
+        var kids = [label];
+        var badge = null;
+        if (item.action_url) {
+          // A channel action (clear / decommission): muted, color by variant.
+          var ac = (item.variant === 'danger') ? 'var(--danger, #d9534f)' : (item.variant === 'warning') ? 'var(--warning, #d98c34)' : 'var(--text-mute, #999)';
+          label.style.color = ac;
+          label.style.fontSize = '0.85rem';
+        } else if (item.source) {
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:0.75rem;background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
+          kids.push(badge);
+        } else {
+          // The Channel row gets a small marker so it reads as the home thread,
+          // plus an unread dot (hidden until a wake lands in the home thread).
+          label.textContent = '⚡ ' + (item.label || 'Channel');
+          channelUnreadDot = el('span', {class: 'ui-unread-dot', title: 'New activity',
+            style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']);
+          kids.push(channelUnreadDot);
+        }
+        var b = el('button', {type: 'button', class: 'ui-channel-row',
+          style: 'display:flex;align-items:center;gap:0.4rem;text-align:left;padding:0.45rem 0.6rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+          onclick: function() { selectOrchNav(i); }}, kids);
         navEl.appendChild(b);
         orchBtns.push(b);
+        orchBadges.push(badge);
       });
-      side.appendChild(navEl);
+      // Insert the channel box at the very top of the rail, above the
+      // sessions header/search/list (which stay in place for channel agents).
+      side.insertBefore(navEl, sideHdrEl);
       function applyOrchMode(agentId) {
         var isOrch = isAltNavAgent(agentId);
-        if (sideList) sideList.style.display = isOrch ? 'none' : '';
-        if (sideSearch) sideSearch.style.display = isOrch ? 'none' : '';
-        if (sideHdrEl) sideHdrEl.style.display = isOrch ? 'none' : '';
+        // Channel agents keep their session list AND get the channel box on
+        // top — both visible. Non-channel agents just hide the box.
         navEl.style.display = isOrch ? '' : 'none';
         if (!isOrch && orchView) orchView.style.display = 'none';
-        if (isOrch && orchBtns.length) selectOrchNav(0);
-        // Single ongoing thread: resume one pinned session so the
-        // conversation (and its server-side compaction) persists across
-        // visits, instead of starting a fresh session each time.
-        if (isOrch && altPinnedSession && currentSessionId !== altPinnedSession) {
-          openSession(altPinnedSession);
+        if (isOrch) {
+          refreshChannelBadges();
+          if (orchBtns.length) selectOrchNav(0);
         }
       }
       window.addEventListener('gohort-agent-id-changed', function(e) {
@@ -8658,6 +8716,24 @@ const runtimeJS = `
       // web_assets dispatches the change event after picker init; apply now
       // too in case the default-selected agent is already an orchestrator.
       setTimeout(function() { applyOrchMode(window.GOHORT_AGENT_ID || ''); }, 0);
+
+      // Unread/badge poll. A channel agent receives background wakes (a
+      // monitor fires, a standing agent reports, a goal conversation
+      // finishes) that append to sessions the user isn't viewing — so the
+      // unread dots + management counts must refresh on their own, not only
+      // on navigation. Light and guarded: only for channel agents, only when
+      // the tab is visible, and never mid bulk-select (which would fight the
+      // user's row selection). Non-channel agents never get background
+      // appends, so there's nothing to poll for them.
+      if (hasList) {
+        setInterval(function() {
+          if (document.hidden) return;
+          if (bulkState && bulkState.mode) return;
+          if (!isAltNavAgent(window.GOHORT_AGENT_ID)) return;
+          loadSessions();
+          refreshChannelBadges();
+        }, 30000);
+      }
 
       // Mobile top bar carries the hamburger + active session title +
       // a "+ N" new-session button. The rail header also has a "+ New"
@@ -11247,6 +11323,18 @@ const runtimeJS = `
       var activeID = cfg.list_is_context ? activeContextId : activeSessionId;
       fetchJSON(substituteExtras(cfg.list_url)).then(function(items) {
         sideList.innerHTML = '';
+        // For channel agents the home thread is shown as the Channel row in
+        // the box above — drop it here so it isn't listed twice, and reflect
+        // its unread state on the Channel row's dot instead of a list row.
+        var chanSid = altPinnedSession(window.GOHORT_AGENT_ID);
+        if (chanSid && Array.isArray(items)) {
+          var chanUnread = false;
+          items = items.filter(function(s) {
+            if (s && s[idF] === chanSid) { chanUnread = !!s.unread; return false; }
+            return true;
+          });
+          if (channelUnreadDot) channelUnreadDot.style.display = chanUnread ? 'inline-block' : 'none';
+        }
         if (!Array.isArray(items) || !items.length) {
           if (cfg.bulk_select && bulkState.mode) {
             renderBulkBar([], sideList, bulkState, bulkSelected,
@@ -11299,9 +11387,14 @@ const runtimeJS = `
           // the framework's hover / active styling AND the
           // position:relative context that the absolutely-positioned
           // ✎/× buttons need to land on the right edge.
-          var row = el('div', {class: rowClass}, [
-            el('span', {class: 'ui-chat-side-title', text: ttl}),
-          ]);
+          var rowKids = [el('span', {class: 'ui-chat-side-title', text: ttl})];
+          // Unread dot — a background append (monitor wake / report / goal
+          // completion) landed here while it wasn't open. Cleared on open.
+          if (rec.unread) {
+            rowKids.unshift(el('span', {class: 'ui-unread-dot', title: 'New activity',
+              style: 'display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-right:0.45rem;flex:0 0 auto;vertical-align:middle'}, ['']));
+          }
+          var row = el('div', {class: rowClass}, rowKids);
           row.addEventListener('click', function() {
             if (inMode) {
               if (bulkSelected[sid]) delete bulkSelected[sid];
@@ -11382,12 +11475,20 @@ const runtimeJS = `
     }
 
     function openSession(sid) {
-      // Alt-nav agents are a single pinned thread: force EVERY session
-      // open/switch/new to the fixed id, so no entry point (initial load,
-      // deep link, "+ New", loadSessions auto-open) can fork a fresh chat.
-      // Client mirror of the server-side pin in the app's send/load handlers.
-      if (altPinnedSession && isAltNavAgent(window.GOHORT_AGENT_ID)) {
-        sid = altPinnedSession;
+      // Channel agents no longer force every open onto the home thread — they
+      // have a channel thread AND ordinary sessions. The Channel row opens the
+      // home thread explicitly (via altPinnedSession); a normal session row /
+      // "+ New" / deep link opens its own id as requested.
+      // Opening ANY session returns to the chat pane — hide any management /
+      // History overlay (orchView) that was covering it, so clicking a session
+      // from the list isn't masked by a table that's still up, and mark the
+      // Channel row (index 0) active so the rail reflects "you're in chat now".
+      if (orchView) orchView.style.display = 'none';
+      if (typeof orchBtns !== 'undefined' && orchBtns && orchBtns.length) {
+        orchBtns.forEach(function(b, i) {
+          b.style.background = (i === 0) ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
+          b.style.fontWeight = (i === 0) ? '600' : '400';
+        });
       }
       // Any session open / switch / new collapses the mobile drawer —
       // done at the top so it fires for EVERY entry point (row click,

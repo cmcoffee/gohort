@@ -954,6 +954,23 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// breadcrumb above to detect a wedged provider call.
 		Log("[agent_loop] round %d: ← LLM returned (content=%d, tools=%d)", round, len(resp.Content), len(resp.ToolCalls))
 
+		// DIAGNOSTIC: collapse-ish round — the model wrote a large reasoning
+		// block but little visible content and called no tool. The existing
+		// reasoning-collapse re-prompt below only triggers at <30 chars, so a
+		// near-miss (e.g. 35 chars of content over 4k tokens of reasoning) is
+		// returned as the reply with the reasoning silently dropped. Dump the
+		// reasoning here so we can confirm whether the actual answer was buried
+		// in the thinking channel. Thinking models put the conclusion at the
+		// END, so log the tail in full rather than truncating it off.
+		if len(resp.ToolCalls) == 0 && len(strings.TrimSpace(resp.Content)) < 200 && len(resp.Reasoning) > 2000 {
+			tail := resp.Reasoning
+			if len(tail) > 4000 {
+				tail = "…" + tail[len(tail)-4000:]
+			}
+			Debug("[agent_loop] COLLAPSE-DIAG round %d: content=%q | reasoning_tail(%d total)=%q",
+				round, strings.TrimSpace(resp.Content), len(resp.Reasoning), tail)
+		}
+
 		// Thinking models may place their response entirely in the
 		// reasoning field. Promote reasoning to content when there is
 		// no content or tool calls so text-based tool parsing can work.
