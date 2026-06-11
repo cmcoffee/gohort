@@ -1482,6 +1482,12 @@ type AgentLoopPanel struct {
 	// BulkSelect adds checkboxes + bulk delete to the sessions
 	// sidebar (same shape as ChatPanel).
 	BulkSelect bool `json:"bulk_select,omitempty"`
+	// MarkAllReadURL, when set, adds a "Mark all read" button next to the
+	// Select pill in the sidebar header. It POSTs to this URL (extras like
+	// {agent_id} substituted) and reloads the list. The button shows only
+	// when at least one session is unread. core/ui owns the affordance; the
+	// app owns the endpoint that clears the unread state.
+	MarkAllReadURL string `json:"mark_all_read_url,omitempty"`
 	// Attachments enables a 📎 button on the input row. When set,
 	// the runtime base64-encodes selected images and ships them in
 	// the send body as `images: [...]`.

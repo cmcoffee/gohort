@@ -148,10 +148,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// substitutes it from the ExtraFields select value
 					// every fetch. Sessions live in their agent's bucket
 					// so switching the picker swaps the rail contents.
-					ListURL:     "api/sessions?agent_id={agent_id}",
-					LoadURL:     "api/sessions/{id}?agent_id={agent_id}",
-					DeleteURL:   "api/sessions/{id}?agent_id={agent_id}",
-					TruncateURL: "api/sessions/{id}?agent_id={agent_id}",
+					ListURL:        "api/sessions?agent_id={agent_id}",
+					LoadURL:        "api/sessions/{id}?agent_id={agent_id}",
+					DeleteURL:      "api/sessions/{id}?agent_id={agent_id}",
+					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
+					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
 					ListTitle:   "Sessions",
 					NewLabel:    "New session",
 					// Same chat-app layout the public /agents/ surface

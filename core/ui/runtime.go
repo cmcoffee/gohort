@@ -1222,11 +1222,30 @@ body { min-height: 100vh; min-height: 100dvh; }
  * Select sits just left of + New, with Mobile-only × close on the far
  * left of the header. */
 .ui-chat-side-h > span:first-child,
-.ui-chat-side-h > .ui-chat-side-h-label { flex: 1; min-width: 0; }
+.ui-chat-side-h > .ui-chat-side-h-label {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* "⋯" overflow menu for secondary sidebar actions. */
+.ui-side-menu-wrap { position: relative; flex: 0 0 auto; display: inline-flex; }
+.ui-side-menu {
+  position: absolute; top: 100%; left: 0; z-index: 20; min-width: 150px;
+  margin-top: 0.25rem; padding: 0.25rem;
+  background: var(--bg-1, #1b1b2b); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+.ui-side-menu-item {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; color: var(--text); font: inherit; font-size: 0.8rem;
+  text-transform: none; letter-spacing: normal;
+  padding: 0.35rem 0.5rem; border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.ui-side-menu-item:hover { background: var(--bg-2, rgba(127,127,127,0.18)); }
 .ui-chat-new {
   background: transparent; color: var(--accent); border: 1px solid var(--accent);
   border-radius: 6px; padding: 0.2rem 0.55rem; font-size: 0.75rem; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  flex: 0 0 auto; white-space: nowrap;
 }
 .ui-chat-new:hover { background: var(--bg-2); }
 .ui-chat-new.active { background: var(--accent); color: var(--text-on-accent, #fff); }
@@ -1240,6 +1259,7 @@ body { min-height: 100vh; min-height: 100dvh; }
   border: 1px solid var(--border); border-radius: 6px;
   padding: 0.2rem 0.55rem; font-size: 0.75rem; cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+  flex: 0 0 auto; white-space: nowrap;
 }
 .ui-chat-side-btn:hover { color: var(--text); border-color: var(--text-mute); }
 .ui-chat-side-btn.active {
@@ -8545,6 +8565,28 @@ const runtimeJS = `
         }, ['Select']);
       }
       var leftExtras = [collapseBtn];
+      // Secondary sidebar actions live behind a "⋯" overflow menu so they
+      // don't crowd (and overlap) the "Sessions" title. Currently: Mark all
+      // read. The app opts in by setting the action's URL. Ordered first
+      // (before Select) so the header reads: ⋯ · Select · + New.
+      if (cfg.mark_all_read_url) {
+        var moreMenu = el('div', {class: 'ui-side-menu', style: 'display:none'}, [
+          el('button', {class: 'ui-side-menu-item', onclick: function() {
+            moreMenu.style.display = 'none';
+            fetch(substituteExtras(cfg.mark_all_read_url), {method: 'POST'})
+              .then(function() { loadSessions(); })
+              .catch(function(err) { console.error('mark all read failed: ' + err.message); });
+          }}, ['Mark all read']),
+        ]);
+        var moreBtn = el('button', {class: 'ui-chat-side-btn', title: 'More actions',
+          onclick: function(ev) {
+            ev.stopPropagation();
+            moreMenu.style.display = (moreMenu.style.display === 'none') ? 'block' : 'none';
+          }}, ['⋯']);
+        // Any click outside the menu closes it.
+        document.addEventListener('click', function() { moreMenu.style.display = 'none'; });
+        leftExtras.push(el('div', {class: 'ui-side-menu-wrap'}, [moreBtn, moreMenu]));
+      }
       if (sideSelectBtn) leftExtras.push(sideSelectBtn);
       var sideHdrBuilt = renderSideHeader({
         label:    cfg.list_title || 'Sessions',

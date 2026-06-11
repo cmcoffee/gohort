@@ -140,6 +140,22 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sid := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	// /api/sessions/mark-all-read — clear the unread state on EVERY session
+	// of the resolved agent (the sidebar "Mark all read" action). Agent-scoped,
+	// not session-scoped, so handle it before the {sid} sub-actions below.
+	if sid == "mark-all-read" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		markAllSessionsSeen(udb, agent.ID)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// Detect /api/sessions/{sid}/export — a sub-action that dumps
 	// the full session as JSON or markdown for sharing / debugging.
 	if strings.HasSuffix(sid, "/export") {

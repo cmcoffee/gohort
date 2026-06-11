@@ -106,6 +106,31 @@ func listChatSessions(db Database, agentID string) []ChatSession {
 	return out
 }
 
+// markAllSessionsSeen clears the unread state on every session of an agent —
+// the "mark all read" action. Like markSessionSeen it writes LastSeen only
+// (never bumps LastAt), so it doesn't count as activity. Returns how many it
+// updated.
+func markAllSessionsSeen(db Database, agentID string) int {
+	if db == nil || agentID == "" {
+		return 0
+	}
+	tbl := sessionTable(agentID)
+	n := 0
+	for _, k := range db.Keys(tbl) {
+		var s ChatSession
+		if !db.Get(tbl, k, &s) {
+			continue
+		}
+		if !s.LastAt.After(s.LastSeen) {
+			continue
+		}
+		s.LastSeen = s.LastAt
+		db.Set(tbl, k, s)
+		n++
+	}
+	return n
+}
+
 // markSessionSeen records that the user has now viewed a session: it sets
 // LastSeen to the session's current LastAt, clearing the unread state. It
 // writes directly (NOT via saveChatSession) so it does NOT bump LastAt —
