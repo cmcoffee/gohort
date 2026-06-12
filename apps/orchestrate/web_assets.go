@@ -1461,51 +1461,12 @@ const orchestrateWebAssets = `<style>
     watchInterjections();
 
     // --- Send to Builder handoff -----------------------------------
-    // When we land on Builder with a ?builder_brief=<id> param, the
-    // "Builder" toolbar button on another agent just staged an
-    // improvement brief. Fetch it (one-shot server-side) and auto-send
-    // it as Builder's first message so Builder responds immediately
-    // instead of waiting for the user to re-type anything.
-    function autoSendToChat(text) {
-      var tries = 0;
-      (function attempt() {
-        var input = document.querySelector('.ui-chat-input');
-        var sendBtn = document.querySelector('.ui-chat-send');
-        // offsetParent !== null → the send button is visible (not
-        // swapped out for Cancel mid-send), i.e. the panel is idle and
-        // ready to accept a fresh turn.
-        if (input && sendBtn && sendBtn.offsetParent !== null) {
-          input.value = text;
-          input.dispatchEvent(new Event('input', {bubbles: true}));
-          sendBtn.click();
-          return;
-        }
-        if (tries++ < 40) { setTimeout(attempt, 150); }
-      })();
-    }
-    function consumeBuilderBrief() {
-      var id;
-      try { id = new URL(window.location.href).searchParams.get('builder_brief'); } catch (_) { id = null; }
-      if (!id) return;
-      // Strip the param up front so a refresh can't re-fire (the brief
-      // is one-shot server-side regardless, but keep the URL clean).
-      try {
-        var u = new URL(window.location.href);
-        u.searchParams.delete('builder_brief');
-        window.history.replaceState({}, '', u.toString());
-      } catch (_) {}
-      fetch('api/builder-brief/' + encodeURIComponent(id))
-        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function(d) {
-          var text = (d && d.text) || '';
-          if (!text) throw new Error('empty brief');
-          autoSendToChat(text);
-        })
-        .catch(function(err) {
-          window.uiAlert('Could not load the Builder brief: ' + (err && err.message || err));
-        });
-    }
-    consumeBuilderBrief();
+    // Landing on Builder with ?builder_brief=<id> (from the send_to_builder
+    // tool or the "Builder" toolbar button) is now handled SERVER-SIDE: the
+    // page reads + consumes the one-shot brief and hands it to the chat panel
+    // as cfg.auto_send, which fires it through the panel's own sendMessage()
+    // after mount. No client fetch / DOM-scraping here — the old approach
+    // looked for a chat-input class this panel doesn't use and silently failed.
 
     // --- Toolbar client actions ------------------------------------
     // Each one pivots off the active agent in the dropdown (mirror

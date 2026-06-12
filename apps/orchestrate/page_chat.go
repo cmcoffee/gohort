@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -134,6 +135,22 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(channelAgentsJSON) +
 		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
+	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder
+	// tool or the toolbar "Send to Builder" button) carries a one-shot brief.
+	// Read + consume it server-side and hand it to the chat panel as AutoSend,
+	// so Builder receives it on mount through its own send path — no fragile
+	// client-side fetch + DOM injection.
+	builderBrief := ""
+	if bid := strings.TrimSpace(r.URL.Query().Get("builder_brief")); bid != "" {
+		if udb := UserDB(T.DB, user); udb != nil {
+			var brief builderBriefRecord
+			if udb.Get(builderBriefTable, bid, &brief) {
+				udb.Unset(builderBriefTable, bid) // one-shot
+				builderBrief = brief.Text
+			}
+		}
+	}
+
 	page := ui.Page{
 		Title:         "Agency",
 		ShowTitle:     true,
@@ -179,6 +196,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// runs.go / runs_http.go for the server contract.
 					RunsURLBase:   "api/runs/",
 					DeepLinkParam: "session",
+					AutoSend:      builderBrief,
 					LockActivity:  true,
 					EmptyText:     "Pick an agent from the rail, then ask anything. The orchestrator plans the steps, the worker runs each one (tool calls appear inline), then the orchestrator replies.",
 					Placeholder:   "What do you want to do?",

@@ -1462,6 +1462,12 @@ type AgentLoopPanel struct {
 	// context id into the URL query string (e.g. ?session=abc).
 	// Reloading the page picks up the parameter and reconnects.
 	DeepLinkParam string `json:"deep_link_param,omitempty"`
+	// AutoSend — a message the panel sends ONCE, automatically, after it
+	// mounts and is ready (via its own send path, not a simulated click).
+	// Used for deep-link handoffs that pre-load a first message (e.g. the
+	// page reads a one-shot brief id and stamps the brief here) so the agent
+	// responds immediately without the user re-typing. Empty = no auto-send.
+	AutoSend string `json:"auto_send,omitempty"`
 	// Terminal — when set, splits the right pane vertically with
 	// activity on top and a terminal below. The terminal field
 	// names the WebSocket endpoint the runtime opens to drive

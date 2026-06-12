@@ -161,7 +161,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
 					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run."},
 					"mission":          {Type: "string", Description: "What the agent should do each run."},
-					"cron":             {Type: "string", Description: "Recurring wall-clock schedule: \"daily 08:00\", \"FRI 21:30\", \"weekdays 17:00\". Use this for \"every day at 8am\" (fires tomorrow 8am, then daily). Leave empty if using interval_seconds."},
+					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in LOCAL time — the SAME zone get_local_time / time_in_zone report. Use the time the user stated VERBATIM; do NOT convert to UTC (the schedule already runs in local time, so converting fires it hours off). e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". Leave empty if using interval_seconds."},
 					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
 					"interval_seconds": {Type: "number", Description: "Recurrence interval in seconds (86400 = daily, 21600 = every 6h, 3600 = hourly). Use with optional start_at. Omit when using cron."},
 				},

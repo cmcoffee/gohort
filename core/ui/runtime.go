@@ -11941,6 +11941,25 @@ const runtimeJS = `
 
     if (hasList) loadSessions();
 
+    // AutoSend — a deep-link handoff (e.g. a Builder brief the page stamped
+    // server-side) sends ONE message automatically via the panel's own
+    // sendMessage(), once the panel is actually mounted. No DOM-scraping or
+    // simulated clicks — that's why the old approach silently failed (it looked
+    // for a chat input class this panel doesn't use). Fires a fresh turn in a
+    // new session, so the agent responds immediately without the user retyping.
+    if (cfg.auto_send) {
+      var pendingAuto = cfg.auto_send, autoTries = 0;
+      (function fireAutoSend() {
+        if (wrap.isConnected) {
+          inputArea.value = pendingAuto;
+          inputArea.dispatchEvent(new Event('input', {bubbles: true}));
+          sendMessage();
+          return;
+        }
+        if (autoTries++ < 100) setTimeout(fireAutoSend, 50);
+      })();
+    }
+
     // On mobile, the page header (back button) + top bundle (buttons
     // row) sit above the chat grid in flow but aren't useful
     // mid-conversation. Scroll the grid into the top of the viewport

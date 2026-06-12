@@ -35,7 +35,7 @@ func (T *Phantom) scheduleToolDef(chatID, handle string) AgentToolDef {
 				"run_at":           {Type: "string", Description: "condition=always: ISO8601 wall-clock time for a one-shot, e.g. 2026-06-12T09:00:00-07:00. Omit if using delay_seconds or a repeat."},
 				"delay_seconds":    {Type: "number", Description: "condition=always: seconds from now for a one-shot (e.g. 30). Omit if using run_at or a repeat."},
 				"interval_seconds": {Type: "number", Description: "Repeat every N seconds. condition=always: minimum 60. condition=change: how often to check, minimum 30."},
-				"cron":             {Type: "string", Description: "condition=always: repeat on a calendar schedule \"{day(s)} HH:MM\", e.g. \"FRI 21:30\", \"daily 08:00\", \"weekdays 17:00\", \"APR-3 09:00\" (annual). Omit for one-shot or interval repeats."},
+				"cron":             {Type: "string", Description: "condition=always: repeat on a calendar schedule in LOCAL time (the zone get_local_time/time_in_zone report) — use the time the user stated, do NOT convert to UTC. \"{day(s)} HH:MM\", e.g. \"daily 12:00\" (noon local), \"FRI 21:30\", \"weekdays 17:00\", \"APR-3 09:00\" (annual). Omit for one-shot or interval repeats."},
 				"random_window":    {Type: "string", Description: "condition=always: repeat once per day at a random time within \"HH:MM-HH:MM\". Omit for fixed schedules."},
 				"repeat_until":     {Type: "string", Description: "condition=always: a natural-language condition that stops the repeat when met, evaluated after each fire (e.g. \"until the user replies\", \"after 5 messages\")."},
 				"tool_name":        {Type: "string", Description: "condition=change: the owner's tool to watch (its output is hashed each interval). Omit to watch THIS conversation."},
