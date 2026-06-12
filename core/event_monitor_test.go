@@ -138,18 +138,26 @@ func TestExecuteEventPollFiresAndDebounces(t *testing.T) {
 	if len(wakes) != 1 {
 		t.Fatalf("expected debounce on identical answer, got %d wakes", len(wakes))
 	}
-	// Changed answer → wakes again.
+	// Changed but still-matching answer → edge-triggered, so NO new wake. It
+	// re-fires only after the condition clears and re-arms.
 	pollAnswer = "YES — CVE-2026-1, CVE-2026-2"
 	cur, _ = GetEventMonitor(db, "craig", "cve-watch")
 	executeEventPoll(context.Background(), db, cur)
-	if len(wakes) != 2 {
-		t.Fatalf("expected a 2nd wake on changed answer, got %d", len(wakes))
+	if len(wakes) != 1 {
+		t.Fatalf("expected no re-wake while still matching (edge-triggered), got %d", len(wakes))
 	}
-	// Non-matching answer → no wake.
+	// Non-matching answer → re-arms (no wake).
 	pollAnswer = "no new CVEs"
 	cur, _ = GetEventMonitor(db, "craig", "cve-watch")
 	executeEventPoll(context.Background(), db, cur)
-	if len(wakes) != 2 {
+	if len(wakes) != 1 {
 		t.Fatalf("expected no wake on non-match, got %d", len(wakes))
+	}
+	// Matching again after re-arm → a fresh onset wakes.
+	pollAnswer = "YES — CVE-2026-3"
+	cur, _ = GetEventMonitor(db, "craig", "cve-watch")
+	executeEventPoll(context.Background(), db, cur)
+	if len(wakes) != 2 {
+		t.Fatalf("expected a wake on the next onset after re-arm, got %d", len(wakes))
 	}
 }

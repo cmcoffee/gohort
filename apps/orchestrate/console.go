@@ -243,7 +243,8 @@ type consoleAgentRow struct {
 	Schedule string `json:"schedule"`
 	Status   string `json:"status"`
 	NextRun  string `json:"next_run"`
-	ID       string `json:"_id"` // hidden; row-action target (the agent name)
+	ID       string `json:"_id"`     // hidden; row-action target (the agent name)
+	Paused   bool   `json:"_paused"` // hidden; gates Pause vs Resume per row
 }
 
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
@@ -259,7 +260,7 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		if sa.Paused {
 			state = "paused"
 		}
-		row := consoleAgentRow{Name: sa.Name, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name}
+		row := consoleAgentRow{Name: sa.Name, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)
 		}
@@ -326,12 +327,16 @@ func (T *OrchestrateApp) handleConsoleAgentResume(w http.ResponseWriter, r *http
 }
 
 type consoleMonitorRow struct {
-	Name   string `json:"name"`
-	Kind   string `json:"kind"`
-	State  string `json:"state"`
-	Detail string `json:"detail"`
-	Last   string `json:"last_fired"`
-	ID     string `json:"_id"` // hidden; row-action target (the monitor name)
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	State   string `json:"state"`
+	Detail  string `json:"detail"`
+	Script  string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
+	Checked string `json:"last_checked"`  // when the poll last ran (liveness)
+	Seen    string `json:"last_seen"`     // last response/value it hashed/observed
+	Last    string `json:"last_fired"`
+	ID      string `json:"_id"`     // hidden; row-action target (the monitor name)
+	Paused  bool   `json:"_paused"` // hidden; gates Pause vs Resume per row
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -353,14 +358,66 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			detail = fmt.Sprintf("every %ds via %s", m.IntervalSeconds, m.CheckAgent)
 		case EventKindHTTP:
 			detail = fmt.Sprintf("every %ds: %s %s %s", m.IntervalSeconds, m.URL, m.CompareOp, m.Threshold)
+		case EventKindWatch:
+			detail = fmt.Sprintf("every %ds: watch %s", m.IntervalSeconds, m.ToolName)
+			if len(m.ToolArgs) > 0 {
+				if b, err := json.Marshal(m.ToolArgs); err == nil {
+					detail += " " + string(b)
+				}
+			}
+			detail += " for changes"
+			if strings.TrimSpace(m.FormatScript) != "" {
+				// A format_script that emits nothing silently suppresses every
+				// alert (advances baseline, never fires). Flag it so a
+				// "updates-but-never-fires" watcher is obvious.
+				detail += " [format_script]"
+			}
 		case EventKindWebhook:
 			detail = "webhook (POST .../event/" + m.Token + ")"
+		}
+		if detail != "" {
+			var dests []string
+			hasWake := false
+			for _, mode := range strings.Split(m.Notify, ",") {
+				switch strings.TrimSpace(mode) {
+				case EventNotifyText:
+					dests = append(dests, "texts you")
+				case EventNotifyDirect:
+					if m.DeliverChatID != "" {
+						dests = append(dests, "posts to its chat")
+					} else {
+						dests = append(dests, "posts here")
+					}
+				case EventNotifyChannel:
+					dests = append(dests, "wakes here")
+					hasWake = true
+				}
+			}
+			if len(dests) == 0 {
+				dests = append(dests, "wakes here")
+				hasWake = true
+			}
+			detail += " → " + strings.Join(dests, " + ")
+			if !hasWake {
+				detail += " (no LLM)"
+			}
 		}
 		last := ""
 		if !m.LastFired.IsZero() {
 			last = m.LastFired.Local().Format("Jan 2 3:04 PM")
 		}
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Last: last, ID: m.Name})
+		checked := ""
+		if !m.LastChecked.IsZero() {
+			checked = m.LastChecked.Local().Format("Jan 2 3:04 PM")
+		}
+		seen := strings.ReplaceAll(m.LastResult, "\n", " ")
+		if r := []rune(seen); len(r) > 80 {
+			seen = string(r[:80]) + "…"
+		}
+		// Full script — the UI table renders long/multi-line cells with a
+		// click-to-expand toggle, so send it whole rather than truncating here.
+		script := strings.TrimSpace(m.FormatScript)
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused})
 	}
 	writeJSON(w, rows)
 }

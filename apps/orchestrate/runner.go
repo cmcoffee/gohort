@@ -4249,6 +4249,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// verbose schemas out of the catalog. Always available; harmless
 	// when the agent has no lazy custom tools (LLM just never calls it).
 	knowTools = append(knowTools, t.loadToolToolDef())
+	// send_to_builder — hand an agent/pipeline/skill authoring request off to
+	// Builder as a one-click link (vs the prose punt), so the user lands in a
+	// fresh Builder session with their request loaded for the full back-and-forth.
+	// Not for Builder itself (no self-handoff).
+	if !isBuilderAgent(t.agent.ID) {
+		knowTools = append(knowTools, t.sendToBuilderToolDef())
+	}
 	// compact_context — LLM-driven context management. Lets the model
 	// proactively discard the bodies of EARLIER tool results it has
 	// consumed and no longer needs (a smoke-test report, a big fetch, a
@@ -4345,6 +4352,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// is added HERE, after that assembly, so it was never in that list.)
 	if !t.agent.Fleet {
 		knowTools = append(knowTools, t.recurringToolDef())
+	}
+	// Tool authoring: any agent can author its OWN tools via tool_def (the way
+	// phantom always could before it was centralized). Builder already has
+	// tool_def via its authoring catalog, so don't double it. AGENT and
+	// PIPELINE authoring still route to Builder; only tools are self-serve.
+	if !isBuilderAgent(t.agent.ID) {
+		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess))
 	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.

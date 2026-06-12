@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // registerOperatorWake installs the event-monitor closures and starts the poll
@@ -41,6 +42,8 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// home thread when unset (legacy monitors created before the fields).
 		wakeAgent := defaultConsoleAgent
 		wakeSession := ""
+		chatTarget := ""
+		notify := EventNotifyChannel
 		if m, ok := GetEventMonitor(RootDB, owner, monitorName); ok {
 			if strings.TrimSpace(m.WakeBrief) != "" {
 				brief = "\n\nWhat to do: " + m.WakeBrief
@@ -49,14 +52,82 @@ func registerOperatorWake(app *OrchestrateApp) {
 				wakeAgent = a
 			}
 			wakeSession = strings.TrimSpace(m.WakeSession)
+			chatTarget = strings.TrimSpace(m.DeliverChatID)
+			if m.Notify != "" {
+				notify = m.Notify
+			}
 		}
 		if wakeSession == "" {
 			wakeSession = channelSessionID(wakeAgent)
 		}
-		msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
-			monitorName, summary, brief)
-		if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, wakeAgent, wakeSession, "", msg, false); err != nil {
-			Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
+		// notify may list MULTIPLE destinations (comma-separated, e.g.
+		// "direct,text") — fan out to each. The channel wake doubles as the
+		// fallback when nothing else delivered, so the alert is never dropped.
+		modes := map[string]bool{}
+		for _, mode := range strings.Split(notify, ",") {
+			if mode = strings.TrimSpace(mode); mode != "" {
+				modes[mode] = true
+			}
+		}
+		delivered := false
+
+		// text: deliver the event straight to the owner's phone, no LLM.
+		if modes[EventNotifyText] {
+			sent := false
+			if link, ok := ActivePhantomLink(); ok {
+				if self, ok := link.OwnerHandle(owner); ok {
+					if err := link.SendToHandle(owner, self, summary); err == nil {
+						sent, delivered = true, true
+					} else {
+						Log("[operator.wake] %s/%s notify=text send failed: %v", owner, monitorName, err)
+					}
+				}
+			}
+			if !sent {
+				Log("[operator.wake] %s/%s notify=text but owner phone unavailable", owner, monitorName)
+			}
+		}
+
+		// direct: post the change verbatim, no LLM, WHERE the watcher was created
+		// — a phantom-origin watcher (DeliverChatID set) into that conversation
+		// (e.g. the group); otherwise into the Agency channel thread.
+		if modes[EventNotifyDirect] {
+			if chatTarget != "" {
+				if link, ok := ActivePhantomLink(); ok {
+					if err := link.SendToChat(owner, chatTarget, summary); err == nil {
+						delivered = true
+						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
+					} else {
+						Log("[operator.wake] %s/%s notify=direct send to chat %s failed: %v", owner, monitorName, chatTarget, err)
+					}
+				} else {
+					Log("[operator.wake] %s/%s notify=direct but phantom bridge unavailable", owner, monitorName)
+				}
+			} else if udb := UserDB(app.DB, owner); udb != nil {
+				sess, ok := loadChatSession(udb, wakeAgent, wakeSession)
+				if !ok {
+					sess = ChatSession{ID: wakeSession, AgentID: wakeAgent}
+				}
+				sess.Messages = append(sess.Messages, ChatMessage{
+					Role:    "assistant",
+					Content: fmt.Sprintf("[monitor %q]\n%s", monitorName, summary),
+				})
+				if _, err := saveChatSession(udb, sess); err == nil {
+					delivered = true
+				} else {
+					Log("[operator.wake] %s/%s notify=direct save failed: %v", owner, monitorName, err)
+				}
+			}
+		}
+
+		// channel: wake the agent in-thread to react. Also the fallback when no
+		// other destination delivered, so the alert is never silently dropped.
+		if modes[EventNotifyChannel] || !delivered {
+			msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
+				monitorName, summary, brief)
+			if _, err := app.RunAgentSyncContinuing(ctx, owner, owner, wakeAgent, wakeSession, "", msg, false); err != nil {
+				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
+			}
 		}
 	})
 
@@ -66,8 +137,22 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// tools. We rebuild the management toolset for the monitor's owner and
 	// dispatch the named tool; anything not found falls back to the global path.
 	RegisterWatchToolInvoker(func(owner, toolName string, toolArgs map[string]any) (string, error) {
-		sess := &ToolSession{Username: owner}
+		sess := &ToolSession{Username: owner, DB: AuthDB()}
+		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
 		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
+			if td.Tool.Name == toolName {
+				return td.Handler(toolArgs)
+			}
+		}
+		// (2) the owner's persistent temp tools — admin-promoted "global" tools
+		// (e.g. an api-mode wrapper like ts3_list_clients). These live in the
+		// temp-tool store, not the static chat-tool registry, so InvokeWatcherTool
+		// can't reach them.
+		for _, p := range LoadPersistentTempTools(AuthDB(), owner) {
+			tt := p.Tool
+			sess.TempTools = append(sess.TempTools, &tt)
+		}
+		for _, td := range temptool.BuildAgentToolDefs(sess) {
 			if td.Tool.Name == toolName {
 				return td.Handler(toolArgs)
 			}

@@ -436,7 +436,15 @@ func (T *Phantom) composeOperatorRelay(chatID, handle string, conv Conversation,
 		}
 		msgs = append(msgs, Message{Role: role, Content: content})
 	}
-	msgs = append(msgs, Message{Role: "user", Content: "Compose the message now."})
+	// Put the intent on the LAST user turn (most salient position) and forbid
+	// echoing. Without this, the prior delivered message sits as the last
+	// assistant turn in the history above and a small model continues/repeats
+	// it verbatim instead of composing the new intent. Keep the relay framing in
+	// the system prompt too (reinforcement).
+	msgs = append(msgs, Message{Role: "user", Content: fmt.Sprintf(
+		"Compose a NEW outbound text to %s now, in your own voice, conveying this:\n\n%s\n\n"+
+			"This is a fresh message. Do NOT repeat, resend, or echo any earlier message in this conversation.",
+		recipient, intent)})
 
 	sysPrompt := fmt.Sprintf(
 		"Current date and time: %s\n\nYour name is %s. The person you are messaging is %s.\n\n%s%s\n\n"+

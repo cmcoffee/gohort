@@ -1565,8 +1565,8 @@ type OrchestratorNavItem struct {
 	// instead of opening a chat or table view — for channel-level operations
 	// (clear the thread, decommission). Empty = not an action item.
 	ActionURL string `json:"action_url,omitempty"`
-	Confirm   string `json:"confirm,omitempty"`   // confirmation prompt before an ActionURL POST
-	Variant   string `json:"variant,omitempty"`   // "danger" | "warning" | "" — styles an action item
+	Confirm   string `json:"confirm,omitempty"` // confirmation prompt before an ActionURL POST
+	Variant   string `json:"variant,omitempty"` // "danger" | "warning" | "" — styles an action item
 }
 
 // OrchestratorRowAction is one per-row button in an orchestrator nav view.
@@ -1576,6 +1576,13 @@ type OrchestratorRowAction struct {
 	Method  string `json:"method,omitempty"`  // default POST
 	Variant string `json:"variant,omitempty"` // "success" | "danger" | ""
 	Confirm string `json:"confirm,omitempty"`
+	// OnlyIf / HideIf gate the button on a row field's truthiness (use a
+	// hidden "_"-prefixed field so it doesn't render as a column). OnlyIf
+	// shows the button only when row[field] is truthy; HideIf hides it when
+	// truthy. e.g. a Pause action with HideIf:"_paused" + a Resume action
+	// with OnlyIf:"_paused" so only the applicable one shows per row.
+	OnlyIf string `json:"only_if,omitempty"`
+	HideIf string `json:"hide_if,omitempty"`
 }
 
 // AgentTerminal configures the optional bottom-right terminal pane

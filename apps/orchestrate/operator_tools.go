@@ -358,10 +358,12 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this monitor, e.g. \"nvda-below\" or \"ts-join\"."},
 					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\" — prefer the cheapest that fits (see the tool description)."},
-					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction)."},
+					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
+					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
 					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_phantom_chat for a chat). No LLM runs between changes — the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
+					"format_script":    {Type: "string", Description: "watch only, optional: sandboxed python that shapes the alert. It receives {\"prior\":...,\"current\":...} JSON on stdin (the previous and current tool output) and prints the notification text to stdout. Empty stdout means \"this change isn't worth alerting\" (suppressed). No network, no LLM. Omit to use the built-in diff summary. Use this to format exactly the notification you want (e.g. parse a client list and print only \"X joined\" / \"X left\")."},
 					"check_agent":      {Type: "string", Description: "poll only: name/id of an existing agent that checks the condition each interval."},
 					"check":            {Type: "string", Description: "poll only: the question/brief given to the checker. Tell it to answer with the match string when the event has happened."},
 					"match_contains":   {Type: "string", Description: "poll only: fire when the checker's answer contains this (case-insensitive). Default \"YES\"."},
@@ -385,8 +387,15 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if _, exists := GetEventMonitor(RootDB, owner, name); exists {
 					return "", fmt.Errorf("a monitor named %q already exists", name)
 				}
+				notify := strings.ToLower(strings.TrimSpace(oArgStr(args, "notify")))
+				switch notify {
+				case EventNotifyText, EventNotifyDirect:
+					// honored as-is
+				default:
+					notify = EventNotifyChannel
+				}
 				m := EventMonitor{
-					Name: name, Owner: owner, Kind: kind,
+					Name: name, Owner: owner, Kind: kind, Notify: notify,
 					// Wake the agent that created this monitor, IN the session it
 					// was created in, so the event lands back where the user set
 					// it up (not a hardcoded default thread). WakeSession falls
@@ -443,6 +452,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if ta, ok := args["tool_args"].(map[string]any); ok {
 						m.ToolArgs = ta
 					}
+					m.FormatScript = oArgStr(args, "format_script")
 					m.IntervalSeconds = oArgInt(args, "interval_seconds")
 					if m.IntervalSeconds <= 0 {
 						m.IntervalSeconds = 60

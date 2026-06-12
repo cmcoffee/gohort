@@ -154,8 +154,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
 					RenameURL:      "api/sessions/rename?agent_id={agent_id}",
 					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
-					ListTitle:   "Sessions",
-					NewLabel:    "New session",
+					ListTitle:      "Sessions",
+					NewLabel:       "New session",
 					// Same chat-app layout the public /agents/ surface
 					// uses: sessions rail extends full-height on the
 					// left, topbar lives inside the chat pane (not
@@ -190,13 +190,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Delete", Method: "DELETE", URL: "api/console/history", Variant: "danger", Confirm: "Delete this turn from the conversation?"},
 						}},
 						{Label: "Enabled agents", Source: "api/console/agents", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause"},
-							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume"},
+							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
+							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
 						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause"},
-							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume"},
+							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
+							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
 						}},
 						{Label: "Authorizations", Source: "api/console/approvals", RowActions: []ui.OrchestratorRowAction{
@@ -217,9 +217,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// pinned-session map — so it knows which agents get the nav
 					// and what thread to pin each to, without hardcoding the id
 					// scheme.
-					AltNavFlag: "ORCH_CHANNEL_AGENTS",
-					Markdown:   true,
-					BulkSelect: true,
+					AltNavFlag:  "ORCH_CHANNEL_AGENTS",
+					Markdown:    true,
+					BulkSelect:  true,
 					Attachments: true,
 					ExtraFields: []ui.ChatField{
 						{

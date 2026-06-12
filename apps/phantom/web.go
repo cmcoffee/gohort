@@ -407,8 +407,9 @@ func (T *Phantom) handleToolList(w http.ResponseWriter, r *http.Request) {
 	out = append(out,
 		toolInfo{Name: "memory", Desc: "Manage per-conversation memory: save / list / delete saved facts about the person. Call with action=help for usage."},
 		toolInfo{Name: "knowledge", Desc: "Long-term per-chat vector memory: save / search / forget findings, plus auto-ingest of each turn. Enable for chats where you want recall across many conversations."},
-		toolInfo{Name: "schedule_callback", Desc: "Schedule a follow-up message at a specified time."},
+		toolInfo{Name: "schedule", Desc: "Schedule a timed message or reminder (one-shot or recurring), OR set up a watcher that alerts only when something changes. Includes list/cancel."},
 		toolInfo{Name: "follow_up", Desc: "Send a brief follow-up message after a short delay (1–5 seconds)."},
+		toolInfo{Name: "tool_def", Desc: "Let the assistant author its OWN tools for this conversation (API or sandboxed-script), test them, and wrap them in a watcher. Persistence across sessions still needs admin approval."},
 	)
 	// dispatch_agent is NOT listed here — its presence is controlled
 	// by the per-chat Allowed Agents (🛰) picker. Selecting any agent
@@ -1630,7 +1631,7 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		var registryNames []string
 		for _, n := range toolNames {
 			switch n {
-			case "memory", "save_memory", "schedule_callback", "follow_up":
+			case "memory", "save_memory", "schedule", "schedule_callback", "create_watcher", "follow_up":
 				// phantom-specific — handled below
 			case "generate_image":
 				if ImageGenerationAvailable() {
@@ -1762,10 +1763,24 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	if toolEnabled("follow_up") {
 		tools = append(tools, followUpToolDef(T.DB, chatID, handle))
 	}
-	if includeScheduler && toolEnabled("schedule_callback") {
-		tools = append(tools, T.schedulerToolDef(chatID, handle))
-		tools = append(tools, T.listScheduledToolDef(chatID))
-		tools = append(tools, T.cancelScheduledToolDef(chatID))
+	// Unified scheduling: one `schedule` tool (+ list/cancel) replaces the old
+	// schedule_callback and create_watcher families. Accept the legacy enable
+	// names so curated tool sets keep working. Gated by includeScheduler so a
+	// fired callback can't schedule itself recursively. The legacy
+	// schedulerToolDef/createWatcherToolDef remain defined for in-flight tasks.
+	if includeScheduler && (toolEnabled("schedule") || toolEnabled("schedule_callback") || toolEnabled("create_watcher")) {
+		tools = append(tools, T.scheduleToolDef(chatID, handle))
+		tools = append(tools, T.listScheduleToolDef(chatID))
+		tools = append(tools, T.cancelScheduleToolDef(chatID))
+	}
+	// Tool authoring: phantom can author its OWN tools again (the way the
+	// ts3_list_clients tool was originally created here), then call them to
+	// test and wrap them in a watcher via schedule(condition="change"). tool_def
+	// is the consolidated authoring entry point; persistence across sessions
+	// still goes through admin approval. Agent/pipeline authoring stays with
+	// Builder in orchestrate.
+	if toolEnabled("tool_def") {
+		tools = append(tools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess))
 	}
 	// NOTE: look_at_attachment + the per-attachment [image-N|…]/[video-N|…]
 	// history annotations were removed — phantom now handles attachments
@@ -1784,6 +1799,61 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 		names = append(names, td.Tool.Name)
 	}
 	Debug("[phantom] conv %s tool catalog (%d): %s", chatID, len(tools), strings.Join(names, ", "))
+	return tools
+}
+
+// assembleConvTools builds the FULL per-conversation tool catalog: buildConvTools
+// plus recall_conversation plus the skill tools. Both the live message handler
+// and the scheduler fire path call this, so a fired callback sees the IDENTICAL
+// tools a live turn does. Previously the scheduler called only buildConvTools, so
+// a scheduled task ("call me at 5pm") fired without the skill tools and the model
+// reported it had no access to a capability that a live turn could reach (the
+// calling tool arrives THROUGH a skill). deliveredSkills tracks which skills'
+// guidance was already injected this turn (pass a fresh map per turn).
+func (T *Phantom) assembleConvTools(chatID, handle string, conv Conversation, cfg PhantomConfig, sess *ToolSession, deliveredSkills map[string]bool, includeScheduler bool) []AgentToolDef {
+	tools := T.buildConvTools(chatID, handle, conv, cfg, sess, includeScheduler)
+	// recall_conversation — search this conversation's folded-in older history
+	// (compaction writes aged-out exchanges into a private, per-conversation
+	// searchable store). Reached for when the recent window + summary lack a
+	// specific older detail.
+	tools = append(tools, T.recallConversationToolDef(chatID))
+	// Skill tools: read_skill / skill_knowledge_search / skill_knowledge_fetch_doc.
+	// Stateless one-shot calls. skill_knowledge_search searches the skill's
+	// attached collections (core SearchCollections) AND its source-hooks, merged.
+	if !conv.DisableSkills && len(conv.AllowedSkills) > 0 {
+		hasReadSkill := false
+		for _, td := range tools {
+			if td.Tool.Name == "read_skill" {
+				hasReadSkill = true
+				break
+			}
+		}
+		if !hasReadSkill {
+			owner := phantomAgentOwner(T.DB)
+			tools = append(tools,
+				BuildReadSkillTool(T.DB, owner, conv.AllowedSkills, deliveredSkills),
+				BuildSkillKnowledgeSearchTool(T.DB, owner, conv.AllowedSkills, deliveredSkills,
+					func(skill SkillRecord, query string) string {
+						if len(skill.AttachedCollections) == 0 {
+							return ""
+						}
+						hits := SearchCollections(context.Background(), CollectionsDB(), owner, skill.AttachedCollections, query, 5)
+						return formatSkillCollectionHits(hits)
+					}),
+				BuildSkillKnowledgeFetchDocTool(T.DB, owner, conv.AllowedSkills, deliveredSkills,
+					func(skill SkillRecord, docID string) (string, error) {
+						if len(skill.AttachedCollections) == 0 {
+							return fmt.Sprintf("The %q skill has no document collections to fetch from.", skill.Name), nil
+						}
+						doc := FetchCollectionDoc(CollectionsDB(), owner, skill.AttachedCollections, docID, 10000)
+						if doc == "" {
+							return fmt.Sprintf("No document with doc_id=%q in the %q skill's collections.", docID, skill.Name), nil
+						}
+						return doc, nil
+					}),
+			)
+		}
+	}
 	return tools
 }
 
@@ -2402,50 +2472,10 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 			Created: now(),
 		})
 	}
-	tools := T.buildConvTools(chatID, handle, conv, cfg, sess, true)
-	// recall_conversation — search this conversation's folded-in older
-	// history (compaction writes aged-out exchanges into a private,
-	// per-conversation searchable store). The LLM reaches for it when the
-	// recent window + summary don't have a specific older detail.
-	tools = append(tools, T.recallConversationToolDef(chatID))
-	// Skill tools: read_skill / skill_knowledge_search / skill_knowledge_fetch_doc.
-	// Stateless one-shot calls. skill_knowledge_search searches the skill's
-	// attached collections (core SearchCollections) AND its source-hooks, merged
-	// — matching orchestrate.
-	if !conv.DisableSkills && len(conv.AllowedSkills) > 0 {
-		hasReadSkill := false
-		for _, td := range tools {
-			if td.Tool.Name == "read_skill" {
-				hasReadSkill = true
-				break
-			}
-		}
-		if !hasReadSkill {
-			owner := phantomAgentOwner(T.DB)
-			tools = append(tools,
-				BuildReadSkillTool(T.DB, owner, conv.AllowedSkills, deliveredSkills),
-				BuildSkillKnowledgeSearchTool(T.DB, owner, conv.AllowedSkills, deliveredSkills,
-					func(skill SkillRecord, query string) string {
-						if len(skill.AttachedCollections) == 0 {
-							return ""
-						}
-						hits := SearchCollections(context.Background(), CollectionsDB(), owner, skill.AttachedCollections, query, 5)
-						return formatSkillCollectionHits(hits)
-					}),
-				BuildSkillKnowledgeFetchDocTool(T.DB, owner, conv.AllowedSkills, deliveredSkills,
-					func(skill SkillRecord, docID string) (string, error) {
-						if len(skill.AttachedCollections) == 0 {
-							return fmt.Sprintf("The %q skill has no document collections to fetch from.", skill.Name), nil
-						}
-						doc := FetchCollectionDoc(CollectionsDB(), owner, skill.AttachedCollections, docID, 10000)
-						if doc == "" {
-							return fmt.Sprintf("No document with doc_id=%q in the %q skill's collections.", docID, skill.Name), nil
-						}
-						return doc, nil
-					}),
-			)
-		}
-	}
+	// Full catalog (buildConvTools + recall_conversation + skill tools), shared
+	// with the scheduler fire path via assembleConvTools so a live turn and a
+	// fired callback see the IDENTICAL tools.
+	tools := T.assembleConvTools(chatID, handle, conv, cfg, sess, deliveredSkills, true)
 
 	Log("[phantom] processing reply for %s (%d history msgs, %d tools)", senderDesc, len(msgs), len(tools))
 

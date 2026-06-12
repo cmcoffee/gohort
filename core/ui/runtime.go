@@ -8535,7 +8535,7 @@ const runtimeJS = `
     var wrap = el('div', {class: 'ui-agent' + (hasList ? '' : ' ui-agent-no-list')});
 
     // --- Optional list sidebar -------------------------------------------
-    var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null;
+    var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
     function closeDrawer() {
       if (!side) return;
       side.classList.remove('open');
@@ -8636,17 +8636,35 @@ const runtimeJS = `
         if (actions.length) hr.appendChild(el('th', {style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'}, ['']));
         tbl.appendChild(hr);
         rows.forEach(function(row) {
-          var tr = el('tr');
+          // Which columns hold long / multi-line content. If any, the whole ROW
+          // is click-to-expand (one expander per line, not per field): clicking
+          // it reveals a detail line below with the full content.
+          var longCols = cols.filter(function(c) {
+            var s = String(row[c] == null ? '' : row[c]);
+            return s.length > 80 || s.indexOf('\n') >= 0;
+          });
+          var tr = el('tr', longCols.length ? {style: 'cursor:pointer'} : {});
           cols.forEach(function(c) {
             var v = row[c];
-            tr.appendChild(el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));vertical-align:top'}, [v == null ? '' : String(v)]));
+            var s = (v == null) ? '' : String(v);
+            if (s.length > 80 || s.indexOf('\n') >= 0) {
+              s = s.replace(/\n/g, ' ');
+              if (s.length > 80) s = s.slice(0, 80) + '…';
+            }
+            tr.appendChild(el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));vertical-align:top'}, [s]));
           });
           if (actions.length) {
             var cell = el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));white-space:nowrap'});
             actions.forEach(function(a) {
+              // Conditional row actions: skip when only_if field is falsy or
+              // hide_if field is truthy (e.g. show Pause only when not paused,
+              // Resume only when paused).
+              if (a.only_if && !row[a.only_if]) return;
+              if (a.hide_if && row[a.hide_if]) return;
               var cls = 'ui-row-btn compact';
               if (a.variant) cls += ' ' + a.variant;
-              var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function() {
+              var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function(ev) {
+                if (ev) ev.stopPropagation(); // don't toggle the row expand
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
                 fetch(a.url + '?id=' + encodeURIComponent(row._id), {method: a.method || 'POST'})
                   .then(function() { if (reload) reload(); })
@@ -8657,6 +8675,19 @@ const runtimeJS = `
             tr.appendChild(cell);
           }
           tbl.appendChild(tr);
+          if (longCols.length) {
+            var dtr = el('tr', {style: 'display:none'});
+            var dtd = el('td', {colspan: String(cols.length + (actions.length ? 1 : 0)), style: 'padding:0.3rem 0.6rem 0.7rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));background:var(--bg-2, rgba(127,127,127,0.06))'});
+            longCols.forEach(function(c) {
+              dtd.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.8rem;margin:0.4rem 0 0.15rem'}, [c]));
+              dtd.appendChild(el('pre', {style: 'white-space:pre-wrap;margin:0;font-size:0.82rem;max-height:340px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [String(row[c] == null ? '' : row[c])]));
+            });
+            dtr.appendChild(dtd);
+            tbl.appendChild(dtr);
+            tr.onclick = function() {
+              dtr.style.display = dtr.style.display === 'none' ? '' : 'none';
+            };
+          }
         });
         orchView.appendChild(tbl);
       }
@@ -8669,7 +8700,7 @@ const runtimeJS = `
             if (item.confirm && window.uiConfirm && !(await window.uiConfirm(item.confirm))) return;
             var url = item.action_url + (item.action_url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
             fetch(url, {method: 'POST'})
-              .then(function() { refreshChannelBadges(); if (orchBtns.length) selectOrchNav(0); })
+              .then(function() { refreshChannelBadges(); closeDrawer(); if (orchBtns.length) selectOrchNav(0); })
               .catch(function(err) { console.error('channel action failed: ' + err.message); });
           })();
           return;
@@ -8678,11 +8709,23 @@ const runtimeJS = `
           b.style.background = (i === idx) ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
           b.style.fontWeight = (i === idx) ? '600' : '400';
         });
+        // On mobile the sidebar is a slide-in drawer that sits ABOVE the content
+        // overlay (z-index 30 vs 5), so close it after a selection — otherwise
+        // the chosen view (the orchView table, or the channel chat) renders
+        // hidden behind the still-open drawer. No-op on desktop.
+        closeDrawer();
         if (!orchView) return;
         if (item.source) {
           // A data view (History / Enabled agents / Authorizations): overlay
           // the chat pane with the fetched table.
           orchView.style.display = '';
+          // On mobile, start the overlay BELOW the header bar so the ☰ stays
+          // uncovered and tappable (otherwise inset:0 paints over it and there's
+          // no way back). Desktop has no mobile header — pin to the top.
+          orchView.style.top = (drawer && window.innerWidth <= 700) ? (drawer.mobileHdr.offsetHeight + 'px') : '0';
+          // Reflect the loaded view in the mobile header (e.g. "Authorizations")
+          // instead of leaving the stale session title.
+          if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
           var reload = function() { selectOrchNav(idx); };
           fetch(item.source).then(function(r) { return r.ok ? r.json() : []; })
@@ -8694,6 +8737,10 @@ const runtimeJS = `
           orchView.style.display = 'none';
           var altSid = altPinnedSession(window.GOHORT_AGENT_ID);
           if (altSid && currentSessionId !== altSid) openSession(altSid);
+          // Restore the chat's title (openSession refreshes it when it actually
+          // switches; when already on the home thread it doesn't fire, so put
+          // back the remembered session title rather than the view label).
+          if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = lastSessionTitle || (cfg.new_label || 'New');
         }
       }
       // refreshChannelBadges fetches each management view's row count and
@@ -11381,6 +11428,9 @@ const runtimeJS = `
             if (s && s[idF] === chanSid) { chanUnread = !!s.unread; return false; }
             return true;
           });
+          // Don't badge the Channel row when you're already viewing the
+          // channel thread.
+          if (chanSid === activeSessionId) chanUnread = false;
           if (channelUnreadDot) channelUnreadDot.style.display = chanUnread ? 'inline-block' : 'none';
         }
         if (!Array.isArray(items) || !items.length) {
@@ -11437,8 +11487,9 @@ const runtimeJS = `
           // ✎/× buttons need to land on the right edge.
           var rowKids = [el('span', {class: 'ui-chat-side-title', text: ttl})];
           // Unread dot — a background append (monitor wake / report / goal
-          // completion) landed here while it wasn't open. Cleared on open.
-          if (rec.unread) {
+          // completion) landed here while it wasn't open. Cleared on open, and
+          // never shown on the session you're currently viewing.
+          if (rec.unread && sid !== activeSessionId) {
             rowKids.unshift(el('span', {class: 'ui-unread-dot', title: 'New activity',
               style: 'display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-right:0.45rem;flex:0 0 auto;vertical-align:middle'}, ['']));
           }
@@ -11517,8 +11568,12 @@ const runtimeJS = `
     // generic "New" label. No-op when there's no drawer (desktop-only
     // or no list).
     function setHeaderTitle(t) {
+      // Remember the active session's title so the header can be restored when
+      // returning to the Channel chat from a management view (which overrides
+      // the title with its own label below).
+      lastSessionTitle = t || (cfg.new_label || 'New');
       if (drawer && drawer.mobileTitle) {
-        drawer.mobileTitle.textContent = t || (cfg.new_label || 'New');
+        drawer.mobileTitle.textContent = lastSessionTitle;
       }
     }
 

@@ -26,6 +26,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,21 @@ const (
 	EventKindHTTP    = "http_poll"
 	EventKindWatch   = "watch"
 
+	// Notify modes — where a fire is delivered.
+	//   channel (default): wake the channel agent in its home thread (an LLM
+	//                      turn reacts there).
+	//   direct:            post the change verbatim into the channel home
+	//                      thread, NO LLM — it just shows up in the thread (and
+	//                      lights the unread dot). Cheapest in-app delivery.
+	//   text:              deliver the event straight to the owner's phone via
+	//                      the phantom bridge, no LLM.
+	EventNotifyChannel = "channel"
+	// direct: post the change verbatim, no LLM, WHERE the watcher was created —
+	// into its phantom conversation (DeliverChatID, e.g. a group) when set, else
+	// the Agency channel thread. Origin-aware, not hardcoded to one surface.
+	EventNotifyDirect = "direct"
+	EventNotifyText   = "text"
+
 	// minPollInterval floors the poll cadence so a misconfigured monitor can't
 	// hammer the checker agent.
 	minPollInterval = 30
@@ -57,13 +73,19 @@ const (
 
 // EventMonitor is one standing trigger. Name is unique per owner.
 type EventMonitor struct {
-	Name      string `json:"name"`
-	Owner     string `json:"owner"`
-	Kind      string `json:"kind"`                 // EventKindWebhook | EventKindPoll
+	Name        string `json:"name"`
+	Owner       string `json:"owner"`
+	Kind        string `json:"kind"`                   // EventKindWebhook | EventKindPoll
 	WakeBrief   string `json:"wake_brief"`             // guidance handed to the woken agent on each wake
 	WakeAgent   string `json:"wake_agent,omitempty"`   // channel agent woken when this fires; empty = deployment default channel agent
 	WakeSession string `json:"wake_session,omitempty"` // session the monitor was created in; the wake lands here. Empty = the agent's channel home thread
-	Token     string `json:"token,omitempty"`      // webhook secret (URL path segment)
+	Notify      string `json:"notify,omitempty"`       // delivery: EventNotifyChannel (default) wakes the agent in-thread; EventNotifyText texts the owner (no LLM)
+	Token       string `json:"token,omitempty"`        // webhook secret (URL path segment)
+
+	// DeliverChatID is the phantom conversation a notify=direct alert posts into
+	// (the chat the watcher was created in — e.g. a group). Empty for a monitor
+	// created in the Agency console, where direct posts to the channel thread.
+	DeliverChatID string `json:"deliver_chat_id,omitempty"`
 
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition
@@ -82,11 +104,19 @@ type EventMonitor struct {
 	ToolName string         `json:"tool_name,omitempty"` // tool invoked each interval; its output is hashed
 	ToolArgs map[string]any `json:"tool_args,omitempty"` // args passed to the tool every invocation
 	LastHash string         `json:"last_hash,omitempty"` // sha256 of the last output (the change baseline)
+	LastBody string         `json:"last_body,omitempty"` // prior output (capped) — diffed against the new output to show WHAT changed
+	// FormatScript (watch kind, optional) is sandboxed python that shapes the
+	// alert. It receives {"prior":...,"current":...} JSON on stdin and prints
+	// the notification text to stdout — empty stdout means "this change isn't
+	// worth alerting" (suppress). No network, no LLM. Empty = use the built-in
+	// diff summary.
+	FormatScript string `json:"format_script,omitempty"`
 
 	Paused       bool      `json:"paused"`
 	Created      time.Time `json:"created"`
 	NextCheck    time.Time `json:"next_check,omitempty"`
 	LastFired    time.Time `json:"last_fired,omitempty"`
+	LastChecked  time.Time `json:"last_checked,omitempty"`  // last time the poll ran (every interval) — proves liveness even with no change
 	LastResult   string    `json:"last_result,omitempty"`   // last answer/value seen (poll debounce / http display)
 	LastBreached bool      `json:"last_breached,omitempty"` // http_poll edge-trigger: was the condition met last check
 	LastMatched  bool      `json:"last_matched,omitempty"`  // poll edge-trigger: did the checker answer match last check
@@ -286,6 +316,11 @@ func StartEventMonitorScheduler() {
 			return
 		}
 		if !m.Paused {
+			// Record liveness every poll (even when nothing changes) so a
+			// healthy-but-quiet monitor is visibly alive in the console. Saved
+			// before execute* re-reads, so its own save preserves it.
+			m.LastChecked = time.Now()
+			SaveEventMonitor(RootDB, m)
 			switch m.Kind {
 			case EventKindPoll:
 				executeEventPoll(ctx, RootDB, m)
@@ -415,25 +450,171 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		return // no change — stay quiet, no LLM
 	}
 	firstObservation := cur.LastHash == ""
+	prior := cur.LastBody
 	cur.LastHash = hash
 	cur.LastResult = truncateEvent(body, 400)
+	cur.LastBody = capBody(body)
 	if firstObservation {
 		// Baseline only — don't wake on the very first poll.
+		Debug("[event] watch %s/%s: first observation, baseline recorded (no wake)", m.Owner, m.Name)
 		SaveEventMonitor(db, cur)
 		return
 	}
+	// Build the alert text. A format_script (sandboxed python) can shape the
+	// notification; if it prints nothing or errors, buildWatchSummary falls back
+	// to the built-in diff so a real change always fires (never silently eaten).
+	summary, _ := buildWatchSummary(ctx, cur, prior, body)
+	Debug("[event] watch %s/%s: change detected — firing (%s)", m.Owner, m.Name, m.Notify)
 	cur.LastFired = time.Now()
 	SaveEventMonitor(db, cur)
-	summary := fmt.Sprintf("Watch monitor %q detected a change. Current output:\n%s",
-		m.Name, truncateEvent(body, 1500))
 	fireWake(ctx, db, m.Owner, m.Name, summary, "watch")
+}
+
+// buildWatchSummary produces the alert text for a watch fire. With a
+// FormatScript it runs the user's sandboxed python ({prior,current} on stdin →
+// stdout) and uses its stdout as the alert. On empty stdout, a script error, or
+// no script, it falls back to the built-in diff + current-output summary so a
+// real change ALWAYS fires. (suppress is always false now — kept for signature
+// compatibility; a buggy script can no longer silently eat a wake.)
+func buildWatchSummary(ctx context.Context, m EventMonitor, prior, current string) (summary string, suppress bool) {
+	return formatWatchAlert(ctx, m.Owner, m.Name, m.FormatScript, prior, current)
+}
+
+// formatWatchAlert produces the alert text for a change/watch fire, decoupled
+// from any record type so both the event monitor and the unified trigger engine
+// share it. A formatScript's stdout becomes the alert; empty stdout / a script
+// error / no script all fall back to the built-in diff + current-output summary,
+// so a real change always fires. Never suppresses (the second return is always
+// false, retained for signature compatibility).
+func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, current string) (summary string, suppress bool) {
+	if strings.TrimSpace(formatScript) != "" {
+		// Hand the script the body (HTTP status line split off, so json.loads
+		// works directly) AND the status line separately, so a script that wants
+		// to react to e.g. a 500 still can. Change detection (the hash + built-in
+		// diff) still uses the full body, so a status change trips the watch too.
+		priorStatus, priorBody := SplitHTTPStatus(prior)
+		curStatus, curBody := SplitHTTPStatus(current)
+		payload, _ := json.Marshal(map[string]string{
+			"prior": priorBody, "current": curBody,
+			"prior_status": priorStatus, "current_status": curStatus,
+		})
+		sctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		res := RunSandboxedScript(sctx, "python3", formatScript, string(payload))
+		cancel()
+		if res.Err != nil {
+			Log("[event] watch %s/%s format_script error: %v (stderr=%q) — using built-in summary",
+				owner, name, res.Err, truncateEvent(res.Stderr, 200))
+		} else if out := strings.TrimSpace(res.Stdout); out != "" {
+			return out, false
+		} else {
+			// Empty stdout no longer suppresses — that was a silent footgun (a
+			// buggy script killed the watcher). Fall back to the built-in diff
+			// so the change still alerts, and surface any stderr so a
+			// wrong-stream print / silent traceback is debuggable.
+			note := ""
+			if s := strings.TrimSpace(res.Stderr); s != "" {
+				note = " (stderr: " + truncateEvent(s, 200) + ")"
+			}
+			Log("[event] watch %s/%s: format_script printed nothing to stdout%s — using the built-in diff so the change still alerts. SCRIPT WAS:\n%s", owner, name, note, truncateEvent(formatScript, 600))
+		}
+	}
+	// Built-in: lead with WHAT changed (added/removed lines), then the current
+	// output for context.
+	summary = fmt.Sprintf("Watch monitor %q detected a change.", name)
+	if d := diffLines(prior, current); d != "" {
+		summary += "\n\nWhat changed:\n" + d
+	}
+	summary += "\n\nCurrent output:\n" + truncateEvent(current, 1200)
+	return summary, false
+}
+
+// SplitHTTPStatus splits a tool response into its leading "HTTP <code> <text>"
+// status line (the prefix the temptool API path prepends) and the remaining
+// body. Returns ("", s) when there's no such prefix. A watch format_script gets
+// the body as prior/current (so json.loads works directly) AND the status line
+// separately (so a script that wants to react to e.g. a 500 still can).
+func SplitHTTPStatus(s string) (status, body string) {
+	if strings.HasPrefix(s, "HTTP ") {
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			return s[:i], s[i+1:]
+		}
+		return s, ""
+	}
+	return "", s
+}
+
+// capBody bounds the stored prior-output snapshot used for diffing.
+func capBody(s string) string {
+	const max = 4096
+	if len(s) > max {
+		return s[:max]
+	}
+	return s
+}
+
+// diffLines produces a compact line-level diff of two text blobs: lines present
+// now but not before (prefixed "+") and lines present before but not now ("-").
+// Set-based, so it catches "someone joined / someone left" on a server list and
+// "new message" on a chat without caring about order. Capped so a big change
+// can't produce a wall of text. Empty when nothing line-level changed.
+func diffLines(prior, current string) string {
+	priorSet := map[string]bool{}
+	for _, l := range strings.Split(prior, "\n") {
+		if t := strings.TrimSpace(l); t != "" {
+			priorSet[t] = true
+		}
+	}
+	curSet := map[string]bool{}
+	var added []string
+	for _, l := range strings.Split(current, "\n") {
+		t := strings.TrimSpace(l)
+		if t == "" {
+			continue
+		}
+		curSet[t] = true
+		if !priorSet[t] {
+			added = append(added, t)
+		}
+	}
+	var removed []string
+	for l := range priorSet {
+		if !curSet[l] {
+			removed = append(removed, l)
+		}
+	}
+	sort.Strings(removed) // map iteration order isn't stable; keep wakes deterministic
+	const maxLines = 20
+	var b strings.Builder
+	for i, l := range added {
+		if i >= maxLines {
+			fmt.Fprintf(&b, "+ …and %d more added\n", len(added)-maxLines)
+			break
+		}
+		fmt.Fprintf(&b, "+ %s\n", truncateEvent(l, 200))
+	}
+	for i, l := range removed {
+		if i >= maxLines {
+			fmt.Fprintf(&b, "- …and %d more removed\n", len(removed)-maxLines)
+			break
+		}
+		fmt.Fprintf(&b, "- %s\n", truncateEvent(l, 200))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // fetchAndExtract GETs the monitor's URL and pulls out the value to compare,
 // via JSONPath, then Regex, else the whole (trimmed) body. Body is capped at
 // 1 MiB and the request times out at 20s.
 func fetchAndExtract(ctx context.Context, m EventMonitor) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.URL, nil)
+	return fetchExtractURL(ctx, m.URL, m.JSONPath, m.Regex)
+}
+
+// fetchExtractURL GETs url and pulls out the value to compare, via jsonPath,
+// then regex, else the whole (trimmed) body. Body is capped at 1 MiB and the
+// request times out at 20s. Decoupled from any record type so both the event
+// monitor and the unified trigger engine share it.
+func fetchExtractURL(ctx context.Context, url, jsonPath, regex string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
@@ -449,12 +630,12 @@ func fetchAndExtract(ctx context.Context, m EventMonitor) (string, error) {
 		return "", err
 	}
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, m.URL)
+		return "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
-	if p := strings.TrimSpace(m.JSONPath); p != "" {
+	if p := strings.TrimSpace(jsonPath); p != "" {
 		return extractJSONPath(body, p)
 	}
-	if rx := strings.TrimSpace(m.Regex); rx != "" {
+	if rx := strings.TrimSpace(regex); rx != "" {
 		return extractRegex(body, rx)
 	}
 	return strings.TrimSpace(string(body)), nil

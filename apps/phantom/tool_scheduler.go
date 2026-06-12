@@ -83,10 +83,10 @@ func (T *Phantom) rescheduleProactive(chatID, handle string, cfg PhantomConfig) 
 	if !cfg.ProactiveEnabled || cfg.ProactiveWindow == "" {
 		return
 	}
-	hours := windowDurationHours(cfg.ProactiveWindow)
+	hours := WindowDurationHours(cfg.ProactiveWindow)
 	n := proactiveDailyN(T.DB, chatID, cfg.ProactiveMaxPerDay, hours)
 	fired := proactiveTodayCount(T.DB, chatID)
-	next, err := nextRandomWindowTime(cfg.ProactiveWindow, time.Now(), n, fired)
+	next, err := NextRandomWindowTime(cfg.ProactiveWindow, time.Now(), n, fired)
 	if err != nil {
 		Log("[phantom/proactive] window error for %s: %v", chatID, err)
 		return
@@ -254,6 +254,50 @@ func (T *Phantom) registerSchedulerHandler() {
 			return nil
 		})
 	})
+
+	// Unified trigger engine (the `schedule` tool). Phantom-chat triggers
+	// deliver into a conversation: action=callback runs the agent turn and
+	// queues its reply; action=notify queues the summary verbatim. The legacy
+	// phantom.callback handler above stays registered for in-flight reminders
+	// and the proactive personality loop (dual-run).
+	RegisterTriggerAction("phantom_chat", func(ctx context.Context, t ScheduledTrigger, summary string) {
+		switch t.Action {
+		case ActionNotify:
+			text := strings.TrimSpace(summary)
+			if text == "" {
+				return
+			}
+			T.rememberRecentReply(text)
+			storeMessage(T.DB, PhantomMessage{
+				ID:        now() + "-" + newID(),
+				ChatID:    t.TargetID,
+				Role:      "assistant",
+				Text:      text,
+				Timestamp: now(),
+			})
+			enqueueOutbox(T.DB, OutboxItem{
+				ID:      newID(),
+				ChatID:  t.TargetID,
+				Handle:  t.TargetMeta,
+				Text:    text,
+				Type:    "scheduled",
+				Created: now(),
+			})
+		default: // ActionCallback
+			T.composeScheduledReply(ctx, t.TargetID, t.TargetMeta, t.Prompt)
+		}
+	})
+	RegisterStopConditionChecker(func(ctx context.Context, t ScheduledTrigger) bool {
+		if t.TargetKind != "phantom_chat" {
+			return false
+		}
+		var recentMsgs []Message
+		for _, m := range recentMessages(T.DB, t.TargetID, 10) {
+			recentMsgs = append(recentMsgs, Message{Role: m.Role, Content: m.Text})
+		}
+		return T.evalStopCondition(ctx, t.RepeatUntil, t.RepeatCount, t.TargetMeta, recentMsgs)
+	})
+	StartTriggerScheduler()
 }
 
 // migratePhantomScheduled moves ScheduledCall records from the old relay_scheduled
@@ -319,107 +363,6 @@ func formatDuration(secs int) string {
 	default:
 		return fmt.Sprintf("%d seconds", secs)
 	}
-}
-
-var weekdayNames = map[string]time.Weekday{
-	"sun": time.Sunday, "sunday": time.Sunday,
-	"mon": time.Monday, "monday": time.Monday,
-	"tue": time.Tuesday, "tuesday": time.Tuesday,
-	"wed": time.Wednesday, "wednesday": time.Wednesday,
-	"thu": time.Thursday, "thursday": time.Thursday,
-	"fri": time.Friday, "friday": time.Friday,
-	"sat": time.Saturday, "saturday": time.Saturday,
-}
-
-var monthNames = map[string]time.Month{
-	"jan": time.January, "january": time.January,
-	"feb": time.February, "february": time.February,
-	"mar": time.March, "march": time.March,
-	"apr": time.April, "april": time.April,
-	"may": time.May,
-	"jun": time.June, "june": time.June,
-	"jul": time.July, "july": time.July,
-	"aug": time.August, "august": time.August,
-	"sep": time.September, "september": time.September,
-	"oct": time.October, "october": time.October,
-	"nov": time.November, "november": time.November,
-	"dec": time.December, "december": time.December,
-}
-
-// nextCronOccurrence returns the next time after `from` that matches the cron spec.
-// Spec format: "{days} {HH:MM}" where days is one of:
-//   - a weekday name or comma-separated list: "FRI", "MON,WED,FRI"
-//   - "daily" / "everyday" — every day
-//   - "weekdays"           — Monday–Friday
-//   - "weekends"           — Saturday–Sunday
-//   - "MON-DD" month-day   — annual date, e.g. "APR-3", "DEC-25"
-func nextCronOccurrence(spec string, from time.Time) (time.Time, error) {
-	parts := strings.Fields(strings.TrimSpace(spec))
-	if len(parts) != 2 {
-		return time.Time{}, fmt.Errorf("invalid cron spec %q: expected 'DAY(S) HH:MM'", spec)
-	}
-	t, err := time.Parse("15:04", parts[1])
-	if err != nil {
-		return time.Time{}, fmt.Errorf("invalid time %q in cron spec: use HH:MM (24-hour)", parts[1])
-	}
-	hour, min := t.Hour(), t.Minute()
-
-	// Month-day pattern: "APR-3", "DEC-25", etc. — annual repeat.
-	if idx := strings.Index(parts[0], "-"); idx > 0 {
-		monthStr := strings.ToLower(parts[0][:idx])
-		month, ok := monthNames[monthStr]
-		if !ok {
-			return time.Time{}, fmt.Errorf("unknown month %q in cron spec", parts[0][:idx])
-		}
-		var day int
-		if _, err := fmt.Sscanf(parts[0][idx+1:], "%d", &day); err != nil || day < 1 || day > 31 {
-			return time.Time{}, fmt.Errorf("invalid day %q in cron spec", parts[0][idx+1:])
-		}
-		// Try this year, then next year.
-		for _, year := range []int{from.Year(), from.Year() + 1} {
-			c := time.Date(year, month, day, hour, min, 0, 0, from.Location())
-			if c.Month() != month {
-				continue // day overflowed (e.g. Feb-30)
-			}
-			if c.After(from) {
-				return c, nil
-			}
-		}
-		return time.Time{}, fmt.Errorf("no occurrence found for cron spec %q", spec)
-	}
-
-	daySet := make(map[time.Weekday]bool)
-	switch strings.ToLower(parts[0]) {
-	case "daily", "everyday":
-		for d := time.Sunday; d <= time.Saturday; d++ {
-			daySet[d] = true
-		}
-	case "weekdays":
-		for _, d := range []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday} {
-			daySet[d] = true
-		}
-	case "weekends":
-		daySet[time.Saturday] = true
-		daySet[time.Sunday] = true
-	default:
-		for _, token := range strings.Split(parts[0], ",") {
-			wd, ok := weekdayNames[strings.ToLower(strings.TrimSpace(token))]
-			if !ok {
-				return time.Time{}, fmt.Errorf("unknown day %q in cron spec", token)
-			}
-			daySet[wd] = true
-		}
-	}
-
-	// Search up to 8 days ahead for the next matching slot.
-	base := time.Date(from.Year(), from.Month(), from.Day(), hour, min, 0, 0, from.Location())
-	for i := 0; i <= 7; i++ {
-		c := base.AddDate(0, 0, i)
-		if daySet[c.Weekday()] && c.After(from) {
-			return c, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("no occurrence found for cron spec %q", spec)
 }
 
 // schedulerToolDef returns an AgentToolDef that lets the LLM schedule a future callback.
@@ -518,7 +461,7 @@ func (T *Phantom) schedulerToolDef(chatID, handle string) AgentToolDef {
 			repeatCron = strings.TrimSpace(repeatCron)
 			// Validate cron spec eagerly so errors surface at schedule time.
 			if repeatCron != "" {
-				if _, err := nextCronOccurrence(repeatCron, time.Now()); err != nil {
+				if _, err := NextCronOccurrence(repeatCron, time.Now()); err != nil {
 					return "", fmt.Errorf("invalid repeat_cron: %w", err)
 				}
 			}
@@ -527,7 +470,7 @@ func (T *Phantom) schedulerToolDef(chatID, handle string) AgentToolDef {
 			repeatRandomWindow, _ := args["repeat_random_window"].(string)
 			repeatRandomWindow = strings.TrimSpace(repeatRandomWindow)
 			if repeatRandomWindow != "" {
-				if _, _, _, _, werr := parseWindowBounds(repeatRandomWindow); werr != nil {
+				if _, _, _, _, werr := ParseWindowBounds(repeatRandomWindow); werr != nil {
 					return "", fmt.Errorf("invalid repeat_random_window: %w", werr)
 				}
 			}
@@ -565,145 +508,18 @@ func (T *Phantom) schedulerToolDef(chatID, handle string) AgentToolDef {
 	}
 }
 
-// parseWindowBounds parses a "HH:MM-HH:MM" window spec into (startHour, startMin, endHour, endMin).
-func parseWindowBounds(spec string) (sh, sm, eh, em int, err error) {
-	parts := strings.SplitN(spec, "-", 2)
-	if len(parts) != 2 {
-		return 0, 0, 0, 0, fmt.Errorf("invalid window %q: expected HH:MM-HH:MM", spec)
-	}
-	var st, et time.Time
-	if st, err = time.Parse("15:04", strings.TrimSpace(parts[0])); err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("invalid start time in window %q: use HH:MM", spec)
-	}
-	if et, err = time.Parse("15:04", strings.TrimSpace(parts[1])); err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("invalid end time in window %q: use HH:MM", spec)
-	}
-	return st.Hour(), st.Minute(), et.Hour(), et.Minute(), nil
-}
-
-// nextRandomWindowTime returns the next fire time for a HH:MM-HH:MM daily
-// window using slot-based distribution: the window is split into N equal
-// slots and the next fire is placed at a random instant inside the slot
-// matching firedSoFar. If that slot is already in the past (mid-day enable,
-// missed fire, server restart), it advances to the next valid slot. When N
-// slots are exhausted today, it rolls over to slot 0 of tomorrow's window.
-//
-// minGap is a safety margin to prevent back-to-back fires when slots are
-// short — the chosen instant is shifted into the next slot if it would land
-// inside (now + minGap).
-//
-// N must be ≥ 1; firedSoFar should be the number of proactive fires already
-// completed in today's window.
-func nextRandomWindowTime(spec string, from time.Time, n, firedSoFar int) (time.Time, error) {
-	sh, sm, eh, em, err := parseWindowBounds(spec)
-	if err != nil {
-		return time.Time{}, err
-	}
-	if n < 1 {
-		n = 1
-	}
-
-	const minGap = 20 * time.Minute
-
-	loc := from.Location()
-	windowStart := func(day time.Time) time.Time {
-		return time.Date(day.Year(), day.Month(), day.Day(), sh, sm, 0, 0, loc)
-	}
-	windowEnd := func(day time.Time) time.Time {
-		return time.Date(day.Year(), day.Month(), day.Day(), eh, em, 0, 0, loc)
-	}
-
-	earliest := from.Add(minGap)
-
-	// pickInSlot returns a random time within slot[i] of [wStart, wEnd], shifting
-	// past `earliest` if needed. Returns (time, true) if a valid time was found,
-	// (zero, false) if even the slot's tail is before earliest (slot is in past).
-	pickInSlot := func(wStart, wEnd time.Time, i int) (time.Time, bool) {
-		span := wEnd.Sub(wStart)
-		slotWidth := span / time.Duration(n)
-		slotStart := wStart.Add(slotWidth * time.Duration(i))
-		slotEnd := wStart.Add(slotWidth * time.Duration(i+1))
-		// Bound the effective window of this slot by the earliest-allowed time.
-		if slotEnd.Before(earliest) {
-			return time.Time{}, false
-		}
-		effective := slotStart
-		if earliest.After(effective) {
-			effective = earliest
-		}
-		if !effective.Before(slotEnd) {
-			return time.Time{}, false
-		}
-		jitterRange := slotEnd.Sub(effective)
-		jitter := time.Duration(rand.Int63n(int64(jitterRange) + 1))
-		if jitter >= jitterRange {
-			jitter = jitterRange - 1
-		}
-		return effective.Add(jitter), true
-	}
-
-	for _, day := range []time.Time{from, from.AddDate(0, 0, 1)} {
-		wStart := windowStart(day)
-		wEnd := windowEnd(day)
-		if !wEnd.After(wStart) {
-			continue
-		}
-		startSlot := firedSoFar
-		if !day.Equal(from) || day.After(from) && !sameYMD(day, from) {
-			// Tomorrow rolls over to slot 0 — yesterday's fires don't count.
-			startSlot = 0
-		}
-		if startSlot >= n {
-			// Today's slots are all spoken for; let the loop fall through to tomorrow.
-			continue
-		}
-		for i := startSlot; i < n; i++ {
-			if t, ok := pickInSlot(wStart, wEnd, i); ok {
-				return t, nil
-			}
-		}
-	}
-
-	// Fallback: slot 0 of the window two days out.
-	day2 := from.AddDate(0, 0, 2)
-	wStart := windowStart(day2)
-	wEnd := windowEnd(day2)
-	if !wEnd.After(wStart) {
-		return time.Time{}, fmt.Errorf("window %q has zero or negative duration", spec)
-	}
-	if t, ok := pickInSlot(wStart, wEnd, 0); ok {
-		return t, nil
-	}
-	return time.Time{}, fmt.Errorf("could not find a slot for window %q", spec)
-}
-
-// sameYMD reports whether two times fall on the same calendar day in their
-// respective locations.
-func sameYMD(a, b time.Time) bool {
-	ay, am, ad := a.Date()
-	by, bm, bd := b.Date()
-	return ay == by && am == bm && ad == bd
-}
-
-// windowDurationHours returns the duration of an HH:MM-HH:MM window in hours.
-// Returns 0 if the spec is malformed or the window has zero/negative span.
-func windowDurationHours(spec string) float64 {
-	sh, sm, eh, em, err := parseWindowBounds(spec)
-	if err != nil {
-		return 0
-	}
-	mins := (eh*60 + em) - (sh*60 + sm)
-	if mins <= 0 {
-		return 0
-	}
-	return float64(mins) / 60.0
-}
-
-// repeatConditionMet asks the LLM whether the repeat_until condition has been satisfied.
-// Returns true if the condition is met (stop repeating) or if the LLM call fails
-// after the condition string looks time-based and is clearly in the past.
+// repeatConditionMet asks the LLM whether the repeat_until condition has been
+// satisfied for a legacy scheduled task.
 func (T *Phantom) repeatConditionMet(ctx context.Context, p phantomCallPayload, recentMessages []Message) bool {
-	if p.RepeatUntil == "" {
+	return T.evalStopCondition(ctx, p.RepeatUntil, p.RepeatCount, p.Handle, recentMessages)
+}
+
+// evalStopCondition asks the LLM whether a repeat_until stopping condition has
+// been met (returns true = stop repeating). Shared by the legacy scheduler and
+// the unified trigger engine's stop-condition checker. A failed/empty LLM call
+// continues the repeat (returns false).
+func (T *Phantom) evalStopCondition(ctx context.Context, repeatUntil string, repeatCount int, handle string, recentMessages []Message) bool {
+	if repeatUntil == "" {
 		return false
 	}
 	sysPrompt := fmt.Sprintf(
@@ -715,8 +531,8 @@ func (T *Phantom) repeatConditionMet(ctx context.Context, p phantomCallPayload, 
 			"has the stopping condition been met?\n\n"+
 			"Reply with exactly one word: YES or NO.",
 		time.Now().Format("Monday, January 2, 2006 3:04:05 PM MST"),
-		p.RepeatUntil,
-		p.RepeatCount,
+		repeatUntil,
+		repeatCount,
 	)
 	msgs := make([]Message, 0, len(recentMessages)+1)
 	msgs = append(msgs, recentMessages...)
@@ -726,13 +542,13 @@ func (T *Phantom) repeatConditionMet(ctx context.Context, p phantomCallPayload, 
 	defer cancel()
 	resp, err := T.LLM.Chat(condCtx, msgs, WithSystemPrompt(sysPrompt), WithThink(false))
 	if err != nil || resp == nil {
-		Log("[phantom/scheduler] condition check failed for %s: %v — continuing repeat", p.Handle, err)
+		Log("[phantom/scheduler] condition check failed for %s: %v — continuing repeat", handle, err)
 		return false
 	}
 	answer := strings.ToUpper(strings.TrimSpace(resp.Content))
 	met := strings.HasPrefix(answer, "YES")
 	if met {
-		Log("[phantom/scheduler] repeat_until condition met for %s: %q", p.Handle, p.RepeatUntil)
+		Log("[phantom/scheduler] repeat_until condition met for %s: %q", handle, repeatUntil)
 	}
 	return met
 }
@@ -784,191 +600,15 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		p.RepeatRandomWindow = cfg.ProactiveWindow
 	}
 
-	personaName := cfg.PersonaName
-	if conv.PersonaName != "" {
-		personaName = conv.PersonaName
-	}
-	personality := cfg.Personality
-	if conv.Personality != "" {
-		personality = conv.Personality
-	}
-	convRules := cfg.SystemPrompt
-	if conv.SystemPrompt != "" {
-		convRules = conv.SystemPrompt
-	}
-	basePrompt := buildSystemPrompt(personality, convRules)
-
-	var senderDesc string
-	if conv.DisplayName != "" {
-		senderDesc = fmt.Sprintf("%s (%s)", conv.DisplayName, p.Handle)
-	} else {
-		senderDesc = p.Handle
-	}
-
-	// Build recent history so the LLM can judge whether the timing is right.
-	history := recentMessages(T.DB, p.ChatID, 10)
-	var msgs []Message
-	for _, m := range history {
-		role := "user"
-		content := m.Text
-		if m.Role == "assistant" {
-			role = "assistant"
-		} else {
-			label := p.Handle
-			if conv.DisplayName != "" {
-				label = conv.DisplayName
-			}
-			content = label + ": " + m.Text
-		}
-		msgs = append(msgs, Message{Role: role, Content: content})
-	}
-	msgs = append(msgs, Message{Role: "user", Content: "Compose your scheduled message now, or call stay_silent if the timing is not right."})
-
-	// The scheduled prompt is an instruction for the LLM — injected into the
-	// system prompt so the LLM composes an outbound message naturally rather
-	// than responding to a fake user turn.
-	sysPrompt := fmt.Sprintf(
-		"Current date and time: %s\n\nYour name is %s. The person you are messaging is %s.\n\n%s%s\n\n"+
-			"## Scheduled Message Instruction\n%s\n\n"+
-			"Compose a natural outbound message to the user following the instruction above. "+
-			"Do not mention that this is scheduled or automated. "+
-			"When you know someone's name, use it naturally. "+
-			"Keep responses varied — avoid repetitive patterns. "+
-			"If the conversation history or language rules suggest the timing is not right, call stay_silent instead of sending. "+
-			"IMPORTANT: Reply in plain text only. No markdown. This is a text message conversation.",
-		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"), personaName, senderDesc, basePrompt, memoryBlock(T.DB, p.ChatID), p.Prompt,
-	)
-
-	sess := &ToolSession{
-		LLM:          T.LLM,
-		LeadLLM:      T.LeadLLM,
-		WorkspaceDir: ensurePhantomWorkspace(cfg),
-		DB:           T.DB,
-		Username:     cfg.OwnerHandle,
-	}
-	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
-		t := p.Tool
-		_ = sess.AppendTempTool(&t)
-	}
-	// send_status: enqueue an immediate outbox item so the user gets a
-	// progress iMessage before the scheduled reply. FIFO ordering in the
-	// outbox preserves arrival order.
-	sess.StatusCallback = func(text string) {
-		text = strings.TrimSpace(stripEmojis(text))
-		if text == "" {
-			return
-		}
-		Log("[phantom/scheduler] send_status for %s: %q", p.Handle, text)
-		T.rememberRecentReply(text)
-		storeMessage(T.DB, PhantomMessage{
-			ID:        now() + "-" + newID(),
-			ChatID:    p.ChatID,
-			Role:      "assistant",
-			Text:      text,
-			Timestamp: now(),
-		})
-		enqueueOutbox(T.DB, OutboxItem{
-			ID:      newID(),
-			ChatID:  p.ChatID,
-			Handle:  p.Handle,
-			Text:    text,
-			Type:    "status",
-			Created: now(),
-		})
-	}
-	tools := T.buildConvTools(p.ChatID, p.Handle, conv, cfg, sess, false)
-
-	phantomChatOpts := buildThinkOpts("app.phantom")
-	resp, _, err := T.RunAgentLoop(ctx, msgs, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    15,
-		RouteKey:     "app.phantom",
-		PromptTools:  T.PromptTools,
-		ChatOptions:  phantomChatOpts,
-		Confirm:      func(string, string) bool { return true },
-		// Drain any view-images deposited by tools so the LLM sees the
-		// frames on its next round (LLM-only, not delivered to user).
-		OnRoundStart: func() []Message {
-			imgs := sess.DrainViewImages()
-			if len(imgs) == 0 {
-				return nil
-			}
-			return []Message{{
-				Role:    "user",
-				Content: "Here are the sampled frames for visual analysis:",
-				Images:  imgs,
-			}}
-		},
-	})
-	if err != nil {
-		Log("[phantom/scheduler] LLM error for %s: %v", p.Handle, err)
+	// Compose + deliver the scheduled turn (shared with the unified trigger
+	// engine). If nothing was delivered (LLM error, stay_silent with nothing,
+	// empty, or a duplicate), don't reschedule — matching the prior behavior.
+	if _, delivered := T.composeScheduledReply(ctx, p.ChatID, p.Handle, p.Prompt); !delivered {
 		return
 	}
-
-	var replyText string
-	if resp != nil {
-		replyText = strings.TrimSpace(stripEmojis(resp.Content))
-		// Consume [ATTACH: ...] markers: attach the referenced file onto
-		// sess (so it flows into sessionImages below) and strip the marker
-		// from the visible text. The interactive path does this in
-		// processMessage; without it here the marker leaked as raw text and
-		// the file never attached. Failures are logged inside
-		// applyAttachMarkers; a proactive turn has no next turn to feed back
-		// to, so we don't thread them further.
-		replyText, _ = applyAttachMarkers(sess, replyText)
-	}
-	sessionImages := filterNewImages(sess.Images)
-	sessionVideos := filterNewVideos(sess.Videos)
-	sessionVideos = normalizeAudioForDelivery(sessionVideos)
-
-	// stay_silent suppresses the LLM's text but lets gathered attachments
-	// through. With nothing gathered, silence means "send nothing."
-	if sess.Silenced {
-		if len(sessionImages) == 0 && len(sessionVideos) == 0 {
-			Log("[phantom/scheduler] stay_silent called for %s — no scheduled reply sent", p.Handle)
-			return
-		}
-		Log("[phantom/scheduler] stay_silent called for %s — text suppressed, %d images / %d videos still delivered", p.Handle, len(sessionImages), len(sessionVideos))
-		replyText = ""
-	}
-	if replyText == "" && len(sessionImages) == 0 && len(sessionVideos) == 0 {
-		if len(sess.Images) > 0 || len(sess.Videos) > 0 {
-			Log("[phantom/scheduler] all attachments already sent to %s, nothing new to queue", p.Handle)
-		} else {
-			// Capture diagnostic context for empty LLM responses.
-			if resp == nil {
-				Log("[phantom/scheduler] empty LLM response for %s — nil response from RunAgentLoop", p.Handle)
-			} else {
-				Log("[phantom/scheduler] empty LLM response for %s — content=%d chars, reasoning=%d chars, tool_calls=%d, stop_reason=%q",
-					p.Handle, len(resp.Content), len(resp.Reasoning), len(resp.ToolCalls))
-			}
-		}
-		return
-	}
-
-	// Replay guard: drop if this exact text was sent recently (catches
-	// rescued-empty-response replays from the agent loop and coalesced
-	// re-run repeats). See processMessage for the full rationale.
-	if T.matchesRecentReply(replyText) {
-		Log("[phantom/scheduler] dropping duplicate scheduled reply for %s (matches recently-sent text)", p.Handle)
-		return
-	}
-	T.rememberRecentReply(replyText)
-	enqueueOutbox(T.DB, OutboxItem{
-		ID:      newID(),
-		ChatID:  p.ChatID,
-		Handle:  p.Handle,
-		Text:    replyText,
-		Images:  sessionImages,
-		Videos:  sessionVideos,
-		Type:    "scheduled",
-		Created: now(),
-	})
 	if p.IsProactive {
 		incrementProactiveCount(T.DB, p.ChatID)
 	}
-	Log("[phantom/scheduler] queued reply for %s: %q", p.Handle, replyText)
 
 	p.RepeatCount++
 
@@ -996,7 +636,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		// the full window, preserving the legacy "fire once at a random time
 		// in this daily window" behavior. The proactive scheduler is the
 		// only path that uses multi-slot distribution.
-		next, err := nextRandomWindowTime(p.RepeatRandomWindow, time.Now(), 1, 0)
+		next, err := NextRandomWindowTime(p.RepeatRandomWindow, time.Now(), 1, 0)
 		if err != nil {
 			Log("[phantom/scheduler] random window reschedule error for %s: %v", p.Handle, err)
 		} else {
@@ -1009,7 +649,7 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 			}
 		}
 	case p.RepeatCron != "":
-		next, err := nextCronOccurrence(p.RepeatCron, time.Now())
+		next, err := NextCronOccurrence(p.RepeatCron, time.Now())
 		if err != nil {
 			Log("[phantom/scheduler] cron reschedule error for %s: %v", p.Handle, err)
 		} else {
@@ -1031,6 +671,197 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 			Log("[phantom/scheduler] rescheduled repeat for %s in %s", p.Handle, formatDuration(p.RepeatSeconds))
 		}
 	}
+}
+
+// composeScheduledReply runs one scheduled/callback agent turn for a chat: it
+// builds the persona system prompt + recent history, assembles the FULL live
+// tool catalog (assembleConvTools, so a fired callback has the same tools a live
+// turn does), runs the agent loop, and enqueues the reply (plus any gathered
+// attachments) to the chat's outbox. Shared by the legacy scheduler fire path
+// (fireScheduledCall) and the unified trigger engine's callback action
+// (RegisterTriggerAction "phantom_chat"). Returns the delivered text and whether
+// anything was delivered (false on LLM error / stay_silent-with-nothing / empty
+// response / duplicate) so the caller can decide whether to reschedule.
+func (T *Phantom) composeScheduledReply(ctx context.Context, chatID, handle, instruction string) (string, bool) {
+	cfg := defaultConfig(T.DB)
+	var conv Conversation
+	T.DB.Get(conversationTable, chatID, &conv)
+
+	personaName := cfg.PersonaName
+	if conv.PersonaName != "" {
+		personaName = conv.PersonaName
+	}
+	personality := cfg.Personality
+	if conv.Personality != "" {
+		personality = conv.Personality
+	}
+	convRules := cfg.SystemPrompt
+	if conv.SystemPrompt != "" {
+		convRules = conv.SystemPrompt
+	}
+	basePrompt := buildSystemPrompt(personality, convRules)
+
+	var senderDesc string
+	if conv.DisplayName != "" {
+		senderDesc = fmt.Sprintf("%s (%s)", conv.DisplayName, handle)
+	} else {
+		senderDesc = handle
+	}
+
+	// Recent history so the LLM can judge whether the timing is right.
+	history := recentMessages(T.DB, chatID, 10)
+	var msgs []Message
+	for _, m := range history {
+		role := "user"
+		content := m.Text
+		if m.Role == "assistant" {
+			role = "assistant"
+		} else {
+			label := handle
+			if conv.DisplayName != "" {
+				label = conv.DisplayName
+			}
+			content = label + ": " + m.Text
+		}
+		msgs = append(msgs, Message{Role: role, Content: content})
+	}
+	msgs = append(msgs, Message{Role: "user", Content: "Compose your scheduled message now, or call stay_silent if the timing is not right."})
+
+	// The scheduled instruction is injected into the system prompt so the LLM
+	// composes an outbound message naturally rather than answering a fake turn.
+	sysPrompt := fmt.Sprintf(
+		"Current date and time: %s\n\nYour name is %s. The person you are messaging is %s.\n\n%s%s\n\n"+
+			"## Scheduled Message Instruction\n%s\n\n"+
+			"Compose a natural outbound message to the user following the instruction above. "+
+			"Do not mention that this is scheduled or automated. "+
+			"When you know someone's name, use it naturally. "+
+			"Keep responses varied — avoid repetitive patterns. "+
+			"If the conversation history or language rules suggest the timing is not right, call stay_silent instead of sending. "+
+			"IMPORTANT: Reply in plain text only. No markdown. This is a text message conversation.",
+		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"), personaName, senderDesc, basePrompt, memoryBlock(T.DB, chatID), instruction,
+	)
+
+	sess := &ToolSession{
+		LLM:          T.LLM,
+		LeadLLM:      T.LeadLLM,
+		WorkspaceDir: ensurePhantomWorkspace(cfg),
+		DB:           T.DB,
+		Username:     cfg.OwnerHandle,
+	}
+	for _, pt := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		tt := pt.Tool
+		_ = sess.AppendTempTool(&tt)
+	}
+	// send_status: enqueue an immediate outbox item so the user gets a progress
+	// iMessage before the scheduled reply. FIFO ordering preserves arrival order.
+	sess.StatusCallback = func(text string) {
+		text = strings.TrimSpace(stripEmojis(text))
+		if text == "" {
+			return
+		}
+		Log("[phantom/scheduler] send_status for %s: %q", handle, text)
+		T.rememberRecentReply(text)
+		storeMessage(T.DB, PhantomMessage{
+			ID:        now() + "-" + newID(),
+			ChatID:    chatID,
+			Role:      "assistant",
+			Text:      text,
+			Timestamp: now(),
+		})
+		enqueueOutbox(T.DB, OutboxItem{
+			ID:      newID(),
+			ChatID:  chatID,
+			Handle:  handle,
+			Text:    text,
+			Type:    "status",
+			Created: now(),
+		})
+	}
+	// Full catalog, same as a live turn (recall + skill tools included) so a
+	// fired callback can actually use what it was scheduled for, e.g. a calling
+	// tool reached through a skill. includeScheduler=false to avoid a scheduled
+	// task scheduling itself recursively. Fresh deliveredSkills per fire.
+	tools := T.assembleConvTools(chatID, handle, conv, cfg, sess, map[string]bool{}, false)
+
+	phantomChatOpts := buildThinkOpts("app.phantom")
+	resp, _, err := T.RunAgentLoop(ctx, msgs, AgentLoopConfig{
+		SystemPrompt: sysPrompt,
+		Tools:        tools,
+		MaxRounds:    15,
+		RouteKey:     "app.phantom",
+		PromptTools:  T.PromptTools,
+		ChatOptions:  phantomChatOpts,
+		Confirm:      func(string, string) bool { return true },
+		// Drain any view-images deposited by tools so the LLM sees the frames on
+		// its next round (LLM-only, not delivered to user).
+		OnRoundStart: func() []Message {
+			imgs := sess.DrainViewImages()
+			if len(imgs) == 0 {
+				return nil
+			}
+			return []Message{{
+				Role:    "user",
+				Content: "Here are the sampled frames for visual analysis:",
+				Images:  imgs,
+			}}
+		},
+	})
+	if err != nil {
+		Log("[phantom/scheduler] LLM error for %s: %v", handle, err)
+		return "", false
+	}
+
+	var replyText string
+	if resp != nil {
+		replyText = strings.TrimSpace(stripEmojis(resp.Content))
+		// Consume [ATTACH: ...] markers so the file attaches and the marker
+		// doesn't leak as raw text (the interactive path does this too).
+		replyText, _ = applyAttachMarkers(sess, replyText)
+	}
+	sessionImages := filterNewImages(sess.Images)
+	sessionVideos := filterNewVideos(sess.Videos)
+	sessionVideos = normalizeAudioForDelivery(sessionVideos)
+
+	// stay_silent suppresses the text but lets gathered attachments through.
+	if sess.Silenced {
+		if len(sessionImages) == 0 && len(sessionVideos) == 0 {
+			Log("[phantom/scheduler] stay_silent called for %s — no scheduled reply sent", handle)
+			return "", false
+		}
+		Log("[phantom/scheduler] stay_silent called for %s — text suppressed, %d images / %d videos still delivered", handle, len(sessionImages), len(sessionVideos))
+		replyText = ""
+	}
+	if replyText == "" && len(sessionImages) == 0 && len(sessionVideos) == 0 {
+		if len(sess.Images) > 0 || len(sess.Videos) > 0 {
+			Log("[phantom/scheduler] all attachments already sent to %s, nothing new to queue", handle)
+		} else if resp == nil {
+			Log("[phantom/scheduler] empty LLM response for %s — nil response from RunAgentLoop", handle)
+		} else {
+			Log("[phantom/scheduler] empty LLM response for %s — content=%d chars, reasoning=%d chars, tool_calls=%d",
+				handle, len(resp.Content), len(resp.Reasoning), len(resp.ToolCalls))
+		}
+		return "", false
+	}
+
+	// Replay guard: drop if this exact text was sent recently (catches
+	// rescued-empty-response replays and coalesced re-run repeats).
+	if T.matchesRecentReply(replyText) {
+		Log("[phantom/scheduler] dropping duplicate scheduled reply for %s (matches recently-sent text)", handle)
+		return "", false
+	}
+	T.rememberRecentReply(replyText)
+	enqueueOutbox(T.DB, OutboxItem{
+		ID:      newID(),
+		ChatID:  chatID,
+		Handle:  handle,
+		Text:    replyText,
+		Images:  sessionImages,
+		Videos:  sessionVideos,
+		Type:    "scheduled",
+		Created: now(),
+	})
+	Log("[phantom/scheduler] queued reply for %s: %q", handle, replyText)
+	return replyText, true
 }
 
 // listScheduledToolDef returns a tool that lists pending scheduled tasks for this conversation.
