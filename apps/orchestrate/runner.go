@@ -1388,6 +1388,20 @@ func (t *chatTurn) dynamicTempTools(sess *ToolSession) func() []AgentToolDef {
 	}
 }
 
+// attachDeliveredSkillTools loads the bundled Tools of any skill the LLM has
+// consulted this turn (t.deliveredSkills) into the session pool, so a skill's
+// own shipped scripts become callable once it's active — and never before that.
+// Idempotent: a tool already present (persistent pool, agent kit, or a prior
+// round) is skipped. Surfaced through the normal BuildAgentToolDefs feed, so
+// the tools inherit private-mode filtering + the lazy/static split for free.
+func (t *chatTurn) attachDeliveredSkillTools(sess *ToolSession) {
+	// Shared with phantom via core.AttachDeliveredSkillTools so both surfaces
+	// behave identically. Orchestrate's dynamicNewTempTools surfaces sess temp
+	// tools itself (brand-new mid-turn tools fall through to a direct surface),
+	// so we don't need the returned names here.
+	AttachDeliveredSkillTools(sess, t.udb, t.user, t.deliveredSkills, t.privateMode)
+}
+
 // dynamicNewTempTools returns the agent loop's per-round dynamic
 // tool feed: ONLY temp tools created mid-turn that weren't in the
 // static snapshot. Persistent temp tools live in the static catalog;
@@ -1400,6 +1414,11 @@ func (t *chatTurn) dynamicTempTools(sess *ToolSession) func() []AgentToolDef {
 func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef {
 	base := t.dynamicTempTools(sess)
 	return func() []AgentToolDef {
+		// Bundled skill tools: once a skill is consulted this turn, load its
+		// shipped scripts into the session pool so they become callable. Polled
+		// each round (cheap, idempotent) so a skill consulted mid-turn surfaces
+		// its tools the next round, exactly like a freshly-authored temp tool.
+		t.attachDeliveredSkillTools(sess)
 		raw := base()
 		out := make([]AgentToolDef, 0, len(raw))
 		for _, td := range raw {

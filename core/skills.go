@@ -89,6 +89,16 @@ type SkillRecord struct {
 	// doesn't leak into unrelated turns. Empty by default — most
 	// skills are pure behavior packets and don't carry docs.
 	AttachedCollections []string `json:"attached_collections,omitempty"`
+	// Tools are shell/script tools BUNDLED with the skill — its own executable
+	// code, shipped inline (mirrors AgentRecord.Tools). When the skill is
+	// consulted this turn they join the catalog so the LLM can run them
+	// deterministically without spending context tokens (a calculator, a
+	// screener, a formatter). Self-contained: the skill carries its scripts, so
+	// it stays portable across export/import instead of referencing a separately
+	// registered tool by name. Active-path only — bundled tools surface ONLY once
+	// the skill is delivered (read_skill / skill_knowledge_search), never in
+	// unrelated turns. Empty by default; most skills carry no code.
+	Tools []TempTool `json:"tools,omitempty"`
 	// Embedding is cached at save time so the classifier doesn't
 	// have to re-embed on every turn. Re-computed in SaveSkill from
 	// the current Description. Persisted with the record so reloads
@@ -454,6 +464,44 @@ func skillInstructionsBlock(skill SkillRecord, delivered map[string]bool) string
 		return ""
 	}
 	return "Apply the \"" + skill.Name + "\" approach for the REST of this turn — it governs how you read these results AND how you reply, not just this one result:\n\n" + body + "\n\n---\n"
+}
+
+// AttachDeliveredSkillTools loads the bundled Tools of every skill consulted
+// this turn (delivered[id] true) into the session pool, so a skill's shipped
+// scripts become callable once it's active and never before. Idempotent.
+// Returns the names attached/present this call so a per-round caller can surface
+// exactly the skill-bundled tools (bypassing any default-deny on shell tools —
+// consulting an allowed skill IS the opt-in, the same trust boundary that lets
+// AgentRecord.Tools skip the allowlist). Shared by orchestrate + phantom so the
+// behavior is identical on both surfaces.
+func AttachDeliveredSkillTools(sess *ToolSession, db Database, user string, delivered map[string]bool, privateMode bool) []string {
+	if sess == nil || len(delivered) == 0 {
+		return nil
+	}
+	var attached []string
+	for _, s := range LoadSkills(db, user) {
+		if s.Disabled || !delivered[s.ID] || len(s.Tools) == 0 {
+			continue
+		}
+		for i := range s.Tools {
+			tool := s.Tools[i]
+			// Private mode drops network-capable api-mode tools (local shell
+			// tools still run); same rule the agent-kit load path uses.
+			if privateMode && tool.Mode == TempToolModeAPI {
+				continue
+			}
+			if sess.HasTempTool(tool.Name) {
+				attached = append(attached, tool.Name) // already loaded — still report it for per-round surfacing
+				continue
+			}
+			if err := sess.AppendTempTool(&tool); err != nil {
+				Log("[skills] skill %q bundled tool %q failed to load: %v", s.Name, tool.Name, err)
+				continue
+			}
+			attached = append(attached, tool.Name)
+		}
+	}
+	return attached
 }
 
 // BuildReadSkillTool builds read_skill(skill): returns the named skill's

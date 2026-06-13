@@ -43,7 +43,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"allowed_tools": {
 			Type:        "array",
-			Description: "(create) Optional tools the skill brings to the active agent's catalog while it's active. Resolved against the registered tool pool — names not in the pool are silently skipped (e.g. authoring tools won't surface on non-Builder agents). Same shape as agent AllowedTools.",
+			Description: "(create) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill — it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that matches a source hook is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"attached_collections": {
@@ -131,7 +131,9 @@ domain fits the task, consults it (read_skill / skill_knowledge_search)
 against. If a skill has triggers, a substring/glob match on the message
 or an attachment filename ALSO injects its instructions deterministically
 (no LLM decision) — an optional precision fast-path, not a classifier.
-An activated skill's allowed_tools join the catalog for that turn.
+A consulted skill's BUNDLED tools (scripts snapshotted from allowed_tools at
+author time) join the catalog for that turn — its own executable code, callable
+without spending context tokens.
 
 Think of skills as dynamic personas: "if the user is doing X, also
 know Y." Keep them focused — one skill, one capability. Multiple small
@@ -233,7 +235,11 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if hadPrior {
 		rec.ID = existing.ID
 		rec.Created = existing.Created
+		rec.Tools = existing.Tools // preserve already-bundled tools across an upsert
 	}
+	// Snapshot any allowed_tools that name a local session/persistent tool INTO
+	// the skill so it ships its own executable code (portable, self-contained).
+	copiedTools := autoCopySessionToolsForSkill(sess, &rec)
 	saved, err := SaveSkill(sess.DB, sess.Username, rec)
 	if err != nil {
 		return "", err
@@ -250,7 +256,63 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if mintedCollection != "" {
 		collNote = fmt.Sprintf(" Created and linked an empty knowledge collection %q Knowledge (id=%s) — it has no documents yet, so tell the user to populate it via the Knowledge surface (upload docs or Auto-fill) before the skill's knowledge_search returns anything.", saved.Name, mintedCollection)
 	}
-	return fmt.Sprintf("Skill %q %s%s. Active when triggers match OR the embedded description scores above 0.55 against the user message.%s", saved.Name, verb, embedNote, collNote), nil
+	toolNote := ""
+	if copiedTools > 0 {
+		toolNote = fmt.Sprintf(" Bundled %d tool(s) INTO the skill — they ship with it and become callable whenever the skill is consulted.", copiedTools)
+	}
+	return fmt.Sprintf("Skill %q %s%s.%s Active when triggers match OR the embedded description scores above 0.55 against the user message.%s", saved.Name, verb, embedNote, toolNote, collNote), nil
+}
+
+// autoCopySessionToolsForSkill snapshots any tool named in the skill's
+// AllowedTools that matches a session draft or the user's persistent pool INTO
+// the skill's bundled Tools, so the skill ships its own executable code and
+// stays portable (mirrors autoCopySessionToolsForAgent). Names that don't match
+// a local tool — source-hook names used for knowledge queries, registered-pool
+// tools — are left alone. Returns how many were copied.
+func autoCopySessionToolsForSkill(sess *ToolSession, rec *SkillRecord) int {
+	if sess == nil || len(rec.AllowedTools) == 0 {
+		return 0
+	}
+	byName := make(map[string]*TempTool)
+	if sess.Username != "" {
+		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+			t := p.Tool
+			byName[t.Name] = &t
+		}
+	}
+	if sess.ChatSessionID != "" {
+		for _, draft := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
+			t := draft
+			byName[t.Name] = &t
+		}
+	}
+	if len(byName) == 0 {
+		return 0
+	}
+	already := make(map[string]bool, len(rec.Tools))
+	for _, t := range rec.Tools {
+		already[t.Name] = true
+	}
+	copied := 0
+	for _, name := range rec.AllowedTools {
+		if already[name] {
+			continue
+		}
+		t, ok := byName[name]
+		if !ok {
+			continue // not a local tool — leave the name for the knowledge/pool path
+		}
+		rec.Tools = append(rec.Tools, *t)
+		already[name] = true
+		copied++
+		Log("[orchestrate.skill_def] bundled tool %q into skill %q", name, rec.Name)
+		// Now owned by the skill record — drop it from the admin pending-review
+		// queue (no-op when it wasn't queued, e.g. came from the persistent pool).
+		if sess.Username != "" {
+			DequeuePendingTempTool(sess.DB, sess.Username, name)
+		}
+	}
+	return copied
 }
 
 // skillDefUpdate patches an EXISTING skill in place: only the fields
@@ -288,6 +350,10 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	if _, has := args["allowed_tools"]; has {
 		rec.AllowedTools = stringSliceFromArgs(args, "allowed_tools")
 		changed = append(changed, "allowed_tools")
+		// Re-snapshot: a newly-named local tool gets bundled into the skill.
+		if autoCopySessionToolsForSkill(sess, &rec) > 0 {
+			changed = append(changed, "bundled_tools")
+		}
 	}
 	if _, has := args["attached_collections"]; has {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")

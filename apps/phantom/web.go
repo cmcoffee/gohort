@@ -2521,6 +2521,30 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		ChatOptions:  phantomChatOpts,
 		OnStep:       onStep,
 		Confirm:      func(string, string) bool { return true },
+		// Per-round feed for BUNDLED SKILL TOOLS: once a skill is consulted this
+		// turn (deliveredSkills), surface its shipped scripts so the LLM can run
+		// them THIS turn. Phantom's static catalog can't know the skill would be
+		// consulted, so this fills the gap — same as orchestrate's dynamic feed.
+		// Skill-bundled tools bypass the conv's shell-tool default-deny: the
+		// admin allowed the skill (conv.AllowedSkills) and the LLM consulted it,
+		// which is the opt-in, mirroring how AgentRecord.Tools skip the allowlist.
+		DynamicTools: func() []AgentToolDef {
+			names := AttachDeliveredSkillTools(sess, T.DB, phantomAgentOwner(T.DB), deliveredSkills, false)
+			if len(names) == 0 {
+				return nil
+			}
+			want := make(map[string]bool, len(names))
+			for _, n := range names {
+				want[n] = true
+			}
+			var out []AgentToolDef
+			for _, td := range temptool.BuildAgentToolDefs(sess) {
+				if want[td.Tool.Name] {
+					out = append(out, td)
+				}
+			}
+			return out
+		},
 		// Drain any view-images deposited by tools (view_video,
 		// download_video frame sampling) into a follow-up user message
 		// at the next round so the LLM sees them. Images go to the LLM
