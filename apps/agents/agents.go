@@ -127,6 +127,8 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleSend(w, r, agent)
 	case rest == "api/cancel":
 		orch.PublicHandleCancel(w, r, agent)
+	case rest == "api/channel/clear":
+		orch.PublicHandleChannelClear(w, r, agent.ID)
 	case rest == "api/sessions":
 		orch.PublicHandleSessionList(w, r, agent.ID)
 	case strings.HasPrefix(rest, "api/sessions/"):
@@ -224,8 +226,19 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// agent app (one slug → one agent); no need for a dropdown-change
 	// listener like Agency has.
 	agentIDJSON, _ := json.Marshal(agent.ID)
+	// Channel agents pin every visitor to one ongoing home thread (a
+	// rolling summary keeps it bounded) instead of ad-hoc sessions. The
+	// runtime reads this agentId→pinned-session map (named via AltNavFlag)
+	// to know which agents pin AND what thread to pin them to. The session
+	// id is identical for all visitors; per-(user, agent) scoping resolves
+	// it to a different physical thread per person.
+	channelGlobal := ""
+	if agent.Channel {
+		chMap, _ := json.Marshal(map[string]string{agent.ID: orchestrate.ChannelSessionID(agent.ID)})
+		channelGlobal = "window.ORCH_CHANNEL_AGENTS = " + string(chMap) + ";"
+	}
 	intakeHead := "<script>window.AGENT_INTAKE_FORM = " + intakeJSON + ";" +
-		"window.GOHORT_AGENT_ID = " + string(agentIDJSON) + ";</script>" +
+		"window.GOHORT_AGENT_ID = " + string(agentIDJSON) + ";" + channelGlobal + "</script>" +
 		intakeFormAssets
 	// Private-mode toggle only renders when the agent's admin opted
 	// in via AllowPrivateMode AND ForcePrivate isn't on. ForcePrivate
@@ -256,6 +269,62 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 			SendField: "inferred_disabled",
 		})
 	}
+	panel := ui.AgentLoopPanel{
+		ListURL:     "api/sessions",
+		LoadURL:     "api/sessions/{id}",
+		DeleteURL:   "api/sessions/{id}",
+		TruncateURL: "api/sessions/{id}",
+		ListTitle:   "Sessions",
+		NewLabel:    "New session",
+		// Drives sessions + New into the topbar as
+		// dropdown-style buttons; no persistent rail.
+		// Matches the classic chat-app surface where
+		// one conversation owns the whole pane.
+		ListPosition:  "top",
+		SendURL:       "api/send",
+		CancelURL:     "api/cancel",
+		DeepLinkParam: "session",
+		LockActivity:  true,
+		EmptyText:     desc,
+		Placeholder:   "Ask " + display + " something…",
+		Markdown:      true,
+		BulkSelect:    true,
+		Attachments:   true,
+		// Per-user surfaces:
+		//   - Memory: the end-user's accumulated notes for
+		//     this agent (private to them)
+		//   - Documents: a unified view of the agent's
+		//     shared knowledge base (read-only — admin
+		//     curated) + the end-user's own uploaded docs
+		//     (editable, private to them).
+		Actions: []ui.ToolbarAction{
+			{Label: "Memory", Title: "Review and prune the notes this agent has accumulated from your conversations.",
+				Method: "client", URL: "agents_memory_modal"},
+			{Label: "Knowledge", Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus.",
+				Method: "client", URL: "agents_knowledge_modal"},
+			{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+				Method: "client", URL: "copy_session"},
+		},
+		Modes: modes,
+	}
+
+	// Channel agents publish as a single ongoing home thread per visitor.
+	// Swap the topbar-dropdown session layout for the rail + channel box,
+	// pin the visitor to their per-(user, agent) channel thread, and show
+	// only the per-visitor-safe nav items. The owner's fleet-management
+	// rows (Enabled agents / Authorizations / Event monitors / standing
+	// agents) are deliberately ABSENT — those reach admin-only endpoints
+	// that aren't mounted on this public surface.
+	if agent.Channel {
+		panel.ListPosition = "" // use the left rail so the channel box has a home
+		panel.AltNavFlag = "ORCH_CHANNEL_AGENTS"
+		panel.OrchestratorNav = []ui.OrchestratorNavItem{
+			{Label: "Channel"},
+			{Label: "Clear channel", ActionURL: "api/channel/clear", Variant: "warning",
+				Confirm: "Clear this conversation and its rolling summary? This can't be undone."},
+		}
+	}
+
 	page := ui.Page{
 		Title:     display,
 		ShowTitle: true,
@@ -264,44 +333,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
-				Body: ui.AgentLoopPanel{
-					ListURL:       "api/sessions",
-					LoadURL:       "api/sessions/{id}",
-					DeleteURL:     "api/sessions/{id}",
-					TruncateURL:   "api/sessions/{id}",
-					ListTitle:     "Sessions",
-					NewLabel:      "New session",
-					// Drives sessions + New into the topbar as
-					// dropdown-style buttons; no persistent rail.
-					// Matches the classic chat-app surface where
-					// one conversation owns the whole pane.
-					ListPosition:  "top",
-					SendURL:       "api/send",
-					CancelURL:     "api/cancel",
-					DeepLinkParam: "session",
-					LockActivity:  true,
-					EmptyText:     desc,
-					Placeholder:   "Ask " + display + " something…",
-					Markdown:      true,
-					BulkSelect:    true,
-					Attachments:   true,
-					// Per-user surfaces:
-					//   - Memory: the end-user's accumulated notes for
-					//     this agent (private to them)
-					//   - Documents: a unified view of the agent's
-					//     shared knowledge base (read-only — admin
-					//     curated) + the end-user's own uploaded docs
-					//     (editable, private to them).
-					Actions: []ui.ToolbarAction{
-						{Label: "Memory", Title: "Review and prune the notes this agent has accumulated from your conversations.",
-							Method: "client", URL: "agents_memory_modal"},
-						{Label: "Knowledge", Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus.",
-							Method: "client", URL: "agents_knowledge_modal"},
-						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
-							Method: "client", URL: "copy_session"},
-					},
-					Modes: modes,
-				},
+				Body:     panel,
 			},
 		},
 		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + memoryModalScript + docsModalScript,

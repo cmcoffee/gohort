@@ -1657,6 +1657,23 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// bypasses the fleet.
 		tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
 	}
+	// Parent-tool inheritance — an owned sub-agent that opted in (InheritParentTools)
+	// resolves its parent's NON-consequential catalog at runtime in addition to
+	// its own allowlist: the parent's worker tools (no Fleet block) plus the
+	// read-only phantom tools. Lets a Builder-authored summarizer read the chat
+	// it summarizes without being a Fleet agent (so no texting / delegation).
+	// Guarded to top-level parents so inheritance can't chain, and deduped so
+	// shared names don't double-register.
+	if t.agent.InheritParentTools && t.agent.OwnedBy != "" {
+		if parent, ok := loadAgent(t.udb, t.agent.OwnedBy); ok && parent.OwnedBy == "" {
+			inherited := t.inheritableParentTools(parent, sess)
+			before := len(tools)
+			tools = mergeToolsDedup(tools, inherited)
+			for _, td := range tools[before:] {
+				toolNames = append(toolNames, td.Tool.Name)
+			}
+		}
+	}
 	// (Skill-granted tools are NOT resolved here anymore. Activation is
 	// per-turn: t.skillsActive is empty when this static catalog is built
 	// at turn start. A skill's tools are surfaced by the per-round
@@ -4249,13 +4266,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// verbose schemas out of the catalog. Always available; harmless
 	// when the agent has no lazy custom tools (LLM just never calls it).
 	knowTools = append(knowTools, t.loadToolToolDef())
-	// send_to_builder — hand an agent/pipeline/skill authoring request off to
-	// Builder as a one-click link (vs the prose punt), so the user lands in a
-	// fresh Builder session with their request loaded for the full back-and-forth.
-	// Not for Builder itself (no self-handoff).
-	if !isBuilderAgent(t.agent.ID) {
-		knowTools = append(knowTools, t.sendToBuilderToolDef())
-	}
+	// send_to_builder is DISABLED — a Fleet agent now BUILDS agents/pipelines/
+	// skills by DISPATCHING Builder as a sub-agent (agents(run, agent="builder")),
+	// which drafts in-session and queues for the owner's approval, rather than
+	// handing the user a one-click link to a separate Builder session. The tool
+	// and its brief plumbing (send_to_builder.go, the ?builder_brief deep-link,
+	// the toolbar "Builder" button) stay in the tree; only the LLM-facing tool is
+	// no longer offered. To re-enable: append t.sendToBuilderToolDef() here for
+	// non-Builder agents.
 	// compact_context — LLM-driven context management. Lets the model
 	// proactively discard the bodies of EARLIER tool results it has
 	// consumed and no longer needs (a smoke-test report, a big fetch, a

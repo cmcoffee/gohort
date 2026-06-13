@@ -172,9 +172,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Type: "header", Label: "Channel & fleet",
 				Help: "Always-on behaviors. Independent of each other."},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a channel",
-				Help: "Gives the agent a persistent home thread it resumes alongside its normal sessions — where event-monitor wakes and standing-agent reports land — with a rolling summary so it stays bounded. Adds the channel sidebar (Channel row + Authorizations / Enabled agents / Event monitors). Channel agents are never published publicly."},
+				Help: "Gives the agent a persistent home thread it resumes alongside its normal sessions — where event-monitor wakes and standing-agent reports land — with a rolling summary so it stays bounded. Adds the channel sidebar (Channel row + Authorizations / Enabled agents / Event monitors). Can be published as a public app (each visitor gets their own private channel thread + compaction) as long as Fleet tools are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Fleet management tools",
-				Help: "Grants delegation + standing-agent + event-monitor + run-ledger + history-recall tools. Unlike the old orchestrator mode it does NOT stop the agent doing work itself — it just adds the tools."},
+				Help: "Grants delegation + standing-agent + event-monitor + run-ledger + history-recall tools. Unlike the old orchestrator mode it does NOT stop the agent doing work itself — it just adds the tools. Fleet agents are never published publicly (the tools reach owner-only management endpoints)."},
 
 			ui.FormField{Type: "header", Label: "Publishing",
 				Help: "Who can use this agent and under what restrictions."},

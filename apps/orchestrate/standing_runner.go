@@ -13,6 +13,7 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -22,6 +23,18 @@ import (
 // standing-agent scheduler and ensures the scheduler handler is live.
 func registerStandingRunner(app *OrchestrateApp) {
 	RegisterStandingRunner(func(ctx context.Context, sa StandingAgent) StandingRunResult {
+		// Never run a sub-agent that's still held for approval. A schedule (or a
+		// delegation) can be set up against an agent before its owner activates
+		// it — running it anyway would defeat the approval gate. Report an
+		// attention entry naming why it didn't execute. Covers standing fires AND
+		// delegations, since both flow through the registered runner.
+		if rec, ok := loadAgent(UserDB(app.DB, sa.Owner), sa.AgentID); ok && rec.PendingApproval {
+			return StandingRunResult{
+				Status:  RunAttention,
+				Summary: "Skipped: agent \"" + rec.Name + "\" is still awaiting approval — activate it in the Authorizations pane and it will run on its next schedule.",
+			}
+		}
+
 		var blockedTool string
 		confirm := func(name, _ string) bool {
 			if blockedTool == "" {
@@ -51,6 +64,44 @@ func registerStandingRunner(app *OrchestrateApp) {
 				"\"; skipped on this unattended run. " + res.Summary
 		}
 		return res
+	})
+
+	// Reporter: after each run, post the result back into the channel/session
+	// the standing agent was created from, so it lands where the user is
+	// watching and lights the unread dot (saveChatSession bumps LastAt, which
+	// the session list reads as unread). Mirrors the event-monitor notify=direct
+	// delivery. Best-effort: a missing session is recreated; failures log only.
+	RegisterStandingReporter(func(ctx context.Context, sa StandingAgent, rec RunRecord) {
+		reportAgent := strings.TrimSpace(sa.ReportAgentID)
+		if reportAgent == "" {
+			reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
+		}
+		reportSession := strings.TrimSpace(sa.ReportSessionID)
+		if reportSession == "" {
+			reportSession = channelSessionID(reportAgent)
+		}
+		udb := UserDB(app.DB, sa.Owner)
+		if udb == nil {
+			return
+		}
+		body := strings.TrimSpace(rec.Raw)
+		if body == "" {
+			body = strings.TrimSpace(rec.Summary)
+		}
+		if body == "" {
+			return // nothing to report
+		}
+		sess, ok := loadChatSession(udb, reportAgent, reportSession)
+		if !ok {
+			sess = ChatSession{ID: reportSession, AgentID: reportAgent}
+		}
+		sess.Messages = append(sess.Messages, ChatMessage{
+			Role:    "assistant",
+			Content: fmt.Sprintf("[standing agent %q]\n%s", sa.Name, body),
+		})
+		if _, err := saveChatSession(udb, sess); err != nil {
+			Log("[standing] report append failed for %s/%s: %v", sa.Owner, sa.Name, err)
+		}
 	})
 
 	// Idempotent — the Operator app also starts the scheduler; first wins.

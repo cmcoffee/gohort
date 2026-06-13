@@ -367,6 +367,24 @@ type AgentRecord struct {
 	// Empty (default) = no parent, standard top-level agent.
 	OwnedBy string `json:"owned_by,omitempty"`
 
+	// InheritParentTools makes an owned sub-agent (OwnedBy set) resolve the
+	// PARENT's inheritable tool catalog at runtime in ADDITION to its own
+	// AllowedTools. "Inheritable" is the parent's non-consequential set — its
+	// normal worker tools plus the read-only phantom tools (read_phantom_chat,
+	// list_phantom_chats), but NOT the consequential Fleet tools (delegate,
+	// message_contact, notify_me, standing-agent / monitor management). Lets a
+	// Builder-authored summarizer read a phantom chat without being able to text
+	// people or run the fleet. Opt-in (default false) so existing sub-agents are
+	// unaffected. Only meaningful with OwnedBy set.
+	InheritParentTools bool `json:"inherit_parent_tools,omitempty"`
+
+	// PendingApproval holds a freshly-authored agent OUT of service until the
+	// owner approves it. Set when a dispatched Builder mints an agent on a
+	// parent's behalf: the record is saved but excluded from dispatch / run /
+	// listing, and an Authorization (action=activate_sub_agent) lands in the
+	// parent owner's queue. Approving flips this off. Default false = live.
+	PendingApproval bool `json:"pending_approval,omitempty"`
+
 	// Think overrides the LLM's reasoning mode for this agent's turns.
 	// Tri-state stored as a string so it round-trips cleanly through
 	// the form panel (HTML select) AND the LLM CRUD tool (string arg):

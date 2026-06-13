@@ -503,7 +503,7 @@ func (T *OrchestrateApp) handleConsoleRunDetail(w http.ResponseWriter, r *http.R
 // handleConsoleApprovals lists pending delegations awaiting the user's
 // approval (the authorizations queue).
 func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -523,6 +523,12 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 		if a.Action == "converse_contact" {
 			agent = operatorApprovalRecipient(user, a)
 			action = "converse toward: " + a.Brief
+		}
+		if a.Action == "activate_sub_agent" {
+			if rec, found := loadAgent(udb, a.Agent); found {
+				agent = rec.Name
+			}
+			action = "activate sub-agent: " + a.Brief
 		}
 		out = append(out, apprRow{
 			Agent:     agent,
@@ -565,7 +571,7 @@ func operatorApprovalRecipient(owner string, a Authorization) string {
 // agent (always-allow), drops the pending entry, and runs the delegation async
 // (the result lands in Activity / the run-ledger).
 func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request, always bool) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -575,6 +581,19 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	DeleteAuthorization(RootDB, user, a.ID)
+	// activate_sub_agent: a dispatched Builder drafted this sub-agent and held it
+	// for approval. Approval just clears the PendingApproval hold so it goes
+	// live — no delegation runs. ("Always allow" has no meaning here.)
+	if a.Action == "activate_sub_agent" {
+		if rec, ok := loadAgent(udb, a.Agent); ok {
+			rec.PendingApproval = false
+			if _, err := saveAgent(udb, rec); err != nil {
+				Log("[operator.approval] activate_sub_agent %s save failed: %v", a.Agent, err)
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	// send_message: deliver the queued text to the contact via the phantom
 	// bridge. ("Always allow" doesn't pre-authorize a contact — each outbound
 	// to a real person stays a deliberate approval.)
@@ -633,10 +652,16 @@ func (T *OrchestrateApp) handleApprovalAlways(w http.ResponseWriter, r *http.Req
 }
 
 func (T *OrchestrateApp) handleApprovalDeny(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	DeleteAuthorization(RootDB, user, r.URL.Query().Get("id"))
+	id := r.URL.Query().Get("id")
+	// Denying a sub-agent activation rejects the draft outright — delete the
+	// held agent so it doesn't linger dormant (PendingApproval) forever.
+	if a, found := GetAuthorization(RootDB, user, id); found && a.Action == "activate_sub_agent" {
+		deleteAgent(udb, user, a.Agent)
+	}
+	DeleteAuthorization(RootDB, user, id)
 	w.WriteHeader(http.StatusNoContent)
 }

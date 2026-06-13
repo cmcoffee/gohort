@@ -51,6 +51,12 @@ type StandingAgent struct {
 	Created         time.Time `json:"created"`
 	NextRun         time.Time `json:"next_run,omitempty"`     // display: next scheduled fire
 	SchedulerID     string    `json:"scheduler_id,omitempty"` // current recurring task id (for cancel-and-replace)
+	// Report target — the channel agent + session this standing agent was
+	// created from, so each run's result posts back where the user is watching
+	// (parallels EventMonitor's WakeAgent/WakeSession). Empty on legacy records;
+	// the reporter then falls back to the target agent's channel home thread.
+	ReportAgentID   string `json:"report_agent_id,omitempty"`
+	ReportSessionID string `json:"report_session_id,omitempty"`
 }
 
 // StandingRunResult is what a registered runner reports for one run.
@@ -76,6 +82,7 @@ type standingRunPayload struct {
 var (
 	standingRunner    StandingRunnerFunc
 	standingEscalator func(RunRecord)
+	standingReporter  func(context.Context, StandingAgent, RunRecord)
 	standingMu        sync.RWMutex
 	standingStarted   bool
 )
@@ -93,6 +100,16 @@ func RegisterStandingRunner(fn StandingRunnerFunc) {
 func RegisterStandingEscalator(fn func(RunRecord)) {
 	standingMu.Lock()
 	standingEscalator = fn
+	standingMu.Unlock()
+}
+
+// RegisterStandingReporter installs a callback invoked after EVERY standing run
+// (ok or not), so the agent-aware layer can post the result back into the
+// channel/session the agent was created from. Distinct from the escalator,
+// which fires only on non-OK runs for harder attention handling. Optional.
+func RegisterStandingReporter(fn func(context.Context, StandingAgent, RunRecord)) {
+	standingMu.Lock()
+	standingReporter = fn
 	standingMu.Unlock()
 }
 
@@ -293,6 +310,7 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 	standingMu.RLock()
 	runner := standingRunner
 	esc := standingEscalator
+	rpt := standingReporter
 	standingMu.RUnlock()
 
 	if trigger == "" {
@@ -328,7 +346,17 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 	rec.Artifacts = res.Artifacts
 	rec.Err = res.Err
 	rec.Ended = time.Now()
+	fullOutput := rec.Raw // capture before RecordRun moves Raw to the encrypted side table
 	rec = RecordRun(db, rec)
+
+	// Report EVERY run back to the channel/session it was created from. Pass the
+	// full output explicitly — RecordRun stores Raw in the encrypted side table
+	// and the returned record no longer carries it.
+	if rpt != nil {
+		forReport := rec
+		forReport.Raw = fullOutput
+		rpt(ctx, sa, forReport)
+	}
 
 	if rec.Status != RunOK {
 		Log("[standing] %s/%s finished with status=%s", sa.Owner, sa.Name, rec.Status)

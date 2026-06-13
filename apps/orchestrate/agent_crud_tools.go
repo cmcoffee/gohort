@@ -93,9 +93,29 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	copied := autoCopySessionToolsForAgent(sess, &rec)
 	rec.ID = "" // force fresh assignment
 	rec.Owner = sess.Username
+	// Dispatched-Builder authoring: a Fleet parent (e.g. Chat) dispatched Builder
+	// to mint this agent. Stamp it as an owned, parent-inheriting sub-agent held
+	// for approval — saved, but kept OUT of service (excluded from dispatch / run
+	// / listing) until the parent owner approves it from the Authorizations pane.
+	dispatchedBuild := strings.TrimSpace(sess.DispatchParentAgentID) != ""
+	if dispatchedBuild {
+		rec.OwnedBy = sess.DispatchParentAgentID
+		rec.InheritParentTools = true
+		rec.PendingApproval = true
+	}
 	saved, err := saveAgent(sess.DB, rec)
 	if err != nil {
 		return "", err
+	}
+	if dispatchedBuild {
+		// Queue the parent owner's approval. Agent holds the created id; the
+		// console's activate handler flips PendingApproval off on approve.
+		SaveAuthorization(RootDB, Authorization{
+			Owner:  sess.Username,
+			Action: "activate_sub_agent",
+			Agent:  saved.ID,
+			Brief:  fmt.Sprintf("Activate %q — sub-agent Builder drafted for %s. Inherits the parent's read-only tools; nothing consequential.", saved.Name, sess.DispatchParentAgentID),
+		})
 	}
 	// Stamp the session's authoring-in-progress slot so subsequent
 	// create_*_tool calls can auto-default for_agent to this agent
@@ -119,6 +139,15 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		}
 	}
 	b, _ := json.Marshal(saved)
+	if dispatchedBuild {
+		// Held-for-approval path: the sub-agent is saved but not live, so there
+		// is nothing for Builder to verify by dispatch — it stays gated until
+		// the parent owner approves. Report and end the turn.
+		return fmt.Sprintf(
+			"AGENT_DRAFTED ok. id=%s name=%q — saved but HELD FOR APPROVAL. It will not run until the owner approves it in the Authorizations pane; on approval it goes live as a sub-agent of %s and inherits that parent's read-only tools. DONE — reply with a one-line summary of what you drafted and END THE TURN. Do NOT call ask_user or create_agent again.\n\nSaved record: %s",
+			saved.ID, saved.Name, sess.DispatchParentAgentID, string(b),
+		), nil
+	}
 	// Lead with a directive line so the LLM doesn't keep iterating
 	// (e.g. asking the user a follow-up question after the agent's
 	// already been created). The JSON after is for reference if the

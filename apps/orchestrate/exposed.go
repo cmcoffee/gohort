@@ -131,14 +131,24 @@ type ExposedAgentEntry struct {
 // (<100 users, <20 agents/user); add a deployment-wide index if a
 // scan becomes noticeable.
 // publiclyExposable reports whether an agent may be served on the public
-// /agents/ surface. Channel agents (a personal ongoing thread + the
-// management box that reaches admin-gated fleet endpoints) and Fleet agents
-// (delegation tools) are NEVER public, regardless of the Exposed flag.
+// /agents/ surface. Fleet agents (delegation + standing-agent + event-monitor
+// tools that reach admin-gated owner-only endpoints) are NEVER public,
+// regardless of the Exposed flag. A plain Channel agent (a persistent home
+// thread + rolling-summary compaction, no fleet tools) CAN be published — the
+// agents app pins each visitor to their own per-(user, agent) channel thread,
+// and the fleet management box is owner-only so it never renders publicly.
 // Enforced at the read points so the rule holds even if a record drifts to
 // Exposed=true.
 func publiclyExposable(a AgentRecord) bool {
-	return a.Exposed && !a.Channel && !a.Fleet
+	return a.Exposed && !a.Fleet
 }
+
+// ChannelSessionID exposes a channel agent's pinned home-thread session id so
+// the public agents app can pin each visitor to the SAME id the runner
+// compacts against (agent.Channel && sess.ID == channelSessionID(agent.ID) in
+// runner.go). Per-(user, agent) scoping means the id resolves to a different
+// physical thread for every visitor without the id itself differing.
+func ChannelSessionID(agentID string) string { return channelSessionID(agentID) }
 
 func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	if T.DB == nil || AuthDB == nil {
@@ -247,6 +257,27 @@ func (T *OrchestrateApp) PublicHandleSend(w http.ResponseWriter, r *http.Request
 // PublicHandleCancel mirrors PublicHandleSend's bypass for cancel.
 func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
 	T.handleCancel(w, r, agent)
+}
+
+// PublicHandleChannelClear wipes the calling end-user's channel home thread
+// (conversation + rolling summary / fold cursor) for an exposed channel agent
+// — the per-visitor equivalent of the owner's "Clear channel" console action.
+// Per-(user, agent) scoped via RequireUser, so a visitor only ever resets
+// their OWN thread. agentID comes from the slug-resolved record, not the
+// request, so a crafted ?agent= can't redirect the wipe.
+func (T *OrchestrateApp) PublicHandleChannelClear(w http.ResponseWriter, r *http.Request, agentID string) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sid := channelSessionID(agentID)
+	deleteChatSession(udb, agentID, sid)
+	deleteCompactState(udb, agentID, sid)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // (PublicHandleAgentMemory removed — the auto-notes Memory layer

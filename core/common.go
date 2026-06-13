@@ -1297,6 +1297,12 @@ type ToolSession struct {
 	// stock-tracker style features). Empty for non-chat apps.
 	ChatSessionID string
 
+	// DispatchParentAgentID is set when this session runs a sub-agent dispatched
+	// by a parent (e.g. Chat dispatching Builder). It carries the PARENT agent's
+	// id so authoring tools can stamp creations as owned by the parent and route
+	// them to the parent owner's approval queue. Empty for top-level turns.
+	DispatchParentAgentID string
+
 	// RoutingTarget is a generic "where does this session belong?" identifier
 	// the host app stamps on at construction time. Format is "<prefix>:<ref>"
 	// — e.g. "phantom:iMessage;-;+14155551234", "chat:<sessionID>". It scopes

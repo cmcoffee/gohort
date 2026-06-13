@@ -121,6 +121,15 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 	if sess != nil {
 		owner = sess.Username
 	}
+	// The channel/orchestrator agent + session this management surface is bound
+	// to (runner passes t.agent.ID). Captured before any handler shadows agentID
+	// so standing-agent reports can land back in the session they were created
+	// from.
+	controllerAgentID := agentID
+	controllerSession := ""
+	if sess != nil {
+		controllerSession = sess.ChatSessionID
+	}
 	return []AgentToolDef{
 		{
 			Tool: Tool{
@@ -178,6 +187,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				sa := StandingAgent{
 					Name: name, Owner: owner, AgentID: agentID,
 					Mission: strings.TrimSpace(oArgStr(args, "mission")), Created: time.Now(),
+					ReportAgentID:   controllerAgentID,
+					ReportSessionID: controllerSession,
 				}
 				switch {
 				case cron != "":

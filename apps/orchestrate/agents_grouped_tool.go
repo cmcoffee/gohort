@@ -170,6 +170,11 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		if isBuilderAgent(a.ID) {
 			continue
 		}
+		// Sub-agents held for approval aren't live — keep them out of the
+		// dispatch listing until the owner activates them.
+		if a.PendingApproval {
+			continue
+		}
 		out = append(out, row{
 			ID:          a.ID,
 			Name:        a.Name,
@@ -309,6 +314,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
 	}
+	// A sub-agent held for approval is not live yet — refuse to dispatch it until
+	// the owner activates it from the Authorizations pane.
+	if target.PendingApproval {
+		return "", fmt.Errorf("agents(run, agent=%q) refused — that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
+	}
 	if target.ID == t.agent.ID {
 		return "", fmt.Errorf("agents(run, agent=%q) is impossible — you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing — pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
 	}
@@ -321,8 +331,15 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// draft pool the dispatching agent can't see. The user clicks
 	// Builder in their picker directly when they want authoring; no
 	// other agent should be intermediating that conversation.
-	if isBuilderAgent(target.ID) {
-		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder isn't dispatch-callable. Authoring needs the user directly so Builder can run its full intake conversation, ask clarifying questions, and surface its drafts in a session the user can act on. Point the user at Builder in their agent picker (or the chat URL for Builder), describe what they want built, and end your turn", key)
+	// Builder is dispatch-callable ONLY from a channel/Fleet controller (e.g.
+	// Chat). That parent runs it as an authoring SUB-agent: Builder inherits the
+	// parent's inheritable tools (to inspect the parent's world while drafting),
+	// and anything it creates is stamped OwnedBy=<parent> and queued for the
+	// parent owner's approval instead of going live. For every NON-Fleet caller
+	// Builder stays undispatchable — authoring there still needs the human in
+	// the loop (the full intake conversation, ask_user pauses, draft review).
+	if isBuilderAgent(target.ID) && !t.agent.Fleet {
+		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent. Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
 	}
 	// Cycle guard. The current turn's agent is always considered "in
 	// flight" — combined with dispatchChain (inherited from parent
@@ -365,6 +382,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// arbitrary fleet access from Builder; just the specialists.
 	if target.OwnedBy == t.agent.ID {
 		// Allowed by ownership; skip the standard checks.
+	} else if isBuilderAgent(target.ID) && t.agent.Fleet {
+		// Builder is dispatch-callable from a Fleet controller (e.g. Chat) for
+		// in-session authoring, despite Builder's Hidden=true seed posture. The
+		// guard at the top of this function already refused non-Fleet callers, so
+		// reaching here means the caller is authorized — let it through past the
+		// Hidden / allowlist checks below.
 	} else if isBuilderAgent(t.agent.ID) && target.OwnedBy != "" {
 		// Builder override — allow dispatch to any sub-agent for
 		// post-authoring verification. Logged for audit visibility.
@@ -403,6 +426,10 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		DB:             t.udb,
 		ChatSessionID:  subSessID,
 		SubAgentRunner: t.runPipelineSubAgent,
+		// Carry the dispatching parent so authoring tools (Builder's
+		// create_agent) can stamp creations OwnedBy=<parent> and route them to
+		// the parent owner's approval queue.
+		DispatchParentAgentID: t.agent.ID,
 		// Inherit the parent turn's LIVE connector (same instance).
 		// Mid-turn flips on the parent propagate to this child
 		// too — sub-agents can never be more permissive than the
@@ -433,6 +460,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	}
 	if isBuilderAgent(target.ID) {
 		tools = append(tools, builderAuthoringTools(subSess)...)
+		// Dispatched Builder reaches here only from a Fleet parent (guarded at
+		// the top of this function). Inherit that parent's non-consequential
+		// catalog so Builder can inspect the parent's world while authoring —
+		// read_phantom_chat, web_search, etc. — but never the parent's texting /
+		// delegation / fleet tools. Deduped so shared names don't double-add.
+		tools = mergeToolsDedup(tools, t.inheritableParentTools(t.agent, subSess))
 	}
 
 	// chatTurn-bound framework tools (knowledge_search, memory_*,
@@ -482,6 +515,17 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		tools = append(tools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
 	}
 	tools = append(tools, subTurn.skillToolDefs()...)
+	// Parent-tool inheritance on the DISPATCH path (this resolves tools directly,
+	// not via resolveWorkerTools, so the runtime block there wouldn't fire here).
+	// An owned sub-agent that opted in pulls its parent's non-consequential
+	// catalog (read_phantom_chat etc.) so a Builder-authored summarizer can read
+	// the chat it summarizes even when reached by dispatch. Guarded to top-level
+	// parents; deduped.
+	if target.InheritParentTools && target.OwnedBy != "" {
+		if parent, ok := loadAgent(t.udb, target.OwnedBy); ok && parent.OwnedBy == "" {
+			tools = mergeToolsDedup(tools, subTurn.inheritableParentTools(parent, subSess))
+		}
+	}
 
 	// V1 — wrap the sub-agent's tools so their calls emit into the
 	// caller's SSE activity pane. Reuses the parent's wiring (cmd

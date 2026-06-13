@@ -337,6 +337,18 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
+	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
+	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
+	// its parent's non-consequential catalog (read_phantom_chat etc.) at runtime
+	// — without this a Builder-authored summarizer scheduled to run on a clock
+	// would lack the very tool it was built to use. Parent record lives in the
+	// owner's store; guarded to top-level parents; deduped.
+	if target.InheritParentTools && target.OwnedBy != "" {
+		if parent, ok := loadAgent(ownerDB, target.OwnedBy); ok && parent.OwnedBy == "" {
+			pseudo := &chatTurn{app: T, agent: target, user: runtimeUser, udb: runtimeDB, ctx: ctx, network: subSess.Network}
+			tools = mergeToolsDedup(tools, pseudo.inheritableParentTools(parent, subSess))
+		}
+	}
 	// Phantom dispatches: pin the local target's posture flags AND
 	// skip the facts-load so prependAgentContext can't inject any
 	// pre-existing phantom-side facts into the prompt. See the
@@ -526,6 +538,18 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
 		tools, _ = dropToolsByName(tools, nil, "recurring")
+	}
+	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
+	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
+	// its parent's non-consequential catalog (read_phantom_chat etc.) at runtime
+	// — without this a Builder-authored summarizer scheduled to run on a clock
+	// would lack the very tool it was built to use. Parent record lives in the
+	// owner's store; guarded to top-level parents; deduped.
+	if target.InheritParentTools && target.OwnedBy != "" {
+		if parent, ok := loadAgent(ownerDB, target.OwnedBy); ok && parent.OwnedBy == "" {
+			pseudo := &chatTurn{app: T, agent: target, user: runtimeUser, udb: runtimeDB, ctx: ctx, network: subSess.Network}
+			tools = mergeToolsDedup(tools, pseudo.inheritableParentTools(parent, subSess))
+		}
 	}
 	// Phantom dispatches: force the sub-agent posture (no memory layer,
 	// no facts layer) on the LOCAL target so prependAgentContext below
