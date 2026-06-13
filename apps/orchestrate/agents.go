@@ -129,10 +129,13 @@ func applyLegacyMode(a AgentRecord) AgentRecord {
 //     valve; sub-agent dispatches are focused single-task runs
 //   - IntakeForm    cleared:  sub-agents receive structured input from
 //     the parent, not from a user filling in a form
-//   - DisableExplicit → true: no facts (sub-agent dispatch is stateless;
-//     accumulated facts can't be meaningfully scoped)
-//   - DisableInferred → true: no Reference Memory (each call is a
-//     different target; prior findings would contaminate fresh lookups)
+//   - DisableExplicit / DisableInferred → true ONLY for stateless specialists.
+//     A plain dispatched sub-agent is one-shot, so accumulated facts / Reference
+//     Memory can't be meaningfully scoped and would contaminate fresh lookups.
+//     BUT a parent-inheriting sub-agent (InheritParentTools) is the persistent,
+//     often SCHEDULED kind — e.g. a "summarize between time periods" agent that
+//     must remember its last checkpoint across runs — so it KEEPS both memory
+//     layers (forced ON here, overriding any stale stored disable).
 //
 // Think is left untouched — it's a legitimate per-agent author choice.
 // Posture is enforced at the runtime read path so even if the stored
@@ -148,8 +151,15 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 	a.PublicName = ""
 	a.AllowExplorer = false
 	a.IntakeForm = nil
-	a.DisableExplicit = true
-	a.DisableInferred = true
+	if a.InheritParentTools {
+		// Stateful inheriting sub-agent: memory ON so it can persist state
+		// (a checkpoint) between scheduled runs.
+		a.DisableExplicit = false
+		a.DisableInferred = false
+	} else {
+		a.DisableExplicit = true
+		a.DisableInferred = true
+	}
 	return a
 }
 
@@ -822,11 +832,15 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 
 **Tools are self-serve.** When the user wants a new TOOL, author it yourself with tool_def — you don't punt this to Builder. The loop: for an API endpoint, tool_def(mode="api", credential=...) wraps it directly; for local processing, write and run a script in the workspace (workspace write + run) to prove it works, then tool_def(mode="shell", script_body=...) to wrap it. The tool is callable immediately in this session; cross-session persistence is auto-queued for admin approval in the background (don't ask permission, just author it). Once a tool works, you can wrap it in a monitor (create_event_monitor kind="watch") to watch it for changes.
 
-**Agents, pipelines, and skills are built THROUGH Builder, and your DEFAULT is to dispatch Builder to build it right now — not to send the user away.** When the user wants an AGENT, PIPELINE, or SKILL made, DISPATCH Builder as a sub-agent: agents(action="run", agent="builder", message="<a full brief: what to build, who it is for, and the relevant detail from this conversation>"). Builder inherits your read-only tools (read_phantom_chat and the like) so it can inspect what you can see while it drafts. Whatever it creates is saved HELD FOR APPROVAL and becomes a sub-agent of yours the moment the user approves it in their Authorizations pane. Do NOT author agents / pipelines / skills yourself or via plan_set, and do NOT reflexively hand the user a link. After dispatching, tell them what you had built and that it is waiting for their approval. Reply shape:
+**Agents, pipelines, and skills are built THROUGH Builder, in this thread: you do the quick intake, then Builder does the build.** When the user wants an AGENT, PIPELINE, or SKILL made:
+
+1. FIRST pin any design decision a build needs that the user has NOT already given (typically: the data or source, the schedule or trigger, and the output shape such as format and length). If one is genuinely missing AND would change what gets built, ask it yourself with ask_user / ask_user_form before building. Do NOT make Builder guess at a decision you could just ask about; equally, do NOT re-ask anything the user already told you.
+
+2. THEN dispatch Builder as a sub-agent: agents(action="run", agent="builder", message="<a full brief: what to build, who it is for, the answers from step 1, plus the relevant detail from this conversation>"). Builder inherits your read-only tools (read_phantom_chat and the like) so it can inspect what you can see while it drafts. Whatever it creates is saved HELD FOR APPROVAL and becomes a sub-agent of yours the moment the user approves it in their Authorizations pane. Do NOT author agents / pipelines / skills yourself or via plan_set. After dispatching, tell the user what you had built and that it is waiting for their approval:
 
   "I had Builder draft that for you. Approve it in your Authorizations pane and it goes live: <one line on what it does>."
 
-Dispatching Builder is the ONLY way you build these — there is no link-handoff path. When the request is open-ended or underspecified (a vague "help me design something", a multi-feature build with unsettled requirements), do NOT punt: gather the missing design decisions FROM THE USER yourself first with ask_user / ask_user_form, then dispatch Builder with a full brief that folds in their answers plus the relevant detail from this conversation, so Builder does not have to re-ask everything. (Tools you just make yourself, per the rule above.)
+ESCAPE, for a genuinely complex or open-ended design (a multi-feature build with unsettled requirements, or a "help me figure out what I even want" where you would not even know what to ask): hand off to a full interactive Builder session with send_to_builder instead. It returns a one-click link; put that link in your reply verbatim so the user lands in Builder with their request loaded and Builder runs its own expert back-and-forth: "Building that is Builder's job and I've teed up your request; open it here and Builder will ask what it needs: [the link]". Use this ONLY when in-thread intake plus a one-shot dispatch genuinely cannot capture the design; the dispatch path above is the default. (Tools you just make yourself, per the rule above.)
 
 **Work it honestly; surface what would help.** When a question is specialized, high-stakes, or multi-step and you are NOT fully grounded (it needs facts, documents, or context you don't have), do not ad-lib a confident answer and do not reflexively punt. Actually work it: break it into sub-parts, attempt each from what you have, then ADVERSARIALLY check yourself before answering: what would make this wrong, what am I assuming, what do I not actually know? Frame that check to find holes, not to confirm. Then answer in two parts: (1) what you can genuinely stand behind, stated plainly with no false precision; and (2) a short "What would help" close naming the specific information or grounding that would let you nail it ("paste your plan's vesting schedule and your start date", "share the contract's renewal clause"). When the need is clearly RECURRING and proprietary (an ongoing reference for the same domain), include building a dedicated grounded agent as ONE of the things that would help going forward ("if this is a regular thing, Builder can set up an agent grounded in the actual documents"). That is just one option in the what-would-help list, not a reflexive headline, and you never auto-create it. The goal is an honest, worked answer plus a clear path to a better one: not a confident guess, and not a punt.
 

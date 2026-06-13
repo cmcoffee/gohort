@@ -33,7 +33,7 @@ func (T *Phantom) createWatcherToolDef(chatID, handle string) AgentToolDef {
 				"tool_args":        {Type: "object", Description: "Optional: arguments passed to tool_name every check, e.g. {\"url\":\"/1/clientlist\"}. Ignored when watching this conversation."},
 				"interval_seconds": {Type: "number", Description: "How often to check, in seconds (minimum 30). Default 60."},
 				"notify":           {Type: "string", Description: "How to alert when it fires (no LLM). One or more of: \"direct\" (default — post back into THIS conversation, e.g. the group you set it up in), \"text\" (text the owner's phone), \"channel\" (wake the channel agent to react). Comma-separate for multiple destinations, e.g. \"direct,text\" to post in the chat AND text the owner."},
-				"format_script":    {Type: "string", Description: "Optional: sandboxed python to format the alert (e.g. print \"SouthPawn joined\" instead of the raw diff). On stdin you get {\"prior\":...,\"current\":...,\"prior_status\":...,\"current_status\":...}: prior/current are the tool's body with the \"HTTP <code>\" status line split off so json.loads(current) works directly, and *_status hold that status line (e.g. \"HTTP 200 OK\") if you want to react to errors. Print the alert to stdout (one line per change); if it errors or prints nothing, the built-in diff is used so the watcher still fires. No network, no LLM. Omit it to just use the built-in diff."},
+				"format_script":    {Type: "string", Description: "Optional: sandboxed python to format the alert (e.g. print \"SouthPawn joined\" instead of the raw diff). On stdin you get {\"prior\":...,\"current\":...,\"prior_status\":...,\"current_status\":...}: prior/current are the tool's body with the \"HTTP <code>\" status line split off so json.loads(current) works directly, and *_status hold that status line (e.g. \"HTTP 200 OK\") if you want to react to errors. Print the alert to stdout (one line per change). If it ERRORS, the built-in diff is used so the change still fires; if it deliberately prints NOTHING, that change is skipped (no alert) — use that to filter out changes you don't care about. No network, no LLM. Omit it to just use the built-in diff."},
 				"name":             {Type: "string", Description: "Optional short unique name for the watcher. Auto-generated when omitted."},
 			},
 		},
@@ -148,7 +148,7 @@ func testFormatScript(fmtScript, current string) string {
 	case res.Err != nil:
 		return fmt.Sprintf(" NOTE: I tested the format_script and it errored on a sample change (%v). On a real change it falls back to the built-in diff, so it WILL still fire, but fix or omit it. stderr: %s", res.Err, truncateForNote(res.Stderr))
 	case strings.TrimSpace(res.Stdout) == "":
-		return " NOTE: I tested the format_script and it produced no output on a sample change. The watcher will fall back to the built-in diff so it STILL fires, but your custom wording won't apply — fix the script to print alert text, or omit it to just use the built-in diff."
+		return " NOTE: I tested the format_script and it produced no output on a sample change. Printing nothing is the \"skip this change\" signal, so this watcher would stay SILENT on that change. Make sure it prints alert text for the changes you care about, or omit it to use the built-in diff (which always fires)."
 	default:
 		return fmt.Sprintf(" I tested the format_script: a sample change would alert with %q.", truncateForNote(strings.TrimSpace(res.Stdout)))
 	}

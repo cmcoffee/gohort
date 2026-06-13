@@ -460,10 +460,18 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		SaveEventMonitor(db, cur)
 		return
 	}
-	// Build the alert text. A format_script (sandboxed python) can shape the
-	// notification; if it prints nothing or errors, buildWatchSummary falls back
-	// to the built-in diff so a real change always fires (never silently eaten).
-	summary, _ := buildWatchSummary(ctx, cur, prior, body)
+	// Build the alert text. A format_script (sandboxed python) shapes the
+	// notification; empty stdout is its "skip this change" signal (suppress),
+	// while a script error / no script falls back to the built-in diff.
+	summary, suppress := buildWatchSummary(ctx, cur, prior, body)
+	if suppress {
+		// Intentional skip: the baseline was already advanced above, so persist
+		// it and stay quiet. The next poll diffs against THIS body, not the
+		// pre-change one, so the same change won't re-trip.
+		Debug("[event] watch %s/%s: change detected but format_script suppressed the alert", m.Owner, m.Name)
+		SaveEventMonitor(db, cur)
+		return
+	}
 	Debug("[event] watch %s/%s: change detected — firing (%s)", m.Owner, m.Name, m.Notify)
 	cur.LastFired = time.Now()
 	SaveEventMonitor(db, cur)
@@ -472,20 +480,21 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 
 // buildWatchSummary produces the alert text for a watch fire. With a
 // FormatScript it runs the user's sandboxed python ({prior,current} on stdin →
-// stdout) and uses its stdout as the alert. On empty stdout, a script error, or
-// no script, it falls back to the built-in diff + current-output summary so a
-// real change ALWAYS fires. (suppress is always false now — kept for signature
-// compatibility; a buggy script can no longer silently eat a wake.)
+// stdout) and uses its stdout as the alert. Empty stdout suppresses the wake
+// (the script's intentional "skip this change" signal, suppress=true); a script
+// error or no script falls back to the built-in diff + current-output summary so
+// a real change still fires.
 func buildWatchSummary(ctx context.Context, m EventMonitor, prior, current string) (summary string, suppress bool) {
 	return formatWatchAlert(ctx, m.Owner, m.Name, m.FormatScript, prior, current)
 }
 
 // formatWatchAlert produces the alert text for a change/watch fire, decoupled
 // from any record type so both the event monitor and the unified trigger engine
-// share it. A formatScript's stdout becomes the alert; empty stdout / a script
-// error / no script all fall back to the built-in diff + current-output summary,
-// so a real change always fires. Never suppresses (the second return is always
-// false, retained for signature compatibility).
+// share it. A formatScript's stdout becomes the alert. Empty stdout (a clean
+// exit printing nothing) is the script's intentional "skip this change" signal
+// and SUPPRESSES the wake (second return = true). A script error or no script
+// falls back to the built-in diff + current-output summary so a real change
+// still fires.
 func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, current string) (summary string, suppress bool) {
 	if strings.TrimSpace(formatScript) != "" {
 		// Hand the script the body (HTTP status line split off, so json.loads
@@ -507,15 +516,13 @@ func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, cur
 		} else if out := strings.TrimSpace(res.Stdout); out != "" {
 			return out, false
 		} else {
-			// Empty stdout no longer suppresses — that was a silent footgun (a
-			// buggy script killed the watcher). Fall back to the built-in diff
-			// so the change still alerts, and surface any stderr so a
-			// wrong-stream print / silent traceback is debuggable.
-			note := ""
-			if s := strings.TrimSpace(res.Stderr); s != "" {
-				note = " (stderr: " + truncateEvent(s, 200) + ")"
-			}
-			Log("[event] watch %s/%s: format_script printed nothing to stdout%s — using the built-in diff so the change still alerts. SCRIPT WAS:\n%s", owner, name, note, truncateEvent(formatScript, 600))
+			// Empty stdout is the script's INTENTIONAL "this change isn't worth
+			// notifying" signal — suppress the wake. This is the documented
+			// format_script contract. (A script CRASH is different: res.Err above
+			// logs and falls through to the built-in diff below, so a bug can't
+			// silently eat real changes — only a clean empty exit suppresses.)
+			Debug("[event] watch %s/%s: format_script printed nothing — suppressing this change per the empty=skip contract", owner, name)
+			return "", true
 		}
 	}
 	// Built-in: lead with WHAT changed (added/removed lines), then the current

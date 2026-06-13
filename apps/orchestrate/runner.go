@@ -4266,14 +4266,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// verbose schemas out of the catalog. Always available; harmless
 	// when the agent has no lazy custom tools (LLM just never calls it).
 	knowTools = append(knowTools, t.loadToolToolDef())
-	// send_to_builder is DISABLED — a Fleet agent now BUILDS agents/pipelines/
-	// skills by DISPATCHING Builder as a sub-agent (agents(run, agent="builder")),
-	// which drafts in-session and queues for the owner's approval, rather than
-	// handing the user a one-click link to a separate Builder session. The tool
-	// and its brief plumbing (send_to_builder.go, the ?builder_brief deep-link,
-	// the toolbar "Builder" button) stay in the tree; only the LLM-facing tool is
-	// no longer offered. To re-enable: append t.sendToBuilderToolDef() here for
-	// non-Builder agents.
+	// send_to_builder — the ESCAPE for genuinely complex / open-ended authoring:
+	// hands the user a one-click link into a full interactive Builder session.
+	// NOT the default — the prompt makes dispatching Builder as a sub-agent
+	// (intake-then-dispatch, drafts held for approval) the default for the common
+	// case; this is the fallback for designs an in-thread intake + one-shot
+	// dispatch can't capture. Not for Builder itself (no self-handoff).
+	if !isBuilderAgent(t.agent.ID) {
+		knowTools = append(knowTools, t.sendToBuilderToolDef())
+	}
 	// compact_context — LLM-driven context management. Lets the model
 	// proactively discard the bodies of EARLIER tool results it has
 	// consumed and no longer needs (a smoke-test report, a big fetch, a

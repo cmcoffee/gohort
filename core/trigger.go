@@ -398,8 +398,11 @@ func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bo
 			SaveScheduledTrigger(db, cur) // baseline only — don't fire on first poll
 			return false, ""
 		}
-		s, _ := formatWatchAlert(ctx, cur.Owner, cur.Name, cur.FormatScript, prior, body)
-		SaveScheduledTrigger(db, cur) // advance baseline
+		s, suppress := formatWatchAlert(ctx, cur.Owner, cur.Name, cur.FormatScript, prior, body)
+		SaveScheduledTrigger(db, cur) // advance baseline regardless
+		if suppress {
+			return false, "" // format_script printed nothing — intentional skip
+		}
 		return true, s
 
 	case GateRule:

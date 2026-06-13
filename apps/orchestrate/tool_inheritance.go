@@ -19,15 +19,19 @@ package orchestrate
 
 import . "github.com/cmcoffee/gohort/core"
 
-// phantomReadOnlyToolDefs returns just the read-only phantom tools, filtered out
-// of the full management set. Reuses operatorManagementTools as the canonical
-// source (same pattern the watch-tool invoker uses in operator_wake.go) so the
-// closures stay in one place and can't drift.
-func phantomReadOnlyToolDefs(sess *ToolSession, agentID string) []AgentToolDef {
+// phantomInheritableToolDefs returns the OWNER-SAFE phantom tools an inheriting
+// sub-agent / dispatched Builder may use: the read-only ones (list_phantom_chats,
+// read_phantom_chat) PLUS notify_me, which only ever texts the OWNER (no
+// approval, no third party) — so a scheduled summarizer can deliver its result
+// to the user's phone. The genuinely consequential phantom tools that reach
+// OTHER people (message_contact, converse_with_contact) are NOT inheritable.
+// Reuses operatorManagementTools as the canonical source (same pattern the
+// watch-tool invoker uses in operator_wake.go) so the closures can't drift.
+func phantomInheritableToolDefs(sess *ToolSession, agentID string) []AgentToolDef {
 	var out []AgentToolDef
 	for _, td := range operatorManagementTools(sess, agentID) {
 		switch td.Tool.Name {
-		case "list_phantom_chats", "read_phantom_chat":
+		case "list_phantom_chats", "read_phantom_chat", "notify_me":
 			out = append(out, td)
 		}
 	}
@@ -55,7 +59,7 @@ func (t *chatTurn) inheritableParentTools(parent AgentRecord, sess *ToolSession)
 	if err != nil {
 		tools = nil
 	}
-	tools = append(tools, phantomReadOnlyToolDefs(sess, parent.ID)...)
+	tools = append(tools, phantomInheritableToolDefs(sess, parent.ID)...)
 	return tools
 }
 
