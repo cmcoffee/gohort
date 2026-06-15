@@ -39,6 +39,11 @@ const (
 	OAuthGrantClientCredentials = "client_credentials"
 	OAuthGrantJWTBearer         = "jwt_bearer"
 	OAuthGrantRefreshToken      = "refresh_token"
+	// OAuthGrantPassword is the resource-owner password grant: client
+	// authentication (client_id + client_secret) PLUS user credentials
+	// (username + password). The two secrets live in separate encrypted
+	// keys (__secret = client_secret, __password = password); see Option B.
+	OAuthGrantPassword = "password"
 )
 
 func oauthTokenKey(name string) string { return name + "__oauthtoken" }
@@ -143,8 +148,21 @@ func (s *SecureAPI) mintOAuthGrant(c SecureCredential, secret string) (string, s
 		if c.ClientID != "" {
 			form.Set("client_id", c.ClientID)
 		}
+	case OAuthGrantPassword:
+		// Resource-owner password grant: client auth (client_id:client_secret
+		// via Basic, same as client_credentials) PLUS the user's credentials in
+		// the body. secret = client_secret (__secret); the password is the
+		// SECOND secret (__password).
+		form.Set("grant_type", "password")
+		form.Set("username", c.Username)
+		pw, ok := s.loadPassword(c.Name)
+		if !ok || strings.TrimSpace(pw) == "" {
+			return "", "", 0, fmt.Errorf("password grant for %q has no password set — paste it in Admin > APIs", c.Name)
+		}
+		form.Set("password", pw)
+		basicAuth = true // client_id:client_secret via HTTP Basic
 	default:
-		return "", "", 0, fmt.Errorf("unsupported oauth grant %q for %q (use client_credentials | jwt_bearer | refresh_token)", c.Grant, c.Name)
+		return "", "", 0, fmt.Errorf("unsupported oauth grant %q for %q (use client_credentials | jwt_bearer | refresh_token | password)", c.Grant, c.Name)
 	}
 	if c.Scope != "" {
 		form.Set("scope", c.Scope)
@@ -277,18 +295,21 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 	c.Type = SecureCredOAuth2
 	c.Disabled = true // inert until the admin adds the secret + enables
 	switch c.Grant {
-	case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken:
+	case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken, OAuthGrantPassword:
 	default:
-		return fmt.Errorf("draft needs a grant: client_credentials, jwt_bearer, or refresh_token")
+		return fmt.Errorf("draft needs a grant: client_credentials, jwt_bearer, refresh_token, or password")
 	}
 	if strings.TrimSpace(c.TokenURL) == "" || !strings.HasPrefix(strings.ToLower(c.TokenURL), "https://") {
 		return fmt.Errorf("draft needs an https token_url")
 	}
-	if strings.TrimSpace(c.AllowedURLPattern) == "" {
-		return fmt.Errorf("draft needs an allowed_url_pattern (e.g. https://api.ebay.com/buy/browse/**)")
+	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
+		return fmt.Errorf("draft needs a base_url (e.g. https://api.ebay.com) or an allowed_url_pattern")
 	}
 	if c.Grant == OAuthGrantJWTBearer && strings.TrimSpace(c.JWTIssuer) == "" {
 		return fmt.Errorf("jwt_bearer draft needs jwt_issuer")
+	}
+	if c.Grant == OAuthGrantPassword && strings.TrimSpace(c.Username) == "" {
+		return fmt.Errorf("password draft needs a username (the resource-owner username)")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -307,6 +328,52 @@ func (s *SecureAPI) SaveOAuthDraft(c SecureCredential) error {
 		s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), "(pending)")
 	}
 	invalidateOAuthClient(c.Name)
+	return nil
+}
+
+// SaveAPIDraft is the non-oauth sibling of SaveOAuthDraft: it persists a plain
+// key-style credential's CONFIG without a secret — the "Builder scaffolds,
+// admin completes" path for bearer / header / query / basic_auth APIs (the
+// OPNsense case). Stored DISABLED with a "(pending)" secret placeholder; the
+// admin pastes the real value (api key / bearer token / "key:secret" basic
+// pair) in Admin > APIs and enables it. Validates so a malformed draft is
+// rejected up front.
+func (s *SecureAPI) SaveAPIDraft(c SecureCredential) error {
+	if !s.ready() {
+		return fmt.Errorf("secure-api store not initialized")
+	}
+	if !validToolNameStr(c.Name) {
+		return fmt.Errorf("name must be lowercase letters/digits/underscores only")
+	}
+	switch c.Type {
+	case SecureCredBearer, SecureCredBasicAuth:
+	case SecureCredHeader, SecureCredQuery:
+		if strings.TrimSpace(c.ParamName) == "" {
+			return fmt.Errorf("type %q draft needs a param_name (the header or query-param name)", c.Type)
+		}
+	default:
+		return fmt.Errorf("api draft type must be bearer, header, query, or basic_auth (oauth2 uses the oauth draft)")
+	}
+	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
+		return fmt.Errorf("draft needs a base_url (e.g. https://192.168.0.1) or an allowed_url_pattern")
+	}
+	c.Disabled = true // inert until the admin adds the secret + enables
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var existing SecureCredential
+	if s.db.Get(secureAPITable, c.Name, &existing) {
+		c.CreatedAt = existing.CreatedAt
+		c.LastUsedAt = existing.LastUsedAt
+	} else {
+		c.CreatedAt = time.Now()
+	}
+	s.db.Set(secureAPITable, c.Name, c)
+	// Placeholder secret so the admin UI flags "needs secret"; the admin
+	// replaces it with the real value.
+	var hasSecret string
+	if !s.db.Get(secureAPITable, secureCredSecretKey(c.Name), &hasSecret) || hasSecret == "" || hasSecret == "(pending)" {
+		s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), "(pending)")
+	}
 	return nil
 }
 

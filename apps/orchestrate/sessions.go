@@ -49,8 +49,43 @@ func saveChatSession(db Database, s ChatSession) (ChatSession, error) {
 		s.Created = now
 	}
 	s.LastAt = now
+	// Channel-model groundwork: every thread records its membership. Stage 1
+	// has exactly one agent per thread (the lead); the human owner is implicit
+	// in the user-scoped db. Additive — nothing reads it yet (see
+	// docs/channel-model.md), so this just keeps the field populated for Stage 2.
+	ensureLeadParticipant(&s)
 	db.Set(sessionTable(s.AgentID), s.ID, s)
 	return s, nil
+}
+
+// leadAgent returns the thread's lead agent — the agent that fields human
+// input. In the 1:1 session case (Stage 1) that is the session's single
+// AgentID. Falls back to the first agent participant for future shared threads.
+func leadAgent(s ChatSession) string {
+	if s.AgentID != "" {
+		return s.AgentID
+	}
+	for _, p := range s.Participants {
+		if p.Kind == ParticipantAgent && p.ID != "" {
+			return p.ID
+		}
+	}
+	return ""
+}
+
+// ensureLeadParticipant guarantees the session's lead agent is present in
+// Participants exactly once. Idempotent; safe to call on every save.
+func ensureLeadParticipant(s *ChatSession) {
+	lead := leadAgent(*s)
+	if lead == "" {
+		return
+	}
+	for _, p := range s.Participants {
+		if p.Kind == ParticipantAgent && p.ID == lead {
+			return
+		}
+	}
+	s.Participants = append(s.Participants, Participant{Kind: ParticipantAgent, ID: lead})
 }
 
 // ListChatSessions is the exported entry point for callers that need

@@ -20,6 +20,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -41,7 +42,19 @@ type MemoryFact struct {
 	ID        string    `json:"id"`
 	Note      string    `json:"note"`
 	Created   time.Time `json:"created"`
+	// SupersededAt is non-zero once a later fact replaced this one
+	// (the user changed an attribute: moved cities, switched jobs).
+	// Superseded facts stay in the table for history but are filtered
+	// out of ListMemoryFacts, so they no longer inject or dedup.
+	SupersededAt time.Time `json:"superseded_at,omitempty"`
+	SupersededBy string    `json:"superseded_by,omitempty"` // ID of the replacing fact
 }
+
+// FactChatFunc runs one worker-tier LLM chat for supersession judging.
+// Its signature matches AppCore.WorkerChat and Session.Chat, so callers
+// pass either as a method value. Optional: without it, StoreMemoryFact
+// behaves exactly as before (dedup only, no supersession).
+type FactChatFunc func(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error)
 
 // factDedupSimThreshold is the cosine cutoff above which two notes
 // are considered semantic duplicates. Same value phantom uses for
@@ -56,9 +69,11 @@ func factDBKey(namespace, id string) string {
 }
 
 // StoreMemoryFact saves a new note under the namespace with dedup
-// against existing notes. Returns the stored fact + a boolean
+// against existing notes. Returns the stored fact, a boolean
 // indicating whether it was new (false = a duplicate was found and
-// the existing fact is returned instead).
+// the existing fact is returned instead), and the list of facts this
+// note superseded (nil unless a chat func was supplied and a changed
+// fact was detected) so callers can surface what was dropped.
 //
 // Dedup runs in two tiers:
 //   1. Normalized text match (lowercase + collapsed whitespace +
@@ -70,22 +85,35 @@ func factDBKey(namespace, id string) string {
 //
 // First-write-wins on duplicate — the existing fact stays, the new
 // content is dropped. Match phantom's behavior.
-func StoreMemoryFact(db Database, namespace, note string) (MemoryFact, bool) {
+//
+// Supersession: when an optional chat func is supplied AND embeddings
+// surface a related-but-not-duplicate fact, the new note is checked for
+// whether it REPLACES an existing one (same attribute that can't both be
+// current — "lives in X" → "lives in Y"). Replaced facts are marked
+// superseded so they stop injecting, instead of either being dropped as a
+// near-duplicate (stuck on the stale value) or coexisting as a
+// contradiction. Keys are NOT used for this — the keyed model was reverted
+// because the LLM picks inconsistent keys; supersession runs on meaning.
+func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) (MemoryFact, bool, []MemoryFact) {
 	namespace = strings.TrimSpace(namespace)
 	note = strings.TrimSpace(note)
 	if db == nil || namespace == "" || note == "" {
-		return MemoryFact{}, false
+		return MemoryFact{}, false, nil
 	}
 	existing := ListMemoryFacts(db, namespace)
 	// Tier 1: normalized text match.
 	wantNorm := normalizeFactNote(note)
 	for _, f := range existing {
 		if normalizeFactNote(f.Note) == wantNorm {
-			return f, false
+			return f, false, nil
 		}
 	}
 	// Tier 2: semantic similarity, when embeddings are available
-	// and there's something to compare against.
+	// and there's something to compare against. The same pass collects
+	// "supersession candidates" — facts in the related-but-not-duplicate
+	// band [factSupersedeBandFloor, factDedupSimThreshold) — at no extra
+	// embedding cost, for the contradiction check below.
+	var supersedeCandidates []MemoryFact
 	if cfg := GetEmbeddingConfig(); cfg.Enabled && len(existing) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -95,20 +123,90 @@ func StoreMemoryFact(db Database, namespace, note string) (MemoryFact, bool) {
 				if err != nil || len(existVec) != len(newVec) {
 					continue
 				}
-				if Cosine(newVec, existVec) >= factDedupSimThreshold {
-					return f, false
+				sim := Cosine(newVec, existVec)
+				if sim >= factDedupSimThreshold {
+					return f, false, nil
+				}
+				if sim >= factSupersedeBandFloor {
+					supersedeCandidates = append(supersedeCandidates, f)
 				}
 			}
 		}
 	}
+
 	f := MemoryFact{
 		Namespace: namespace,
 		ID:        UUIDv4(),
 		Note:      note,
 		Created:   time.Now(),
 	}
+
+	// Supersession: only fires when a chat func was passed AND the embedding
+	// pass found related candidates — so the common case (no related facts)
+	// pays nothing. The LLM decides which candidates the new note replaces.
+	var superseded []MemoryFact
+	if len(chat) > 0 && chat[0] != nil && len(supersedeCandidates) > 0 {
+		now := time.Now()
+		for _, old := range judgeSupersedes(chat[0], note, supersedeCandidates) {
+			old.SupersededAt = now
+			old.SupersededBy = f.ID
+			db.Set(MemoryFactsTable, factDBKey(old.Namespace, old.ID), old)
+			Debug("[factstore] superseded %q -> %q (ns=%s)", old.Note, note, namespace)
+			superseded = append(superseded, old)
+		}
+	}
+
 	db.Set(MemoryFactsTable, factDBKey(namespace, f.ID), f)
-	return f, true
+	return f, true, superseded
+}
+
+// factSupersedeBandFloor is the cosine floor for a fact to count as a
+// supersession candidate: related enough that a CHANGE is plausible, but
+// below the dedup threshold (0.90, "same fact"). The band is only a cheap
+// pre-filter — the LLM judge makes the actual replace/coexist call.
+const factSupersedeBandFloor = 0.60
+
+// judgeSupersedes asks the worker which candidate facts the new note
+// replaces (same attribute, cannot both be current). Returns the subset to
+// supersede. Best-effort: any error, nil chat, or unparseable reply yields
+// no supersession (the new fact is simply added alongside).
+func judgeSupersedes(chat FactChatFunc, newNote string, candidates []MemoryFact) []MemoryFact {
+	if chat == nil || len(candidates) == 0 {
+		return nil
+	}
+	var list strings.Builder
+	for i, f := range candidates {
+		fmt.Fprintf(&list, "%d. %s\n", i+1, f.Note)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resp, err := chat(ctx, []Message{
+		{Role: "user", Content: fmt.Sprintf(`A memory store holds short facts about a user. A NEW fact is being saved. For each EXISTING fact listed, decide whether the new fact UPDATES or REPLACES it: they describe the SAME attribute or relationship and cannot both be currently true. Examples of replacement: "lives in Denver" replaced by "lives in Austin"; "works at X" replaced by "works at Y"; "phone is A" replaced by "phone is B".
+
+Do NOT flag facts that can independently both be true: "likes coffee" and "likes tea" are different preferences; "has a dog" and "has a cat" coexist. When unsure, do NOT flag — only flag a clear replacement of the same attribute.
+
+NEW fact: %q
+
+EXISTING facts:
+%s
+Reply with ONLY a JSON array of the numbers of existing facts the new fact replaces. Reply [] if none.`, newNote, list.String())},
+	}, WithSystemPrompt("You detect when a new memory fact supersedes existing ones (same attribute, cannot both be current). Reply with ONLY a JSON array of indices."),
+		WithThink(false),
+		WithMaxTokens(128))
+	if err != nil || resp == nil {
+		return nil
+	}
+	var idx []int
+	if DecodeJSON(ResponseText(resp), &idx) != nil {
+		return nil
+	}
+	var out []MemoryFact
+	for _, n := range idx {
+		if n >= 1 && n <= len(candidates) {
+			out = append(out, candidates[n-1])
+		}
+	}
+	return out
 }
 
 // ForgetMemoryFactByIndex removes the fact at the given 1-based
@@ -161,6 +259,12 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 		}
 		var f MemoryFact
 		if db.Get(MemoryFactsTable, k, &f) {
+			// Superseded facts stay in the table for history but never
+			// inject, dedup, or get indexed for forget — they are stale by
+			// definition.
+			if !f.SupersededAt.IsZero() {
+				continue
+			}
 			out = append(out, f)
 		}
 	}
@@ -381,7 +485,7 @@ func MigrateLegacyFactStore(db Database) {
 			db.Unset(MemoryFactsTable, k)
 		}
 		for _, note := range g.notes {
-			_, isNew := StoreMemoryFact(db, ns, note)
+			_, isNew, _ := StoreMemoryFact(db, ns, note)
 			if isNew {
 				migrated++
 			} else {

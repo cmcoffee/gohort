@@ -115,19 +115,28 @@ func credentialFormFields() []ui.FormField {
 			{Value: "client_credentials", Label: "client_credentials"},
 			{Value: "jwt_bearer", Label: "jwt_bearer"},
 			{Value: "refresh_token", Label: "refresh_token"},
+			{Value: "password", Label: "password (user login)"},
 		}},
-		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2"},
 		{Field: "token_url", Label: "Token URL (https)", Placeholder: "https://api.ebay.com/identity/v1/oauth2/token", ShowWhen: "type:oauth2"},
+		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2"},
+		// Single shared secret field (one input avoids the duplicate-name
+		// clobber the form's submit loop would otherwise cause). For OAuth it
+		// IS the client secret; positioned right after Client/App ID so the
+		// OAuth block reads Token URL → Client/App ID → Client Secret → Scope.
+		{Field: "username", Label: "Username", Placeholder: "the user / API key to log in as", ShowWhen: "type:oauth2|basic_auth", Help: "HTTP Basic auth and the OAuth2 password grant. For OPNsense (basic_auth) this is the API key; the secret goes in the Secret/Password field below. Stored as plain config, so it shows when you re-edit (only the secret stays hidden)."},
+		{Field: "secret", Label: "Client Secret / Secret / Password", Type: "password", Help: "The secret for this credential: OAuth = the CLIENT secret (jwt_bearer = the RSA private key; refresh_token = the refresh token); bearer = the token; header/query = the API key; basic_auth = the PASSWORD (OPNsense: the API secret), paired with the Username above. Stored encrypted. Leave blank when editing to keep it."},
 		{Field: "scope", Label: "Scope (optional)", Placeholder: "https://api.ebay.com/oauth/api_scope", ShowWhen: "type:oauth2"},
 		{Field: "jwt_issuer", Label: "JWT issuer (iss)", Placeholder: "service-account@project.iam.gserviceaccount.com", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_subject", Label: "JWT subject (sub, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_audience", Label: "JWT audience (aud, optional)", Placeholder: "defaults to token URL", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_key_id", Label: "JWT key id (kid, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
-
-		{Field: "secret", Label: "Secret", Type: "password", Help: "Token / API key / client secret / RSA private key / refresh token, depending on type. Stored encrypted. Leave blank when editing to keep the existing secret."},
+		{Field: "password", Label: "Password", Type: "password", ShowWhen: "type:oauth2;grant:password", Help: "The resource-owner password (the SECOND secret of the password grant; the Client Secret field above holds the CLIENT secret). Stored encrypted, separately. Leave blank when editing to keep it."},
 
 		{Field: "safety", Type: "header", Label: "Safety + limits"},
-		{Field: "allowed_url_pattern", Label: "Allowed URL pattern", Placeholder: "https://api.github.com/**", Help: "The linchpin safety property: requests to URLs that don't match are rejected before the secret is attached. * matches up to next slash; ** matches arbitrary chars."},
+		{Field: "base_url", Label: "Base URL", Placeholder: "https://192.168.0.1", Help: "The server this credential talks to. Requests are allowed only under this host (and the endpoints below). This is where you change which server it reaches."},
+		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call. e.g. /api/* allows everything under /api/ ; /api/core/* scopes to one module. Add/remove entries. Leave empty to allow ANY path under the Base URL."},
+		{Field: "allowed_url_pattern", Label: "Allowed URL pattern (legacy)", Placeholder: "https://api.github.com/**", Help: "Legacy single-glob alternative to Base URL + Allowed Endpoints. Leave blank when using those; one of the two is required. Requests not matching are rejected before the secret is attached."},
+		{Field: "insecure_skip_tls", Label: "Allow self-signed / skip TLS verification", Type: "toggle", Help: "Turn ON only for LAN appliances with self-signed certs or hosts addressed by IP (e.g. an OPNsense box at https://192.168.0.1, where no cert can validate). Disables certificate checking for THIS credential's requests only. Leave OFF for public internet APIs."},
 		{Field: "denied_url_patterns", Label: "Denied URL patterns", Type: "tags", Help: "Optional explicit denies, checked before the allow pattern."},
 		{Field: "allowed_methods", Label: "Allowed methods", Type: "tags", Help: "e.g. GET, POST. Blank = all methods allowed."},
 		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},

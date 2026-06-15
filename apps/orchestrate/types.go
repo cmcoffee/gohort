@@ -465,6 +465,20 @@ type AgentRecord struct {
 // ChatSession is one chat thread inside an agent. Messages are the
 // orchestrator-user conversation visible to the user; Plans are the
 // per-round decomposition snapshots that drove the activity pane.
+// Participant identifies one member of a thread (channel). See
+// docs/channel-model.md: every conversation is a thread; a 1:1 session is
+// the case whose only agent participant is the lead. Kind is "human" or
+// "agent"; ID is the user (human) or agent id (agent).
+type Participant struct {
+	Kind string `json:"kind"` // ParticipantHuman | ParticipantAgent
+	ID   string `json:"id"`
+}
+
+const (
+	ParticipantHuman = "human"
+	ParticipantAgent = "agent"
+)
+
 type ChatSession struct {
 	ID       string         `json:"ID"`
 	AgentID  string         `json:"-"`
@@ -473,6 +487,13 @@ type ChatSession struct {
 	Plans    []PlanSnapshot `json:"Plans,omitempty"`
 	Created  time.Time      `json:"Created"`
 	LastAt   time.Time      `json:"LastAt"`
+
+	// Participants is the thread's membership (channel model — see
+	// docs/channel-model.md). Stage 1 holds only the single lead agent; the
+	// human owner is implicit in the user-scoped db. Additive and not yet read
+	// by behavior — it gives Stage 2's shared channels + addressing a place to
+	// live so the migration there is mechanical, not a schema change.
+	Participants []Participant `json:"Participants,omitempty"`
 
 	// LastSeen is when the user last viewed this session (set on open and
 	// after their own turn). A background append — a monitor wake, a
@@ -595,6 +616,14 @@ type ChatMessage struct {
 	// re-edit on replayed sessions can rehydrate the form with the
 	// original values instead of degrading to text editing.
 	IntakeValues map[string]string `json:"intake_values,omitempty"`
+	// ReportFrom, when set, marks this assistant message as an automated
+	// report from a producer (a standing agent, a monitor) rather than a turn
+	// in the back-and-forth. It carries the producer's display name; the UI
+	// renders such messages as a distinct card (header = name + fire time, from
+	// Created) instead of a normal chat bubble. The body stays clean; the LLM
+	// still gets a "[standing agent …]" context marker prepended at history-
+	// build time (see toLLMMessages).
+	ReportFrom string `json:"report_from,omitempty"`
 }
 
 // PersistedToolCall is one tool invocation persisted alongside the

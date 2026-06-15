@@ -36,6 +36,8 @@ export function RequestApprovalBlocking(arg1:string,arg2:string,arg3:{[key: stri
 
 export function ResetSettings():Promise<main.save_result>;
 
+export function SaveAttachment(arg1:string,arg2:string,arg3:string):Promise<main.pick_result>;
+
 export function SaveSettings(arg1:string,arg2:string):Promise<main.save_result>;
 
 export function SetAutoApprove(arg1:boolean):Promise<main.save_result>;

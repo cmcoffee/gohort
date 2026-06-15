@@ -21,8 +21,19 @@ import (
 
 const (
 	authorizationsTable    = "delegation_authorizations" // <owner>:<id> -> Authorization
-	delegationPreauthTable = "delegation_preauth"        // <owner>:<agent> -> bool
-	contactPreauthTable    = "contact_preauth"           // <owner>:<handle> -> bool (phantom messaging)
+	delegationPreauthTable = "delegation_preauth"        // <owner>:<agent> -> bool (legacy "allow")
+	contactPreauthTable    = "contact_preauth"           // <owner>:<handle> -> bool (legacy "allow")
+	delegationPolicyTable  = "delegation_policy"         // <owner>:<agent> -> policy string
+	contactPolicyTable     = "contact_policy"            // <owner>:<handle> -> policy string
+)
+
+// Permission policy states for delegations + contacts (the Permissions settings
+// model). The legacy preauth bool maps to PolicyAllow; absence defaults to
+// PolicyAsk; PolicyBlock auto-denies at the gate.
+const (
+	PolicyAllow = "allow" // act without asking — safe to run unattended (background)
+	PolicyAsk   = "ask"   // queue / live-prompt; denied when nobody's present
+	PolicyBlock = "block" // auto-deny, never run, never queue
 )
 
 // Authorization is a pending Operator action awaiting the user's approval.
@@ -189,6 +200,151 @@ func SetContactPreAuthorized(db Database, owner, handle string, on bool) {
 	} else {
 		db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
 	}
+}
+
+// PolicyEntry pairs a permission subject (agent id or contact handle) with its
+// current policy, for the Permissions settings list.
+type PolicyEntry struct {
+	Target string
+	Policy string
+}
+
+func normPolicy(p string) string {
+	if p == PolicyAllow || p == PolicyAsk || p == PolicyBlock {
+		return p
+	}
+	return PolicyAsk
+}
+
+// DelegationPolicy resolves the standing policy for delegating to this agent.
+// An explicit policy record wins; otherwise a legacy "Always allow" grant reads
+// as allow, and the default is ask.
+func DelegationPolicy(db Database, owner, agent string) string {
+	if db == nil {
+		return PolicyAsk
+	}
+	var p string
+	if db.Get(delegationPolicyTable, preauthKey(owner, agent), &p) && p != "" {
+		return normPolicy(p)
+	}
+	var on bool
+	if db.Get(delegationPreauthTable, preauthKey(owner, agent), &on) && on {
+		return PolicyAllow
+	}
+	return PolicyAsk
+}
+
+// SetDelegationPolicy records the standing policy and keeps the legacy preauth
+// flag in sync (so ListDelegationPreAuthorizations / IsDelegationPreAuthorized
+// stay correct without every caller learning about policies).
+func SetDelegationPolicy(db Database, owner, agent, policy string) {
+	if db == nil || strings.TrimSpace(agent) == "" {
+		return
+	}
+	policy = normPolicy(policy)
+	db.Set(delegationPolicyTable, preauthKey(owner, agent), policy)
+	if policy == PolicyAllow {
+		db.Set(delegationPreauthTable, preauthKey(owner, agent), true)
+	} else {
+		db.Unset(delegationPreauthTable, preauthKey(owner, agent))
+	}
+}
+
+// RemoveDelegationPolicy forgets this agent entirely — back to the ask default
+// with no record, so it drops out of the Permissions list.
+func RemoveDelegationPolicy(db Database, owner, agent string) {
+	if db == nil {
+		return
+	}
+	db.Unset(delegationPolicyTable, preauthKey(owner, agent))
+	db.Unset(delegationPreauthTable, preauthKey(owner, agent))
+}
+
+// IsDelegationBlocked reports whether delegations to this agent are blocked
+// (auto-deny at the gate).
+func IsDelegationBlocked(db Database, owner, agent string) bool {
+	return DelegationPolicy(db, owner, agent) == PolicyBlock
+}
+
+// ListDelegationPolicies returns every agent with an explicit policy record,
+// unioned with legacy allow grants, sorted by target.
+func ListDelegationPolicies(db Database, owner string) []PolicyEntry {
+	return listPolicies(db, delegationPolicyTable, owner, ListDelegationPreAuthorizations(db, owner))
+}
+
+// ContactPolicy / SetContactPolicy / RemoveContactPolicy / IsContactBlocked /
+// ListContactPolicies mirror the delegation versions for phantom messaging.
+func ContactPolicy(db Database, owner, handle string) string {
+	if db == nil || strings.TrimSpace(handle) == "" {
+		return PolicyAsk
+	}
+	var p string
+	if db.Get(contactPolicyTable, contactPreauthKey(owner, handle), &p) && p != "" {
+		return normPolicy(p)
+	}
+	var on bool
+	if db.Get(contactPreauthTable, contactPreauthKey(owner, handle), &on) && on {
+		return PolicyAllow
+	}
+	return PolicyAsk
+}
+
+func SetContactPolicy(db Database, owner, handle, policy string) {
+	if db == nil || strings.TrimSpace(handle) == "" {
+		return
+	}
+	policy = normPolicy(policy)
+	db.Set(contactPolicyTable, contactPreauthKey(owner, handle), policy)
+	if policy == PolicyAllow {
+		db.Set(contactPreauthTable, contactPreauthKey(owner, handle), true)
+	} else {
+		db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
+	}
+}
+
+func RemoveContactPolicy(db Database, owner, handle string) {
+	if db == nil {
+		return
+	}
+	db.Unset(contactPolicyTable, contactPreauthKey(owner, handle))
+	db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
+}
+
+func IsContactBlocked(db Database, owner, handle string) bool {
+	return ContactPolicy(db, owner, handle) == PolicyBlock
+}
+
+func ListContactPolicies(db Database, owner string) []PolicyEntry {
+	return listPolicies(db, contactPolicyTable, owner, ListContactPreAuthorizations(db, owner))
+}
+
+// listPolicies merges explicit policy records with legacy allow grants.
+func listPolicies(db Database, table, owner string, legacyAllow []string) []PolicyEntry {
+	if db == nil || owner == "" {
+		return nil
+	}
+	prefix := owner + ":"
+	seen := map[string]string{}
+	for _, k := range db.Keys(table) {
+		if len(k) < len(prefix) || k[:len(prefix)] != prefix {
+			continue
+		}
+		var p string
+		if db.Get(table, k, &p) && p != "" {
+			seen[k[len(prefix):]] = normPolicy(p)
+		}
+	}
+	for _, t := range legacyAllow {
+		if _, ok := seen[t]; !ok {
+			seen[t] = PolicyAllow
+		}
+	}
+	out := make([]PolicyEntry, 0, len(seen))
+	for t, p := range seen {
+		out = append(out, PolicyEntry{Target: t, Policy: p})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	return out
 }
 
 // RunDelegation executes a delegation synchronously via the registered standing

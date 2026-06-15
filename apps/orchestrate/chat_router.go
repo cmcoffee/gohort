@@ -69,6 +69,14 @@ type sessionListItem struct {
 	Source  string `json:"source,omitempty"`
 	ChatID  string `json:"chat_id,omitempty"`
 	Running bool   `json:"running,omitempty"`
+	// Watchers / Dispatches surface LIVE background work attached to a
+	// session — distinct from Running (this session mid-turn) and Unread
+	// (a past append). Watchers = enabled event-monitors whose wake lands
+	// here; Dispatches = in-flight dispatched sub-agents hosted here. Both
+	// derived at request time, not persisted. The rail uses them for an
+	// "active" badge so sessions with ongoing work are findable.
+	Watchers   int `json:"watchers,omitempty"`
+	Dispatches int `json:"dispatches,omitempty"`
 }
 
 // handleSessionList returns the chat sessions for the active agent.
@@ -103,6 +111,25 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 	native := listChatSessions(udb, agent.ID)
 	out := make([]sessionListItem, 0, len(native))
 	runs := T.runsRegistry()
+
+	// Derived "active background work", bucketed by session id once (session
+	// ids are UUIDs, so matching by id is already user-scoped). Enabled
+	// event-monitors that wake a session, and in-flight dispatched sub-agents
+	// hosted by a session, each make that session "active" in the rail.
+	watcherCounts := map[string]int{}
+	for _, m := range ListEventMonitors(RootDB, user) {
+		if !m.Paused && m.WakeSession != "" {
+			watcherCounts[m.WakeSession]++
+		}
+	}
+	dispatchCounts := map[string]int{}
+	for _, k := range RootDB.Keys(SubSessionsTable) {
+		var ss SubSession
+		if RootDB.Get(SubSessionsTable, k, &ss) && ss.Status == SubSessionActive && ss.HostSessionID != "" {
+			dispatchCounts[ss.HostSessionID]++
+		}
+	}
+
 	for _, s := range native {
 		item := sessionListItem{ChatSession: s}
 		// Running flag: in-flight Run keyed by session ID. BySession
@@ -111,6 +138,8 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 		if r := runs.BySession(s.ID); r != nil && r.Status() == RunStatusRunning {
 			item.Running = true
 		}
+		item.Watchers = watcherCounts[s.ID]
+		item.Dispatches = dispatchCounts[s.ID]
 		out = append(out, item)
 	}
 	for _, ext := range CollectExtraSessions(T.DB, agent.ID, user) {
@@ -127,6 +156,8 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 		if r := runs.BySession(ext.ID); r != nil && r.Status() == RunStatusRunning {
 			item.Running = true
 		}
+		item.Watchers = watcherCounts[ext.ID]
+		item.Dispatches = dispatchCounts[ext.ID]
 		out = append(out, item)
 	}
 	_ = json.NewEncoder(w).Encode(out)
@@ -306,6 +337,12 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		// response below the truncation point.
 		var body struct {
 			At int `json:"at"`
+			// DeleteAt (pointer = presence) scrubs EXACTLY ONE message at this
+			// raw storage index, keeping everything after it — the in-thread
+			// per-turn delete affordance. Distinct from At, which truncates from
+			// the index onward. Raw index (client carries it from the load
+			// payload, which includes hidden messages), so it lands precisely.
+			DeleteAt *int `json:"delete_at"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -314,6 +351,30 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 		s, ok := loadChatSession(udb, agent.ID, sid)
 		if !ok {
 			http.NotFound(w, r)
+			return
+		}
+		if body.DeleteAt != nil {
+			di := *body.DeleteAt
+			if di >= 0 && di < len(s.Messages) {
+				s.Messages = append(s.Messages[:di], s.Messages[di+1:]...)
+				if _, err := saveChatSession(udb, s); err != nil {
+					http.Error(w, "save: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+				// Keep the rolling-summary cursor aligned when scrubbing a turn
+				// already folded into the summary: when the cursor reaches zero
+				// the digest no longer reflects the thread, so clear it too.
+				if st := loadCompactState(udb, agent.ID, sid); di < st.SummarizedThrough {
+					st.SummarizedThrough--
+					if st.SummarizedThrough <= 0 {
+						st.SummarizedThrough = 0
+						st.Summary = ""
+					}
+					saveCompactState(udb, agent.ID, sid, st)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted_at": body.DeleteAt, "messages_remaining": len(s.Messages)})
 			return
 		}
 		if body.At < 0 {

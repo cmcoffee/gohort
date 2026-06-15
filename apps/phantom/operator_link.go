@@ -443,12 +443,14 @@ func (T *Phantom) composeOperatorRelay(chatID, handle string, conv Conversation,
 	// the system prompt too (reinforcement).
 	msgs = append(msgs, Message{Role: "user", Content: fmt.Sprintf(
 		"Compose a NEW outbound text to %s now, in your own voice, conveying this:\n\n%s\n\n"+
-			"This is a fresh message. Do NOT repeat, resend, or echo any earlier message in this conversation.",
+			"This is a fresh message. Do NOT repeat, resend, or echo any earlier message in this conversation. "+
+			"Send ONLY the message itself — no narration, preamble, or announcing what you're about to do.",
 		recipient, intent)})
 
 	sysPrompt := fmt.Sprintf(
 		"Current date and time: %s\n\nYour name is %s. The person you are messaging is %s.\n\n%s%s\n\n"+
 			"## Relay Instruction\nYour operator wants you to convey the following to %s, in your own established voice and the context of this conversation. Phrase it naturally as a text FROM YOU — rework it into your voice rather than quoting verbatim, and do NOT mention an operator, that it was relayed, or that it's automated:\n\n%s\n\n"+
+			"Send ONLY the message itself. Do NOT narrate or announce what you are about to do, and do NOT add preamble or process commentary (no \"Let me find...\", \"I'll send...\", \"One sec...\", \"Hold on...\"). If the intent is to share or do something, just say the accompanying message as you naturally would — never describe the act of doing it.\n\n"+
 			"Compose a single natural outbound text message. Plain text only, no markdown.",
 		time.Now().Format("Monday, January 2, 2006 3:04 PM MST"), personaName, recipient, basePrompt, memoryBlock(T.DB, chatID), recipient, intent,
 	)

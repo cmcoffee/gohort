@@ -521,6 +521,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// The rule itself is written WITHOUT em-dashes so it doesn't model the
 	// behavior it forbids.
 	systemPrompt += "\n\n[Style: (1) Stop reaching for the word \"classic\"; you lean on it as filler. Drop it unless it's literally accurate (a \"classic car\", a named \"classic\" edition), never as a generic intensifier for something ordinary. (2) Do NOT use em-dashes (the \"—\" character, U+2014) at all. Where you'd reach for one, use a comma, parentheses, a colon, or two sentences instead.]"
+	// Secret handling — universal. Stops any agent from soliciting API
+	// credentials in chat (the OPNsense-controller failure mode); auth is
+	// injected server-side via Admin > APIs credentials, so the secret never
+	// belongs in the conversation or the tool-call logs.
+	systemPrompt += "\n\n[Secrets: never ask the user to paste an API key, secret, token, or password into the conversation, and do not accept one if offered. Authenticated APIs are wired through gohort credentials set up in Admin > APIs; auth is injected server-side, so you never see or need the secret. If a tool's credential is not configured yet, tell the user it needs to be set up in Admin > APIs (name the credential) and stop there, do not collect login details in chat. A secret typed into a chat leaks into the session history and the tool-call logs, which is what the credential system exists to prevent.]"
+
+	// Internal-marker convention: gives the model a sanctioned, always-scrubbed
+	// wrapper for internal-only notes AND tells it not to type bare delivery
+	// markers into user-facing text (the StripMetaTags safety net catches both).
+	systemPrompt += "\n\n[Internal markers: anything wrapped in <gohort-meta>...</gohort-meta> is stripped before the user sees it — use it for internal-only notes and NEVER put anything the user should read inside it. Do not type bare delivery markers like [ATTACH: file] into your reply; attachments ride along through their tool, and any stray marker is scrubbed from your reply anyway.]"
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
 	// budget were infinite, then getting truncated). Only emit for
@@ -600,6 +610,17 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// loop terminate — injecting a "fix the errors, don't summarize"
 	// nudge instead of letting the rescue path paper over the bailout.
 	cumulativeToolErrors := 0
+
+	// Repeated-failure loop-guard. Small models fixate: they re-issue the
+	// SAME tool call with the SAME args, get the SAME error, and never adapt
+	// (e.g. polling get_run with an approval id that has no run — 25× until the
+	// round budget burns). repeatFail counts consecutive errors per call
+	// signature (tool name + args); once a signature crosses repeatFailLimit we
+	// stop executing it and feed back a hard STOP directive instead. Signature-
+	// scoped (not tool-scoped) so the SAME tool with DIFFERENT args is fine, and
+	// a success resets the counter so legitimate polling isn't penalized.
+	repeatFail := map[string]int{}
+	const repeatFailLimit = 3
 
 	// Wrap-up grace runway. Rather than hard-stopping at the cap (which
 	// strips tools and makes some models emit their intended tool call as
@@ -1354,6 +1375,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			index   int
 			tc      ToolCall
 			handler ToolHandlerFunc
+			sig     string
 		}
 		var work []toolWork
 
@@ -1415,7 +1437,23 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				}
 			}
 
-			work = append(work, toolWork{index: i, tc: tc, handler: handler})
+			// Repeated-failure loop-guard: this exact call (name+args) has
+			// already errored repeatFailLimit times this turn — don't run it
+			// again. Hand back a hard STOP so the model breaks the loop instead
+			// of hammering the same dead end until the round budget is gone.
+			sig := tc.Name + "\x00" + formatArgs(tc.Args)
+			if repeatFail[sig] >= repeatFailLimit {
+				Debug("[agent_loop] loop-guard: %s blocked (%d prior identical failures this turn)", tc.Name, repeatFail[sig])
+				results[i] = ToolResult{
+					ID:      tc.ID,
+					Content: fmt.Sprintf("STOP — you have already called '%s' with these exact arguments %d times this turn and it failed the same way each time. Calling it again will NOT change the result. Do something different: try another approach or different arguments, or tell the user plainly that this isn't working and what you tried. Do not repeat this call.", tc.Name, repeatFail[sig]),
+					IsError: true,
+				}
+				toolErrors++
+				continue
+			}
+
+			work = append(work, toolWork{index: i, tc: tc, handler: handler, sig: sig})
 		}
 
 		// RoundAbortTools: when a control tool (ask_user, respond_directly,
@@ -1579,6 +1617,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			}
 			wg.Wait()
 			toolErrors += int(atomic.LoadInt32(&errCount))
+		}
+
+		// Update the repeated-failure loop-guard from this round's outcomes:
+		// bump the per-signature error count on failure, reset it on success
+		// (so legitimate polling that finally changes isn't penalized).
+		for _, w := range work {
+			if w.sig == "" {
+				continue
+			}
+			if results[w.index].IsError {
+				repeatFail[w.sig]++
+			} else {
+				delete(repeatFail, w.sig)
+			}
 		}
 
 		// BREADCRUMB: tool dispatch complete. If we see this line but

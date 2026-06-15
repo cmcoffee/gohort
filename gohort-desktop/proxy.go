@@ -42,6 +42,7 @@ type gohort_proxy struct {
 	cfg            *core.Config
 	configure_html []byte
 	cookies        *core.PersistentCookieJar
+	app            *App // for native dialogs (download save) — Wails runtime is absent on proxy pages
 
 	mu           sync.Mutex
 	cached_url   string
@@ -60,11 +61,12 @@ type gohort_proxy struct {
 // from depending on the embed. cookies is the proxy-side cookie jar
 // (required because Wails' WKURLSchemeHandler doesn't process
 // Set-Cookie response headers — see core/cookies.go for the why).
-func new_gohort_proxy(cfg *core.Config, configure_html []byte, cookies *core.PersistentCookieJar) http.Handler {
+func new_gohort_proxy(cfg *core.Config, configure_html []byte, cookies *core.PersistentCookieJar, app *App) http.Handler {
 	return &gohort_proxy{
 		cfg:            cfg,
 		configure_html: configure_html,
 		cookies:        cookies,
+		app:            app,
 	}
 }
 
@@ -86,6 +88,11 @@ const SETTINGS_PATH = "/__desktop/settings"
 // Gohort-Bridge API key (via App.SetBridgeAPIKey). No server URL, no
 // reachability probe — so it can't get stuck on "Checking server…".
 const APIKEY_PATH = "/__desktop/apikey"
+
+// SAVE_PATH receives a file attachment (name + mime + base64) from popup_shim.js
+// and writes it via a native save dialog. Loopback-only; the save dialog gates
+// every write, so a page can't write to disk without the user picking a path.
+const SAVE_PATH = "/__desktop/save"
 
 // apikey_page_html is the standalone bridge-API-key editor. Kept inline
 // (not a proxied gohort page, not the configure form) so updating the
@@ -153,6 +160,14 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Write([]byte(apikey_page_html))
+		return
+	}
+	// Download save — popup_shim.js POSTs a file attachment here (it can't use
+	// window.go to reach a native save dialog: Wails doesn't inject its bridge
+	// into proxy-served pages, AND WKWebView won't honor <a download> on a data:
+	// URI). We pop the native save dialog in Go and write the bytes.
+	if r.URL.Path == SAVE_PATH {
+		gp.handle_save_post(w, r)
 		return
 	}
 
@@ -322,6 +337,32 @@ func (gp *gohort_proxy) handle_apikey_post(w http.ResponseWriter, r *http.Reques
 	}
 	core.Log("[gohort-desktop] bridge API key updated (local POST)")
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// handle_save_post pops a native save dialog and writes a file attachment the
+// shim handed over. Mirrors handle_apikey_post (plain POST, the page can't reach
+// the Wails Go-bridge). Returns {ok, path?, error?} so the shim can toast.
+func (gp *gohort_proxy) handle_save_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+		Mime string `json:"mime"`
+		B64  string `json:"b64"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bad request: " + err.Error()})
+		return
+	}
+	res := gp.app.SaveAttachment(req.Name, req.Mime, req.B64)
+	json.NewEncoder(w).Encode(map[string]any{"ok": res.OK, "path": res.Path, "error": res.Error})
 }
 
 // serve_configure writes the embedded configure-page HTML. Status 200

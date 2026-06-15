@@ -93,7 +93,7 @@ func runViewer() {
 	// switches to a tunnel mode. So no proxy-side change is needed
 	// for WS to work; only the transport in front of it needs to be
 	// real HTTP rather than the custom URL scheme.
-	proxyHandler := new_gohort_proxy(cfg, configure_html, cookies)
+	proxyHandler := new_gohort_proxy(cfg, configure_html, cookies, app)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		core.Fatal("gohort-desktop: local listener: %v", err)

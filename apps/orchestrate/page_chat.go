@@ -169,6 +169,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					LoadURL:        "api/sessions/{id}?agent_id={agent_id}",
 					DeleteURL:      "api/sessions/{id}?agent_id={agent_id}",
 					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
+					// Per-turn scrub (✕ on each bubble) — replaces the separate
+					// History view's row-delete; works on every thread, not just
+					// the home thread. See docs/channel-model.md.
+					MessageScrub: true,
 					RenameURL:      "api/sessions/rename?agent_id={agent_id}",
 					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
 					ListTitle:      "Sessions",
@@ -202,11 +206,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					Placeholder:   "What do you want to do?",
 					// Orchestrator-mode agents (the Operator) swap the session
 					// list for this nav; normal agents ignore it entirely.
+					// No "Channel" or "History" rows anymore (channel model — see
+					// docs/channel-model.md): the home thread is just the pinned
+					// session at the top of the list (open it to read it), and
+					// per-turn scrubbing is the inline ✕ on each bubble (works on
+					// every thread, not only the home thread). What remains is the
+					// fleet-management views + the channel-wide actions.
 					OrchestratorNav: []ui.OrchestratorNavItem{
-						{Label: "Channel"},
-						{Label: "History", Source: "api/console/history", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Delete", Method: "DELETE", URL: "api/console/history", Variant: "danger", Confirm: "Delete this turn from the conversation?"},
-						}},
 						{Label: "Enabled agents", Source: "api/console/agents", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
@@ -217,14 +223,29 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
 						}},
-						{Label: "Authorizations", Source: "api/console/approvals", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Approve", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", Confirm: "Approve and run this delegation?"},
-							{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", Confirm: "Approve, run, and always allow delegations to this agent?"},
-							{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger"},
-						}},
-						{Label: "Active grants", Source: "api/console/grants", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Revoke", Method: "POST", URL: "api/console/grants/revoke", Variant: "danger", Confirm: "Revoke this standing authorization? Future actions to this target will queue for your approval again."},
-						}},
+						// Permissions — pinned ABOVE the session list (it's an action
+						// queue, not browse-config), and combines BOTH pending
+						// approval requests AND the standing grants you've given on
+						// one page. Approve/Always/Deny show only on pending rows
+						// (_pending); Revoke only on granted rows (_granted). The
+						// rail badge counts just the pending ones.
+						// Permissions: pending requests render as approval cards
+						// (Deny / Allow once / Always allow); standing-policy rows
+						// render with a segmented Always allow · Needs approval ·
+						// Blocked control + Remove. _pending vs _managed picks which.
+						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Pinned: true, BadgeField: "_pending", Layout: "cards",
+							StateField: "_policy",
+							StateOptions: []ui.OrchestratorStateOption{
+								{Label: "Always allow", Value: "allow", URL: "api/console/permissions/policy"},
+								{Label: "Needs approval", Value: "ask", URL: "api/console/permissions/policy"},
+								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy"},
+							},
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_pending"},
+								{Label: "Allow once", Method: "POST", URL: "api/console/approvals/approve", OnlyIf: "_pending", Confirm: "Approve and run this once?"},
+								{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_pending", Confirm: "Approve, run, and always allow this in future?"},
+								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
+							}},
 						{Label: "Clear channel", ActionURL: "api/console/channel/clear", Variant: "warning",
 							Confirm: "Clear this channel's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
 						{Label: "Decommission", ActionURL: "api/console/channel/decommission", Variant: "danger",
@@ -235,7 +256,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// pinned-session map — so it knows which agents get the nav
 					// and what thread to pin each to, without hardcoding the id
 					// scheme.
-					AltNavFlag:  "ORCH_CHANNEL_AGENTS",
+					AltNavFlag:      "ORCH_CHANNEL_AGENTS",
+					AltPrimaryLabel: "Master Control",
 					Markdown:    true,
 					BulkSelect:  true,
 					Attachments: true,
@@ -270,37 +292,40 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							SendField: "inferred_disabled",
 						},
 					},
+					// Edit stays a flat button (the one you reach for mid-chat);
+					// everything else collapses into Agent / Configure / Session
+					// overflow menus so the toolbar isn't a wall of 15 buttons.
 					Actions: []ui.ToolbarAction{
-						{Label: "Create", Title: "Create a new agent. When a parent agent is currently selected, asks whether to mint a top-level agent or a sub-agent owned by that parent (sub-agent layout masks public / intake / memory fields).",
-							Method: "client", URL: "orchestrate_create_agent"},
 						{Label: "Edit", Title: "Edit the active agent",
 							Method: "client", URL: "orchestrate_edit_agent"},
-						{Label: "Clone", Title: "Clone the active agent into a new draft",
+						{Group: "Agent", Label: "Create", Title: "Create a new agent. When a parent agent is currently selected, asks whether to mint a top-level agent or a sub-agent owned by that parent (sub-agent layout masks public / intake / memory fields).",
+							Method: "client", URL: "orchestrate_create_agent"},
+						{Group: "Agent", Label: "Clone", Title: "Clone the active agent into a new draft",
 							Method: "client", URL: "orchestrate_clone_agent"},
-						{Label: "Export", Title: "Download the active agent as a portable JSON recipe",
-							Method: "client", URL: "orchestrate_export_agent"},
-						{Label: "Import", Title: "Import an agent recipe from a JSON file",
+						{Group: "Agent", Label: "Import", Title: "Import an agent recipe from a JSON file",
 							Method: "client", URL: "orchestrate_import_agent"},
-						{Label: "Tools", Title: "Review and edit the active agent's tool allowlist",
-							Method: "client", URL: "orchestrate_tools_modal"},
-						{Label: "Memory", Title: "Review and prune the active agent's learned notes",
-							Method: "client", URL: "orchestrate_memory_modal"},
-						{Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
-							Method: "client", URL: "orchestrate_knowledge_modal"},
-						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
-							Method: "client", URL: "copy_session"},
-						{Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
-							Method: "client", URL: "orchestrate_skills_modal"},
-						{Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
-							Method: "client", URL: "orchestrate_pipelines_modal"},
-						{Label: "Rules", Title: "Review and edit the active agent's standing rules",
-							Method: "client", URL: "orchestrate_rules_modal"},
-						{Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",
-							Method: "client", URL: "orchestrate_export_session"},
-						{Label: "Builder", Title: "Had to correct this agent? Send the session to Builder so it can see where the agent went wrong and improve its prompt, rules, or tools.",
-							Method: "client", URL: "orchestrate_send_to_builder"},
-						{Label: "Delete", Title: "Delete the active agent",
+						{Group: "Agent", Label: "Export", Title: "Download the active agent as a portable JSON recipe",
+							Method: "client", URL: "orchestrate_export_agent"},
+						{Group: "Agent", Label: "Delete", Title: "Delete the active agent",
 							Method: "client", URL: "orchestrate_delete_agent", Variant: "danger"},
+						{Group: "Configure", Label: "Tools", Title: "Review and edit the active agent's tool allowlist",
+							Method: "client", URL: "orchestrate_tools_modal"},
+						{Group: "Configure", Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
+							Method: "client", URL: "orchestrate_skills_modal"},
+						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
+							Method: "client", URL: "orchestrate_knowledge_modal"},
+						{Group: "Configure", Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
+							Method: "client", URL: "orchestrate_pipelines_modal"},
+						{Group: "Configure", Label: "Rules", Title: "Review and edit the active agent's standing rules",
+							Method: "client", URL: "orchestrate_rules_modal"},
+						{Group: "Configure", Label: "Memory", Title: "Review and prune the active agent's learned notes",
+							Method: "client", URL: "orchestrate_memory_modal"},
+						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+							Method: "client", URL: "copy_session"},
+						{Group: "Session", Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",
+							Method: "client", URL: "orchestrate_export_session"},
+						{Group: "Session", Label: "Send to Builder", Title: "Had to correct this agent? Send the session to Builder so it can see where the agent went wrong and improve its prompt, rules, or tools.",
+							Method: "client", URL: "orchestrate_send_to_builder"},
 					},
 				},
 			},

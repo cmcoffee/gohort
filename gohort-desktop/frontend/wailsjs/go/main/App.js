@@ -70,6 +70,10 @@ export function ResetSettings() {
   return window['go']['main']['App']['ResetSettings']();
 }
 
+export function SaveAttachment(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SaveAttachment'](arg1, arg2, arg3);
+}
+
 export function SaveSettings(arg1, arg2) {
   return window['go']['main']['App']['SaveSettings'](arg1, arg2);
 }

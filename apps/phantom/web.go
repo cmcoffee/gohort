@@ -630,19 +630,13 @@ func (T *Phantom) handleMemory(w http.ResponseWriter, r *http.Request) {
 			Note      string `json:"note"`
 			CreatedAt string `json:"created_at"`
 		}
-		prefix := chatID + ":"
 		var entries []memEntry
-		for _, k := range T.DB.Keys(memoryTable) {
-			if strings.HasPrefix(k, prefix) {
-				var m phantomMemory
-				if T.DB.Get(memoryTable, k, &m) {
-					entries = append(entries, memEntry{
-						ID:        strings.TrimPrefix(k, prefix),
-						Note:      m.Note,
-						CreatedAt: m.CreatedAt,
-					})
-				}
-			}
+		for _, f := range loadMemories(T.DB, chatID) {
+			entries = append(entries, memEntry{
+				ID:        f.ID,
+				Note:      f.Note,
+				CreatedAt: f.Created.Format(time.RFC3339),
+			})
 		}
 		if entries == nil {
 			entries = []memEntry{}
@@ -665,34 +659,16 @@ func (T *Phantom) handleMemory(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "memory id required", http.StatusBadRequest)
 			return
 		}
-		key := chatID + ":" + parts[1]
-		// Verify the key exists before deleting so we can distinguish
-		// "deleted" from "no-op" in the log. The kvlite Unset call is
-		// silent — without this check a wrong key (URL encoding bug,
-		// mismatched chatID, missing entry) would return 204 and look
-		// like a successful delete in the UI even though nothing
-		// changed in the DB.
-		var existing phantomMemory
-		if !T.DB.Get(memoryTable, key, &existing) {
-			// Sample a few existing keys with the same chatID prefix
-			// so the log shows what shape WAS there vs. what we
-			// looked for.
-			prefix := chatID + ":"
-			samples := []string{}
-			for _, k := range T.DB.Keys(memoryTable) {
-				if strings.HasPrefix(k, prefix) {
-					samples = append(samples, k)
-					if len(samples) >= 3 {
-						break
-					}
-				}
-			}
-			Log("[phantom/memory] DELETE: key %q not found (chat had %d matching keys; sample: %v)", key, len(samples), samples)
+		id := parts[1]
+		// ForgetMemoryFactByID returns false when the id isn't present, so
+		// a wrong/stale id surfaces as 404 rather than a silent 204 that
+		// looks like a successful delete in the UI.
+		if !ForgetMemoryFactByID(T.DB, phantomMemoryNS(chatID), id) {
+			Log("[phantom/memory] DELETE: id %q not found for chat %q", id, chatID)
 			http.Error(w, "memory not found", http.StatusNotFound)
 			return
 		}
-		T.DB.Unset(memoryTable, key)
-		Log("[phantom/memory] DELETE: removed %q (was: %q)", key, existing.Note)
+		Log("[phantom/memory] DELETE: removed id %q for chat %q", id, chatID)
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -1553,7 +1529,19 @@ func (T *Phantom) processCoalesced(convChatID, deliverChatID, handle, text strin
 			return slot.generation == gen
 		}
 
-		T.processMessage(convChatID, deliverChatID, handle, text, conv, shouldSend)
+		// Hand this run any draft banked by a superseded earlier run, and clear
+		// it; bankDraft re-banks if THIS run is also superseded before it sends.
+		slot.mu.Lock()
+		priorDraft := slot.bankedDraft
+		slot.bankedDraft = ""
+		slot.mu.Unlock()
+		bankDraft := func(d string) {
+			slot.mu.Lock()
+			slot.bankedDraft = d
+			slot.mu.Unlock()
+		}
+
+		T.processMessage(convChatID, deliverChatID, handle, text, conv, shouldSend, priorDraft, bankDraft)
 
 		slot.mu.Lock()
 		if !slot.queued {
@@ -1714,7 +1702,7 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	// "save_memory" entry for backward compat with existing conv
 	// EnabledTools lists. Both expose the same grouped tool now.
 	if toolEnabled("memory") || toolEnabled("save_memory") {
-		tools = append(tools, memoryGroupedToolDef(T.DB, chatID))
+		tools = append(tools, memoryGroupedToolDef(T.DB, chatID, T.WorkerChat))
 	}
 	// Knowledge tool: chat-scoped vector store with save / search /
 	// forget actions, plus passive auto-ingest at turn close (handled
@@ -1904,7 +1892,7 @@ func phantomStatusLine(info StepInfo) string {
 	return c
 }
 
-func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string, conv Conversation, shouldSend func() bool) {
+func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string, conv Conversation, shouldSend func() bool, priorDraft string, bankDraft func(string)) {
 	chatID := convChatID // legacy local name used throughout the body for storage/history
 	if T.LLM == nil {
 		Log("[phantom] processMessage: LLM not configured")
@@ -2217,6 +2205,18 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		newMsg.Content = "--- NEW MESSAGE (respond to this) ---" + tag + senderDesc + ": " + cleaned
 	}
 	msgs = append(msgs, newMsg)
+
+	// A reply was drafted for the earlier message(s) but a newer one arrived
+	// before it sent. Don't waste it — hand it back as context and let the model
+	// decide: same request (fold the draft into one reply) or a new one (keep
+	// the draft's answer for the earlier point, then address the latest).
+	if strings.TrimSpace(priorDraft) != "" {
+		msgs = append(msgs, Message{
+			Role: "user",
+			Content: "[SYSTEM NOTE — unsent draft] Before the message above arrived, you had finished drafting this reply but had not sent it yet:\n\n" + strings.TrimSpace(priorDraft) +
+				"\n\nDecide how the newest message relates to it: if it is part of the SAME request (a follow-up, correction, or addition), fold your draft into ONE coherent reply that addresses everything. If it is a SEPARATE request, use your draft's answer for the earlier point and then handle the new one. Either way do not throw the draft away, and do not mention this note.",
+		})
+	}
 
 	personaName := cfg.PersonaName
 	if conv.PersonaName != "" {
@@ -2664,10 +2664,17 @@ func (T *Phantom) processMessage(convChatID, deliverChatID, handle, text string,
 		return
 	}
 
-	// Final check: if a newer message arrived while the LLM was working, discard
-	// this reply — the coalesced re-run will produce a reply covering everything.
+	// A newer message arrived while the LLM was working. Don't send this reply
+	// (it predates the new message) — but BANK it so the coalesced re-run gets
+	// it as context and folds it in, instead of regenerating from scratch and
+	// losing the work.
 	if shouldSend != nil && !shouldSend() {
-		Log("[phantom] newer message arrived during LLM call for %s — discarding reply", chatID)
+		if bankDraft != nil && strings.TrimSpace(reply) != "" {
+			bankDraft(reply)
+			Log("[phantom] newer message arrived during LLM call for %s — banking draft (%d chars) for the re-run", chatID, len(reply))
+		} else {
+			Log("[phantom] newer message arrived during LLM call for %s — discarding reply", chatID)
+		}
 		return
 	}
 

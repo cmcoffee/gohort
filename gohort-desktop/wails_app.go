@@ -28,10 +28,12 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -461,6 +463,46 @@ func (a *App) PickReadRoot() pick_result {
 	}
 	core.Log("[gohort-desktop] read-allowlist: added %s (via picker)", chosen)
 	return pick_result{OK: true, Path: chosen}
+}
+
+// SaveAttachment is the desktop download path. The web UI delivers a file
+// attachment as an <a download href="data:<mime>;base64,...">, but WKWebView
+// (the macOS webview Wails uses) ignores the `download` attribute on data: URIs
+// — so that link is a dead click in the desktop client even though it works in
+// a normal browser. popup_shim.js intercepts the click and calls this instead,
+// handing over the filename, mime type, and base64 bytes; we pop a native save
+// dialog and write the decoded bytes to the chosen path. Returns OK with an
+// empty path when the user cancels (the JS treats that as a quiet no-op).
+func (a *App) SaveAttachment(name, mimeType, b64 string) pick_result {
+	_ = mimeType // reserved for a future extension-default; bytes write the same regardless
+	if a.ctx == nil {
+		return pick_result{Error: "desktop not ready"}
+	}
+	b64 = strings.TrimSpace(b64)
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		// Some senders use URL-safe base64 — try that before failing.
+		if alt, aerr := base64.URLEncoding.DecodeString(b64); aerr == nil {
+			raw = alt
+		} else {
+			return pick_result{Error: "decode attachment: " + err.Error()}
+		}
+	}
+	dest, err := wails_runtime.SaveFileDialog(a.ctx, wails_runtime.SaveDialogOptions{
+		DefaultFilename: name,
+		Title:           "Save attachment",
+	})
+	if err != nil {
+		return pick_result{Error: err.Error()}
+	}
+	if dest == "" {
+		return pick_result{OK: true} // user canceled — quiet no-op
+	}
+	if err := os.WriteFile(dest, raw, 0o644); err != nil {
+		return pick_result{Error: err.Error()}
+	}
+	core.Log("[gohort-desktop] saved attachment %q (%d bytes) to %s", name, len(raw), dest)
+	return pick_result{OK: true, Path: dest}
 }
 
 // pick_result mirrors save_result with the chosen path attached.

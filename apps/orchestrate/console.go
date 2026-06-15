@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -71,10 +70,12 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/runs", g(T.handleConsoleRuns))
 	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
 	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))
+	T.HandleFunc("/api/console/permissions", g(T.handleConsolePermissions))
+	T.HandleFunc("/api/console/permissions/policy", g(T.handleConsolePermissionPolicy))
+	T.HandleFunc("/api/console/permissions/remove", g(T.handleConsolePermissionRemove))
 	T.HandleFunc("/api/console/approvals/approve", g(T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", g(T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", g(T.handleApprovalDeny))
-	T.HandleFunc("/api/console/history", g(T.handleConsoleHistory))
 	T.HandleFunc("/api/console/channel/clear", g(T.handleChannelClear))
 	T.HandleFunc("/api/console/channel/decommission", g(T.handleChannelDecommission))
 	T.HandleFunc("/api/console/grants", g(T.handleConsoleGrants))
@@ -181,60 +182,6 @@ func (T *OrchestrateApp) handleChannelDecommission(w http.ResponseWriter, r *htt
 		SetContactPreAuthorized(RootDB, user, handle, false)
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleConsoleHistory powers the orchestrator's History nav: GET returns the
-// pinned thread's turns (role + preview + hidden index); DELETE (?index=N)
-// removes a single turn so the user can scrub a bad instruction. Storage holds
-// the full thread; deleting from it drops the turn from future context (and
-// keeps the compaction marker aligned). A turn already folded into the summary
-// stays in the summary — scrubbing is most reliable on recent (un-summarized)
-// turns.
-func (T *OrchestrateApp) handleConsoleHistory(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	agentID := consoleAgentID(r)
-	sess, _ := loadChatSession(udb, agentID, channelSessionID(agentID))
-
-	if r.Method == http.MethodDelete {
-		idx, _ := strconv.Atoi(r.URL.Query().Get("id"))
-		if idx >= 0 && idx < len(sess.Messages) {
-			sess.Messages = append(sess.Messages[:idx], sess.Messages[idx+1:]...)
-			_, _ = saveChatSession(udb, sess)
-			// Keep the compaction marker aligned when deleting a turn that
-			// was already folded into the summary. When the marker reaches
-			// zero, every summarized turn has been scrubbed, so the summary no
-			// longer reflects anything in the thread — clear its text too,
-			// otherwise a stale digest keeps re-priming the conversation.
-			if st := loadCompactState(udb, agentID, channelSessionID(agentID)); idx < st.SummarizedThrough {
-				st.SummarizedThrough--
-				if st.SummarizedThrough <= 0 {
-					st.SummarizedThrough = 0
-					st.Summary = ""
-				}
-				saveCompactState(udb, agentID, channelSessionID(agentID), st)
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	type histRow struct {
-		Role    string `json:"role"`
-		Message string `json:"message"`
-		ID      string `json:"_id"`
-	}
-	out := []histRow{}
-	for i, m := range sess.Messages {
-		msg := m.Content
-		if len(msg) > 200 {
-			msg = msg[:200] + "…"
-		}
-		out = append(out, histRow{Role: m.Role, Message: msg, ID: strconv.Itoa(i)})
-	}
-	writeJSON(w, out)
 }
 
 type consoleAgentRow struct {
@@ -515,21 +462,7 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 	}
 	out := []apprRow{}
 	for _, a := range ListAuthorizations(RootDB, user) {
-		agent, action := a.Agent, a.Brief
-		if a.Action == "send_message" {
-			agent = operatorApprovalRecipient(user, a)
-			action = "text: " + a.Text
-		}
-		if a.Action == "converse_contact" {
-			agent = operatorApprovalRecipient(user, a)
-			action = "converse toward: " + a.Brief
-		}
-		if a.Action == "activate_sub_agent" {
-			if rec, found := loadAgent(udb, a.Agent); found {
-				agent = rec.Name
-			}
-			action = "activate sub-agent: " + a.Brief
-		}
+		agent, action := approvalDisplay(udb, user, a)
 		out = append(out, apprRow{
 			Agent:     agent,
 			Action:    action,
@@ -538,6 +471,131 @@ func (T *OrchestrateApp) handleConsoleApprovals(w http.ResponseWriter, r *http.R
 		})
 	}
 	writeJSON(w, out)
+}
+
+// approvalDisplay maps a pending Authorization to its (who, detail) display
+// pair, applying the same per-action relabeling the approvals queue shows.
+// Shared by the approvals list and the combined Permissions view.
+func approvalDisplay(udb Database, user string, a Authorization) (who, detail string) {
+	who, detail = a.Agent, a.Brief
+	switch a.Action {
+	case "send_message":
+		who = operatorApprovalRecipient(user, a)
+		detail = "text: " + a.Text
+	case "converse_contact":
+		who = operatorApprovalRecipient(user, a)
+		detail = "converse toward: " + a.Brief
+	case "activate_sub_agent":
+		if rec, found := loadAgent(udb, a.Agent); found {
+			who = rec.Name
+		}
+		detail = "activate sub-agent: " + a.Brief
+	}
+	return who, detail
+}
+
+// handleConsolePermissions is the combined "Permissions" page: pending approval
+// requests AND the standing grants you've already given, on one page. Pending
+// rows come first (they need action) and carry _pending; granted rows carry
+// _granted, so the table's conditional row actions show Approve/Always/Deny on
+// the former and Revoke on the latter. The pinned rail badge counts _pending.
+func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	// Field order matters: the card layout uses the FIRST non-underscore field
+	// as the title (Who), then Detail (mono box), Status (pill), Requested.
+	type permRow struct {
+		Who       string `json:"Who"`
+		Detail    string `json:"Detail"`
+		Status    string `json:"Status,omitempty"`
+		Requested string `json:"Requested,omitempty"`
+		ID        string `json:"_id"`
+		Pending   bool   `json:"_pending,omitempty"`
+		Managed   bool   `json:"_managed,omitempty"` // a standing policy row (segmented control + Remove)
+		Policy    string `json:"_policy,omitempty"`  // allow | ask | block (the segmented state)
+	}
+	out := []permRow{}
+	// Zone 1 — live pending requests (a decision is blocked on the user).
+	for _, a := range ListAuthorizations(RootDB, user) {
+		who, detail := approvalDisplay(udb, user, a)
+		out = append(out, permRow{
+			Who: who, Detail: detail, Status: "Pending",
+			Requested: a.Requested.Local().Format("Jan 2 3:04 PM"),
+			ID:        a.ID, Pending: true,
+		})
+	}
+	// Zone 2 — standing permission policy per subject (Always allow / Needs
+	// approval / Blocked, + Remove).
+	for _, e := range ListDelegationPolicies(RootDB, user) {
+		name := e.Target
+		if rec, found := loadAgent(udb, e.Target); found && rec.Name != "" {
+			name = rec.Name
+		}
+		out = append(out, permRow{Who: name, Detail: "Agent delegation", ID: "agent:" + e.Target, Managed: true, Policy: e.Policy})
+	}
+	for _, e := range ListContactPolicies(RootDB, user) {
+		out = append(out, permRow{Who: e.Target, Detail: "Contact messaging", ID: "contact:" + e.Target, Managed: true, Policy: e.Policy})
+	}
+	writeJSON(w, out)
+}
+
+// handleConsolePermissionPolicy sets a subject's standing policy.
+// POST ?id=<agent:…|contact:…>&value=<allow|ask|block>.
+func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
+	value := strings.TrimSpace(r.URL.Query().Get("value"))
+	if !found || target == "" {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	switch kind {
+	case "agent":
+		SetDelegationPolicy(RootDB, user, target, value)
+	case "contact":
+		SetContactPolicy(RootDB, user, target, value)
+	default:
+		http.Error(w, "unknown subject", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsolePermissionRemove forgets a subject's policy entirely (back to
+// the ask default, dropped from the list). POST ?id=<agent:…|contact:…>.
+func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
+	if !found || target == "" {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	switch kind {
+	case "agent":
+		RemoveDelegationPolicy(RootDB, user, target)
+	case "contact":
+		RemoveContactPolicy(RootDB, user, target)
+	default:
+		http.Error(w, "unknown subject", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // operatorApprovalRecipient renders a human-readable recipient for a phantom

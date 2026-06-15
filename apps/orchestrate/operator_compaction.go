@@ -78,7 +78,10 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		saveCompactState(udb, agent.ID, sessID, newSt)
 		for _, f := range facts {
 			if f = strings.TrimSpace(f); f != "" {
-				StoreMemoryFact(udb, factsNamespace(agent.ID), f)
+				// Worker chat enables supersession: a fact distilled from a
+				// folded span that updates an earlier one replaces it rather
+				// than coexisting as a contradiction.
+				StoreMemoryFact(udb, factsNamespace(agent.ID), f, T.WorkerChat)
 			}
 		}
 		st = newSt

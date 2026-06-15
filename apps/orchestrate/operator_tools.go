@@ -147,6 +147,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if agent == "" || brief == "" {
 					return "", fmt.Errorf("agent and brief are required")
 				}
+				if IsDelegationBlocked(RootDB, owner, agent) {
+					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings — not run.", agent), nil
+				}
 				if IsDelegationPreAuthorized(RootDB, owner, agent) {
 					rec := RunDelegation(context.Background(), RootDB, owner, agent, brief)
 					if rec.Status == RunFailed {
@@ -589,7 +592,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			Tool: Tool{
 				Name:        "notify_me",
 				Description: "Send a text to the USER'S OWN phone via phantom (a notification to yourself / the owner). No approval needed — it only goes to the owner. Use this to push an alert or a monitor result to the user's phone.",
-				Parameters:  map[string]ToolParam{"text": {Type: "string", Description: "The message to send to the owner."}},
+				Parameters:  map[string]ToolParam{"text": {Type: "string", Description: "The message to send to the owner. To include a file you generated (image, etc.), save it to your workspace and call workspace(action=\"attach\", path=\"<file>\") first; it rides along automatically."}},
 				Required:    []string{"text"},
 			},
 			Handler: func(args map[string]any) (string, error) {
@@ -605,10 +608,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if !ok {
 					return "", fmt.Errorf("no owner phone configured in phantom (set Owner phone in phantom settings)")
 				}
-				if err := link.SendToHandle(owner, self, text); err != nil {
+				images := collectMessageAttachments(sess, text)
+					// DeliverMessage (not SendToHandle) so attachments ride along;
+					// persona is inactive for the owner's own chat, so the text
+					// is sent verbatim. Empty chatID resolves the owner's thread.
+					if _, err := operatorDeliverMessage(link, owner, "", self, text, images); err != nil {
 					return "", err
 				}
-				return "Sent to your phone.", nil
+				if len(images) > 0 {
+						return fmt.Sprintf("Sent to your phone with %d attachment(s).", len(images)), nil
+					}
+					return "Sent to your phone.", nil
 			},
 		},
 		{
@@ -638,6 +648,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
 				images := collectMessageAttachments(sess, text)
+				if IsContactBlocked(RootDB, owner, recip) {
+					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings — not sent.", label), nil
+				}
 				// Pre-authorized recipient: send immediately, skip the queue.
 				if IsContactPreAuthorized(RootDB, owner, recip) {
 					if _, err := operatorDeliverMessage(link, owner, rec.ChatID, rec.Handle, text, images); err != nil {
@@ -679,6 +692,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				label := operatorRecipientLabel(rec)
 				// Pre-authorized recipient: start immediately (grant shared with
 				// one-shot texts), skip the queue.
+				if IsContactBlocked(RootDB, owner, recip) {
+					return fmt.Sprintf("Conversing with %s is blocked in the user's permission settings — not started.", label), nil
+				}
 				if IsContactPreAuthorized(RootDB, owner, recip) {
 					if _, err := link.StartGoalConversation(owner, rec.ChatID, rec.Handle, goal, agentID, channelSessionID(agentID)); err != nil {
 						return "", err

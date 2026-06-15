@@ -63,6 +63,51 @@ var thinkBlockRE = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
 // the token limit before emitting </think>.
 var thinkUnclosedRE = regexp.MustCompile(`(?s)^<think>.*`)
 
+// StripThinkTags defensively removes thinking-channel delimiters and the
+// reasoning they wrap from a content string. It handles every leak shape seen
+// from llama.cpp + Qwen thinking models, not just the leading/whole-block cases:
+//
+//   - a full <think>...</think> block anywhere → removed
+//   - an unclosed <think> (token limit hit) → everything from it onward is
+//     reasoning, cut to that point
+//   - an orphan </think> with no opener (server split the opener into
+//     reasoning_content but leaked the closer + preceding text) → everything
+//     up to and including the last </think> is reasoning, dropped
+//
+// Returns the cleaned text and whether any think delimiter was present. The
+// bool is a signal that upstream thinking-channel separation failed; callers
+// at user-facing boundaries (e.g. phantom outbound) should log it.
+func StripThinkTags(s string) (string, bool) {
+	if !strings.Contains(s, "<think>") && !strings.Contains(s, "</think>") {
+		return s, false
+	}
+	// Full blocks anywhere.
+	s = thinkBlockRE.ReplaceAllString(s, "")
+	// Unclosed opener: reasoning runs from it to the end.
+	if i := strings.Index(s, "<think>"); i >= 0 {
+		s = s[:i]
+	}
+	// Orphan closer (no opener). The answer is normally AFTER it
+	// (reasoning</think>answer). But a stray TRAILING closer — "answer</think>"
+	// with nothing after, or the no-think degeneration "answer</think>answer"
+	// where the model duplicated the answer across both channels — means the
+	// answer is BEFORE it. Keep whichever side has content, favoring the after
+	// side when both do (and collapsing the duplicate to one copy).
+	if i := strings.LastIndex(s, "</think>"); i >= 0 {
+		if after := strings.TrimSpace(s[i+len("</think>"):]); after != "" {
+			s = after
+		} else {
+			s = strings.TrimSpace(s[:i])
+		}
+	}
+	// Backstop: never let any delimiter survive, even pathological multi-tag
+	// inputs (accepting that those may concatenate text — no tag is the
+	// invariant that matters).
+	s = strings.ReplaceAll(s, "</think>", "")
+	s = strings.ReplaceAll(s, "<think>", "")
+	return strings.TrimSpace(s), true
+}
+
 // openAIClient implements the LLM interface for OpenAI-compatible APIs.
 type openAIClient struct {
 	apiKey            string
@@ -1582,18 +1627,12 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 				content = ""
 			}
 		}
-		// Defensive cleanup for backends that populate reasoning_content
-		// AND still leak think-block fragments into content (Qwen3 dense
-		// + llama.cpp chat-template variants do this). Strip any full
-		// <think>...</think> blocks, then peel a leading bare </think>
-		// that the model emitted as a closer for content the server
-		// already split off into reasoning_content.
-		if strings.Contains(content, "<think>") {
-			content = strings.TrimSpace(thinkBlockRE.ReplaceAllString(content, ""))
-		}
-		if trimmed := strings.TrimLeft(content, " \t\r\n"); strings.HasPrefix(trimmed, "</think>") {
-			content = strings.TrimSpace(strings.TrimPrefix(trimmed, "</think>"))
-		}
+		// Defensive cleanup for backends that populate reasoning_content AND
+		// still leak think delimiters into content (Qwen3 dense + llama.cpp
+		// chat-template variants do this). StripThinkTags handles full blocks,
+		// unclosed openers, and orphan closers anywhere — not just the leading
+		// cases the prior inline logic caught.
+		content, _ = StripThinkTags(content)
 
 		// Always trace reasoning when present.
 		if reasoning != "" {

@@ -940,7 +940,14 @@ Some endpoints need auth. Two declared-capability shapes:
 
 **Prefer ` + "fetch_via" + `**: gohort dispatches the request through the credential's allow-list, injects auth server-side, logs it, returns the body. The script never sees the secret. ` + "secret" + ` is the escape hatch when you need the raw value (custom signing, OAuth-flow, etc.).
 
-These are the only capability declarations you ever need to write — bare ` + "fetch_url" + `/` + "browse_page" + `/` + "log" + ` are automatic. Credential identifiers can't be auto-guessed, so they stay explicit; if the credential isn't registered, tell the user to register it via the admin UI first.
+These are the only capability declarations you ever need to write — bare ` + "fetch_url" + `/` + "browse_page" + `/` + "log" + ` are automatic. Credential identifiers can't be auto-guessed, so they stay explicit.
+
+**Wiring an authenticated API is credential-first, and the auth must WORK before you build anything against it.** Do it strictly in this order, do NOT skip ahead:
+1. CREATE the gohort credential FIRST. OAuth2 uses draft_oauth_credential; a plain API key, bearer token, custom header, or HTTP basic-auth (e.g. OPNsense) uses draft_api_credential. Set its base_url to the host (e.g. https://192.168.0.1); the admin manages which endpoints under it are allowed.
+2. STOP and hand off, then END THE TURN. The credential is created DISABLED. Tell the user exactly which secret the admin pastes in Admin > APIs, to enable it, and for a LAN appliance or any self-signed or IP-addressed host to also turn on "Allow self-signed / skip TLS verification". Do NOT write the tool or agent yet. You cannot author a correct tool against auth that does not exist and that you cannot call.
+3. VERIFY before building. When the user says it is set up, make ONE probe call through the credential (the auto-generated fetch_url_<name>, or fetch_via in a script) to a simple endpoint. If it errors (bad auth, a cert error, or a connection timeout meaning the server cannot reach the host), report the EXACT error and stop, that is a setup problem to fix with the user, not something to code around. Only a clean response means the auth works.
+4. THEN build the tool, and only then, now that you can actually probe the API to learn its real endpoints and shapes. Prefer tool_def(mode="api", credential="<name>") over a hand-written shell script.
+**NEVER take an api key, secret, token, password, or host as a tool PARAMETER**, and NEVER ask the user to paste a secret into the chat: the credential injects auth server-side. When you author an AGENT around a credentialed API, do NOT write its prompt to collect login details either. You draft the credential; the admin only pastes the secret in Admin > APIs.
 
 ## Authoring is your job
 

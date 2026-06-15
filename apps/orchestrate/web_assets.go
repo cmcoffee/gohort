@@ -602,6 +602,26 @@ const orchestrateWebAssets = `<style>
   padding-left: 1.4rem; /* indent rows under their group header */
 }
 
+/* Standing-agent / monitor report card — a message that arrived on its own
+ * (not a back-and-forth turn) reads as a distinct titled card, not a chat
+ * bubble. Decorated by the report replay hook below. */
+.ui-agent-msg.orch-report-card {
+  border: 1px solid var(--accent, #4a9eff);
+  border-radius: 8px;
+  background: var(--accent-soft, rgba(74,158,255,0.06));
+  padding-top: 0;
+}
+.orch-report-card-hdr {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.4rem 0.65rem;
+  margin: 0 0 0.5rem 0;
+  border-bottom: 1px solid var(--border, rgba(127,127,127,0.25));
+  font-size: 0.78rem;
+}
+.orch-report-card-icon { flex: 0 0 auto; }
+.orch-report-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orch-report-card-time { color: var(--text-mute, #999); font-size: 0.7rem; flex: 0 0 auto; }
+
 </style>
 <script>
 (function() {
@@ -3868,6 +3888,32 @@ const orchestrateWebAssets = `<style>
         });
       }
       registerIntakeReplayHook();
+
+      // Standing-agent / monitor report card. A message with report_from arrived
+      // on its own (a scheduled report, a monitor wake), not as a turn in the
+      // conversation — render it as a distinct titled card (producer name + fire
+      // time header) so it doesn't read like the agent talking back.
+      function registerReportReplayHook() {
+        if (!window.uiRegisterMessageReplayHook) { setTimeout(registerReportReplayHook, 50); return; }
+        window.uiRegisterMessageReplayHook(function(bubble, msg) {
+          if (!bubble || !msg || !msg.report_from) return;
+          if (bubble.querySelector(':scope > .orch-report-card-hdr')) return; // idempotent
+          bubble.classList.add('orch-report-card');
+          var when = '';
+          if (msg.created) {
+            var t = (typeof msg.created === 'number') ? (msg.created > 1e12 ? msg.created : msg.created * 1000) : Date.parse(msg.created);
+            if (!isNaN(t)) { try { when = new Date(t).toLocaleString(); } catch (e) {} }
+          }
+          var hdr = document.createElement('div');
+          hdr.className = 'orch-report-card-hdr';
+          var icon = document.createElement('span'); icon.className = 'orch-report-card-icon'; icon.textContent = '⏰';
+          var name = document.createElement('span'); name.className = 'orch-report-card-name'; name.textContent = msg.report_from;
+          hdr.appendChild(icon); hdr.appendChild(name);
+          if (when) { var ts = document.createElement('span'); ts.className = 'orch-report-card-time'; ts.textContent = when; hdr.appendChild(ts); }
+          bubble.insertBefore(hdr, bubble.firstChild);
+        });
+      }
+      registerReportReplayHook();
 
       // Export-to-Techwriter — on any assistant bubble, ship the
       // rendered body to techwriter as a new article and open the

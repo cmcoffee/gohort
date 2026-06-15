@@ -1401,6 +1401,12 @@ type AgentLoopPanel struct {
 	// resends; Delete just truncates. The URL template substitutes
 	// {id} with the active session id at click time.
 	TruncateURL string `json:"truncate_url,omitempty"`
+	// MessageScrub — optional. When true (and TruncateURL is set), each
+	// replayed message bubble gets a ✕ affordance that deletes JUST that one
+	// message (PATCH {delete_at: rawIndex}), keeping the rest of the thread —
+	// the in-thread per-turn scrub. Gated so apps whose PATCH endpoint only
+	// understands {at} truncation don't render a button that would misfire.
+	MessageScrub bool `json:"msg_scrub,omitempty"`
 	NewLabel    string `json:"new_label,omitempty"`  // default "New"
 	ListTitle   string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
 	// ListPosition picks where the sessions list lives:
@@ -1554,6 +1560,10 @@ type AgentLoopPanel struct {
 	// hardcodes no app-specific global or session-id scheme; the app owns the
 	// name, the membership, and the per-agent session.
 	AltNavFlag string `json:"alt_nav_flag,omitempty"`
+	// AltPrimaryLabel names the pinned home-thread hero row (the ⚡ row at the
+	// top of the rail) for alt-nav agents. App-owned wording; core/ui defaults
+	// to "Channel" when unset rather than hardcoding any one app's term.
+	AltPrimaryLabel string `json:"alt_primary_label,omitempty"`
 }
 
 // OrchestratorNavItem is one sidebar nav entry for an orchestrator-mode agent
@@ -1573,6 +1583,41 @@ type OrchestratorNavItem struct {
 	ActionURL string `json:"action_url,omitempty"`
 	Confirm   string `json:"confirm,omitempty"` // confirmation prompt before an ActionURL POST
 	Variant   string `json:"variant,omitempty"` // "danger" | "warning" | "" — styles an action item
+	// Pinned lifts this item OUT of the "Manage ▾" dropdown and renders it as a
+	// prominent row ABOVE the session list — for an action queue (e.g.
+	// Permissions) that's time-sensitive enough to deserve a fixed, glanceable
+	// home rather than being buried in a menu. Always visible for fleet agents.
+	Pinned bool `json:"pinned,omitempty"`
+	// BadgeField names a hidden row field; the count badge then reflects only
+	// rows where that field is truthy (e.g. "_pending" counts just the pending
+	// approvals on a page that also lists granted ones). Empty = count all rows.
+	BadgeField string `json:"badge_field,omitempty"`
+	// Layout picks how the source rows render: "" / "table" (default, dense
+	// grid) or "cards" (one card per row — first field bold as the title, the
+	// rest as detail lines, row actions as buttons). Cards suit an approval
+	// queue (Permissions) where each row is a decision, not a data point.
+	Layout string `json:"layout,omitempty"`
+	// Icon is an optional leading glyph (emoji or short text) shown before the
+	// label on a Pinned rail row — so a pinned action queue reads as a distinct
+	// tier alongside the Channel hero, not as a bare list entry.
+	Icon string `json:"icon,omitempty"`
+	// StateField + StateOptions add a segmented STATE control to each card in a
+	// "cards" layout (e.g. a permission's Always allow / Needs approval /
+	// Blocked). StateField names the hidden row field holding the current value;
+	// the option whose Value matches it is highlighted. Clicking an option POSTs
+	// its URL with ?id=<row._id>&agent=<id>&value=<Value>. Rows lacking
+	// StateField render no control — so pending cards (buttons) and policy rows
+	// (segmented control) can coexist in one view.
+	StateField   string                    `json:"state_field,omitempty"`
+	StateOptions []OrchestratorStateOption `json:"state_options,omitempty"`
+}
+
+// OrchestratorStateOption is one segment of a card's state control.
+type OrchestratorStateOption struct {
+	Label  string `json:"label"`
+	Value  string `json:"value"`            // matches StateField's row value
+	URL    string `json:"url"`              // POST <url>?id=<row._id>&agent=…&value=<Value>
+	Method string `json:"method,omitempty"` // default POST
 }
 
 // OrchestratorRowAction is one per-row button in an orchestrator nav view.
@@ -1727,6 +1772,12 @@ type ToolbarAction struct {
 	Method  string `json:"method,omitempty"`
 	Confirm string `json:"confirm,omitempty"`
 	Variant string `json:"variant,omitempty"` // "primary" | "danger" | "" (default)
+	// Group, when set, collapses this action into a "<Group> ▾" dropdown in the
+	// toolbar instead of rendering as a standalone button. Actions sharing a
+	// Group land in the same menu, in declared order; ungrouped actions stay as
+	// flat buttons (the always-visible primaries). Lets a crowded toolbar shed
+	// its rarely-used actions into a few overflow menus without per-app JS.
+	Group string `json:"group,omitempty"`
 }
 
 func (ArticleEditor) componentType() string { return "article_editor" }

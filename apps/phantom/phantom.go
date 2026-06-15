@@ -39,6 +39,11 @@ type chatPending struct {
 	conv          Conversation
 	deliverChatID string // outbound destination for the next coalesced reply (may differ from convChatID for aliased inbound)
 	queued        bool   // a message arrived while active; re-run when done
+	// bankedDraft holds a reply that was fully drafted but NOT sent because a
+	// newer message arrived first. Instead of discarding that work, the next
+	// coalesced run gets it as context and decides whether the new message is
+	// part of the same request (fold the draft in) or a separate one.
+	bankedDraft string
 }
 
 type Phantom struct {
@@ -119,6 +124,10 @@ func (T *Phantom) Init() error {
 	// phantom-dispatched sessions for the current admin user.
 	// Called from Init so T.DB is already set by the framework.
 	setPhantomForExport(T)
+	// One-time: fold legacy phantom_memory rows into the shared core fact
+	// store (namespace "phantom:<chatID>") so phantom gets dedup +
+	// supersession. Idempotent — a no-op once the old table is drained.
+	MigratePhantomMemory(T.DB)
 	return T.Flags.Parse()
 }
 func (T *Phantom) Main() error {
@@ -862,6 +871,18 @@ func enqueueOutbox(db Database, item OutboxItem) {
 	// (already-plain text is unchanged).
 	if item.Text != "" {
 		item.Text = markdownToPlain(item.Text)
+		// Thinking-channel delimiters must NEVER reach a real person. If they
+		// show up here, upstream <think> separation failed (core LLM client or
+		// stream assembly) — strip them so the user never sees it, and WARN so
+		// the deeper bug stays visible rather than silently swallowed.
+		if cleaned, found := StripThinkTags(item.Text); found {
+			Warn("[phantom] think-tag leak in outbound to chat=%s — stripped (upstream thinking-channel separation failed): %q", item.ChatID, truncateStr(item.Text, 120))
+			item.Text = cleaned
+		}
+		// Scrub any framework-internal meta markers ([[meta:…]], leaked
+		// [ATTACH:…]) so they never reach a real person. Runs AFTER
+		// applyAttachMarkers has consumed real delivery markers upstream.
+		item.Text = StripMetaTags(item.Text)
 	}
 	if len(item.Videos) > 0 && strings.TrimSpace(item.Text) != "" {
 		// Send the video portion now.

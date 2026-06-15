@@ -13,8 +13,8 @@ package orchestrate
 
 import (
 	"context"
-	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -96,8 +96,10 @@ func registerStandingRunner(app *OrchestrateApp) {
 			sess = ChatSession{ID: reportSession, AgentID: reportAgent}
 		}
 		sess.Messages = append(sess.Messages, ChatMessage{
-			Role:    "assistant",
-			Content: fmt.Sprintf("[standing agent %q]\n%s", sa.Name, body),
+			Role:       "assistant",
+			Content:    body,
+			Created:    time.Now(),
+			ReportFrom: sa.Name,
 		})
 		if _, err := saveChatSession(udb, sess); err != nil {
 			Log("[standing] report append failed for %s/%s: %v", sa.Owner, sa.Name, err)

@@ -69,6 +69,9 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 		// config from the API's docs; the admin pastes the secret + enables
 		// it in the admin UI.
 		draftOAuthCredentialToolDef(),
+		// draft_api_credential — the non-oauth sibling: plain API key /
+		// bearer / header / basic_auth (OPNsense, X-API-Key services, etc.).
+		draftAPICredentialToolDef(),
 	}
 	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
@@ -91,18 +94,19 @@ func draftOAuthCredentialToolDef() AgentToolDef {
 			Description: "Scaffold an OAuth2 API credential for the admin to finish. YOU research the API's OAuth (grant type, https token endpoint, scopes, the URL space it covers) from its docs and fill the config in; the credential is created DISABLED and the admin pastes the SECRET in Admin > APIs and enables it. Use when the user wants to wire up an authenticated API (eBay, Google, etc.). You never see or handle the secret. After drafting, tell the user WHICH secret the admin must paste: client_secret (e.g. eBay Cert ID) for client_credentials, the RSA private key for jwt_bearer, the refresh token for refresh_token.",
 			Parameters: map[string]ToolParam{
 				"name":                {Type: "string", Description: "Short lowercase id (letters/digits/underscores), e.g. \"ebay\". Becomes fetch_url_<name> once live."},
-				"grant":               {Type: "string", Enum: []string{"client_credentials", "jwt_bearer", "refresh_token"}, Description: "The grant the API uses: eBay/most vendor APIs = client_credentials; Google service accounts = jwt_bearer."},
+				"grant":               {Type: "string", Enum: []string{"client_credentials", "jwt_bearer", "refresh_token", "password"}, Description: "The grant the API uses: eBay/most vendor APIs = client_credentials; Google service accounts = jwt_bearer; APIs that need a user login (client id+secret AND username+password) = password."},
 				"token_url":           {Type: "string", Description: "The https token endpoint, e.g. https://api.ebay.com/identity/v1/oauth2/token."},
-				"allowed_url_pattern": {Type: "string", Description: "Glob bounding which URLs this credential may call, e.g. https://api.ebay.com/buy/browse/**. Scope it tight to what's needed."},
+				"base_url":            {Type: "string", Description: "The server this credential talks to, host only, e.g. https://api.ebay.com. The admin manages which endpoints under it are allowed, in Admin > APIs."},
 				"scope":               {Type: "string", Description: "(optional) Requested scopes, space-separated, e.g. https://api.ebay.com/oauth/api_scope."},
 				"client_id":           {Type: "string", Description: "(optional) The non-secret client/app ID, if the user gave it; otherwise the admin adds it."},
+				"username":            {Type: "string", Description: "(password grant) the resource-owner username to log in as. The password itself is a secret the admin pastes."},
 				"jwt_issuer":          {Type: "string", Description: "(jwt_bearer) the iss claim, e.g. the service-account email."},
 				"jwt_subject":         {Type: "string", Description: "(jwt_bearer, optional) the sub claim."},
 				"jwt_audience":        {Type: "string", Description: "(jwt_bearer, optional) the aud claim; defaults to token_url."},
 				"jwt_key_id":          {Type: "string", Description: "(jwt_bearer, optional) the kid header."},
 				"description":         {Type: "string", Description: "(optional) What this credential is for."},
 			},
-			Required: []string{"name", "grant", "token_url", "allowed_url_pattern"},
+			Required: []string{"name", "grant", "token_url", "base_url"},
 		},
 		Handler: func(args map[string]any) (string, error) {
 			c := SecureCredential{
@@ -110,9 +114,10 @@ func draftOAuthCredentialToolDef() AgentToolDef {
 				Type:              SecureCredOAuth2,
 				Grant:             strings.TrimSpace(stringArg(args, "grant")),
 				TokenURL:          strings.TrimSpace(stringArg(args, "token_url")),
-				AllowedURLPattern: strings.TrimSpace(stringArg(args, "allowed_url_pattern")),
+				BaseURL:           strings.TrimSpace(stringArg(args, "base_url")),
 				Scope:             strings.TrimSpace(stringArg(args, "scope")),
 				ClientID:          strings.TrimSpace(stringArg(args, "client_id")),
+				Username:          strings.TrimSpace(stringArg(args, "username")),
 				JWTIssuer:         strings.TrimSpace(stringArg(args, "jwt_issuer")),
 				JWTSubject:        strings.TrimSpace(stringArg(args, "jwt_subject")),
 				JWTAudience:       strings.TrimSpace(stringArg(args, "jwt_audience")),
@@ -126,9 +131,69 @@ func draftOAuthCredentialToolDef() AgentToolDef {
 				OAuthGrantClientCredentials: "the client secret (e.g. eBay Cert ID)",
 				OAuthGrantJWTBearer:         "the RSA private key (PEM or JWK)",
 				OAuthGrantRefreshToken:      "the refresh token",
+				OAuthGrantPassword:          "the client secret AND the user's password (two separate fields)",
 			}[c.Grant]
 			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. To finish: in Admin > APIs open %q, paste %s into the secret field, add the client/app ID if it's not set, enable it, then hit Test. It goes live as fetch_url_%s.",
 				c.Name, c.Grant, c.Name, secretNeeded, c.Name), nil
+		},
+	}
+}
+
+// credentialFirstGuidance is injected into the system prompt of every
+// self-serve authoring agent (any non-Builder agent that gets tool_def + the
+// credential-draft tools). It travels with the authoring CAPABILITY rather
+// than living hardcoded in one seed prompt, so Chat, custom agents, and any
+// future authoring agent all get the same credential-first behavior. Builder
+// carries the equivalent in its own persona. No backticks inside (raw string).
+const credentialFirstGuidance = `**Wiring an authenticated API is credential-first, and the auth must WORK before you build anything against it.** Do it strictly in this order, do NOT skip ahead:
+1. CREATE the gohort credential FIRST. OAuth2 uses draft_oauth_credential; a plain API key, bearer token, custom header, or HTTP basic-auth (e.g. OPNsense) uses draft_api_credential. Set its base_url to the host (e.g. https://192.168.0.1); the admin manages which endpoints under it are allowed.
+2. STOP and hand off, then END THE TURN. The credential is created DISABLED. Tell the user exactly which secret the admin pastes in Admin > APIs, to enable it, and for a LAN appliance or any self-signed or IP-addressed host to also turn on "Allow self-signed / skip TLS verification". Do NOT write the tool or agent yet. You cannot author a correct tool against auth that does not exist and that you cannot call.
+3. VERIFY before building. When the user says it is set up, make ONE probe call through the credential (the auto-generated fetch_url_<name>, or fetch_via in a script) to a simple endpoint. If it errors (bad auth, a cert error, or a connection timeout meaning the server cannot reach the host), report the EXACT error and stop. That is a setup problem to fix with the user, not something to code around or retry blindly. Only a clean response means the auth works.
+4. THEN build the tool, and only then, now that you can actually probe the API to learn its real endpoints and shapes. Prefer tool_def(mode="api", credential="<name>") over a hand-written shell script; api mode handles the call, the auth, the allow-list, and retries for you.
+NEVER take an api key, secret, token, password, or host as a tool PARAMETER, and NEVER ask the user to paste a secret into the chat: the credential injects auth server-side. If you build an AGENT around the API, do not write its prompt to collect login details either. You draft the credential; the admin only pastes the secret in Admin > APIs.`
+
+// draftAPICredentialToolDef is the non-oauth sibling of
+// draftOAuthCredentialToolDef: Builder scaffolds a plain key / bearer /
+// header / basic_auth credential from the API's docs; the admin pastes the
+// secret + enables it. This is how authenticated NON-oauth APIs (OPNsense,
+// X-API-Key services, etc.) get wired without ever putting a secret into a
+// tool parameter.
+func draftAPICredentialToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "draft_api_credential",
+			Description: "Scaffold a NON-OAuth API credential (plain API key, bearer token, custom header, or HTTP basic-auth) for the admin to finish. Use this for any authenticated API that is NOT OAuth2 — e.g. OPNsense (basic_auth), a service with an X-API-Key header, or a bearer token. YOU research from the docs HOW the API authenticates (which mechanism, which header/param name, the URL space it covers) and fill the config; the credential is created DISABLED and the admin pastes the SECRET in Admin > APIs and enables it. You never see or handle the secret. After drafting, tell the user exactly WHICH value the admin must paste (the API key, the bearer token, or the username:password pair for basic_auth — for OPNsense that's key:secret). Then build the tool with tool_def(mode=\"api\", credential=\"<name>\") — NEVER take the key/secret/host as tool parameters.",
+			Parameters: map[string]ToolParam{
+				"name":                {Type: "string", Description: "Short lowercase id (letters/digits/underscores), e.g. \"opnsense\". Becomes fetch_url_<name> once live."},
+				"type":                {Type: "string", Enum: []string{"bearer", "header", "query", "basic_auth"}, Description: "How the API authenticates: bearer = Authorization: Bearer <token>; header = a custom header (set param_name, e.g. X-API-Key); query = key in a query param (set param_name); basic_auth = HTTP Basic (secret is username:password; OPNsense uses key:secret)."},
+				"base_url":            {Type: "string", Description: "The server this credential talks to, host only, no path, e.g. https://192.168.0.1. The admin manages which specific endpoints under it are allowed, in Admin > APIs."},
+				"param_name":          {Type: "string", Description: "(header/query only) the header or query-param name, e.g. X-API-Key or apikey."},
+				"description":         {Type: "string", Description: "(optional) What this credential is for."},
+			},
+			Required: []string{"name", "type", "base_url"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			c := SecureCredential{
+				Name:        strings.TrimSpace(stringArg(args, "name")),
+				Type:        strings.TrimSpace(stringArg(args, "type")),
+				BaseURL:     strings.TrimSpace(stringArg(args, "base_url")),
+				ParamName:   strings.TrimSpace(stringArg(args, "param_name")),
+				Description: strings.TrimSpace(stringArg(args, "description")),
+			}
+			if err := Secure().SaveAPIDraft(c); err != nil {
+				return "", err
+			}
+			secretNeeded := map[string]string{
+				SecureCredBearer:    "the bearer token",
+				SecureCredHeader:    "the API key value for the " + c.ParamName + " header",
+				SecureCredQuery:     "the API key value for the " + c.ParamName + " query param",
+				SecureCredBasicAuth: "the credential as username:password (for OPNsense, key:secret)",
+			}[c.Type]
+			if secretNeeded == "" {
+				secretNeeded = "the secret value"
+			}
+			return fmt.Sprintf("Drafted %s credential %q, created DISABLED. To finish: in Admin > APIs open %q, paste %s into the secret field, enable it. It goes live as fetch_url_%s. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params.",
+				c.Type, c.Name, c.Name, secretNeeded, c.Name, c.Name), nil
 		},
 	}
 }

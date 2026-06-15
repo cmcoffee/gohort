@@ -3876,6 +3876,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if g := strings.TrimSpace(t.agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g
 	}
+	// Credential-first authoring guidance — capability-tied. Every non-Builder
+	// agent is granted tool_def + the credential-draft tools later in this
+	// function (same condition), so it gets the matching guidance here. Builder
+	// carries the equivalent in its own persona, so it's excluded to avoid
+	// doubling.
+	if !isBuilderAgent(t.agent.ID) {
+		sys += "\n\n" + credentialFirstGuidance
+	}
 	// Any skill the LLM activated mid-turn via activate_skill is
 	// re-injected here as well — the orchestrator round sees the
 	// skill via the tool result in conversation history naturally,
@@ -4397,6 +4405,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// PIPELINE authoring still route to Builder; only tools are self-serve.
 	if !isBuilderAgent(t.agent.ID) {
 		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess))
+		// Credential-first authoring: an agent that can author API tools must be
+		// able to create the credential it routes through (a DISABLED, secretless
+		// draft the admin later completes), instead of soliciting secrets in
+		// chat. Builder has these via its authoring catalog; every other
+		// self-serve authoring agent gets them here. The matching
+		// credentialFirstGuidance is injected into the system prompt above under
+		// the same !isBuilderAgent condition.
+		knowTools = append(knowTools, draftOAuthCredentialToolDef(), draftAPICredentialToolDef())
 	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.
@@ -5595,7 +5611,9 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	}
 	t.sse.Send(map[string]any{"kind": "message_done", "id": msgID})
 	t.emitStats(msgID, resp, synthStart)
-	return strings.TrimSpace(reply), nil
+	// Scrub framework-internal markers from the saved/exported copy (the client
+	// also strips on render — see uiRenderMarkdown). Cheap no-op when none.
+	return strings.TrimSpace(StripMetaTags(reply)), nil
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -5607,6 +5625,15 @@ func toLLMMessages(msgs []ChatMessage) []Message {
 	out := make([]Message, 0, len(msgs))
 	for mi, m := range msgs {
 		base := Message{Role: m.Role, Content: m.Content}
+		// Automated reports store a clean body (the UI shows the producer in a
+		// card header); re-attach an origin marker for the LLM so it reads as an
+		// automated report, not something it said itself. Wrapped in
+		// <gohort-meta> so that if the model echoes it into a reply it's scrubbed
+		// (a bare [standing agent …] would leak); the model still reads it as
+		// input (StripMetaTags only touches output).
+		if m.ReportFrom != "" {
+			base.Content = fmt.Sprintf("<gohort-meta>automated report from %q — context, not user input</gohort-meta>\n%s", m.ReportFrom, m.Content)
+		}
 		// Preserve tool calls + results across turns. ChatMessage.ToolCalls
 		// (set on the assistant turn that fired them) gets expanded into
 		// the LLM-protocol shape: the assistant message carries ToolCalls,

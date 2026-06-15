@@ -137,6 +137,20 @@ func (a *AdminApp) WebRestricted(r *http.Request) bool {
 // It sets up a sub-mux with routes for user management, system settings,
 // cost tracking, and vector statistics, then prepares a gated handler to
 // be mounted to the provided mux under the specified prefix.
+// saveCredWithPassword saves a secure-API credential, plus the oauth2
+// password-grant SECOND secret (the resource-owner password) when the grant is
+// password. Empty password = keep the existing one, mirroring Save's
+// empty-means-keep secret semantics.
+func saveCredWithPassword(c SecureCredential, secret, password string) error {
+	if err := Secure().Save(c, secret); err != nil {
+		return err
+	}
+	if c.Grant == OAuthGrantPassword {
+		return Secure().SavePassword(c.Name, password)
+	}
+	return nil
+}
+
 func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Grab the database from SetupWebAgentFunc's wiring. The admin app
 	// isn't an Agent, so we use AuthDB which is set by the main app.
@@ -1011,7 +1025,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			// stored secret unchanged unless the admin types a new one).
 			if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" {
 				w.Header().Set("Content-Type", "application/json")
-				for _, c := range Secure().List() {
+				for _, c := range Secure().ListWithPending() {
 					if c.Name == name {
 						json.NewEncoder(w).Encode(c)
 						return
@@ -1021,7 +1035,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(Secure().List())
+			json.NewEncoder(w).Encode(Secure().ListWithPending())
 		case http.MethodPost:
 			// Two POST shapes: the upsert body (full credential) and the
 			// toggle action (?action=enable|disable&name=X). Distinguish
@@ -1088,10 +1102,14 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				Name              string   `json:"name"`
 				Type              string   `json:"type"`
 				AllowedURLPattern string   `json:"allowed_url_pattern"`
+				BaseURL           string   `json:"base_url"`
+				AllowedEndpoints  []string `json:"allowed_endpoints"`
 				ParamName         string   `json:"param_name"`
 				Description       string   `json:"description"`
 				RequiresConfirm   bool     `json:"requires_confirm"`
+				InsecureSkipTLS   bool     `json:"insecure_skip_tls"`
 				Secret            string   `json:"secret"`
+				Password          string   `json:"password"` // password-grant resource-owner password (the 2nd secret)
 				AllowedMethods    []string `json:"allowed_methods"`
 				DeniedURLPatterns []string `json:"denied_url_patterns"`
 				MaxCallsPerDay    int      `json:"max_calls_per_day"`
@@ -1099,6 +1117,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				Grant       string `json:"grant"`
 				TokenURL    string `json:"token_url"`
 				ClientID    string `json:"client_id"`
+				Username    string `json:"username"` // password grant: resource-owner username
 				Scope       string `json:"scope"`
 				JWTIssuer   string `json:"jwt_issuer"`
 				JWTSubject  string `json:"jwt_subject"`
@@ -1113,15 +1132,19 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				Name:              strings.TrimSpace(req.Name),
 				Type:              strings.TrimSpace(req.Type),
 				AllowedURLPattern: strings.TrimSpace(req.AllowedURLPattern),
+				BaseURL:           strings.TrimSpace(req.BaseURL),
+				AllowedEndpoints:  req.AllowedEndpoints,
 				ParamName:         strings.TrimSpace(req.ParamName),
 				Description:       strings.TrimSpace(req.Description),
 				RequiresConfirm:   req.RequiresConfirm,
+				InsecureSkipTLS:   req.InsecureSkipTLS,
 				AllowedMethods:    req.AllowedMethods,
 				DeniedURLPatterns: req.DeniedURLPatterns,
 				MaxCallsPerDay:    req.MaxCallsPerDay,
 				Grant:             strings.TrimSpace(req.Grant),
 				TokenURL:          strings.TrimSpace(req.TokenURL),
 				ClientID:          strings.TrimSpace(req.ClientID),
+				Username:          strings.TrimSpace(req.Username),
 				Scope:             strings.TrimSpace(req.Scope),
 				JWTIssuer:         strings.TrimSpace(req.JWTIssuer),
 				JWTSubject:        strings.TrimSpace(req.JWTSubject),
@@ -1143,6 +1166,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					if c.ClientID == "" {
 						c.ClientID = existing.ClientID
 					}
+					if c.Username == "" {
+						c.Username = existing.Username
+					}
 					if c.Scope == "" {
 						c.Scope = existing.Scope
 					}
@@ -1160,7 +1186,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					}
 				}
 			}
-			if err := Secure().Save(c, req.Secret); err != nil {
+			if err := saveCredWithPassword(c, req.Secret, req.Password); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}

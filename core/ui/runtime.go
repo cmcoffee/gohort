@@ -2723,6 +2723,24 @@ body { min-height: 100vh; min-height: 100dvh; }
    * behind a scroll. */
   flex-wrap: wrap;
 }
+/* Toolbar overflow dropdown (Agent / Configure / Session ▾). The menu is
+ * portaled to <body> and position:fixed (placed via JS from the button's rect)
+ * so the list-top .ui-agent-actions cascade — which kept dragging it into flow
+ * as a stacked/side-by-side row — can't reach it at all. */
+.ui-toolbar-menu {
+  position: fixed; z-index: 1000; min-width: 170px;
+  display: none; flex-direction: column; gap: 0.1rem; padding: 0.3rem;
+  border: 1px solid var(--border, rgba(127,127,127,0.3)); border-radius: 6px;
+  background: var(--bg-1, #1b1b2b); box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+.ui-toolbar-menu.open { display: flex; }
+.ui-toolbar-menu button {
+  display: block; width: 100%; text-align: left; padding: 0.4rem 0.6rem;
+  border: none; background: transparent; cursor: pointer; font: inherit;
+  font-size: 0.82rem; color: var(--text, inherit); border-radius: 4px;
+}
+.ui-toolbar-menu button:hover { background: var(--bg-2, rgba(127,127,127,0.15)); }
+.ui-toolbar-menu button.danger { color: var(--danger, #d9534f); }
 @media (max-width: 700px) {
   .ui-agent-actions { padding: 0.4rem 0.5rem; gap: 0.3rem; }
   .ui-agent-actions .ui-row-btn { font-size: 0.78rem; padding: 0.3rem 0.55rem; }
@@ -4180,10 +4198,24 @@ const runtimeJS = `
   // Use this (or add the ui-md class yourself) for ANY element you fill
   // with rendered markdown — it is what keeps headings / code / lists
   // consistent across every surface.
+  // uiStripMetaTags removes framework-internal markers from anything rendered
+  // for the user — the reserved <gohort-meta>…</gohort-meta> convention plus
+  // leaked delivery markers ([ATTACH:…], <<<ATTACH:…>>>…<<<END>>>). Mirrors core
+  // StripMetaTags (Go) so the saved copy and the rendered copy agree.
+  window.uiStripMetaTags = function(s) {
+    if (!s || (s.indexOf('<gohort-meta') < 0 && s.indexOf('[ATTACH') < 0 && s.indexOf('<<<ATTACH') < 0)) return s;
+    return s
+      .replace(/<gohort-meta>[\s\S]*?<\/gohort-meta>/gi, '')
+      .replace(/\[ATTACH:\s*[^\]]*\]/g, '')
+      .replace(/<<<ATTACH:[^>]*>>>[\s\S]*?<<<END>>>/gi, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  };
   window.uiRenderMarkdown = function(target, raw) {
     if (!target) return;
     target.classList.add('ui-md');
-    target.innerHTML = mdToHTML(String(raw == null ? '' : raw));
+    target.innerHTML = mdToHTML(window.uiStripMetaTags(String(raw == null ? '' : raw)));
   };
   // Markdown extension registry — apps add post-processors that
   // run after base mdToHTML passes complete.
@@ -8536,6 +8568,9 @@ const runtimeJS = `
 
     // --- Optional list sidebar -------------------------------------------
     var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
+    // Channel/fleet "Manage ▾" control — built in the rail block (where the nav
+    // machinery is in scope), shown in the topbar actions for fleet agents.
+    var manageControl = null, manageBtn = null, manageDot = null, pinnedEl = null;
     function closeDrawer() {
       if (!side) return;
       side.classList.remove('open');
@@ -8616,13 +8651,83 @@ const runtimeJS = `
       // other agent is untouched and keeps its session list. Renders the nav
       // + hides sessions; non-chat items overlay the main pane with a table.
       sideHdrEl = sideHdrBuilt.elt;
+      // primaryEl — the "Channel" hero row: the agent's main/home thread, pinned
+      // at the very TOP of the rail (above Permissions and the session header) and
+      // styled distinctly so it doesn't read as just another session. Content is
+      // filled by loadSessions, which knows the home thread + its unread state.
+      var primaryEl = el('div', {style: 'display:none;padding:0.5rem 0.5rem 0.35rem'});
+      side.insertBefore(primaryEl, sideHdrEl);
       var orchBtns = [];
       var orchBadges = [];
-      var channelUnreadDot = null; // dot on the Channel row; toggled from the channel thread's unread
       function renderOrchTable(rows, item, reload) {
         orchView.innerHTML = '';
         if (!rows || !rows.length) {
           orchView.appendChild(el('div', {style: 'color:var(--text-mute, #999);padding:0.5rem'}, ['Nothing here yet.']));
+          return;
+        }
+        // Card layout (item.layout === 'cards') — a COMPACT one-row-per-entry
+        // list (like Claude Desktop's permission settings): title + inline muted
+        // details + a Status pill on the left, the segmented state control and
+        // action buttons on the right. Wraps to a second line only when narrow.
+        if (item && item.layout === 'cards') {
+          var cactions = (item && item.row_actions) || [];
+          var ckeys = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
+          rows.forEach(function(row) {
+            var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'});
+            // Left: title + status pill + inline muted details, all on one line.
+            var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
+            ckeys.forEach(function(k, ki) {
+              var v = row[k];
+              var s = (v == null) ? '' : String(v);
+              if (!s) return;
+              if (ki === 0) {
+                info.appendChild(el('span', {style: 'font-weight:600;font-size:0.9rem'}, [s]));
+              } else if (k === 'Status') {
+                var pend = /pending/i.test(s);
+                info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
+                  (pend ? 'background:var(--accent, #4a9eff);color:#fff' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
+              } else {
+                info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:0.78rem;word-break:break-word'}, [s]));
+              }
+            });
+            card.appendChild(info);
+            // Right: segmented state control (rows that carry it) + actions.
+            var controls = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;flex:0 0 auto;flex-wrap:wrap'});
+            if (item.state_field && (item.state_options || []).length && row[item.state_field] != null) {
+              var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:6px;overflow:hidden'});
+              (item.state_options || []).forEach(function(opt, oi) {
+                var active = String(row[item.state_field]) === String(opt.value);
+                var segBtn = el('button', {type: 'button',
+                  style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:0.73rem;white-space:nowrap;' +
+                    (active ? 'background:var(--accent, #4a9eff);color:#fff;font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
+                  onclick: function(ev) {
+                    if (ev) ev.stopPropagation();
+                    if (active) return;
+                    var u = opt.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '') + '&value=' + encodeURIComponent(opt.value);
+                    fetch(u, {method: opt.method || 'POST'}).then(function() { if (reload) reload(); }).catch(function(err) { console.error('state set failed: ' + err.message); });
+                  }}, [opt.label]);
+                seg.appendChild(segBtn);
+              });
+              controls.appendChild(seg);
+            }
+            cactions.forEach(function(a) {
+              if (a.only_if && !row[a.only_if]) return;
+              if (a.hide_if && row[a.hide_if]) return;
+              var cls = 'ui-row-btn compact';
+              if (a.variant) cls += ' ' + a.variant;
+              var btn = el('button', {type: 'button', class: cls, onclick: async function(ev) {
+                if (ev) ev.stopPropagation();
+                if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+                fetch(rowURL, {method: a.method || 'POST'})
+                  .then(function() { if (reload) reload(); })
+                  .catch(function(err) { console.error('row action failed: ' + err.message); });
+              }}, [a.label]);
+              controls.appendChild(btn);
+            });
+            if (controls.childNodes.length) card.appendChild(controls);
+            orchView.appendChild(card);
+          });
           return;
         }
         // Columns = the row's keys minus any "_"-prefixed (hidden, e.g. _id).
@@ -8666,7 +8771,10 @@ const runtimeJS = `
               var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function(ev) {
                 if (ev) ev.stopPropagation(); // don't toggle the row expand
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
-                fetch(a.url + '?id=' + encodeURIComponent(row._id), {method: a.method || 'POST'})
+                // Stamp the in-view agent so per-agent row actions (e.g. History
+                // turn-scrub) target the right agent's thread, not the default.
+                var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+                fetch(rowURL, {method: a.method || 'POST'})
                   .then(function() { if (reload) reload(); })
                   .catch(function(err) { console.error('row action failed: ' + err.message); });
               }}, [a.label]);
@@ -8691,6 +8799,23 @@ const runtimeJS = `
         });
         orchView.appendChild(tbl);
       }
+      // orchSourceURL pins a nav source/action fetch to the agent currently
+      // in view. Data views like History are per-agent on the server (they key
+      // off ?agent=…); without this the fetch omits the param and the server
+      // falls back to its default agent, so a non-default channel's History
+      // always renders empty. Mirrors the action_url agent-stamping below.
+      function orchSourceURL(src) {
+        if (!src) return src;
+        return src + (src.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+      }
+      // openHomeThread lands on the agent's home thread — a pinned session in
+      // the normal list, not a nav row (channel model: the home thread is just
+      // a session). Used on entering a channel agent and after a channel-wide
+      // action. Non-channel agents have no pinned thread, so it's a no-op there.
+      function openHomeThread() {
+        var hs = altPinnedSession(window.GOHORT_AGENT_ID);
+        if (hs) openSession(hs);
+      }
       function selectOrchNav(idx) {
         var item = (cfg.orchestrator_nav || [])[idx] || {};
         // Action items are buttons (clear / decommission): POST to the URL
@@ -8700,7 +8825,7 @@ const runtimeJS = `
             if (item.confirm && window.uiConfirm && !(await window.uiConfirm(item.confirm))) return;
             var url = item.action_url + (item.action_url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
             fetch(url, {method: 'POST'})
-              .then(function() { refreshChannelBadges(); closeDrawer(); if (orchBtns.length) selectOrchNav(0); })
+              .then(function() { refreshChannelBadges(); closeDrawer(); openHomeThread(); })
               .catch(function(err) { console.error('channel action failed: ' + err.message); });
           })();
           return;
@@ -8728,7 +8853,7 @@ const runtimeJS = `
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
           var reload = function() { selectOrchNav(idx); };
-          fetch(item.source).then(function(r) { return r.ok ? r.json() : []; })
+          fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) { renderOrchTable(rows, item, reload); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
         } else {
@@ -8736,7 +8861,12 @@ const runtimeJS = `
           // shows, and resume this agent's pinned home thread.
           orchView.style.display = 'none';
           var altSid = altPinnedSession(window.GOHORT_AGENT_ID);
-          if (altSid && currentSessionId !== altSid) openSession(altSid);
+          // Use this panel's own session var (activeSessionId). currentSessionId
+          // belongs to a different component (chat_panel) and is undeclared here
+          // — referencing it threw a ReferenceError that swallowed the channel
+          // open, so selecting Channel silently fell through to a new session
+          // and the home thread never auto-opened.
+          if (altSid && activeSessionId !== altSid) openSession(altSid);
           // Restore the chat's title (openSession refreshes it when it actually
           // switches; when already on the home thread it doesn't fire, so put
           // back the remembered session title rather than the view label).
@@ -8746,63 +8876,125 @@ const runtimeJS = `
       // refreshChannelBadges fetches each management view's row count and
       // shows it as a badge on that row (hidden when zero). core/ui stays
       // agnostic: any nav item with a source gets a count badge.
+      // updateManageDot lights the dot on the Manage button when ANY management
+      // view currently shows a nonzero count — the at-a-glance "you have pending
+      // items" signal the old rail-box badges gave, now that the per-view badges
+      // live inside a closed dropdown.
+      function updateManageDot() {
+        if (!manageDot) return;
+        // Pinned items live in the rail, not the Manage menu — exclude them so
+        // the Manage dot reflects only what's actually inside the dropdown.
+        var any = (cfg.orchestrator_nav || []).some(function(item, i) {
+          if (item.pinned) return false;
+          var b = orchBadges[i];
+          return b && b.style.display !== 'none' && b.textContent && b.textContent !== '0';
+        });
+        manageDot.style.display = any ? '' : 'none';
+      }
       function refreshChannelBadges() {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
           if (!item.source || !badge) return;
-          fetch(item.source).then(function(r) { return r.ok ? r.json() : []; })
+          fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
-              var n = (rows && rows.length) || 0;
+              // BadgeField counts only matching rows (e.g. _pending on a page
+              // that also lists granted permissions); empty counts every row.
+              var n = item.badge_field
+                ? (rows || []).filter(function(rw) { return rw && rw[item.badge_field]; }).length
+                : ((rows && rows.length) || 0);
               badge.textContent = n ? String(n) : '';
               badge.style.display = n ? '' : 'none';
+              // A pinned action-queue row tints itself when it has items.
+              if (item.pinned && orchBtns[i]) {
+                orchBtns[i].style.background = n ? 'var(--accent-soft, rgba(74,158,255,0.14))' : 'transparent';
+              }
+              updateManageDot();
             })
             .catch(function() {});
         });
       }
-      // The channel box sits ABOVE the normal session list (not replacing
-      // it). Row 0 is the Channel (the no-source chat item) → opens the home
-      // thread. Rows with a source are management views (Enabled agents /
-      // Event monitors / Authorizations) rendered with a live count badge.
-      navEl = el('div', {class: 'ui-channel-box', style: 'display:none;flex-direction:column;gap:0.1rem;padding:0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'});
+      // Channel/fleet management is a "Manage ▾" dropdown in the topbar — NOT a
+      // box in the session rail (channel model: the rail is threads only). navEl
+      // is the absolutely-positioned dropdown panel; each item is a management
+      // view (Enabled agents / Event monitors / Authorizations) with a live
+      // count badge, or a channel-wide action (Clear / Decommission).
+      navEl = el('div', {class: 'ui-channel-menu', style: 'display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:210px;flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
+      function closeManageMenu() { if (navEl) navEl.style.display = 'none'; }
+      // Pinned items (action queues like Permissions) get a prominent row ABOVE
+      // the session list; everything else lives in the Manage dropdown. One pass
+      // keeps orchBtns/orchBadges index-aligned with cfg.orchestrator_nav.
+      pinnedEl = el('div', {class: 'ui-channel-pinned', style: 'display:none;flex-direction:column;gap:0.2rem;padding:0.45rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'});
       (cfg.orchestrator_nav || []).forEach(function(item, i) {
-        var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
-        var kids = [label];
         var badge = null;
-        if (item.action_url) {
-          // A channel action (clear / decommission): muted, color by variant.
-          var ac = (item.variant === 'danger') ? 'var(--danger, #d9534f)' : (item.variant === 'warning') ? 'var(--warning, #d98c34)' : 'var(--text-mute, #999)';
-          label.style.color = ac;
-          label.style.fontSize = '0.85rem';
-        } else if (item.source) {
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:0.75rem;background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
-          kids.push(badge);
+        var b;
+        if (item.pinned) {
+          var plabel = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600'}, [item.label || ('View ' + (i + 1))]);
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.72rem;background:var(--accent, #4a9eff);color:#fff'}, ['']);
+          var pkids = [];
+          if (item.icon) pkids.push(el('span', {style: 'font-size:0.95rem;flex:0 0 auto'}, [item.icon]));
+          pkids.push(plabel);
+          pkids.push(badge);
+          b = el('button', {type: 'button', class: 'ui-channel-row ui-channel-pinned-row',
+            style: 'display:flex;align-items:center;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:5px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+            onclick: function() { selectOrchNav(i); }}, pkids);
+          pinnedEl.appendChild(b);
         } else {
-          // The Channel row gets a small marker so it reads as the home thread,
-          // plus an unread dot (hidden until a wake lands in the home thread).
-          label.textContent = '⚡ ' + (item.label || 'Channel');
-          channelUnreadDot = el('span', {class: 'ui-unread-dot', title: 'New activity',
-            style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']);
-          kids.push(channelUnreadDot);
+          var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
+          var kids = [label];
+          if (item.action_url) {
+            // A channel action (clear / decommission): muted, color by variant.
+            var ac = (item.variant === 'danger') ? 'var(--danger, #d9534f)' : (item.variant === 'warning') ? 'var(--warning, #d98c34)' : 'var(--text-mute, #999)';
+            label.style.color = ac;
+            label.style.fontSize = '0.85rem';
+          } else if (item.source) {
+            badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.2rem;text-align:center;padding:0.05rem 0.4rem;border-radius:999px;font-size:0.75rem;background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)'}, ['']);
+            kids.push(badge);
+          }
+          b = el('button', {type: 'button', class: 'ui-channel-row',
+            style: 'display:flex;align-items:center;gap:0.4rem;text-align:left;padding:0.45rem 0.6rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+            onclick: function() { closeManageMenu(); selectOrchNav(i); }}, kids);
+          navEl.appendChild(b);
         }
-        var b = el('button', {type: 'button', class: 'ui-channel-row',
-          style: 'display:flex;align-items:center;gap:0.4rem;text-align:left;padding:0.45rem 0.6rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
-          onclick: function() { selectOrchNav(i); }}, kids);
-        navEl.appendChild(b);
         orchBtns.push(b);
         orchBadges.push(badge);
       });
-      // Insert the channel box at the very top of the rail, above the
-      // sessions header/search/list (which stay in place for channel agents).
-      side.insertBefore(navEl, sideHdrEl);
+      // Pinned rows sit at the very top of the rail, above the session header.
+      if (sideHdrEl && pinnedEl.childNodes.length) side.insertBefore(pinnedEl, sideHdrEl);
+      // The toggle. Wrapped (position:relative) so the dropdown anchors to it.
+      // Hidden by default; applyOrchMode reveals it for fleet agents. A small
+      // dot lights when any management view has pending items (the signal the
+      // old rail-box badges carried).
+      manageBtn = el('button', {type: 'button', class: 'ui-row-btn', title: 'Channel & fleet management',
+        onclick: function(ev) {
+          ev.stopPropagation();
+          var open = navEl.style.display === 'none' || !navEl.style.display;
+          navEl.style.display = open ? 'flex' : 'none';
+          if (open) refreshChannelBadges();
+        }}, ['Manage ▾']);
+      manageDot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
+        style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;flex:0 0 auto'}, ['']);
+      manageBtn.appendChild(manageDot);
+      manageControl = el('div', {style: 'position:relative;display:none'}, [manageBtn, navEl]);
+      // Close on any outside click.
+      document.addEventListener('click', function(ev) {
+        if (navEl && navEl.style.display && navEl.style.display !== 'none' &&
+            manageControl && !manageControl.contains(ev.target)) closeManageMenu();
+      });
       function applyOrchMode(agentId) {
         var isOrch = isAltNavAgent(agentId);
-        // Channel agents keep their session list AND get the channel box on
-        // top — both visible. Non-channel agents just hide the box.
-        navEl.style.display = isOrch ? '' : 'none';
+        // Fleet agents get the "Manage ▾" control in the topbar; the rail is
+        // threads only. Non-fleet agents hide it (and any open overlay/menu).
+        if (manageControl) manageControl.style.display = isOrch ? '' : 'none';
+        if (pinnedEl) pinnedEl.style.display = isOrch ? '' : 'none';
+        // Hide the Channel hero immediately for non-fleet agents; loadSessions
+        // re-shows + fills it for fleet agents from the home thread.
+        if (!isOrch && primaryEl) primaryEl.style.display = 'none';
+        closeManageMenu();
         if (!isOrch && orchView) orchView.style.display = 'none';
         if (isOrch) {
           refreshChannelBadges();
-          if (orchBtns.length) selectOrchNav(0);
+          // Land on the home thread (a pinned session in the rail).
+          openHomeThread();
         }
       }
       window.addEventListener('gohort-agent-id-changed', function(e) {
@@ -8945,91 +9137,124 @@ const runtimeJS = `
     }
 
     var actionsBar = el('div', {class: 'ui-agent-actions'});
-    (cfg.actions || []).forEach(function(action) {
+    // runToolbarAction performs one toolbar action — shared by flat buttons AND
+    // grouped-dropdown items so both behave identically.
+    async function runToolbarAction(action, btn) {
+      if (action.confirm && !(await window.uiConfirm(action.confirm))) return;
+      var method = action.method || 'post';
+      if (method === 'client') {
+        var name = action.url || '';
+        var fn = window.UIClientActions && window.UIClientActions[name];
+        if (typeof fn === 'function') {
+          fn({
+            sessionId: activeSessionId,
+            button:    btn,
+            action:    action,
+            // clearConvo() / clearActivity() — wipe a pane. Used by app-defined
+            // Clear actions that mirror the legacy chat-header Clear button.
+            clearConvo: function() {
+              msgEls = {}; blockEls = {};
+              convoLog.innerHTML = '';
+              emptyMsg = el('div', {class: 'ui-agent-empty'},
+                [cfg.empty_text || 'Start typing below.']);
+              convoLog.appendChild(emptyMsg);
+            },
+            clearActivity: function() {
+              activityEls = {};
+              activityLog.innerHTML = '';
+            },
+            // subscribe(url) — wire an EventSource to url and pipe its events
+            // through handleEvent so a server job's progress shows in the
+            // activity pane. Registers as activeEventSource so cancelMessage()
+            // and the 'done' handler close it cleanly (else the browser
+            // auto-reconnects and the snapshot-then-stream translator replays
+            // every buffered event forever after cancel).
+            subscribe: function(url) {
+              if (activeEventSource) {
+                activeEventSource.close();
+                activeEventSource = null;
+              }
+              var es = new EventSource(url);
+              activeEventSource = es;
+              es.onmessage = function(ev) {
+                try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
+              };
+              es.onerror = function() {
+                if (es.readyState === EventSource.CLOSED) {
+                  if (activeEventSource === es) activeEventSource = null;
+                  enableInput();
+                }
+              };
+              disableInput();
+              return es;
+            },
+          });
+        } else {
+          showToast('No handler for client action: ' + name);
+        }
+        return;
+      }
+      var url = (action.url || '').replace('{id}',
+        encodeURIComponent(activeSessionId || ''));
+      if (method === 'open')          { window.open(url, '_blank', 'noopener'); }
+      else if (method === 'redirect') { window.location.href = url; }
+      else {
+        fetchJSON(url, {method: 'POST'}).catch(function(err) {
+          showToast('Failed: ' + (err && err.message || err));
+        });
+      }
+    }
+    function makeActionButton(action) {
       var classes = 'ui-row-btn';
       if (action.variant) classes += ' ' + action.variant;
-      var btn = el('button', {
-        class: classes,
-        title: action.title || '',
-        'data-action-label': action.label || '',
-      }, [action.label || '(action)']);
-      btn.addEventListener('click', async function() {
-        if (action.confirm && !(await window.uiConfirm(action.confirm))) return;
-        var method = action.method || 'post';
-        if (method === 'client') {
-          var name = action.url || '';
-          var fn = window.UIClientActions && window.UIClientActions[name];
-          if (typeof fn === 'function') {
-            fn({
-              sessionId: activeSessionId,
-              button:    btn,
-              action:    action,
-              // clearConvo() / clearActivity() — wipe a pane. Used
-              // by app-defined Clear actions that mirror the
-              // legacy chat-header Clear button.
-              clearConvo: function() {
-                msgEls = {}; blockEls = {};
-                convoLog.innerHTML = '';
-                emptyMsg = el('div', {class: 'ui-agent-empty'},
-                  [cfg.empty_text || 'Start typing below.']);
-                convoLog.appendChild(emptyMsg);
-              },
-              clearActivity: function() {
-                activityEls = {};
-                activityLog.innerHTML = '';
-              },
-              // subscribe(url) — wire an EventSource to url and
-              // pipe its events through the panel's handleEvent.
-              // Lets client actions tap a server-side job (map,
-              // synthesize, …) that emits events into the same
-              // queue the chat uses, so progress shows up in the
-              // activity pane.
-              //
-              // CRITICAL: register the EventSource as
-              // activeEventSource so cancelMessage() and the
-              // 'done' event handler close it cleanly. Without
-              // this the browser auto-reconnects on stream end,
-              // and the server's snapshot-then-stream translator
-              // replays every buffered event each time — the
-              // user sees the last output repeated forever after
-              // cancel.
-              subscribe: function(url) {
-                if (activeEventSource) {
-                  activeEventSource.close();
-                  activeEventSource = null;
-                }
-                var es = new EventSource(url);
-                activeEventSource = es;
-                es.onmessage = function(ev) {
-                  try { handleEvent(JSON.parse(ev.data)); } catch (_) {}
-                };
-                es.onerror = function() {
-                  if (es.readyState === EventSource.CLOSED) {
-                    if (activeEventSource === es) activeEventSource = null;
-                    enableInput();
-                  }
-                };
-                disableInput();
-                return es;
-              },
-            });
-          } else {
-            showToast('No handler for client action: ' + name);
-          }
-          return;
-        }
-        var url = (action.url || '').replace('{id}',
-          encodeURIComponent(activeSessionId || ''));
-        if (method === 'open')          { window.open(url, '_blank', 'noopener'); }
-        else if (method === 'redirect') { window.location.href = url; }
-        else {
-          fetchJSON(url, {method: 'POST'}).catch(function(err) {
-            showToast('Failed: ' + (err && err.message || err));
-          });
+      var btn = el('button', {class: classes, title: action.title || '',
+        'data-action-label': action.label || ''}, [action.label || '(action)']);
+      btn.addEventListener('click', function() { runToolbarAction(action, btn); });
+      return btn;
+    }
+    // Render ungrouped actions as flat buttons; collapse each Group into a
+    // "<Group> ▾" dropdown so a crowded toolbar sheds its rarely-used actions.
+    (function() {
+      var groupOrder = [], groupMap = {};
+      (cfg.actions || []).forEach(function(action) {
+        if (action.group) {
+          if (!groupMap[action.group]) { groupMap[action.group] = []; groupOrder.push(action.group); }
+          groupMap[action.group].push(action);
+        } else {
+          actionsBar.appendChild(makeActionButton(action));
         }
       });
-      actionsBar.appendChild(btn);
-    });
+      groupOrder.forEach(function(gname) {
+        // The menu is portaled to <body> (position:fixed, placed from the
+        // button's rect) — the toolbar's list-top cascade kept pulling an
+        // in-toolbar menu into normal flow, so we get it out of the toolbar's
+        // DOM entirely. Only the toggle button lives in the actions bar.
+        var menu = el('div', {class: 'ui-toolbar-menu'});
+        var toggle = el('button', {type: 'button', class: 'ui-row-btn', title: gname + ' actions'}, [gname + ' ▾']);
+        function closeMenu() { menu.classList.remove('open'); }
+        function openMenu() {
+          var r = toggle.getBoundingClientRect();
+          menu.style.left = Math.round(r.left) + 'px';
+          menu.style.top = Math.round(r.bottom + 4) + 'px';
+          menu.classList.add('open');
+        }
+        groupMap[gname].forEach(function(action) {
+          var item = el('button', {type: 'button', class: (action.variant ? action.variant : ''),
+            title: action.title || ''}, [action.label || '(action)']);
+          item.addEventListener('click', function() { closeMenu(); runToolbarAction(action, item); });
+          menu.appendChild(item);
+        });
+        document.body.appendChild(menu);
+        toggle.addEventListener('click', function(ev) {
+          ev.stopPropagation();
+          if (menu.classList.contains('open')) closeMenu(); else openMenu();
+        });
+        document.addEventListener('click', function(e) {
+          if (menu.classList.contains('open') && !menu.contains(e.target) && !toggle.contains(e.target)) closeMenu();
+        });
+        actionsBar.appendChild(toggle);
+      });
+    })();
     // Copy session — registered as a built-in client action so apps
     // can place it wherever they want in their Actions list. Closes
     // over substituteExtras + cfg.load_url + activeSessionId so the
@@ -9144,6 +9369,14 @@ const runtimeJS = `
       });
     }
     if ((cfg.actions || []).length === 0) actionsBar.style.display = 'none';
+    // Drop the "Manage ▾" fleet control into the topbar actions (built earlier
+    // in the rail block, where the nav machinery was in scope). Travels with
+    // actionsBar to wherever the layout places it. Force the bar visible since
+    // the control alone justifies it even when the app declared no other actions.
+    if (manageControl) {
+      actionsBar.style.display = '';
+      actionsBar.appendChild(manageControl);
+    }
     topbar.appendChild(actionsBar);
     // statusPill removed — the in-chat thinking spinner (rendered
     // by showThinking, floating above the active assistant bubble)
@@ -9950,6 +10183,7 @@ const runtimeJS = `
         title: 'Delete this message and everything after',
         onclick: function(){ deleteUserMessage(bubble); },
       }, ['Delete']));
+      maybeAppendScrub(bar, bubble);
       appendBubbleActions(bar, 'user', bubble);
       bubble.appendChild(bar);
     }
@@ -9972,6 +10206,7 @@ const runtimeJS = `
         onclick: function(){ copyAssistantMessage(bubble, copyBtn); },
       }, ['Copy']);
       bar.appendChild(copyBtn);
+      maybeAppendScrub(bar, bubble);
       appendBubbleActions(bar, 'assistant', bubble);
       bubble.appendChild(bar);
     }
@@ -10320,6 +10555,45 @@ const runtimeJS = `
           return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
         }
         return r.json();
+      });
+    }
+
+    // maybeAppendScrub adds a ✕ that deletes JUST this one message (not a
+    // truncate-from-here) when the app opted in via cfg.msg_scrub AND this
+    // bubble has a known raw storage index (replayed bubbles only). Keeps every
+    // later turn intact — the in-thread replacement for the old History
+    // row-delete. Live bubbles have no index yet; they get one on reload.
+    function maybeAppendScrub(bar, bubble) {
+      if (!cfg.msg_scrub || !cfg.truncate_url) return;
+      var entry = msgEntryForBubble(bubble);
+      if (!entry || typeof entry.storageIndex !== 'number') return;
+      bar.appendChild(el('button', {
+        class: 'ui-agent-msg-act danger',
+        title: 'Delete just this message (keep the rest of the thread)',
+        onclick: function(){ scrubMessage(bubble); },
+      }, ['✕']));
+    }
+
+    // scrubMessage deletes one message by its raw storage index, keeping the
+    // rest of the thread, then reloads the session so every bubble's
+    // storageIndex re-syncs after the array shifts down.
+    async function scrubMessage(bubble) {
+      if (!activeSessionId) return;
+      var entry = msgEntryForBubble(bubble);
+      if (!entry || typeof entry.storageIndex !== 'number') return;
+      if (!(await window.uiConfirm('Delete just this message? The rest of the thread stays.'))) return;
+      var url = substituteExtras(cfg.truncate_url.replace('{id}', encodeURIComponent(activeSessionId)));
+      fetch(url, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({delete_at: entry.storageIndex}),
+      }).then(function(r) {
+        if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+        return r.json();
+      }).then(function() {
+        openSession(activeSessionId);
+      }).catch(function(err) {
+        window.uiAlert('Delete failed: ' + (err && err.message || err));
       });
     }
 
@@ -11394,6 +11668,20 @@ const runtimeJS = `
       enableInput();
     }
 
+    // detachActiveStream drops THIS client's view of an in-flight run WITHOUT
+    // telling the server to cancel it — the agent loop keeps running server-side
+    // (runs.go) and we re-attach via the resume probe. Distinct from
+    // cancelMessage, which also POSTs cancel_url to stop the run. Called when
+    // opening/switching a session so a stale send (or resume) stream from the
+    // previous view can't keep appending deltas into the new one — that overlap
+    // is what produced token-by-token doubling ("AllAll four four …") when a
+    // user left a running session and came back: the old stream and the resume
+    // stream both fed the same bubble.
+    function detachActiveStream() {
+      if (activeStream) { try { activeStream.abort(); } catch(_) {} activeStream = null; }
+      if (activeEventSource) { try { activeEventSource.close(); } catch(_) {} activeEventSource = null; }
+    }
+
     // --- Session list / load / delete -------------------------------------
 
     // Refresh the list rail when any uiInvalidate fires for our
@@ -11418,22 +11706,49 @@ const runtimeJS = `
       var activeID = cfg.list_is_context ? activeContextId : activeSessionId;
       fetchJSON(substituteExtras(cfg.list_url)).then(function(items) {
         sideList.innerHTML = '';
-        // For channel agents the home thread is shown as the Channel row in
-        // the box above — drop it here so it isn't listed twice, and reflect
-        // its unread state on the Channel row's dot instead of a list row.
+        // Channel model: the agent's home thread is just a session, pinned to
+        // the TOP of this list (not a separate Channel row). Pull it out of the
+        // normal items so it doesn't also appear under Active/Recent, and render
+        // it first below. For a channel agent whose home thread has no turns yet
+        // (not in the items list), synthesize a placeholder row so there's always
+        // an entry point — sending into it creates it on the first turn.
         var chanSid = altPinnedSession(window.GOHORT_AGENT_ID);
+        var homeRec = null;
         if (chanSid && Array.isArray(items)) {
-          var chanUnread = false;
           items = items.filter(function(s) {
-            if (s && s[idF] === chanSid) { chanUnread = !!s.unread; return false; }
+            if (s && s[idF] === chanSid) { homeRec = s; return false; }
             return true;
           });
-          // Don't badge the Channel row when you're already viewing the
-          // channel thread.
-          if (chanSid === activeSessionId) chanUnread = false;
-          if (channelUnreadDot) channelUnreadDot.style.display = chanUnread ? 'inline-block' : 'none';
+          if (!homeRec) { homeRec = {}; homeRec[idF] = chanSid; }
+          if (!homeRec[ttlF]) homeRec[ttlF] = 'Home';
         }
-        if (!Array.isArray(items) || !items.length) {
+        // Fill the Channel hero row — the agent's main thread, styled to stand
+        // apart from the session list. Hidden for non-channel agents (no home
+        // thread). Sits above Permissions + the session header (see primaryEl).
+        if (primaryEl) {
+          primaryEl.innerHTML = '';
+          if (homeRec) {
+            var chId = homeRec[idF];
+            var chActive = chId === activeSessionId;
+            var chKids = [
+              el('span', {style: 'font-size:0.95rem;flex:0 0 auto'}, ['⚡']),
+              el('span', {style: 'flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [cfg.alt_primary_label || 'Channel']),
+            ];
+            if (homeRec.unread && !chActive) {
+              chKids.push(el('span', {class: 'ui-unread-dot', title: 'New activity',
+                style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']));
+            }
+            var chRow = el('button', {type: 'button', class: 'ui-channel-hero',
+              style: 'display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.6rem 0.7rem;border:1px solid var(--accent, #4a9eff);border-radius:6px;cursor:pointer;font:inherit;color:var(--text, inherit);background:var(--accent-soft, rgba(74,158,255,' + (chActive ? '0.18' : '0.08') + '))',
+              onclick: function() { openSession(chId); closeDrawer(); }}, chKids);
+            primaryEl.appendChild(chRow);
+            primaryEl.style.display = '';
+          } else {
+            primaryEl.style.display = 'none';
+          }
+        }
+        if (!Array.isArray(items)) items = [];
+        if (!homeRec && !items.length) {
           if (cfg.bulk_select && bulkState.mode) {
             renderBulkBar([], sideList, bulkState, bulkSelected,
               function(s){ return s[idF]; }, loadSessions, function(){});
@@ -11473,7 +11788,9 @@ const runtimeJS = `
               });
             });
         }
-        items.forEach(function(rec) {
+        // Build one rail row and append it to sideList. Pulled out of the
+        // forEach so the list renders in two passes (Active group, then Recent).
+        function buildAndAppendRow(rec) {
           var sid = rec[idF];
           var ttl = rec[ttlF] || sid;
           var inMode = cfg.bulk_select && bulkState.mode;
@@ -11492,6 +11809,23 @@ const runtimeJS = `
           if (rec.unread && sid !== activeSessionId) {
             rowKids.unshift(el('span', {class: 'ui-unread-dot', title: 'New activity',
               style: 'display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-right:0.45rem;flex:0 0 auto;vertical-align:middle'}, ['']));
+          }
+          // Active-work badge — LIVE watchers/dispatches attached to this
+          // session. Distinct from the unread dot (a past append) and the
+          // running pulse (this session mid-turn): this persists as long as
+          // the background work does, so sessions with ongoing work stay
+          // findable. Shown regardless of whether the session is open.
+          var wq = rec.watchers || 0, dq = rec.dispatches || 0;
+          if (wq > 0 || dq > 0) {
+            var parts = [];
+            if (wq > 0) parts.push('👁 ' + wq);
+            if (dq > 0) parts.push('⚙ ' + dq);
+            var tip = 'Active background work: ' +
+              (wq > 0 ? wq + ' watcher' + (wq === 1 ? '' : 's') : '') +
+              (wq > 0 && dq > 0 ? ', ' : '') +
+              (dq > 0 ? dq + ' dispatch' + (dq === 1 ? '' : 'es') : '');
+            rowKids.push(el('span', {class: 'ui-badge accent', title: tip,
+              style: 'margin-left:0.4rem;font-size:0.66rem;padding:0 0.3rem;flex:0 0 auto;vertical-align:middle'}, [parts.join('  ')]));
           }
           var row = el('div', {class: rowClass}, rowKids);
           row.addEventListener('click', function() {
@@ -11541,7 +11875,19 @@ const runtimeJS = `
             var delBtn = el('button', {class: 'ui-chat-side-del', title: 'Delete',
               onclick: async function(ev) {
                 ev.stopPropagation();
-                if (!(await window.uiConfirm('Delete this item?'))) return;
+                // Warn when the thread has LIVE producers attached (watchers /
+                // in-flight dispatches): deleting only clears the transcript —
+                // the producers keep running and will recreate the thread on
+                // their next fire. So this is really a clear, not a delete.
+                var wq = rec.watchers || 0, dq = rec.dispatches || 0;
+                var delMsg = 'Delete this item?';
+                if (wq > 0 || dq > 0) {
+                  var bits = [];
+                  if (wq > 0) bits.push(wq + ' active watcher' + (wq === 1 ? '' : 's'));
+                  if (dq > 0) bits.push(dq + ' running dispatch' + (dq === 1 ? '' : 'es'));
+                  delMsg = 'This thread has ' + bits.join(' and ') + '. Deleting it only clears the conversation — they keep running and will re-create the thread on their next report. To stop them, use Decommission. Delete anyway?';
+                }
+                if (!(await window.uiConfirm(delMsg))) return;
                 var url = substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(sid)));
                 fetchJSON(url, {method: 'DELETE'}).then(function() {
                   if (cfg.list_is_context) {
@@ -11556,7 +11902,32 @@ const runtimeJS = `
           }
           if (sid === activeID) row.classList.add('active');
           sideList.appendChild(row);
-        });
+        }
+
+        // Two-pass render: sessions with live background work (watchers or
+        // in-flight dispatches) lift into an "Active" group so they don't
+        // scroll away under chat history; the rest follow under "Recent".
+        // "running" (mid-turn) is intentionally NOT grouped — it's transient
+        // and already shown by its own pulse — so the list doesn't reshuffle
+        // every time a turn starts or ends.
+        var hasBgWork = function(rec) { return (rec.watchers || 0) > 0 || (rec.dispatches || 0) > 0; };
+        function groupHeader(label) {
+          return el('div', {class: 'ui-chat-side-group',
+            style: 'padding:0.4rem 0.6rem 0.2rem;font-size:0.62rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-mute);font-weight:600'}, [label]);
+        }
+        // The home thread renders as the Channel hero row above the rail (see
+        // primaryEl) — NOT in this list. The list is the ordinary threads,
+        // grouped Active (live background work) then Recent.
+        var actives = items.filter(hasBgWork);
+        var rest = items.filter(function(rec) { return !hasBgWork(rec); });
+        if (actives.length) {
+          sideList.appendChild(groupHeader('Active'));
+          actives.forEach(buildAndAppendRow);
+        }
+        if (rest.length) {
+          if (actives.length) sideList.appendChild(groupHeader('Recent'));
+          rest.forEach(buildAndAppendRow);
+        }
       }).catch(function() {
         sideList.innerHTML = '';
         sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['(failed to load)']));
@@ -11584,13 +11955,14 @@ const runtimeJS = `
       // "+ New" / deep link opens its own id as requested.
       // Opening ANY session returns to the chat pane — hide any management /
       // History overlay (orchView) that was covering it, so clicking a session
-      // from the list isn't masked by a table that's still up, and mark the
-      // Channel row (index 0) active so the rail reflects "you're in chat now".
+      // from the list isn't masked by a table that's still up. No nav row maps
+      // to "in chat" anymore (the home thread is a pinned session, not a Channel
+      // row), so clear every management-nav highlight instead of marking row 0.
       if (orchView) orchView.style.display = 'none';
       if (typeof orchBtns !== 'undefined' && orchBtns && orchBtns.length) {
-        orchBtns.forEach(function(b, i) {
-          b.style.background = (i === 0) ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
-          b.style.fontWeight = (i === 0) ? '600' : '400';
+        orchBtns.forEach(function(b) {
+          b.style.background = 'transparent';
+          b.style.fontWeight = '400';
         });
       }
       // Any session open / switch / new collapses the mobile drawer —
@@ -11598,6 +11970,11 @@ const runtimeJS = `
       // rail-header "+ New", mobile-top-bar "+", deep link). No-op on
       // desktop (the .open class isn't used there).
       closeDrawer();
+      // Tear down any in-flight stream from the view we're leaving BEFORE we
+      // clear bubbles / reset the seq counter / re-attach below. Client-only —
+      // the server run keeps going and we re-attach via tryResumeRun, so a
+      // stale send/resume stream can't double-feed the new view's bubble.
+      detachActiveStream();
       // CONTEXT mode — list rows are reference contexts (workspaces,
       // projects, …). Selecting one binds future sends to that id
       // via cfg.list_body_field. Server-side LoadURL still gets
@@ -11712,13 +12089,27 @@ const runtimeJS = `
         setHeaderTitle(rec && rec[ttlF]);
         var msgs = rec && rec[msgsF];
         if (Array.isArray(msgs)) {
-          msgs.forEach(function(m) {
+          msgs.forEach(function(m, i) {
             // Hidden messages still ride along for the LLM's history
             // view but the prior bubble already shows their content
             // (e.g. submitted ask_user card). Skip rendering the dupe.
+            // NOTE: hidden messages stay in the array, so i is the TRUE
+            // storage index (not the rendered position) — exactly what the
+            // per-turn scrub needs to delete the right message server-side.
             if (m && m.hidden) return;
             var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
             addMessage(m.role || 'assistant', mid, m.content || m.text || '');
+            // Remember the raw storage index so the ✕ scrub affordance can
+            // PATCH {delete_at: i}. Only replayed bubbles carry it; live ones
+            // get one on the next load (reload re-syncs after a scrub/delete).
+            if (msgEls[mid]) msgEls[mid].storageIndex = i;
+            // Re-attach the action bar now that storageIndex is set — addMessage
+            // attached it during creation (before we knew the index), so the
+            // scrub button wouldn't have rendered. attach* is idempotent.
+            if (cfg.msg_scrub && cfg.truncate_url && msgEls[mid]) {
+              if (m.role === 'user' && (m.content || m.text || '').length > 0) attachUserActions(msgEls[mid].bubble);
+              else if (m.role === 'assistant') attachAssistantActions(msgEls[mid].bubble);
+            }
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
             if (m.created || m.usage) {
               setMessageMeta(mid, {created: m.created, usage: m.usage});

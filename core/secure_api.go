@@ -28,10 +28,13 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +42,16 @@ import (
 	"sync"
 	"time"
 )
+
+// isTimeoutErr reports whether err is a request timeout (deadline exceeded or a
+// net timeout) rather than a hard failure like connection-refused or DNS.
+func isTimeoutErr(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
 
 const (
 	secureAPITable      = "secure_api_credentials"
@@ -68,9 +81,25 @@ type SecureCredential struct {
 	Name              string `json:"name"`
 	Type              string `json:"type"`
 	AllowedURLPattern string `json:"allowed_url_pattern"`
+	// BaseURL + AllowedEndpoints are the preferred, clearer split of the
+	// allow-list: BaseURL pins the server (e.g. https://192.168.0.1) and
+	// AllowedEndpoints is an add/remove list of path globs under it (e.g.
+	// "/api/core/**"). A request is allowed when it falls under BaseURL AND
+	// its path matches one endpoint; an EMPTY endpoint list means anything
+	// under BaseURL. When BaseURL is set it supersedes AllowedURLPattern;
+	// legacy credentials carrying only AllowedURLPattern keep working.
+	BaseURL          string   `json:"base_url,omitempty"`
+	AllowedEndpoints []string `json:"allowed_endpoints,omitempty"`
 	Description       string `json:"description,omitempty"`
 	ParamName         string `json:"param_name,omitempty"`
 	RequiresConfirm   bool   `json:"requires_confirm"`
+	// InsecureSkipTLS skips TLS certificate verification for this
+	// credential's requests. Required for LAN appliances (firewalls, NAS,
+	// switches) that present self-signed certs OR are addressed by IP — no
+	// cert can validate against a bare IP. Off by default; it reduces
+	// transport security, so the credential's AllowedURLPattern (already the
+	// linchpin gate) should be scoped tightly to the one host.
+	InsecureSkipTLS bool `json:"insecure_skip_tls,omitempty"`
 	// Disabled skips this credential from the auto-generated tool
 	// catalog AND blocks dispatch for any wrapped temp tool that
 	// references it. Use to temporarily revoke access entirely
@@ -120,7 +149,8 @@ type SecureCredential struct {
 	// secure_api_oauth.go.
 	Grant       string `json:"grant,omitempty"`        // client_credentials | jwt_bearer | refresh_token
 	TokenURL    string `json:"token_url,omitempty"`    // OAuth token endpoint (https)
-	ClientID    string `json:"client_id,omitempty"`    // client_credentials / refresh_token
+	ClientID    string `json:"client_id,omitempty"`    // client_credentials / refresh_token / password
+	Username    string `json:"username,omitempty"`     // password grant: resource-owner username (config, not secret)
 	Scope       string `json:"scope,omitempty"`        // requested scopes (space-separated)
 	JWTIssuer   string `json:"jwt_issuer,omitempty"`   // jwt_bearer: iss claim
 	JWTSubject  string `json:"jwt_subject,omitempty"`  // jwt_bearer: sub claim (optional)
@@ -141,6 +171,39 @@ type SecureCredential struct {
 // for a named credential lives. Kept separate from the metadata key
 // so listing credentials doesn't pull encrypted blobs into memory.
 func secureCredSecretKey(name string) string { return name + "__secret" }
+
+// securePasswordKey is the DB key for the SECOND secret of an oauth2 password
+// grant: the resource-owner password. Kept separate from __secret (which holds
+// the client_secret) so the two secrets never share a blob (Option B). Only
+// the password grant uses it.
+func securePasswordKey(name string) string { return name + "__password" }
+
+// SavePassword stores (or, on empty, preserves) the oauth2 password-grant
+// resource-owner password. Mirrors Save's "empty means keep existing"
+// semantics so an admin editing config without re-typing the password keeps
+// it. Encrypted at rest like the primary secret.
+func (s *SecureAPI) SavePassword(name, password string) error {
+	if !s.ready() || name == "" {
+		return fmt.Errorf("name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(password) == "" {
+		return nil // keep existing (or none yet)
+	}
+	s.db.CryptSet(secureAPITable, securePasswordKey(name), password)
+	return nil
+}
+
+// loadPassword reads the decrypted password-grant password. Mirrors loadSecret.
+func (s *SecureAPI) loadPassword(name string) (string, bool) {
+	if !s.ready() {
+		return "", false
+	}
+	var p string
+	ok := s.db.Get(secureAPITable, securePasswordKey(name), &p)
+	return p, ok
+}
 
 // SecureAPIAuditEntry is one row in the audit log. Kept short to
 // avoid bloating storage; the full response body is NOT recorded.
@@ -274,9 +337,9 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
 	case SecureCredOAuth2:
 		switch c.Grant {
-		case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken:
+		case OAuthGrantClientCredentials, OAuthGrantJWTBearer, OAuthGrantRefreshToken, OAuthGrantPassword:
 		default:
-			return fmt.Errorf("oauth2 credential needs a grant: client_credentials, jwt_bearer, or refresh_token")
+			return fmt.Errorf("oauth2 credential needs a grant: client_credentials, jwt_bearer, refresh_token, or password")
 		}
 		if strings.TrimSpace(c.TokenURL) == "" {
 			return fmt.Errorf("oauth2 credential needs a token_url (the https token endpoint)")
@@ -287,6 +350,9 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		if c.Grant == OAuthGrantJWTBearer && strings.TrimSpace(c.JWTIssuer) == "" {
 			return fmt.Errorf("jwt_bearer grant needs jwt_issuer (the iss claim)")
 		}
+		if c.Grant == OAuthGrantPassword && strings.TrimSpace(c.Username) == "" {
+			return fmt.Errorf("password grant needs a username (the resource-owner username)")
+		}
 		// Config may have changed: drop any cached client + stored token so
 		// the next call rebuilds from the new config.
 		invalidateOAuthClient(c.Name)
@@ -296,10 +362,14 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	if (c.Type == SecureCredHeader || c.Type == SecureCredQuery) && strings.TrimSpace(c.ParamName) == "" {
 		return fmt.Errorf("type %q requires a param_name", c.Type)
 	}
-	if strings.TrimSpace(c.AllowedURLPattern) == "" {
-		return fmt.Errorf("allowed_url_pattern is required (e.g. https://api.github.com/*)")
+	if strings.TrimSpace(c.BaseURL) == "" && strings.TrimSpace(c.AllowedURLPattern) == "" {
+		return fmt.Errorf("a base_url (e.g. https://192.168.0.1) or an allowed_url_pattern is required")
 	}
-	if !strings.HasPrefix(c.AllowedURLPattern, "https://") && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
+	if b := strings.TrimSpace(c.BaseURL); b != "" {
+		if !strings.HasPrefix(strings.ToLower(b), "https://") && !strings.HasPrefix(strings.ToLower(b), "http://") {
+			return fmt.Errorf("base_url must start with https:// or http://")
+		}
+	} else if !strings.HasPrefix(c.AllowedURLPattern, "https://") && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
 		return fmt.Errorf("allowed_url_pattern must start with http:// or https://")
 	}
 	s.mu.Lock()
@@ -379,13 +449,36 @@ func (s *SecureAPI) List() []SecureCredential {
 		}
 		var c SecureCredential
 		if s.db.Get(secureAPITable, k, &c) {
-			if c.Type == SecureCredOAuth2 {
-				c.Pending = s.OAuthDraftPending(c.Name)
-			}
 			out = append(out, c)
 		}
 	}
 	return out
+}
+
+// ListWithPending is List() plus the computed "needs secret" flag on each
+// authenticated credential (an unfinished draft still holding the "(pending)"
+// placeholder secret). It reads + decrypts the secret per credential, so it is
+// the ADMIN-facing variant ONLY — the hot tool-building path (BuildTools) uses
+// plain List() to avoid that per-credential read.
+func (s *SecureAPI) ListWithPending() []SecureCredential {
+	creds := s.List()
+	for i := range creds {
+		creds[i].Pending = s.draftPending(creds[i].Name, creds[i].Type)
+	}
+	return creds
+}
+
+// draftPending reports whether an authenticated credential still holds the
+// "(pending)" placeholder secret (config authored by Builder, secret not yet
+// supplied by the admin). Generalizes the old oauth-only check to every type
+// — drives the "NEEDS SECRET" badge for draft_api_credential drafts too. A
+// "none" credential carries no secret, so it is never pending.
+func (s *SecureAPI) draftPending(name, ctype string) bool {
+	if ctype == SecureCredNone {
+		return false
+	}
+	secret, ok := s.loadSecret(name)
+	return !ok || secret == "" || secret == "(pending)"
 }
 
 // SetDisabled toggles the per-credential disabled flag.
@@ -736,8 +829,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// URL allowlist check. THIS IS THE LINCHPIN. If the LLM somehow
 	// produces a URL outside the allowed pattern, we refuse — no
 	// header is ever attached.
-	if !urlMatchesPattern(rawURL, c.AllowedURLPattern) {
-		return "", fmt.Errorf("url %q is not allowed for credential %q (allowed pattern: %s)", rawURL, c.Name, c.AllowedURLPattern)
+	if !urlAllowedByCredential(c, rawURL) {
+		baseErr := fmt.Sprintf("url %q is not allowed for credential %q (base_url=%q, pattern=%q, endpoints=%v)", rawURL, c.Name, c.BaseURL, c.AllowedURLPattern, c.AllowedEndpoints)
+		return "", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name))
 	}
 
 	// URL deny patterns: applied after the allowlist for fine-grained
@@ -775,9 +869,19 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if err != nil {
 		return "", fmt.Errorf("invalid url: %w", err)
 	}
-	if parsed.Scheme != "https" && !strings.HasPrefix(c.AllowedURLPattern, "http://") {
-		return "", fmt.Errorf("non-https URL not allowed for credential %q", c.Name)
+	// http is allowed only when the credential's allow-list explicitly opts in
+	// (e.g. a LAN appliance served over http). Honor BOTH the new BaseURL
+	// scheme and the legacy AllowedURLPattern prefix — checking only the legacy
+	// field left http base_url credentials unable to make any call.
+	allowsHTTP := strings.HasPrefix(c.AllowedURLPattern, "http://") ||
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(c.BaseURL)), "http://")
+	if parsed.Scheme != "https" && !allowsHTTP {
+		baseErr := fmt.Sprintf("non-https URL not allowed for credential %q (set the credential's Base URL to http:// if the host is plain-http)", c.Name)
+		return "", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name))
 	}
+	// Both config gates passed — the credential can reach this URL; reset the
+	// repeated-rejection escalation so a later, unrelated mistake starts fresh.
+	clearCredRejections(c.Name)
 
 	// Type "none" carries no auth — public unauthenticated endpoints.
 	// Skip the secret-load gate; the dispatch switch below also skips
@@ -803,6 +907,13 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	var connector *NetworkConnector
 	if sess != nil {
 		connector = sess.Network
+	}
+	// Network egress is OFF for this turn (Private mode). Fail fast with a CLEAR
+	// reason — otherwise the request cancels and surfaces as a generic "context
+	// canceled" that the model misreads as the host being down (it then tells
+	// the user the firewall is unreachable, which is wrong).
+	if connector != nil && !connector.Allowed() {
+		return "", fmt.Errorf("blocked by Private mode: network egress is OFF for this turn, so the call to %q was NOT attempted. The credential and host are fine — this is a local privacy setting, NOT a connectivity or firewall problem. To reach it, turn off Private mode on this agent (or dispatch to an agent that has network). Do NOT report the host as down or unreachable", rawURL)
 	}
 	baseCtx, releaseConn := connector.DeriveCancelCtx(context.Background())
 	defer releaseConn()
@@ -853,11 +964,17 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		q.Set(c.ParamName, secret)
 		req.URL.RawQuery = q.Encode()
 	case SecureCredBasicAuth:
-		idx := strings.Index(secret, ":")
-		if idx < 0 {
-			return "", fmt.Errorf("basic_auth secret must be 'username:password'")
+		// Username is stored as plain config (c.Username) so it shows on
+		// re-edit; the secret holds only the password. Combine them here.
+		// Legacy credentials with no separate username carry "user:pass" in
+		// the secret directly — the else-if keeps those working.
+		pair := secret
+		if c.Username != "" {
+			pair = c.Username + ":" + secret
+		} else if !strings.Contains(secret, ":") {
+			return "", fmt.Errorf("basic_auth needs a username on the credential, or a 'username:password' secret")
 		}
-		auth := base64.StdEncoding.EncodeToString([]byte(secret))
+		auth := base64.StdEncoding.EncodeToString([]byte(pair))
 		req.Header.Set("Authorization", "Basic "+auth)
 	case SecureCredOAuth2:
 		// apiclient mints/caches/refreshes the access token and sets the
@@ -879,7 +996,11 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// raw secret plus, for basic_auth, the base64-encoded form.
 	redactList := []string{secret}
 	if c.Type == SecureCredBasicAuth {
-		redactList = append(redactList, base64.StdEncoding.EncodeToString([]byte(secret)))
+		pair := secret
+		if c.Username != "" {
+			pair = c.Username + ":" + secret
+		}
+		redactList = append(redactList, base64.StdEncoding.EncodeToString([]byte(pair)))
 	}
 	if oauthBearer != "" {
 		redactList = append(redactList, oauthBearer)
@@ -895,6 +1016,13 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	}
 
 	httpClient := &http.Client{Timeout: secureAPIRequestTimeout}
+	if c.InsecureSkipTLS {
+		// Per-credential opt-out of cert verification (self-signed / IP-addressed
+		// LAN appliances). Scoped to this credential's allow-listed host only.
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		httpClient.Transport = tr
+	}
 	resp, err := httpClient.Do(req)
 	auditEntry := SecureAPIAuditEntry{
 		CredentialName: c.Name,
@@ -905,6 +1033,22 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if err != nil {
 		auditEntry.Error = redact(err.Error())
 		s.recordAudit(auditEntry)
+		// Private mode flipped ON mid-call → the context was cancelled. Report
+		// the real reason, not a "request failed" the model reads as host-down.
+		if connector != nil && !connector.Allowed() {
+			return "", fmt.Errorf("blocked by Private mode: network egress was turned OFF mid-call, so the request to %q was cancelled — this is a privacy setting, NOT a host/connectivity failure. Turn off Private mode to reach it", rawURL)
+		}
+		// A TIMEOUT is usually transient (slow LAN appliance, connection warmup,
+		// a momentary blip) — NOT a sign the IP / scheme / port / credential is
+		// wrong. Steer the model away from confidently misdiagnosing a one-off
+		// timeout as a config error and sending the user to change settings.
+		if isTimeoutErr(err) {
+			host := rawURL
+			if parsed != nil && parsed.Host != "" {
+				host = parsed.Host
+			}
+			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT — a slow LAN appliance, connection warmup, or a momentary network blip — and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, secureAPIRequestTimeout)
+		}
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
 	defer resp.Body.Close()
@@ -1010,6 +1154,91 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 //                                      does NOT match https://api.github.com/repos/x/y
 //   https://api.github.com/**          matches both above
 //   https://api.example.com/users/*    matches /users/me, NOT /users/me/repos
+// Repeated-rejection guard. A credential whose allow-list / scheme keeps
+// rejecting requests in a short window is misconfigured (wrong base_url,
+// endpoints, or scheme) — retrying different URLs can never fix that. After a
+// few rejections the dispatch escalates the error with a hard "stop and report
+// the config" directive so an agent quits the blind-retry loop. A request that
+// passes the gates clears the counter for that credential.
+type credRejectTracker struct {
+	count int
+	since time.Time
+}
+
+var (
+	credRejectMu sync.Mutex
+	credRejects  = map[string]*credRejectTracker{}
+)
+
+const (
+	credRejectWindow    = 2 * time.Minute
+	credRejectThreshold = 3
+)
+
+func noteCredRejection(name string) int {
+	credRejectMu.Lock()
+	defer credRejectMu.Unlock()
+	t := credRejects[name]
+	now := time.Now()
+	if t == nil || now.Sub(t.since) > credRejectWindow {
+		t = &credRejectTracker{since: now}
+		credRejects[name] = t
+	}
+	t.count++
+	return t.count
+}
+
+func clearCredRejections(name string) {
+	credRejectMu.Lock()
+	delete(credRejects, name)
+	credRejectMu.Unlock()
+}
+
+// credMisconfigEscalation appends the stop-and-report directive to a config
+// rejection once the same credential has been rejected credRejectThreshold
+// times in the window.
+func credMisconfigEscalation(name, baseErr string, count int) error {
+	if count < credRejectThreshold {
+		return fmt.Errorf("%s", baseErr)
+	}
+	return fmt.Errorf("%s. STOP — this credential has been rejected %d times in a row. Its Base URL, Allowed Endpoints, or scheme is MISCONFIGURED, and trying different URLs will NOT fix it. Do not retry. Report this exact error to the user and ask them to correct the %q credential in Admin > APIs (Base URL must match the request's scheme+host, e.g. http:// vs https://; an Allowed Endpoint like /api/* permits everything under /api/).", baseErr, count, name)
+}
+
+// urlAllowedByCredential is the request-time allow-list gate. It prefers the
+// BaseURL + AllowedEndpoints split (BaseURL pins the host; each endpoint is a
+// path glob under it; an empty endpoint list allows anything under BaseURL),
+// and falls back to the legacy single AllowedURLPattern for credentials that
+// predate the split.
+func urlAllowedByCredential(c SecureCredential, rawURL string) bool {
+	if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
+		eps := c.AllowedEndpoints
+		if len(eps) == 0 {
+			return urlMatchesPattern(rawURL, base+"/**")
+		}
+		for _, ep := range eps {
+			ep = strings.TrimSpace(ep)
+			if ep == "" {
+				continue
+			}
+			if !strings.HasPrefix(ep, "/") {
+				ep = "/" + ep
+			}
+			// "/api/*" intuitively means "everything under /api/", not just one
+			// path segment. Bump a trailing single-star to "**" so a normal
+			// user gets the breadth they expect without knowing the *-vs-**
+			// glob convention. ("/api/core/*" -> "/api/core/**", etc.)
+			if strings.HasSuffix(ep, "/*") {
+				ep += "*"
+			}
+			if urlMatchesPattern(rawURL, base+ep) {
+				return true
+			}
+		}
+		return false
+	}
+	return urlMatchesPattern(rawURL, c.AllowedURLPattern)
+}
+
 func urlMatchesPattern(u, pattern string) bool {
 	return globMatch(u, pattern)
 }

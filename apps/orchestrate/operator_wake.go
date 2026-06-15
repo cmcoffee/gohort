@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/tools/temptool"
@@ -109,8 +110,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 					sess = ChatSession{ID: wakeSession, AgentID: wakeAgent}
 				}
 				sess.Messages = append(sess.Messages, ChatMessage{
-					Role:    "assistant",
-					Content: fmt.Sprintf("[monitor %q]\n%s", monitorName, summary),
+					Role:       "assistant",
+					Content:    summary,
+					Created:    time.Now(),
+					ReportFrom: monitorName,
 				})
 				if _, err := saveChatSession(udb, sess); err == nil {
 					delivered = true

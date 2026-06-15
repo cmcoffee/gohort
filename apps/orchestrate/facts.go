@@ -54,11 +54,22 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 			if note == "" {
 				return "", errors.New("note is required")
 			}
-			f, isNew := StoreMemoryFact(t.udb, factsNamespace(t.agent.ID), note)
+			// Pass the worker chat so a changed fact ("moved to Austin")
+			// supersedes the stale one instead of being dropped as a near-dup
+			// or coexisting as a contradiction.
+			f, isNew, superseded := StoreMemoryFact(t.udb, factsNamespace(t.agent.ID), note, t.app.WorkerChat)
 			if !isNew {
 				return fmt.Sprintf("Already remembered (deduped): %q. Skipping.", f.Note), nil
 			}
-			return fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", f.Note), nil
+			msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", f.Note)
+			if len(superseded) > 0 {
+				dropped := make([]string, len(superseded))
+				for i, s := range superseded {
+					dropped[i] = fmt.Sprintf("%q", s.Note)
+				}
+				msg += fmt.Sprintf(" Superseded %d now-stale fact(s): %s.", len(dropped), strings.Join(dropped, ", "))
+			}
+			return msg, nil
 		},
 	}
 }
