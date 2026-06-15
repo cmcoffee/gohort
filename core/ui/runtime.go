@@ -8831,8 +8831,17 @@ const runtimeJS = `
           return;
         }
         orchBtns.forEach(function(b, i) {
-          b.style.background = (i === idx) ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
-          b.style.fontWeight = (i === idx) ? '600' : '400';
+          var on = (i === idx);
+          var navItem = (cfg.orchestrator_nav || [])[i] || {};
+          if (navItem.pinned) {
+            // Pinned rail rows show "selected" as the accent border (matching
+            // Master Control); background is left to refreshChannelBadges (its
+            // pending tint) so the two signals don't fight.
+            b.style.border = on ? '1px solid var(--accent, #4a9eff)' : '1px solid transparent';
+          } else {
+            b.style.background = on ? 'var(--bg-2, rgba(127,127,127,0.18))' : 'transparent';
+            b.style.fontWeight = on ? '600' : '400';
+          }
         });
         // On mobile the sidebar is a slide-in drawer that sits ABOVE the content
         // overlay (z-index 30 vs 5), so close it after a selection — otherwise
@@ -8841,9 +8850,13 @@ const runtimeJS = `
         closeDrawer();
         if (!orchView) return;
         if (item.source) {
-          // A data view (History / Enabled agents / Authorizations): overlay
-          // the chat pane with the fetched table.
+          // A data view (Permissions / Enabled agents / …): overlay the chat
+          // pane with the fetched table. The overlay now covers the chat, so
+          // de-accent the Master Control hero — the selected indicator belongs
+          // to the nav row whose view is showing, not the underlying thread.
           orchView.style.display = '';
+          var heroBtn = primaryEl && primaryEl.querySelector('.ui-channel-hero');
+          if (heroBtn) { heroBtn.style.border = '1px solid transparent'; heroBtn.style.background = 'transparent'; }
           // On mobile, start the overlay BELOW the header bar so the ☰ stays
           // uncovered and tappable (otherwise inset:0 paints over it and there's
           // no way back). Desktop has no mobile header — pin to the top.
@@ -8934,8 +8947,11 @@ const runtimeJS = `
           if (item.icon) pkids.push(el('span', {style: 'font-size:0.95rem;flex:0 0 auto'}, [item.icon]));
           pkids.push(plabel);
           pkids.push(badge);
+          // Transparent border by default (reserves the space, no layout shift);
+          // selectOrchNav swaps in the accent border when this view is selected,
+          // matching the Master Control hero's "selected" treatment.
           b = el('button', {type: 'button', class: 'ui-channel-row ui-channel-pinned-row',
-            style: 'display:flex;align-items:center;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:5px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+            style: 'display:flex;align-items:center;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:5px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
             onclick: function() { selectOrchNav(i); }}, pkids);
           pinnedEl.appendChild(b);
         } else {
@@ -11738,8 +11754,13 @@ const runtimeJS = `
               chKids.push(el('span', {class: 'ui-unread-dot', title: 'New activity',
                 style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']));
             }
-            var chRow = el('button', {type: 'button', class: 'ui-channel-hero',
-              style: 'display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.6rem 0.7rem;border:1px solid var(--accent, #4a9eff);border-radius:6px;cursor:pointer;font:inherit;color:var(--text, inherit);background:var(--accent-soft, rgba(74,158,255,' + (chActive ? '0.18' : '0.08') + '))',
+            // Accent border + tint ONLY when it's the active thread (so it
+            // doesn't read as permanently selected); the ⚡ + bold label keep it
+            // distinct as the primary thread the rest of the time.
+            var heroBorder = chActive ? 'var(--accent, #4a9eff)' : 'transparent';
+            var heroBg = chActive ? 'var(--accent-soft, rgba(74,158,255,0.16))' : 'transparent';
+            var chRow = el('button', {type: 'button', class: 'ui-channel-hero' + (chActive ? ' active' : ''),
+              style: 'display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.6rem 0.7rem;border:1px solid ' + heroBorder + ';border-radius:6px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
               onclick: function() { openSession(chId); closeDrawer(); }}, chKids);
             primaryEl.appendChild(chRow);
             primaryEl.style.display = '';
@@ -11963,6 +11984,7 @@ const runtimeJS = `
         orchBtns.forEach(function(b) {
           b.style.background = 'transparent';
           b.style.fontWeight = '400';
+          b.style.border = '1px solid transparent'; // clear any pinned "selected" accent border
         });
       }
       // Any session open / switch / new collapses the mobile drawer —

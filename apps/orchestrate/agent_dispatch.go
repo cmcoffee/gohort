@@ -122,7 +122,11 @@ func (T *OrchestrateApp) SaveAgentForUser(user string, rec AgentRecord) (string,
 // No-op when ForcePrivate is false. Returns ctx + the (possibly
 // filtered) tool slice so the caller can replace its local references.
 func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tools []AgentToolDef, target AgentRecord) (context.Context, []AgentToolDef) {
-	if !target.ForcePrivate {
+	// Enforce private when the TARGET is permanently private (ForcePrivate) OR
+	// the PARENT turn is already running private — the parent's connector rides
+	// on ctx, so a blocked incoming ctx means a Private parent delegated /
+	// dispatched here and the privacy must NOT be lost in the sub-run.
+	if !target.ForcePrivate && NetworkAllowedFromContext(ctx) {
 		return ctx, tools
 	}
 	connector := NewNetworkConnector(true)

@@ -151,7 +151,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings — not run.", agent), nil
 				}
 				if IsDelegationPreAuthorized(RootDB, owner, agent) {
-					rec := RunDelegation(context.Background(), RootDB, owner, agent, brief)
+					// Carry the parent turn's network connector into the delegation
+					// so a Private parent stays private in the sub-run (applyForce-
+					// PrivateToDispatch enforces it from the blocked ctx). nil-safe.
+					rec := RunDelegation(sess.ContextWithNetworkConnector(context.Background()), RootDB, owner, agent, brief)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
 					}
