@@ -157,7 +157,8 @@ func (T *Phantom) handleKeys(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPost:
 		var req struct {
-			Name string `json:"name"`
+			Name    string `json:"name"`
+			Service string `json:"service,omitempty"` // messaging service this bridge speaks; empty = imessage
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
 			http.Error(w, "name required", http.StatusBadRequest)
@@ -170,6 +171,7 @@ func (T *Phantom) handleKeys(w http.ResponseWriter, r *http.Request) {
 			Name:    strings.TrimSpace(req.Name),
 			Key:     fmt.Sprintf("%x", secret),
 			Owner:   user, // binds the key to this user for the per-user desktop tool bridge
+			Service: normService(strings.TrimSpace(req.Service)),
 			Created: now(),
 		}
 		T.DB.Set(apiKeyTable, ak.ID, ak)
@@ -904,7 +906,8 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !bridgeKeyValid(T.DB, r) { // hook
+	svc, ok := bridgeKeyService(T.DB, r) // hook; svc = the bridge's messaging service
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -923,7 +926,12 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chat_id and text or image/video required", http.StatusBadRequest)
 		return
 	}
-	req.Text = stripLeadingArtifact(req.Text)
+	// Inbound store-time cleaning is per-service (iMessage strips a leading
+	// bridge artifact; other channels store as-is, so a legit leading "+"
+	// isn't clipped).
+	if clean := servicePolicyFor(svc).CleanInbound; clean != nil {
+		req.Text = clean(req.Text)
+	}
 
 	// Loop-back guard: if the bridge's ROWID + sentText skip both missed
 	// (slow chat.db commit, bridge restart), our own reply text could
@@ -965,6 +973,7 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	var incomingConv Conversation
 	knownConv := T.DB.Get(conversationTable, req.ChatID, &incomingConv)
 	incomingConv.ChatID = req.ChatID
+	incomingConv.Service = svc // tag the thread with the bridge's service
 	incomingConv.Handle = req.Handle
 	if req.DisplayName != "" {
 		incomingConv.DisplayName = req.DisplayName
@@ -1198,11 +1207,14 @@ func (T *Phantom) handlePoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !bridgeKeyValid(T.DB, r) {
+	svc, ok := bridgeKeyService(T.DB, r)
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	items := drainOutbox(T.DB)
+	// Hand the bridge ONLY its own service's items so two channels don't
+	// drain each other's replies.
+	items := drainOutbox(T.DB, svc)
 	if items == nil {
 		items = []OutboxItem{}
 	}

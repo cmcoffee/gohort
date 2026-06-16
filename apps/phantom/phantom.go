@@ -158,6 +158,7 @@ type APIKey struct {
 	Name     string `json:"name"`  // friendly label, e.g. "Craig's MacBook"
 	Key      string `json:"key"`   // the secret token, shown once on creation
 	Owner    string `json:"owner"` // gohort username the key belongs to; binds the key to a user for the per-user desktop tool bridge
+	Service  string `json:"service,omitempty"` // messaging service this key's bridge speaks ("imessage" when empty); scopes inbound tagging + the outbound poll so channels don't collide
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`
 }
@@ -172,6 +173,7 @@ type ConvMember struct {
 // Conversation tracks one chat thread (one contact or group chat).
 type Conversation struct {
 	ChatID           string       `json:"chat_id"`           // e.g. "iMessage;-;+14155551234"
+	Service          string       `json:"service,omitempty"` // messaging service this thread lives on ("imessage" when empty); set from the inbound bridge's key
 	Handle           string       `json:"handle"`            // phone number or email
 	DisplayName      string       `json:"display_name"`      // contact name if known
 	Members          []ConvMember `json:"members,omitempty"` // group chat participants
@@ -277,6 +279,7 @@ type PhantomMessage struct {
 type OutboxItem struct {
 	ID      string   `json:"id"`
 	ChatID  string   `json:"chat_id"`
+	Service string   `json:"service,omitempty"` // service this reply is bound to ("imessage" when empty); the poll only hands a bridge its own service's items
 	Handle  string   `json:"handle"` // phone/email the agent sends to
 	Text    string   `json:"text"`
 	Images  []string `json:"images,omitempty"` // base64-encoded images to send as attachments
@@ -572,12 +575,25 @@ func validateAPIKey(db Database, secret string) (APIKey, bool) {
 // (LookupDesktopKey). Phantom is now a CONSUMER of the core-owned desktop
 // key, not the owner — the daemon's auto-provisioned key works here too,
 // and existing phantom keys keep working for backward compatibility.
-func bridgeKeyValid(db Database, r *http.Request) bool {
+// bridgeKeyService validates the X-API-Key for phantom's hook/poll and
+// returns the messaging service the key's bridge speaks. A phantom APIKey
+// carries its Service (empty = imessage); the core desktop bridge key is
+// iMessage today (the Mac daemon). ok=false on an invalid key.
+func bridgeKeyService(db Database, r *http.Request) (string, bool) {
 	key := r.Header.Get("X-API-Key")
-	if _, ok := validateAPIKey(db, key); ok {
-		return true
+	if ak, ok := validateAPIKey(db, key); ok {
+		return normService(ak.Service), true
 	}
-	_, ok := LookupDesktopKey(key)
+	if _, ok := LookupDesktopKey(key); ok {
+		return phantomDefaultService, true
+	}
+	return "", false
+}
+
+// bridgeKeyValid is the bool-only form for callers that don't need the
+// service id.
+func bridgeKeyValid(db Database, r *http.Request) bool {
+	_, ok := bridgeKeyService(db, r)
 	return ok
 }
 
@@ -863,6 +879,14 @@ func enqueueOutbox(db Database, item OutboxItem) {
 	if db == nil {
 		return
 	}
+	// Tag the reply with its conversation's service (default imessage) at
+	// the chokepoint, so every enqueue call site stays service-unaware and
+	// the poll routes it to the right bridge. Per-service delivery deltas
+	// (e.g. the video+text stagger) come from the policy.
+	if item.Service == "" {
+		item.Service = conversationService(db, item.ChatID)
+	}
+	pol := servicePolicyFor(item.Service)
 	// De-markdown every outbound message at the chokepoint. iMessage
 	// renders no markdown, so literal **bold**, `code`, # headers and
 	// the like would otherwise reach the user as punctuation noise. The
@@ -884,7 +908,7 @@ func enqueueOutbox(db Database, item OutboxItem) {
 		// applyAttachMarkers has consumed real delivery markers upstream.
 		item.Text = StripMetaTags(item.Text)
 	}
-	if len(item.Videos) > 0 && strings.TrimSpace(item.Text) != "" {
+	if pol.AttachmentDelay && len(item.Videos) > 0 && strings.TrimSpace(item.Text) != "" {
 		// Send the video portion now.
 		videosOnly := item
 		videosOnly.Text = ""
@@ -978,17 +1002,27 @@ func buildThinkOpts(routeKey string) []ChatOption {
 	return opts
 }
 
-func drainOutbox(db Database) []OutboxItem {
+// drainOutbox returns + deletes the pending outbox items for ONE service
+// (the polling bridge's). Items for other services are left in place so
+// their own bridge picks them up — this is what keeps two channels from
+// draining each other's replies. Legacy items with no Service normalize
+// to imessage.
+func drainOutbox(db Database, service string) []OutboxItem {
 	if db == nil {
 		return nil
 	}
+	service = normService(service)
 	var items []OutboxItem
 	for _, k := range db.Keys(outboxTable) {
 		var item OutboxItem
-		if db.Get(outboxTable, k, &item) {
-			items = append(items, item)
-			db.Unset(outboxTable, k)
+		if !db.Get(outboxTable, k, &item) {
+			continue
 		}
+		if normService(item.Service) != service {
+			continue
+		}
+		items = append(items, item)
+		db.Unset(outboxTable, k)
 	}
 	return items
 }
