@@ -53,6 +53,7 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	// Web UI endpoints (session auth).
 	sub.HandleFunc("/api/keys", T.handleKeys)
+	sub.HandleFunc("/api/migrate-channel", T.handleMigrateToChannel)
 	sub.HandleFunc("/api/keys/", T.handleKeyDelete)
 	sub.HandleFunc("/api/conversations", T.handleConversations)
 	sub.HandleFunc("/api/conversation/", T.handleConversation)

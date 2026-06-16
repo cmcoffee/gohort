@@ -76,12 +76,20 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	newSt, facts, changed, err := CompactConversation(context.Background(), cm, st, cfg, fold)
 	if err == nil && changed {
 		saveCompactState(udb, agent.ID, sessID, newSt)
-		for _, f := range facts {
-			if f = strings.TrimSpace(f); f != "" {
-				// Worker chat enables supersession: a fact distilled from a
-				// folded span that updates an earlier one replaces it rather
-				// than coexisting as a contradiction.
-				StoreMemoryFact(udb, factsNamespace(agent.ID), f, T.WorkerChat)
+		// Fact extraction respects the agent's Reference Memory setting. A
+		// memory-disabled run (e.g. a phantom: dispatch with DisableInferred
+		// forced on) still gets its history BOUNDED — folding the aging span
+		// into a summary — but the folded span doesn't seed facts. Without
+		// this gate, generalizing compaction to the dispatch path would
+		// silently revive fact storage on memory-off agents.
+		if !agent.DisableInferred {
+			for _, f := range facts {
+				if f = strings.TrimSpace(f); f != "" {
+					// Worker chat enables supersession: a fact distilled from a
+					// folded span that updates an earlier one replaces it rather
+					// than coexisting as a contradiction.
+					StoreMemoryFact(udb, factsNamespace(agent.ID), f, T.WorkerChat)
+				}
 			}
 		}
 		st = newSt

@@ -647,8 +647,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		priorSession.Created = time.Now()
 	}
 	deliveredMessage := markAsDelegated(message)
-	llmMessages := make([]Message, 0, len(priorSession.Messages)+1)
-	for _, m := range priorSession.Messages {
+	// Bound the run-view with the same rolling-summary compaction the Cortex
+	// thread uses, so a long-running channel / dispatch session doesn't load
+	// its entire history into the prompt (and eventually blow the window).
+	// Run-only — storage keeps the full thread. No-op until the thread grows
+	// past the fold trigger, so short dispatches are unaffected; fact
+	// extraction honors the agent's memory setting (see compactOperatorHistory).
+	bounded := T.compactOperatorHistory(runtimeDB, runtimeUser, target, subSessionID, priorSession.Messages)
+	llmMessages := make([]Message, 0, len(bounded)+1)
+	for _, m := range bounded {
 		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
 	}
 	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMessage})

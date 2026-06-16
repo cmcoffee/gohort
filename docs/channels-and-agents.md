@@ -30,6 +30,45 @@ The Slice 1 multi-service work (the `Service` dimension, the key-scoped
 poll, `ServicePolicy`, and `docs/phantom-service-bridge.md`) is the
 transport substrate this builds on. See `project_phantom_multichannel`.
 
+## The three surfaces of an agent
+
+An agent can have up to three kinds of conversational surface, and they are
+**orthogonal toggles, not agent types**. Any combination is valid.
+
+- **Cortex** (zero or one): the agent's persistent home thread and mind.
+  Where the owner directs it, where event-monitor wakes and standing-agent
+  reports land, and the cross-channel command center — read across all the
+  agent's channels, or message one or all of them. Bounded by rolling-
+  summary compaction.
+- **Channels** (zero or many): the rooms. Each is a connection from the
+  transport (phantom) to the agent representing one place it talks — a
+  linked iMessage chat (a person or a group), later a Telegram/Slack room.
+  Inbound from a contact runs the agent in that channel's thread. A Channel
+  *is* the room; there is no separate "conversation" concept.
+- **Sessions** (zero or many): ad-hoc direct web chats — the classic Agency
+  conversation where the owner sits down and works with the agent.
+
+Combinations:
+
+| Surfaces | What it is |
+|---|---|
+| Sessions only | a normal web agent |
+| Cortex + Sessions | today's Master Control / Chat |
+| Channels + Sessions | a pure messaging bot |
+| all three | a full agent: a home-thread brain, rooms it talks in, and a web front door |
+
+In the agent's rail this reads as three groups: the **Cortex** pinned at top
+(one), **Channels** (the rooms, labelled by contact/group), and **Sessions**
+(web chats). Under the hood all three are session records under the agent,
+tagged by origin: the home thread, `chan:<chatID>` rooms, and plain web
+sessions.
+
+So the full vocabulary: **Service** is the wire, a **Channel** is a room on
+it, the **Cortex** is the mind across the rooms, and **Sessions** are the
+front door. Context/compaction controls are not specific to any one surface
+— they bound any persistent thread the agent runs (Cortex threads and
+Channel threads alike), driven by per-agent settings.
+
 ## The attach model
 
 Mirror the existing per-agent attach fields on `AgentRecord`
