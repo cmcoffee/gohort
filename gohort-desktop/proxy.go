@@ -94,6 +94,11 @@ const APIKEY_PATH = "/__desktop/apikey"
 // every write, so a page can't write to disk without the user picking a path.
 const SAVE_PATH = "/__desktop/save"
 
+// OPEN_PATH receives an external URL from popup_shim.js to open in the user's
+// default browser. Like SAVE_PATH, it runs in Go because proxy-served pages
+// can't reach the Wails Go-bridge (window.runtime is absent there).
+const OPEN_PATH = "/__desktop/open"
+
 // apikey_page_html is the standalone bridge-API-key editor. Kept inline
 // (not a proxied gohort page, not the configure form) so updating the
 // key is fully decoupled from the server-connection flow.
@@ -168,6 +173,14 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// URI). We pop the native save dialog in Go and write the bytes.
 	if r.URL.Path == SAVE_PATH {
 		gp.handle_save_post(w, r)
+		return
+	}
+	// Open external link — popup_shim.js POSTs an external URL here so it opens
+	// in the user's real browser. Same reason as the others: proxy-served pages
+	// don't get the Wails Go-bridge, so window.runtime.BrowserOpenURL is absent;
+	// we open it from the Go side instead.
+	if r.URL.Path == OPEN_PATH {
+		gp.handle_open_post(w, r)
 		return
 	}
 
@@ -363,6 +376,33 @@ func (gp *gohort_proxy) handle_save_post(w http.ResponseWriter, r *http.Request)
 	}
 	res := gp.app.SaveAttachment(req.Name, req.Mime, req.B64)
 	json.NewEncoder(w).Encode(map[string]any{"ok": res.OK, "path": res.Path, "error": res.Error})
+}
+
+// handle_open_post opens an external link in the user's default browser. The
+// shim POSTs {url} here because window.runtime.BrowserOpenURL is unavailable on
+// proxy-served pages. openURL validates the scheme (http/https only).
+func (gp *gohort_proxy) handle_open_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	var req struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bad request: " + err.Error()})
+		return
+	}
+	if err := gp.app.openURL(req.URL); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 // serve_configure writes the embedded configure-page HTML. Status 200

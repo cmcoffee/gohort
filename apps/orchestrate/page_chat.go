@@ -296,7 +296,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// everything else collapses into Agent / Configure / Session
 					// overflow menus so the toolbar isn't a wall of 15 buttons.
 					Actions: []ui.ToolbarAction{
-						{Label: "Edit", Title: "Edit the active agent",
+						{Group: "Agent", Label: "Edit", Title: "Edit the active agent",
 							Method: "client", URL: "orchestrate_edit_agent"},
 						{Group: "Agent", Label: "Create", Title: "Create a new agent. When a parent agent is currently selected, asks whether to mint a top-level agent or a sub-agent owned by that parent (sub-agent layout masks public / intake / memory fields).",
 							Method: "client", URL: "orchestrate_create_agent"},

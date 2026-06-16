@@ -929,7 +929,7 @@ func roundShapePreamble(maxSteps int) string {
 	stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
 	return "## How this round works\n\n" +
 		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with one of: **ask_user / ask_user_form** (pause for input), **respond_directly** (terminate with reply), or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
-		"**Don't speculate-then-correct.** If you're about to call a tool, do NOT first write a full answer from training that you'll then revise after the result comes back — the user sees both, and it reads as confused. Before tools fire, say nothing or something terse (\"Looking that up…\"). Save the answer for AFTER you have the result.\n\n" +
+		"**Before a tool call, write ONE short sentence in your own voice saying what you're about to do** — \"Let me grab that video.\" / \"Checking your calendar…\" / \"Pulling the latest numbers.\" The user sees it right away, so they're never left watching dead air while the tool runs. Keep it to a sentence. Do NOT write your actual ANSWER before a tool call — that's not the place for it, and you'd just repeat yourself once the result is back. Save the real answer for your final, tool-free reply AFTER you have the results.\n\n" +
 		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
 		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text. When a listed specialist agent (see Available agents) covers the question, dispatch to it FIRST — don't answer or web_search it yourself; that wins over both chatting about it and looking it up. Otherwise, for time-sensitive or verifiable facts: call the tool; don't answer from training.\n\n"
 }
@@ -1030,6 +1030,11 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		// flips it, sess.NetworkAllowed() and
 		// NetworkAllowedFromContext(ctx) both see the new state.
 		Network: t.network,
+		// Turn context — tools that spawn synchronous sub-runs (delegate)
+		// root them here via sess.Context() so a Stop / cancel of this
+		// turn also cancels the outgoing agent call instead of leaving it
+		// detached on context.Background().
+		Ctx: t.ctx,
 		// Pipeline-mode temp tools dispatch through this runner. Caps
 		// recursion depth via t.pipelineDepth (incremented on entry,
 		// decremented on exit) so pipeline-calls-pipeline can't
@@ -1044,6 +1049,23 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// immediately for verification before any other commit step.
 	if t.session != nil {
 		sess.ChatSessionID = t.session.ID
+	}
+	// send_status delivery for chat. Renders as a PERSISTENT muted line in
+	// the conversation flow (kind:status_note → appended to convoLog),
+	// above the eventual reply — NOT the topbar status bar, which is
+	// cleared on 'done' so a mid-turn status vanished before the user
+	// could read it (the "send_status isn't working" symptom). Only wired
+	// when this turn has a live SSE stream — a standing-agent / wake turn
+	// has no watcher, so send_status falls through to its built-in no-op
+	// guidance there instead of emitting into a dead writer.
+	if t.sse != nil {
+		sess.StatusCallback = func(text string) {
+			text = strings.TrimSpace(text)
+			if text == "" {
+				return
+			}
+			t.sse.Send(map[string]any{"kind": "status_note", "text": text})
+		}
 	}
 	// Default workspace = per-user root. Tools that author scripts
 	// via script_body ship them here at registration; dispatch finds
@@ -2522,6 +2544,13 @@ func (t *chatTurn) drainLastUsage() *ChatMessageUsage {
 	t.lastUsageMu.Unlock()
 	return u
 }
+
+// leadInMaxLen is the cutoff that separates a mid-round lead-in (one
+// short sentence the model writes before a tool call — finalized as its
+// own message bubble) from a full answer mis-emitted before a tool
+// (cleared, so it doesn't double the answer the model then writes in its
+// final reply). See the onStep !info.Done branch.
+const leadInMaxLen = 600
 
 // emitStatus pushes a phase-narration row into the activity pane.
 // Mirrors servitor's status events ("Investigator: synthesizing…",
@@ -4288,6 +4317,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// agent (Builder, mid-authoring) actually invoked it.
 		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(ct, sess))
 	}
+	// send_status — always-on mid-turn channel. Tagged IsFrameworkTool at
+	// the source (so it's out of the default worker pool + curation UI);
+	// force-included here so EVERY agent has it, matching the round-shape
+	// contract in the prompt ("prose alongside a tool call is dropped —
+	// call send_status to talk mid-turn"). Session-bound so its handler
+	// reaches sess.StatusCallback (wired in newToolSession → topbar status).
+	if ct, ok := LookupChatTool("send_status"); ok {
+		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(ct, sess))
+	}
 	// load_tool — gateway for the LLM's custom tools, which are
 	// presented by name+desc only (prompt section) to keep their
 	// verbose schemas out of the catalog. Always available; harmless
@@ -4568,7 +4606,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 
 	stopKeepalive := startKeepalive(t.sse)
 	think := true
-	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
+	if p := RouteThink(orchestratorRouteKey(t.agent.ID)); p != nil {
 		think = *p
 	}
 	// Per-agent override wins over the route default — the author may
@@ -4679,22 +4717,35 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// in case the model front-loaded its answer into a tool round
 		// and the final round comes back empty.
 		if !info.Done {
-			// Text streamed in a tool round is KEPT as its own settled card —
-			// short narration OR substantive interim content, regardless of
-			// length. We no longer clear long text here: that "front-loaded
-			// answer" heuristic dropped legitimate text the model emitted
-			// alongside a tool call but never repeated. Double-emit is now
-			// prevented at the source by the emit-discipline prompt (don't
-			// write the full answer in a tool round); the final-reply
-			// transcript dedup is the backstop. Worst case is a rare double
-			// card — far better than silently losing real content.
-			if cleaned != "" {
-				t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-				lastFinalizedID = id
-				lastFinalizedText = cleaned
-				streamMsgID = ""
-				t.setCurrentMsgID("")
+			// A round that calls tools is not the answer round, but the text
+			// the model streamed here is its lead-in — "Let me grab that
+			// video." — written in its own voice (roundShapePreamble asks for
+			// exactly one such sentence before a tool call). FINALIZE it as
+			// its own message bubble, exactly like a normal streamed reply,
+			// then close it so the next round opens a fresh bubble. No clear,
+			// no separate status card — it reads as the assistant chatting as
+			// it works, with no flicker. captureMidTurnBubble persists it
+			// (with the tool calls it triggered) so a reload replays the same
+			// transcript.
+			//
+			// Guard: prose longer than leadInMaxLen is a full ANSWER mis-
+			// emitted before a tool, not a lead-in — finalizing it here AND
+			// again in the final round would double the answer (the original
+			// double-emit bug). Clear those instead; the loop's history still
+			// holds the text so the model's final reply carries the answer.
+			if cleaned == "" {
+				streamedBuf.Reset()
+				return
 			}
+			if len(cleaned) > leadInMaxLen {
+				t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+				streamedBuf.Reset()
+				return
+			}
+			t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+			t.captureMidTurnBubble(cleaned)
+			streamMsgID = ""
+			t.setCurrentMsgID("")
 			streamedBuf.Reset()
 			return
 		}
@@ -4967,7 +5018,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// attach calls. The architecture itself enforces deliberate
 		// per-file delivery now.)
 		ChatOptions: []ChatOption{
-			WithRouteKey("app.orchestrate.orchestrator"),
+			WithRouteKey(orchestratorRouteKey(t.agent.ID)),
 			WithThink(think),
 		},
 	})
@@ -5559,7 +5610,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// Worker tier (Private: true route stage) — same routing as the
 	// plan round; honors the "worker (thinking)" preference.
 	think := true
-	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
+	if p := RouteThink(orchestratorRouteKey(t.agent.ID)); p != nil {
 		think = *p
 	}
 	// Per-agent override wins over the route default (see plan round
@@ -5589,7 +5640,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		msgs,
 		handler,
 		WithSystemPrompt(synthSys),
-		WithRouteKey("app.orchestrate.orchestrator"),
+		WithRouteKey(orchestratorRouteKey(t.agent.ID)),
 		WithThink(think),
 	)
 	stopKeepalive()

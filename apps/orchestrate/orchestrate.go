@@ -54,6 +54,20 @@ func init() {
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
+		Key:   "app.orchestrate.builder",
+		Label: "Agency: Builder design (escalates to lead)",
+		// Builder is low-volume + high-leverage — its agent-design reasoning
+		// (decomposition, tool/credential design) benefits most from the lead
+		// model, and a well-built agent saves many downstream worker turns. NOT
+		// Private (unlike the other Agency stages): the admin can flip it back to
+		// worker for a fully-local build flow, and it degrades to worker
+		// automatically when no lead model is configured. Only the design /
+		// synthesis reasoning routes here; the dispatched plan_set worker phases
+		// stay on app.orchestrate.worker.
+		Default: "lead",
+		Group:   "Agency",
+	})
+	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.worker",
 		Label:   "Agency: Worker (no-think)",
 		Default: "worker",
@@ -207,6 +221,12 @@ func (T *OrchestrateApp) Routes() {
 	// callers see. Idempotent — running it twice produces the same
 	// record.
 	T.migrateBuilderShadows()
+
+	// One-shot removal of the retired Operator seed. It folded into Chat
+	// (seed-chat) and is gone from seedAgents(); this deletes any stale
+	// per-user shadow (record + old operator-thread + side data) so it
+	// stops appearing in the agent menu. Idempotent.
+	T.dropLegacyOperator()
 
 	// One-shot persistent-tool snapshot migration. Walks every user's
 	// agents and, for any AllowedTools name that resolves only to the

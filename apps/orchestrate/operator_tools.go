@@ -11,7 +11,6 @@
 package orchestrate
 
 import (
-	"context"
 	"encoding/base64"
 	"fmt"
 	"os"
@@ -151,10 +150,14 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings — not run.", agent), nil
 				}
 				if IsDelegationPreAuthorized(RootDB, owner, agent) {
-					// Carry the parent turn's network connector into the delegation
-					// so a Private parent stays private in the sub-run (applyForce-
-					// PrivateToDispatch enforces it from the blocked ctx). nil-safe.
-					rec := RunDelegation(sess.ContextWithNetworkConnector(context.Background()), RootDB, owner, agent, brief)
+					// Root the delegation in the PARENT TURN'S context (sess.Context())
+					// so a Stop / cancel of the chat turn also cancels this outgoing
+					// agent call — previously it ran on context.Background() and kept
+					// going after the user stopped. ContextWithNetworkConnector also
+					// carries the parent's network connector so a Private parent stays
+					// private in the sub-run (applyForcePrivateToDispatch enforces it
+					// from the blocked ctx). Both nil-safe.
+					rec := RunDelegation(sess.ContextWithNetworkConnector(sess.Context()), RootDB, owner, agent, brief)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
 					}

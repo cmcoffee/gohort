@@ -473,6 +473,22 @@ func (a *App) PickReadRoot() pick_result {
 // handing over the filename, mime type, and base64 bytes; we pop a native save
 // dialog and write the decoded bytes to the chosen path. Returns OK with an
 // empty path when the user cancels (the JS treats that as a quiet no-op).
+// openURL opens an external link in the user's default browser. Called from the
+// proxy's /__desktop/open handler: proxy-served pages can't reach the Wails
+// Go-bridge (window.runtime is absent there), so popup_shim.js POSTs the URL and
+// we open it from the Go side via the runtime. Only http/https is allowed, so a
+// stray javascript:/file:/data: link can't be smuggled into the OS opener.
+// Unexported on purpose — same package as the proxy, and keeping it off the
+// Wails binding surface avoids a generated-bindings churn.
+func (a *App) openURL(rawURL string) error {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("only http(s) URLs can be opened externally")
+	}
+	wails_runtime.BrowserOpenURL(a.ctx, u.String())
+	return nil
+}
+
 func (a *App) SaveAttachment(name, mimeType, b64 string) pick_result {
 	_ = mimeType // reserved for a future extension-default; bytes write the same regardless
 	if a.ctx == nil {

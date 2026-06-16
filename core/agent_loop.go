@@ -601,6 +601,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	failureStreakWarned := false
 	const failureStreakThreshold = 3
 
+
 	// cumulativeToolErrors tracks tool errors across the WHOLE loop, not
 	// just the current round. Used to catch the "give up with errors
 	// pending" pattern: model emits empty content + finish=stop after a

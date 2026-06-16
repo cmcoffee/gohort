@@ -236,6 +236,18 @@ func isBuilderAgent(agentID string) bool {
 	return agentID == "seed-builder"
 }
 
+// orchestratorRouteKey picks the lead-routing stage for the main reasoning +
+// synthesis calls. Builder gets its own stage (default lead, admin-flippable)
+// so its agent-design reasoning runs on the stronger model; every other agent
+// stays on the worker-locked orchestrator stage. Degrades to worker
+// automatically when no lead model is configured (agent_loop's NoLead guard).
+func orchestratorRouteKey(agentID string) string {
+	if isBuilderAgent(agentID) {
+		return "app.orchestrate.builder"
+	}
+	return "app.orchestrate.orchestrator"
+}
+
 // builderWorkerDirectives is the cross-cutting authoring discipline
 // every Builder-spawned worker should follow. Builder's OrchestratorPrompt
 // holds these rules for the conductor turn, but workers don't see

@@ -1567,6 +1567,24 @@ body { min-height: 100vh; min-height: 100dvh; }
   white-space: pre-wrap; word-break: break-word;
 }
 .ui-chat-status { align-self: center; font-size: 0.78rem; color: var(--text-mute); font-style: italic; padding: 0.2rem 0; }
+/* Themed confirm / alert / prompt dialog (uiDefaultModal) — the in-page
+ * replacement for native browser dialogs, so the chrome matches the app
+ * and mirrors the gohort-desktop host modal. */
+.ui-modal-dialog {
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 1.1rem 1.2rem; width: 92%; max-width: 440px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  font: inherit;
+}
+.ui-modal-dialog::backdrop { background: rgba(0,0,0,0.5); }
+.ui-modal-msg { margin-bottom: 1rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.ui-modal-input {
+  width: 100%; box-sizing: border-box; margin-bottom: 0.9rem;
+  padding: 0.45rem 0.6rem; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg-0); color: var(--text); font: inherit;
+}
+.ui-modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 .ui-chat-attachments {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: 0.4rem; margin-top: 0.5rem; clear: both;
@@ -2765,6 +2783,18 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-agent-empty {
   color: var(--text-mute); font-style: italic; text-align: center;
   padding: 1.5rem 0;
+}
+/* Mid-turn status from send_status, rendered as a real message bubble
+ * (same .ui-agent-msg-body card chrome as a normal reply) so it reads
+ * like the agent talking. Left-aligned like the assistant; tinted with
+ * muted text + an accent left-stripe so it's clearly INTERIM status,
+ * not the settled answer. Persists in the flow (not cleared on done). */
+.ui-agent-msg-status { align-self: flex-start; }
+.ui-agent-msg-status .ui-agent-msg-body {
+  background: var(--bg-1);
+  color: var(--text-mute);
+  border-left: 3px solid var(--accent);
+  font-size: 0.92rem;
 }
 /* Per-message container — transparent layout slot. The card chrome
  * (bg + border + padding) lives on .ui-agent-msg-body so the meta
@@ -4243,45 +4273,91 @@ const runtimeJS = `
     if (typeof fn === 'function') window.UIClientActions[name] = fn;
   };
 
-  // uiConfirm / uiAlert — always-async wrappers around the native
-  // dialog primitives. Use these instead of confirm() / window.uiAlert()
-  // anywhere in the runtime or apps. Callers must await uiConfirm.
+  // uiConfirm / uiAlert / uiPrompt — always-async dialog wrappers. Use
+  // these instead of native confirm() / alert() / prompt() anywhere in
+  // the runtime or apps; callers await the result (uiPrompt resolves to
+  // the entered string or null on cancel; uiConfirm to a bool).
   //
-  // Why: native confirm()/alert() are sync, but they don't work in
-  // every host. Wails' WKWebView on macOS doesn't implement the
-  // WKUIDelegate methods that show those dialogs (Wails declares
-  // the protocol but leaves runJavaScriptConfirmPanel /
-  // runJavaScriptAlertPanel unimplemented), so confirm() silently
-  // returns false and window.uiAlert() does nothing — every delete and
-  // every error toast vanishes. Routing through these helpers lets
-  // a host inject a replacement (window.__uiConfirmImpl /
-  // __uiAlertImpl) that uses a custom CSS modal instead. In a real
-  // browser the impl is absent and we fall through to the native
-  // primitives — same behavior as before.
+  // Native dialogs are inconsistent across hosts and broken in some:
+  // Wails' WKWebView on macOS leaves runJavaScriptConfirmPanel /
+  // AlertPanel / TextInputPanel unimplemented, so confirm() returns
+  // false, alert() does nothing, prompt() returns null. Resolution
+  // order:
+  //   1. a host-injected impl (window.__uiConfirmImpl / __uiAlertImpl /
+  //      __uiPromptImpl) — e.g. gohort-desktop's native-styled modal;
+  //   2. otherwise uiDefaultModal — a themed in-page dialog that matches
+  //      the rest of the UI.
+  // We NO LONGER fall through to native confirm/alert/prompt, so every
+  // host gets a real, consistent dialog instead of the browser's
+  // default chrome.
+  function uiDefaultModal(opts) {
+    opts = opts || {};
+    return new Promise(function(resolve) {
+      var dlg = document.createElement('dialog');
+      dlg.className = 'ui-modal-dialog';
+      var msg = document.createElement('div');
+      msg.className = 'ui-modal-msg';
+      msg.textContent = opts.msg || '';
+      dlg.appendChild(msg);
+      var input = null;
+      if (opts.kind === 'prompt') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'ui-modal-input';
+        input.value = (opts.def != null ? opts.def : '');
+        dlg.appendChild(input);
+      }
+      var actions = document.createElement('div');
+      actions.className = 'ui-modal-actions';
+      function done(v) { try { dlg.close(); } catch (_) {} dlg.remove(); resolve(v); }
+      function mkBtn(label, primary, val) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'ui-row-btn' + (primary ? ' primary' : '');
+        b.textContent = label;
+        b.addEventListener('click', function() {
+          done(opts.kind === 'prompt' && primary ? (input ? input.value : null) : val);
+        });
+        return b;
+      }
+      if (opts.kind === 'confirm') {
+        actions.appendChild(mkBtn('Cancel', false, false));
+        actions.appendChild(mkBtn(opts.ok || 'OK', true, true));
+      } else if (opts.kind === 'prompt') {
+        actions.appendChild(mkBtn('Cancel', false, null));
+        actions.appendChild(mkBtn(opts.ok || 'OK', true, null));
+      } else {
+        actions.appendChild(mkBtn(opts.ok || 'OK', true, undefined));
+      }
+      dlg.appendChild(actions);
+      // Escape closes with the cancel value; Enter confirms / submits.
+      dlg.addEventListener('cancel', function(e) {
+        e.preventDefault();
+        done(opts.kind === 'confirm' ? false : (opts.kind === 'prompt' ? null : undefined));
+      });
+      dlg.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && opts.kind !== 'alert') {
+          e.preventDefault();
+          done(opts.kind === 'confirm' ? true : (input ? input.value : null));
+        }
+      });
+      document.body.appendChild(dlg);
+      if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+      if (input) { input.focus(); try { input.select(); } catch (_) {} }
+      else { var bs = actions.querySelectorAll('button'); if (bs.length) bs[bs.length - 1].focus(); }
+    });
+  }
   window.uiConfirm = function(msg) {
-    if (typeof window.__uiConfirmImpl === 'function') {
-      return Promise.resolve(window.__uiConfirmImpl(msg));
-    }
-    return Promise.resolve(window.confirm(msg));
+    if (typeof window.__uiConfirmImpl === 'function') return Promise.resolve(window.__uiConfirmImpl(msg));
+    return uiDefaultModal({kind: 'confirm', msg: msg});
   };
   window.uiAlert = function(msg) {
-    if (typeof window.__uiAlertImpl === 'function') {
-      return Promise.resolve(window.__uiAlertImpl(msg));
-    }
-    window.alert(msg);
-    return Promise.resolve();
+    if (typeof window.__uiAlertImpl === 'function') return Promise.resolve(window.__uiAlertImpl(msg));
+    return uiDefaultModal({kind: 'alert', msg: msg});
   };
-  // uiPrompt — async text-input dialog. Resolves to the entered string,
-  // or null if cancelled (window.prompt semantics). Same host story as
-  // uiConfirm: WKWebView doesn't implement runJavaScriptTextInputPanel,
-  // so native prompt() returns null there; a host injects __uiPromptImpl
-  // (a CSS-modal with an input) to make it work. Real browsers fall
-  // through to native prompt(). Callers must await and null-check.
   window.uiPrompt = function(msg, def) {
-    if (typeof window.__uiPromptImpl === 'function') {
-      return Promise.resolve(window.__uiPromptImpl(msg, def));
-    }
-    return Promise.resolve(window.prompt(msg, def != null ? def : ''));
+    if (typeof window.__uiPromptImpl === 'function') return Promise.resolve(window.__uiPromptImpl(msg, def));
+    return uiDefaultModal({kind: 'prompt', msg: msg, def: def});
   };
   // Data-source invalidation. Apps and components fire this when a
   // write completes so any list/table fetched from the same source
@@ -5873,8 +5949,8 @@ const runtimeJS = `
     // f.suggest_url, and feeds the server's {value} back through the
     // field's registered setter so the right apply logic fires per
     // field type (parseInt for number, rules-rebuild for rules, etc.).
-    function runFieldSuggest(f, btn) {
-      var hint = prompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
+    async function runFieldSuggest(f, btn) {
+      var hint = await uiPrompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
       if (hint === null) return; // user cancelled
       btn.classList.add('busy');
       btn.disabled = true;
@@ -8571,6 +8647,18 @@ const runtimeJS = `
     // Channel/fleet "Manage ▾" control — built in the rail block (where the nav
     // machinery is in scope), shown in the topbar actions for fleet agents.
     var manageControl = null, manageBtn = null, manageDot = null, pinnedEl = null;
+    // Only one top-bar dropdown (Manage ▾ / the grouped toolbar menus) is open
+    // at a time. openTopbarMenu holds the close-fn of whatever is currently
+    // open; opening another closes it first. Each menu registers its own
+    // closer on open and clears it on close.
+    var openTopbarMenu = null;
+    function setOpenTopbarMenu(closeFn) {
+      if (openTopbarMenu && openTopbarMenu !== closeFn) { try { openTopbarMenu(); } catch (_) {} }
+      openTopbarMenu = closeFn;
+    }
+    function clearOpenTopbarMenu(closeFn) {
+      if (openTopbarMenu === closeFn) openTopbarMenu = null;
+    }
     function closeDrawer() {
       if (!side) return;
       side.classList.remove('open');
@@ -8932,7 +9020,7 @@ const runtimeJS = `
       // view (Enabled agents / Event monitors / Authorizations) with a live
       // count badge, or a channel-wide action (Clear / Decommission).
       navEl = el('div', {class: 'ui-channel-menu', style: 'display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:210px;flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
-      function closeManageMenu() { if (navEl) navEl.style.display = 'none'; }
+      function closeManageMenu() { if (navEl) navEl.style.display = 'none'; clearOpenTopbarMenu(closeManageMenu); }
       // Pinned items (action queues like Permissions) get a prominent row ABOVE
       // the session list; everything else lives in the Manage dropdown. One pass
       // keeps orchBtns/orchBadges index-aligned with cfg.orchestrator_nav.
@@ -8984,8 +9072,13 @@ const runtimeJS = `
         onclick: function(ev) {
           ev.stopPropagation();
           var open = navEl.style.display === 'none' || !navEl.style.display;
-          navEl.style.display = open ? 'flex' : 'none';
-          if (open) refreshChannelBadges();
+          if (open) {
+            setOpenTopbarMenu(closeManageMenu); // close any open toolbar menu first
+            navEl.style.display = 'flex';
+            refreshChannelBadges();
+          } else {
+            closeManageMenu();
+          }
         }}, ['Manage ▾']);
       manageDot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
         style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;flex:0 0 auto'}, ['']);
@@ -9247,8 +9340,9 @@ const runtimeJS = `
         // DOM entirely. Only the toggle button lives in the actions bar.
         var menu = el('div', {class: 'ui-toolbar-menu'});
         var toggle = el('button', {type: 'button', class: 'ui-row-btn', title: gname + ' actions'}, [gname + ' ▾']);
-        function closeMenu() { menu.classList.remove('open'); }
+        function closeMenu() { menu.classList.remove('open'); clearOpenTopbarMenu(closeMenu); }
         function openMenu() {
+          setOpenTopbarMenu(closeMenu); // close any other open top-bar menu first
           var r = toggle.getBoundingClientRect();
           menu.style.left = Math.round(r.left) + 'px';
           menu.style.top = Math.round(r.bottom + 4) + 'px';
@@ -11311,6 +11405,30 @@ const runtimeJS = `
         case 'status':
           setStatus(ev.text || '');
           break;
+        case 'status_note':
+          // Persistent mid-turn status from send_status, rendered as a
+          // real message bubble (same card chrome as a normal reply) so
+          // it reads like the agent talking — just tinted + accent-
+          // striped to mark it as interim status, not the settled
+          // answer. Unlike the ephemeral topbar 'status' bar (cleared on
+          // 'done'), this stays in the conversation flow above the reply.
+          // No action bar / msgEls registration — it isn't a turn message
+          // and must not interfere with the streaming-bubble bookkeeping.
+          if (ev.text) {
+            clearEmpty();
+            var snBubble = el('div', {class: 'ui-agent-msg ui-agent-msg-status'});
+            var snBody = el('div', {class: 'ui-agent-msg-body'});
+            if (cfg.markdown) { uiRenderMarkdown(snBody, ev.text); }
+            else { snBody.textContent = ev.text; }
+            snBubble.appendChild(snBody);
+            convoLog.appendChild(snBubble);
+            // Keep the thinking spinner BELOW the note (work continues).
+            if (thinkingEl && thinkingEl.parentNode === convoLog) {
+              convoLog.appendChild(thinkingEl);
+            }
+            scrollConvo(false);
+          }
+          break;
         case 'done':
           enableInput();
           setStatus('');
@@ -11877,18 +11995,22 @@ const runtimeJS = `
                 class: 'ui-chat-side-ren', title: 'Rename',
                 onclick: function(ev) {
                   ev.stopPropagation();
-                  var next = prompt('Rename to:', ttl);
-                  if (next == null) return;
-                  next = next.trim();
-                  if (!next || next === ttl) return;
-                  fetchJSON(substituteExtras(cfg.rename_url), {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({id: sid, name: next}),
-                  }).then(function() { loadSessions(); })
-                    .catch(function(err) {
-                      showToast('Rename failed: ' + (err && err.message || err));
-                    });
+                  // uiPrompt (not native prompt) so this works on hosts where
+                  // window.prompt is unsupported — e.g. the gohort-desktop
+                  // Wails webview, which injects __uiPromptImpl + a modal.
+                  uiPrompt('Rename to:', ttl).then(function(next) {
+                    if (next == null) return;
+                    next = next.trim();
+                    if (!next || next === ttl) return;
+                    fetchJSON(substituteExtras(cfg.rename_url), {
+                      method: 'POST',
+                      headers: {'Content-Type': 'application/json'},
+                      body: JSON.stringify({id: sid, name: next}),
+                    }).then(function() { loadSessions(); })
+                      .catch(function(err) {
+                        showToast('Rename failed: ' + (err && err.message || err));
+                      });
+                  });
                 },
               }, ['✎']);
               row.appendChild(renBtn);
@@ -14138,14 +14260,14 @@ const runtimeJS = `
       currentContextName = name || null;
       ctxCurrent.textContent = name ? '[' + name + ']' : '';
     }
-    function saveContext() {
+    async function saveContext() {
       if (!cfg.contexts_list_url) {
         showToast('Saving contexts not configured');
         return;
       }
       var body = ctxEditor.value || '';
       if (!body.trim()) { showToast('Context is empty'); return; }
-      var name = prompt('Name this context:', currentContextName || '');
+      var name = await uiPrompt('Name this context:', currentContextName || '');
       if (name == null) return;
       name = name.trim();
       if (!name) return;
@@ -15805,8 +15927,8 @@ const runtimeJS = `
       var statusLine = el('div', {class: 'ui-tw-rules-saved'});
       var saveSourceBtn = (cfg.merge_sources_url) ? el('button', {class: 'ui-row-btn',
         title: 'Save the pasted content as a reusable merge source',
-        onclick: function() {
-          var name = window.prompt('Name this merge source:', '');
+        onclick: async function() {
+          var name = await uiPrompt('Name this merge source:', '');
           if (!name) return;
           if (!pasteArea.value.trim()) { showToast('Paste something first'); return; }
           fetchJSON(cfg.merge_sources_url, {

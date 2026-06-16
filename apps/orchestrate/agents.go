@@ -307,6 +307,47 @@ func (T *OrchestrateApp) migrateBuilderShadows() {
 	}
 }
 
+// dropLegacyOperator is a one-shot migration that deletes the retired
+// Operator seed. The Operator folded into Chat (seed-chat), so it was
+// removed from seedAgents() — but any per-user shadow record (minted
+// back when seed-operator was a live seed, by customization or
+// tool-approval) still lists as "Operator" in the agent menu, because
+// seedAgentByID("seed-operator") is now false and listAgents emits
+// unknown owned records verbatim. This wipes that shadow per user:
+// the record, its session bucket (including the old "operator-thread"
+// home thread, which lived under orchestrate_sessions:seed-operator),
+// and the per-(user, agent) memory + knowledge. Done directly rather
+// than via deleteAgent so a legacy record with a non-matching Owner
+// field can't trip the ownership guard — we're already inside each
+// user's own store. Idempotent: users without the shadow are skipped.
+func (T *OrchestrateApp) dropLegacyOperator() {
+	if T == nil || T.DB == nil || AuthDB == nil {
+		return
+	}
+	authDB := AuthDB()
+	if authDB == nil {
+		return
+	}
+	dropped := 0
+	for _, u := range AuthListUsers(authDB) {
+		udb := UserDB(T.DB, u.Username)
+		if udb == nil {
+			continue
+		}
+		if !udb.Get(agentsTable, "seed-operator", &AgentRecord{}) {
+			continue
+		}
+		dropChatSessionBucket(udb, "seed-operator")
+		udb.Unset(agentsTable, "seed-operator")
+		dropAgentSideData(udb, u.Username, "seed-operator")
+		dropped++
+		Log("[orchestrate.migrate] dropLegacyOperator: removed retired Operator for user=%q", u.Username)
+	}
+	if dropped > 0 {
+		Log("[orchestrate.migrate] dropLegacyOperator: removed %d Operator shadow(s)", dropped)
+	}
+}
+
 // migrateAgentPersistentTools snapshots persistent-pool tools into
 // every existing agent's Tools[] when the agent's AllowedTools names
 // them. One-shot eager version of the auto-snapshot now baked into

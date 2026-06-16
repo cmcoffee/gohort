@@ -1284,6 +1284,18 @@ type ToolSession struct {
 	// default; treated as allowed).
 	Network *NetworkConnector
 
+	// Ctx is the turn's cancelable context — the SAME context the agent
+	// loop runs under, so it's canceled when the user stops the turn
+	// (/api/cancel) or the run registry replaces it. Tools that spawn
+	// their OWN synchronous sub-run (e.g. the delegate tool calling
+	// RunDelegation) must derive their run context from this — via
+	// sess.Context() — instead of context.Background(), so a cancel of
+	// the parent turn also cancels the outgoing agent call. Without it
+	// the sub-run is detached and keeps running after Stop. Nil-safe:
+	// sess.Context() falls back to context.Background() when unset (apps
+	// that don't wire it, or detached background runs).
+	Ctx context.Context
+
 	// Username scopes session-aware features that need a stable identity:
 	// loading a user's persistent temp tools, scoping the workspace,
 	// approval-queue association. Empty for unauthenticated sessions
@@ -1350,6 +1362,17 @@ func (s *ToolSession) NetworkAllowed() bool {
 		return true
 	}
 	return s.Network.Allowed()
+}
+
+// Context returns the session's turn context (s.Ctx), or
+// context.Background() when unset or the session is nil. Tools that
+// spawn a synchronous sub-run should root it here so a parent-turn
+// cancel propagates to the child.
+func (s *ToolSession) Context() context.Context {
+	if s == nil || s.Ctx == nil {
+		return context.Background()
+	}
+	return s.Ctx
 }
 
 // ContextWithNetworkConnector wraps ctx with the session's connector

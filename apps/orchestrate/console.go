@@ -24,23 +24,13 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// legacyOperatorThread is the pre-split single session id the Operator used.
-// Retained only as the migration SOURCE — the one-time Operator→Chat fold
-// copies this thread into seed-chat's channel session. New code derives the
-// per-agent channel session via channelSessionID.
-const legacyOperatorThread = "operator-thread"
-
 // channelSessionID is the session id of a channel agent's persistent home
 // thread. Per-agent so every channel agent has its own ongoing conversation.
 // The client gets this value (per agent) from the host page, so it never
-// hardcodes the scheme. seed-operator is bridged to its pre-split thread id
-// so the existing Operator conversation isn't orphaned by the id-scheme
-// change; this special case is removed when the Operator→Chat fold migrates
-// that thread.
+// hardcodes the scheme. (The retired Operator's pre-split "operator-thread"
+// bridge was removed when the Operator seed was dropped — see
+// dropLegacyOperator.)
 func channelSessionID(agentID string) string {
-	if agentID == "seed-operator" {
-		return legacyOperatorThread
-	}
 	return "channel:" + agentID
 }
 

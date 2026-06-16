@@ -1586,8 +1586,11 @@ func (T *Phantom) buildConvTools(chatID, handle string, conv Conversation, cfg P
 	// grants. stay_silent lets the LLM decline to reply; keep_going
 	// lets it request another round when it needs to plan more before
 	// acting (without that, "let me think" lands as visible text and
-	// the round ends).
-	if st, err := GetAgentToolsWithSession(sess, "stay_silent", "keep_going"); err == nil {
+	// the round ends). send_status is the mid-turn channel (delivered as
+	// its own immediate iMessage via sess.StatusCallback, wired below) —
+	// framework-tagged, so it's out of the default pool and force-included
+	// here like the others.
+	if st, err := GetAgentToolsWithSession(sess, "stay_silent", "keep_going", "send_status"); err == nil {
 		tools = append(tools, st...)
 	}
 	// Always-include `workspace` regardless of per-conv enablement.

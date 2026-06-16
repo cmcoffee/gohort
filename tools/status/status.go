@@ -28,12 +28,20 @@ type SendStatusTool struct{}
 
 func (t *SendStatusTool) Name() string { return "send_status" }
 
+// IsFrameworkTool: send_status is round-shape infrastructure — the
+// mid-turn channel every agent is told to use (the prose alongside a
+// tool call is dropped). Marking it framework hides it from the
+// curation pickers and the default worker pool; each conversational
+// surface (orchestrate, phantom) force-includes it explicitly, exactly
+// like stay_silent / keep_going. Always-wired, never user-toggleable.
+func (t *SendStatusTool) IsFrameworkTool() bool { return true }
+
 // Caps: nil — control-flow / messaging only, no side effects on the
 // outside world. Same posture as stay_silent.
 func (t *SendStatusTool) Caps() []Capability { return nil }
 
 func (t *SendStatusTool) Desc() string {
-	return "Send a brief one-line status mid-turn so the user sees forward motion. CALL THIS when upcoming work will take >5 seconds (downloads, multi-step tool chains, slow APIs, callbacks) and again when you switch phases. Status messages do NOT replace your final reply — keep producing the answer when ready."
+	return "Post a brief one-line progress note to the user mid-turn — a heads-up before your final reply (a phase change, progress on slow work like downloads, multi-step tool chains, slow APIs, callbacks). Often you don't need to call this explicitly: a short sentence you write right before a tool call already surfaces as a live status. Reach for send_status when you want to post a progress note in a round where you are NOT also calling a tool. It does NOT replace your final reply — keep producing the actual answer for your last, tool-free turn."
 }
 
 func (t *SendStatusTool) Params() map[string]ToolParam {
