@@ -143,12 +143,12 @@ func publiclyExposable(a AgentRecord) bool {
 	return a.Exposed && !a.Fleet
 }
 
-// ChannelSessionID exposes a channel agent's pinned home-thread session id so
+// CortexSessionID exposes a channel agent's pinned home-thread session id so
 // the public agents app can pin each visitor to the SAME id the runner
-// compacts against (agent.Channel && sess.ID == channelSessionID(agent.ID) in
+// compacts against (agent.Cortex && sess.ID == cortexSessionID(agent.ID) in
 // runner.go). Per-(user, agent) scoping means the id resolves to a different
 // physical thread for every visitor without the id itself differing.
-func ChannelSessionID(agentID string) string { return channelSessionID(agentID) }
+func CortexSessionID(agentID string) string { return cortexSessionID(agentID) }
 
 func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	if T.DB == nil || AuthDB == nil {
@@ -274,7 +274,7 @@ func (T *OrchestrateApp) PublicHandleChannelClear(w http.ResponseWriter, r *http
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sid := channelSessionID(agentID)
+	sid := cortexSessionID(agentID)
 	deleteChatSession(udb, agentID, sid)
 	deleteCompactState(udb, agentID, sid)
 	w.WriteHeader(http.StatusNoContent)

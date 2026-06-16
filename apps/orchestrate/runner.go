@@ -3222,7 +3222,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	}
 
 	// Channel agents no longer force every send onto one thread — the client
-	// sends the channel session id (channelSessionID) when the Channel row is
+	// sends the channel session id (cortexSessionID) when the Channel row is
 	// open, and ordinary session ids otherwise. The channel thread is created
 	// under its requested id on first turn just like any session.
 	// Resolve session (create on first turn, otherwise load).
@@ -3374,7 +3374,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	// and evicts durable facts into memory. Gated to the channel thread so a
 	// channel agent's ordinary ad-hoc sessions stay verbatim (they're
 	// disposable; only the persistent home thread needs the running summary).
-	if agent.Channel && sess.ID == channelSessionID(agent.ID) {
+	if agent.Cortex && sess.ID == cortexSessionID(agent.ID) {
 		sess.Messages = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
 	}
 

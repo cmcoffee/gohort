@@ -41,17 +41,21 @@ type AgentRecord struct {
 	// from the session-based chat agents.
 	Mode string `json:"mode,omitempty"`
 
-	// Channel, when true, gives the agent a persistent "home thread" that
-	// it resumes alongside (not instead of) its normal sessions: a single
-	// ongoing conversation where event-monitor wakes and standing-agent
-	// reports land, with ongoing-thread compaction (running summary +
-	// recent tail) applied to keep it bounded. Channel agents also get the
-	// channel sidebar (a Channel row + the Authorizations / Enabled agents
-	// / Event monitors management box) and are never publicly exposable.
-	// Independent of Fleet — an agent can have a channel without delegation
-	// tools, or vice versa. This is the generalized form of what used to be
-	// Mode == "orchestrator".
-	Channel bool `json:"channel,omitempty"`
+	// Cortex, when true, gives the agent a persistent "home thread" — its
+	// mind: a single ongoing conversation it resumes alongside (not instead
+	// of) its normal sessions, where event-monitor wakes and standing-agent
+	// reports land, with ongoing-thread compaction (running summary + recent
+	// tail) applied to keep it bounded. Cortex agents also get the management
+	// sidebar (the pinned hero row + Permissions / Enabled agents / Event
+	// monitors box) and are never publicly exposable. Independent of Fleet —
+	// an agent can have a Cortex without delegation tools, or vice versa.
+	// This is the generalized form of what used to be Mode == "orchestrator".
+	//
+	// The JSON/storage key stays "channel" (legacy) so existing agent records
+	// keep working without a migration; the concept and all code is Cortex.
+	// The word "Channel" is now reserved for messaging surfaces attached to
+	// an agent (see docs/channels-and-agents.md).
+	Cortex bool `json:"channel,omitempty"`
 
 	// Fleet, when true, attaches the fleet-management toolset to the agent:
 	// delegate, create/list/run/pause/delete standing agents, the run

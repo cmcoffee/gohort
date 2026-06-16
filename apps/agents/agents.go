@@ -233,8 +233,8 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// id is identical for all visitors; per-(user, agent) scoping resolves
 	// it to a different physical thread per person.
 	channelGlobal := ""
-	if agent.Channel {
-		chMap, _ := json.Marshal(map[string]string{agent.ID: orchestrate.ChannelSessionID(agent.ID)})
+	if agent.Cortex {
+		chMap, _ := json.Marshal(map[string]string{agent.ID: orchestrate.CortexSessionID(agent.ID)})
 		channelGlobal = "window.ORCH_CHANNEL_AGENTS = " + string(chMap) + ";"
 	}
 	intakeHead := "<script>window.AGENT_INTAKE_FORM = " + intakeJSON + ";" +
@@ -315,7 +315,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// rows (Enabled agents / Authorizations / Event monitors / standing
 	// agents) are deliberately ABSENT — those reach admin-only endpoints
 	// that aren't mounted on this public surface.
-	if agent.Channel {
+	if agent.Cortex {
 		panel.ListPosition = "" // use the left rail so the channel box has a home
 		panel.AltNavFlag = "ORCH_CHANNEL_AGENTS"
 		panel.OrchestratorNav = []ui.OrchestratorNavItem{

@@ -30,7 +30,7 @@ func operatorHistoryTools(sess *ToolSession, agentID string) []AgentToolDef {
 	if sess != nil {
 		db = sess.DB
 	}
-	source := operatorLCMSource(agentID, channelSessionID(agentID))
+	source := operatorLCMSource(agentID, cortexSessionID(agentID))
 
 	return []AgentToolDef{
 		{

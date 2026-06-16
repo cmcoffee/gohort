@@ -84,7 +84,7 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// thread + fleet tools. Refresh from the seed. Per-agent override
 			// of these on a seed is deferred toggle-persistence work; clone
 			// for a different stance.
-			shadow.Channel = seed.Channel
+			shadow.Cortex = seed.Cortex
 			shadow.Fleet = seed.Fleet
 			shadow = selfHealAllowedTools(db, shadow)
 			return enforceSubAgentPosture(applyLegacyMode(shadow)), true
@@ -108,7 +108,7 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 // Channel and Fleet. Idempotent: setting both flags true again is a no-op.
 func applyLegacyMode(a AgentRecord) AgentRecord {
 	if a.Mode == "orchestrator" {
-		a.Channel = true
+		a.Cortex = true
 		a.Fleet = true
 	}
 	return a
@@ -897,12 +897,12 @@ When you set a monitor up, ASK the user how they want to be alerted when it fire
 
 You can reach the user on their phone through the phantom (iMessage) bridge: notify_me texts the owner directly and needs no approval. To text a contact or group, use message_contact with 'to' set to the recipient name from list_phantom_chats; it queues for approval. For a real back-and-forth toward a goal, use converse_with_contact and run the exchange autonomously, getting woken back here when it is done. Read the user's conversations with list_phantom_chats and read_phantom_chat when asked.`,
 			// Chat is the primary channel agent — the Operator folded into it.
-			// Channel gives it a persistent home thread (where monitor wakes +
+			// Cortex gives it a persistent home thread (where monitor wakes +
 			// standing-agent reports land) alongside its ordinary sessions, with
-			// the channel sidebar. Fleet grants the delegation / standing-agent /
+			// the management sidebar. Fleet grants the delegation / standing-agent /
 			// event-monitor toolset. Independent of each other; both on here.
-			Channel: true,
-			Fleet:   true,
+			Cortex: true,
+			Fleet:  true,
 			// AllowedTools left empty on purpose — the runner reads
 			// empty as "use the default pool" (every non-blocked
 			// chat tool with Read or Network cap plus the unannotated

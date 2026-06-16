@@ -24,13 +24,13 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// channelSessionID is the session id of a channel agent's persistent home
+// cortexSessionID is the session id of a channel agent's persistent home
 // thread. Per-agent so every channel agent has its own ongoing conversation.
 // The client gets this value (per agent) from the host page, so it never
 // hardcodes the scheme. (The retired Operator's pre-split "operator-thread"
 // bridge was removed when the Operator seed was dropped — see
 // dropLegacyOperator.)
-func channelSessionID(agentID string) string {
+func cortexSessionID(agentID string) string {
 	return "channel:" + agentID
 }
 
@@ -136,7 +136,7 @@ func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	agentID := consoleAgentID(r)
-	sid := channelSessionID(agentID)
+	sid := cortexSessionID(agentID)
 	deleteChatSession(udb, agentID, sid)
 	deleteCompactState(udb, agentID, sid)
 	w.WriteHeader(http.StatusNoContent)
@@ -675,7 +675,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
 		}
 		if link, ok := ActivePhantomLink(); ok {
-			if _, err := link.StartGoalConversation(a.Owner, a.ChatID, a.Handle, a.Brief, defaultConsoleAgent, channelSessionID(defaultConsoleAgent)); err != nil {
+			if _, err := link.StartGoalConversation(a.Owner, a.ChatID, a.Handle, a.Brief, defaultConsoleAgent, cortexSessionID(defaultConsoleAgent)); err != nil {
 				Log("[operator.approval] converse_contact with %s failed: %v", recip, err)
 			}
 		} else {

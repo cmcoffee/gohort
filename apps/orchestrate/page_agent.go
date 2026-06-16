@@ -169,10 +169,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
 				Help: "Hides read_skill / skill_knowledge_search / skill_knowledge_fetch_doc + the \"Available skills\" block AND stops trigger-injection — no skill applies, regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
 
-			ui.FormField{Type: "header", Label: "Master Control & fleet",
+			ui.FormField{Type: "header", Label: "Cortex & fleet",
 				Help: "Always-on behaviors. Independent of each other."},
-			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Master Control thread",
-				Help: "Gives the agent a persistent Master Control thread (the ⚡ row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Can be published as a public app (each visitor gets their own private Master Control thread + compaction) as long as Fleet tools are off."},
+			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
+				Help: "Gives the agent a persistent Cortex thread (its mind — the ⚡ row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Can be published as a public app (each visitor gets their own private Cortex thread + compaction) as long as Fleet tools are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Fleet management tools",
 				Help: "Grants delegation + standing-agent + event-monitor + run-ledger + history-recall tools. Unlike the old orchestrator mode it does NOT stop the agent doing work itself — it just adds the tools. Fleet agents are never published publicly (the tools reach owner-only management endpoints)."},
 

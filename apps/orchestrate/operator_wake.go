@@ -59,7 +59,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 		if wakeSession == "" {
-			wakeSession = channelSessionID(wakeAgent)
+			wakeSession = cortexSessionID(wakeAgent)
 		}
 		// notify may list MULTIPLE destinations (comma-separated, e.g.
 		// "direct,text") — fan out to each. The channel wake doubles as the

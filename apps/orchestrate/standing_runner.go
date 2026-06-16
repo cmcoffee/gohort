@@ -78,7 +78,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 		}
 		reportSession := strings.TrimSpace(sa.ReportSessionID)
 		if reportSession == "" {
-			reportSession = channelSessionID(reportAgent)
+			reportSession = cortexSessionID(reportAgent)
 		}
 		udb := UserDB(app.DB, sa.Owner)
 		if udb == nil {

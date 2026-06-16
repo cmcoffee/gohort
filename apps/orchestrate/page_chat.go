@@ -39,11 +39,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		"seed-research": 2,
 		"seed-kb":       3,
 	}
-	// channelAgents maps each channel agent's id (a.Channel) to its home-thread
+	// cortexAgents maps each channel agent's id (a.Cortex) to its home-thread
 	// session id, so the client both knows which agents get the channel nav AND
 	// what session to pin them to — without core/ui hardcoding the id scheme.
 	// A present key = channel agent; the value = its pinned session.
-	channelAgents := map[string]string{}
+	cortexAgents := map[string]string{}
 	type pickerRow struct {
 		ID    string
 		Name  string
@@ -59,8 +59,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	subAgentsByParent := map[string][]map[string]string{}
 	var builtIns, customs []pickerRow
 	for _, a := range agents {
-		if a.Channel {
-			channelAgents[a.ID] = channelSessionID(a.ID)
+		if a.Cortex {
+			cortexAgents[a.ID] = cortexSessionID(a.ID)
 		}
 		// Sub-agents (OwnedBy set → Hidden=true via enforceSubAgentPosture)
 		// stay out of the main picker — they appear in the secondary
@@ -128,11 +128,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// (no sub-agents in the fleet) is fine — the JS hides the picker
 	// when the selected parent has no children.
 	subAgentsJSON, _ := json.Marshal(subAgentsByParent)
-	channelAgentsJSON, _ := json.Marshal(channelAgents)
+	cortexAgentsJSON, _ := json.Marshal(cortexAgents)
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
-		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(channelAgentsJSON) +
+		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder
@@ -257,7 +257,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// and what thread to pin each to, without hardcoding the id
 					// scheme.
 					AltNavFlag:      "ORCH_CHANNEL_AGENTS",
-					AltPrimaryLabel: "Master Control",
+					AltPrimaryLabel: "Cortex",
 					Markdown:    true,
 					BulkSelect:  true,
 					Attachments: true,

@@ -702,7 +702,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return fmt.Sprintf("Conversing with %s is blocked in the user's permission settings — not started.", label), nil
 				}
 				if IsContactPreAuthorized(RootDB, owner, recip) {
-					if _, err := link.StartGoalConversation(owner, rec.ChatID, rec.Handle, goal, agentID, channelSessionID(agentID)); err != nil {
+					if _, err := link.StartGoalConversation(owner, rec.ChatID, rec.Handle, goal, agentID, cortexSessionID(agentID)); err != nil {
 						return "", err
 					}
 					return fmt.Sprintf("Started the conversation with %s toward the goal (you've pre-authorized this recipient) — I'll run the exchange and report back here when it's done or I'm stuck.", label), nil

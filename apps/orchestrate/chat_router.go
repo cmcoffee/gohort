@@ -280,7 +280,7 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 	}
 	// Channel agents no longer force every visit onto one thread — they have
 	// a channel thread AND normal sessions. The channel thread is just a
-	// specific session id (channelSessionID) the client opens via the
+	// specific session id (cortexSessionID) the client opens via the
 	// Channel row; ad-hoc sessions pass through with their own ids. So we
 	// don't rewrite sid here anymore.
 	switch r.Method {
@@ -308,7 +308,7 @@ func (T *OrchestrateApp) handleSessionOne(w http.ResponseWriter, r *http.Request
 			// Channel row opens it, return an empty session instead of 404 so
 			// the client opens a fresh thread rather than erroring. Ad-hoc
 			// sessions still 404 on a miss.
-			if agent.Channel && sid == channelSessionID(agent.ID) {
+			if agent.Cortex && sid == cortexSessionID(agent.ID) {
 				s = ChatSession{ID: sid}
 			} else {
 				http.NotFound(w, r)

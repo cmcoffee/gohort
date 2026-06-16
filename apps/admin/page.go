@@ -8,6 +8,7 @@ package admin
 
 import (
 	"net/http"
+	"sort"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -270,7 +271,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		Title:     "Administrator",
 		ShowTitle: true,
 		BackURL:   "/",
-		MaxWidth:  "900px", // wider than mobile-default; admin lives on a desktop browser
+		MaxWidth:  "1200px", // desktop admin — room for a 2-col section grid + full-width tables
+		Grid:      true,      // flow sections into a responsive grid; wide sections (tagged below) span full width
+		Tabbed:    true,      // category tab bar across the top; sections grouped below
 		Sections: []ui.Section{
 			{
 				Title:    "System Status",
@@ -382,7 +385,6 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			{
 				Title:     "LLM Routing",
 				Subtitle:  "Pick which tier handles each pipeline stage. \"lead\" uses the precision (remote) LLM. \"worker\" uses the local model. \"worker (thinking)\" enables extended reasoning on the local model. Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
-				Collapsed: true,
 				Body: ui.Table{
 					Source: "api/routing",
 					RowKey: "key",
@@ -1380,5 +1382,60 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
+	// Category for each section's top tab, and which sections span the
+	// full grid width (tables, the cost chart, multi-pane Stacks, the DB
+	// browser) vs the narrow config forms that pack two-up. Kept here in
+	// one place so the section literals above stay uncluttered and the
+	// layout reads at a glance. Tab order follows first appearance in the
+	// Sections slice, so the order of these groups is set by section order.
+	sectionGroup := map[string]string{
+		"System Status": "System", "Site Settings": "System",
+		"Users": "System", "Default Apps": "System",
+
+		"LLM Routing": "Routing",
+
+		"Worker LLM Thinking": "Models",
+		"Cost History (Last 30 Days)": "Models", "Ollama Proxy": "Models",
+		"Embeddings": "Models", "Agent Loop Tuning": "Models",
+		"Local Model Scheduler": "Models",
+
+		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
+		"Web Search": "Capabilities", "Mail (SMTP)": "Capabilities",
+		"Network Timeouts": "Capabilities",
+
+		"API Credentials": "Tools", "MCP Servers": "Tools",
+		"Source Hooks": "Tools", "Persistent Tools (Pending)": "Tools",
+		"Persistent Tools (Active)": "Tools", "Tool Groups": "Tools",
+		"Skills": "Tools", "Pipelines": "Tools",
+
+		"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
+		"Migrations": "Maintenance", "Vector Index": "Maintenance",
+		"Database Browser": "Maintenance",
+	}
+	wideSections := map[string]bool{
+		"System Status": true, "Users": true, "LLM Routing": true,
+		"Cost History (Last 30 Days)": true, "Scheduled Tasks": true,
+		"API Credentials": true, "MCP Servers": true, "Source Hooks": true,
+		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
+		"Tool Groups": true, "Skills": true, "Pipelines": true,
+		"Migrations": true, "Database Browser": true,
+	}
+	for i := range page.Sections {
+		t := page.Sections[i].Title
+		if g, ok := sectionGroup[t]; ok {
+			page.Sections[i].Group = g
+		}
+		if wideSections[t] {
+			page.Sections[i].Wide = true
+		}
+	}
+	// Tab order (and clustering of each group's sections) — a stable sort
+	// by this rank so the tabs read in a sensible order regardless of the
+	// section authoring order above; sections keep their relative order
+	// within each group.
+	groupRank := map[string]int{"System": 0, "Models": 1, "Routing": 2, "Capabilities": 3, "Tools": 4, "Maintenance": 5}
+	sort.SliceStable(page.Sections, func(i, j int) bool {
+		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
+	})
 	page.ServeHTTP(w, r)
 }

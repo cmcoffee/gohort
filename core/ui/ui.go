@@ -65,6 +65,21 @@ type Page struct {
 	Sticky Component
 	// Sections are rendered in order. Most apps have 2-5.
 	Sections []Section
+	// Grid lays the sections out in a responsive grid instead of a single
+	// stacked column: two columns on desktop, one on mobile. Narrow
+	// sections pack two-up; a section marked Wide spans the full width.
+	// For settings-heavy pages (admin) this uses the horizontal space
+	// instead of a tall ribbon. Pair with a wider MaxWidth. Default false
+	// (the classic single column). NoChrome sections always stack at full
+	// width, outside the grid (they manage their own layout).
+	Grid bool
+	// Tabbed renders a button bar of the distinct Section.Group names
+	// across the top and shows one group's sections at a time. For pages
+	// with many sections (admin) this replaces an endless scroll with
+	// category navigation. Combines with Grid: each group's sections lay
+	// out in the grid within its panel. Sections with no Group fall under
+	// "General". Default false.
+	Tabbed bool
 	// MaxWidth caps the central column width. Default 600px (mobile-first
 	// even on desktop). Set to "" or "100%" for full width.
 	MaxWidth string
@@ -98,6 +113,8 @@ func (p Page) Render(w http.ResponseWriter) error {
 		Sticky:   marshalComponent(p.Sticky),
 		Sections: make([]sectionConfig, 0, len(p.Sections)),
 		MaxWidth: p.MaxWidth,
+		Grid:     p.Grid,
+		Tabbed:   p.Tabbed,
 		Footer:   p.Footer,
 		FooterURL: p.FooterURL,
 		BackURL:  p.BackURL,
@@ -113,6 +130,8 @@ func (p Page) Render(w http.ResponseWriter) error {
 			Body:      marshalComponent(s.Body),
 			NoChrome:  s.NoChrome,
 			Collapsed: s.Collapsed,
+			Wide:      s.Wide,
+			Group:     s.Group,
 		})
 	}
 	jsonBlob, err := json.Marshal(cfg)
@@ -206,6 +225,15 @@ type Section struct {
 	// reference sections (LLM Routing, Cost Sources) that an operator
 	// rarely opens. Defaults to false (expanded).
 	Collapsed bool
+	// Wide makes the section span the full page width when the Page is in
+	// Grid mode. Use for tables, charts, and wide Stacks that shouldn't be
+	// squeezed into one grid column. No effect when Page.Grid is false.
+	Wide bool
+	// Group names the category this section belongs to when the Page is in
+	// Tabbed mode; sections sharing a Group appear under the same top tab,
+	// tabs ordered by first appearance. Empty = "General". No effect when
+	// Page.Tabbed is false.
+	Group string
 }
 
 // --- internal: serialization shape consumed by ui.js ----------------------
@@ -217,6 +245,8 @@ type pageConfig struct {
 	Sticky    json.RawMessage `json:"sticky,omitempty"`
 	Sections  []sectionConfig `json:"sections"`
 	MaxWidth  string          `json:"max_width"`
+	Grid      bool            `json:"grid,omitempty"`
+	Tabbed    bool            `json:"tabbed,omitempty"`
 	Footer    string          `json:"footer,omitempty"`
 	FooterURL string          `json:"footer_url,omitempty"`
 }
@@ -227,6 +257,8 @@ type sectionConfig struct {
 	Body      json.RawMessage `json:"body,omitempty"`
 	NoChrome  bool            `json:"no_chrome,omitempty"`
 	Collapsed bool            `json:"collapsed,omitempty"`
+	Wide      bool            `json:"wide,omitempty"`
+	Group     string          `json:"group,omitempty"`
 }
 
 // marshalComponent serializes a Component as JSON with a "type" tag the

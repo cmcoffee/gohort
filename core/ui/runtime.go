@@ -187,6 +187,42 @@ body { min-height: 100vh; min-height: 100dvh; }
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
   padding: 0.6rem 0.8rem; margin-bottom: 0.8rem;
 }
+/* Page.Grid layout — sections flow into a responsive 2-column grid on
+ * desktop, one column on mobile; a Wide section spans the full width.
+ * Cards size to their own content (align-items:start) so a short form
+ * doesn't stretch to match a tall neighbor. gap replaces the per-card
+ * margin so spacing stays even. */
+.ui-section-grid {
+  display: grid; grid-template-columns: 1fr; gap: 0.8rem; align-items: start;
+  /* dense: backfill the empty cell a full-width (Wide) section would
+   * otherwise leave beside a lone narrow section, so narrow cards pack
+   * tight instead of leaving holes on the left/right. */
+  grid-auto-flow: row dense;
+}
+.ui-section-grid > .ui-section { margin-bottom: 0; min-width: 0; }
+.ui-section-grid > .ui-section-wide { grid-column: 1 / -1; }
+@media (min-width: 900px) {
+  .ui-section-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* Page.Tabbed — a category button bar across the top; one group's
+ * sections show at a time. */
+.ui-tabbar {
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  margin: 0 0 1rem 0; padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.ui-tab {
+  padding: 0.4rem 0.9rem; border-radius: 8px; cursor: pointer;
+  font: inherit; font-size: 0.85rem;
+  border: 1px solid var(--border); background: var(--bg-1); color: var(--text-mute);
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ui-tab:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-tab.active {
+  background: var(--accent-soft, rgba(74,158,255,0.16));
+  border-color: var(--accent, #4a9eff); color: var(--text);
+}
+.ui-tab-hidden { display: none; }
 .ui-section-h {
   font-size: 0.85rem; margin: 0 0 0.5rem 0;
   color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
@@ -11866,7 +11902,7 @@ const runtimeJS = `
             var chActive = chId === activeSessionId;
             var chKids = [
               el('span', {style: 'font-size:0.95rem;flex:0 0 auto'}, ['⚡']),
-              el('span', {style: 'flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [cfg.alt_primary_label || 'Channel']),
+              el('span', {style: 'flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [cfg.alt_primary_label || 'Cortex']),
             ];
             if (homeRec.unread && !chActive) {
               chKids.push(el('span', {class: 'ui-unread-dot', title: 'New activity',
@@ -16229,13 +16265,65 @@ const runtimeJS = `
 
     if (cfg.sticky) mountComponent(cfg.sticky, root);
 
+    // Section layout. Three modes, combinable:
+    //  - tabbed (cfg.tabbed): a top button bar of the distinct section
+    //    groups; each group is a panel shown one at a time. A panel is
+    //    itself a grid when cfg.grid.
+    //  - grid (cfg.grid): one responsive 2-col grid (1 col on mobile);
+    //    Wide sections span full width.
+    //  - plain: stacked directly on root.
+    var inGrid = !!cfg.grid;
+    var tabbed = !!cfg.tabbed;
+    var sectionsHost = root;        // non-tabbed host
+    var groupHosts = {};            // group name -> mount host (tabbed)
+    if (tabbed) {
+      var order = [], seenG = {};
+      (cfg.sections || []).forEach(function(s) {
+        var g = s.group || 'General';
+        if (!seenG[g]) { seenG[g] = true; order.push(g); }
+      });
+      var tabbar = el('div', {class: 'ui-tabbar'});
+      root.appendChild(tabbar);
+      var panels = [];
+      order.forEach(function(g, idx) {
+        var panel = el('div', {class: 'ui-tabpanel' + (idx === 0 ? '' : ' ui-tab-hidden')});
+        var host = panel;
+        if (inGrid) { host = el('div', {class: 'ui-section-grid'}); panel.appendChild(host); }
+        groupHosts[g] = host;
+        panels.push(panel);
+        var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === 0 ? ' active' : '')}, [g]);
+        btn.addEventListener('click', function() {
+          for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
+          var tabs = tabbar.querySelectorAll('.ui-tab');
+          for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+          btn.classList.add('active');
+        });
+        tabbar.appendChild(btn);
+        root.appendChild(panel);
+      });
+    } else if (inGrid) {
+      sectionsHost = el('div', {class: 'ui-section-grid'});
+      root.appendChild(sectionsHost);
+    }
+    function hostForSection(s) {
+      if (tabbed) return groupHosts[s.group || 'General'] || sectionsHost;
+      return sectionsHost;
+    }
     (cfg.sections || []).forEach(function(s) {
+      var host = hostForSection(s);
       // NoChrome sections skip the card wrapper — body mounts directly
-      // into the page root with no padding/bg/border. Used when the
-      // contained component (e.g. ChatPanel) manages its own layout
-      // and the section card would just create double-nested boxes.
+      // with no padding/bg/border. Used when the contained component
+      // (e.g. ChatPanel) manages its own layout and a card would just
+      // create double-nested boxes. In grid mode they ride a full-width
+      // slot so page order is preserved.
       if (s.no_chrome) {
-        if (s.body) mountComponent(s.body, root);
+        if (inGrid) {
+          var ncWrap = el('div', {class: 'ui-section-wide'});
+          if (s.body) mountComponent(s.body, ncWrap);
+          host.appendChild(ncWrap);
+        } else if (s.body) {
+          mountComponent(s.body, host);
+        }
         return;
       }
       var section = el('div', {class: 'ui-section'});
@@ -16275,7 +16363,8 @@ const runtimeJS = `
       if (s.body) mountComponent(s.body, inner);
       if (collapsed) inner.style.display = 'none';
       section.appendChild(inner);
-      root.appendChild(section);
+      if (inGrid && s.wide) section.classList.add('ui-section-wide');
+      host.appendChild(section);
     });
 
     if (cfg.footer) {
