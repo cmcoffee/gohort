@@ -57,12 +57,30 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	if T.LLM == nil || len(msgs) == 0 {
 		return msgs
 	}
+	// Per-agent context depth = the verbatim recent-message tail (0 = the
+	// framework default of 12). Applies to any persistent thread the agent
+	// runs — its Cortex home thread and each Channel room alike.
+	keepRecent := agent.ContextDepth
+	// Compaction off: no rolling summary. Keep the recent tail verbatim and
+	// forget older messages (still bounded — storage keeps the full thread;
+	// this just chooses forget-old over summarize-old).
+	if agent.DisableCompaction {
+		k := keepRecent
+		if k <= 0 {
+			k = 12
+		}
+		if len(msgs) > k {
+			return msgs[len(msgs)-k:]
+		}
+		return msgs
+	}
 	cm := make([]Message, len(msgs))
 	for i, m := range msgs {
 		cm[i] = Message{Role: m.Role, Content: m.Content}
 	}
 	st := loadCompactState(udb, agent.ID, sessID)
 	cfg := CompactionConfig{
+		KeepRecent: keepRecent, // 0 → withDefaults applies 12
 		// Archive each folded span into a searchable history index so aged
 		// content stays recoverable via recall_history / expand_history,
 		// instead of surviving only as the lossy running summary.

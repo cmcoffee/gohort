@@ -197,6 +197,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
 				Help: "Hides read_skill / skill_knowledge_search / skill_knowledge_fetch_doc + the \"Available skills\" block AND stops trigger-injection — no skill applies, regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
 
+			ui.FormField{Type: "header", Label: "Context",
+				Help: "How much of a persistent thread (the Cortex home thread, each Channel room) the agent carries into the prompt. Storage always keeps the full thread; these only bound the run-view."},
+			ui.FormField{Field: "context_depth", Type: "number", Label: "Context depth (recent messages)", Min: 0, Max: 200,
+				Placeholder: "0",
+				Help:        "How many recent messages are kept verbatim. 0 = framework default (12). Older messages fold into a rolling summary unless that's disabled below."},
+			ui.FormField{Field: "disable_compaction", Type: "toggle", Label: "Disable rolling summary",
+				Help: "Off (default) summarizes older messages into a running summary; on drops them to the context-depth tail instead. Both stay bounded — this just chooses summarize-old vs forget-old."},
+
 			ui.FormField{Type: "header", Label: "Cortex & fleet",
 				Help: "Always-on behaviors. Independent of each other."},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",

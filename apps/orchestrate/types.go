@@ -225,6 +225,19 @@ type AgentRecord struct {
 	// "give me a fresh-slate answer, ignore my own prior derivations."
 	DisableInferred bool `json:"disable_inferred,omitempty"`
 
+	// ContextDepth caps how many recent messages a persistent thread keeps
+	// verbatim in the run-view — the Cortex home thread AND each Channel
+	// room. 0 = framework default (12). Older messages fold into a rolling
+	// summary (unless DisableCompaction), so storage keeps the full thread
+	// while the prompt stays bounded.
+	ContextDepth int `json:"context_depth,omitempty"`
+
+	// DisableCompaction turns OFF the rolling-summary fold on the agent's
+	// persistent threads: older messages are dropped down to the
+	// ContextDepth tail rather than summarized. Both states are bounded;
+	// this just chooses summarize-old vs forget-old. Default false (fold).
+	DisableCompaction bool `json:"disable_compaction,omitempty"`
+
 	// MemoryMode shapes the Explicit Memory layer (store_fact + the
 	// always-in-prompt facts block) — selects which "what to put here"
 	// directive the LLM sees. Two modes:
