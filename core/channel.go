@@ -144,14 +144,18 @@ type ChannelInbound struct {
 	AgentID   string // the bound agent (channel.AgentID)
 	SessionID string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
 	Text      string // the inbound message text
-	// (inbound images + a mid-turn status callback + outbound attachments
-	// come in a later slice — Slice A is text in, text out.)
+	// StatusCallback, when set, receives mid-turn status pings (the agent's
+	// send_status / progress notes) so the transport can deliver them ahead
+	// of the final reply. nil = no status (graceful).
+	StatusCallback func(string)
+	// (inbound images are a later slice.)
 }
 
 // ChannelReply is the bound agent's response for the transport to deliver
 // back out the channel.
 type ChannelReply struct {
-	Text string
+	Text   string
+	Images []string // base64 attachments the agent produced this turn
 }
 
 // ChannelAgentRunnerFunc runs a channel's bound agent on one inbound message

@@ -19,12 +19,20 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 	RegisterChannelAgentRunner(func(ctx context.Context, in ChannelInbound) (ChannelReply, error) {
 		// agentOwner == runtimeUser: the channel owner's agent runs under the
 		// owner's own store. SessionID is per-contact (stable), so each contact
-		// accumulates its own continuing thread under the agent. Empty
-		// injectionQueueID + freshSession=false → continue the session.
-		reply, err := app.RunAgentSyncContinuing(ctx, in.Owner, in.Owner, in.AgentID, in.SessionID, "", in.Text, false)
+		// accumulates its own continuing thread under the agent. The rich
+		// variant carries the status callback through to the sub-session and
+		// returns the agent's produced attachments.
+		res, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
+			AgentOwner:     in.Owner,
+			RuntimeUser:    in.Owner,
+			AgentKey:       in.AgentID,
+			SubSessionID:   in.SessionID,
+			Message:        in.Text,
+			StatusCallback: in.StatusCallback,
+		})
 		if err != nil {
 			return ChannelReply{}, err
 		}
-		return ChannelReply{Text: reply}, nil
+		return ChannelReply{Text: res.Text, Images: res.Images}, nil
 	})
 }

@@ -1159,17 +1159,29 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 					AgentID:   ch.AgentID,
 					SessionID: sessionID,
 					Text:      text,
+					// Mid-turn status → its own outbox item delivered before the
+					// reply, so a slow turn isn't dead air.
+					StatusCallback: func(s string) {
+						s = strings.TrimSpace(s)
+						if s == "" {
+							return
+						}
+						enqueueOutbox(T.DB, OutboxItem{
+							ID: newID(), ChatID: deliverChatID, Service: svc, Handle: handle,
+							Text: s, Type: "status", Created: now(),
+						})
+					},
 				})
 				if err != nil {
 					Log("[phantom] channel agent run failed (chat=%s agent=%s): %v", deliverChatID, ch.AgentID, err)
 					return
 				}
-				if strings.TrimSpace(reply.Text) == "" {
+				if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 {
 					return
 				}
 				enqueueOutbox(T.DB, OutboxItem{
 					ID: newID(), ChatID: deliverChatID, Service: svc, Handle: handle,
-					Text: reply.Text, Type: "reply", Created: now(),
+					Text: reply.Text, Images: reply.Images, Type: "reply", Created: now(),
 				})
 			}()
 			w.WriteHeader(http.StatusAccepted)

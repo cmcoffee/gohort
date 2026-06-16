@@ -472,32 +472,72 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 // don't want compounding context-contamination from accumulated old
 // turns. The wipe is irreversible — older turns are gone, not just
 // hidden from the LLM. Default false preserves the continuity model.
+// AgentSyncRun carries the inputs for RunAgentSyncContinuingRich. The channel
+// path uses StatusCallback (mid-turn pings) and reads AgentSyncResult.Images
+// (the agent's produced attachments); the legacy text-only callers go through
+// the RunAgentSyncContinuing wrapper.
+type AgentSyncRun struct {
+	AgentOwner       string
+	RuntimeUser      string
+	AgentKey         string
+	SubSessionID     string
+	InjectionQueueID string
+	Message          string
+	FreshSession     bool
+	StatusCallback   func(string) // optional: wired to the sub-session's StatusCallback
+}
+
+// AgentSyncResult is the bound agent's output: reply text plus any attachments
+// it produced this turn (base64).
+type AgentSyncResult struct {
+	Text   string
+	Images []string
+}
+
+// RunAgentSyncContinuing is the text-only wrapper kept for existing callers
+// (goal conversations, dispatch_agent, event-monitor wakes).
 func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string, freshSession bool) (string, error) {
+	res, err := T.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
+		AgentOwner: agentOwner, RuntimeUser: runtimeUser, AgentKey: agentKey,
+		SubSessionID: subSessionID, InjectionQueueID: injectionQueueID,
+		Message: message, FreshSession: freshSession,
+	})
+	return res.Text, err
+}
+
+func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run AgentSyncRun) (AgentSyncResult, error) {
+	agentOwner := run.AgentOwner
+	runtimeUser := run.RuntimeUser
+	agentKey := run.AgentKey
+	subSessionID := run.SubSessionID
+	injectionQueueID := run.InjectionQueueID
+	message := run.Message
+	freshSession := run.FreshSession
 	if T == nil || T.LLM == nil {
-		return "", errors.New("orchestrate runtime not initialized")
+		return AgentSyncResult{}, errors.New("orchestrate runtime not initialized")
 	}
 	if agentOwner == "" {
-		return "", errors.New("agentOwner is required")
+		return AgentSyncResult{}, errors.New("agentOwner is required")
 	}
 	if runtimeUser == "" {
 		runtimeUser = agentOwner
 	}
 	if strings.TrimSpace(message) == "" {
-		return "", errors.New("message is required")
+		return AgentSyncResult{}, errors.New("message is required")
 	}
 	ownerDB := UserDB(T.DB, agentOwner)
 	if ownerDB == nil {
-		return "", fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+		return AgentSyncResult{}, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
 	}
 	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
 	if !ok {
-		return "", fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+		return AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
 	runtimeDB := ownerDB
 	if runtimeUser != agentOwner {
 		runtimeDB = UserDB(T.DB, runtimeUser)
 		if runtimeDB == nil {
-			return "", fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+			return AgentSyncResult{}, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
 		}
 	}
 	if subSessionID == "" {
@@ -512,6 +552,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	}
 	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
 		subSess.WorkspaceDir = ws
+	}
+	// Mid-turn status (channel path): the agent's send_status / progress
+	// pings land here so the transport can deliver them before the final
+	// reply. nil for the legacy text-only callers — graceful no-op.
+	if run.StatusCallback != nil {
+		subSess.StatusCallback = run.StatusCallback
 	}
 	defer clearAuthoringInProgress(runtimeDB, subSessionID)
 	defer DeleteSessionTempTools(runtimeDB, subSessionID)
@@ -663,10 +709,10 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
 	if runErr != nil {
-		return "", runErr
+		return AgentSyncResult{}, runErr
 	}
 	if resp == nil {
-		return "", errors.New("agent returned no response")
+		return AgentSyncResult{}, errors.New("agent returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
 	// Persist the new exchange for the next continuation.
@@ -678,7 +724,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner,
 	if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
 		Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
 	}
-	return cleanReply, nil
+	return AgentSyncResult{Text: cleanReply, Images: subSess.Images}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-
