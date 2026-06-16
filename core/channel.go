@@ -1,9 +1,12 @@
 package core
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"strings"
+	"sync"
 )
 
 // Channel binds a messaging surface — a Service transport (imessage /
@@ -131,4 +134,61 @@ func ChannelForInbound(db Database, owner, service, address string) (Channel, bo
 		return *wholeService, true
 	}
 	return Channel{}, false
+}
+
+// --- Phase 2: routing inbound to the bound agent -----------------------------
+
+// ChannelInbound is one inbound message routed to a channel's bound agent.
+type ChannelInbound struct {
+	Owner     string // the channel owner — whose agent runs and under whose store
+	AgentID   string // the bound agent (channel.AgentID)
+	SessionID string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
+	Text      string // the inbound message text
+	// (inbound images + a mid-turn status callback + outbound attachments
+	// come in a later slice — Slice A is text in, text out.)
+}
+
+// ChannelReply is the bound agent's response for the transport to deliver
+// back out the channel.
+type ChannelReply struct {
+	Text string
+}
+
+// ChannelAgentRunnerFunc runs a channel's bound agent on one inbound message
+// and returns its reply. Registered by orchestrate (it owns the agent loop);
+// the transport (phantom) calls it via RunChannelAgent when an inbound
+// matches a bound Channel. Mirrors the standing-runner seam.
+type ChannelAgentRunnerFunc func(ctx context.Context, in ChannelInbound) (ChannelReply, error)
+
+var (
+	channelAgentRunner   ChannelAgentRunnerFunc
+	channelAgentRunnerMu sync.RWMutex
+)
+
+// RegisterChannelAgentRunner installs the agent-execution closure. Call once
+// at startup from the agent-aware package (orchestrate).
+func RegisterChannelAgentRunner(fn ChannelAgentRunnerFunc) {
+	channelAgentRunnerMu.Lock()
+	channelAgentRunner = fn
+	channelAgentRunnerMu.Unlock()
+}
+
+// ChannelAgentRunnerReady reports whether an agent runner is registered, so
+// the transport can fall back to its own engine when orchestrate isn't loaded.
+func ChannelAgentRunnerReady() bool {
+	channelAgentRunnerMu.RLock()
+	defer channelAgentRunnerMu.RUnlock()
+	return channelAgentRunner != nil
+}
+
+// RunChannelAgent runs the bound agent on an inbound message. Errors when no
+// runner is registered.
+func RunChannelAgent(ctx context.Context, in ChannelInbound) (ChannelReply, error) {
+	channelAgentRunnerMu.RLock()
+	fn := channelAgentRunner
+	channelAgentRunnerMu.RUnlock()
+	if fn == nil {
+		return ChannelReply{}, errors.New("no channel agent runner registered")
+	}
+	return fn(ctx, in)
 }

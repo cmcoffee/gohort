@@ -200,6 +200,11 @@ func (T *OrchestrateApp) Routes() {
 	// high-consequence tools).
 	registerStandingRunner(T)
 
+	// Channel agent runner: lets the transport (phantom) run a Channel's bound
+	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
+	// this registers the agent-execution half. See docs/channels-and-agents.md.
+	registerChannelAgentRunner(T)
+
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
 	// channel agent (inject into its home thread + run a turn) when something
 	// happens. core owns the store + poll schedule; this supplies the waker

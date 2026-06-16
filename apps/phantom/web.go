@@ -1139,6 +1139,44 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Channel routing (Phase 2): if a Channel is bound for this owner +
+	// service + sender, the BOUND orchestrate agent answers — independent of
+	// phantom's own persona / auto-reply config and gatekeeper. No binding (or
+	// orchestrate not loaded) falls through to phantom's own engine below,
+	// unchanged. Self-messages (empty handle = the owner's own echo) are
+	// skipped: a channel agent replies to external contacts, not to the owner
+	// texting in. See docs/channels-and-agents.md.
+	if owner := phantomToolOwner(T.DB); owner != "" && req.Handle != "" && ChannelAgentRunnerReady() {
+		if ch, found := ChannelForInbound(RootDB, owner, svc, req.Handle); found && ch.AutoReply {
+			deliverChatID := activeChatID
+			sessionID := "chan:" + activeChatID
+			text := req.Text
+			handle := req.Handle
+			Log("[phantom] channel %q (service=%s agent=%s) handling inbound from %s", ch.Name, svc, ch.AgentID, handle)
+			go func() {
+				reply, err := RunChannelAgent(context.Background(), ChannelInbound{
+					Owner:     ch.Owner,
+					AgentID:   ch.AgentID,
+					SessionID: sessionID,
+					Text:      text,
+				})
+				if err != nil {
+					Log("[phantom] channel agent run failed (chat=%s agent=%s): %v", deliverChatID, ch.AgentID, err)
+					return
+				}
+				if strings.TrimSpace(reply.Text) == "" {
+					return
+				}
+				enqueueOutbox(T.DB, OutboxItem{
+					ID: newID(), ChatID: deliverChatID, Service: svc, Handle: handle,
+					Text: reply.Text, Type: "reply", Created: now(),
+				})
+			}()
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+	}
+
 	// Process through LLM if relay is enabled for this conversation.
 	// Replies are sent to req.ChatID (the actual sender address), not activeChatID.
 	// For real aliases, honor auto-reply on either the incoming address or
