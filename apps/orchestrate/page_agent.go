@@ -13,6 +13,34 @@ import (
 //
 //	GET /agent/new        — create a new blank agent
 //	GET /agent/{id}       — edit existing agent
+// channelAgentPrompt is the persona for the Channel agent preset: a lean,
+// on-message conversational base, no Agency-controller framing. Tuned for
+// short text replies on a messaging Channel. Product output, so no
+// em-dashes (universal style rule).
+const channelAgentPrompt = "You are a helpful assistant answering messages on a messaging channel. Keep replies short, clear, and conversational; these are text messages, not essays. Answer the person directly and stay on topic. If you need information, use your tools quietly and reply with the result. Do not narrate your internal steps, your tools, or any other agents. If you genuinely can't help with something, say so briefly and suggest a next step."
+
+// channelAgentTemplates returns the agent editor's "Start from template"
+// presets (create mode only). The Channel agent is a focused conversational
+// base for an agent you attach to a Channel: a messaging persona, Fleet OFF
+// (a channel bot shouldn't reach your fleet), and Cortex OFF (each contact
+// is its own session under the agent, so it needs no home thread of its
+// own). You stamp instances from this rather than cloning your personal
+// Chat, which would drag in its manage-your-agents / dispatch-Builder
+// framing. See docs/channels-and-agents.md.
+func channelAgentTemplates() []ui.FormTemplate {
+	return []ui.FormTemplate{
+		{
+			Label: "Channel agent",
+			Values: map[string]any{
+				"description":         "Conversational agent for a messaging channel (Telegram / Slack / iMessage).",
+				"orchestrator_prompt": channelAgentPrompt,
+				"fleet":               false,
+				"channel":             false,
+			},
+		},
+	}
+}
+
 func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request) {
 	_, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -212,6 +240,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		)
 	}
 
+	// "Start from template" presets — create mode only (a template would
+	// clobber a real agent's fields when editing). Today: the Channel
+	// agent, a lean conversational base you stamp instances from instead
+	// of cloning your personal Chat.
+	var agentTemplates []ui.FormTemplate
+	if id == "" && !subAgent {
+		agentTemplates = channelAgentTemplates()
+	}
 	agentSection := ui.Section{
 		Title:    "Agent",
 		Subtitle: "Identity, prompts, and behavior. Clone an existing agent from the landing page if you want a quick copy to tweak.",
@@ -222,6 +258,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			SubmitLabel:    "Save agent",
 			RedirectURL:    redirectURL,
 			RedirectTarget: "_self",
+			Templates:      agentTemplates,
 			Fields:         fields,
 		},
 	}
@@ -234,6 +271,57 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	sections := []ui.Section{agentSection}
+
+	// Channels — attach messaging surfaces (iMessage / Telegram / Slack)
+	// to this agent. Phase 1: the binding is stored; a message arriving on
+	// a channel will run THIS agent once inbound routing lands (Phase 2).
+	// See docs/channels-and-agents.md. Top-level agents only — a focused
+	// sub-agent is reached via its parent, not its own phone number.
+	if id != "" && !subAgent {
+		sections = append(sections, ui.Section{
+			Title:    "Channels",
+			Subtitle: "Attach a messaging surface so this agent answers over it. Leave the scope blank to route every conversation on that service to this agent, or set a handle/room to bind just one. (Bindings are stored now; inbound routing to the agent lands in a later phase.)",
+			Body: ui.Stack{
+				Children: []ui.Component{
+					ui.Table{
+						Source:    "../api/channels?agent_id=" + id,
+						RowKey:    "id",
+						EmptyText: "No channels attached yet.",
+						Columns: []ui.Col{
+							{Field: "name", Flex: 1},
+							{Field: "service", Label: "Service", Mute: true},
+							{Field: "address", Label: "Scope", Mute: true, Flex: 1},
+							{Field: "auto_reply", Type: "badge", Label: "Auto-reply", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "On", Color: "success"},
+								{Value: false, Label: "Off", Color: "mute"},
+							}},
+						},
+						RowActions: []ui.RowAction{
+							{Type: "button", Label: "Detach", PostTo: "../api/channels?id={id}", Method: "DELETE",
+								Variant: "danger", Confirm: "Detach this channel from the agent? The binding is removed."},
+						},
+					},
+					ui.FormPanel{
+						PostURL:     "../api/channels?agent_id=" + id,
+						SubmitLabel: "Attach channel",
+						Fields: []ui.FormField{
+							{Field: "name", Label: "Name", Type: "text", Placeholder: "e.g. Support line"},
+							{Field: "service", Label: "Service", Type: "select", Options: []ui.SelectOption{
+								{Value: "imessage", Label: "iMessage"},
+								{Value: "telegram", Label: "Telegram"},
+								{Value: "slack", Label: "Slack"},
+							}},
+							{Field: "address", Label: "Scope (optional)", Type: "text",
+								Placeholder: "blank = whole service; or a handle / room id",
+								Help: "Blank routes every conversation on this service to the agent; a specific handle/room binds just that one (and overrides a whole-service binding)."},
+							{Field: "auto_reply", Label: "Auto-reply", Type: "toggle",
+								Help: "Answer inbound automatically, rather than only recording it."},
+						},
+					},
+				},
+			},
+		})
+	}
 
 	// Sub-agent dispatch allowlist. Only renders for existing agents
 	// (need a known ID to wire the picker's record/post URLs). The
