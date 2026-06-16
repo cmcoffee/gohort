@@ -1715,6 +1715,16 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 	}
 }
 
+// agentExport is the portable recipe shape: the agent itself plus any
+// sub-agents it owns, each carrying its inline Tools. AgentRecord is
+// embedded so the parent's fields stay at the top level — a plain
+// AgentRecord JSON (older exports / hand-written recipes) still imports,
+// with SubAgents simply empty.
+type agentExport struct {
+	AgentRecord
+	SubAgents []AgentRecord `json:"sub_agents,omitempty"`
+}
+
 // handleAgentImport accepts a JSON agent record (the shape produced by
 // .../export) and saves it as a new agent owned by the importer.
 // Whatever ID, Owner, Created the importer sends are discarded — the
@@ -1729,11 +1739,12 @@ func (T *OrchestrateApp) handleAgentImport(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var rec AgentRecord
-	if err := json.NewDecoder(r.Body).Decode(&rec); err != nil {
+	var imp agentExport
+	if err := json.NewDecoder(r.Body).Decode(&imp); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	rec := imp.AgentRecord
 	if strings.TrimSpace(rec.Name) == "" {
 		http.Error(w, "import: name is required", http.StatusBadRequest)
 		return
@@ -1744,12 +1755,36 @@ func (T *OrchestrateApp) handleAgentImport(w http.ResponseWriter, r *http.Reques
 	}
 	rec.ID = ""
 	rec.Owner = user
+	rec.OwnedBy = ""
 	rec.Created = time.Time{}
 	rec.Updated = time.Time{}
 	saved, err := saveAgent(udb, rec)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	// Recreate bundled sub-agents under the freshly-minted parent id so
+	// the parent's specialist picker finds them. A malformed sub-agent is
+	// skipped (logged), not fatal — the parent already saved.
+	subCount := 0
+	for _, s := range imp.SubAgents {
+		if strings.TrimSpace(s.Name) == "" || strings.TrimSpace(s.OrchestratorPrompt) == "" {
+			Log("[orchestrate.agents] import: skipping sub-agent with missing name/prompt under %q", saved.Name)
+			continue
+		}
+		s.ID = ""
+		s.Owner = user
+		s.OwnedBy = saved.ID
+		s.Created = time.Time{}
+		s.Updated = time.Time{}
+		if _, serr := saveAgent(udb, s); serr != nil {
+			Log("[orchestrate.agents] import: sub-agent %q failed: %v", s.Name, serr)
+			continue
+		}
+		subCount++
+	}
+	if subCount > 0 {
+		Log("[orchestrate.agents] imported agent %q (%s) with %d sub-agent(s)", saved.Name, saved.ID, subCount)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(saved)
@@ -1897,15 +1932,42 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		export := a
 		export.ID = ""
 		export.Owner = ""
+		export.OwnedBy = ""
 		export.Created = time.Time{}
 		export.Updated = time.Time{}
+		// Bundle the agent's owned sub-agents (specialists) and their
+		// inline Tools so the recipe is self-contained — importing the
+		// parent recreates the whole tree. Identity fields are stripped;
+		// OwnedBy is re-linked to the new parent id on import. Sub-agents
+		// are always parented to a TOP-LEVEL agent (they don't chain), so
+		// a single direct-children pass covers the tree.
+		var subs []AgentRecord
+		for _, k := range udb.Keys(agentsTable) {
+			if k == id {
+				continue
+			}
+			var s AgentRecord
+			if !udb.Get(agentsTable, k, &s) {
+				continue
+			}
+			if s.OwnedBy != id || (s.Owner != user && s.Owner != seedOwner) {
+				continue
+			}
+			s.ID = ""
+			s.Owner = ""
+			s.OwnedBy = ""
+			s.Created = time.Time{}
+			s.Updated = time.Time{}
+			subs = append(subs, s)
+		}
+		payload := agentExport{AgentRecord: export, SubAgents: subs}
 		filename := safeFilename(a.Name) + ".agent.json"
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition",
 			`attachment; filename="`+filename+`"`)
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(export)
+		_ = enc.Encode(payload)
 		return
 	}
 	if action != "" {
