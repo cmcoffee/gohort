@@ -9,6 +9,7 @@ import (
 
 	_ "github.com/cmcoffee/gohort/apps/admin"
 	_ "github.com/cmcoffee/gohort/apps/agents"
+	_ "github.com/cmcoffee/gohort/apps/bridges"
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/orchestrate"

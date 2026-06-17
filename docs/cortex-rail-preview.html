@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex rail — preview</title>
+<style>
+  :root {
+    --bg:#0d1117; --bg-1:#161b22; --bg-2:#21262d;
+    --text:#e8e0c8; --text-mute:#8b949e; --border:#30363d;
+    --accent:#58a6ff; --accent-dim:rgba(88,166,255,0.15);
+    --cortex:#d9b86c; --cortex-dim:rgba(217,184,108,0.10);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); height:100vh; display:flex; }
+
+  /* ---- the rail ---- */
+  .rail { width:300px; flex:0 0 300px; background:var(--bg); border-right:1px solid var(--border);
+    display:flex; flex-direction:column; height:100vh; }
+  .rail-top { padding:0.75rem 0.7rem 0.5rem; border-bottom:1px solid var(--border); }
+  .agent-sel { width:100%; background:var(--bg-1); color:var(--text); border:1px solid var(--border);
+    border-radius:7px; padding:0.45rem 0.6rem; font-size:0.9rem; font-weight:600; }
+  .new-row { display:flex; gap:0.4rem; margin-top:0.55rem; }
+  .btn { flex:1; text-align:center; border:1px solid var(--border); border-radius:7px; padding:0.45rem 0.5rem;
+    font-size:0.82rem; cursor:pointer; background:var(--bg-1); color:var(--text); white-space:nowrap; }
+  .btn.primary { background:var(--accent-dim); border-color:var(--accent); color:#cfe6ff; }
+  .btn:hover { border-color:var(--accent); }
+
+  .list { flex:1; overflow-y:auto; padding:0.35rem 0.4rem 1rem; }
+
+  /* one continuous list; tiers separated by a faint divider, no headers */
+  .divider { height:1px; background:var(--border); opacity:0.5; margin:0.45rem 0.5rem; }
+  .tier-label { padding:0.3rem 0.6rem 0.2rem; font-size:0.62rem; letter-spacing:0.06em;
+    text-transform:uppercase; color:var(--text-mute); font-weight:600; }
+
+  .row { display:flex; align-items:flex-start; gap:0.55rem; padding:0.5rem 0.55rem;
+    border-radius:7px; cursor:pointer; }
+  .row:hover { background:var(--bg-1); }
+  .row.active { background:var(--bg-1); }
+  .row .glyph { flex:0 0 1.1rem; font-size:0.95rem; line-height:1.2; text-align:center; opacity:0.85; }
+  .row .body { flex:1; min-width:0; }
+  .row .title { font-size:0.9rem; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .sub { font-size:0.76rem; color:var(--text-mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:0.1rem; }
+  .row .meta { flex:0 0 auto; font-size:0.7rem; color:var(--text-mute); padding-top:0.15rem; }
+
+  /* cortex — pinned top, same row shape, just marked */
+  .row.cortex { background:var(--cortex-dim); }
+  .row.cortex:hover { background:var(--cortex-dim); }
+  .row.cortex .glyph { color:var(--cortex); opacity:1; }
+  .row.cortex .title { font-weight:700; color:var(--text); }
+  .badge { font-size:0.58rem; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;
+    color:var(--cortex); border:1px solid var(--cortex); border-radius:999px; padding:0.02rem 0.4rem;
+    margin-left:0.4rem; vertical-align:middle; }
+  .svc { font-size:0.7rem; color:var(--text-mute); }
+  .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:#3fb950; margin-left:0.35rem; vertical-align:middle; }
+
+  /* ---- main pane (context only) ---- */
+  .main { flex:1; display:flex; flex-direction:column; }
+  .main-h { padding:0.8rem 1.1rem; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:0.5rem; }
+  .main-h .t { font-weight:700; }
+  .main-body { flex:1; padding:1.2rem; color:var(--text-mute); overflow-y:auto; }
+  .bubble { max-width:60%; padding:0.6rem 0.85rem; border-radius:10px; margin-bottom:0.7rem; font-size:0.9rem; line-height:1.45; }
+  .bubble.them { background:var(--bg-1); color:var(--text); }
+  .bubble.me { background:var(--accent-dim); color:#cfe6ff; margin-left:auto; }
+  .note { font-size:0.72rem; color:var(--text-mute); margin:0.2rem 0 0.9rem; }
+  .legend { position:fixed; bottom:10px; right:14px; font-size:0.72rem; color:var(--text-mute);
+    background:var(--bg-1); border:1px solid var(--border); border-radius:7px; padding:0.5rem 0.7rem; max-width:320px; line-height:1.5; }
+</style>
+</head>
+<body>
+  <div class="rail">
+    <div class="rail-top">
+      <select class="agent-sel"><option>Personal Assistant</option><option>Support bot</option></select>
+      <div class="new-row">
+        <div class="btn primary">+ New session</div>
+        <div class="btn">+ Clean session</div>
+      </div>
+    </div>
+
+    <div class="list">
+      <!-- TIER 1: cortex, pinned top -->
+      <div class="row cortex">
+        <div class="glyph">&#129504;</div>
+        <div class="body">
+          <div class="title">Cortex <span class="badge">home</span><span class="dot" title="active"></span></div>
+          <div class="sub">the standing thread &middot; 2 monitors, 1 schedule</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- TIER 2: channel threads — LABELED, pinned under the cortex so incoming never scrolls off -->
+      <div class="tier-label">Channels</div>
+      <div class="row">
+        <div class="glyph">&#128172;</div>
+        <div class="body">
+          <div class="title">Mom <span class="svc">&middot; iMessage</span></div>
+          <div class="sub">see you at 6, drive safe</div>
+        </div>
+        <div class="meta">4m</div>
+      </div>
+      <div class="row">
+        <div class="glyph">&#128172;</div>
+        <div class="body">
+          <div class="title">Family chat <span class="svc">&middot; iMessage</span></div>
+          <div class="sub">Dad: who's bringing the cooler?</div>
+        </div>
+        <div class="meta">1h</div>
+      </div>
+      <div class="row">
+        <div class="glyph">&#128172;</div>
+        <div class="body">
+          <div class="title">+1 831 588 4304 <span class="svc">&middot; iMessage</span></div>
+          <div class="sub">thanks!</div>
+        </div>
+        <div class="meta">3h</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- TIER 3: your sessions (the SCROLLING tier) — a NEW one lands at the top -->
+      <div class="row active">
+        <div class="glyph">&#9711;</div>
+        <div class="body"><div class="title">New session <span class="badge" style="color:var(--accent);border-color:var(--accent)">just now</span></div></div>
+        <div class="meta">now</div>
+      </div>
+      <div class="row">
+        <div class="glyph">&#9711;</div>
+        <div class="body"><div class="title">Trip planning &mdash; Lisbon</div></div>
+        <div class="meta">2h</div>
+      </div>
+      <div class="row">
+        <div class="glyph">&#9711;</div>
+        <div class="body"><div class="title">Debug the build error</div></div>
+        <div class="meta">1d</div>
+      </div>
+      <div class="row">
+        <div class="glyph">&#9711;</div>
+        <div class="body"><div class="title">Quick question about taxes</div></div>
+        <div class="meta">3d</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="main-h"><span class="glyph">&#9711;</span><span class="t">New session</span><span class="svc">&middot; forked from the cortex just now</span></div>
+    <div class="main-body">
+      <div class="note">Clicking &ldquo;+ New session&rdquo; opens a fresh fork here AND drops it at the top of your sessions, right under the cortex. It starts seeded with the cortex's current context (Connected), so the agent already knows your standing situation.</div>
+      <div class="bubble me">what's on my plate today?</div>
+      <div class="bubble them">You've got the Lisbon trip to finalize, and the diskstation is low on space &mdash; want me to start with either?</div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <b>One list, three tiers.</b><br>
+    Cortex pinned top (gold, home badge) &rarr; <b>Channels</b> (labeled, &#128172;, pinned so incoming never scrolls off) &rarr; your sessions (&#9711;, the unlabeled scrolling tier), split by faint dividers.<br>
+    A NEW session lands at the top of the sessions tier and opens. &ldquo;+ New session&rdquo; = Connected &middot; &ldquo;+ Clean session&rdquo; = Incognito.
+  </div>
+</body>
+</html>

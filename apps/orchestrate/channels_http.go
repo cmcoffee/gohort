@@ -27,45 +27,85 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodGet:
 		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-		out := []Channel{}
+		// Carry a brand-correct service label (imessage → iMessage) alongside
+		// each channel so the UI shows it without hardcoding service names.
+		type channelView struct {
+			Channel
+			ServiceLabel string `json:"service_label,omitempty"`
+		}
+		out := []channelView{}
 		for _, ch := range ListChannels(RootDB, user) {
 			if agentID != "" && ch.AgentID != agentID {
 				continue
 			}
-			out = append(out, ch)
+			out = append(out, channelView{Channel: ch, ServiceLabel: ServiceDisplayName(ch.Service)})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
 
 	case http.MethodPost:
 		agentID := strings.TrimSpace(r.URL.Query().Get("agent_id"))
-		if agentID == "" {
-			http.Error(w, "agent_id is required", http.StatusBadRequest)
-			return
-		}
 		var req struct {
-			Name      string `json:"name"`
-			Service   string `json:"service"`
-			Address   string `json:"address"`
-			AutoReply bool   `json:"auto_reply"`
+			ID          string `json:"id"` // set → update in place; empty → create
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Service     string `json:"service"`
+			Address     string `json:"address"`
+			AgentID     string `json:"agent_id"` // optional re-point on update / create from body
+			AutoReply   bool   `json:"auto_reply"`
+			Direction   string `json:"direction"`
+			Gatekeeper  string `json:"gatekeeper"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		if strings.TrimSpace(req.Service) == "" {
-			http.Error(w, "service is required", http.StatusBadRequest)
+		// Update in place when an id is given: preserve service/address/created,
+		// refresh the editable fields, allow re-pointing the bound agent.
+		if id := strings.TrimSpace(req.ID); id != "" {
+			ch, found := GetChannel(RootDB, user, id)
+			if !found {
+				http.Error(w, "channel not found", http.StatusNotFound)
+				return
+			}
+			// Specifying a channel is just the interface fields; the connector
+			// (service + address) is attached separately, so it's preserved here
+			// rather than wiped by an absent value.
+			ch.Name = strings.TrimSpace(req.Name)
+			ch.Description = strings.TrimSpace(req.Description)
+			ch.AutoReply = req.AutoReply
+			ch.Direction = strings.TrimSpace(req.Direction)
+			ch.Gatekeeper = strings.TrimSpace(req.Gatekeeper)
+			if a := strings.TrimSpace(req.AgentID); a != "" {
+				ch.AgentID = a
+			}
+			SaveChannel(RootDB, ch)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ch)
 			return
 		}
+		// Create — agent from the query (rail is agent-scoped) or the body.
+		if agentID == "" {
+			agentID = strings.TrimSpace(req.AgentID)
+		}
+		if agentID == "" {
+			http.Error(w, "agent_id is required", http.StatusBadRequest)
+			return
+		}
+		// Service may be blank: an inert channel — the interface is configured
+		// but no source is hooked in yet, so nothing routes until one is.
 		ch := Channel{
-			ID:        NewChannelID(),
-			Owner:     user,
-			Name:      strings.TrimSpace(req.Name),
-			Service:   strings.TrimSpace(req.Service),
-			Address:   strings.TrimSpace(req.Address),
-			AgentID:   agentID,
-			AutoReply: req.AutoReply,
-			Created:   time.Now().UTC().Format(time.RFC3339),
+			ID:          NewChannelID(),
+			Owner:       user,
+			Name:        strings.TrimSpace(req.Name),
+			Description: strings.TrimSpace(req.Description),
+			Service:     strings.TrimSpace(req.Service),
+			Address:     strings.TrimSpace(req.Address),
+			AgentID:     agentID,
+			AutoReply:   req.AutoReply,
+			Direction:   strings.TrimSpace(req.Direction),
+			Gatekeeper:  strings.TrimSpace(req.Gatekeeper),
+			Created:     time.Now().UTC().Format(time.RFC3339),
 		}
 		SaveChannel(RootDB, ch)
 		Log("[orchestrate.channels] user=%q attached channel %q (service=%s scope=%q) to agent=%s",

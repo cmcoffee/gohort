@@ -559,7 +559,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	//     load above; this only adds the running conversation.
 	// Direct Agency chat with a sub-agent is a separate path (handleSend).
 	prior, _ := loadChatSession(t.udb, target.ID, subSessID)
-	deliveredMsg := markAsDelegated(msg)
+	// Only Builder acts on the delegated marker; others get the message verbatim.
+	deliveredMsg := msg
+	if isBuilderAgent(target.ID) {
+		deliveredMsg = markAsDelegated(msg)
+	}
 	llmMessages := make([]Message, 0, len(prior.Messages)+1)
 	for _, m := range prior.Messages {
 		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})

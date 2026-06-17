@@ -274,6 +274,10 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if existing.Owner != sess.Username {
 		return "", fmt.Errorf("agent %q is not yours — clone it first to customize", id)
 	}
+	// LOCK — no editing another agent's sub-agent (see agentMutationLock).
+	if msg := agentMutationLock(existing, sess); msg != "" {
+		return "", errors.New(msg)
+	}
 	mergeAgentArgs(&existing, args)
 	// Auto-copy session tools into the agent when allowed_tools picks up
 	// a name that exists in this session's draft pool — same rule as
@@ -379,10 +383,34 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if id == "" {
 		return "", errors.New("id is required")
 	}
+	// LOCK — an agent may only delete a sub-agent IT owns (target.OwnedBy ==
+	// caller). Another agent's sub-agent is off-limits to tools; only its owner
+	// or the user (via the dashboard) can remove it. Prevents one agent from
+	// deleting another's. The human dashboard path (deleteAgent direct) is
+	// unrestricted.
+	if target, ok := loadAgent(sess.DB, id); ok {
+		if msg := agentMutationLock(target, sess); msg != "" {
+			return "", errors.New(msg)
+		}
+	}
 	if err := deleteAgent(sess.DB, id, sess.Username); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf(`{"deleted":%q}`, id), nil
+}
+
+// agentMutationLock gates tool-initiated delete/update of an agent: an agent may
+// only mutate a sub-agent it owns (OwnedBy == its dispatch-parent caller) or an
+// unowned/top-level agent it is authoring in this same flow. Touching ANOTHER
+// agent's sub-agent is rejected — only its owner or the human can. Returns "" to
+// allow, or a refusal message. The human dashboard never calls this (it deletes
+// via deleteAgent directly), so it stays unrestricted.
+func agentMutationLock(target AgentRecord, sess *ToolSession) string {
+	caller := strings.TrimSpace(sess.DispatchParentAgentID)
+	if target.OwnedBy != "" && target.OwnedBy != caller {
+		return fmt.Sprintf("can't modify %q — it belongs to another agent; only its owner or the user (from the dashboard) can change it", target.ID)
+	}
+	return ""
 }
 
 // --- shared param + merge helpers -----------------------------------------

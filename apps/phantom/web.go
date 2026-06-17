@@ -54,12 +54,13 @@ func (T *Phantom) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Web UI endpoints (session auth).
 	sub.HandleFunc("/api/keys", T.handleKeys)
 	sub.HandleFunc("/api/migrate-channel", T.handleMigrateToChannel)
+	sub.HandleFunc("/api/migrate-actions", T.handleMigrateActions)
+	sub.HandleFunc("/api/agent-channels", T.handleAgentChannels)
+	sub.HandleFunc("/api/connect-channel", T.handleConnectChannel)
 	sub.HandleFunc("/api/keys/", T.handleKeyDelete)
 	sub.HandleFunc("/api/conversations", T.handleConversations)
 	sub.HandleFunc("/api/conversation/", T.handleConversation)
 	sub.HandleFunc("/api/config", T.handleConfig)
-	sub.HandleFunc("/api/proactive/test", T.handleProactiveTest)
-	sub.HandleFunc("/api/proactive-next", T.handleProactiveNext)
 	sub.HandleFunc("/api/tools", T.handleToolList)
 	sub.HandleFunc("/api/announce", T.handleAnnounce)
 	sub.HandleFunc("/api/conv-info/", T.handleConvInfo)
@@ -217,16 +218,7 @@ func (T *Phantom) handleConfig(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
-		var prev PhantomConfig
-		T.DB.Get(configTable, configKey, &prev)
 		T.DB.Set(configTable, configKey, cfg)
-		proactiveChanged := cfg.ProactiveEnabled != prev.ProactiveEnabled ||
-			cfg.ProactiveWindow != prev.ProactiveWindow ||
-			cfg.ProactivePrompt != prev.ProactivePrompt ||
-			cfg.ProactiveMaxPerDay != prev.ProactiveMaxPerDay
-		if proactiveChanged {
-			go T.syncProactiveTasks(cfg)
-		}
 		jsonOK(w, cfg)
 	case http.MethodPatch:
 		// Partial update — merges only the provided fields onto the stored
@@ -252,94 +244,6 @@ func (T *Phantom) handleConfig(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-// handleProactiveTest schedules a one-shot proactive message for all opted-in
-// conversations at a specified time (or in 10 seconds if none given).
-func (T *Phantom) handleProactiveTest(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		FireAt string `json:"fire_at"`
-	}
-	json.NewDecoder(r.Body).Decode(&req)
-
-	fireAt := time.Now().Add(10 * time.Second)
-	if req.FireAt != "" {
-		if t, err := time.Parse(time.RFC3339, req.FireAt); err == nil {
-			fireAt = t
-		}
-	}
-
-	cfg := defaultConfig(T.DB)
-	var count int
-	for _, k := range T.DB.Keys(conversationTable) {
-		var conv Conversation
-		if !T.DB.Get(conversationTable, k, &conv) || !conv.ProactiveEnabled {
-			continue
-		}
-		payload := phantomCallPayload{
-			ChatID:      conv.ChatID,
-			Handle:      conv.Handle,
-			Prompt:      cfg.ProactivePrompt,
-			IsProactive: true,
-		}
-		if _, err := ScheduleTask(phantomTaskKind, payload, fireAt); err != nil {
-			Log("[phantom/proactive] test schedule error for %s: %v", conv.ChatID, err)
-			continue
-		}
-		count++
-	}
-	jsonOK(w, map[string]any{
-		"message": fmt.Sprintf("Test scheduled for %d conversation(s) at %s", count, fireAt.Local().Format("3:04:05 PM")),
-	})
-}
-
-// handleProactiveNext returns the next scheduled proactive fire time for each
-// opted-in conversation. The UI displays these in the conversation detail panel.
-func (T *Phantom) handleProactiveNext(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	type nextFire struct {
-		ChatID   string `json:"chat_id"`
-		NextFire string `json:"next_fire"` // RFC3339 or empty
-	}
-
-	var result []nextFire
-	for _, k := range T.DB.Keys(conversationTable) {
-		var conv Conversation
-		if !T.DB.Get(conversationTable, k, &conv) || !conv.ProactiveEnabled {
-			continue
-		}
-		var sid string
-		if !T.DB.Get(proactiveIDsTable, conv.ChatID, &sid) || sid == "" {
-			continue
-		}
-		// Look up the scheduled task in the global scheduler.
-		for _, task := range ListScheduledTasks(phantomTaskKind) {
-			if task.ID == sid {
-				result = append(result, nextFire{
-					ChatID:   conv.ChatID,
-					NextFire: task.RunAt,
-				})
-				break
-			}
-		}
-	}
-	jsonOK(w, result)
 }
 
 // handleToolList returns all tools available to phantom — both registry tools
@@ -737,6 +641,17 @@ func (T *Phantom) handleConversation(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.DisplayName != nil {
 			conv.DisplayName = *req.DisplayName
+			// Propagate the title to the bound channel's orchestrate session, so
+			// the Agency rail/transcript title tracks the name set here — the
+			// channel's title is owned by this (transport) side. No-op when the
+			// chat isn't bound to a channel agent or orchestrate isn't loaded.
+			if orch := findOrchestrate(); orch != nil {
+				if owner := phantomToolOwner(T.DB); owner != "" {
+					if ch, found := ChannelForInbound(RootDB, owner, phantomDefaultService, conv.Handle, conv.ChatID, chatID); found {
+						orch.RenameChannelSession(owner, ch.AgentID, chatID, strings.TrimSpace(*req.DisplayName))
+					}
+				}
+			}
 		}
 		if req.PersonaName != nil {
 			conv.PersonaName = *req.PersonaName
@@ -903,6 +818,12 @@ func (T *Phantom) handleAnnounce(w http.ResponseWriter, r *http.Request) {
 
 // handleHook receives an incoming message from the relay agent on the Mac.
 func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
+	// Transition: Bridges is the transport now. If it's loaded, forward inbound
+	// to it (the daemon may still be pointed at /phantom/api/hook until rebuilt).
+	if h := MessagingHook(); h != nil {
+		h(w, r)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1081,6 +1002,46 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+		// Auto-alias: phantom can be handed the SAME 1:1 chat under more than one
+		// id (handle form "svc;-;handle" and chat-GUID form "svc;+;chat…"). Rather
+		// than splitting it into two conversations — and two channel agents — if
+		// another PRIMARY conversation already carries this exact sender handle,
+		// treat this id as an alias of it: auto-populate that primary's
+		// AliasHandles so future messages under either id resolve to one
+		// conversation. Scoped to non-empty handles (1:1 contacts); group convs
+		// use Members (not Handle), so they won't false-merge.
+		if !routingResolved {
+			if h := strings.TrimSpace(req.Handle); h != "" {
+				for _, k := range T.DB.Keys(conversationTable) {
+					if k == req.ChatID {
+						continue
+					}
+					var c Conversation
+					if !T.DB.Get(conversationTable, k, &c) || c.AliasOf != "" || strings.TrimSpace(c.Handle) != h {
+						continue
+					}
+					already := false
+					for _, ah := range c.AliasHandles {
+						if ah == req.ChatID {
+							already = true
+							break
+						}
+					}
+					if !already {
+						c.AliasHandles = append(c.AliasHandles, req.ChatID)
+						T.DB.Set(conversationTable, k, c)
+					}
+					incomingConv.AliasOf = k
+					T.DB.Set(conversationTable, req.ChatID, incomingConv)
+					activeChatID = k
+					conv = c
+					routingResolved = true
+					isAlias = true
+					Log("[phantom] auto-aliased %s → %s (same handle %q) — unified into one conversation", req.ChatID, k, h)
+					break
+				}
+			}
+		}
 		if !routingResolved {
 			if aliasConvsChecked > 0 {
 				Debug("[phantom] alias scan: no match for handle=%q chatID=%q — checked %d convs with alias_handles", req.Handle, req.ChatID, aliasConvsChecked)
@@ -1140,55 +1101,9 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Channel routing (Phase 2): if a Channel is bound for this owner +
-	// service + sender, the BOUND orchestrate agent answers — independent of
-	// phantom's own persona / auto-reply config and gatekeeper. No binding (or
-	// orchestrate not loaded) falls through to phantom's own engine below,
-	// unchanged. Self-messages (empty handle = the owner's own echo) are
-	// skipped: a channel agent replies to external contacts, not to the owner
-	// texting in. See docs/channels-and-agents.md.
-	if owner := phantomToolOwner(T.DB); owner != "" && req.Handle != "" && ChannelAgentRunnerReady() {
-		if ch, found := ChannelForInbound(RootDB, owner, svc, req.Handle); found && ch.AutoReply {
-			deliverChatID := activeChatID
-			sessionID := "chan:" + activeChatID
-			text := req.Text
-			handle := req.Handle
-			Log("[phantom] channel %q (service=%s agent=%s) handling inbound from %s", ch.Name, svc, ch.AgentID, handle)
-			go func() {
-				reply, err := RunChannelAgent(context.Background(), ChannelInbound{
-					Owner:     ch.Owner,
-					AgentID:   ch.AgentID,
-					SessionID: sessionID,
-					Text:      text,
-					// Mid-turn status → its own outbox item delivered before the
-					// reply, so a slow turn isn't dead air.
-					StatusCallback: func(s string) {
-						s = strings.TrimSpace(s)
-						if s == "" {
-							return
-						}
-						enqueueOutbox(T.DB, OutboxItem{
-							ID: newID(), ChatID: deliverChatID, Service: svc, Handle: handle,
-							Text: s, Type: "status", Created: now(),
-						})
-					},
-				})
-				if err != nil {
-					Log("[phantom] channel agent run failed (chat=%s agent=%s): %v", deliverChatID, ch.AgentID, err)
-					return
-				}
-				if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 {
-					return
-				}
-				enqueueOutbox(T.DB, OutboxItem{
-					ID: newID(), ChatID: deliverChatID, Service: svc, Handle: handle,
-					Text: reply.Text, Images: reply.Images, Type: "reply", Created: now(),
-				})
-			}()
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-	}
+	// Channels no longer route through phantom — the Bridges app (apps/bridges)
+	// is the sole channel transport now. Inbound here falls through to phantom's
+	// own engine below (legacy). Point connectors at /bridges/api/hook instead.
 
 	// Process through LLM if relay is enabled for this conversation.
 	// Replies are sent to req.ChatID (the actual sender address), not activeChatID.
@@ -1201,8 +1116,8 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	// every reply, and these contacts are typically not auto-reply-enabled.
 	goalLive := hasLiveGoalConversation(T.DB, activeChatID)
 	autoReply := conv.AutoReply || (isAlias && incomingConv.AutoReply) || goalLive
-	Log("[phantom] hook from %s — enabled=%v auto_reply_all=%v conv_auto_reply=%v alias=%v primary=%v goal=%v active=%s",
-		req.Handle, cfg.Enabled, cfg.AutoReplyAll, autoReply, isAlias, routingResolved && !isAlias, goalLive, activeChatID)
+	Log("[phantom] hook from %s — enabled=%v conv_auto_reply=%v alias=%v primary=%v goal=%v active=%s",
+		req.Handle, cfg.Enabled, autoReply, isAlias, routingResolved && !isAlias, goalLive, activeChatID)
 	// Only run the gatekeeper + LLM processing when phantom is enabled AND
 	// this chat is set to auto-reply. A chat that isn't auto-reply-enabled
 	// won't respond regardless, so running the gatekeeper LLM on its
@@ -1211,7 +1126,7 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 	// ran for EVERY incoming message and the auto-reply check only gated
 	// the reply, so a disabled chat still burned a gatekeeper call per
 	// message.)
-	if cfg.Enabled && (cfg.AutoReplyAll || autoReply) {
+	if cfg.Enabled && autoReply {
 		// Gatekeeper applies to all incoming messages for this (enabled)
 		// chat including the owner's own — gatekeeperAllow's senderLabel
 		// resolution labels owner-handle messages as the owner, so the
@@ -1254,6 +1169,12 @@ func (T *Phantom) handleHook(w http.ResponseWriter, r *http.Request) {
 // handlePoll returns and removes all pending outbox items.
 // The agent's in-memory retry queue handles re-delivery if osascript fails.
 func (T *Phantom) handlePoll(w http.ResponseWriter, r *http.Request) {
+	// Transition: drain Bridges' outbox when it's loaded, so a daemon still
+	// polling /phantom/api/poll gets Bridges' replies.
+	if p := MessagingPoll(); p != nil {
+		p(w, r)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

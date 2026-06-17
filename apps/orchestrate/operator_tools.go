@@ -106,13 +106,22 @@ func operatorRecipientLabel(s PhantomChatSummary) string {
 	}
 }
 
-// operatorDeliverMessage sends one message via the bridge's DeliverMessage,
-// which addresses the recipient by chat_id (unambiguous; the ONLY correct way
-// to reach a group) or handle, and routes by the chat's persona: when phantom
-// answers that chat its LLM composes in voice, otherwise the text goes verbatim.
-// Returns the text actually delivered.
-func operatorDeliverMessage(link PhantomLink, owner, chatID, handle, text string, images []string) (string, error) {
-	return link.DeliverMessage(owner, chatID, handle, text, images)
+// operatorDeliverMessage sends one message OUTBOUND via the messaging transport
+// (Bridges) — addressed by chat_id (unambiguous; the ONLY correct way to reach a
+// group) or handle. The agent composed the text, so it goes VERBATIM. This is
+// the single delivery chokepoint for notify_me, message_contact, and the
+// approval-execution path; routing it through Bridges' outbox is what makes them
+// actually deliver (phantom's outbox is no longer drained — the daemon polls
+// Bridges now). Returns the text delivered.
+func operatorDeliverMessage(owner, chatID, handle, text string, images []string) (string, error) {
+	ct, ok := ActiveChannelThreads()
+	if !ok {
+		return "", fmt.Errorf("no messaging transport is available")
+	}
+	if err := ct.Deliver(owner, "imessage", chatID, handle, text, images); err != nil {
+		return "", err
+	}
+	return text, nil
 }
 
 func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
@@ -374,14 +383,14 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "create_event_monitor",
-				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change — deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM — best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does — best for \"tell me when X changes\", e.g. a chat via read_phantom_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive — reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate).",
+				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change — deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM — best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does — best for \"tell me when X changes\", e.g. a chat via read_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive — reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate).",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this monitor, e.g. \"nvda-below\" or \"ts-join\"."},
 					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\" — prefer the cheapest that fits (see the tool description)."},
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
-					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_phantom_chat for a chat). No LLM runs between changes — the cheapest detection."},
+					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes — the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
 					"format_script":    {Type: "string", Description: "watch only, optional: sandboxed python that shapes the alert. It receives {\"prior\":...,\"current\":...} JSON on stdin (the previous and current tool output) and prints the notification text to stdout. Empty stdout means \"this change isn't worth alerting\" (suppressed). No network, no LLM. Omit to use the built-in diff summary. Use this to format exactly the notification you want (e.g. parse a client list and print only \"X joined\" / \"X left\")."},
 					"check_agent":      {Type: "string", Description: "poll only: name/id of an existing agent that checks the condition each interval."},
@@ -520,80 +529,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
 			},
 		},
-		{
-			Tool: Tool{
-				Name:        "list_phantom_chats",
-				Description: "List the user's phantom (iMessage) conversations — contact/handle and chat id — so you can read or message one. Read-only.",
-				Parameters:  map[string]ToolParam{"limit": {Type: "number", Description: "Max conversations (default 20)."}},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				link, ok := ActivePhantomLink()
-				if !ok {
-					return "", fmt.Errorf("the phantom bridge is not available")
-				}
-				limit := oArgInt(args, "limit")
-				if limit <= 0 {
-					limit = 20
-				}
-				chats, err := link.ListChats(owner, limit)
-				if err != nil {
-					return "", err
-				}
-				if len(chats) == 0 {
-					return "No phantom conversations found.", nil
-				}
-				var b strings.Builder
-				for _, c := range chats {
-					name := c.DisplayName
-					if name == "" {
-						name = c.Handle
-					}
-					fmt.Fprintf(&b, "- %s (%s) [chat_id: %s]", name, c.Handle, c.ChatID)
-					if !c.LastAt.IsZero() {
-						fmt.Fprintf(&b, " last %s", c.LastAt.Local().Format("Jan 2 3:04 PM"))
-					}
-					b.WriteString("\n")
-				}
-				return strings.TrimSpace(b.String()), nil
-			},
-		},
-		{
-			Tool: Tool{
-				Name:        "read_phantom_chat",
-				Description: "Read recent messages from one phantom (iMessage) conversation. Use a chat_id from list_phantom_chats. Read-only.",
-				Parameters: map[string]ToolParam{
-					"chat_id": {Type: "string", Description: "The conversation's chat id."},
-					"limit":   {Type: "number", Description: "How many recent messages (default 20)."},
-				},
-				Required: []string{"chat_id"},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				link, ok := ActivePhantomLink()
-				if !ok {
-					return "", fmt.Errorf("the phantom bridge is not available")
-				}
-				chatID := strings.TrimSpace(oArgStr(args, "chat_id"))
-				if chatID == "" {
-					return "", fmt.Errorf("chat_id is required")
-				}
-				msgs, err := link.ReadChat(owner, chatID, oArgInt(args, "limit"))
-				if err != nil {
-					return "", err
-				}
-				if len(msgs) == 0 {
-					return "No messages in that conversation (or it isn't yours).", nil
-				}
-				var b strings.Builder
-				for _, m := range msgs {
-					who := "them"
-					if m.FromMe {
-						who = "me"
-					}
-					fmt.Fprintf(&b, "[%s] %s: %s\n", m.At.Local().Format("Jan 2 3:04 PM"), who, m.Text)
-				}
-				return strings.TrimSpace(b.String()), nil
-			},
-		},
+		// The phantom-named read tools were removed — superseded by the
+		// channel-scoped chat tools (channel_tools.go) which read the live
+		// Bridges threads. A Fleet agent reaches them by holding a whole-service
+		// channel.
 		{
 			Tool: Tool{
 				Name:        "notify_me",
@@ -618,7 +557,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// DeliverMessage (not SendToHandle) so attachments ride along;
 					// persona is inactive for the owner's own chat, so the text
 					// is sent verbatim. Empty chatID resolves the owner's thread.
-					if _, err := operatorDeliverMessage(link, owner, "", self, text, images); err != nil {
+					if _, err := operatorDeliverMessage(owner, "", self, text, images); err != nil {
 					return "", err
 				}
 				if len(images) > 0 {
@@ -630,9 +569,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "message_contact",
-				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_phantom_chats — a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id — the name works. Delivery routes automatically: if phantom's assistant is active for that chat your message is delivered in that chat's established voice, otherwise your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow'), then sends once approved.",
+				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats — a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id — the name works. Delivery routes automatically: if phantom's assistant is active for that chat your message is delivered in that chat's established voice, otherwise your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow'), then sends once approved.",
 				Parameters: map[string]ToolParam{
-					"to":   {Type: "string", Description: "Recipient as shown by list_phantom_chats: a contact/group name, a handle (phone/email), or a chat_id. Required — never omit it."},
+					"to":   {Type: "string", Description: "Recipient as shown by list_chats: a contact/group name, a handle (phone/email), or a chat_id. Required — never omit it."},
 					"text": {Type: "string", Description: "The message to send. To attach a file you generated (image, etc.), first save it to your workspace and call workspace(action=\"attach\", path=\"<file>\"), then send the message — the attachment rides along automatically. Do NOT type delivery markers like [ATTACH: ...] into this text; that is a different surface's convention and is stripped before sending."},
 				},
 				Required: []string{"to", "text"},
@@ -649,7 +588,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {
-					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact/group name, handle, or chat_id exactly as shown by list_phantom_chats", to)
+					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact/group name, handle, or chat_id exactly as shown by list_chats", to)
 				}
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
@@ -659,7 +598,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				// Pre-authorized recipient: send immediately, skip the queue.
 				if IsContactPreAuthorized(RootDB, owner, recip) {
-					if _, err := operatorDeliverMessage(link, owner, rec.ChatID, rec.Handle, text, images); err != nil {
+					if _, err := operatorDeliverMessage(owner, rec.ChatID, rec.Handle, text, images); err != nil {
 						return "", err
 					}
 					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
@@ -673,9 +612,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "converse_with_contact",
-				Description: "Hand off a GOAL to an individual contact and let me run the back-and-forth text conversation autonomously until it's done or I'm stuck — then I report back in this thread. Use this instead of message_contact when the task needs a real multi-turn exchange (scheduling, confirming details, negotiating), not a single message. Set `to` to the contact as shown by list_phantom_chats — a name, handle, or chat_id (this is for 1:1 conversations; to message a group use message_contact). Contacting a real person is consequential, so this queues ONE upfront approval to converse toward the goal (UNLESS the user pre-authorized this recipient via 'Always allow', in which case it starts right away); once approved I message and reply on my own, without asking per message.",
+				Description: "Hand off a GOAL to an individual contact and let me run the back-and-forth text conversation autonomously until it's done or I'm stuck — then I report back in this thread. Use this instead of message_contact when the task needs a real multi-turn exchange (scheduling, confirming details, negotiating), not a single message. Set `to` to the contact as shown by list_chats — a name, handle, or chat_id (this is for 1:1 conversations; to message a group use message_contact). Contacting a real person is consequential, so this queues ONE upfront approval to converse toward the goal (UNLESS the user pre-authorized this recipient via 'Always allow', in which case it starts right away); once approved I message and reply on my own, without asking per message.",
 				Parameters: map[string]ToolParam{
-					"to":   {Type: "string", Description: "The contact as shown by list_phantom_chats: a name, handle (phone/email), or chat_id. Required."},
+					"to":   {Type: "string", Description: "The contact as shown by list_chats: a name, handle (phone/email), or chat_id. Required."},
 					"goal": {Type: "string", Description: "The objective to accomplish through the conversation, with any specifics I need (dates, constraints, what counts as done). I run the exchange toward this."},
 				},
 				Required: []string{"to", "goal"},
@@ -692,7 +631,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {
-					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact name, handle, or chat_id exactly as shown by list_phantom_chats", to)
+					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact name, handle, or chat_id exactly as shown by list_chats", to)
 				}
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
@@ -719,7 +658,14 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Description: "List the user's event monitors (webhook + poll) with their kind, schedule, paused state, and when each last fired.",
 			},
 			Handler: func(args map[string]any) (string, error) {
-				ms := ListEventMonitors(RootDB, owner)
+				// Scope to THIS agent's monitors (WakeAgent set on create), not
+				// every monitor the owner has across all their agents.
+				var ms []EventMonitor
+				for _, m := range ListEventMonitors(RootDB, owner) {
+					if m.WakeAgent == controllerAgentID {
+						ms = append(ms, m)
+					}
+				}
 				if len(ms) == 0 {
 					return "No event monitors are set up.", nil
 				}
@@ -756,7 +702,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			},
 			Handler: func(args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
-				if _, ok := GetEventMonitor(RootDB, owner, name); !ok {
+				// Scope to THIS agent — don't let one agent delete another's monitor.
+				if m, ok := GetEventMonitor(RootDB, owner, name); !ok || m.WakeAgent != controllerAgentID {
 					return "", fmt.Errorf("no event monitor named %q", name)
 				}
 				DeleteEventMonitor(RootDB, owner, name)

@@ -634,13 +634,23 @@ func (t *chatTurn) dispatchableFleet() []AgentRecord {
 		return nil
 	}
 	// AllowedDispatchTargets: empty = allow all (hide Hidden); non-empty
-	// = allowlist (explicit pick wins, even over Hidden).
-	linked := make(map[string]bool, len(t.agent.AllowedDispatchTargets))
+	// = allowlist (explicit pick wins, even over Hidden). Only count targets
+	// that STILL EXIST — a stale (deleted) id must not keep the agent in
+	// restrict-mode, which would silently hide every other agent (including a
+	// freshly added/imported one). Self-heals an allowlist whose members were
+	// deleted: if all its entries are gone, it falls back to "show all".
+	all := listAgents(fleetDB, fleetUser)
+	exists := make(map[string]bool, len(all))
+	for _, a := range all {
+		exists[a.ID] = true
+	}
+	linked := map[string]bool{}
 	for _, id := range t.agent.AllowedDispatchTargets {
-		linked[id] = true
+		if exists[id] {
+			linked[id] = true
+		}
 	}
 	restrictMode := len(linked) > 0
-	all := listAgents(fleetDB, fleetUser)
 	var available []AgentRecord
 	for _, a := range all {
 		if a.ID == t.agent.ID || isBuilderAgent(a.ID) {
@@ -1697,6 +1707,26 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// reaches for "recurring" (interval-from-now → "not exactly 8am") and
 		// bypasses the fleet.
 		tools, toolNames = dropToolsByName(tools, toolNames, "recurring")
+	}
+	// Channel-scoped chat tools — ANY agent that has channels gets list_chats /
+	// read_chat over ITS channels (a whole-service binding widens to the global
+	// view). Gated on having channels, independent of Fleet; conversational turn
+	// only, like the Fleet block.
+	if forOrchestrator {
+		if chTools := channelChatTools(sess, t.user, t.agent.ID); len(chTools) > 0 {
+			tools = append(tools, chTools...)
+			for _, td := range chTools {
+				toolNames = append(toolNames, td.Tool.Name)
+			}
+		}
+		// Cortex agents get file_deliverable — file a sizable artifact as its own
+		// session, keep only a pointer in the standing thread (cortex stays lean).
+		if dTools := cortexDeliverableTools(t.udb, t.agent.ID); len(dTools) > 0 {
+			tools = append(tools, dTools...)
+			for _, td := range dTools {
+				toolNames = append(toolNames, td.Tool.Name)
+			}
+		}
 	}
 	// Parent-tool inheritance — an owned sub-agent that opted in (InheritParentTools)
 	// resolves its parent's NON-consequential catalog at runtime in addition to
@@ -3902,6 +3932,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		persona = roundShapePreamble(resolveMaxPlanSteps(t.agent)) + persona
 	}
 	sys := prependAgentContext(persona, t.agent, t.facts())
+	// Cortex fork-seeding: a NON-cortex session of a Cortex-enabled agent inherits
+	// the cortex's recent STANDING context (received channel messages, monitor
+	// fires) as background awareness — so the agent greets you already aware. Skip
+	// the cortex's own thread (it already holds these). Concise live-read; empty
+	// when nothing's recent. Cross-session FACT continuity rides memory, not this.
+	if t.agent.Cortex && t.session != nil && t.session.ID != cortexSessionID(t.agent.ID) {
+		sys += cortexContextBlock(t.udb, t.agent.ID)
+	}
 	if g := strings.TrimSpace(t.agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g
 	}
@@ -4737,7 +4775,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				streamedBuf.Reset()
 				return
 			}
-			if len(cleaned) > leadInMaxLen {
+			// Builder presents a PLAN (intentionally long) before it acts —
+			// exempt it from the length clear so the user actually sees what it
+			// intends to do. The clear exists for ORDINARY agents that mis-emit a
+			// full answer before a tool (and then repeat it at the end); Builder's
+			// pre-tool prose is the plan, not a doubled answer.
+			if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) {
 				t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
 				streamedBuf.Reset()
 				return

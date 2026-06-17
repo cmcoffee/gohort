@@ -74,6 +74,135 @@ func (T *OrchestrateApp) SaveAgentForUser(user string, rec AgentRecord) (string,
 	return saved.ID, nil
 }
 
+// UpdateAgentForUser saves changes to an EXISTING agent (rec.ID required) under
+// the user's store, in place — no new ID is minted. The update half used by
+// re-sync flows like phantom re-migrate, which refresh a bound agent's prompt /
+// rules / tools from the current persona rather than creating a duplicate.
+func (T *OrchestrateApp) UpdateAgentForUser(user string, rec AgentRecord) error {
+	if T == nil || T.DB == nil {
+		return errors.New("orchestrate runtime not initialized")
+	}
+	if user == "" || rec.ID == "" {
+		return errors.New("user and agent id are required")
+	}
+	udb := UserDB(T.DB, user)
+	if udb == nil {
+		return fmt.Errorf("no per-user db for %q", user)
+	}
+	rec.Owner = user
+	_, err := saveAgent(udb, rec)
+	return err
+}
+
+// KnowledgeDoc is one prior knowledge chunk to seed an agent's knowledge with.
+type KnowledgeDoc struct {
+	Title   string
+	Section string
+	Text    string
+	Kind    string
+}
+
+// ImportAgentKnowledge ingests prior knowledge chunks into an agent's knowledge
+// store under the owner (the per-(user,agent) "imported" namespace), re-embedding
+// via the configured model. Used by migration to carry a phantom chat's per-chat
+// vector knowledge onto its channel agent. Guarded so a re-sync doesn't
+// duplicate. Returns how many landed.
+func (T *OrchestrateApp) ImportAgentKnowledge(owner, agentID string, docs []KnowledgeDoc) int {
+	if T == nil || owner == "" || agentID == "" || len(docs) == 0 || VectorDB == nil {
+		return 0
+	}
+	src := knowledgeSource(owner, agentID, "imported")
+	if CountChunksBySource(VectorDB, src) > 0 {
+		return 0 // already imported; re-sync-safe
+	}
+	ctx := context.Background()
+	n := 0
+	for i, d := range docs {
+		body := strings.TrimSpace(d.Text)
+		if body == "" {
+			continue
+		}
+		title := strings.TrimSpace(d.Title)
+		if title == "" {
+			title = strings.TrimSpace(d.Section)
+		}
+		reportID := fmt.Sprintf("orch-import-%s-%d", agentID, i)
+		IngestReportTitled(ctx, VectorDB, src, reportID, title, body, strings.TrimSpace(d.Kind))
+		n++
+	}
+	return n
+}
+
+// ChannelHistoryMessage is one prior message used to seed a channel thread.
+type ChannelHistoryMessage struct {
+	Role    string
+	Content string
+	Sender  string // who said it — the contact on inbound, the agent on replies
+	Created time.Time
+}
+
+// ImportChannelHistory seeds a channel's thread session with prior messages,
+// but ONLY when the session is currently empty — so a re-run (re-sync) doesn't
+// duplicate them. Used by migration to carry a chat's recent history onto its
+// channel thread so the agent and the transcript have the back-story. Returns
+// how many were written.
+func (T *OrchestrateApp) ImportChannelHistory(owner, agentID, sessionID string, msgs []ChannelHistoryMessage) int {
+	if T == nil || T.DB == nil || owner == "" || agentID == "" || sessionID == "" || len(msgs) == 0 {
+		return 0
+	}
+	udb := UserDB(T.DB, owner)
+	if udb == nil {
+		return 0
+	}
+	sess, _ := loadChatSession(udb, agentID, sessionID)
+	if len(sess.Messages) > 0 {
+		return 0 // already has a thread; don't duplicate on re-sync
+	}
+	if sess.ID == "" {
+		sess.ID = sessionID
+		sess.AgentID = agentID
+		sess.Created = time.Now()
+	}
+	for _, m := range msgs {
+		sess.Messages = append(sess.Messages, ChatMessage{
+			Role: m.Role, Content: m.Content, Sender: m.Sender, Created: m.Created,
+		})
+	}
+	if _, err := saveChatSession(udb, sess); err != nil {
+		Log("[orchestrate] ImportChannelHistory: save failed for %s: %v", sessionID, err)
+		return 0
+	}
+	return len(msgs)
+}
+
+// ImportAgentNotes stores notes into an agent's Explicit Memory — the
+// always-in-prompt "Saved notes" / facts block — under the owner's store. Used
+// by migration to carry a phantom chat's remembered facts onto its channel
+// agent. Returns how many NEW notes landed (the fact store dedups, so
+// re-importing an existing note is a no-op). The agent should be in chatbot
+// MemoryMode for these to read as personalization notes rather than lessons.
+func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string) int {
+	if T == nil || T.DB == nil || owner == "" || agentID == "" {
+		return 0
+	}
+	udb := UserDB(T.DB, owner)
+	if udb == nil {
+		return 0
+	}
+	ns := factsNamespace(agentID)
+	added := 0
+	for _, note := range notes {
+		note = strings.TrimSpace(note)
+		if note == "" {
+			continue
+		}
+		if _, isNew, _ := StoreMemoryFact(udb, ns, note); isNew {
+			added++
+		}
+	}
+	return added
+}
+
 // RunAgentSync runs the named agent against a single user message
 // and returns the synthesized reply. Exposed for OTHER apps (e.g.
 // Phantom) that want to delegate work into an orchestrate agent and
@@ -310,10 +439,31 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	}
 	defer clearAuthoringInProgress(runtimeDB, subSessID)
 	defer DeleteSessionTempTools(runtimeDB, subSessID)
-	toolNames := target.AllowedTools
+	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
+	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
 		for _, td := range RegisteredChatTools() {
 			toolNames = append(toolNames, td.Name())
+		}
+	} else if !isNoToolsSentinel(toolNames) {
+		// A curated allowlist still gets the always-on tools the interactive
+		// turn force-includes (runner.go): workspace (the delivery primitive
+		// every producer routes through) and the framework utilities
+		// (calculate, date_math, time_in_zone). Without this, a channel or
+		// dispatched agent with a tight list can't tell the time or deliver an
+		// attachment — the always-on contract has to hold on every path.
+		has := func(n string) bool {
+			for _, x := range toolNames {
+				if x == n {
+					return true
+				}
+			}
+			return false
+		}
+		for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
+			if !has(n) {
+				toolNames = append(toolNames, n)
+			}
 		}
 	}
 	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
@@ -340,6 +490,11 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
 		tools, _ = dropToolsByName(tools, nil, "recurring")
+	}
+	// Channel-scoped chat tools — any agent that has channels gets list_chats /
+	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
+	if chTools := channelChatTools(subSess, agentOwner, target.ID); len(chTools) > 0 {
+		tools = append(tools, chTools...)
 	}
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
 	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
@@ -387,11 +542,14 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	}
 	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
 	sysPrompt += availableBlock
-	// Mark delegated invocations so the target agent knows there's no
-	// human on the other end of ask_user / ask_user_form. Builder
-	// keys off this marker to skip Phase 1 conversation + the Phase 3
-	// confirmation pause; other agents can ignore it.
-	deliveredMessage := markAsDelegated(message)
+	// Only Builder reads the delegated marker (to skip its intake/confirm
+	// workflow); other agents ignore it. ask_user / approvals are already
+	// framework-gated off the dispatch path, so we don't add the marker for
+	// agents that don't act on it.
+	deliveredMessage := message
+	if isBuilderAgent(target.ID) {
+		deliveredMessage = markAsDelegated(message)
+	}
 	// Resolve thinking the same way the chat surface does so a
 	// dispatched agent runs with the SAME default as if it were
 	// invoked directly from Agency. Base = route default. Target's
@@ -485,6 +643,25 @@ type AgentSyncRun struct {
 	Message          string
 	FreshSession     bool
 	StatusCallback   func(string) // optional: wired to the sub-session's StatusCallback
+	// Title, when set, names a FRESH session (used only if it has no title
+	// yet). Channel rooms pass the contact's display name so the rail row and
+	// transcript read as the conversation partner rather than the raw id.
+	Title string
+	// MessageSender, when set, is stored as THIS message's author (ChatMessage
+	// .Sender). Channel rooms pass the inbound contact's display name so a
+	// GROUP thread renders real who-said-what — each inbound carries its own
+	// sender, unlike Title which only names the session once.
+	MessageSender string
+	// Images carries decoded inbound image bytes (a contact's photo on a
+	// channel) to ride on the user message as multimodal content the vision
+	// model sees this turn. Empty for text-only callers.
+	Images [][]byte
+	// Interactive marks this as a real person's message (a channel inbound),
+	// NOT an agent-to-agent dispatch. When set, the delegated-invocation marker
+	// is skipped — there IS a human, follow-up questions can be answered, and
+	// the "[DELEGATED INVOCATION] no human is listening…" preamble must not leak
+	// into the message. Default false (dispatch behavior unchanged).
+	Interactive bool
 }
 
 // AgentSyncResult is the bound agent's output: reply text plus any attachments
@@ -522,7 +699,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if runtimeUser == "" {
 		runtimeUser = agentOwner
 	}
-	if strings.TrimSpace(message) == "" {
+	if strings.TrimSpace(message) == "" && len(run.Images) == 0 {
 		return AgentSyncResult{}, errors.New("message is required")
 	}
 	ownerDB := UserDB(T.DB, agentOwner)
@@ -561,10 +738,31 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	defer clearAuthoringInProgress(runtimeDB, subSessionID)
 	defer DeleteSessionTempTools(runtimeDB, subSessionID)
-	toolNames := target.AllowedTools
+	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
+	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
 		for _, td := range RegisteredChatTools() {
 			toolNames = append(toolNames, td.Name())
+		}
+	} else if !isNoToolsSentinel(toolNames) {
+		// A curated allowlist still gets the always-on tools the interactive
+		// turn force-includes (runner.go): workspace (the delivery primitive
+		// every producer routes through) and the framework utilities
+		// (calculate, date_math, time_in_zone). Without this, a channel or
+		// dispatched agent with a tight list can't tell the time or deliver an
+		// attachment — the always-on contract has to hold on every path.
+		has := func(n string) bool {
+			for _, x := range toolNames {
+				if x == n {
+					return true
+				}
+			}
+			return false
+		}
+		for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
+			if !has(n) {
+				toolNames = append(toolNames, n)
+			}
 		}
 	}
 	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
@@ -588,6 +786,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
 		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
 		tools, _ = dropToolsByName(tools, nil, "recurring")
+	}
+	// Channel-scoped chat tools — any agent that has channels gets list_chats /
+	// read_chat over ITS channels (independent of Fleet). Mirrors runner.go.
+	if chTools := channelChatTools(subSess, agentOwner, target.ID); len(chTools) > 0 {
+		tools = append(tools, chTools...)
 	}
 	// Parent-tool inheritance on the sync-dispatch path (standing-agent fires,
 	// delegations, event-monitor wakes). An owned sub-agent that opted in pulls
@@ -646,7 +849,29 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		priorSession.AgentID = target.ID
 		priorSession.Created = time.Now()
 	}
-	deliveredMessage := markAsDelegated(message)
+	// Name a fresh, untitled session from the caller (channel rooms pass the
+	// contact's display name), so the rail labels it by conversation partner.
+	if priorSession.Title == "" && run.Title != "" {
+		priorSession.Title = run.Title
+	}
+	// The delegated-invocation marker only signals a CONVERSATIONAL agent
+	// (Builder) to skip its intake/confirm workflow and run headless from the
+	// brief — it's the only agent whose prompt reads it. ask_user / approval
+	// pauses are already framework-gated (those tools aren't in the dispatch
+	// catalog; approvals auto-approve), so we don't instruct the LLM about them.
+	// Skip it for everyone else, and always on an interactive surface (a channel
+	// has a human who answers follow-ups in the next message).
+	deliveredMessage := message
+	if !run.Interactive && isBuilderAgent(target.ID) {
+		deliveredMessage = markAsDelegated(message)
+	}
+	// Inbound images (channel path): tag the text so the model treats the
+	// attached photo as already-in-context multimodal content rather than
+	// inferring it should fetch/download something, then carry the decoded
+	// bytes on the user message below. Mirrors phantom's own engine.
+	if n := len(run.Images); n > 0 {
+		deliveredMessage += fmt.Sprintf("\n[CURRENT ATTACHMENT: %d image(s) — already provided inline as multimodal content you can see directly; do NOT call any tool to fetch, download, or find them]", n)
+	}
 	// Bound the run-view with the same rolling-summary compaction the Cortex
 	// thread uses, so a long-running channel / dispatch session doesn't load
 	// its entire history into the prompt (and eventually blow the window).
@@ -658,7 +883,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	for _, m := range bounded {
 		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
 	}
-	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMessage})
+	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMessage, Images: run.Images})
 
 	// Optional injection-queue drain hook for mid-flight user notes.
 	// Cheap no-op when the queue isn't registered.
@@ -724,9 +949,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	cleanReply := strings.TrimSpace(resp.Content)
 	// Persist the new exchange for the next continuation.
 	now := time.Now()
+	// Sender carries the author for channel-room transcripts: the inbound
+	// contact on the user message, the bound agent on its reply. Both empty for
+	// plain dispatch sessions (no MessageSender passed), leaving web sessions
+	// anonymous as before.
+	assistantSender := ""
+	if run.MessageSender != "" {
+		assistantSender = target.Name
+	}
 	priorSession.Messages = append(priorSession.Messages,
-		ChatMessage{Role: "user", Content: deliveredMessage, Created: now},
-		ChatMessage{Role: "assistant", Content: cleanReply, Created: now},
+		ChatMessage{Role: "user", Content: deliveredMessage, Created: now, Sender: run.MessageSender},
+		ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender},
 	)
 	if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
 		Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
@@ -747,7 +980,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 // behavior. Agents that don't care about delegation context can
 // ignore the marker — the brief still reads naturally below.
 func markAsDelegated(msg string) string {
-	return "[DELEGATED INVOCATION] No human is listening for ask_user — work from the brief below as a self-contained spec. Make reasonable defaults for anything unspecified. Skip intake conversation + approval pauses; go directly to execution.\n\nBrief: " + msg
+	return "[DELEGATED INVOCATION] Headless one-shot run — no back-and-forth; work from the brief as a self-contained spec, making reasonable defaults for anything unspecified.\n\nBrief: " + msg
 }
 
 // findAgentByNameOrID looks up an agent in udb either by exact ID

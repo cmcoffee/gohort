@@ -261,7 +261,7 @@ func (T *Phantom) chatPersonaActive(cfg PhantomConfig, chatID string) (Conversat
 	if !cfg.Enabled {
 		return primary, false
 	}
-	if cfg.AutoReplyAll || primary.AutoReply || aliasAutoReply {
+	if primary.AutoReply || aliasAutoReply {
 		return primary, true
 	}
 	// Auto-reply may have been enabled on a SIBLING alias address; phantom would

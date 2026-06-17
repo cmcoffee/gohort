@@ -280,56 +280,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	}
 	sections := []ui.Section{agentSection}
 
-	// Channels — attach messaging surfaces (iMessage / Telegram / Slack)
-	// to this agent. Phase 1: the binding is stored; a message arriving on
-	// a channel will run THIS agent once inbound routing lands (Phase 2).
-	// See docs/channels-and-agents.md. Top-level agents only — a focused
-	// sub-agent is reached via its parent, not its own phone number.
-	if id != "" && !subAgent {
-		sections = append(sections, ui.Section{
-			Title:    "Channels",
-			Subtitle: "Attach a messaging surface so this agent answers over it. Leave the scope blank to route every conversation on that service to this agent, or set a handle/room to bind just one. (Bindings are stored now; inbound routing to the agent lands in a later phase.)",
-			Body: ui.Stack{
-				Children: []ui.Component{
-					ui.Table{
-						Source:    "../api/channels?agent_id=" + id,
-						RowKey:    "id",
-						EmptyText: "No channels attached yet.",
-						Columns: []ui.Col{
-							{Field: "name", Flex: 1},
-							{Field: "service", Label: "Service", Mute: true},
-							{Field: "address", Label: "Scope", Mute: true, Flex: 1},
-							{Field: "auto_reply", Type: "badge", Label: "Auto-reply", Badges: []ui.BadgeMapping{
-								{Value: true, Label: "On", Color: "success"},
-								{Value: false, Label: "Off", Color: "mute"},
-							}},
-						},
-						RowActions: []ui.RowAction{
-							{Type: "button", Label: "Detach", PostTo: "../api/channels?id={id}", Method: "DELETE",
-								Variant: "danger", Confirm: "Detach this channel from the agent? The binding is removed."},
-						},
-					},
-					ui.FormPanel{
-						PostURL:     "../api/channels?agent_id=" + id,
-						SubmitLabel: "Attach channel",
-						Fields: []ui.FormField{
-							{Field: "name", Label: "Name", Type: "text", Placeholder: "e.g. Support line"},
-							{Field: "service", Label: "Service", Type: "select", Options: []ui.SelectOption{
-								{Value: "imessage", Label: "iMessage"},
-								{Value: "telegram", Label: "Telegram"},
-								{Value: "slack", Label: "Slack"},
-							}},
-							{Field: "address", Label: "Scope (optional)", Type: "text",
-								Placeholder: "blank = whole service; or a handle / room id",
-								Help: "Blank routes every conversation on this service to the agent; a specific handle/room binds just that one (and overrides a whole-service binding)."},
-							{Field: "auto_reply", Label: "Auto-reply", Type: "toggle",
-								Help: "Answer inbound automatically, rather than only recording it."},
-						},
-					},
-				},
-			},
-		})
-	}
+	// (Channels section removed from the agent editor — channels are managed in
+	// the chat rail's Channels area and in the Bridges app, scoped to the agent
+	// you're viewing, so the editor no longer carries a duplicate attach form.)
 
 	// Sub-agent dispatch allowlist. Only renders for existing agents
 	// (need a known ID to wire the picker's record/post URLs). The
@@ -359,80 +312,29 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		})
 	}
 
-	// Phantom dispatches surface. Phantom-driven runs use per-chat
-	// synthetic users so they're invisible from the normal session
-	// list (which reads only your DB). This read-only table walks
-	// every phantom:* user, finds sessions in this agent's bucket,
-	// and lets the operator drill into any of them via an expand
-	// row-action that renders the full message history.
-	//
-	// Top-level agents only. Sub-agent dispatches via
-	// agents(action="run") are stateless (no session persisted), so a
-	// sub-agent's bucket under any phantom:<chatID> user is always
-	// empty. Pre-stateless leftover threads under those buckets are
-	// inaccessible here anyway — wiping the parent's phantom sessions
-	// is the recovery path. Hiding this section on sub-agents stops
-	// the editor from advertising a surface that's structurally empty.
-	//
-	// Wipe affordances at two granularities: per-row Delete (clears
-	// one chat's session with this agent) and a section-level
-	// "Wipe all" (nukes every phantom session for this agent across
-	// all chats). The latter is the contaminated-context recovery
-	// path — phantom chats accumulate dispatch history that the
-	// LLM treats as recall, so a wipe is sometimes the only way to
-	// stop a misbehavior loop.
-	if id != "" && !subAgent {
+	// (Phantom dispatch + wipe sections removed — phantom's per-chat dispatch
+	// surface is retiring with phantom; channel threads are inspected via the
+	// rail + the channel-scoped chat tools now.)
+
+	// Delete — the human's authoritative remove for any existing agent the editor
+	// is open on, INCLUDING a sub-agent reached via the picker (which agents
+	// can't delete once the cross-agent lock is in place). Non-seed only: seeds
+	// revert via their own path, they aren't "deleted". The DELETE handler
+	// cascades sub-agents and cleans channels / monitors / standing agents /
+	// dispatch-allowlist references.
+	if id != "" && !isSeedID(id) {
 		sections = append(sections, ui.Section{
-			Title:    "Phantom dispatches",
-			Subtitle: "Every phantom chat that has dispatched to this agent. Phantom-driven runs scope under per-chat synthetic users (phantom:<chatID>) for isolation; this is the only place to inspect — or wipe — their session history. Per-row Delete clears one chat; \"Wipe all\" below the table nukes every phantom session for this agent.",
-			Body: ui.Table{
-				Source:    "../api/agents/" + id + "/phantom-sessions",
-				RowKey:    "session_id",
-				EmptyText: "No phantom dispatches have reached this agent.",
-				SortBy:    "last_at",
-				SortDesc:  true,
-				Columns: []ui.Col{
-					{Field: "chat_id", Label: "Chat", Flex: 2},
-					{Field: "title", Label: "Title", Flex: 3, Mute: true},
-					{Field: "messages", Label: "Msgs"},
-					{Field: "last_at", Label: "Last", Format: "reltime", Mute: true},
-				},
-				RowActions: []ui.RowAction{
-					ui.Expand("View", ui.HistoryPanel{
-						Source:       "../api/agents/" + id + "/phantom-sessions/{session_id}?chat_id={chat_id}",
-						EmptyText:    "(empty session)",
-						RoleField:    "role",
-						TextField:    "content",
-						TimeField:    "created",
-						AssistantTag: "assistant",
-					}),
-					{
-						Type:    "button",
-						Label:   "Delete",
-						PostTo:  "../api/agents/" + id + "/phantom-sessions/{session_id}?chat_id={chat_id}",
-						Method:  "DELETE",
-						Confirm: "Delete this phantom session? The chat's running history with this agent is dropped; the next dispatch from that chat starts fresh.",
-					},
-				},
-			},
-		})
-		// Wipe-all control. DisplayPanel sources the agent record
-		// (benign fetch for the page; Pairs is empty so no labels
-		// render), and the Actions row carries the bulk-wipe button.
-		// Lets us reuse the framework's confirm + variant styling
-		// without inventing a one-off bare-button component.
-		sections = append(sections, ui.Section{
-			Title:    "Wipe phantom dispatches",
-			Subtitle: "Drop every phantom session for this agent across all chats. Use as the hard reset when the agent's phantom-side history has been contaminated and per-row cleanup isn't enough. iMessage chats remain (phantom-side state is separate); only the orchestrate session bucket for this agent under each phantom:<chatID> user gets cleared.",
+			Title:    "Delete agent",
+			Subtitle: "Permanently remove this agent — its sessions, memory, knowledge, and any sub-agents it owns. Channels, monitors, and standing agents bound to it are cleaned up too. This can't be undone.",
 			Body: ui.DisplayPanel{
 				Source: "../api/agents/" + id,
 				Pairs:  []ui.DisplayPair{},
 				Actions: []ui.ToolbarAction{
 					{
-						Label:   "Wipe all phantom sessions",
+						Label:   "Delete this agent",
 						Method:  "DELETE",
-						URL:     "../api/agents/" + id + "/phantom-sessions",
-						Confirm: "Wipe every phantom session for this agent? Every phantom chat's accumulated history with this agent will be deleted. Their next dispatch starts fresh.",
+						URL:     "../api/agents/" + id,
+						Confirm: "Delete this agent permanently? Its sessions, memory, knowledge, and any sub-agents it owns are removed, and its channels / monitors / standing agents are cleaned up. This can't be undone.",
 						Variant: "danger",
 					},
 				},

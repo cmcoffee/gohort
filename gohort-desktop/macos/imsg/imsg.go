@@ -2,8 +2,9 @@
 
 // Package imsg is the macOS iMessage relay service: it watches the
 // local Messages chat.db, relays inbound messages to the gohort
-// Phantom server's /phantom/api/hook, polls /phantom/api/poll for
+// Bridges server's /bridges/api/hook, polls /bridges/api/poll for
 // outbound items, and sends them through Messages.app via AppleScript.
+// (This daemon IS the iMessage bridge — one connector in the Bridges app.)
 //
 // Migrated verbatim from apps/phantom/_bridge/main.go during the
 // bridge consolidation; the daemon (cmd/gohort-bridge) drives it via
@@ -1063,7 +1064,7 @@ func deliverOutbox(cfg Config, db *sql.DB) {
 	// Retry any previously-failed items that are due before polling for new ones.
 	flushRetryQueue(cfg, db)
 
-	req, _ := http.NewRequest(http.MethodGet, cfg.ServerURL+"/phantom/api/poll", nil)
+	req, _ := http.NewRequest(http.MethodGet, cfg.ServerURL+"/bridges/api/poll", nil)
 	req.Header.Set("X-API-Key", cfg.APIKey())
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -1374,7 +1375,7 @@ func (e *hookErr) Error() string { return e.msg }
 // Returns *hookErr so callers can distinguish skip vs retry.
 func postHook(cfg Config, payload HookPayload) error {
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequest(http.MethodPost, cfg.ServerURL+"/phantom/api/hook", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, cfg.ServerURL+"/bridges/api/hook", bytes.NewReader(body))
 	if err != nil {
 		return &hookErr{msg: err.Error(), skip: false}
 	}

@@ -168,6 +168,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					ListURL:        "api/sessions?agent_id={agent_id}",
 					LoadURL:        "api/sessions/{id}?agent_id={agent_id}",
 					DeleteURL:      "api/sessions/{id}?agent_id={agent_id}",
+					// Channels rail section — its own region above Sessions with
+					// add/edit/remove. {id} → channel id on delete; save upserts.
+					ChannelsURL:      "api/channels?agent_id={agent_id}",
+					ChannelSaveURL:   "api/channels?agent_id={agent_id}",
+					ChannelDeleteURL: "api/channels?id={id}",
+					ChannelAgentsURL: "api/agents",
 					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
 					// Per-turn scrub (✕ on each bubble) — replaces the separate
 					// History view's row-delete; works on every thread, not just

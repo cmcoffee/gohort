@@ -49,7 +49,7 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Sticky: ui.PanicBar{
 			Label:   "⚠ PANIC — disable everything",
 			OnClick: "/phantom/api/mobile/panic",
-			Confirm: "Disable everything? Phantom master OFF, all conv auto-reply OFF, secure-API OFF, proactive OFF. Reversible.",
+			Confirm: "Disable everything? Phantom master OFF, all conv auto-reply OFF, secure-API OFF. Reversible.",
 		},
 		Sections: []ui.Section{
 			{
@@ -58,10 +58,22 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					Source: "/phantom/api/config",
 					Toggles: []ui.Toggle{
 						{Field: "enabled", Label: "Phantom enabled"},
-						{Field: "auto_reply_all", Label: "Auto-reply to all conversations"},
 						{Field: "secure_api_enabled", Label: "Allow secure-API tools"},
-						{Field: "proactive_enabled", Label: "Allow proactive messaging"},
 					},
+				},
+			},
+			{
+				Title:    "Channel agents",
+				Subtitle: "Turn each enabled chat into its own orchestrate agent on a per-contact channel — own persona if set, else the global default; rules combine global + per-chat. Safe to run and re-run — phantom keeps answering until you point traffic at the agents. Manage them in Agency.",
+				Body: ui.ActionList{
+					Source:     "/phantom/api/migrate-actions",
+					LabelField: "Label",
+					DescField:  "Desc",
+					PostTo:     "/phantom/api/migrate-channel",
+					Method:     "POST",
+					ButtonText: "Run",
+					Confirm:    "Migrate each enabled chat to its own channel agent? Re-running refreshes existing agents and adds newly-enabled chats. Phantom keeps answering until you move traffic over.",
+					EmptyText:  "Manage your channel agents in Agency.",
 				},
 			},
 			{
@@ -96,24 +108,6 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						{Field: "gatekeeper_prompt", Label: "Gatekeeper rules", Type: "rules",
 							Placeholder: "No filter rules. Without any, the AI replies to every message.",
 							Help: "Each rule is evaluated; a message must satisfy all of them to be answered."},
-						{Field: "proactive_window", Label: "Proactive window", Type: "text",
-							Placeholder: "09:00-21:00", Help: "Daily window when proactive messages may fire.",
-							ShowWhen: "proactive_enabled"},
-						{Field: "proactive_max_per_day", Label: "Proactive max / day", Type: "number",
-							Min: 0, Max: 50, Help: "0 = unlimited.",
-							ShowWhen: "proactive_enabled"},
-						{Field: "proactive_prompt", Label: "Proactive style", Type: "textarea", Rows: 2,
-							Placeholder: "Voice and tone for unprompted messages — how the persona should sound.",
-							Help: "The HOW. The lists below are the WHAT.",
-							ShowWhen: "proactive_enabled"},
-						{Field: "proactive_always", Label: "Always do on wake", Type: "rules",
-							Placeholder: "One action per line. Done every time it wakes.",
-							Help: "Performed on every proactive wake.",
-							ShowWhen: "proactive_enabled"},
-						{Field: "proactive_actions", Label: "Random on wake", Type: "rules",
-							Placeholder: "One action per line. One is picked at random each wake.",
-							Help: "A pool of unprompted things — one is drawn at random each wake.",
-							ShowWhen: "proactive_enabled"},
 					},
 				},
 			},
@@ -216,8 +210,6 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 									Help: "How many recent messages get included VERBATIM in the LLM's context. Lower = less prompt budget burned on history (good for tight worker models); higher = more continuity (good for long collaborative threads). 0 inherits the global default. Older messages are folded into a rolling summary when compaction is enabled."},
 								{Field: "compaction_enabled", Label: "Rolling-summary compaction", Type: "toggle",
 									Help: "When on, messages that age out of the verbatim window get summarized via the worker LLM so the model still has continuity from older exchanges. When off, anything older than the verbatim window is forgotten entirely."},
-								{Field: "proactive_enabled", Label: "Allow proactive messages", Type: "toggle",
-									Help: "When on (and the master proactive toggle is also on), the AI may send unprompted check-ins / follow-ups to this chat during the configured window. Default off — proactive messaging is opt-in per chat so contacts who haven't opted into spontaneous texts don't suddenly get them."},
 							},
 						}),
 						compactExpand("🔧", ui.ChipPicker{
@@ -259,6 +251,21 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							NameField:     "id",
 							LabelField:    "name",
 							DescField:     "description",
+						}),
+						// Connect to channel — point this chat at an agent's
+						// channel (the "hook a source" action). Lists the owner's
+						// agent channels; clicking Connect stamps the channel's
+						// source with this chat's handle, so inbound routes to that
+						// channel's bound agent instead of phantom's own engine.
+						compactExpand("🔗", ui.ActionList{
+							Source:     "/phantom/api/agent-channels",
+							LabelField: "label",
+							DescField:  "desc",
+							ButtonText: "Connect",
+							Method:     "POST",
+							PostTo:     "/phantom/api/connect-channel?chat_id={chat_id}&channel_id={id}",
+							Confirm:    "Route this chat's messages to this channel's agent? It stops using phantom's own persona for this chat.",
+							EmptyText:  "No agent channels yet. Create one in Agency (or use Migrate above), then connect it here.",
 						}),
 						// Members + aliases editor — for group chats, plus
 						// conversation-level alias handles (phone/email that
@@ -340,8 +347,8 @@ func (T *Phantom) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMobilePanic is the kill-switch endpoint. Flips the master
-// Enabled flag off, AutoReplyAll off, ProactiveEnabled off, and sets
-// every conv's AutoReply off. Idempotent — safe to call repeatedly.
+// Enabled flag off, secure-API off, and sets every conv's AutoReply
+// off. Idempotent — safe to call repeatedly.
 func (T *Phantom) handleMobilePanic(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
@@ -352,8 +359,6 @@ func (T *Phantom) handleMobilePanic(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := defaultConfig(T.DB)
 	cfg.Enabled = false
-	cfg.AutoReplyAll = false
-	cfg.ProactiveEnabled = false
 	cfg.SecureAPIEnabled = false
 	T.DB.Set(configTable, configKey, cfg)
 	convsPaused := 0
@@ -368,7 +373,7 @@ func (T *Phantom) handleMobilePanic(w http.ResponseWriter, r *http.Request) {
 			convsPaused++
 		}
 	}
-	Log("[phantom] PANIC button engaged: master + auto-reply-all + proactive + secure-api OFF; %d conversations had auto-reply paused", convsPaused)
+	Log("[phantom] PANIC button engaged: master + secure-api OFF; %d conversations had auto-reply paused", convsPaused)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":       "panic engaged",

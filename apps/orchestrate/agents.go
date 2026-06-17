@@ -142,6 +142,19 @@ func applyLegacyMode(a AgentRecord) AgentRecord {
 // record drifts (Builder mistake, manual DB edit, old data) the runtime
 // treats sub-agents correctly. Editor + Builder also discipline the
 // write path so wrong values don't end up persisted in the first place.
+// agentParentExists reports whether a sub-agent's OwnedBy parent still exists —
+// either an in-code seed (may have no stored shadow) or a stored agent record.
+// Used to detect orphaned sub-agents (parent gone) so they can be promoted.
+func agentParentExists(db Database, parentID string) bool {
+	if strings.TrimSpace(parentID) == "" {
+		return false
+	}
+	if _, isSeed := seedAgentByID(parentID); isSeed {
+		return true
+	}
+	return db.Get(agentsTable, parentID, &AgentRecord{})
+}
+
 func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 	if a.OwnedBy == "" {
 		return a
@@ -599,6 +612,17 @@ func listAgents(db Database, owner string) []AgentRecord {
 				continue
 			}
 		}
+		// Orphaned-sub-agent self-heal: OwnedBy points at a parent that no longer
+		// exists (parent deleted before the cascade fix, cross-owner, legacy data).
+		// A sub-agent is pinned Hidden, so an orphan is INVISIBLE and unmanageable —
+		// promote it to a top-level agent (clear OwnedBy + un-hide) so it surfaces
+		// and can be kept or deleted. Persisted once; after that it's a normal
+		// agent and this never fires for it again.
+		if a.OwnedBy != "" && !agentParentExists(db, a.OwnedBy) {
+			a.OwnedBy = ""
+			a.Hidden = false
+			_, _ = saveAgent(db, a)
+		}
 		out = append(out, enforceSubAgentPosture(a))
 		seen[a.ID] = true
 	}
@@ -664,6 +688,47 @@ func deleteAgent(db Database, id, owner string) error {
 		if child.OwnedBy == id && child.Owner == owner {
 			Log("[orchestrate.agents] cascade-deleting sub-agent %q (owned_by=%q)", child.Name, a.Name)
 			_ = deleteAgent(db, child.ID, owner)
+		}
+	}
+	// Clear cross-references so a deleted agent doesn't dangle in the fleet:
+	// channels that route to it, monitors / standing agents that wake it, and —
+	// importantly — every OTHER agent's dispatch allowlist that names it. A stale
+	// id left in an allowlist keeps that agent in restrict-mode, which hides all
+	// NON-listed agents (so a freshly added/imported agent silently won't appear
+	// as available). Channels/monitors/standing agents live in RootDB.
+	for _, ch := range ListChannelsForAgent(RootDB, owner, id) {
+		DeleteChannel(RootDB, owner, ch.ID)
+	}
+	for _, m := range ListEventMonitors(RootDB, owner) {
+		if m.WakeAgent == id {
+			DeleteEventMonitor(RootDB, owner, m.Name)
+		}
+	}
+	for _, s := range ListStandingAgents(RootDB, owner) {
+		if s.AgentID == id {
+			DeleteStandingAgent(RootDB, owner, s.Name)
+		}
+	}
+	for _, k := range db.Keys(agentsTable) {
+		if k == id {
+			continue
+		}
+		var other AgentRecord
+		if !db.Get(agentsTable, k, &other) || other.Owner != owner || len(other.AllowedDispatchTargets) == 0 {
+			continue
+		}
+		var kept []string
+		changed := false
+		for _, t := range other.AllowedDispatchTargets {
+			if t == id {
+				changed = true
+				continue
+			}
+			kept = append(kept, t)
+		}
+		if changed {
+			other.AllowedDispatchTargets = kept
+			_, _ = saveAgent(db, other)
 		}
 	}
 	dropChatSessionBucket(db, id)

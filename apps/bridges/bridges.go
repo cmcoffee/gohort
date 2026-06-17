@@ -1,0 +1,455 @@
+// Bridges is the messaging-transport layer: it routes inbound from a messaging
+// service (iMessage, Telegram, Slack, …) to the agent bound on a Channel, and
+// delivers the agent's reply back out. It is PURE TRANSPORT — no persona, no
+// own LLM engine, no tools. The agent (orchestrate) owns all of that; a Channel
+// (core) is the interface to it; a Bridge is the connector for one service.
+//
+// A Bridge is defined by its SERVICE and the contract it speaks to the server:
+// POST inbound to /bridges/api/hook, poll /bridges/api/poll for outbound, and
+// authenticate with a bridge key (which declares the service). HOW a bridge
+// sources messages varies — iMessage runs as the gohort-desktop daemon
+// (device-side, Mac-only); Telegram/Slack would be server-side pollers/webhooks
+// — but to Bridges they're all just connectors speaking the same contract.
+//
+// Replaces phantom's transport slice; phantom's own-engine is left behind to
+// retire. See [[project_channels_to_agents]].
+package bridges
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+func init() {
+	RegisterApp(new(Bridges))
+	// A gatekeeper pre-filter (later) makes a worker LLM call; register a route
+	// stage so it's tunable alongside the other apps.
+	RegisterRouteStage(RouteStage{
+		Key:     "app.bridges",
+		Label:   "Bridges",
+		Default: "worker (thinking)",
+		Group:   "Apps",
+	})
+}
+
+// Bridges — the transport app. Dashboard-only (no CLI surface).
+type Bridges struct {
+	AppCore
+}
+
+func (T *Bridges) Name() string    { return "bridges" }
+func (T *Bridges) WebPath() string { return "/bridges" }
+func (T *Bridges) WebName() string { return "Bridges" }
+func (T *Bridges) WebDesc() string {
+	return "Connect messaging services (iMessage, Telegram, …) to your channel agents."
+}
+func (T *Bridges) Desc() string { return "Apps: messaging transport — services → channels." }
+
+// WebOrder places Bridges right after Agency on the dashboard (Agency is
+// -1000, Knowledge is -800), ahead of the default-50 app grid.
+func (T *Bridges) WebOrder() int { return -900 }
+
+func (T *Bridges) Init() error { return T.Flags.Parse() }
+
+func (T *Bridges) Main() error {
+	Log("Bridges is a dashboard app. Start with:\n  gohort serve :8080")
+	return nil
+}
+
+// --- storage tables ----------------------------------------------------------
+
+const (
+	bridgeKeysTable = "bridges_keys"      // BridgeKey records (auth + service declaration)
+	outboxTable     = "bridges_outbox"    // pending outbound items, drained by poll
+	seenMsgTable    = "bridges_seen_msgs" // inbound dedup (chatID:msgID → 1)
+	convosTable     = "bridges_convos"    // chats seen — identity + members + aliases
+	messagesTable   = "bridges_messages"  // chatID:msgID → StoredMessage (thread view)
+)
+
+// ConvMember is one participant — the identity Bridges learns, the name the user
+// can set, and alternate handles for the same person (so a contact reachable via
+// phone + email resolves to one member).
+type ConvMember struct {
+	Handle  string   `json:"handle"`
+	Name    string   `json:"name,omitempty"`
+	Aliases []string `json:"aliases,omitempty"`
+}
+
+// Convo is a chat Bridges has seen: identity, participants, and conversation-
+// level alias handles (alternate ids for the SAME chat). No persona/engine.
+type Convo struct {
+	ChatID       string       `json:"chat_id"`
+	Service      string       `json:"service"`
+	Handle       string       `json:"handle,omitempty"`
+	DisplayName  string       `json:"display_name,omitempty"`
+	Members      []ConvMember `json:"members,omitempty"`
+	AliasHandles []string     `json:"alias_handles,omitempty"`
+	// Added marks a conversation the operator has explicitly curated — picked
+	// from the incoming list or entered by number. The dashboard's managed
+	// list shows only these; raw inbound stays in the "Add" picker until added.
+	Added  bool   `json:"added,omitempty"`
+	LastAt string `json:"last_at,omitempty"`
+}
+
+func (T *Bridges) getConvo(chatID string) (Convo, bool) {
+	var c Convo
+	ok := T.DB.Get(convosTable, chatID, &c)
+	return c, ok
+}
+
+func (T *Bridges) saveConvo(c Convo) {
+	if c.ChatID != "" {
+		T.DB.Set(convosTable, c.ChatID, c)
+	}
+}
+
+// deleteConvo removes a conversation and its stored thread — used when folding a
+// duplicate chat into another (its id added as an alias on the keeper).
+func (T *Bridges) deleteConvo(chatID string) {
+	if chatID == "" {
+		return
+	}
+	T.DB.Unset(convosTable, chatID)
+	prefix := chatID + ":"
+	for _, k := range T.DB.Keys(messagesTable) {
+		if strings.HasPrefix(k, prefix) {
+			T.DB.Unset(messagesTable, k)
+		}
+	}
+}
+
+// isGroupChat reports whether a chat id is a group room. iMessage marks the
+// chat type in the id: ";+;" is a group (many members), ";-;" is a 1:1. A group
+// has no single canonical handle — its identity is the stable chat id — so we
+// must never treat a member's handle as the group's address.
+func isGroupChat(chatID string) bool {
+	return strings.Contains(chatID, ";+;")
+}
+
+func (T *Bridges) upsertConvo(service, chatID, handle, displayName string) {
+	if strings.TrimSpace(chatID) == "" {
+		return
+	}
+	c, _ := T.getConvo(chatID)
+	c.ChatID = chatID
+	c.Service = service
+	// A group has no canonical handle — its identity is the stable chat id.
+	// Clear any handle a pre-fix inbound clobbered in, so the address derives
+	// from the chat id and the dashboard stops showing a stale member binding
+	// as "connected".
+	if isGroupChat(chatID) {
+		c.Handle = ""
+	}
+	if h := strings.TrimSpace(handle); h != "" {
+		c.Members = upsertMember(c.Members, h, displayName) // learn the participant
+		if !isGroupChat(chatID) {
+			c.Handle = h // only a 1:1 chat has a single canonical handle
+		}
+	}
+	if d := strings.TrimSpace(displayName); d != "" {
+		c.DisplayName = d
+	}
+	c.LastAt = now()
+	T.saveConvo(c)
+}
+
+// upsertMember adds/updates a participant by handle, learning a name when one is
+// supplied. Matches on the handle OR any of its aliases.
+func upsertMember(members []ConvMember, handle, name string) []ConvMember {
+	handle, name = strings.TrimSpace(handle), strings.TrimSpace(name)
+	if handle == "" {
+		return members
+	}
+	for i := range members {
+		if members[i].Handle == handle || contains(members[i].Aliases, handle) {
+			if name != "" && name != handle {
+				members[i].Name = name
+			}
+			return members
+		}
+	}
+	m := ConvMember{Handle: handle}
+	if name != "" && name != handle {
+		m.Name = name
+	}
+	return append(members, m)
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// syncMembersFromHistory harvests participants from the stored thread — every
+// handle that's ever sent becomes a member (carrying any name seen) — so the
+// roster is complete even for senders we didn't catch live. Derive-on-read,
+// mirroring phantom. Returns the (possibly updated, persisted) Convo.
+func (T *Bridges) syncMembersFromHistory(chatID string) Convo {
+	c, _ := T.getConvo(chatID)
+	c.ChatID = chatID
+	before := len(c.Members)
+	for _, m := range T.recentMessages(chatID, 0) { // 0 = entire thread
+		if m.Role == "user" && strings.TrimSpace(m.Handle) != "" {
+			c.Members = upsertMember(c.Members, m.Handle, m.DisplayName)
+		}
+	}
+	if len(c.Members) != before {
+		T.saveConvo(c)
+	}
+	return c
+}
+
+// --- message thread (for the dashboard view) ---------------------------------
+
+// StoredMessage is one inbound/outbound message kept for the thread view.
+type StoredMessage struct {
+	ID          string `json:"id"`
+	ChatID      string `json:"chat_id"`
+	Role        string `json:"role"` // "user" | "assistant"
+	Handle      string `json:"handle,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Text        string `json:"text"`
+	Timestamp   string `json:"timestamp"`
+}
+
+func (T *Bridges) storeMessage(m StoredMessage) {
+	if m.ChatID == "" || m.ID == "" || strings.TrimSpace(m.Text) == "" {
+		return
+	}
+	if m.Timestamp == "" {
+		m.Timestamp = now()
+	}
+	T.DB.Set(messagesTable, m.ChatID+":"+m.ID, m)
+}
+
+func (T *Bridges) recentMessages(chatID string, n int) []StoredMessage {
+	var out []StoredMessage
+	prefix := chatID + ":"
+	for _, k := range T.DB.Keys(messagesTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var m StoredMessage
+		if T.DB.Get(messagesTable, k, &m) {
+			out = append(out, m)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp < out[j].Timestamp })
+	if n > 0 && len(out) > n {
+		out = out[len(out)-n:]
+	}
+	return out
+}
+
+func (T *Bridges) listConvos() []Convo {
+	var out []Convo
+	for _, k := range T.DB.Keys(convosTable) {
+		var c Convo
+		if T.DB.Get(convosTable, k, &c) {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastAt > out[j].LastAt })
+	return out
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// --- Bridge key: a connector's credential + the service it speaks -------------
+
+// BridgeKey authenticates one connector (e.g. the gohort-desktop iMessage
+// daemon) and declares which Service it bridges. The key's LastSeen drives the
+// dashboard's connection status.
+type BridgeKey struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`            // friendly label, e.g. "Craig's MacBook"
+	Key      string `json:"key"`             // the secret; shown once on creation
+	Owner    string `json:"owner"`           // gohort user this bridge belongs to
+	Service  string `json:"service"`         // "imessage", "telegram", … (the bridge's service id)
+	Enabled  bool   `json:"enabled"`         // per-bridge switch; create sets true. Disabled = inbound recorded, not routed/delivered
+	Created  string `json:"created"`
+	LastSeen string `json:"last_seen,omitempty"`
+}
+
+func newToken() string {
+	b := make([]byte, 24)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// saveBridgeKey upserts a key.
+func (T *Bridges) saveBridgeKey(k BridgeKey) { T.DB.Set(bridgeKeysTable, k.ID, k) }
+
+// listBridgeKeys returns the owner's bridge keys (newest first).
+func (T *Bridges) listBridgeKeys(owner string) []BridgeKey {
+	var out []BridgeKey
+	for _, id := range T.DB.Keys(bridgeKeysTable) {
+		var k BridgeKey
+		if T.DB.Get(bridgeKeysTable, id, &k) && k.Owner == owner {
+			out = append(out, k)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Created > out[j].Created })
+	return out
+}
+
+// validateBridgeKey resolves a secret to its key record, stamping LastSeen so
+// the dashboard can show "connected N ago".
+func (T *Bridges) validateBridgeKey(secret string) (BridgeKey, bool) {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return BridgeKey{}, false
+	}
+	for _, id := range T.DB.Keys(bridgeKeysTable) {
+		var k BridgeKey
+		if T.DB.Get(bridgeKeysTable, id, &k) && k.Key == secret {
+			k.LastSeen = now()
+			T.DB.Set(bridgeKeysTable, k.ID, k)
+			return k, true
+		}
+	}
+	// Accept the core desktop key — the gohort-desktop daemon's auto-negotiated
+	// credential — as the iMessage bridge, so the existing daemon authenticates
+	// without minting a separate key. Backed by a PERSISTENT record (created on
+	// first sight) so the desktop bridge shows in the dashboard and has its own
+	// enable switch like any other bridge.
+	if user, ok := LookupDesktopKey(secret); ok && user != "" {
+		id := "desktop:" + user
+		var k BridgeKey
+		if !T.DB.Get(bridgeKeysTable, id, &k) {
+			// Name carries no service suffix — the dashboard appends "(iMessage)"
+			// when it renders the row, so "Desktop" shows as "Desktop (iMessage)".
+			k = BridgeKey{ID: id, Name: "Desktop", Owner: user, Service: "imessage", Enabled: true, Created: now()}
+		} else if k.Name == "Desktop (iMessage)" {
+			k.Name = "Desktop" // migrate the old doubled-suffix name in place
+		}
+		k.LastSeen = now()
+		T.DB.Set(bridgeKeysTable, id, k)
+		return k, true
+	}
+	return BridgeKey{}, false
+}
+
+// --- Outbox: pending outbound, drained per-service by the poll ---------------
+
+// OutboxItem is one message queued for a connector to deliver.
+type OutboxItem struct {
+	ID      string   `json:"id"`
+	ChatID  string   `json:"chat_id"`
+	Handle  string   `json:"handle,omitempty"`
+	Service string   `json:"service"`
+	Text    string   `json:"text,omitempty"`
+	Images  []string `json:"images,omitempty"` // base64
+	Type    string   `json:"type,omitempty"`   // "reply" | "status"
+	Created string   `json:"created"`
+}
+
+func (T *Bridges) enqueueOutbox(it OutboxItem) {
+	if it.ID == "" {
+		it.ID = newToken()[:16]
+	}
+	if it.Created == "" {
+		it.Created = now()
+	}
+	T.DB.Set(outboxTable, it.ID, it)
+}
+
+// drainOutbox returns and removes every pending item for one service, oldest
+// first, so a connector only ever gets its own service's traffic.
+func (T *Bridges) drainOutbox(service string) []OutboxItem {
+	var out []OutboxItem
+	for _, id := range T.DB.Keys(outboxTable) {
+		var it OutboxItem
+		if T.DB.Get(outboxTable, id, &it) && it.Service == service {
+			out = append(out, it)
+			T.DB.Unset(outboxTable, id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Created < out[j].Created })
+	return out
+}
+
+// --- inbound dedup -----------------------------------------------------------
+
+// seenMessage reports whether this inbound was already processed, recording it
+// if not. Keeps a connector's at-least-once delivery from double-firing agents.
+func (T *Bridges) seenMessage(chatID, msgID string) bool {
+	if msgID == "" {
+		return false
+	}
+	key := chatID + ":" + msgID
+	var v int
+	if T.DB.Get(seenMsgTable, key, &v) {
+		return true
+	}
+	T.DB.Set(seenMsgTable, key, 1)
+	return false
+}
+
+// --- group identity ----------------------------------------------------------
+
+// resolveSender returns who to attribute a message to: the name on THIS message
+// if present, else a member name remembered for the handle (or one of its
+// aliases), else the raw handle. upsertConvo learns names onto the Convo's
+// Members, and the user can override them in the member editor — so group
+// transcripts read by person, not by phone number.
+func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
+	if fresh = strings.TrimSpace(fresh); fresh != "" {
+		return fresh
+	}
+	if handle = strings.TrimSpace(handle); handle == "" {
+		// Empty handle = the owner's own message (the daemon clears it for
+		// is_from_me). Label it with the configured self name when set.
+		if n := strings.TrimSpace(T.config().SelfName); n != "" {
+			return n
+		}
+		return "Someone"
+	}
+	if c, ok := T.getConvo(chatID); ok {
+		for _, m := range c.Members {
+			if (m.Handle == handle || contains(m.Aliases, handle)) && m.Name != "" {
+				return m.Name
+			}
+		}
+	}
+	return handle
+}
+
+// bridgeOwner returns the single owner Bridges operates for — the deployment
+// admin (one phone / one admin, mirroring phantom's single-tenant posture).
+func (T *Bridges) bridgeOwner() string {
+	src := RootDB
+	if src == nil {
+		src = T.DB
+	}
+	if src == nil {
+		return ""
+	}
+	for _, u := range AuthListUsers(src) {
+		if u.Admin {
+			return u.Username
+		}
+	}
+	return ""
+}
+
+var _ = http.MethodGet // placeholder import use; routes live in web.go

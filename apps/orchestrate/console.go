@@ -283,8 +283,15 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	// Scope to the agent this pane is for — a monitor belongs to the agent it
+	// wakes (WakeAgent, set on create), so without this every agent's pane shows
+	// every agent's monitors.
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	rows := []consoleMonitorRow{}
 	for _, m := range ListEventMonitors(RootDB, user) {
+		if agentID != "" && m.WakeAgent != agentID {
+			continue
+		}
 		state := "active"
 		if m.Paused {
 			state = "paused"
@@ -653,12 +660,8 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		if always {
 			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
 		}
-		if link, ok := ActivePhantomLink(); ok {
-			if _, err := operatorDeliverMessage(link, a.Owner, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
-				Log("[operator.approval] send_message to %s failed: %v", recip, err)
-			}
-		} else {
-			Log("[operator.approval] phantom bridge unavailable; dropped message to %s", recip)
+		if _, err := operatorDeliverMessage(a.Owner, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
+			Log("[operator.approval] send_message to %s failed: %v", recip, err)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		return

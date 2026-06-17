@@ -94,6 +94,22 @@ func snapshotChunks(db Database) []EmbeddedChunk {
 	return chunkCache.chunks
 }
 
+// ChunksForSource returns every stored chunk whose Source exactly matches —
+// used to read out one namespace's knowledge (e.g. to copy a phantom chat's
+// per-chat knowledge onto a migrated agent). Returns a fresh slice.
+func ChunksForSource(db Database, source string) []EmbeddedChunk {
+	if db == nil || source == "" {
+		return nil
+	}
+	var out []EmbeddedChunk
+	for _, c := range snapshotChunks(db) {
+		if c.Source == source {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // invalidateChunkCache marks the cache stale so the next read rebuilds.
 // Cheap: a single bool flip under lock.
 func invalidateChunkCache() {

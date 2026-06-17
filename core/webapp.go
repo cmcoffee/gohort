@@ -64,6 +64,22 @@ type WebAppOrder interface {
 	WebOrder() int
 }
 
+// WebAppFeatured is optionally implemented by a WebApp that should render
+// as a large, full-width hero card at the top of the dashboard — the
+// primary entry point that demands attention, set apart from the regular
+// app grid. Combine with a low WebOrder so it sorts first.
+type WebAppFeatured interface {
+	WebFeatured() bool
+}
+
+// WebAppWide is optionally implemented by a WebApp whose dashboard card
+// should span the full grid width but keep the REGULAR card height — a
+// "double" button, not a hero. Use for a utility entry (e.g. Administrator)
+// that belongs on its own row, typically pinned to the bottom via WebOrder.
+type WebAppWide interface {
+	WebWide() bool
+}
+
 
 // WebAppRestricted is optionally implemented by WebApps that should be
 // hidden from certain requests (e.g. IP-based access control).
@@ -962,10 +978,17 @@ func (lw *loggingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	var cards strings.Builder
 	for _, a := range apps {
-		fmt.Fprintf(&cards, `<a class="card" href="%s/">
+		cls := "card"
+		if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
+			cls += " featured" // hero entry point — full-width, set apart
+		}
+		if wd, ok := a.app.(WebAppWide); ok && wd.WebWide() {
+			cls += " wide" // full-width row, regular height
+		}
+		fmt.Fprintf(&cards, `<a class="%s" href="%s/">
 			<div class="card-name">%s</div>
 			<div class="card-desc">%s</div>
-		</a>`, a.path, a.name, a.desc)
+		</a>`, cls, a.path, a.name, a.desc)
 	}
 
 	// Detect logged-in user for the auth bar.
@@ -1013,6 +1036,21 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
   .card:hover { border-color: #58a6ff; transform: translateY(-2px); }
   .card-name { font-size: 1.25rem; font-weight: 600; color: #f0f6fc; margin-bottom: 0.5rem; }
   .card-desc { font-size: 0.9rem; color: #8b949e; line-height: 1.4; }
+  /* Featured hero card — the primary entry point. Spans the full grid
+     width and is larger so it stands apart by SIZE, not color (a blue
+     border reads as a hover/selected state and is confusing here). */
+  .card.featured {
+    grid-column: 1 / -1;
+    padding: 2.25rem 2rem;
+    background: linear-gradient(135deg, #161b22 0%, #1b2230 100%);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+  .card.featured:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.45); }
+  .card.featured .card-name { font-size: 1.9rem; margin-bottom: 0.6rem; }
+  .card.featured .card-desc { font-size: 1.02rem; }
+  /* Wide card — spans the full grid row at the REGULAR card height (a
+     "double" button). Used for a bottom utility entry like Administrator. */
+  .card.wide { grid-column: 1 / -1; }
   #live-panel {
     width: 100%; max-width: 700px; margin-top: 2rem;
   }

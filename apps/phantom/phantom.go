@@ -8,8 +8,6 @@ import (
 	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"math"
-	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -145,8 +143,6 @@ const (
 	configTable        = "phantom_config"
 	sentImagesTable    = "phantom_sent_images"
 	phantomTasksTable  = "phantom_tasks"
-	phantomCountsTable = "phantom_proactive_counts"
-	proactiveIDsTable  = "phantom_proactive_ids"
 	configKey          = "persona"
 )
 
@@ -304,9 +300,8 @@ type PhantomConfig struct {
 	PersonaName      string   `json:"persona_name"`   // name the AI introduces itself as
 	OwnerName        string   `json:"owner_name"`     // name for the phone owner ("from_me" messages)
 	OwnerHandle      string   `json:"owner_handle"`   // phone number of the device owner; messages from this handle are treated as from_me
-	Personality      string   `json:"personality"`    // who the AI is — prepended to SystemPrompt
-	SystemPrompt     string   `json:"system_prompt"`  // conversation rules
-	AutoReplyAll     bool     `json:"auto_reply_all"` // if false, enable per-conversation
+	Personality      string   `json:"personality"`   // who the AI is — prepended to SystemPrompt
+	SystemPrompt     string   `json:"system_prompt"` // conversation rules
 	Enabled          bool     `json:"enabled"`
 	EnabledTools     []string `json:"enabled_tools"`     // tool names to give the persona
 	GatekeeperPrompt string   `json:"gatekeeper_prompt"` // if set, LLM decides whether to respond
@@ -462,86 +457,6 @@ func filterNewVideos(videos []string) []string {
 		}
 	}
 	return fresh
-}
-
-// proactiveDayCount tracks how many proactive messages fired today for a
-// conversation, plus the day's target fire count N (used by the slot-based
-// scheduler so every fire across the day uses the same target).
-type proactiveDayCount struct {
-	Date     string `json:"date"` // local YYYY-MM-DD
-	Count    int    `json:"count"`
-	DailyN   int    `json:"daily_n,omitempty"`   // target fire count for the day; 0 = not yet chosen
-	LastFire string `json:"last_fire,omitempty"` // RFC3339 — dedup safety net
-}
-
-// proactiveTodayCount returns the number of proactive fires today for chatID.
-func proactiveTodayCount(db Database, chatID string) int {
-	var rec proactiveDayCount
-	if !db.Get(phantomCountsTable, chatID, &rec) {
-		return 0
-	}
-	if rec.Date != time.Now().Local().Format("2006-01-02") {
-		return 0
-	}
-	return rec.Count
-}
-
-// proactiveLastFire returns the time of the last proactive fire for chatID.
-func proactiveLastFire(db Database, chatID string) time.Time {
-	var rec proactiveDayCount
-	if !db.Get(phantomCountsTable, chatID, &rec) || rec.LastFire == "" {
-		return time.Time{}
-	}
-	t, _ := time.Parse(time.RFC3339, rec.LastFire)
-	return t
-}
-
-// incrementProactiveCount records one more proactive fire today for chatID.
-func incrementProactiveCount(db Database, chatID string) {
-	today := time.Now().Local().Format("2006-01-02")
-	var rec proactiveDayCount
-	db.Get(phantomCountsTable, chatID, &rec)
-	if rec.Date != today {
-		rec = proactiveDayCount{Date: today}
-	}
-	rec.Count++
-	rec.LastFire = now()
-	db.Set(phantomCountsTable, chatID, rec)
-}
-
-// proactiveDailyN returns today's target fire count (N) for chatID, computing
-// and persisting it on first call of the day. maxPerDay > 0 makes N deterministic;
-// maxPerDay == 0 generates a random N in [1, max(1, ceil(windowHours))] so unlimited
-// mode varies day to day. windowHours is the duration of the fire window.
-func proactiveDailyN(db Database, chatID string, maxPerDay int, windowHours float64) int {
-	today := time.Now().Local().Format("2006-01-02")
-	var rec proactiveDayCount
-	db.Get(phantomCountsTable, chatID, &rec)
-	if rec.Date != today {
-		rec = proactiveDayCount{Date: today}
-	}
-	if maxPerDay > 0 {
-		// Deterministic: always honor the configured cap. Refresh in case the
-		// admin lowered it mid-day; we don't want a stale higher N to override.
-		if rec.DailyN != maxPerDay {
-			rec.DailyN = maxPerDay
-			db.Set(phantomCountsTable, chatID, rec)
-		}
-		return maxPerDay
-	}
-	if rec.DailyN > 0 {
-		return rec.DailyN
-	}
-	// Unlimited mode: pick a random N for the day, biased so the expected
-	// value is windowHours/2 but variance allows higher rolls. Range is
-	// [1, ceil(windowHours)].
-	upper := int(math.Ceil(windowHours))
-	if upper < 1 {
-		upper = 1
-	}
-	rec.DailyN = 1 + rand.Intn(upper)
-	db.Set(phantomCountsTable, chatID, rec)
-	return rec.DailyN
 }
 
 // stripLeadingArtifact removes encoding artifacts (e.g. +$, +E) that

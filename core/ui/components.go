@@ -278,6 +278,15 @@ func Expand(label string, c Component) RowAction {
 	}
 }
 
+// ExpandIf is Expand with OnlyIf/HideIf gating on a row field's truthiness —
+// e.g. show a Connect expander only while a row is not yet connected. Pass an
+// empty string to skip either gate.
+func ExpandIf(label, onlyIf, hideIf string, c Component) RowAction {
+	a := Expand(label, c)
+	a.OnlyIf, a.HideIf = onlyIf, hideIf
+	return a
+}
+
 // HistoryPanel renders a scrollable list of messages fetched from
 // Source. Used inside RowAction Expand for chat-history-style displays.
 type HistoryPanel struct {
@@ -1389,6 +1398,22 @@ type AgentLoopPanel struct {
 	ListURL   string `json:"list_url,omitempty"`   // GET → []record
 	LoadURL   string `json:"load_url,omitempty"`   // GET {id} → record (+messages in SESSION mode)
 	DeleteURL string `json:"delete_url,omitempty"` // DELETE {id}
+	// Channels rail section — optional. When ChannelsURL is set, a DISTINCT
+	// region renders at the top of the rail (above the sessions list) with its
+	// own header, a + Add control, and edit/remove per row: the agent's
+	// messaging-channel bindings, separate from chat Sessions.
+	//   ChannelsURL    GET  → []{id, name, service, address, agent_id, auto_reply, direction, gatekeeper}
+	//   ChannelSaveURL POST → upsert (body carries id on edit); create/edit a binding
+	//   ChannelDeleteURL DELETE {id} → remove the binding
+	// Clicking a channel opens its thread (session id "chan:<address>"). The
+	// chat-session list excludes chan: rows so a channel lives only here.
+	ChannelsURL      string `json:"channels_url,omitempty"`
+	ChannelSaveURL   string `json:"channel_save_url,omitempty"`
+	ChannelDeleteURL string `json:"channel_delete_url,omitempty"`
+	// ChannelAgentsURL — optional GET → [{id, name}] of the agents a channel
+	// may be bound to, so the channel editor can re-point a channel at a
+	// different agent. Omit to hide the agent picker.
+	ChannelAgentsURL string `json:"channel_agents_url,omitempty"`
 	// RenameURL — optional. When set, each rail row gets a ✎ button.
 	// Clicking prompts for a new name; the runtime POSTs {id, name}
 	// to RenameURL, then refreshes the list. Useful for workspaces /

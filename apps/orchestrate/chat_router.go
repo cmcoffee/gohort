@@ -68,7 +68,11 @@ type sessionListItem struct {
 	ChatSession
 	Source  string `json:"source,omitempty"`
 	ChatID  string `json:"chat_id,omitempty"`
-	Running bool   `json:"running,omitempty"`
+	// ChannelID, when set, marks this row as a messaging-channel binding (the
+	// Channels rail group). The rail's delete (×) then removes the binding via
+	// the channel-delete URL instead of only wiping the session transcript.
+	ChannelID string `json:"channel_id,omitempty"`
+	Running   bool   `json:"running,omitempty"`
 	// Watchers / Dispatches surface LIVE background work attached to a
 	// session — distinct from Running (this session mid-turn) and Unread
 	// (a past append). Watchers = enabled event-monitors whose wake lands
@@ -160,6 +164,9 @@ func (T *OrchestrateApp) handleSessionList(w http.ResponseWriter, r *http.Reques
 		item.Dispatches = dispatchCounts[ext.ID]
 		out = append(out, item)
 	}
+	// Channel bindings render in their OWN rail region (ChannelsURL), not in
+	// this session list — so the list stays chat-sessions only. The client
+	// filters out chan: rows defensively.
 	_ = json.NewEncoder(w).Encode(out)
 }
 

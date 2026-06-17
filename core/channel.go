@@ -26,10 +26,16 @@ import (
 // the bound agent yet. Phase 2 wires ChannelForInbound into the inbound
 // path. See [[project_channels_to_agents]].
 type Channel struct {
-	ID      string `json:"id"`
-	Owner   string `json:"owner"`          // gohort user who owns this channel
-	Name    string `json:"name,omitempty"` // friendly label
-	Service string `json:"service"`        // transport id: imessage / telegram / slack
+	ID          string `json:"id"`
+	Owner       string `json:"owner"`                 // gohort user who owns this channel
+	Name        string `json:"name,omitempty"`        // friendly label
+	Description string `json:"description,omitempty"` // what this interface is for
+	// A Channel is the INTERFACE — the pipe to/from the bound agent's LLM. On
+	// its own it's inert config (name/description/direction/auto-reply/
+	// gatekeeper); it does nothing until a SOURCE is hooked in. Service +
+	// Address are that hook: the transport the messages flow over. Empty
+	// Service = no source hooked yet (inert) — nothing routes until one is.
+	Service string `json:"service,omitempty"` // transport id: imessage / telegram / slack ("" = inert, no source)
 	// Address scopes the binding within the service: "" means the WHOLE
 	// service (every contact/room routes to AgentID); a specific value
 	// (a handle / room id) binds just that conversation, overriding the
@@ -37,7 +43,61 @@ type Channel struct {
 	Address   string `json:"address,omitempty"`
 	AgentID   string `json:"agent_id"`             // the orchestrate agent bound to this channel
 	AutoReply bool   `json:"auto_reply,omitempty"` // channel-layer policy: answer inbound automatically (vs record-only)
-	Created   string `json:"created,omitempty"`
+	// Direction sets which way messages flow on this channel:
+	//   "inbound"       — receives input; the agent processes it but does NOT
+	//                     reply back out on this surface (a response, if any,
+	//                     goes elsewhere — RespondsOn, a later slice).
+	//   "bidirectional" — receives input and replies on the same surface. The
+	//                     default; "" is treated as this.
+	//   "outbound"      — the agent only SENDS here; inbound is not processed.
+	Direction string `json:"direction,omitempty"`
+	// Gatekeeper is this channel's own wake rule, layered on top of the
+	// deployment-wide overall gatekeeper. A cheap pre-agent filter: the
+	// transport evaluates it before spinning up the bound agent, and skips
+	// the run on a no. Empty = no per-channel rule (the overall still applies).
+	Gatekeeper string `json:"gatekeeper,omitempty"`
+	Created    string `json:"created,omitempty"`
+}
+
+// Channel flow directions (Channel.Direction).
+const (
+	DirectionInbound       = "inbound"       // input only; agent processes, no reply on this surface
+	DirectionBidirectional = "bidirectional" // input + reply on the same surface (default)
+	DirectionOutbound      = "outbound"      // output only; agent sends here, inbound not processed
+)
+
+// serviceDisplayNames maps a transport id (the routing key, lowercase) to its
+// brand-correct display name. The id stays lowercase everywhere internally;
+// only presentation uses this.
+var serviceDisplayNames = map[string]string{
+	"imessage": "iMessage",
+	"sms":      "SMS",
+	"telegram": "Telegram",
+	"slack":    "Slack",
+	"whatsapp": "WhatsApp",
+	"signal":   "Signal",
+	"discord":  "Discord",
+	"email":    "Email",
+}
+
+// ServiceDisplayName returns the brand-correct display label for a transport id
+// (e.g. "imessage" → "iMessage"), falling back to the id unchanged for unknown
+// services. Use anywhere a service is shown to a user.
+func ServiceDisplayName(service string) string {
+	s := strings.TrimSpace(service)
+	if d, ok := serviceDisplayNames[strings.ToLower(s)]; ok {
+		return d
+	}
+	return s
+}
+
+// ChannelDirection returns a channel's flow direction, defaulting to
+// bidirectional when unset so existing bindings behave as before.
+func ChannelDirection(ch Channel) string {
+	if ch.Direction == "" {
+		return DirectionBidirectional
+	}
+	return ch.Direction
 }
 
 const channelsTable = "channels"
@@ -110,19 +170,43 @@ func DeleteChannel(db Database, owner, id string) {
 	db.Unset(channelsTable, channelKey(owner, id))
 }
 
+// ChannelSessionKey returns the orchestrate session id a channel's inbound runs
+// under. A per-contact channel (Address set) keys by the channel itself, so the
+// agent keeps one stable thread for that contact AND the rail can show the
+// binding as a row before any message has arrived. A whole-service channel
+// (Address == "") has no single thread, so it falls back to per-chat keying via
+// the supplied chatID. Inbound routing and the session rail must agree on this,
+// so they both call here.
+func ChannelSessionKey(ch Channel, chatID string) string {
+	if ch.Address != "" {
+		return "chan:" + ch.Address
+	}
+	return "chan:" + chatID
+}
+
 // ChannelForInbound resolves which channel — and therefore which agent —
 // handles an inbound message on a service for an owner. An exact Address
 // binding wins over a whole-service binding (Address==""), so a per-contact
 // channel overrides the service-wide default. Returns false when nothing is
 // bound. Phase 2 routing uses this; Phase 1 just stores the bindings.
-func ChannelForInbound(db Database, owner, service, address string) (Channel, bool) {
+// addresses are the inbound's candidate identifiers (sender handle, chat id,
+// and any conversation aliases). A channel bound to ANY non-empty one matches —
+// owner self-chats have an empty handle and group rooms vary by sender, but the
+// chat id is stable, so matching on the set is what makes routing robust.
+func ChannelForInbound(db Database, owner, service string, addresses ...string) (Channel, bool) {
 	service = strings.TrimSpace(service)
+	want := map[string]bool{}
+	for _, a := range addresses {
+		if a = strings.TrimSpace(a); a != "" {
+			want[a] = true
+		}
+	}
 	var wholeService *Channel
 	for _, ch := range ListChannels(db, owner) {
 		if ch.Service != service {
 			continue
 		}
-		if ch.Address != "" && ch.Address == address {
+		if ch.Address != "" && want[ch.Address] {
 			return ch, true // exact-address binding wins
 		}
 		if ch.Address == "" {
@@ -142,13 +226,15 @@ func ChannelForInbound(db Database, owner, service, address string) (Channel, bo
 type ChannelInbound struct {
 	Owner     string // the channel owner — whose agent runs and under whose store
 	AgentID   string // the bound agent (channel.AgentID)
-	SessionID string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
-	Text      string // the inbound message text
+	SessionID        string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
+	SenderName       string // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
+	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
+	Text             string   // the inbound message text
+	Images           []string // base64 inbound attachments (a contact's photo) — delivered to the agent as multimodal content it can see this turn
 	// StatusCallback, when set, receives mid-turn status pings (the agent's
 	// send_status / progress notes) so the transport can deliver them ahead
 	// of the final reply. nil = no status (graceful).
 	StatusCallback func(string)
-	// (inbound images are a later slice.)
 }
 
 // ChannelReply is the bound agent's response for the transport to deliver

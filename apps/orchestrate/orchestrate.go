@@ -150,6 +150,11 @@ func (T *OrchestrateApp) WebDesc() string {
 // other future "top-of-list" apps without needing to bump this.
 func (T *OrchestrateApp) WebOrder() int { return -1000 }
 
+// WebFeatured renders Agency as the large full-width hero card at the top
+// of the dashboard — it's the primary workbench, so it demands attention
+// above the regular app grid.
+func (T *OrchestrateApp) WebFeatured() bool { return true }
+
 // WebRestricted hides Orchestrate from non-admin users on the landing
 // page. Orchestrate is the agent workbench (CRUD, prompts, allowlists,
 // memory pruning); end-users consume the agents an admin builds via

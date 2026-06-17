@@ -641,6 +641,13 @@ type ChatMessage struct {
 	// still gets a "[standing agent …]" context marker prepended at history-
 	// build time (see toLLMMessages).
 	ReportFrom string `json:"report_from,omitempty"`
+	// Sender names who authored this message, for channel-room transcripts
+	// where the session is a multi-party messaging thread: the contact's
+	// display name on inbound (user) messages, the bound agent's name on its
+	// replies. Lets a GROUP channel render real who-said-what (the session
+	// title alone can't, since many contacts share one room). Empty on plain
+	// web sessions, where the anonymous you/assistant bubbles are correct.
+	Sender string `json:"sender,omitempty"`
 }
 
 // PersistedToolCall is one tool invocation persisted alongside the

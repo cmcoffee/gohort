@@ -1386,6 +1386,27 @@ body { min-height: 100vh; min-height: 100dvh; }
  * of letting .active's narrower padding stack the title under the
  * checkbox. -2px keeps the active border accounted for. */
 .ui-chat-side-item.active.selectable { padding-left: calc(2.2rem - 2px); }
+/* Channels rail section — a distinct region above the session list with its
+ * own header + Add control. Rows reuse .ui-chat-side-item styling. */
+.ui-channels-rail { padding: 0.25rem 0 0.35rem; border-bottom: 1px solid var(--border); margin-bottom: 0.25rem; }
+.ui-channels-h { display: flex; align-items: center; justify-content: space-between; padding: 0.2rem 0.6rem 0.25rem; }
+.ui-channels-h-title { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-mute); font-weight: 600; }
+.ui-channels-add {
+  border: none; background: transparent; color: var(--text-mute); cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0 0.25rem; border-radius: 4px;
+}
+.ui-channels-add:hover { background: var(--bg-2); color: var(--text); }
+.ui-channels-empty { padding: 0.15rem 0.6rem 0.3rem; font-size: 0.75rem; color: var(--text-mute); }
+.ui-channels-dir {
+  flex: 0 0 auto; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-mute); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 0.25rem; margin-left: 0.35rem; align-self: center;
+}
+.ui-channels-inert {
+  flex: 0 0 auto; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-mute); opacity: 0.7; border: 1px dashed var(--border); border-radius: 3px;
+  padding: 0 0.25rem; margin-left: 0.3rem; align-self: center;
+}
 .ui-chat-side-title {
   font-size: 0.85rem; color: var(--text); line-height: 1.3;
   /* Allow up to 3 lines before truncating — single-line ellipsis
@@ -2849,6 +2870,18 @@ body { min-height: 100vh; min-height: 100dvh; }
   border-radius: 6px;
   border: 1px solid var(--border);
 }
+/* Channel-room transcript: a small sender name above the bubble so a
+ * messaging thread reads as who-said-what, like a chat history. Only
+ * present on .ui-agent-msg-named bubbles (channel sessions). */
+.ui-agent-msg-sender {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-mute);
+  margin-bottom: 0.18rem;
+  padding: 0 0.2rem;
+}
+.ui-agent-msg-user.ui-agent-msg-named .ui-agent-msg-sender { text-align: right; }
 /* User bubble — elevated bg + accent stripe on the right edge of
  * the body card (mirrors ChatPanel's stripe + right-aligns so the
  * eye reads "this is your message"). Text is muted so the eye's
@@ -8639,6 +8672,30 @@ const runtimeJS = `
     function altPinnedSession(agentId) { var m = altNavAgents(); return (m && agentId && m[agentId]) || ''; }
 
     var activeSessionId = '';
+    // Channel-thread live polling: a watched channel is fed server-side (from
+    // the messaging surface), so we poll its session to append new inbound
+    // messages + the agent's replies while it's open. Timer + the count of
+    // messages already on screen.
+    var channelPollTimer = null, channelPollCount = 0;
+    // channelTranscript — non-null while a CHANNEL ROOM session is open
+    // (id "chan:<chatID>"). It holds the sender labels so the thread reads
+    // as a messaging transcript (contact name + agent name above each line),
+    // not the anonymous you/assistant bubbles a web session uses. Reset to
+    // null on every session open so it never leaks into a plain session.
+    // {contact: <conversation partner>, agent: <bound agent's name>}.
+    var channelTranscript = null;
+    // currentAgentLabel reads the agent picker's selected option text so a
+    // channel transcript can label the assistant side by the bound agent's
+    // actual name (the panel serves all agents via the picker, so there's no
+    // static name). Falls back to a generic label.
+    function currentAgentLabel() {
+      var sel = document.querySelector('.ui-agent-extras select[name="agent_id"], .ui-agent-extras-label select');
+      if (sel && sel.selectedIndex >= 0) {
+        var t = (sel.options[sel.selectedIndex].text || '').trim();
+        if (t) return t;
+      }
+      return 'Assistant';
+    }
     // activeRunId — server-issued run identifier for the current
     // in-flight turn. Captured from the kind=run event the server
     // emits right after the session event. Used to (a) address
@@ -8781,6 +8838,12 @@ const runtimeJS = `
       // filled by loadSessions, which knows the home thread + its unread state.
       var primaryEl = el('div', {style: 'display:none;padding:0.5rem 0.5rem 0.35rem'});
       side.insertBefore(primaryEl, sideHdrEl);
+      // channelsEl — the Channels rail SECTION: a distinct region with its own
+      // header + Add control, listing the agent's messaging-channel bindings
+      // ABOVE the session list (not mixed into it). Filled by loadChannels;
+      // hidden when the app didn't opt in (no channels_url).
+      var channelsEl = el('div', {class: 'ui-channels-rail', style: 'display:none'});
+      side.insertBefore(channelsEl, sideHdrEl);
       var orchBtns = [];
       var orchBadges = [];
       function renderOrchTable(rows, item, reload) {
@@ -8980,7 +9043,10 @@ const runtimeJS = `
           // to the nav row whose view is showing, not the underlying thread.
           orchView.style.display = '';
           var heroBtn = primaryEl && primaryEl.querySelector('.ui-channel-hero');
-          if (heroBtn) { heroBtn.style.border = '1px solid transparent'; heroBtn.style.background = 'transparent'; }
+          // De-accent the SELECTED state (border + strong bg) but keep the
+          // Cortex's persistent faint gold tint — it's the standing-thread
+          // marker, not a selection cue.
+          if (heroBtn) { heroBtn.style.border = '1px solid transparent'; heroBtn.style.background = 'rgba(217,184,108,0.07)'; }
           // On mobile, start the overlay BELOW the header bar so the ☰ stays
           // uncovered and tappable (otherwise inset:0 paints over it and there's
           // no way back). Desktop has no mobile header — pin to the top.
@@ -9041,9 +9107,10 @@ const runtimeJS = `
                 : ((rows && rows.length) || 0);
               badge.textContent = n ? String(n) : '';
               badge.style.display = n ? '' : 'none';
-              // A pinned action-queue row tints itself when it has items.
+              // A pinned action-queue row keeps a faint always-on tint (marks it
+              // like the Cortex row) and STRENGTHENS it when items are pending.
               if (item.pinned && orchBtns[i]) {
-                orchBtns[i].style.background = n ? 'var(--accent-soft, rgba(74,158,255,0.14))' : 'transparent';
+                orchBtns[i].style.background = n ? 'rgba(88,166,255,0.18)' : 'rgba(88,166,255,0.06)';
               }
               updateManageDot();
             })
@@ -9065,17 +9132,27 @@ const runtimeJS = `
         var badge = null;
         var b;
         if (item.pinned) {
-          var plabel = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600'}, [item.label || ('View ' + (i + 1))]);
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.72rem;background:var(--accent, #4a9eff);color:#fff'}, ['']);
-          var pkids = [];
-          if (item.icon) pkids.push(el('span', {style: 'font-size:0.95rem;flex:0 0 auto'}, [item.icon]));
-          pkids.push(plabel);
-          pkids.push(badge);
+          // Modernized pinned row (Permissions etc.) — mirrors the Cortex marked
+          // row: a colored glyph + bold title (+ optional subtitle) + count pill,
+          // rounded with a faint always-on accent tint that strengthens when the
+          // queue has pending items (set in refreshChannelBadges).
+          var pAccent = '#58a6ff';
+          var plabel = el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis;min-width:0'}, [item.label || ('View ' + (i + 1))]);
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.7rem;font-weight:700;background:' + pAccent + ';color:#fff;flex:0 0 auto'}, ['']);
+          var ptitle = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden'}, [plabel, badge]);
+          var pbody = [ptitle];
+          if (item.subtitle) {
+            pbody.push(el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.subtitle]));
+          }
+          var pkids = [
+            el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + pAccent}, [item.icon || '🛡']),
+            el('div', {style: 'flex:1;min-width:0'}, pbody),
+          ];
           // Transparent border by default (reserves the space, no layout shift);
           // selectOrchNav swaps in the accent border when this view is selected,
-          // matching the Master Control hero's "selected" treatment.
+          // matching the Cortex row's "selected" treatment.
           b = el('button', {type: 'button', class: 'ui-channel-row ui-channel-pinned-row',
-            style: 'display:flex;align-items:center;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:5px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
+            style: 'display:flex;align-items:flex-start;gap:0.5rem;text-align:left;padding:0.5rem 0.6rem;border:1px solid transparent;border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:rgba(88,166,255,0.06);width:100%',
             onclick: function() { selectOrchNav(i); }}, pkids);
           pinnedEl.appendChild(b);
         } else {
@@ -10158,7 +10235,7 @@ const runtimeJS = `
       }, 120);
     });
 
-    function addMessage(role, id, text) {
+    function addMessage(role, id, text, senderOverride) {
       clearEmpty();
       var classes = 'ui-agent-msg ui-agent-msg-' + (role || 'system');
       // Hide empty assistant bubbles (lazy-bubble materializations for
@@ -10170,6 +10247,18 @@ const runtimeJS = `
         classes += ' ui-agent-msg-empty';
       }
       var bubble = el('div', {class: classes});
+      // Channel-room transcript: name each line by who said it (contact vs the
+      // bound agent), the usual chat-transcript treatment. The hover-only
+      // timestamp on the action bar still carries the "when". Only when a
+      // channel session is open — plain web sessions stay anonymous.
+      if (channelTranscript && (role === 'user' || role === 'assistant')) {
+        bubble.classList.add('ui-agent-msg-named');
+        // Prefer the stored per-message author (set on every channel message,
+        // so a GROUP thread names each distinct sender); fall back to the
+        // session's contact/agent labels for 1:1 or older messages.
+        var who = senderOverride || ((role === 'user') ? channelTranscript.contact : channelTranscript.agent);
+        bubble.appendChild(el('div', {class: 'ui-agent-msg-sender'}, [who || '']));
+      }
       var body = el('div', {class: 'ui-agent-msg-body'});
       if (cfg.markdown && role === 'assistant' && text) {
         uiRenderMarkdown(body, text);
@@ -11871,8 +11960,237 @@ const runtimeJS = `
       }
     });
 
+    // railChannelKey — the session id a channel's thread lives under (mirrors
+    // core ChannelSessionKey: per-contact channels thread by handle).
+    function railChannelKey(ch) { return 'chan:' + (ch.address || ''); }
+
+    // railFieldLabel — a small labeled wrapper for a form input in the modal.
+    function railFieldLabel(lbl, input) {
+      return el('div', {style: 'margin:0.4rem 0'}, [
+        el('div', {style: 'font-size:0.7rem;color:var(--text-mute);margin-bottom:0.15rem'}, [lbl]),
+        input,
+      ]);
+    }
+
+    // railRulesEditor — an add/remove rules list (one rule per row + "+ Add
+    // rule"), matching the FormField type="rules" editor used for
+    // gatekeeper rules. Returns {el, getValue} — getValue joins the non-empty
+    // rows with newlines (the stored gatekeeper format).
+    function railRulesEditor(initial) {
+      var wrap = el('div', {class: 'ui-rules'});
+      var rules = parseRules(String(initial || ''));
+      function render() {
+        wrap.innerHTML = '';
+        if (!rules.length) {
+          wrap.appendChild(el('div', {class: 'ui-rules-empty'}, ['No rules yet — add one below.']));
+        }
+        rules.forEach(function(r, idx) {
+          var ti = el('input', {type: 'text', class: 'ui-rules-input', placeholder: 'rule…'});
+          ti.value = r;
+          ti.addEventListener('blur', function() { rules[idx] = ti.value; });
+          ti.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter') {
+              ev.preventDefault();
+              rules[idx] = ti.value;
+              rules.splice(idx + 1, 0, '');
+              render();
+              var ins = wrap.querySelectorAll('.ui-rules-input');
+              if (ins[idx + 1]) ins[idx + 1].focus();
+            }
+          });
+          var del = el('button', {class: 'ui-rules-del', type: 'button', title: 'Remove this rule'}, ['×']);
+          del.addEventListener('click', function() { rules[idx] = ti.value; rules.splice(idx, 1); render(); });
+          wrap.appendChild(el('div', {class: 'ui-rules-row'}, [el('span', {class: 'ui-rules-num'}, [String(idx + 1) + '.']), ti, del]));
+        });
+        var addBtn = el('button', {class: 'ui-rules-add', type: 'button'}, ['+ Add rule']);
+        addBtn.addEventListener('click', function() {
+          rules.push('');
+          render();
+          var ins = wrap.querySelectorAll('.ui-rules-input');
+          var last = ins[ins.length - 1];
+          if (last) last.focus();
+        });
+        wrap.appendChild(addBtn);
+      }
+      render();
+      return {
+        el: wrap,
+        getValue: function() {
+          var ins = wrap.querySelectorAll('.ui-rules-input');
+          var vals = [];
+          for (var i = 0; i < ins.length; i++) {
+            var v = ins[i].value.trim();
+            if (v) vals.push(v);
+          }
+          return vals.join('\n');
+        },
+      };
+    }
+
+    // channelForm — add/edit modal for a channel. A channel is the INTERFACE
+    // (pipe to/from the agent): specifying it is just name / description /
+    // direction / auto-reply / gatekeeper. The SERVICE/connector is attached
+    // separately (and shown as "Name (service)" in the list) — not asked for
+    // here. Posts to cfg.channel_save_url (id on edit).
+    function channelForm(ch) {
+      ch = ch || {};
+      var isEdit = !!ch.id;
+      var dlg = el('dialog', {class: 'ui-modal-dialog'});
+      var nameIn = el('input', {class: 'ui-modal-input', type: 'text', placeholder: 'Name'});
+      nameIn.value = ch.name || '';
+      var descIn = el('input', {class: 'ui-modal-input', type: 'text', placeholder: 'What this interface is for (optional)'});
+      descIn.value = ch.description || '';
+      var dirSel = el('select', {class: 'ui-modal-input'});
+      [['bidirectional', 'Bi-directional'], ['inbound', 'Inbound'], ['outbound', 'Outbound']].forEach(function(o) {
+        var opt = el('option', {value: o[0]}, [o[1]]);
+        if ((ch.direction || 'bidirectional') === o[0]) opt.selected = true;
+        dirSel.appendChild(opt);
+      });
+      var arIn = el('input', {type: 'checkbox'});
+      if (ch.auto_reply) arIn.checked = true;
+      var gkEditor = railRulesEditor(ch.gatekeeper);
+      // Bound-agent picker — only on EDIT, to RE-POINT an existing channel at a
+      // different agent. On ADD there's no selector: a new channel binds to the
+      // agent you're on (the save URL carries its agent_id), so picking one would
+      // be redundant. Populated async from cfg.channel_agents_url.
+      var agentSel = el('select', {class: 'ui-modal-input'});
+      var body = el('div', {}, [
+        el('div', {class: 'ui-modal-msg'}, [isEdit ? 'Edit channel' : 'Add channel']),
+        railFieldLabel('Name', nameIn),
+        railFieldLabel('Description', descIn),
+        railFieldLabel('Direction', dirSel),
+      ]);
+      if (cfg.channel_agents_url && isEdit) {
+        var agentField = railFieldLabel('Agent', agentSel);
+        body.appendChild(agentField);
+        fetchJSON(substituteExtras(cfg.channel_agents_url)).then(function(list) {
+          if (!Array.isArray(list)) list = [];
+          agentSel.innerHTML = '';
+          list.forEach(function(a) {
+            var opt = el('option', {value: a.id}, [a.name || a.id]);
+            if (ch.agent_id && a.id === ch.agent_id) opt.selected = true;
+            agentSel.appendChild(opt);
+          });
+        }).catch(function() { agentField.style.display = 'none'; });
+      }
+      body.appendChild(el('label', {style: 'display:flex;align-items:center;gap:0.4rem;margin:0.5rem 0'}, [arIn, el('span', {}, ['Auto-reply'])]));
+      body.appendChild(railFieldLabel('Gatekeeper rules', gkEditor.el));
+      var saveB = el('button', {class: 'ui-btn-primary', onclick: function() {
+        var payload = {id: ch.id || '', name: nameIn.value.trim(), description: descIn.value.trim(),
+          direction: dirSel.value, auto_reply: arIn.checked, gatekeeper: gkEditor.getValue()};
+        if (isEdit && cfg.channel_agents_url && agentSel.value) payload.agent_id = agentSel.value;
+        fetchJSON(substituteExtras(cfg.channel_save_url), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
+          .then(function() { try { dlg.close(); } catch (e) {} dlg.remove(); loadChannels(); })
+          .catch(function(err) { showToast('Save failed: ' + (err && err.message || err)); });
+      }}, [isEdit ? 'Save' : 'Add']);
+      var cancelB = el('button', {onclick: function() { try { dlg.close(); } catch (e) {} dlg.remove(); }}, ['Cancel']);
+      body.appendChild(el('div', {class: 'ui-modal-actions'}, [cancelB, saveB]));
+      dlg.appendChild(body);
+      document.body.appendChild(dlg);
+      if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+    }
+
+    // loadChannels — render the Channels rail section (its own header + Add,
+    // then one row per binding with open / edit / remove). Hidden when the app
+    // didn't provide a channels_url.
+    function loadChannels() {
+      if (!cfg.channels_url || !channelsEl) return;
+      fetchJSON(substituteExtras(cfg.channels_url)).then(function(list) {
+        if (!Array.isArray(list)) list = [];
+        channelsEl.innerHTML = '';
+        // Channels stay LABELED — a distinct tier under the cortex, set off by its
+        // "Channels" header + the section divider. (Sessions below are the
+        // unlabeled default list; the cortex above carries its own badge.)
+        var hdr = el('div', {class: 'ui-channels-h'}, [el('span', {class: 'ui-channels-h-title'}, ['Channels'])]);
+        if (cfg.channel_save_url) {
+          hdr.appendChild(el('button', {class: 'ui-channels-add', title: 'Add channel',
+            onclick: function(ev) { ev.stopPropagation(); channelForm(null); }}, ['+']));
+        }
+        channelsEl.appendChild(hdr);
+        if (!list.length) {
+          channelsEl.appendChild(el('div', {class: 'ui-channels-empty'}, ['No channels yet.']));
+          channelsEl.style.display = '';
+          return;
+        }
+        list.forEach(function(ch) {
+          var sid = railChannelKey(ch);
+          // List as "Name (Service)" when a connector is attached, else just the
+          // name (with an inert badge below). service_label is the brand-correct
+          // display (iMessage), falling back to the raw service id.
+          var svcLabel = ch.service_label || ch.service;
+          var title = ch.name || ch.address || svcLabel || 'channel';
+          if (ch.name && ch.service) title = ch.name + ' (' + svcLabel + ')';
+          var dir = ch.direction || 'bidirectional';
+          var dirShort = dir === 'inbound' ? 'in' : (dir === 'outbound' ? 'out' : 'both');
+          var rowKids = [
+            el('span', {class: 'ui-chat-side-title', title: ch.description || ''}, [title]),
+            el('span', {class: 'ui-channels-dir', title: 'Direction: ' + dir}, [dirShort]),
+          ];
+          // No source hooked in → the interface is inert (nothing routes yet).
+          if (!ch.service) {
+            rowKids.push(el('span', {class: 'ui-channels-inert', title: 'No source hooked in — inert'}, ['inert']));
+          }
+          var row = el('div', {class: 'ui-chat-side-item ui-channels-item ui-chat-side-item-renable' + (sid === activeSessionId ? ' active' : '')}, rowKids);
+          row.addEventListener('click', function() { openSession(sid); closeDrawer(); });
+          if (cfg.channel_save_url) {
+            row.appendChild(el('button', {class: 'ui-chat-side-ren', title: 'Edit channel',
+              onclick: function(ev) { ev.stopPropagation(); channelForm(ch); }}, ['✎']));
+          }
+          if (cfg.channel_delete_url) {
+            row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete channel',
+              onclick: async function(ev) {
+                ev.stopPropagation();
+                if (!(await window.uiConfirm('Delete this channel? Inbound stops routing to the agent. The agent itself is kept.'))) return;
+                var url = substituteExtras(cfg.channel_delete_url.replace('{id}', encodeURIComponent(ch.id)));
+                fetchJSON(url, {method: 'DELETE'}).then(function() {
+                  if (activeSessionId === sid) openSession(null);
+                  loadChannels();
+                }).catch(function(err) { showToast('Delete failed: ' + (err && err.message || err)); });
+              }}, ['×']));
+          }
+          channelsEl.appendChild(row);
+        });
+        channelsEl.style.display = '';
+      }).catch(function() { /* leave the section as-is on error */ });
+    }
+
+    // appendChannelMessage — render one newly-arrived channel message (live
+    // poll). Mirrors the replay's per-message render minus the edit/scrub/tool
+    // plumbing (channel threads are read-only and append-only).
+    function appendChannelMessage(m) {
+      if (!m || m.hidden) return;
+      var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
+      addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
+      if (cfg.markdown && m.role === 'assistant') finalizeMessage(mid);
+      if (m.created || m.usage) setMessageMeta(mid, {created: m.created, usage: m.usage});
+    }
+
+    function stopChannelPolling() {
+      if (channelPollTimer) { clearInterval(channelPollTimer); channelPollTimer = null; }
+    }
+
+    // startChannelPolling — while a channel thread is open, re-fetch its session
+    // every few seconds and append any messages beyond what's on screen, so new
+    // inbound + the agent's responses show up live without a manual reload.
+    function startChannelPolling(sid, initialCount) {
+      stopChannelPolling();
+      if (!cfg.load_url || (sid || '').indexOf('chan:') !== 0) return;
+      channelPollCount = initialCount || 0;
+      channelPollTimer = setInterval(function() {
+        if (activeSessionId !== sid) { stopChannelPolling(); return; }
+        fetchJSON(substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)))).then(function(rec) {
+          if (activeSessionId !== sid) return;
+          var msgs = rec && rec[msgsF];
+          if (!Array.isArray(msgs) || msgs.length <= channelPollCount) return;
+          for (var i = channelPollCount; i < msgs.length; i++) appendChannelMessage(msgs[i]);
+          channelPollCount = msgs.length;
+        }).catch(function() {});
+      }, 3000);
+    }
+
     function loadSessions() {
       if (!hasList) return;
+      loadChannels();
       var activeID = cfg.list_is_context ? activeContextId : activeSessionId;
       fetchJSON(substituteExtras(cfg.list_url)).then(function(items) {
         sideList.innerHTML = '';
@@ -11900,21 +12218,31 @@ const runtimeJS = `
           if (homeRec) {
             var chId = homeRec[idF];
             var chActive = chId === activeSessionId;
-            var chKids = [
-              el('span', {style: 'font-size:0.95rem;flex:0 0 auto'}, ['⚡']),
-              el('span', {style: 'flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [cfg.alt_primary_label || 'Cortex']),
-            ];
+            // Cortex — the standing/home thread, rendered as a MARKED ROW (gold
+            // brain glyph + "home" badge + faint always-on gold tint) so it reads
+            // as a session, just the special one, pinned at the top of the list.
+            var gold = '#d9b86c';
+            var titleLine = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden'}, [
+              el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis'}, [cfg.alt_primary_label || 'Cortex']),
+              el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.05em;font-weight:700;color:' + gold + ';border:1px solid ' + gold + ';border-radius:999px;padding:0.02rem 0.4rem;flex:0 0 auto'}, ['home']),
+            ]);
             if (homeRec.unread && !chActive) {
-              chKids.push(el('span', {class: 'ui-unread-dot', title: 'New activity',
+              titleLine.appendChild(el('span', {class: 'ui-unread-dot', title: 'New activity',
                 style: 'width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);flex:0 0 auto'}, ['']));
             }
-            // Accent border + tint ONLY when it's the active thread (so it
-            // doesn't read as permanently selected); the ⚡ + bold label keep it
-            // distinct as the primary thread the rest of the time.
-            var heroBorder = chActive ? 'var(--accent, #4a9eff)' : 'transparent';
-            var heroBg = chActive ? 'var(--accent-soft, rgba(74,158,255,0.16))' : 'transparent';
+            var chKids = [
+              el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + gold}, ['🧠']),
+              el('div', {style: 'flex:1;min-width:0'}, [
+                titleLine,
+                el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, ['standing thread']),
+              ]),
+            ];
+            // Faint gold tint ALWAYS (marks it as the standing thread); a gold
+            // border adds when it's the active thread.
+            var heroBorder = chActive ? gold : 'transparent';
+            var heroBg = chActive ? 'rgba(217,184,108,0.16)' : 'rgba(217,184,108,0.07)';
             var chRow = el('button', {type: 'button', class: 'ui-channel-hero' + (chActive ? ' active' : ''),
-              style: 'display:flex;align-items:center;gap:0.5rem;width:100%;text-align:left;padding:0.6rem 0.7rem;border:1px solid ' + heroBorder + ';border-radius:6px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
+              style: 'display:flex;align-items:flex-start;gap:0.5rem;width:100%;text-align:left;padding:0.5rem 0.6rem;border:1px solid ' + heroBorder + ';border-radius:7px;cursor:pointer;font:inherit;color:var(--text, inherit);background:' + heroBg,
               onclick: function() { openSession(chId); closeDrawer(); }}, chKids);
             primaryEl.appendChild(chRow);
             primaryEl.style.display = '';
@@ -11923,6 +12251,10 @@ const runtimeJS = `
           }
         }
         if (!Array.isArray(items)) items = [];
+        // Channel threads live in the dedicated Channels section above — keep
+        // their chan: rows out of the chat-session list so they aren't shown
+        // twice. (Defensive: the server already omits them.)
+        items = items.filter(function(s) { return (s[idF] || '').indexOf('chan:') !== 0; });
         if (!homeRec && !items.length) {
           if (cfg.bulk_select && bulkState.mode) {
             renderBulkBar([], sideList, bulkState, bulkSelected,
@@ -12051,9 +12383,27 @@ const runtimeJS = `
               }, ['✎']);
               row.appendChild(renBtn);
             }
-            var delBtn = el('button', {class: 'ui-chat-side-del', title: 'Delete',
+            var delBtn = el('button', {class: 'ui-chat-side-del', title: (rec.channel_id ? 'Delete channel' : 'Delete'),
               onclick: async function(ev) {
                 ev.stopPropagation();
+                // Channel rows delete the BINDING, not just the transcript:
+                // removing the channel stops inbound from routing to the agent.
+                // The agent itself is kept; the thread is cleared too so the
+                // row goes away cleanly.
+                if (rec.channel_id && cfg.channel_delete_url) {
+                  if (!(await window.uiConfirm('Delete this channel? Inbound messages stop routing to the agent and this thread is cleared. The agent itself is kept.'))) return;
+                  var curl = substituteExtras(cfg.channel_delete_url.replace('{id}', encodeURIComponent(rec.channel_id)));
+                  fetchJSON(curl, {method: 'DELETE'}).then(function() {
+                    if (cfg.delete_url) {
+                      var surl = substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(sid)));
+                      return fetchJSON(surl, {method: 'DELETE'}).catch(function() {});
+                    }
+                  }).then(function() {
+                    if (activeSessionId === sid) openSession(null);
+                    loadSessions();
+                  }).catch(function(err) { showToast('Delete channel failed: ' + (err && err.message || err)); });
+                  return;
+                }
                 // Warn when the thread has LIVE producers attached (watchers /
                 // in-flight dispatches): deleting only clears the transcript —
                 // the producers keep running and will recreate the thread on
@@ -12090,23 +12440,13 @@ const runtimeJS = `
         // and already shown by its own pulse — so the list doesn't reshuffle
         // every time a turn starts or ends.
         var hasBgWork = function(rec) { return (rec.watchers || 0) > 0 || (rec.dispatches || 0) > 0; };
-        function groupHeader(label) {
-          return el('div', {class: 'ui-chat-side-group',
-            style: 'padding:0.4rem 0.6rem 0.2rem;font-size:0.62rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-mute);font-weight:600'}, [label]);
-        }
-        // The home thread renders as the Channel hero row above the rail (see
-        // primaryEl) — NOT in this list. The list is the ordinary threads,
-        // grouped Active (live background work) then Recent.
+        // Headerless: one flat list, no "Active"/"Recent" labels (the Cortex row
+        // is above via primaryEl; channels render below). Sessions with live
+        // background work still float to the TOP — just without a group label.
         var actives = items.filter(hasBgWork);
         var rest = items.filter(function(rec) { return !hasBgWork(rec); });
-        if (actives.length) {
-          sideList.appendChild(groupHeader('Active'));
-          actives.forEach(buildAndAppendRow);
-        }
-        if (rest.length) {
-          if (actives.length) sideList.appendChild(groupHeader('Recent'));
-          rest.forEach(buildAndAppendRow);
-        }
+        actives.forEach(buildAndAppendRow);
+        rest.forEach(buildAndAppendRow);
       }).catch(function() {
         sideList.innerHTML = '';
         sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['(failed to load)']));
@@ -12139,10 +12479,16 @@ const runtimeJS = `
       // row), so clear every management-nav highlight instead of marking row 0.
       if (orchView) orchView.style.display = 'none';
       if (typeof orchBtns !== 'undefined' && orchBtns && orchBtns.length) {
-        orchBtns.forEach(function(b) {
+        orchBtns.forEach(function(b, i) {
+          var navItem = (cfg.orchestrator_nav || [])[i] || {};
+          b.style.border = '1px solid transparent'; // clear any "selected" accent border
+          // Pinned rows (Permissions) keep their PERSISTENT faint tint — that's
+          // their always-on marker, not a selection state — so clear only the
+          // selected border here and leave the background to refreshChannelBadges.
+          // Non-pinned rows reset fully.
+          if (navItem.pinned) return;
           b.style.background = 'transparent';
           b.style.fontWeight = '400';
-          b.style.border = '1px solid transparent'; // clear any pinned "selected" accent border
         });
       }
       // Any session open / switch / new collapses the mobile drawer —
@@ -12230,6 +12576,15 @@ const runtimeJS = `
       }
       // SESSION mode — replay messages from the saved conversation.
       activeSessionId = sid || '';
+      // Start every open as a plain session; the load below re-flags channel
+      // rooms so transcript labels never leak from a previously-open channel.
+      channelTranscript = null;
+      // Channel threads are READ-ONLY in the web UI — messages arrive from the
+      // messaging surface, not by typing here. Hide the composer for a channel
+      // thread (id "chan:…") and restore it for ordinary sessions.
+      if (inputRow) inputRow.style.display = ((sid || '').indexOf('chan:') === 0) ? 'none' : '';
+      // Stop any prior channel poll; a channel open re-starts it after replay.
+      stopChannelPolling();
       // Reset run-tracking state — the new session may have its own
       // in-flight run discovered via the active-run probe below, or
       // no run at all. Either way, start counting from zero.
@@ -12267,6 +12622,18 @@ const runtimeJS = `
       }
       fetchJSON(url).then(function(rec) {
         setHeaderTitle(rec && rec[ttlF]);
+        // Channel rooms render as a who-said-what transcript: the session is
+        // a 1:1 messaging thread, so "user" lines are the contact (named by
+        // the session title) and "assistant" lines are the bound agent. Plain
+        // web sessions keep the anonymous bubbles (channelTranscript = null).
+        if ((sid || '').indexOf('chan:') === 0) {
+          channelTranscript = {
+            contact: (rec && rec[ttlF]) || 'Contact',
+            agent: currentAgentLabel(),
+          };
+        } else {
+          channelTranscript = null;
+        }
         var msgs = rec && rec[msgsF];
         if (Array.isArray(msgs)) {
           msgs.forEach(function(m, i) {
@@ -12278,7 +12645,7 @@ const runtimeJS = `
             // per-turn scrub needs to delete the right message server-side.
             if (m && m.hidden) return;
             var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
-            addMessage(m.role || 'assistant', mid, m.content || m.text || '');
+            addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
             // Remember the raw storage index so the ✕ scrub affordance can
             // PATCH {delete_at: i}. Only replayed bubbles carry it; live ones
             // get one on the next load (reload re-syncs after a scrub/delete).
@@ -12346,6 +12713,12 @@ const runtimeJS = `
         }
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);
         loadSessions();
+        // Channel threads are append-only and fed server-side (from the
+        // messaging surface) — poll so new inbound + the agent's replies show
+        // up live while watching, without a manual reload.
+        if (channelTranscript) {
+          startChannelPolling(sid, Array.isArray(msgs) ? msgs.length : 0);
+        }
         // After the saved transcript renders, ask the server
         // whether this session has an in-flight run we should
         // attach to. Server-side, the agent loop is decoupled from

@@ -117,6 +117,10 @@ func (a *AdminApp) WebName() string { return "Administrator" }
 func (a *AdminApp) WebDesc() string { return "User management, sessions, and system status" }
 func (a *AdminApp) WebOrder() int   { return 99 }
 
+// WebWide renders Administrator as a full-width row at regular height — a
+// "double" button sitting on its own at the bottom of the dashboard.
+func (a *AdminApp) WebWide() bool { return true }
+
 // WebRestricted hides the admin card from non-admin users or disallowed IPs.
 func (a *AdminApp) WebRestricted(r *http.Request) bool {
 	if a.db == nil {

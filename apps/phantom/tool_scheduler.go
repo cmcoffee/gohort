@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -24,7 +23,6 @@ type phantomCallPayload struct {
 	RepeatUntil        string `json:"repeat_until,omitempty"`         // natural-language stopping condition, evaluated by LLM after each fire
 	RepeatCount        int    `json:"repeat_count,omitempty"`         // number of times this task has already fired (incremented each fire)
 	PhantomTaskID string `json:"phantom_task_id,omitempty"` // our short ID, links to phantom_tasks record
-	IsProactive   bool   `json:"is_proactive,omitempty"`   // set by admin config, never by the LLM tool
 }
 
 // splitRules splits a newline-separated rules string (as saved by a "rules"
@@ -37,122 +35,6 @@ func splitRules(s string) []string {
 		}
 	}
 	return out
-}
-
-// buildProactiveInstruction composes the wake-up instruction for a proactive
-// fire. ProactivePrompt supplies the style/voice guidance (the HOW);
-// ProactiveAlways lists actions performed every wake; ProactiveActions is a
-// pool from which one action is drawn at random each wake (for variety).
-// Returns "" only when nothing is configured, in which case the caller keeps
-// the task's existing prompt so the legacy single-prompt behavior is preserved.
-func buildProactiveInstruction(cfg PhantomConfig) string {
-	always := splitRules(cfg.ProactiveAlways)
-	pool := splitRules(cfg.ProactiveActions)
-
-	var b strings.Builder
-	if s := strings.TrimSpace(cfg.ProactivePrompt); s != "" {
-		b.WriteString(s)
-		b.WriteString("\n\n")
-	}
-	if len(always) > 0 {
-		b.WriteString("Every time, do all of the following:\n")
-		for i, a := range always {
-			fmt.Fprintf(&b, "%d. %s\n", i+1, a)
-		}
-		b.WriteString("\n")
-	}
-	if len(pool) > 0 {
-		b.WriteString("Also do this one thing, chosen for this occasion:\n")
-		fmt.Fprintf(&b, "- %s\n", pool[rand.Intn(len(pool))])
-		b.WriteString("\n")
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// rescheduleProactive cancels any existing proactive task for the given
-// conversation and schedules a new one. Stores the scheduler task ID so
-// it can be cancelled later. This is the single authority for proactive
-// task lifecycle — both syncProactiveTasks and fireScheduledCall use it.
-func (T *Phantom) rescheduleProactive(chatID, handle string, cfg PhantomConfig) {
-	// Cancel whatever is currently scheduled for this conversation.
-	var oldID string
-	if T.DB.Get(proactiveIDsTable, chatID, &oldID) && oldID != "" {
-		UnscheduleTask(oldID)
-		T.DB.Unset(proactiveIDsTable, chatID)
-	}
-	if !cfg.ProactiveEnabled || cfg.ProactiveWindow == "" {
-		return
-	}
-	hours := WindowDurationHours(cfg.ProactiveWindow)
-	n := proactiveDailyN(T.DB, chatID, cfg.ProactiveMaxPerDay, hours)
-	fired := proactiveTodayCount(T.DB, chatID)
-	next, err := NextRandomWindowTime(cfg.ProactiveWindow, time.Now(), n, fired)
-	if err != nil {
-		Log("[phantom/proactive] window error for %s: %v", chatID, err)
-		return
-	}
-	prompt := buildProactiveInstruction(cfg)
-	if prompt == "" {
-		prompt = cfg.ProactivePrompt
-	}
-	payload := phantomCallPayload{
-		ChatID:      chatID,
-		Handle:      handle,
-		Prompt:      prompt,
-		IsProactive: true,
-	}
-	sid, err := ScheduleTask(phantomTaskKind, payload, next)
-	if err != nil {
-		Log("[phantom/proactive] schedule error for %s: %v", chatID, err)
-		return
-	}
-	T.DB.Set(proactiveIDsTable, chatID, sid)
-	Log("[phantom/proactive] scheduled proactive for %s at %s", chatID, next.Local().Format("Mon Jan 2 3:04 PM"))
-}
-
-// syncProactiveTasks is called after proactive config changes. For opted-in
-// conversations it cancel-and-replaces the existing task; for opted-out or
-// globally disabled conversations it cancels any lingering task.
-func (T *Phantom) syncProactiveTasks(cfg PhantomConfig) {
-	// Build set of tracked scheduler IDs so we can identify orphans.
-	tracked := make(map[string]bool)
-	for _, k := range T.DB.Keys(proactiveIDsTable) {
-		var sid string
-		if T.DB.Get(proactiveIDsTable, k, &sid) && sid != "" {
-			tracked[sid] = true
-		}
-	}
-
-	// Cancel orphaned proactive tasks left over from the old versioning system
-	// or from races. Any task with IsProactive=true that isn't in proactiveIDsTable
-	// is an orphan.
-	for _, task := range ListScheduledTasks(phantomTaskKind) {
-		if tracked[task.ID] {
-			continue
-		}
-		var p phantomCallPayload
-		if err := json.Unmarshal(task.Payload, &p); err != nil || !p.IsProactive {
-			continue
-		}
-		UnscheduleTask(task.ID)
-		Log("[phantom/proactive] cleaned up orphaned task %s for %s", task.ID, p.ChatID)
-	}
-
-	for _, k := range T.DB.Keys(conversationTable) {
-		var conv Conversation
-		if !T.DB.Get(conversationTable, k, &conv) {
-			continue
-		}
-		if cfg.ProactiveEnabled && conv.ProactiveEnabled {
-			T.rescheduleProactive(conv.ChatID, conv.Handle, cfg)
-		} else {
-			var oldID string
-			if T.DB.Get(proactiveIDsTable, conv.ChatID, &oldID) && oldID != "" {
-				UnscheduleTask(oldID)
-				T.DB.Unset(proactiveIDsTable, conv.ChatID)
-			}
-		}
-	}
 }
 
 // trackTask stores a record in phantom_tasks so the LLM can list and cancel it.
@@ -218,48 +100,11 @@ func (T *Phantom) registerSchedulerHandler() {
 	// Migrate any tasks stored in the old per-app DB table into the global scheduler.
 	migratePhantomScheduled(T.DB)
 
-	// Register a reconciler that ensures all opted-in conversations have a
-	// scheduled proactive task. If a task was lost (e.g. handler crashed after
-	// removing it but before re-scheduling), this recreates it.
-	SetPostSchedulerStart(func() {
-		RegisterReconciler("phantom/proactive", func(ctx context.Context) error {
-			sdb := GetSchedDB()
-			if sdb == nil {
-				return nil
-			}
-			_ = sdb // used implicitly via ListScheduledTasks
-			cfg := defaultConfig(T.DB)
-			if !cfg.ProactiveEnabled || cfg.ProactiveWindow == "" {
-				return nil
-			}
-			for _, k := range T.DB.Keys(conversationTable) {
-				var conv Conversation
-				if !T.DB.Get(conversationTable, k, &conv) || !conv.ProactiveEnabled || conv.ChatID == "" {
-					continue
-				}
-				// Check if a task already exists in the scheduler for this conversation.
-				hasTask := false
-				for _, st := range ListScheduledTasks(phantomTaskKind) {
-					var p phantomCallPayload
-					if json.Unmarshal(st.Payload, &p) == nil && p.ChatID == conv.ChatID && p.IsProactive {
-						hasTask = true
-						break
-					}
-				}
-				if !hasTask {
-					Log("[phantom/reconciler] rescheduling missing proactive task for %s", conv.ChatID)
-					T.rescheduleProactive(conv.ChatID, conv.Handle, cfg)
-				}
-			}
-			return nil
-		})
-	})
-
 	// Unified trigger engine (the `schedule` tool). Phantom-chat triggers
 	// deliver into a conversation: action=callback runs the agent turn and
 	// queues its reply; action=notify queues the summary verbatim. The legacy
 	// phantom.callback handler above stays registered for in-flight reminders
-	// and the proactive personality loop (dual-run).
+	// and LLM-scheduled callbacks.
 	RegisterTriggerAction("phantom_chat", func(ctx context.Context, t ScheduledTrigger, summary string) {
 		switch t.Action {
 		case ActionNotify:
@@ -555,59 +400,15 @@ func (T *Phantom) evalStopCondition(ctx context.Context, repeatUntil string, rep
 
 // fireScheduledCall runs the LLM with the scheduled prompt and enqueues the reply.
 func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
-	cfg := defaultConfig(T.DB)
-
-	if p.IsProactive && !cfg.ProactiveEnabled {
-		Log("[phantom/proactive] proactive disabled — dropping task for %s", p.ChatID)
-		return
-	}
-	// Dedup: if a proactive message was sent very recently (e.g. orphaned tasks
-	// from the old versioning system firing in parallel), skip silently.
-	if p.IsProactive {
-		if last := proactiveLastFire(T.DB, p.ChatID); !last.IsZero() && time.Since(last) < 5*time.Minute {
-			Log("[phantom/proactive] duplicate fire for %s — last fire %s ago, dropping", p.ChatID, time.Since(last).Round(time.Second))
-			return
-		}
-	}
-
-	var conv Conversation
-	T.DB.Get(conversationTable, p.ChatID, &conv)
-
 	// Remove the tracking record now that this task is firing.
 	// The reschedule path will create a new record with the fresh task ID.
-	if !p.IsProactive {
-		T.untrackTask(p.PhantomTaskID)
-	}
-
-	if p.IsProactive && !conv.ProactiveEnabled {
-		Log("[phantom/proactive] conversation %s not opted in — dropping", p.ChatID)
-		return
-	}
-	if p.IsProactive && cfg.ProactiveMaxPerDay > 0 {
-		if count := proactiveTodayCount(T.DB, p.ChatID); count >= cfg.ProactiveMaxPerDay {
-			Log("[phantom/proactive] daily cap of %d reached for %s — rescheduling for next window", cfg.ProactiveMaxPerDay, p.ChatID)
-			T.rescheduleProactive(p.ChatID, p.Handle, cfg)
-			return
-		}
-	}
-	// For proactive tasks, recompose the instruction from the current config
-	// (the action pool, always-do list, and mode may have changed since the
-	// task was scheduled). The window is always refreshed for the reschedule.
-	if p.IsProactive {
-		if instr := buildProactiveInstruction(cfg); instr != "" {
-			p.Prompt = instr
-		}
-		p.RepeatRandomWindow = cfg.ProactiveWindow
-	}
+	T.untrackTask(p.PhantomTaskID)
 
 	// Compose + deliver the scheduled turn (shared with the unified trigger
 	// engine). If nothing was delivered (LLM error, stay_silent with nothing,
 	// empty, or a duplicate), don't reschedule — matching the prior behavior.
 	if _, delivered := T.composeScheduledReply(ctx, p.ChatID, p.Handle, p.Prompt); !delivered {
 		return
-	}
-	if p.IsProactive {
-		incrementProactiveCount(T.DB, p.ChatID)
 	}
 
 	p.RepeatCount++
@@ -624,18 +425,10 @@ func (T *Phantom) fireScheduledCall(ctx context.Context, p phantomCallPayload) {
 		}
 	}
 
-	// Proactive tasks use rescheduleProactive (cancel-and-replace by ID).
-	if p.IsProactive {
-		T.rescheduleProactive(p.ChatID, p.Handle, cfg)
-		return
-	}
-
 	switch {
 	case p.RepeatRandomWindow != "":
-		// User-scheduled random-window repeats use a single slot covering
-		// the full window, preserving the legacy "fire once at a random time
-		// in this daily window" behavior. The proactive scheduler is the
-		// only path that uses multi-slot distribution.
+		// Random-window repeats use a single slot covering the full window:
+		// fire once at a random time in this daily window.
 		next, err := NextRandomWindowTime(p.RepeatRandomWindow, time.Now(), 1, 0)
 		if err != nil {
 			Log("[phantom/scheduler] random window reschedule error for %s: %v", p.Handle, err)

@@ -52,6 +52,10 @@ func (T *KnowledgeApp) WebDesc() string {
 	return "Named document collections that travel with your skills."
 }
 
+// WebOrder places Knowledge third on the dashboard, right after Agency
+// (-1000) and Bridges (-900), ahead of the default-50 app grid.
+func (T *KnowledgeApp) WebOrder() int { return -800 }
+
 func (T *KnowledgeApp) Routes() {
 	T.HandleFunc("/", T.handleListPage)
 	T.HandleFunc("/c/", T.handleDetailPage)
