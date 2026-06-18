@@ -153,7 +153,7 @@ func operatorRecipientKey(chatID, handle string) string {
 
 // operatorRecipientLabel renders a resolved recipient for user-facing messages:
 // "DisplayName (handle)" when both are known, else whichever is present.
-func operatorRecipientLabel(s PhantomChatSummary) string {
+func operatorRecipientLabel(s MessagingChatSummary) string {
 	switch {
 	case s.DisplayName != "" && s.Handle != "":
 		return s.DisplayName + " (" + s.Handle + ")"
@@ -621,7 +621,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Required: []string{"text"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				link, ok := ActivePhantomLink()
+				link, ok := ActiveMessagingLink()
 				if !ok {
 					return "", fmt.Errorf("the messaging bridge is not available")
 				}
@@ -663,7 +663,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if to == "" || text == "" {
 					return "", fmt.Errorf("to and text are required")
 				}
-				link, ok := ActivePhantomLink()
+				link, ok := ActiveMessagingLink()
 				if !ok {
 					return "", fmt.Errorf("the messaging bridge is not available")
 				}

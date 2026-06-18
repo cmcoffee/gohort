@@ -24,7 +24,7 @@ type bridgesConfig struct {
 	// SelfHandle is the owner's OWN messaging handle (their phone/email), used so
 	// the agent can text the owner directly (notify_me / self-notify) and resolve
 	// "me" as a recipient. Bridges only knew SelfName (a label) before; this is the
-	// addressable handle the PhantomLink owner-handle seam needs.
+	// addressable handle the MessagingLink owner-handle seam needs.
 	SelfHandle string `json:"self_handle,omitempty"`
 }
 
@@ -65,20 +65,14 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/messages/", T.handleMessages)
 	MountSubMux(mux, prefix, sub)
 
-	// Transition: let phantom's legacy /phantom/api/hook + /poll forward here, so
-	// the existing desktop daemon (still pointed at phantom) routes through
-	// Bridges until it's rebuilt to hit /bridges/api/* directly.
-	RegisterMessagingTransport(T.handleHook, T.handlePoll)
-
 	// Expose Bridges' stored threads + outbound to orchestrate's channel-scoped
 	// chat tools (list_chats / read_chat / send_message) without a cycle.
 	RegisterChannelThreads(channelThreadsImpl{T})
 
-	// Become the PhantomLink the Operator's tools (message_contact / notify_me /
-	// console / operator_wake) call — replacing phantom as that seam's provider.
-	// Registered AFTER any phantom import would have, so bridges wins. See
-	// phantomlink.go.
-	RegisterPhantomLink(phantomLinkImpl{T})
+	// Become the MessagingLink the Operator's tools (message_contact / notify_me /
+	// console / operator_wake) call — the sole provider since phantom retired.
+	// See phantomlink.go.
+	RegisterMessagingLink(messagingLinkImpl{T})
 }
 
 // handleConfig gets/sets the transport switch (so the panic state can be turned

@@ -626,7 +626,7 @@ func operatorApprovalRecipient(owner string, a Authorization) string {
 		return a.Handle
 	}
 	if strings.TrimSpace(a.ChatID) != "" {
-		if link, ok := ActivePhantomLink(); ok {
+		if link, ok := ActiveMessagingLink(); ok {
 			if s, ok := link.DescribeChat(owner, a.ChatID); ok {
 				switch {
 				case s.DisplayName != "" && s.Handle != "":

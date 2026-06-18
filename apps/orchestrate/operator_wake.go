@@ -75,7 +75,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// text: deliver the event straight to the owner's phone, no LLM.
 		if modes[EventNotifyText] {
 			sent := false
-			if link, ok := ActivePhantomLink(); ok {
+			if link, ok := ActiveMessagingLink(); ok {
 				if self, ok := link.OwnerHandle(owner); ok {
 					if err := link.SendToHandle(owner, self, summary); err == nil {
 						sent, delivered = true, true
@@ -94,7 +94,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// (e.g. the group); otherwise into the Agency channel thread.
 		if modes[EventNotifyDirect] {
 			if chatTarget != "" {
-				if link, ok := ActivePhantomLink(); ok {
+				if link, ok := ActiveMessagingLink(); ok {
 					if err := link.SendToChat(owner, chatTarget, summary); err == nil {
 						delivered = true
 						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
