@@ -16,6 +16,9 @@ type Database interface {
 	Keys(table string) []string
 	CountKeys(table string) int
 	Tables() []string
+	// AllTables lists every bucket including sub-store namespaces (the
+	// separator-named scopes Tables() hides) — for maintenance/enumeration.
+	AllTables() []string
 	Table(table string) Table
 	Close()
 }
@@ -170,6 +173,14 @@ func (d DBase) CountKeys(table string) int {
 // Tables returns a list of all table names in the database.
 func (d DBase) Tables() []string {
 	tables, err := d.Store.Tables()
+	Critical(err)
+	return tables
+}
+
+// AllTables lists every bucket including sub-store namespaces (separator-named
+// scopes Tables() hides). Used by maintenance sweeps that drop a whole scope.
+func (d DBase) AllTables() []string {
+	tables, err := d.Store.AllTables()
 	Critical(err)
 	return tables
 }
