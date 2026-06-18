@@ -147,6 +147,53 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	return out
 }
 
+// Stored-thread caps. compactOperatorHistory bounds the RUN view; these bound
+// what's PERSISTED, so a long-lived Cortex / channel thread doesn't grow without
+// limit (it's loaded whole every turn and re-read by the cortex poll). Older
+// folded content stays recoverable via the recall index it was archived to.
+const (
+	storedHistoryCap        = 150 // verbatim messages kept in the stored thread
+	storedHistoryCapNoEmbed = 500 // bigger when embeddings are off — recall is then substring-only, so retain more verbatim
+	storedHistorySlack      = 32  // only trim once over cap+slack, so it batches instead of dropping one per turn
+)
+
+// trimStoredHistory bounds the STORED thread (distinct from compactOperatorHistory's
+// run-view). With compaction ON it drops only leading messages already folded into
+// the summary AND archived to recall (capped at the fold cursor), decrementing the
+// cursor in lockstep so it keeps indexing the now-shorter array — the consistency
+// the run-view depends on (and the exact desync the earlier bug was). With
+// compaction OFF (forget-old) there's no summary/archive, so it keeps the last
+// `keep` verbatim and the rest is genuinely forgotten — consistent with that
+// agent's choice. No-op below the cap. Returns the slice to persist.
+func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sessID string, msgs []ChatMessage) []ChatMessage {
+	keep := storedHistoryCap
+	if !GetEmbeddingConfig().Enabled {
+		keep = storedHistoryCapNoEmbed
+	}
+	if len(msgs) <= keep+storedHistorySlack {
+		return msgs
+	}
+	if agent.DisableCompaction {
+		Log("[operator.compact] %s:%s storage capped to %d (compaction off; older forgotten)", agent.ID, sessID, keep)
+		return msgs[len(msgs)-keep:]
+	}
+	st := loadCompactState(udb, agent.ID, sessID)
+	if st.SummarizedThrough <= 0 {
+		return msgs // nothing folded yet → nothing safe to drop
+	}
+	drop := len(msgs) - keep
+	if drop > st.SummarizedThrough {
+		drop = st.SummarizedThrough // never drop a message that isn't in the summary + archive
+	}
+	if drop <= 0 {
+		return msgs
+	}
+	st.SummarizedThrough -= drop
+	saveCompactState(udb, agent.ID, sessID, st)
+	Log("[operator.compact] %s:%s storage trimmed %d folded leading msgs (kept %d + summary; older in recall)", agent.ID, sessID, drop, len(msgs)-drop)
+	return msgs[drop:]
+}
+
 // monitorWakePrefix marks a turn injected by an event-monitor wake (see the
 // waker in operator_wake.go). A frequently-firing monitor would otherwise
 // flood the verbatim tail with near-identical wake turns, which trains the

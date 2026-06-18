@@ -3402,11 +3402,13 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	if saved, err := saveChatSession(udb, sess); err == nil {
 		sess = saved
 	}
-	// Ongoing-conversation compaction (channel home thread only): storage
-	// keeps the full history (saved above); the RUN sees a bounded view — a
-	// running summary + the recent tail. Folds aging turns into the summary
-	// and evicts durable facts into memory. Gated to the channel thread so a
-	// channel agent's ordinary ad-hoc sessions stay verbatim (they're
+	// Ongoing-conversation compaction (channel home thread only): the RUN sees a
+	// bounded view — a running summary + the ContextDepth tail — and STORAGE is
+	// likewise bounded to the summary + a generous tail (trimStoredHistory), with
+	// folded-out spans archived to the recall index rather than kept inline, so
+	// this long-lived thread doesn't grow without limit. Folds aging turns into
+	// the summary and evicts durable facts into memory. Gated to the channel
+	// thread so a channel agent's ordinary ad-hoc sessions stay verbatim (they're
 	// disposable; only the persistent home thread needs the running summary).
 	//
 	// CRITICAL: the bounded view is RUN-ONLY — it feeds runPlan below and
@@ -3420,6 +3422,12 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	planMsgs := sess.Messages
 	if agent.Cortex && sess.ID == cortexSessionID(agent.ID) {
 		planMsgs = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
+		// Bound STORAGE too (not just the run-view): drop leading messages already
+		// folded into the summary AND archived to the recall index, keeping the
+		// summary + a generous verbatim tail. Caps the per-turn (and 3s cortex-poll)
+		// load of this long-lived thread instead of growing it forever; older
+		// content stays recoverable via recall_history. Cursor stays consistent.
+		sess.Messages = T.trimStoredHistory(udb, agent, sess.ID, sess.Messages)
 	}
 
 	if T.LLM == nil {
