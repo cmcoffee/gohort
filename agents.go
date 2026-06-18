@@ -13,7 +13,10 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/orchestrate"
-	_ "github.com/cmcoffee/gohort/apps/phantom"
+	// apps/phantom retired: transport + PhantomLink moved to apps/bridges, and
+	// proactive / scheduled-callbacks / goal-conversations were dropped (an agent
+	// on a channel covers them). No longer linked into the binary; the package
+	// stays in-tree until its files are deleted. See the phantom-retirement audit.
 	_ "github.com/cmcoffee/gohort/apps/servitor"
 	_ "github.com/cmcoffee/gohort/apps/techwriter"
 )
