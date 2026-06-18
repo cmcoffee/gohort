@@ -700,49 +700,6 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		},
 		{
 			Tool: Tool{
-				Name:        "converse_with_contact",
-				Description: "Hand off a GOAL to an individual contact and let me run the back-and-forth text conversation autonomously until it's done or I'm stuck — then I report back in this thread. Use this instead of message_contact when the task needs a real multi-turn exchange (scheduling, confirming details, negotiating), not a single message. Set `to` to the contact as shown by list_chats — a name, handle, or chat_id (this is for 1:1 conversations; to message a group use message_contact). Contacting a real person is consequential, so this queues ONE upfront approval to converse toward the goal (UNLESS the user pre-authorized this recipient via 'Always allow', in which case it starts right away); once approved I message and reply on my own, without asking per message.",
-				Parameters: map[string]ToolParam{
-					"to":   {Type: "string", Description: "The contact as shown by list_chats: a name, handle (phone/email), or chat_id. Required."},
-					"goal": {Type: "string", Description: "The objective to accomplish through the conversation, with any specifics I need (dates, constraints, what counts as done). I run the exchange toward this."},
-				},
-				Required: []string{"to", "goal"},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				to := strings.TrimSpace(oArgStr(args, "to"))
-				goal := strings.TrimSpace(oArgStr(args, "goal"))
-				if to == "" || goal == "" {
-					return "", fmt.Errorf("to and goal are required")
-				}
-				link, ok := ActivePhantomLink()
-				if !ok {
-					return "", fmt.Errorf("the messaging bridge is not available")
-				}
-				rec, ok := link.ResolveRecipient(owner, to)
-				if !ok {
-					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact name, handle, or chat_id exactly as shown by list_chats", to)
-				}
-				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
-				label := operatorRecipientLabel(rec)
-				// Pre-authorized recipient: start immediately (grant shared with
-				// one-shot texts), skip the queue.
-				if IsContactBlocked(RootDB, owner, recip) {
-					return fmt.Sprintf("Conversing with %s is blocked in the user's permission settings — not started.", label), nil
-				}
-				if IsContactPreAuthorized(RootDB, owner, recip) {
-					if _, err := link.StartGoalConversation(owner, rec.ChatID, rec.Handle, goal, agentID, cortexSessionID(agentID)); err != nil {
-						return "", err
-					}
-					return fmt.Sprintf("Started the conversation with %s toward the goal (you've pre-authorized this recipient) — I'll run the exchange and report back here when it's done or I'm stuck.", label), nil
-				}
-				a := SaveAuthorization(RootDB, Authorization{
-					Owner: owner, Action: "converse_contact", ChatID: rec.ChatID, Handle: rec.Handle, Brief: goal,
-				})
-				return fmt.Sprintf("Queued a request to converse with %s toward the goal for the user's approval — it's in the Authorizations pane (id %s). Once approved I run the whole exchange and report back here when it's done or I'm stuck.", label, a.ID), nil
-			},
-		},
-		{
-			Tool: Tool{
 				Name:        "list_event_monitors",
 				Description: "List the user's event monitors (webhook + poll) with their kind, schedule, paused state, and when each last fired.",
 			},

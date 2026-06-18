@@ -23,11 +23,12 @@ import (
 
 type phantomLinkImpl struct{ app *Phantom }
 
-// registerOperatorLink wires phantom into the core PhantomLink registry. Called
-// from RegisterRoutes once T.DB is set.
-func (T *Phantom) registerOperatorLink() {
-	RegisterPhantomLink(phantomLinkImpl{app: T})
-}
+// registerOperatorLink USED to wire phantom into the core PhantomLink registry.
+// Bridges now provides that seam (apps/bridges/phantomlink.go), so this is a
+// no-op during the transition — phantom's phantomLinkImpl below is dead code,
+// removed entirely when the phantom app is deleted. Left in place so the call
+// site in RegisterRoutes doesn't need touching mid-migration.
+func (T *Phantom) registerOperatorLink() {}
 
 // ownsBridge gates every link call to the single device owner.
 func (p phantomLinkImpl) ownsBridge(owner string) bool {

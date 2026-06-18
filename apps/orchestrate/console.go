@@ -692,19 +692,10 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// (Like send_message, "Always allow" does NOT pre-authorize a contact —
 	// each conversation stays a deliberate approval.)
 	if a.Action == "converse_contact" {
-		recip := operatorRecipientKey(a.ChatID, a.Handle)
-		// "Always allow" pre-authorizes THIS recipient (shared with one-shot
-		// texts), so future conversations/texts start without re-queuing.
-		if always {
-			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
-		}
-		if link, ok := ActivePhantomLink(); ok {
-			if _, err := link.StartGoalConversation(a.Owner, a.ChatID, a.Handle, a.Brief, defaultConsoleAgent, cortexSessionID(defaultConsoleAgent)); err != nil {
-				Log("[operator.approval] converse_contact with %s failed: %v", recip, err)
-			}
-		} else {
-			Log("[operator.approval] phantom bridge unavailable; dropped conversation with %s", recip)
-		}
+		// Goal-conversations are retired; an approval for a stale queued one just
+		// clears (nothing to start). Guard kept so it doesn't fall through to the
+		// delegation path below.
+		Log("[operator.approval] converse_contact retired; clearing stale approval")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

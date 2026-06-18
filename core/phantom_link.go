@@ -75,20 +75,6 @@ type PhantomLink interface {
 	// conversation, or just Handle for a brand-new handle-shaped recipient). ok
 	// is false when the string matches no conversation and isn't handle-shaped.
 	ResolveRecipient(owner, to string) (PhantomChatSummary, bool)
-	// StartGoalConversation asks phantom to run an autonomous, multi-turn
-	// conversation with `handle` toward `goal`, on behalf of the caller (the
-	// Operator). Phantom sends the opening message, then drives the exchange
-	// as the contact replies (async — nobody blocks), and when the goal is met
-	// or it's stuck it calls back into the caller's agent thread.
-	//
-	// Address the recipient by chatID (preferred — unambiguous; from ListChats)
-	// or, when chatID is empty, by handle (a brand-new 1:1 not yet in a thread).
-	//
-	// operatorAgent + operatorThread name that back-edge target as plain data
-	// so core needn't know the caller's session constants: phantom injects the
-	// outcome as a turn into operatorThread (run under operatorAgent). Returns
-	// a task id for correlation.
-	StartGoalConversation(owner, chatID, handle, goal, operatorAgent, operatorThread string) (taskID string, err error)
 }
 
 var (
@@ -96,7 +82,8 @@ var (
 	phantomLinkMu sync.RWMutex
 )
 
-// RegisterPhantomLink installs the bridge. Call once at startup from phantom.
+// RegisterPhantomLink installs the bridge. Called once at startup by the active
+// messaging transport (now bridges; formerly phantom).
 func RegisterPhantomLink(p PhantomLink) {
 	phantomLinkMu.Lock()
 	phantomLink = p

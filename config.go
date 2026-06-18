@@ -152,6 +152,32 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	return c
 }
 
+// reloadSharedLLMs rebuilds the shared worker + lead LLMs from current DB config
+// and swaps them in live (no restart). Registered via RegisterLLMReloader; the
+// admin UI calls core.ReloadLLMs() after saving LLM config. On error the prior
+// LLMs stay active (SetSharedLLMs isn't reached), so a bad config can't break a
+// running server. Apps hold reloadable handles, so the swap reaches them all.
+func reloadSharedLLMs() error {
+	cfg := dbcfg.llm()
+	if cfg.Provider == "" {
+		return fmt.Errorf("no worker LLM provider configured")
+	}
+	worker, err := NewLLMFromConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("worker LLM: %w", err)
+	}
+	var lead LLM
+	leadCfg := dbcfg.leadLLM()
+	if leadCfg.Provider != "" {
+		if lead, err = NewLLMFromConfig(leadCfg); err != nil {
+			return fmt.Errorf("lead LLM: %w", err)
+		}
+	}
+	SetSharedLLMs(worker, lead)
+	Log("[llm] reloaded shared LLMs (worker=%s/%s)", cfg.Provider, cfg.Model)
+	return nil
+}
+
 func (d dbCFG) mail() MailConfig {
 	var c MailConfig
 	global.db.Get(MailTable, "server", &c.Server)

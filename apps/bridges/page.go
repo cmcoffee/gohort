@@ -44,6 +44,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 						Fields: []ui.FormField{
 							{Field: "self_name", Label: "Your name", Type: "text", Placeholder: "Craig",
 								Help: "How your own messages are labeled in group chats."},
+							{Field: "self_handle", Label: "Your handle", Type: "text", Placeholder: "+15551234567",
+								Help: "Your own phone/email — lets the agent text you directly (notify_me) and resolve \"me\" as a recipient."},
 						},
 					},
 				}},

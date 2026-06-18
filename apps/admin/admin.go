@@ -306,6 +306,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		a.handleVectorStats(w, r)
 	})
 
+	// Per-kind breakdown (research / debate / lcm / collections / …) with doc +
+	// chunk counts — the legible view of what's in the index, vs the opaque
+	// per-source id dump.
+	sub.HandleFunc("/api/vector-stats/by-kind", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleVectorStatsByKind(w, r)
+	})
+
 	// API: settings (signup toggle, etc.).
 	sub.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -2331,6 +2341,28 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		})
 	})
 
+	// Worker LLM (primary / local) connection + thinking config. Mirrors the
+	// --setup "Primary Provider" step. Writes llm_config. The API key is
+	// CryptSet only when a new value is typed (blank = keep existing) and is
+	// never returned by GET. Parallel-request caps live in the separate Local
+	// Model Scheduler section. Takes effect on restart (the shared LLM is built
+	// once at startup).
+	sub.HandleFunc("/api/worker-llm", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleLLMConfig(w, r, LLMTable, true)
+	})
+	// Lead LLM (precision / remote) connection + thinking config. Mirrors the
+	// --setup "Precision LLM" step. Writes lead_llm_config; an empty provider
+	// means "use the primary worker". Same key-masking + restart semantics.
+	sub.HandleFunc("/api/lead-llm", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleLLMConfig(w, r, LeadLLMTable, false)
+	})
+
 	// Local model scheduler: GET returns max parallel for Ollama and llama.cpp,
 	// POST updates both values. Requires restart to apply.
 	sub.HandleFunc("/api/local-scheduler", func(w http.ResponseWriter, r *http.Request) {
@@ -2355,6 +2387,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				}
 				a.db.Set(LLMTable, "ollama_max_parallel", req.OllamaMaxParallel)
 				a.db.Set(LLMTable, "llamacpp_max_parallel", req.LlamacppMaxParallel)
+			}
+			// Parallel caps are read when the LLM client is built, so a reload
+			// re-applies them live (no restart).
+			if err := ReloadLLMs(); err != nil {
+				Log("[admin] LLM reload after scheduler save failed: %v", err)
 			}
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -2660,6 +2697,186 @@ func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 		"empty":          empty,
 		"by_source_text": byText,
 	})
+}
+
+// handleVectorStatsByKind aggregates the index by SOURCE KIND — the prefix
+// before the first ':' (research / debate / answer / lcm / collections / …) —
+// reporting a document count (distinct full sources) and a chunk count per kind.
+// The raw per-source ids are opaque; grouping by kind is what's actually legible.
+func (a *AdminApp) handleVectorStatsByKind(w http.ResponseWriter, r *http.Request) {
+	db := VectorDB
+	if db == nil {
+		db = RootDB
+	}
+	type kindAgg struct {
+		docs   map[string]bool
+		chunks int
+	}
+	agg := map[string]*kindAgg{}
+	if db != nil {
+		for _, k := range db.Keys(EmbeddedChunks) {
+			var c EmbeddedChunk
+			if !db.Get(EmbeddedChunks, k, &c) {
+				continue
+			}
+			src := c.Source
+			if src == "" {
+				src = "(unspecified)"
+			}
+			kind := src
+			if i := strings.IndexByte(src, ':'); i >= 0 {
+				kind = src[:i]
+			}
+			ka := agg[kind]
+			if ka == nil {
+				ka = &kindAgg{docs: map[string]bool{}}
+				agg[kind] = ka
+			}
+			ka.docs[src] = true
+			ka.chunks++
+		}
+	}
+	rows := make([]map[string]any, 0, len(agg))
+	for kind, ka := range agg {
+		rows = append(rows, map[string]any{
+			"kind":      kind,
+			"label":     vectorKindLabel(kind),
+			"documents": len(ka.docs),
+			"chunks":    ka.chunks,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i]["chunks"].(int) > rows[j]["chunks"].(int) })
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(rows)
+}
+
+// vectorKindLabel maps a source-kind prefix to a human label; unknown kinds
+// pass through unchanged.
+func vectorKindLabel(kind string) string {
+	switch strings.ToLower(kind) {
+	case "research":
+		return "Research reports"
+	case "debate":
+		return "Debates"
+	case "answer":
+		return "Answers"
+	case "lcm":
+		return "Conversation history"
+	case "collection", "collections":
+		return "Document collections"
+	case "skill", "skills":
+		return "Skills"
+	case "hook", "source-hook", "sourcehook":
+		return "Source hooks"
+	case "(unspecified)":
+		return "Unspecified"
+	}
+	return kind
+}
+
+// handleLLMConfig is the shared GET/POST handler for the Worker (llm_config) and
+// Lead (lead_llm_config) LLM sections. worker=true includes the worker-only
+// fields (context size, request timeout). The API key is CryptSet only when a
+// new value is supplied (blank on the form = keep the existing key) and is
+// masked — never returned — on GET. Mirrors the --setup save in config.go.
+func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table string, worker bool) {
+	if a.db == nil {
+		http.Error(w, "no database", http.StatusInternalServerError)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var req struct {
+			Provider             string `json:"provider"`
+			Model                string `json:"model"`
+			APIKey               string `json:"api_key"`
+			Endpoint             string `json:"endpoint"`
+			ContextSize          int    `json:"context_size"`
+			RequestTimeout       int    `json:"request_timeout_seconds"`
+			NativeTools          bool   `json:"native_tools"`
+			DisableThinking      bool   `json:"disable_thinking"`
+			ThinkingBudget       int    `json:"thinking_budget"`
+			NoThinkUseKwarg      bool   `json:"no_think_use_kwarg"`
+			NoThinkSendBudget    bool   `json:"no_think_send_budget"`
+			NoThinkBudget        int    `json:"no_think_budget"`
+			NoThinkPrependSystem bool   `json:"no_think_prepend_system"`
+			NoThinkPrependUser   bool   `json:"no_think_prepend_user"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		a.db.Set(table, "provider", req.Provider)
+		a.db.Set(table, "model", req.Model)
+		a.db.Set(table, "endpoint", req.Endpoint)
+		a.db.Set(table, "native_tools", req.NativeTools)
+		a.db.Set(table, "disable_thinking", req.DisableThinking)
+		a.db.Set(table, "thinking_budget", req.ThinkingBudget)
+		a.db.Set(table, "no_think_configured", true)
+		a.db.Set(table, "no_think_use_kwarg", req.NoThinkUseKwarg)
+		a.db.Set(table, "no_think_send_budget", req.NoThinkSendBudget)
+		a.db.Set(table, "no_think_budget", req.NoThinkBudget)
+		a.db.Set(table, "no_think_prepend_system", req.NoThinkPrependSystem)
+		a.db.Set(table, "no_think_prepend_user", req.NoThinkPrependUser)
+		if worker {
+			a.db.Set(table, "context_size", req.ContextSize)
+			a.db.Set(table, "request_timeout_seconds", req.RequestTimeout)
+		}
+		if req.APIKey != "" {
+			a.db.CryptSet(table, "api_key", req.APIKey)
+		}
+		// Apply live — rebuild the shared LLMs from the new config so the change
+		// takes effect without a restart. Best-effort: on a bad config the prior
+		// LLMs stay active and we log it (the config is still saved).
+		if err := ReloadLLMs(); err != nil {
+			Log("[admin] LLM reload after %s save failed (config saved; prior LLM still active): %v", table, err)
+		}
+		Log("[admin] user %q updated %s (provider=%q model=%q)", AuthCurrentUser(r), table, req.Provider, req.Model)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// GET — current values; api_key is masked (never returned).
+	var provider, model, endpoint string
+	var contextSize, reqTimeout, noThinkBudget int
+	var nativeTools, disableThinking, ntPrependSys, ntPrependUser bool
+	ntKwarg, ntBudget := true, true // defaults when no-think was never configured
+	thinkingBudget := 4096          // default budget when unset (matches config.go)
+	a.db.Get(table, "provider", &provider)
+	a.db.Get(table, "model", &model)
+	a.db.Get(table, "endpoint", &endpoint)
+	a.db.Get(table, "native_tools", &nativeTools)
+	a.db.Get(table, "disable_thinking", &disableThinking)
+	a.db.Get(table, "thinking_budget", &thinkingBudget)
+	var ntConfigured bool
+	a.db.Get(table, "no_think_configured", &ntConfigured)
+	if ntConfigured {
+		a.db.Get(table, "no_think_use_kwarg", &ntKwarg)
+		a.db.Get(table, "no_think_send_budget", &ntBudget)
+		a.db.Get(table, "no_think_prepend_system", &ntPrependSys)
+		a.db.Get(table, "no_think_prepend_user", &ntPrependUser)
+	}
+	a.db.Get(table, "no_think_budget", &noThinkBudget)
+	out := map[string]any{
+		"provider":                provider,
+		"model":                   model,
+		"endpoint":                endpoint,
+		"native_tools":            nativeTools,
+		"disable_thinking":        disableThinking,
+		"thinking_budget":         thinkingBudget,
+		"no_think_use_kwarg":      ntKwarg,
+		"no_think_send_budget":    ntBudget,
+		"no_think_budget":         noThinkBudget,
+		"no_think_prepend_system": ntPrependSys,
+		"no_think_prepend_user":   ntPrependUser,
+		"api_key":                 "", // masked; blank on the form means "keep existing"
+	}
+	if worker {
+		a.db.Get(table, "context_size", &contextSize)
+		a.db.Get(table, "request_timeout_seconds", &reqTimeout)
+		out["context_size"] = contextSize
+		out["request_timeout_seconds"] = reqTimeout
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
 }
 
 func (a *AdminApp) handleStatus(w http.ResponseWriter, r *http.Request) {

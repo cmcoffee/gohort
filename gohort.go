@@ -193,13 +193,17 @@ func main() {
 		if shared_llm == nil {
 			set_agent_llm(agent)
 			T := agent.Get()
-			shared_llm = T.LLM
-			shared_lead_llm = T.LeadLLM
+			// Register the concrete worker/lead as the process shared pair (also
+			// what stateless tools read via SharedWorkerLLM), then hand THIS agent
+			// and every later one RELOADABLE handles instead of the concrete LLM —
+			// so an admin LLM-config change (core.ReloadLLMs) swaps the concretes
+			// live and every app's reference follows, no restart.
+			SetSharedLLMs(T.LLM, T.LeadLLM)
+			shared_llm = ReloadableWorkerLLM()
+			shared_lead_llm = ReloadableLeadLLM()
 			shared_prompt_tools = T.PromptTools
-			// Expose to stateless tools that need an inline LLM call
-			// (e.g., the mock-shell tool). Only runs once because the
-			// first-agent branch is gated on shared_llm being nil.
-			SetSharedLLMs(shared_llm, shared_lead_llm)
+			T.LLM = shared_llm
+			T.LeadLLM = shared_lead_llm
 		} else {
 			T := agent.Get()
 			T.LLM = shared_llm
@@ -207,6 +211,9 @@ func main() {
 			T.PromptTools = shared_prompt_tools
 		}
 	}
+	// Wire the live LLM-config reload (admin UI applies model/provider/key
+	// changes without a restart) — rebuilds from DB and swaps the shared pair.
+	RegisterLLMReloader(reloadSharedLLMs)
 
 	if global.debug {
 		enable_debug()

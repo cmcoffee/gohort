@@ -21,6 +21,11 @@ type bridgesConfig struct {
 	// this they resolve to "Someone". Set it and your messages read as you, in
 	// group threads and to the agent.
 	SelfName string `json:"self_name,omitempty"`
+	// SelfHandle is the owner's OWN messaging handle (their phone/email), used so
+	// the agent can text the owner directly (notify_me / self-notify) and resolve
+	// "me" as a recipient. Bridges only knew SelfName (a label) before; this is the
+	// addressable handle the PhantomLink owner-handle seam needs.
+	SelfHandle string `json:"self_handle,omitempty"`
 }
 
 func (T *Bridges) config() bridgesConfig {
@@ -68,6 +73,12 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Expose Bridges' stored threads + outbound to orchestrate's channel-scoped
 	// chat tools (list_chats / read_chat / send_message) without a cycle.
 	RegisterChannelThreads(channelThreadsImpl{T})
+
+	// Become the PhantomLink the Operator's tools (message_contact / notify_me /
+	// console / operator_wake) call — replacing phantom as that seam's provider.
+	// Registered AFTER any phantom import would have, so bridges wins. See
+	// phantomlink.go.
+	RegisterPhantomLink(phantomLinkImpl{T})
 }
 
 // handleConfig gets/sets the transport switch (so the panic state can be turned

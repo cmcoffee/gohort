@@ -203,6 +203,12 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-section-grid > .ui-section-wide { grid-column: 1 / -1; }
 @media (min-width: 900px) {
   .ui-section-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Masonry mode (class added by JS): a fine row track so per-card row spans can
+   * pack each card directly under the one above instead of aligning to the
+   * tallest card in its row (which left "missing puzzle piece" holes under the
+   * short ones). JS-gated via the class so that without JS the grid stays a
+   * normal, functional 2-col grid rather than clamping cards to a 2px track. */
+  .ui-section-grid.ui-masonry { grid-auto-rows: 2px; }
 }
 /* Page.Tabbed — a category button bar across the top; one group's
  * sections show at a time. */
@@ -16903,6 +16909,51 @@ const runtimeJS = `
       if (inGrid && s.wide) section.classList.add('ui-section-wide');
       host.appendChild(section);
     });
+
+    // Masonry packing for grid sections. Plain CSS grid aligns every row to its
+    // tallest card, leaving holes under shorter cards (the "missing puzzle pieces"
+    // look). We give the grid a fine row track (the .ui-masonry CSS above) and set
+    // each card's row span to ceil(height / track), so cards pack directly under
+    // the one above. Only at >=2 columns; single-column (mobile) clears the spans.
+    if (inGrid) {
+      var masonryGrids = Array.prototype.slice.call(root.querySelectorAll('.ui-section-grid'));
+      masonryGrids.forEach(function(g) { g.classList.add('ui-masonry'); });
+      var layoutMasonry = function(grid) {
+        if (grid.offsetParent === null) return; // hidden (inactive tab) — reruns when shown
+        var cs = getComputedStyle(grid);
+        var cols = cs.gridTemplateColumns.split(' ').filter(Boolean).length;
+        var kids = Array.prototype.slice.call(grid.children);
+        if (cols < 2) { kids.forEach(function(c) { c.style.gridRowEnd = ''; }); return; }
+        var rowH = parseFloat(cs.gridAutoRows) || 1;
+        var gap = parseFloat(cs.rowGap) || 0;
+        // Reset, measure all, then assign — avoids interleaved read/write thrash
+        // and the cards never paint mid-pass (one synchronous JS task).
+        kids.forEach(function(c) { c.style.gridRowEnd = ''; });
+        var spans = kids.map(function(c) {
+          return Math.max(1, Math.ceil((c.getBoundingClientRect().height + gap) / (rowH + gap)));
+        });
+        kids.forEach(function(c, i) { c.style.gridRowEnd = 'span ' + spans[i]; });
+      };
+      var relayoutMasonry = function() { masonryGrids.forEach(layoutMasonry); };
+      requestAnimationFrame(relayoutMasonry); // initial pass once layout settles
+      var mrT = null;
+      window.addEventListener('resize', function() {
+        if (mrT) clearTimeout(mrT);
+        mrT = setTimeout(relayoutMasonry, 120); // column count flips at the breakpoint
+      });
+      // Recompute when a card's own height changes — async Table loads, ShowWhen
+      // toggles, collapsibles, and tab show/hide (display:none -> shown fires it).
+      if (window.ResizeObserver) {
+        var moT = null;
+        var mo = new ResizeObserver(function() {
+          if (moT) clearTimeout(moT);
+          moT = setTimeout(relayoutMasonry, 60);
+        });
+        masonryGrids.forEach(function(grid) {
+          Array.prototype.forEach.call(grid.children, function(c) { mo.observe(c); });
+        });
+      }
+    }
 
     if (cfg.footer) {
       var footer = el('div', {class: 'ui-footer'});

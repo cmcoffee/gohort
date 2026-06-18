@@ -383,6 +383,74 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Worker LLM",
+				Subtitle: "The primary / local model most work runs on. Applies immediately on save (the live LLM is rebuilt — no restart). API key is stored encrypted; leave it blank to keep the current one.",
+				Body: ui.FormPanel{
+					Source: "api/worker-llm",
+					Fields: []ui.FormField{
+						{Field: "provider", Label: "Provider", Type: "select", Options: []ui.SelectOption{
+							{Value: "ollama", Label: "Ollama"}, {Value: "llama.cpp", Label: "llama.cpp"},
+							{Value: "anthropic", Label: "Anthropic"}, {Value: "openai", Label: "OpenAI"},
+							{Value: "gemini", Label: "Gemini"}},
+							Help: "Local providers (ollama / llama.cpp) are the usual worker."},
+						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b", Help: "Blank = provider default."},
+						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
+							Help: "Stored encrypted. Not needed for local ollama / llama.cpp."},
+						{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1",
+							Help: "For local / self-hosted providers; blank = provider default.",
+							Presets: []ui.FieldPreset{
+								{Label: "Ollama", Value: "http://localhost:11434"},
+								{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
+						{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 262144,
+							Help: "0 = default (65K for ollama / llama.cpp)."},
+						{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
+							Help: "0 = default 300s."},
+						{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
+							Help: "Disable for models without tool-calling support (ollama)."},
+						{Type: "header", Label: "Thinking", Collapsed: true},
+						{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle"},
+						{Field: "thinking_budget", Label: "Thinking budget (tokens, 0 = unlimited)", Type: "number", Min: 0, Max: 131072,
+							Help: "Also the hard ceiling for per-agent / per-route budgets. Default 4096."},
+						{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle"},
+						{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle"},
+						{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192,
+							Help: "0 = built-in default (512)."},
+						{Field: "no_think_prepend_system", Label: "No-think: prepend /no_think to system prompt", Type: "toggle"},
+						{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle"},
+					},
+				},
+			},
+			{
+				Title:    "Lead LLM",
+				Subtitle: "The precision / remote model for high-stakes stages (routing sends \"lead\" stages here). Provider \"(use primary)\" reuses the worker. Applies immediately on save (no restart); key stored encrypted, blank keeps current.",
+				Body: ui.FormPanel{
+					Source: "api/lead-llm",
+					Fields: []ui.FormField{
+						{Field: "provider", Label: "Provider", Type: "select", Options: []ui.SelectOption{
+							{Value: "", Label: "(use primary)"},
+							{Value: "anthropic", Label: "Anthropic"}, {Value: "openai", Label: "OpenAI"},
+							{Value: "gemini", Label: "Gemini"}, {Value: "ollama", Label: "Ollama"},
+							{Value: "llama.cpp", Label: "llama.cpp"}},
+							Help: "(use primary) routes lead stages to the worker model."},
+						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-4-6"},
+						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
+							Help: "Stored encrypted. Blank reuses the primary provider's key where applicable."},
+						{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
+							Help: "For local / self-hosted lead providers."},
+						{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
+							Help: "Disable for models without tool-calling support (ollama)."},
+						{Type: "header", Label: "Thinking", Collapsed: true},
+						{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle"},
+						{Field: "thinking_budget", Label: "Thinking budget (tokens, 0 = unlimited)", Type: "number", Min: 0, Max: 131072},
+						{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle"},
+						{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle"},
+						{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192},
+						{Field: "no_think_prepend_system", Label: "No-think: prepend /no_think to system prompt", Type: "toggle"},
+						{Field: "no_think_prepend_user", Label: "No-think: prepend /no_think to last user message", Type: "toggle"},
+					},
+				},
+			},
+			{
 				Title:     "LLM Routing",
 				Subtitle:  "Pick which tier handles each pipeline stage. \"lead\" uses the precision (remote) LLM. \"worker\" uses the local model. \"worker (thinking)\" enables extended reasoning on the local model. Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
 				Body: ui.Table{
@@ -429,19 +497,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					EmptyText: "No routing stages registered.",
 				},
 			},
-			{
-				Title:    "Worker LLM Thinking",
-				Subtitle: "Default thinking settings for the worker (local) LLM. Per-route overrides in the routing table take precedence. Budget 0 = unlimited.",
-				Body: ui.FormPanel{
-					Source: "api/worker-thinking",
-					Fields: []ui.FormField{
-						{Field: "enabled", Label: "Thinking enabled by default", Type: "toggle"},
-						{Field: "budget", Label: "Default thinking budget (tokens)", Type: "number",
-							Min: 0, Max: 65536, Help: "0 = unlimited (model decides).",
-							ShowWhen: "enabled"},
-					},
-				},
-			},
+			// "Worker LLM Thinking" folded into the new "Worker LLM" section above
+			// (its thinking + no-think controls now live in that section's
+			// collapsible Thinking group). The api/worker-thinking endpoint is
+			// retained for compatibility but no longer surfaced here.
 			{
 				Title:    "Cost History (Last 30 Days)",
 				Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown. Tap **Adjust prices** to edit the per-token / per-call rates that feed the dollar estimate.",
@@ -1319,7 +1378,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Local Model Scheduler",
-				Subtitle: "Concurrent-request caps for local LLM backends. Default 1 (strict serial). Raise only when the backend supports parallel requests. Requires restart to apply.",
+				Subtitle: "Concurrent-request caps for local LLM backends. Default 1 (strict serial). Raise only when the backend supports parallel requests. Applies immediately on save (the live LLM is rebuilt).",
 				Body: ui.FormPanel{
 					Source: "api/local-scheduler",
 					Fields: []ui.FormField{
@@ -1364,15 +1423,28 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			{
 				Title:    "Vector Index",
 				Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced.",
-				Body: ui.DisplayPanel{
-					Source: "api/vector-stats",
-					Pairs: []ui.DisplayPair{
-						{Label: "Total chunks", Field: "total"},
-						{Label: "Embedded", Field: "embedded"},
-						{Label: "Empty (embed failed)", Field: "empty"},
-						{Label: "By source", Field: "by_source_text", Mono: true},
+				Body: ui.Stack{Children: []ui.Component{
+					ui.DisplayPanel{
+						Source: "api/vector-stats",
+						Pairs: []ui.DisplayPair{
+							{Label: "Total chunks", Field: "total"},
+							{Label: "Embedded", Field: "embedded"},
+							{Label: "Empty (embed failed)", Field: "empty"},
+						},
 					},
-				},
+					// Per-kind breakdown (documents + chunks) — the legible view,
+					// vs the opaque per-source id dump it replaces.
+					ui.Table{
+						Source: "api/vector-stats/by-kind",
+						RowKey: "kind",
+						Columns: []ui.Col{
+							{Field: "label", Label: "Source", Flex: 2},
+							{Field: "documents", Label: "Documents"},
+							{Field: "chunks", Label: "Chunks"},
+						},
+						EmptyText: "No chunks indexed yet.",
+					},
+				}},
 			},
 			{
 				Title:     "Database Browser",
@@ -1392,13 +1464,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"System Status": "System", "Site Settings": "System",
 		"Users": "System", "Default Apps": "System",
 
-		"LLM Routing": "Routing",
+		"Cost History (Last 30 Days)": "System",
 
-		"Worker LLM Thinking": "Models",
-		"Cost History (Last 30 Days)": "Models", "Ollama Proxy": "Models",
-		"Embeddings": "Models", "Agent Loop Tuning": "Models",
-		"Local Model Scheduler": "Models",
+		"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs",
+		"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
+		"Local Model Scheduler": "LLMs",
 
+		"Embeddings": "Capabilities",
 		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
 		"Web Search": "Capabilities", "Mail (SMTP)": "Capabilities",
 		"Network Timeouts": "Capabilities",
@@ -1433,7 +1505,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// by this rank so the tabs read in a sensible order regardless of the
 	// section authoring order above; sections keep their relative order
 	// within each group.
-	groupRank := map[string]int{"System": 0, "Models": 1, "Routing": 2, "Capabilities": 3, "Tools": 4, "Maintenance": 5}
+	groupRank := map[string]int{"System": 0, "LLMs": 1, "Capabilities": 2, "Tools": 3, "Maintenance": 4}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})
