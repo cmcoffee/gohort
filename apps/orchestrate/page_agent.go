@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,24 +20,45 @@ import (
 // em-dashes (universal style rule).
 const channelAgentPrompt = "You are a helpful assistant answering messages on a messaging channel. Keep replies short, clear, and conversational; these are text messages, not essays. Answer the person directly and stay on topic. If you need information, use your tools quietly and reply with the result. Do not narrate your internal steps, your tools, or any other agents. If you genuinely can't help with something, say so briefly and suggest a next step."
 
-// channelAgentTemplates returns the agent editor's "Start from template"
-// presets (create mode only). The Channel agent is a focused conversational
-// base for an agent you attach to a Channel: a messaging persona, Fleet OFF
-// (a channel bot shouldn't reach your fleet), and Cortex OFF (each contact
-// is its own session under the agent, so it needs no home thread of its
-// own). You stamp instances from this rather than cloning your personal
-// Chat, which would drag in its manage-your-agents / dispatch-Builder
-// framing. See docs/channels-and-agents.md.
-func channelAgentTemplates() []ui.FormTemplate {
+// agentTypeTemplates returns the editor's "Agent type" presets (create mode).
+// Picking one STAMPS sensible defaults for the character-defining flags —
+// Cortex (a standing mind, the "channel" json field) and memory mode — so you
+// choose WHAT KIND of agent this is instead of reasoning about each flag. The
+// type is a starting point, not a lock: every flag stays editable in Advanced
+// afterward. Fleet is deliberately OFF on all of them — granting the fleet
+// (delegate / standing agents / monitors) to an agent is an explicit choice you
+// add per agent, not a type default (dispatch to other agents is already
+// available without it). See docs/channels-and-agents.md.
+//
+//	Assistant      — standing personal helper: Cortex on, personalized memory.
+//	Conversational — a 1:1 chat persona that knows you: no Cortex, personalized.
+//	Channel agent  — answers a messaging room/contact: Cortex on (for the
+//	                 received→cortex feed), lessons-only memory (a room is many
+//	                 people, so single-user personalization doesn't fit).
+//	Specialist     — a focused, dispatchable worker: no Cortex, lessons-only.
+func agentTypeTemplates() []ui.FormTemplate {
 	return []ui.FormTemplate{
 		{
-			Label: "Channel agent",
+			Label:  "Assistant — standing personal helper (continuous mind)",
+			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false},
+		},
+		{
+			Label:  "Conversational — a 1:1 chat persona that knows you",
+			Values: map[string]any{"channel": false, "memory_mode": "chatbot", "fleet": false},
+		},
+		{
+			Label: "Channel agent — answers a messaging room / contact",
 			Values: map[string]any{
-				"description":         "Conversational agent for a messaging channel (Telegram / Slack / iMessage).",
-				"orchestrator_prompt": channelAgentPrompt,
+				"channel":             true, // Cortex on → the received→cortex feed
+				"memory_mode":         "agent",
 				"fleet":               false,
-				"channel":             false,
+				"description":         "Conversational agent attached to a messaging channel (iMessage / Telegram / Slack).",
+				"orchestrator_prompt": channelAgentPrompt,
 			},
+		},
+		{
+			Label:  "Specialist — a focused, dispatchable worker",
+			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false},
 		},
 	}
 }
@@ -89,6 +111,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+	agentLocked := false
 	if id != "" {
 		source = "../api/agents/" + id
 		title = "Edit agent"
@@ -97,12 +120,15 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// the editor falls back to the top-level shape (intake form,
 		// publishing, etc. still rendering for what's actually a
 		// sub-agent).
-		if rec, ok := loadAgent(udb, id); ok && rec.OwnedBy != "" {
-			subAgent = true
-			if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
-				parentName = parent.Name
+		if rec, ok := loadAgent(udb, id); ok {
+			agentLocked = rec.Locked
+			if rec.OwnedBy != "" {
+				subAgent = true
+				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
+					parentName = parent.Name
+				}
+				title = "Edit sub-agent"
 			}
-			title = "Edit sub-agent"
 		}
 	}
 	// On save, redirect back to the chat surface AND pre-select the
@@ -137,7 +163,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "plan_guidance", Type: "textarea", Label: "Plan guidance", Rows: 3,
 			Help:       "Optional. Appended to the orchestrator prompt — nudges decomposition style.",
 			SuggestURL: "../api/agents/suggest"},
-		{Type: "header", Label: "Budgets",
+		{Type: "header", Label: "Budgets", Collapsed: true,
 			Help: "How much compute the agent may spend per turn."},
 		{Field: "max_plan_steps", Type: "number", Label: "Max plan steps", Min: 1, Max: 12,
 			Placeholder: "5",
@@ -149,7 +175,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			SuggestURL:  "../api/agents/suggest"},
 		{Field: "gap_check", Type: "toggle", Label: "Gap detection",
 			Help: "Post-plan review pass that fills structural gaps before synthesis. Worth it for research; off for chat."},
-		{Type: "header", Label: "Reasoning",
+		{Type: "header", Label: "Reasoning", Collapsed: true,
 			Help: "Override the LLM's reasoning mode for this agent's turns."},
 		{Field: "think", Type: "select", Label: "Think mode",
 			Options: []ui.SelectOption{
@@ -182,7 +208,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Lets the worker lift its round budget mid-turn. For agents mapping unfamiliar APIs."},
 			ui.FormField{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",
 				Help: "Max rounds once explorer mode is active. Blank/0 = default 50. Only applies when explorer mode is allowed."},
-			ui.FormField{Type: "header", Label: "Memory",
+			ui.FormField{Type: "header", Label: "Memory", Collapsed: true,
 				Help: "What the agent remembers across turns. Knowledge (uploaded files) is always available."},
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode",
 				Options: []ui.SelectOption{
@@ -194,10 +220,12 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Strips store_fact tools + pre-injected facts block. For impersonal / stateless agents."},
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
 				Help: "Strips memory_save / memory_search / memory_forget from the catalog and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
-			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
-				Help: "Hides read_skill / skill_knowledge_search / skill_knowledge_fetch_doc + the \"Available skills\" block AND stops trigger-injection — no skill applies, regardless of the per-agent allowlist. For KB readers / doc-Q&A / compliance agents that should never load skill addendums."},
+			// (disable_skills toggle removed — redundant: skills only fire when a
+			// skill is ATTACHED (AllowedSkills), so "no skills" = attach none; the
+			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the
+			// CRUD tools.)
 
-			ui.FormField{Type: "header", Label: "Context",
+			ui.FormField{Type: "header", Label: "Context", Collapsed: true,
 				Help: "How much of a persistent thread (the Cortex home thread, each Channel room) the agent carries into the prompt. Storage always keeps the full thread; these only bound the run-view."},
 			ui.FormField{Field: "context_depth", Type: "number", Label: "Context depth (recent messages)", Min: 0, Max: 200,
 				Placeholder: "0",
@@ -205,15 +233,15 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_compaction", Type: "toggle", Label: "Disable rolling summary",
 				Help: "Off (default) summarizes older messages into a running summary; on drops them to the context-depth tail instead. Both stay bounded — this just chooses summarize-old vs forget-old."},
 
-			ui.FormField{Type: "header", Label: "Cortex & fleet",
+			ui.FormField{Type: "header", Label: "Cortex & fleet", Collapsed: true,
 				Help: "Always-on behaviors. Independent of each other."},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
 				Help: "Gives the agent a persistent Cortex thread (its mind — the ⚡ row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Can be published as a public app (each visitor gets their own private Cortex thread + compaction) as long as Fleet tools are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Fleet management tools",
 				Help: "Grants delegation + standing-agent + event-monitor + run-ledger + history-recall tools. Unlike the old orchestrator mode it does NOT stop the agent doing work itself — it just adds the tools. Fleet agents are never published publicly (the tools reach owner-only management endpoints)."},
 
-			ui.FormField{Type: "header", Label: "Publishing",
-				Help: "Who can use this agent and under what restrictions."},
+			ui.FormField{Type: "header", Label: "Access & visibility", Collapsed: true,
+				Help: "Who can use this agent, fleet visibility, and Private-mode policy. (The edit/delete lock is the 🔒 icon at the top-right.)"},
 			ui.FormField{Field: "exposed", Type: "toggle", Label: "Publish as public app",
 				Help: "Shows on /agents/ for non-admin users. Each end-user gets their own sessions + facts under the agent."},
 			ui.FormField{Field: "public_name", Type: "text", Label: "Public app name",
@@ -226,8 +254,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
 				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agency picker and stays reachable at its public URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
+			// (Lock moved to the 🔒/🔓 icon in the top-right of the editor —
+			// toggled live via handleAgentLock, preserved across form saves.)
 
-			ui.FormField{Type: "header", Label: "Intake & evals",
+			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
 				Help: "Optional structured input form + saved test cases."},
 			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
 				Help: "Optional. Saved test cases for the eval harness. Run via POST /api/agents/<id>/eval to grade the agent against each case. Format: a JSON array of {name, prompt, must_include, must_not_include, judge_prompt, notes}. must_include / must_not_include are case-insensitive substring checks; judge_prompt is an optional LLM-as-judge criterion. Use to lock in expected behavior before editing the orchestrator_prompt so regressions are visible.",
@@ -238,23 +268,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Placeholder: "[\n  {\"name\": \"company\", \"label\": \"Company name\", \"type\": \"text\", \"required\": true},\n  {\"name\": \"audience\", \"label\": \"Target audience\", \"type\": \"textarea\"},\n  {\"name\": \"deadline\", \"label\": \"Deadline\", \"type\": \"select\", \"options\": [\"This week\", \"This month\", \"No rush\"]},\n  {\"name\": \"topics\", \"label\": \"Topics of interest\", \"type\": \"checklist\", \"options\": [\"AI\", \"Healthcare\", \"Finance\", \"Education\"]}\n]",
 				SuggestURL:  "../api/agents/suggest"},
 		)
-	} else {
-		// Sub-agent surface: still allow the user to suppress skills.
-		// Memory / publishing / intake are pinned off structurally; no
-		// reason to display the toggles.
-		fields = append(fields,
-			ui.FormField{Field: "disable_skills", Type: "toggle", Label: "Disable skills",
-				Help: "Suppresses the skills classifier for this sub-agent. Skills can contaminate focused-specialist answers with unrelated corpus chunks; off-by-default for sub-agents is usually right."},
-		)
 	}
+	// (Sub-agent surface has no extra toggles — memory / publishing / intake are
+	// pinned off structurally, and disable_skills was dropped as redundant.)
 
-	// "Start from template" presets — create mode only (a template would
-	// clobber a real agent's fields when editing). Today: the Channel
-	// agent, a lean conversational base you stamp instances from instead
-	// of cloning your personal Chat.
+	// "Agent type" presets — create mode only (a template stamps fields, which
+	// would clobber a real agent's values when editing; flags stay editable in
+	// Advanced after). Picking a type sets the character-defining defaults
+	// (Cortex + memory mode, Fleet off) so you choose what KIND of agent it is.
 	var agentTemplates []ui.FormTemplate
 	if id == "" && !subAgent {
-		agentTemplates = channelAgentTemplates()
+		agentTemplates = agentTypeTemplates()
 	}
 	agentSection := ui.Section{
 		Title:    "Agent",
@@ -267,6 +291,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			RedirectURL:    redirectURL,
 			RedirectTarget: "_self",
 			Templates:      agentTemplates,
+			TemplatesLabel: "Agent type",
 			Fields:         fields,
 		},
 	}
@@ -349,12 +374,65 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" {
 		backURL = "..?agent=" + url.QueryEscape(id)
 	}
+	// Lock icon — a 🔒/🔓 toggle pinned to the top-right of the editor for any
+	// existing agent (seeds included — locking protects a seed shadow from being
+	// rewritten by another agent too). Toggling it persists immediately via
+	// /api/agents/{id}/lock (handleAgentLock); the form save preserves Locked, so
+	// the icon is the single control. App-specific behavior, so it rides in via
+	// ExtraHeadHTML per the core/ui domain-agnostic rule.
+	lockHead := ""
+	if id != "" {
+		lockHead = agentLockIconHTML(id, agentLocked)
+	}
 	page := ui.Page{
-		Title:     title,
-		ShowTitle: true,
-		BackURL:   backURL,
-		MaxWidth:  "900px",
-		Sections:  sections,
+		Title:         title,
+		ShowTitle:     true,
+		BackURL:       backURL,
+		MaxWidth:      "900px",
+		Sections:      sections,
+		ExtraHeadHTML: lockHead,
 	}
 	page.ServeHTTP(w, r)
+}
+
+// agentLockIconHTML builds the lock toggle injected via ExtraHeadHTML. It sits
+// inline in the page header, right after the title (next to the agent name),
+// rather than floating at the viewport edge. 🔒 = locked (other agents can't
+// edit/delete it), 🔓 = unlocked. Click POSTs to /api/agents/<id>/lock and
+// re-draws. The header is built asynchronously by the runtime, so a short
+// requestAnimationFrame poll waits for the title before inserting. No backticks
+// (it lives in a Go raw string downstream); JS uses plain quotes + concatenation.
+func agentLockIconHTML(id string, locked bool) string {
+	return fmt.Sprintf(`<style>
+#agent-lock{cursor:pointer;border:none;background:none;font-size:1.35rem;line-height:1;opacity:.85;padding:0 .25rem;align-self:center;margin-left:.55rem}
+#agent-lock:hover{opacity:1;transform:scale(1.1)}
+#agent-lock[disabled]{opacity:.4;cursor:wait}
+</style>
+<script>
+(function(){
+  var locked=%t, id=%q;
+  var b=document.createElement('button');
+  b.id='agent-lock'; b.type='button';
+  function draw(){
+    b.textContent=locked?'🔒':'🔓';
+    b.title=locked?'Locked — only you can edit or delete (click to unlock)':'Unlocked — click to lock so other agents cannot edit or delete';
+  }
+  draw();
+  b.onclick=function(){
+    var next=!locked; b.disabled=true;
+    fetch('../api/agents/'+id+'/lock',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({locked:next})})
+      .then(function(r){ if(!r.ok) throw new Error('request failed'); locked=next; draw(); })
+      .catch(function(e){ alert('Could not change lock: '+(e&&e.message||e)); })
+      .then(function(){ b.disabled=false; });
+  };
+  var tries=0;
+  function mount(){
+    if(document.getElementById('agent-lock')) return;
+    var title=document.querySelector('.ui-page-title');
+    if(title){ title.insertAdjacentElement('afterend', b); return; }
+    if(tries++ < 120) requestAnimationFrame(mount);
+  }
+  mount();
+})();
+</script>`, locked, id)
 }

@@ -191,8 +191,22 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// Scope to the agent this pane is for — a standing agent runs (and was
+	// created from) AgentID, so without this every agent's pane shows every
+	// agent's scheduled agents with no way to tell which belongs where.
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	rows := []consoleAgentRow{}
 	for _, sa := range ListStandingAgents(RootDB, user) {
+		// A standing agent belongs to the CONTROLLER that created and manages it
+		// (ReportAgentID) — that's whose console this pane is. AgentID is the
+		// target agent it RUNS (e.g. a "Market Research" job created from the
+		// Operator), which is a different agent, so scoping by it hid the job
+		// from its own controller. Empty ReportAgentID (legacy) stays visible
+		// everywhere rather than vanishing.
+		controller := sa.ReportAgentID
+		if agentID != "" && controller != "" && controller != agentID {
+			continue
+		}
 		state := "active"
 		if sa.Paused {
 			state = "paused"
@@ -289,7 +303,14 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
 	rows := []consoleMonitorRow{}
 	for _, m := range ListEventMonitors(RootDB, user) {
-		if agentID != "" && m.WakeAgent != agentID {
+		// A monitor belongs to the agent it wakes. An empty WakeAgent means the
+		// default Chat agent (seed-chat) — map it so those monitors show on
+		// Chat's pane instead of vanishing from every pane.
+		wake := m.WakeAgent
+		if wake == "" {
+			wake = "seed-chat"
+		}
+		if agentID != "" && wake != agentID {
 			continue
 		}
 		state := "active"

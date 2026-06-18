@@ -51,7 +51,10 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			Message:        in.Text,
 			Images:         images,
 			Interactive:    true, // a real person is texting — no delegation marker
-			StatusCallback: in.StatusCallback,
+			// Replying BACK to this same conversation is in-thread, not a
+			// proactive reach-out — so it skips the send approval gate.
+			ReplyAuthorizedKey: operatorRecipientKey(in.ChatID, in.Handle),
+			StatusCallback:     in.StatusCallback,
 		})
 		if err != nil {
 			return ChannelReply{}, err
@@ -72,7 +75,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		if rt := strings.TrimSpace(replyText); rt != "" {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
-		app.AppendCortexObservation(in.Owner, in.AgentID, chFirst(in.SenderName, in.ConversationName, "someone"), obs)
+		app.AppendCortexObservation(in.Owner, in.AgentID, chFirst(in.SenderName, in.ConversationName, "someone"), cortexKindMessage, obs)
 		return ChannelReply{Text: replyText, Images: res.Images}, nil
 	})
 }

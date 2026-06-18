@@ -31,7 +31,7 @@ func phantomInheritableToolDefs(sess *ToolSession, agentID string) []AgentToolDe
 	var out []AgentToolDef
 	for _, td := range operatorManagementTools(sess, agentID) {
 		switch td.Tool.Name {
-		case "list_phantom_chats", "read_phantom_chat", "notify_me":
+		case "list_chats", "read_chat", "notify_me":
 			out = append(out, td)
 		}
 	}

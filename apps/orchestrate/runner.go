@@ -3120,6 +3120,9 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		History          []ChatMessage `json:"history,omitempty"`
 		PrivateMode      bool          `json:"private_mode,omitempty"`
 		InferredDisabled bool          `json:"inferred_disabled,omitempty"`
+		// Incognito (clean-room session) — honored only on the FIRST turn, when
+		// the session is created; afterwards the stored session flag governs.
+		Incognito bool `json:"incognito,omitempty"`
 		// Hidden marks the user message as already-shown-in-prior-bubble
 		// (e.g. an ask_user card's submitted state). LLM still sees the
 		// content in history; the chat panel just skips rendering a
@@ -3264,10 +3267,11 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 			// "operator-thread") is actually CREATED under that id on its
 			// first turn. Empty req.SessionID (a normal new chat) falls
 			// through to saveChatSession minting a fresh UUID.
-			ID:      req.SessionID,
-			AgentID: agent.ID,
-			Title:   titleFromFirstMessage(req.Message),
-			Created: time.Now(),
+			ID:        req.SessionID,
+			AgentID:   agent.ID,
+			Title:     titleFromFirstMessage(req.Message),
+			Created:   time.Now(),
+			Incognito: req.Incognito, // clean-room session, set at creation
 		}
 		var err error
 		sess, err = saveChatSession(udb, sess)
@@ -3404,8 +3408,18 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	// and evicts durable facts into memory. Gated to the channel thread so a
 	// channel agent's ordinary ad-hoc sessions stay verbatim (they're
 	// disposable; only the persistent home thread needs the running summary).
+	//
+	// CRITICAL: the bounded view is RUN-ONLY — it feeds runPlan below and
+	// nothing else. It must NOT be written back to sess.Messages: the
+	// CompactState.SummarizedThrough cursor indexes the FULL history, so
+	// re-feeding an already-shortened list overshoots the cursor, clamps the
+	// tail to empty, and silently drops the user's just-typed message from
+	// BOTH the LLM payload and (via the end-of-turn save) storage — the model
+	// then answers from the stale summary alone. Keep sess.Messages full; the
+	// dispatch path (agent_dispatch.go) already uses this run-only pattern.
+	planMsgs := sess.Messages
 	if agent.Cortex && sess.ID == cortexSessionID(agent.ID) {
-		sess.Messages = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
+		planMsgs = T.compactOperatorHistory(udb, user, agent, sess.ID, sess.Messages)
 	}
 
 	if T.LLM == nil {
@@ -3491,7 +3505,9 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		session:          &sess,
 		privateMode:      privateMode,
 		network:          turnConnector,
-		inferredDisabled: req.InferredDisabled,
+		// Incognito (clean-room) sessions also suppress the inferred memory layer
+		// (write side) — nothing accumulates back, matching "no baggage out".
+		inferredDisabled: req.InferredDisabled || sess.Incognito,
 		isNewSession:     isNewSession,
 		userImages:       decodeUserImages(req.Images),
 		// from_client.* tools are exposed only when the request came from the
@@ -3565,7 +3581,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 
 	// --- Orchestrator round 1: respond directly, plan, or ask ---
 	turn.emitStatus("Thinking…")
-	steps, question, directReply, planErr := turn.runPlan(sess.Messages)
+	steps, question, directReply, planErr := turn.runPlan(planMsgs)
 	if planErr != nil {
 		sse.Send(map[string]any{"kind": "error", "text": "plan: " + planErr.Error()})
 		return
@@ -3931,13 +3947,22 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if !isBuilderAgent(t.agent.ID) {
 		persona = roundShapePreamble(resolveMaxPlanSteps(t.agent)) + persona
 	}
-	sys := prependAgentContext(persona, t.agent, t.facts())
-	// Cortex fork-seeding: a NON-cortex session of a Cortex-enabled agent inherits
-	// the cortex's recent STANDING context (received channel messages, monitor
-	// fires) as background awareness — so the agent greets you already aware. Skip
-	// the cortex's own thread (it already holds these). Concise live-read; empty
-	// when nothing's recent. Cross-session FACT continuity rides memory, not this.
-	if t.agent.Cortex && t.session != nil && t.session.ID != cortexSessionID(t.agent.ID) {
+	// Incognito (clean-room) session: inherit NOTHING — no memory facts and no
+	// cortex standing context. A one-off with no baggage. Connected sessions
+	// (the default) get both.
+	incognito := t.session != nil && t.session.Incognito
+	facts := t.facts()
+	if incognito {
+		facts = nil
+	}
+	sys := prependAgentContext(persona, t.agent, facts)
+	// Cortex fork-seeding: a NON-cortex, NON-incognito session of a Cortex-enabled
+	// agent inherits the cortex's recent STANDING context (received channel
+	// messages, monitor fires) as background awareness — so the agent greets you
+	// already aware. Skip the cortex's own thread (it already holds these).
+	// Concise live-read; empty when nothing's recent. Cross-session FACT
+	// continuity rides memory, not this.
+	if !incognito && t.agent.Cortex && t.session != nil && t.session.ID != cortexSessionID(t.agent.ID) {
 		sys += cortexContextBlock(t.udb, t.agent.ID)
 	}
 	if g := strings.TrimSpace(t.agent.PlanGuidance); g != "" {
@@ -4229,21 +4254,27 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	formTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user_form",
-			Description: "Pause and ask the user a SEQUENCE of clarifying questions, one at a time, with clickable answers. Use when you need multiple pieces of info to proceed and each has its own discrete choices — e.g. language + deployment target + timeline. PREFER this over a single ask_user with a numbered list inside the question text; the form gives the user clickable step-through UI instead of forcing them to type \"1. Go 2. AWS 3. one week\". For a single question, use ask_user instead.",
+			Description: "Pause and collect SEVERAL pieces of info from the user in one pass. Two shapes, depending on whether you need CHOICES or typed ENTRY:\n• CHOICES: each step has discrete options (e.g. language + deployment target + timeline) — the user clicks through them one at a time. PREFER this over a single ask_user with a numbered list in the question text.\n• ENTRY FIELDS: give a step a type (\"text\", \"number\", \"textarea\", \"select\", \"password\") when the user must TYPE a specific value — an API base URL, a key, a count, an endpoint. Any step with a type turns the whole thing into a single FORM: every field shows at once with one Submit, instead of a step-through. Mix freely — a select field with options plus text/number fields. For ONE question, use ask_user instead.",
 			Parameters: map[string]ToolParam{
 				"steps": {
 					Type:        "array",
-					Description: "Ordered list of questions to walk the user through. Each step is {question, options?, multi?}. Keep questions short; 2-5 steps total is the sweet spot.",
+					Description: "Ordered list of steps. A CHOICE step is {question, options?, multi?}; an ENTRY-FIELD step is {question, type, placeholder?, options? (for select)}. Keep it short; 2-6 steps is the sweet spot. As soon as ANY step has a type, the client renders all steps at once as a form.",
 					Items: &ToolParam{
 						Type: "object",
 						Properties: map[string]ToolParam{
-							"question": {Type: "string", Description: "The question text shown for this step."},
+							"question": {Type: "string", Description: "The question or field LABEL shown for this step."},
+							"type": {
+								Type:        "string",
+								Enum:        []string{"text", "number", "textarea", "select", "password"},
+								Description: "Optional. Set this to make the step a typed ENTRY field: \"text\" (one line), \"number\", \"textarea\" (multi-line), \"select\" (dropdown built from options), or \"password\" (masked, for secrets/keys). Omit for a plain choice/open step. Any typed step switches the form to all-fields-at-once with one Submit.",
+							},
 							"options": {
 								Type:        "array",
-								Description: "Optional clickable choices for this step. When provided the user sees checkboxes (multi) or radios (single); always paired with a free-text input for custom answers.",
+								Description: "Choices for this step. For a choice step the user sees checkboxes (multi) or radios (single) plus a free-text input; for a type=select step these are the dropdown values. Array of strings.",
 								Items:       &ToolParam{Type: "string"},
 							},
-							"multi": {Type: "boolean", Description: "When true (and options is non-empty), multiple options can be picked for this step. Default false."},
+							"placeholder": {Type: "string", Description: "Optional hint text inside an entry field (type=text/number/textarea/password), e.g. \"https://api.example.com\"."},
+							"multi":       {Type: "boolean", Description: "Choice steps only: when true (and options is non-empty), multiple options can be picked. Default false."},
 						},
 						Required: []string{"question"},
 					},
@@ -5785,8 +5816,11 @@ func toLLMMessages(msgs []ChatMessage) []Message {
 // to maxSteps with a log when the orchestrator overshoots its budget.
 // normalizeFormStep coerces one entry from the ask_user_form tool's
 // `steps` array into the shape the client renderer expects:
-// {question, options:[...], multi:bool}. Defensive against the LLM
-// varying types (string options vs []any, missing fields).
+// {question, options:[...], multi:bool, type, placeholder}. Defensive
+// against the LLM varying types (string options vs []any, missing fields).
+// A non-empty `type` marks the step as a typed entry FIELD (text / number /
+// textarea / select / password); the renderer switches to an all-at-once
+// form when any step carries one.
 func normalizeFormStep(m map[string]any) map[string]any {
 	out := map[string]any{
 		"question": strings.TrimSpace(stringArg(m, "question")),
@@ -5796,6 +5830,15 @@ func normalizeFormStep(m map[string]any) map[string]any {
 	}
 	if v, ok := m["multi"].(bool); ok && v {
 		out["multi"] = true
+	}
+	// Entry-field metadata. Only accept known types so a stray value can't
+	// produce a broken input; anything else falls back to a choice/open step.
+	switch strings.ToLower(strings.TrimSpace(stringArg(m, "type"))) {
+	case "text", "number", "textarea", "select", "password":
+		out["type"] = strings.ToLower(strings.TrimSpace(stringArg(m, "type")))
+	}
+	if ph := strings.TrimSpace(stringArg(m, "placeholder")); ph != "" {
+		out["placeholder"] = ph
 	}
 	return out
 }

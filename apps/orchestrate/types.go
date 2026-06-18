@@ -384,6 +384,12 @@ type AgentRecord struct {
 	// Empty (default) = no parent, standard top-level agent.
 	OwnedBy string `json:"owned_by,omitempty"`
 
+	// Locked protects this agent from being edited or deleted BY ANOTHER AGENT
+	// (the agent-CRUD tools). Only the human — via the dashboard/editor — can
+	// change a locked agent. Off by default; the user opts in to protect agents
+	// they don't want an authoring agent (Builder, a misfiring fleet) to touch.
+	Locked bool `json:"locked,omitempty"`
+
 	// InheritParentTools makes an owned sub-agent (OwnedBy set) resolve the
 	// PARENT's inheritable tool catalog at runtime in ADDITION to its own
 	// AllowedTools. "Inheritable" is the parent's non-consequential set — its
@@ -522,6 +528,12 @@ type ChatSession struct {
 	// sidebar's unread dot. Not persisted — derived from the two timestamps.
 	Unread bool `json:"unread,omitempty"`
 
+	// Incognito marks a "clean room" session (cortex preset): it does NOT inherit
+	// the agent's cortex standing context OR its memory/facts, and (write side)
+	// does not store facts back. A one-off with no baggage in and nothing out.
+	// Set at creation from the request; persisted for the session's life.
+	Incognito bool `json:"incognito,omitempty"`
+
 	// AwaitingUserConfirm is set when the previous orchestrator turn
 	// ended via ask_user / ask_user_form. The next user message is
 	// presumed to be the answer, and gated tools (agent CRUD, etc.)
@@ -641,6 +653,13 @@ type ChatMessage struct {
 	// still gets a "[standing agent …]" context marker prepended at history-
 	// build time (see toLLMMessages).
 	ReportFrom string `json:"report_from,omitempty"`
+	// ReportKind classifies a ReportFrom card so the UI can pick a fitting
+	// icon — a channel message from a person reads differently from a scheduled
+	// report or a monitor wake. One of: "message" (a channel inbound),
+	// "scheduled" (a standing-agent report), "monitor" (an event-monitor wake),
+	// "deliverable" (a filed artifact pointer). Empty falls back to the default
+	// (scheduled) icon. Display-only — the LLM context marker keys off ReportFrom.
+	ReportKind string `json:"report_kind,omitempty"`
 	// Sender names who authored this message, for channel-room transcripts
 	// where the session is a multi-party messaging thread: the contact's
 	// display name on inbound (user) messages, the bound agent's name on its

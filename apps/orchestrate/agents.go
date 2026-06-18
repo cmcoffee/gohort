@@ -932,6 +932,7 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 
 - One question, enumerable choices → ask_user with options[].
 - Several questions, each with their own choices → ask_user_form with steps[]. NEVER stuff multiple questions into one ask_user as a numbered list; that forces the user to type "1. … 2. … 3. …" instead of clicking through.
+- Several specific VALUES the user must TYPE (an API base URL, a key, a count, an endpoint) → ask_user_form with steps[] where each step sets type ("text"/"number"/"textarea"/"select"/"password"). Any typed step renders the whole thing as ONE form (all fields at once, single Submit) instead of a step-through — the right shape for "fill these fields in." Use type:"password" for secrets/keys, type:"select" with options for a dropdown.
 - Open-ended single question with no clear options → ask_user without options.
 
 ## Authoring: tools are yours; agents and pipelines go to Builder
@@ -942,7 +943,7 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 
 1. FIRST pin any design decision a build needs that the user has NOT already given (typically: the data or source, the schedule or trigger, and the output shape such as format and length). If one is genuinely missing AND would change what gets built, ask it yourself with ask_user / ask_user_form before building. Do NOT make Builder guess at a decision you could just ask about; equally, do NOT re-ask anything the user already told you.
 
-2. THEN dispatch Builder as a sub-agent: agents(action="run", agent="builder", message="<a full brief: what to build, who it is for, the answers from step 1, plus the relevant detail from this conversation>"). Builder inherits your read-only tools (read_phantom_chat and the like) so it can inspect what you can see while it drafts. Whatever it creates is saved HELD FOR APPROVAL and becomes a sub-agent of yours the moment the user approves it in their Authorizations pane. Do NOT author agents / pipelines / skills yourself or via plan_set. After dispatching, tell the user what you had built and that it is waiting for their approval:
+2. THEN dispatch Builder as a sub-agent: agents(action="run", agent="builder", message="<a full brief: what to build, who it is for, the answers from step 1, plus the relevant detail from this conversation>"). Builder inherits your read-only tools (read_chat and the like) so it can inspect what you can see while it drafts. Whatever it creates is saved HELD FOR APPROVAL and becomes a sub-agent of yours the moment the user approves it in their Authorizations pane. Do NOT author agents / pipelines / skills yourself or via plan_set. After dispatching, tell the user what you had built and that it is waiting for their approval:
 
   "I had Builder draft that for you. Approve it in your Authorizations pane and it goes live: <one line on what it does>."
 
@@ -958,7 +959,7 @@ You can supervise and schedule the user's standing agents and event monitors. To
 
 To be woken when something changes, create an event monitor (not a standing agent), and pick the CHEAPEST kind that can detect it so you do not burn an LLM every cycle. Prefer deterministic detection: an http_poll monitor reads a value from a URL (json_path or regex) and fires when it crosses a threshold, with no LLM; a watch monitor invokes a tool each interval, hashes its output, and wakes you ONLY when that output changes, with no LLM until it does — reach for this whenever a tool can return the thing to watch (for example read_phantom_chat to watch a chat, fetch_url to watch a page), because it is the cheap way to "tell me when X changes"; a webhook monitor mints a secret URL an external system POSTs to. Only when the condition is genuinely fuzzy and no value or hash can capture it should you use a poll monitor, which runs an LLM checker agent every interval (the expensive last resort, and it is edge-triggered, so the checker must answer a clean NONE whenever the condition is absent). Default to watch or http_poll over poll. Manage them with list_event_monitors and delete_event_monitor.
 
-When you set a monitor up, ASK the user how they want to be alerted when it fires, then set the notify field: notify="channel" (default) wakes you here in this thread so you can react and summarize (uses an LLM); notify="direct" posts the change verbatim into this thread with NO LLM, so it just shows up here and lights the unread dot; notify="text" texts the change straight to their phone, no LLM. Use channel when the alert benefits from your reasoning, direct or text when they just want the raw change pushed (cheaper, no LLM per fire). And note what watching a chat actually means: a watch on read_phantom_chat OBSERVES that conversation and reports changes to the user HERE. It never sends a message into the watched chat. Do not text or reply to the people in a conversation you were only asked to watch; "watch the X chat" means tell ME when it changes, not message X.
+When you set a monitor up, ASK the user how they want to be alerted when it fires, then set the notify field: notify="channel" (default) wakes you here in this thread so you can react and summarize (uses an LLM); notify="direct" posts the change verbatim into this thread with NO LLM, so it just shows up here and lights the unread dot; notify="text" texts the change straight to their phone, no LLM. Use channel when the alert benefits from your reasoning, direct or text when they just want the raw change pushed (cheaper, no LLM per fire). And note what watching a chat actually means: a watch on read_chat OBSERVES that conversation and reports changes to the user HERE. It never sends a message into the watched chat. Do not text or reply to the people in a conversation you were only asked to watch; "watch the X chat" means tell ME when it changes, not message X.
 
 You can reach the user on their phone through the phantom (iMessage) bridge: notify_me texts the owner directly and needs no approval. To text a contact or group, use message_contact with 'to' set to the recipient name from list_phantom_chats; it queues for approval. For a real back-and-forth toward a goal, use converse_with_contact and run the exchange autonomously, getting woken back here when it is done. Read the user's conversations with list_phantom_chats and read_phantom_chat when asked.`,
 			// Chat is the primary channel agent — the Operator folded into it.
@@ -1554,7 +1555,7 @@ The rule: ask when GUESSING is the alternative; search when SEARCHING is the alt
 - The user under-specified but the answer space is small and you can cover it ("how does X work" → search and explain).
 - A name/term you don't know — look it up first, ask only if results are genuinely ambiguous.
 
-Multi-step clarifications (several distinct decisions to make) → use ask_user_form with steps[], one step per decision. Never numbered-list multiple questions inside one ask_user.`,
+Multi-step clarifications (several distinct decisions to make) → use ask_user_form with steps[], one step per decision. Never numbered-list multiple questions inside one ask_user. When you instead need the user to TYPE specific values (URL, key, count, endpoint), give each step a type ("text"/"number"/"select"/"password"/"textarea") so ask_user_form renders one fill-in form.`,
 			AllowedTools: []string{
 				"web_search",
 				"fetch_url",
@@ -1730,6 +1731,18 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			} else if existing.Owner != user {
 				http.Error(w, "not your agent", http.StatusForbidden)
 				return
+			} else {
+				// Locked is owned by the lock icon (handleAgentLock), not the
+				// edit form — preserve the stored value so a normal save can't
+				// silently unlock the agent.
+				req.Locked = existing.Locked
+			}
+		} else if isSeedID(req.ID) {
+			// Seeds save as a per-user shadow. The form carries no `locked`
+			// field (the icon owns it), so preserve the stored lock from the
+			// existing shadow or it would clear on every save.
+			if existing, ok := loadAgent(udb, req.ID); ok {
+				req.Locked = existing.Locked
 			}
 		}
 		// Seed agents auto-include every persistent_temp_tool the user
@@ -1951,6 +1964,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentPhantomSessionOne(w, r, user, id, sid)
 		return
 	}
+	if action == "lock" {
+		T.handleAgentLock(w, r, user, id)
+		return
+	}
 	if action == "knowledge/auto-inferred" {
 		T.handleAgentKnowledgeAutoInferredWipe(w, r, user, id)
 		return
@@ -2058,4 +2075,36 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleAgentLock toggles the per-agent edit/delete lock — POST /api/agents/{id}/lock
+// {locked}. This is the HUMAN control (the editor's lock icon), so it's owner-
+// gated only; the agent-CRUD tools enforce the lock, they don't set it. Locked
+// is changed ONLY here — the main agent save preserves the stored value — so the
+// icon is the single source of truth and a form save can't clobber it.
+func (T *OrchestrateApp) handleAgentLock(w http.ResponseWriter, r *http.Request, user, id string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	udb := UserDB(T.DB, user)
+	a, ok := loadAgent(udb, id)
+	// Seeds load with an empty Owner until first shadowed; treat that as the
+	// caller's own. A non-seed must already belong to the caller.
+	if !ok || (a.Owner != "" && a.Owner != user) {
+		http.NotFound(w, r)
+		return
+	}
+	var req struct {
+		Locked bool `json:"locked"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	a.Owner = user
+	a.Locked = req.Locked
+	if _, err := saveAgent(udb, a); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"locked": a.Locked})
 }

@@ -153,10 +153,11 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "send_message",
-				Description: "Send a message OUT over one of this agent's channels — to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to your channels only. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient.",
+				Description: "Send a message OUT over one of this agent's channels — to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to your channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool — put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
 				Parameters: map[string]ToolParam{
-					"to":   {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id."},
-					"text": {Type: "string", Description: "The message to send. To include a file you generated, save it to your workspace and call workspace(action=\"attach\", path=\"<file>\") first — it rides along."},
+					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id."},
+					"text":        {Type: "string", Description: "The message text to send to the channel."},
+					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
 				},
 				Required: []string{"to", "text"},
 			},
@@ -172,9 +173,17 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 				}
 				recip := operatorRecipientKey(chatID, handle)
 				label := chFirst(handle, chatID)
-				images := collectMessageAttachments(sess, text)
+				images := messageImages(sess, args, text)
 				if IsContactBlocked(RootDB, owner, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings — not sent.", label), nil
+				}
+				// Replying to the conversation that just messaged us is in-thread,
+				// not a proactive reach-out — deliver without the approval queue.
+				if isReplyToActiveInbound(sess, recip) {
+					if _, err := operatorDeliverMessage(owner, chatID, handle, text, images); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				if IsContactPreAuthorized(RootDB, owner, recip) {
 					if _, err := operatorDeliverMessage(owner, chatID, handle, text, images); err != nil {

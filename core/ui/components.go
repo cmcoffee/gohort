@@ -398,6 +398,18 @@ type FormPanel struct {
 	// known-good starting point the user can edit before saving. Keys
 	// in each template's Values are field names.
 	Templates []FormTemplate `json:"templates,omitempty"`
+	// TemplatesLabel overrides the "Start from template" caption on the presets
+	// dropdown — e.g. "Agent type" when the templates are character presets, not
+	// just starting points. Empty = "Start from template".
+	TemplatesLabel string `json:"templates_label,omitempty"`
+
+	// Invalidate — data sources to refresh after a successful save. Each
+	// entry is matched against other components' Source; a Table fetched
+	// from the same URL refetches itself (via window.uiInvalidate). Use
+	// when this form writes a record that a sibling list displays — e.g.
+	// an "add" form in a modal whose result should appear in the table
+	// behind it without a manual reload.
+	Invalidate []string `json:"invalidate,omitempty"`
 }
 
 // FormTemplate is one named preset for a FormPanel's "Start from
@@ -466,6 +478,11 @@ type FormField struct {
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
 	Decimals int            `json:"decimals,omitempty"`
 	Options  []SelectOption `json:"options,omitempty"`
+	// Collapsed, on a Type=="header" field, makes that header a collapsible
+	// group: the fields that follow it (until the next header) fold into a body
+	// that's hidden until the header is clicked. Declutters advanced settings
+	// without splitting the single-save FormPanel. No effect on non-header fields.
+	Collapsed bool `json:"collapsed,omitempty"`
 	// ShowWhen names another field in the same FormPanel; this field
 	// is rendered (and saves are wired) only when that field's current
 	// value is truthy. Use to collapse irrelevant configuration when a
@@ -830,6 +847,18 @@ type ActionList struct {
 	Confirm    string `json:"confirm,omitempty"`
 	ButtonText string `json:"button_text,omitempty"` // default "Run"
 	EmptyText  string `json:"empty_text,omitempty"`
+
+	// Invalidate — data sources to refresh after a successful action.
+	// Matched against other components' Source so a sibling Table
+	// refetches itself (via window.uiInvalidate). Use when acting on a
+	// row writes something a nearby list shows.
+	Invalidate []string `json:"invalidate,omitempty"`
+	// ReloadSelf — when true, the list refetches its OWN source after a
+	// successful action, dropping the row that was just acted on (e.g. an
+	// "add" picker where the chosen item moves into a managed list and
+	// should disappear from the picker). Off by default so maintenance
+	// lists keep their per-row "done" status visible.
+	ReloadSelf bool `json:"reload_self,omitempty"`
 }
 
 func (ActionList) componentType() string { return "action_list" }
@@ -1589,6 +1618,29 @@ type AgentLoopPanel struct {
 	// top of the rail) for alt-nav agents. App-owned wording; core/ui defaults
 	// to "Channel" when unset rather than hardcoding any one app's term.
 	AltPrimaryLabel string `json:"alt_primary_label,omitempty"`
+
+	// NewVariants, when set, turns the rail's "+ New" button into a split
+	// control: the primary button starts an ordinary new session, and a
+	// caret (▾) opens a menu of alternate new-session modes. Each variant
+	// arms its Extras onto the FIRST send of the new session (creation-time
+	// flags the server reads when it mints the session, e.g. a clean-room
+	// "incognito" session). Use this for choices that are decided when a
+	// session is BORN rather than toggled mid-thread — unlike Modes, which
+	// are live per-turn switches on the session you're already in.
+	NewVariants []NewSessionVariant `json:"new_variants,omitempty"`
+}
+
+// NewSessionVariant is one alternate entry in the rail's "+ New ▾" menu
+// (see AgentLoopPanel.NewVariants). Selecting it opens a fresh session and
+// arms Extras onto that session's first send — a creation-time choice, not
+// a live toggle.
+type NewSessionVariant struct {
+	Label string `json:"label"`
+	Title string `json:"title,omitempty"` // tooltip
+	// Extras are mixed into the body of the new session's first send. The
+	// server reads them at session creation (the framework's pending-extras
+	// channel rides one send, then clears — exactly creation-time scope).
+	Extras map[string]any `json:"extras,omitempty"`
 }
 
 // OrchestratorNavItem is one sidebar nav entry for an orchestrator-mode agent

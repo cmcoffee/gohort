@@ -79,6 +79,23 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		cm[i] = Message{Role: m.Role, Content: m.Content}
 	}
 	st := loadCompactState(udb, agent.ID, sessID)
+	// Self-heal corrupted state: SummarizedThrough counts leading messages
+	// already folded into the summary, so it must never exceed the stored
+	// history length. If it does, the stored thread was truncated BELOW the
+	// cursor out from under us (the symptom of an earlier bug that wrote the
+	// bounded run-view back to storage). Left as-is, clampThrough would pin
+	// the cursor to len(msgs) and the verbatim tail — including the user's
+	// just-typed message — would render empty, so the model answers from the
+	// stale summary alone. Reset the cursor to 0 (KEEP the summary as recall)
+	// so every retained message re-enters the verbatim tail. Mild, one-time
+	// overlap between the summary and the shown tail is far cheaper than
+	// silently dropping the live turn.
+	if st.SummarizedThrough > len(cm) {
+		Log("[operator.compact] cursor %d > history %d for %s:%s — resetting fold cursor (corrupted state recovery)",
+			st.SummarizedThrough, len(cm), agent.ID, sessID)
+		st.SummarizedThrough = 0
+		saveCompactState(udb, agent.ID, sessID, st)
+	}
 	cfg := CompactionConfig{
 		KeepRecent: keepRecent, // 0 → withDefaults applies 12
 		// Archive each folded span into a searchable history index so aged

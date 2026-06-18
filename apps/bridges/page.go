@@ -67,7 +67,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							PostTo:  "/bridges/api/keys/{id}",
 							Confirm: "Revoke this bridge key? Its connector will stop authenticating.", Compact: true},
 					},
-					EmptyText: "No bridges yet. Add one below, then point your connector (the gohort-desktop daemon for iMessage) at /bridges/api/hook.",
+					EmptyText: "No bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
 				},
 			},
 			{
@@ -93,11 +93,17 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 								Method:     "POST",
 								PostTo:     "/bridges/api/add-convo?chat_id={id}",
 								EmptyText:  "No new incoming chats yet — they appear here as people message you.",
+								// Refresh the conversations table behind the modal, and
+								// drop the just-added contact from this picker.
+								Invalidate: []string{"/bridges/api/conversations"},
+								ReloadSelf: true,
 							},
 							ui.FormPanel{
 								Source:      "/bridges/api/add-convo",
 								Method:      "POST",
 								SubmitLabel: "Add number",
+								// Surface the new conversation in the table behind the modal.
+								Invalidate: []string{"/bridges/api/conversations"},
 								Fields: []ui.FormField{
 									{Field: "handle", Label: "Number / handle", Type: "text",
 										Placeholder: "+15551234567"},
@@ -182,22 +188,13 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					},
 				}},
 			},
-			{
-				Title:    "Add a bridge",
-				Subtitle: "Creates a connector key. The secret is shown once on creation — copy it into your connector (the gohort-desktop daemon for iMessage).",
-				Body: ui.FormPanel{
-					Source: "/bridges/api/keys",
-					Method: "POST",
-					// One-shot create: submit on the button, NOT per-field blur
-					// (which would mint a new key on every edit).
-					SubmitLabel: "Create bridge",
-					Fields: []ui.FormField{
-						{Field: "name", Label: "Name", Type: "text", Placeholder: "Craig's MacBook"},
-						{Field: "service", Label: "Service", Type: "text", Placeholder: "imessage",
-							Help: "imessage, telegram, slack, …"},
-					},
-				},
-			},
+			// "Add a bridge" (manual key mint) is intentionally omitted for now: the
+			// only live connector, the iMessage desktop daemon, auto-registers its
+			// own key on first connect, and no other connector exists yet — so a
+			// manual mint produces a key for something redundant or non-existent.
+			// Restore it when a manual-key connector (Telegram, Slack) ships: a
+			// FormPanel POSTing to /bridges/api/keys with {name, service} (ideally a
+			// service dropdown from core.bridgeServices). See docs/bridges-telegram.md.
 		},
 	}
 	page.Render(w)

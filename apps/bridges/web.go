@@ -162,13 +162,13 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route to the bound channel. Match against every id this conversation is
-	// known by — handle, chat id, and any aliases the user set — so owner
-	// self-messages (empty handle), groups, and a chat's multiple ids all resolve.
-	candidates := []string{req.Handle, activeChatID}
-	if c, ok := T.getConvo(activeChatID); ok {
-		candidates = append(candidates, c.AliasHandles...)
-	}
+	// Route to the bound channel. Match against the inbound's full identity
+	// cluster — handle, chat id, and every alias-linked id in BOTH directions,
+	// normalized across the chat-id ↔ raw-handle forms — so owner self-messages
+	// (empty handle), groups, a chat's multiple ids, AND a contact aliased as
+	// "this is also me" all resolve to the right channel regardless of which id
+	// the message arrived on or which convo the alias was added to.
+	candidates := T.inboundIdentities(svc, activeChatID, req.Handle)
 	ch, found := ChannelForInbound(RootDB, owner, svc, candidates...)
 	// Self-heal a stale group binding: a group connected before the group-aware
 	// fix bound its channel to one member's handle (the old Handle-clobber), so
@@ -228,6 +228,8 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 			Owner:            ch.Owner,
 			AgentID:          ch.AgentID,
 			SessionID:        sessionID,
+			ChatID:           chatID,
+			Handle:           handle,
 			SenderName:       sender,
 			ConversationName: sender,
 			Text:             text,

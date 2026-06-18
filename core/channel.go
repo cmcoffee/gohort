@@ -66,18 +66,32 @@ const (
 	DirectionOutbound      = "outbound"      // output only; agent sends here, inbound not processed
 )
 
-// serviceDisplayNames maps a transport id (the routing key, lowercase) to its
-// brand-correct display name. The id stays lowercase everywhere internally;
-// only presentation uses this.
-var serviceDisplayNames = map[string]string{
-	"imessage": "iMessage",
-	"sms":      "SMS",
-	"telegram": "Telegram",
-	"slack":    "Slack",
-	"whatsapp": "WhatsApp",
-	"signal":   "Signal",
-	"discord":  "Discord",
-	"email":    "Email",
+// BridgeService describes a known transport. Adding a new bridge is, on the
+// gohort side, ONE entry here: the routing id is the lowercase map key (stays
+// lowercase everywhere internally); DisplayName is the brand label shown to the
+// user; RendersMarkdown reports whether the surface renders markdown — when
+// false the outbound chokepoint flattens **bold** / # / `code` to plain text so
+// they don't leak as literal punctuation. The connector (the external daemon
+// that speaks /api/hook + /api/poll) is the only other piece.
+type BridgeService struct {
+	DisplayName     string
+	RendersMarkdown bool
+}
+
+// bridgeServices is the registry of known transports. Unknown ids fall back to
+// the raw id for display and plain-text (RendersMarkdown=false) for delivery.
+var bridgeServices = map[string]BridgeService{
+	"imessage": {"iMessage", false},
+	"sms":      {"SMS", false},
+	// Telegram renders markdown, but only when the connector sends parse_mode
+	// MarkdownV2 with proper escaping. Default false = gohort delivers plain
+	// text (always safe); flip to true once a connector implements MarkdownV2.
+	"telegram": {"Telegram", false},
+	"slack":    {"Slack", true},
+	"whatsapp": {"WhatsApp", false},
+	"signal":   {"Signal", false},
+	"discord":  {"Discord", true},
+	"email":    {"Email", false},
 }
 
 // ServiceDisplayName returns the brand-correct display label for a transport id
@@ -85,10 +99,20 @@ var serviceDisplayNames = map[string]string{
 // services. Use anywhere a service is shown to a user.
 func ServiceDisplayName(service string) string {
 	s := strings.TrimSpace(service)
-	if d, ok := serviceDisplayNames[strings.ToLower(s)]; ok {
-		return d
+	if svc, ok := bridgeServices[strings.ToLower(s)]; ok {
+		return svc.DisplayName
 	}
 	return s
+}
+
+// ServiceRendersMarkdown reports whether a transport renders markdown formatting,
+// so the outbound chokepoint keeps it instead of flattening to plain text.
+// Conservative: unknown services get plain text.
+func ServiceRendersMarkdown(service string) bool {
+	if svc, ok := bridgeServices[strings.ToLower(strings.TrimSpace(service))]; ok {
+		return svc.RendersMarkdown
+	}
+	return false
 }
 
 // ChannelDirection returns a channel's flow direction, defaulting to
@@ -227,6 +251,13 @@ type ChannelInbound struct {
 	Owner     string // the channel owner — whose agent runs and under whose store
 	AgentID   string // the bound agent (channel.AgentID)
 	SessionID        string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
+	// ChatID + Handle identify the inbound conversation itself, so the agent's
+	// messaging tools can recognize a reply BACK to it as in-thread (no approval
+	// gate) versus a proactive reach-out to someone else (gated). ChatID is the
+	// transport chat id; Handle the sender's handle (empty for the owner / some
+	// groups). Either may be empty; the recipient key derives from whichever is set.
+	ChatID           string
+	Handle           string
 	SenderName       string // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
 	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
 	Text             string   // the inbound message text

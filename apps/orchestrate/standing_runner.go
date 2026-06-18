@@ -100,6 +100,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 			Content:    body,
 			Created:    time.Now(),
 			ReportFrom: sa.Name,
+			ReportKind: cortexKindScheduled,
 		})
 		if _, err := saveChatSession(udb, sess); err != nil {
 			Log("[standing] report append failed for %s/%s: %v", sa.Owner, sa.Name, err)

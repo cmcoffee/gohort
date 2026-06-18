@@ -101,7 +101,7 @@ phantom; thinking concerns move to the agent.
 | Inbound dedup (row_id), loop-back detection | Channel layer |
 | Alias routing (multiple addresses → one thread) | Channel layer |
 | Coalescing rapid messages into one turn | Channel layer |
-| Per-service delivery formatting (markdown, chunking, attachment stagger) | Channel layer (`ServicePolicy`) |
+| Per-service delivery formatting (markdown, chunking, attachment stagger) | Transport layer: markdown strip shipped via the Bridges `bridgeServices` registry (`RendersMarkdown`); chunking / stagger still TODO |
 | Gatekeeper ("should this even wake the agent") | **Boundary** — see below |
 | Persona / system prompt | Agent |
 | Memory (per-(user, thread)) | Agent |
@@ -147,7 +147,11 @@ Most become "the agent already does this":
 - Proactive scheduling / reminders → standing agents + watchers.
 - Phantom's special tools (read_phantom_chat, notify_me, message_contact)
   → already exposed to orchestrate via the `PhantomLink` core seam; they
-  stay, now pointed at the channel layer.
+  stay, now pointed at the channel layer. `notify_me` / `message_contact` /
+  `send_message` take an explicit `attachments` param (send an image in one
+  call, no implicit attach-first step), and replying to the conversation that
+  just messaged you skips the approval gate (in-thread reply, not a proactive
+  send).
 
 ## Naming: resolved — Cortex
 

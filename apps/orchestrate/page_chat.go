@@ -57,7 +57,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// with a sub-agent for testing without needing to dispatch from the
 	// parent.
 	subAgentsByParent := map[string][]map[string]string{}
-	var builtIns, customs []pickerRow
+	// Three picker groups: the seeds (Built-in), the user's cortex-enabled
+	// conversation agents (a standing brain — carved out so they're easy to
+	// find), and everything else custom.
+	var builtIns, conversation, customs []pickerRow
 	for _, a := range agents {
 		if a.Cortex {
 			cortexAgents[a.ID] = cortexSessionID(a.ID)
@@ -84,17 +87,23 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		// the fleet) silently disappear from Agency. Don't.
 		if ord, ok := builtInOrder[a.ID]; ok {
 			builtIns = append(builtIns, pickerRow{ID: a.ID, Name: a.Name, Order: ord})
+		} else if a.Cortex {
+			conversation = append(conversation, pickerRow{ID: a.ID, Name: a.Name})
 		} else {
 			customs = append(customs, pickerRow{ID: a.ID, Name: a.Name})
 		}
 	}
 	sort.Slice(builtIns, func(i, j int) bool { return builtIns[i].Order < builtIns[j].Order })
+	sort.Slice(conversation, func(i, j int) bool { return conversation[i].Name < conversation[j].Name })
 	sort.Slice(customs, func(i, j int) bool { return customs[i].Name < customs[j].Name })
 	for _, a := range builtIns {
 		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Built-in"})
 	}
+	for _, a := range conversation {
+		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Conversation Agents"})
+	}
 	for _, a := range customs {
-		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Custom"})
+		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Specialized Agents"})
 	}
 
 	// Default the dropdown to the requested agent if the URL carries
@@ -264,6 +273,19 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// scheme.
 					AltNavFlag:      "ORCH_CHANNEL_AGENTS",
 					AltPrimaryLabel: "Cortex",
+					// "+ New ▾" offers a clean-room session. Picking it opens a
+					// fresh thread and arms incognito on the first send, so the
+					// runner stamps the session as a clean room at creation: no
+					// cortex standing context, no memory/facts carried in, and
+					// nothing stored back. A creation-time choice, which is why
+					// it lives here rather than in the per-turn Modes pills.
+					NewVariants: []ui.NewSessionVariant{
+						{
+							Label: "New incognito session",
+							Title: "Start a clean-room session: no cortex standing context and no memory/facts carried in, and nothing stored back. Set when the session is created.",
+							Extras: map[string]any{"incognito": true},
+						},
+					},
 					Markdown:    true,
 					BulkSelect:  true,
 					Attachments: true,
@@ -298,6 +320,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							SendField: "inferred_disabled",
 						},
 					},
+					// Incognito is NOT a live toggle — it's a creation-time
+					// choice (it severs cortex standing context + memory for the
+					// NEW session and stores nothing back). Presenting it as a
+					// pill alongside Private/Clean read as a current-thread
+					// switch, which it never was. It now rides the rail's
+					// "+ New ▾" menu, where it actually applies: picking it
+					// opens a fresh session and arms incognito onto that
+					// session's first send (the server stamps it at creation).
 					// Edit stays a flat button (the one you reach for mid-chat);
 					// everything else collapses into Agent / Configure / Session
 					// overflow menus so the toolbar isn't a wall of 15 buttons.
@@ -316,16 +346,16 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_delete_agent", Variant: "danger"},
 						{Group: "Configure", Label: "Tools", Title: "Review and edit the active agent's tool allowlist",
 							Method: "client", URL: "orchestrate_tools_modal"},
-						{Group: "Configure", Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
-							Method: "client", URL: "orchestrate_skills_modal"},
-						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
-							Method: "client", URL: "orchestrate_knowledge_modal"},
-						{Group: "Configure", Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
-							Method: "client", URL: "orchestrate_pipelines_modal"},
-						{Group: "Configure", Label: "Rules", Title: "Review and edit the active agent's standing rules",
-							Method: "client", URL: "orchestrate_rules_modal"},
 						{Group: "Configure", Label: "Memory", Title: "Review and prune the active agent's learned notes",
 							Method: "client", URL: "orchestrate_memory_modal"},
+						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
+							Method: "client", URL: "orchestrate_knowledge_modal"},
+						{Group: "Configure", Label: "Rules", Title: "Review and edit the active agent's standing rules",
+							Method: "client", URL: "orchestrate_rules_modal"},
+						{Group: "Configure", Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
+							Method: "client", URL: "orchestrate_skills_modal"},
+						{Group: "Configure", Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
+							Method: "client", URL: "orchestrate_pipelines_modal"},
 						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session"},
 						{Group: "Session", Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",

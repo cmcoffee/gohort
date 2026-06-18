@@ -640,6 +640,15 @@ body { min-height: 100vh; min-height: 100dvh; }
   font-size: 0.78rem; color: var(--text-mute);
   margin-top: 0.25rem; line-height: 1.4;
 }
+/* Collapsible header (Collapsed:true) — click to fold/unfold the group below. */
+.ui-form-section.ui-form-collapsible { cursor: pointer; user-select: none; }
+.ui-form-section.ui-form-collapsible .ui-form-section-title::after {
+  content: ' \25B8'; opacity: 0.55; font-weight: 400; /* ▸ collapsed */
+}
+.ui-form-section.ui-form-collapsible.open .ui-form-section-title::after {
+  content: ' \25BE'; /* ▾ expanded */
+}
+.ui-form-section.ui-form-collapsible:hover .ui-form-section-title { color: var(--accent, #58a6ff); }
 .ui-form-suggest-row {
   display: flex; gap: 0.4rem; align-items: center;
   margin-top: 0.3rem;
@@ -1285,6 +1294,17 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 .ui-chat-new:hover { background: var(--bg-2); }
 .ui-chat-new.active { background: var(--accent); color: var(--text-on-accent, #fff); }
+/* Split "+ New ▾": the primary button and the caret read as one control
+ * — joined borders, shared corners. The caret is a slim affordance whose
+ * menu (new-session variants) right-aligns to the rail edge. */
+.ui-chat-new-wrap .ui-chat-new:first-child {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+}
+.ui-chat-new-caret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 0; padding-left: 0.35rem; padding-right: 0.35rem;
+}
+.ui-chat-new-wrap .ui-side-menu { left: auto; right: 0; }
 
 /* Secondary sidebar button — same shape as .ui-chat-new but neutral
    color so it doesn't compete with the primary "New" action. Used
@@ -3195,7 +3215,12 @@ body { min-height: 100vh; min-height: 100dvh; }
  * the bundle's dividers instead of looking like a band stacked
  * above. Buttons themselves keep their pill shape. */
 .ui-agent-top-bundle .ui-agent-modes-in-bundle {
-  padding: 0;
+  /* Match row 1's left inset (.ui-agent-actions padding-left) so the
+   * bottom row's buttons line up flush under the top row's instead of
+   * sitting 0.4rem further left. !important is required to beat the
+   * higher-specificity .ui-agent.ui-agent-list-top .ui-agent-modes
+   * rule (padding: 0), same trick row 1's .ui-agent-actions uses. */
+  padding: 0 0 0 0.4rem !important;
   background: transparent;
   border-top: 0;
   gap: 0.3rem;
@@ -4653,7 +4678,33 @@ const runtimeJS = `
     }, [opts.newLabel || '+ New']);
     var children = [el('span', {text: opts.label})];
     (opts.leftExtras || []).forEach(function(c) { children.push(c); });
-    children.push(sideNew);
+    // Optional split control: a caret beside + New opens a menu of
+    // alternate new-session modes (opts.newVariants — each {label, title,
+    // onSelect}). Generic — core/ui knows nothing about what a variant
+    // means; the caller wires onSelect. Absent variants → plain button.
+    if (opts.newVariants && opts.newVariants.length) {
+      var nvMenu = el('div', {class: 'ui-side-menu', style: 'display:none'});
+      opts.newVariants.forEach(function(v) {
+        nvMenu.appendChild(el('button', {
+          class: 'ui-side-menu-item', title: v.title || '',
+          onclick: function() {
+            nvMenu.style.display = 'none';
+            if (typeof v.onSelect === 'function') v.onSelect();
+          },
+        }, [v.label]));
+      });
+      var nvCaret = el('button', {
+        class: 'ui-chat-new ui-chat-new-caret', title: 'New session options',
+        onclick: function(ev) {
+          ev.stopPropagation();
+          nvMenu.style.display = (nvMenu.style.display === 'none') ? 'block' : 'none';
+        },
+      }, ['▾']);
+      document.addEventListener('click', function() { nvMenu.style.display = 'none'; });
+      children.push(el('div', {class: 'ui-side-menu-wrap ui-chat-new-wrap'}, [sideNew, nvCaret, nvMenu]));
+    } else {
+      children.push(sideNew);
+    }
     (opts.rightExtras || []).forEach(function(c) { children.push(c); });
     children.push(sideClose);
     return {
@@ -5475,6 +5526,7 @@ const runtimeJS = `
         body: JSON.stringify(body)
       }).then(function(){
         setTimeout(function(){ savingIndicator.classList.remove('show'); }, 300);
+        if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
       }).catch(function(err){
         savingIndicator.classList.remove('show');
         showToast('Save failed: ' + err.message);
@@ -6231,9 +6283,9 @@ const runtimeJS = `
       // template re-applies it.
       if (Array.isArray(cfg.templates) && cfg.templates.length) {
         var tplRow = el('div', {class: 'ui-form-field'});
-        tplRow.appendChild(el('label', {class: 'ui-form-label'}, ['Start from template']));
+        tplRow.appendChild(el('label', {class: 'ui-form-label'}, [cfg.templates_label || 'Start from template']));
         var tplSel = el('select', {class: 'ui-form-input'});
-        tplSel.appendChild(el('option', {value: ''}, ['— choose a template —']));
+        tplSel.appendChild(el('option', {value: ''}, [cfg.templates_label ? ('— choose ' + cfg.templates_label.toLowerCase() + ' —') : '— choose a template —']));
         cfg.templates.forEach(function(t, i) {
           tplSel.appendChild(el('option', {value: String(i)}, [t.label || ('Template ' + (i + 1))]));
         });
@@ -6250,7 +6302,32 @@ const runtimeJS = `
         tplRow.appendChild(tplSel);
         wrap.appendChild(tplRow);
       }
-      cfg.fields.forEach(function(f){ wrap.appendChild(renderField(f)); });
+      // Render fields in order. A Type==="header" with collapsed:true starts a
+      // collapsible group — the fields that follow (until the next header) go
+      // into a hidden body the header toggles. Backward-safe: with no collapsed
+      // headers, collapseBody stays null and every field lands in wrap as before.
+      var collapseBody = null;
+      cfg.fields.forEach(function(f){
+        var fieldEl = renderField(f);
+        if ((f.type || '') === 'header') {
+          collapseBody = null; // a header ends any prior group
+          if (f.collapsed) {
+            var body = el('div', {class: 'ui-form-collapse-body', style: 'display:none'});
+            fieldEl.classList.add('ui-form-collapsible');
+            fieldEl.setAttribute('role', 'button');
+            fieldEl.addEventListener('click', function(){
+              var open = body.style.display === 'none';
+              body.style.display = open ? '' : 'none';
+              fieldEl.classList.toggle('open', open);
+            });
+            wrap.appendChild(fieldEl);
+            wrap.appendChild(body);
+            collapseBody = body;
+            return;
+          }
+        }
+        (collapseBody || wrap).appendChild(fieldEl);
+      });
       applyVisibility();
       // Saving indicator gets attached to the parent section header.
       var section = wrap.closest('.ui-section');
@@ -6314,6 +6391,7 @@ const runtimeJS = `
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(current),
           }).then(function(resp) {
+            if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
             if (cfg.redirect_url) {
               var dest = substitute(cfg.redirect_url, resp || {});
               var target = cfg.redirect_target || '_self';
@@ -7051,46 +7129,53 @@ const runtimeJS = `
     var labelField = cfg.label_field || 'Label';
     var descField  = cfg.desc_field  || 'Desc';
     var btnText    = cfg.button_text || 'Run';
-    fetchJSON(cfg.source).then(function(items) {
-      wrap.innerHTML = '';
-      if (!items || !items.length) {
-        wrap.appendChild(el('div', {class: 'ui-actionlist-empty'}, [cfg.empty_text || 'Nothing here.']));
-        return;
-      }
-      items.forEach(function(item) {
-        var status = el('span', {class: 'ui-actionlist-status'});
-        var btn = el('button', {class: 'ui-row-btn', onclick: async function() {
-          if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
-          var url = substitute(cfg.post_to, item);
-          btn.disabled = true;
-          status.textContent = '…';
-          fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
-            btn.disabled = false;
-            // Most maintenance endpoints return {fixed: N} or similar;
-            // surface a digit if present.
-            if (r && typeof r === 'object') {
-              var n = r.fixed != null ? r.fixed : (r.removed != null ? r.removed : null);
-              status.textContent = n != null ? ('done — ' + n) : 'done';
-            } else {
-              status.textContent = 'done';
-            }
-            setTimeout(function(){ status.textContent = ''; }, 4000);
-          }).catch(function(err) {
-            btn.disabled = false;
-            status.textContent = '';
-            showToast('Failed: ' + err.message);
-          });
-        }}, [btnText]);
-        var row = el('div', {class: 'ui-actionlist-row'}, [
-          el('div', {class: 'ui-actionlist-text'}, [
-            el('div', {class: 'ui-actionlist-label'}, [item[labelField] || '?']),
-            item[descField] ? el('div', {class: 'ui-actionlist-desc'}, [item[descField]]) : null,
-          ]),
-          status, btn,
-        ]);
-        wrap.appendChild(row);
-      });
-    }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
+    function load() {
+      fetchJSON(cfg.source).then(function(items) {
+        wrap.innerHTML = '';
+        if (!items || !items.length) {
+          wrap.appendChild(el('div', {class: 'ui-actionlist-empty'}, [cfg.empty_text || 'Nothing here.']));
+          return;
+        }
+        items.forEach(function(item) {
+          var status = el('span', {class: 'ui-actionlist-status'});
+          var btn = el('button', {class: 'ui-row-btn', onclick: async function() {
+            if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
+            var url = substitute(cfg.post_to, item);
+            btn.disabled = true;
+            status.textContent = '…';
+            fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
+              btn.disabled = false;
+              // Most maintenance endpoints return {fixed: N} or similar;
+              // surface a digit if present.
+              if (r && typeof r === 'object') {
+                var n = r.fixed != null ? r.fixed : (r.removed != null ? r.removed : null);
+                status.textContent = n != null ? ('done — ' + n) : 'done';
+              } else {
+                status.textContent = 'done';
+              }
+              setTimeout(function(){ status.textContent = ''; }, 4000);
+              // Refresh sibling lists (a Table behind the modal) and,
+              // when asked, drop the acted row from this picker.
+              if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
+              if (cfg.reload_self) load();
+            }).catch(function(err) {
+              btn.disabled = false;
+              status.textContent = '';
+              showToast('Failed: ' + err.message);
+            });
+          }}, [btnText]);
+          var row = el('div', {class: 'ui-actionlist-row'}, [
+            el('div', {class: 'ui-actionlist-text'}, [
+              el('div', {class: 'ui-actionlist-label'}, [item[labelField] || '?']),
+              item[descField] ? el('div', {class: 'ui-actionlist-desc'}, [item[descField]]) : null,
+            ]),
+            status, btn,
+          ]);
+          wrap.appendChild(row);
+        });
+      }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
+    }
+    load();
     return wrap;
   };
 
@@ -7663,6 +7748,7 @@ const runtimeJS = `
         }, [m.label]);
         modesRow.appendChild(btn);
         var refresh = function() {
+          if (!m.get_url) return; // client-only mode (no persisted server state)
           fetchJSON(withAgentParam(m.get_url)).then(function(d) {
             var v = !!(d && d[m.field]);
             modeState[m.send_field || m.field] = v;
@@ -7723,6 +7809,7 @@ const runtimeJS = `
       // event entirely.
       window.dispatchEvent(new CustomEvent('ui-agent-mode-change',
         {detail: {key: key, value: next}}));
+      if (!m.post_url) return; // client-only mode — local state only, nothing to persist server-side
       var body = {}; body[m.field] = next;
       // Per-(user, agent) scoping — always include the field even
       // when empty so the server-side diagnostic log can distinguish
@@ -8677,6 +8764,10 @@ const runtimeJS = `
     // messages + the agent's replies while it's open. Timer + the count of
     // messages already on screen.
     var channelPollTimer = null, channelPollCount = 0;
+    // cortexObsSeen — keys of observation cards already on screen in the open
+    // cortex home thread, so its live poll appends only NEW ones (channel
+    // messages / scheduled reports / monitor wakes) without re-rendering.
+    var cortexObsSeen = {};
     // channelTranscript — non-null while a CHANNEL ROOM session is open
     // (id "chan:<chatID>"). It holds the sender labels so the thread reads
     // as a messaging transcript (contact name + agent name above each line),
@@ -8816,6 +8907,24 @@ const runtimeJS = `
         newTitle: cfg.new_label || 'New',
         onNew:    function(){ openSession(null); },
         onClose:  function(){ closeDrawer(); },
+        // Alternate new-session modes (cfg.new_variants) — each opens a
+        // fresh session and arms its extras onto the FIRST send, so the
+        // server stamps the choice at session creation (e.g. incognito).
+        // pendingMessageExtras rides one send then clears, which is
+        // exactly creation-time scope — later turns need no re-arming.
+        newVariants: (cfg.new_variants || []).map(function(v) {
+          return {
+            label: v.label, title: v.title,
+            onSelect: function() {
+              openSession(null);
+              if (v.extras) {
+                Object.keys(v.extras).forEach(function(k) {
+                  pendingMessageExtras[k] = v.extras[k];
+                });
+              }
+            },
+          };
+        }),
         // Hamburger inserted BEFORE the New button (left of it)
         // via leftExtras — matches the user's "next to new" ask.
         leftExtras: leftExtras,
@@ -12073,7 +12182,9 @@ const runtimeJS = `
           });
         }).catch(function() { agentField.style.display = 'none'; });
       }
-      body.appendChild(el('label', {style: 'display:flex;align-items:center;gap:0.4rem;margin:0.5rem 0'}, [arIn, el('span', {}, ['Auto-reply'])]));
+      body.appendChild(el('label', {style: 'display:flex;align-items:center;gap:0.4rem;margin:0.5rem 0',
+        title: 'On: an inbound message wakes the agent to read and reply. Off: the message is recorded but the agent stays asleep on this channel.'},
+        [arIn, el('span', {}, ['Wake on message'])]));
       body.appendChild(railFieldLabel('Gatekeeper rules', gkEditor.el));
       var saveB = el('button', {class: 'ui-btn-primary', onclick: function() {
         var payload = {id: ch.id || '', name: nameIn.value.trim(), description: descIn.value.trim(),
@@ -12184,6 +12295,50 @@ const runtimeJS = `
           if (!Array.isArray(msgs) || msgs.length <= channelPollCount) return;
           for (var i = channelPollCount; i < msgs.length; i++) appendChannelMessage(msgs[i]);
           channelPollCount = msgs.length;
+        }).catch(function() {});
+      }, 3000);
+    }
+
+    // obsKey identifies a cortex observation card across polls — its server id
+    // when present, else a stable composite (source + time + content head). Lets
+    // the poll skip cards already on screen without relying on array position
+    // (the cortex thread is also interactive, so chat turns shift indices).
+    function obsKey(m) {
+      return (m && m.id) || (((m && m.report_from) || '') + '|' + ((m && m.created) || '') + '|' + (((m && m.content) || '').slice(0, 40)));
+    }
+    // renderObservation appends one cortex observation card — same path the
+    // initial replay uses (bubble + meta + the app's report-card replay hook).
+    function renderObservation(m) {
+      var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
+      addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
+      if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
+      if (m.created || m.usage) setMessageMeta(mid, {created: m.created, usage: m.usage});
+      if (messageReplayHooks.length) {
+        var entry = msgEls[mid], bubble = entry && entry.bubble;
+        if (bubble) messageReplayHooks.forEach(function(fn) { try { fn(bubble, m); } catch (e) {} });
+      }
+    }
+    // startCortexPolling — while the cortex home thread is open, re-fetch it and
+    // render any NEW observation cards (report_from set) live, like a channel
+    // thread. ONLY observations: chat turns the user has with the cortex agent
+    // ride the SSE/replay path, so the poll never touches them (no duplication).
+    // Reuses the channel poll's timer.
+    function startCortexPolling(sid) {
+      stopChannelPolling();
+      if (!cfg.load_url || (sid || '').indexOf('channel:') !== 0) return;
+      channelPollTimer = setInterval(function() {
+        if (activeSessionId !== sid) { stopChannelPolling(); return; }
+        fetchJSON(substituteExtras(cfg.load_url.replace('{id}', encodeURIComponent(sid)))).then(function(rec) {
+          if (activeSessionId !== sid) return;
+          var msgs = rec && rec[msgsF];
+          if (!Array.isArray(msgs)) return;
+          msgs.forEach(function(m) {
+            if (!m || !m.report_from) return; // observations only — chat turns ride SSE/replay
+            var k = obsKey(m);
+            if (cortexObsSeen[k]) return;
+            cortexObsSeen[k] = true;
+            renderObservation(m);
+          });
         }).catch(function() {});
       }, 3000);
     }
@@ -12718,6 +12873,15 @@ const runtimeJS = `
         // up live while watching, without a manual reload.
         if (channelTranscript) {
           startChannelPolling(sid, Array.isArray(msgs) ? msgs.length : 0);
+        } else if ((sid || '').indexOf('channel:') === 0) {
+          // Cortex home thread: seed the seen-set from what just replayed, then
+          // poll for NEW observation cards so they appear live — like a channel
+          // thread, but only the background report cards (chat turns ride SSE).
+          cortexObsSeen = {};
+          if (Array.isArray(msgs)) {
+            msgs.forEach(function(m) { if (m && m.report_from) cortexObsSeen[obsKey(m)] = true; });
+          }
+          startCortexPolling(sid);
         }
         // After the saved transcript renders, ask the server
         // whether this session has an in-flight run we should

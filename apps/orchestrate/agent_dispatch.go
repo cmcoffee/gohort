@@ -662,6 +662,11 @@ type AgentSyncRun struct {
 	// the "[DELEGATED INVOCATION] no human is listening…" preamble must not leak
 	// into the message. Default false (dispatch behavior unchanged).
 	Interactive bool
+	// ReplyAuthorizedKey, when set, is the recipient key of the conversation this
+	// run replies to (a channel inbound). The messaging tools deliver back to it
+	// without the approval gate — replying to whoever just messaged you is not a
+	// proactive reach-out. Empty for dispatch / web runs. See ToolSession.
+	ReplyAuthorizedKey string
 }
 
 // AgentSyncResult is the bound agent's output: reply text plus any attachments
@@ -721,11 +726,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		subSessionID = "external-dispatch:" + runtimeUser + ":" + target.ID
 	}
 	subSess := &ToolSession{
-		LLM:           T.LLM,
-		LeadLLM:       T.LeadLLM,
-		Username:      runtimeUser,
-		DB:            runtimeDB,
-		ChatSessionID: subSessionID,
+		LLM:                T.LLM,
+		LeadLLM:            T.LeadLLM,
+		Username:           runtimeUser,
+		DB:                 runtimeDB,
+		ChatSessionID:      subSessionID,
+		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
 	}
 	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
 		subSess.WorkspaceDir = ws

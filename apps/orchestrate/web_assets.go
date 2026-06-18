@@ -831,6 +831,91 @@ const orchestrateWebAssets = `<style>
         wrap.appendChild(el('div', {class: 'ui-orch-ask-q'}, ['(form had no questions)']));
         return {wrap: wrap, body: null};
       }
+      // Field-entry form: when ANY step declares a typed input, render every
+      // step at once as a labeled form with a single Submit (vs the choice
+      // step-through below). This is the "enter these specific fields" shape.
+      var entryTypes = {text: 1, number: 1, textarea: 1, select: 1, password: 1};
+      var isFieldForm = steps.some(function(s) { return s.type && entryTypes[s.type]; });
+      if (isFieldForm) {
+        var inputStyle = 'width:100%;box-sizing:border-box;padding:0.4rem 0.5rem;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font:inherit';
+        var fields = [];
+        steps.forEach(function(step, i) {
+          var fwrap = el('div', {class: 'ui-orch-ask-field', style: 'margin-bottom:0.7rem'});
+          var lbl = el('div', {class: 'ui-orch-ask-q'});
+          uiOrchAskMd(lbl, (i + 1) + '. ' + step.question);
+          fwrap.appendChild(lbl);
+          var opts = (step.options || []).map(function(s) { return String(s || '').trim(); })
+                                         .filter(function(s) { return s.length > 0; });
+          var t = step.type || (opts.length ? 'choice' : 'text');
+          var input, getVal;
+          if (t === 'textarea') {
+            input = document.createElement('textarea');
+            input.className = 'ui-orch-ask-extra';
+            input.rows = 3;
+            if (step.placeholder) input.placeholder = step.placeholder;
+            getVal = function() { return (input.value || '').trim(); };
+          } else if (t === 'select') {
+            input = document.createElement('select');
+            input.style.cssText = inputStyle;
+            input.appendChild(el('option', {value: ''}, ['— choose —']));
+            opts.forEach(function(o) { input.appendChild(el('option', {value: o}, [o])); });
+            getVal = function() { return input.value || ''; };
+          } else if (t === 'choice') {
+            input = el('div', {class: 'ui-orch-ask-opts'});
+            var multi = !!step.multi;
+            opts.forEach(function(o) {
+              var row = el('label', {class: 'ui-orch-ask-opt'});
+              var inp = document.createElement('input');
+              inp.type = multi ? 'checkbox' : 'radio';
+              inp.name = 'orch-fform-' + (d.id || '') + '-' + i;
+              inp.value = o;
+              row.appendChild(inp);
+              row.appendChild(el('span', {class: 'ui-orch-ask-opt-lbl'}, [o]));
+              input.appendChild(row);
+            });
+            getVal = function() {
+              var picked = [];
+              input.querySelectorAll('input').forEach(function(x) { if (x.checked) picked.push(x.value); });
+              return picked.join(', ');
+            };
+          } else {
+            input = document.createElement('input');
+            input.type = (t === 'number') ? 'number' : (t === 'password' ? 'password' : 'text');
+            input.style.cssText = inputStyle;
+            if (step.placeholder) input.placeholder = step.placeholder;
+            getVal = function() { return (input.value || '').trim(); };
+          }
+          fwrap.appendChild(input);
+          wrap.appendChild(fwrap);
+          fields.push({step: step, getVal: getVal});
+        });
+        var fActions = el('div', {class: 'ui-orch-ask-actions'});
+        var fSubmit = document.createElement('button');
+        fSubmit.className = 'ui-orch-ask-submit';
+        fSubmit.type = 'button';
+        fSubmit.textContent = 'Submit';
+        fActions.appendChild(fSubmit);
+        wrap.appendChild(fActions);
+        fSubmit.addEventListener('click', function() {
+          var lines = fields.map(function(f, i) {
+            var v = f.getVal();
+            return (i + 1) + '. ' + f.step.question + ' → ' + (v || '(no answer)');
+          });
+          var compiled = lines.join('\n');
+          var inputArea = document.querySelector('.ui-agent-input');
+          var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
+          if (!inputArea || !sendBtn) {
+            window.uiAlert('Could not find the chat input to submit your answers.');
+            return;
+          }
+          inputArea.value = compiled;
+          sendBtn.click();
+          wrap.classList.add('submitted');
+          wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) { x.disabled = true; });
+        });
+        return {wrap: wrap, body: null};
+      }
+
       // Per-step state: picked options + free-text note.
       var answers = steps.map(function() { return {picked: [], note: ''}; });
       var current = 0;
@@ -3906,7 +3991,17 @@ const orchestrateWebAssets = `<style>
           }
           var hdr = document.createElement('div');
           hdr.className = 'orch-report-card-hdr';
-          var icon = document.createElement('span'); icon.className = 'orch-report-card-icon'; icon.textContent = '⏰';
+          // Icon by kind so a person's channel message reads differently from a
+          // scheduled report or a monitor wake. Default (scheduled / unknown) = ⏰.
+          var kindIcon = {
+            message: '💬',      // a channel inbound from a person
+            scheduled: '⏰',    // a standing-agent report
+            monitor: '🔔',      // an event-monitor wake
+            deliverable: '📄'   // a filed-artifact pointer
+          };
+          var icon = document.createElement('span'); icon.className = 'orch-report-card-icon';
+          icon.textContent = kindIcon[msg.report_kind] || '⏰';
+          if (msg.report_kind) bubble.classList.add('orch-report-card-' + msg.report_kind);
           var name = document.createElement('span'); name.className = 'orch-report-card-name'; name.textContent = msg.report_from;
           hdr.appendChild(icon); hdr.appendChild(name);
           if (when) { var ts = document.createElement('span'); ts.className = 'orch-report-card-time'; ts.textContent = when; hdr.appendChild(ts); }

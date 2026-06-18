@@ -114,6 +114,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 					Content:    summary,
 					Created:    time.Now(),
 					ReportFrom: monitorName,
+					ReportKind: cortexKindMonitor,
 				})
 				if _, err := saveChatSession(udb, sess); err == nil {
 					delivered = true

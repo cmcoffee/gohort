@@ -132,6 +132,79 @@ func isGroupChat(chatID string) bool {
 	return strings.Contains(chatID, ";+;")
 }
 
+// chatHandle extracts the raw handle from a 1:1 chat id. iMessage chat ids are
+// "<account>;<type>;<handle>" where type "-" is a 1:1 (the trailing segment is
+// the contact's handle) and "+" is a group (no single handle). Returns "" for
+// groups. Lets a raw-handle alias the user typed ("+1650…") link to the chat-id
+// form ("any;-;+1650…") so the two are recognized as the same person.
+func chatHandle(chatID string) string {
+	if chatID == "" || isGroupChat(chatID) {
+		return ""
+	}
+	if i := strings.LastIndex(chatID, ";"); i >= 0 {
+		return strings.TrimSpace(chatID[i+1:])
+	}
+	return strings.TrimSpace(chatID)
+}
+
+// inboundIdentities resolves every id/handle equivalent to an inbound message,
+// following user-set aliases in BOTH directions and normalizing the chat-id ↔
+// raw-handle forms. A channel bound to ANY of the person's ids then matches,
+// regardless of which id the message arrived on or which convo the alias was
+// added to. Without this: an alias added on the OTHER convo (the natural "this
+// is also me" gesture) silently fails to route, and a raw-handle alias never
+// matches a chat-id-form channel address. Only 1:1 convos cluster — a group is
+// identified by its own chat id, never by a member, so it never joins a person.
+func (T *Bridges) inboundIdentities(svc, chatID, handle string) []string {
+	seen := map[string]bool{}
+	add := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			seen[s] = true
+		}
+	}
+	add(handle)
+	add(chatID)
+	add(chatHandle(chatID))
+	// A group inbound never clusters by member — match it by its own chat id.
+	if !isGroupChat(chatID) {
+		// Alias closure over 1:1 conversations. Repeat until the cluster stops
+		// growing so transitive links (A↔B, B↔C) all collapse. Bounded by the
+		// convo count; trivial at personal-assistant scale.
+		for grew := true; grew; {
+			grew = false
+			for _, c := range T.listConvos() {
+				if isGroupChat(c.ChatID) {
+					continue
+				}
+				if svc != "" && c.Service != "" && c.Service != svc {
+					continue
+				}
+				ids := append([]string{c.ChatID, c.Handle, chatHandle(c.ChatID)}, c.AliasHandles...)
+				linked := false
+				for _, id := range ids {
+					if id = strings.TrimSpace(id); id != "" && seen[id] {
+						linked = true
+						break
+					}
+				}
+				if !linked {
+					continue
+				}
+				for _, id := range ids {
+					if id = strings.TrimSpace(id); id != "" && !seen[id] {
+						seen[id], grew = true, true
+					}
+				}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	return out
+}
+
 func (T *Bridges) upsertConvo(service, chatID, handle, displayName string) {
 	if strings.TrimSpace(chatID) == "" {
 		return
@@ -369,6 +442,15 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	}
 	if it.Created == "" {
 		it.Created = now()
+	}
+	// De-markdown at the single outbound chokepoint. A plain-text transport
+	// (iMessage, SMS) renders literal **bold**, `code`, # headers and [text](url)
+	// as punctuation, so every reply / send / status item is flattened to plain
+	// text here — covering channel replies, send_message, and approved sends in
+	// one place (phantom did the same on its outbox). Services that DO render
+	// markdown (Slack, Discord) keep their formatting.
+	if it.Text != "" && !ServiceRendersMarkdown(it.Service) {
+		it.Text = MarkdownToPlain(it.Text)
 	}
 	T.DB.Set(outboxTable, it.ID, it)
 }

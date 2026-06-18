@@ -15,22 +15,32 @@ import (
 // only RUNS on a real received turn or a trigger, and then it has all the
 // accumulated observations on hand. See docs/channels-and-agents.md.
 
+// Cortex report-card kinds — classify a ReportFrom observation so the UI picks a
+// fitting icon (a person's channel message vs a scheduled report vs a monitor
+// wake). Display-only; the LLM context marker keys off ReportFrom, not this.
+const (
+	cortexKindMessage     = "message"     // a channel inbound from a person
+	cortexKindScheduled   = "scheduled"   // a standing-agent report
+	cortexKindMonitor     = "monitor"     // an event-monitor wake
+	cortexKindDeliverable = "deliverable" // a filed-artifact pointer
+)
+
 // AppendCortexObservation records one non-triggering observation into an agent's
 // cortex. No-op unless the agent has Cortex enabled. The observation renders as a
-// distinct report card (ReportFrom) and bumps LastAt only — NOT LastSeen — so the
-// cortex reads "unread" (new activity) until the user opens it. Never runs the
-// agent; this is awareness, not a turn.
-func (T *OrchestrateApp) AppendCortexObservation(owner, agentID, from, text string) {
+// distinct report card (ReportFrom + kind) and bumps LastAt only — NOT LastSeen —
+// so the cortex reads "unread" (new activity) until the user opens it. Never runs
+// the agent; this is awareness, not a turn. kind is one of the cortexKind* values.
+func (T *OrchestrateApp) AppendCortexObservation(owner, agentID, from, kind, text string) {
 	if T == nil || T.DB == nil || owner == "" {
 		return
 	}
-	appendCortexObs(UserDB(T.DB, owner), agentID, from, text)
+	appendCortexObs(UserDB(T.DB, owner), agentID, from, kind, text)
 }
 
 // appendCortexObs is the db-level core of AppendCortexObservation — usable both
 // from the app method (channel feed) and from tools that already hold the agent
 // owner's db (the deliverable pointer).
-func appendCortexObs(db Database, agentID, from, text string) {
+func appendCortexObs(db Database, agentID, from, kind, text string) {
 	if db == nil || agentID == "" || strings.TrimSpace(text) == "" {
 		return
 	}
@@ -49,6 +59,7 @@ func appendCortexObs(db Database, agentID, from, text string) {
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role:       "assistant",
 		ReportFrom: strings.TrimSpace(from),
+		ReportKind: strings.TrimSpace(kind),
 		Content:    strings.TrimSpace(text),
 		Created:    now,
 	})
@@ -100,7 +111,7 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 				}
 				// Pointer (NOT the body) into the cortex — the standing thread
 				// stays lean but records that the deliverable exists.
-				appendCortexObs(db, agentID, "Deliverable", title+" — filed as a session; open it from the rail.")
+				appendCortexObs(db, agentID, "Deliverable", cortexKindDeliverable, title+" — filed as a session; open it from the rail.")
 				return fmt.Sprintf("Filed %q as a session (id %s). Point the user to it from the rail — do NOT paste the full body into your reply.", title, saved.ID), nil
 			},
 		},
@@ -139,7 +150,7 @@ func cortexContextBlock(db Database, agentID string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors. Use only if relevant to what the user asks; do not recite it.\n\n" + strings.Join(lines, "\n") + "\n"
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors, shown complete as notes. These are NOT run records and have no run id: do not try to fetch one with get_run (you would have to invent an id, which fails). Use only if relevant to what the user asks; do not recite it. To inspect an actual scheduled run, call list_runs first for a real id.\n\n" + strings.Join(lines, "\n") + "\n"
 }
 
 // truncateObs shortens an observation snippet to n runes, appending an ellipsis.

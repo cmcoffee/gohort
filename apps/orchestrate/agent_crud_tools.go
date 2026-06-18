@@ -406,6 +406,11 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 // allow, or a refusal message. The human dashboard never calls this (it deletes
 // via deleteAgent directly), so it stays unrestricted.
 func agentMutationLock(target AgentRecord, sess *ToolSession) string {
+	// Explicit per-agent lock — the user marked this agent protected, so NO agent
+	// may edit or delete it; only the human (dashboard/editor) can.
+	if target.Locked {
+		return fmt.Sprintf("can't modify %q — it's locked; only the user can change it (from the agent editor)", target.ID)
+	}
 	caller := strings.TrimSpace(sess.DispatchParentAgentID)
 	if target.OwnedBy != "" && target.OwnedBy != caller {
 		return fmt.Sprintf("can't modify %q — it belongs to another agent; only its owner or the user (from the dashboard) can change it", target.ID)

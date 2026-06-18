@@ -1247,6 +1247,13 @@ type ToolSession struct {
 	DB                Database // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
 	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
 	WorkspaceID       string   // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
+	// ReplyAuthorizedKey, when set, is the recipient key (chat id or handle) of
+	// the conversation this run is REPLYING to — a channel inbound the agent is
+	// answering. Sending back to that same conversation is a reply, not a
+	// proactive reach-out, so the messaging tools (send_message / message_contact)
+	// deliver to it WITHOUT the approval queue. Empty on web / dispatch runs, so
+	// the gate is unchanged everywhere except a live channel reply.
+	ReplyAuthorizedKey string
 	// StatusCallback, if set, is invoked by the send_status tool to deliver
 	// an in-progress status message to the user mid-turn ("Working on it…").
 	// Each app wires it differently: chat emits an SSE status event, phantom

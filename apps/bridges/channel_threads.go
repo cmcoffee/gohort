@@ -1,6 +1,8 @@
 package bridges
 
 import (
+	"strings"
+
 	. "github.com/cmcoffee/gohort/core"
 )
 
@@ -41,7 +43,16 @@ func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelL
 }
 
 func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text string, images []string) error {
-	svc := firstNonEmpty(service, "imessage")
+	svc := strings.TrimSpace(service)
+	if svc == "" {
+		// Caller didn't specify a transport (proactive send) — resolve it from
+		// the conversation so a Telegram chat's message goes out Telegram, not
+		// the iMessage default. Falls back to iMessage when the chat is unknown.
+		if cv, ok := c.T.getConvo(chatID); ok && strings.TrimSpace(cv.Service) != "" {
+			svc = cv.Service
+		}
+	}
+	svc = firstNonEmpty(svc, "imessage")
 	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Type: "reply"})
 	// Mirror the outbound into the thread store so the dashboard + read_chat see it.
 	c.T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})

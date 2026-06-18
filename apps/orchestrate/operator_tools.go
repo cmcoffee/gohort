@@ -46,6 +46,24 @@ func collectMessageAttachments(sess *ToolSession, text string) []string {
 	}
 	for _, m := range operatorAttachMarkerRe.FindAllStringSubmatch(text, -1) {
 		name := strings.TrimSpace(m[1])
+		out = append(out, resolveWorkspaceImages(sess, []string{name})...)
+	}
+	return out
+}
+
+// resolveWorkspaceImages reads each workspace-relative path and returns its
+// base64 bytes, skipping anything empty, escaping the workspace, or unreadable.
+// Lets a channel agent deliver a file straight to its channel via send_message's
+// `attachments` param WITHOUT workspace(action="attach") — which stages the file
+// onto the agent's REPLY (the caller), not the channel. That conflation is why a
+// dispatched channel agent kept "sending the image back" instead of out.
+func resolveWorkspaceImages(sess *ToolSession, paths []string) []string {
+	var out []string
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
+		return out
+	}
+	for _, name := range paths {
+		name = strings.TrimSpace(name)
 		clean := filepath.Clean(name)
 		if name == "" || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
 			continue // never escape the workspace
@@ -57,6 +75,48 @@ func collectMessageAttachments(sess *ToolSession, text string) []string {
 		out = append(out, base64.StdEncoding.EncodeToString(b))
 	}
 	return out
+}
+
+// attachmentsParamDesc is the shared description for the messaging tools' explicit
+// image/file param. One self-contained call ("send THIS image to X") instead of
+// the implicit, easily-skipped workspace(action="attach")-first convention.
+const attachmentsParamDesc = "Optional workspace file path(s) to send WITH this message — e.g. [\"find-djbk.jpg\"] from image(action=\"find\"/\"generate\"). The files ride out to the recipient. Prefer this over a separate workspace(action=\"attach\") step: pass the path here and it's delivered in one call."
+
+// messageImages gathers every image to ride an outbound message: the explicit
+// `attachments` workspace paths (the steered, self-contained path) PLUS the
+// implicit sess.Images / [ATTACH:] markers (collectMessageAttachments), deduped.
+// One place so send_message, message_contact and notify_me behave identically —
+// the fragmented "did the model remember to attach first?" failure mode is why
+// images were silently dropped.
+func messageImages(sess *ToolSession, args map[string]any, text string) []string {
+	images := collectMessageAttachments(sess, text)
+	var paths []string
+	if raw, ok := args["attachments"].([]any); ok {
+		for _, v := range raw {
+			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+				paths = append(paths, s)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, im := range images {
+		seen[im] = true
+	}
+	for _, im := range resolveWorkspaceImages(sess, paths) {
+		if !seen[im] {
+			seen[im] = true
+			images = append(images, im)
+		}
+	}
+	return images
+}
+
+// isReplyToActiveInbound reports whether recip is the very conversation this run
+// is replying to (a channel inbound). Replying to whoever just messaged you is
+// in-thread, not a proactive reach-out, so it skips the approval queue. False on
+// web / dispatch runs (ReplyAuthorizedKey empty), leaving the gate unchanged there.
+func isReplyToActiveInbound(sess *ToolSession, recip string) bool {
+	return sess != nil && sess.ReplyAuthorizedKey != "" && recip != "" && recip == sess.ReplyAuthorizedKey
 }
 
 // resolveCheckAgent maps a user-supplied poll-monitor checker reference to a
@@ -118,7 +178,10 @@ func operatorDeliverMessage(owner, chatID, handle, text string, images []string)
 	if !ok {
 		return "", fmt.Errorf("no messaging transport is available")
 	}
-	if err := ct.Deliver(owner, "imessage", chatID, handle, text, images); err != nil {
+	// Empty service => let the transport resolve it from the conversation, so a
+	// proactive send to a Telegram chat goes out Telegram (not the iMessage
+	// default). Channel REPLIES already pass the inbound's service explicitly.
+	if err := ct.Deliver(owner, "", chatID, handle, text, images); err != nil {
 		return "", err
 	}
 	return text, nil
@@ -374,7 +437,21 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			Handler: func(args map[string]any) (string, error) {
 				rec, ok := GetRun(RootDB, owner, strings.TrimSpace(oArgStr(args, "id")))
 				if !ok {
-					return "", fmt.Errorf("no run with that id")
+					// The id wasn't found — commonly because it was fabricated
+					// (e.g. an attempt to "fetch" a cortex background note, which
+					// is not a run). Run ids are opaque and only come from list_runs,
+					// so point the model at the real ones instead of a bare error it
+					// will just retry against.
+					recent := ListRuns(RootDB, owner, RunFilter{Limit: 5})
+					if len(recent) == 0 {
+						return "", fmt.Errorf("no run with that id. Run ids come from list_runs (opaque, not constructed); there are no runs recorded yet")
+					}
+					var b strings.Builder
+					b.WriteString("no run with that id. Run ids are opaque and come ONLY from list_runs — do not construct one. Recent run ids:\n")
+					for _, rr := range recent {
+						fmt.Fprintf(&b, "- %s (%s, %s)\n", rr.ID, rr.Agent, rr.Status)
+					}
+					return "", fmt.Errorf("%s", strings.TrimSpace(b.String()))
 				}
 				return fmt.Sprintf("Run %s\nagent: %s\nstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\noutput:\n%s",
 					rec.ID, rec.Agent, rec.Status, rec.Trigger, rec.Brief, rec.Summary, rec.Raw), nil
@@ -536,14 +613,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "notify_me",
-				Description: "Send a text to the USER'S OWN phone via phantom (a notification to yourself / the owner). No approval needed — it only goes to the owner. Use this to push an alert or a monitor result to the user's phone.",
-				Parameters:  map[string]ToolParam{"text": {Type: "string", Description: "The message to send to the owner. To include a file you generated (image, etc.), save it to your workspace and call workspace(action=\"attach\", path=\"<file>\") first; it rides along automatically."}},
-				Required:    []string{"text"},
+				Description: "Send a text to the USER'S OWN phone (a notification to yourself / the owner). No approval needed — it only goes to the owner. Use this to push an alert or a monitor result to the user's phone. To include an image/file, pass its workspace path in `attachments`.",
+				Parameters: map[string]ToolParam{
+					"text":        {Type: "string", Description: "The message to send to the owner."},
+					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
+				},
+				Required: []string{"text"},
 			},
 			Handler: func(args map[string]any) (string, error) {
 				link, ok := ActivePhantomLink()
 				if !ok {
-					return "", fmt.Errorf("the phantom bridge is not available")
+					return "", fmt.Errorf("the messaging bridge is not available")
 				}
 				text := strings.TrimSpace(oArgStr(args, "text"))
 				if text == "" {
@@ -551,9 +631,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				self, ok := link.OwnerHandle(owner)
 				if !ok {
-					return "", fmt.Errorf("no owner phone configured in phantom (set Owner phone in phantom settings)")
+					return "", fmt.Errorf("no owner phone is configured (set the owner's handle in the messaging bridge settings)")
 				}
-				images := collectMessageAttachments(sess, text)
+				images := messageImages(sess, args, text)
 					// DeliverMessage (not SendToHandle) so attachments ride along;
 					// persona is inactive for the owner's own chat, so the text
 					// is sent verbatim. Empty chatID resolves the owner's thread.
@@ -569,10 +649,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "message_contact",
-				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats — a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id — the name works. Delivery routes automatically: if phantom's assistant is active for that chat your message is delivered in that chat's established voice, otherwise your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow'), then sends once approved.",
+				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats — a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id — the name works. To send an image/file, pass its workspace path in `attachments`. Your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow', or you're replying to someone who just messaged you), then sends once approved.",
 				Parameters: map[string]ToolParam{
-					"to":   {Type: "string", Description: "Recipient as shown by list_chats: a contact/group name, a handle (phone/email), or a chat_id. Required — never omit it."},
-					"text": {Type: "string", Description: "The message to send. To attach a file you generated (image, etc.), first save it to your workspace and call workspace(action=\"attach\", path=\"<file>\"), then send the message — the attachment rides along automatically. Do NOT type delivery markers like [ATTACH: ...] into this text; that is a different surface's convention and is stripped before sending."},
+					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a contact/group name, a handle (phone/email), or a chat_id. Required — never omit it."},
+					"text":        {Type: "string", Description: "The message to send. Do NOT type delivery markers like [ATTACH: ...] into this text; that is a different surface's convention and is stripped before sending."},
+					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
 				},
 				Required: []string{"to", "text"},
 			},
@@ -584,7 +665,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				link, ok := ActivePhantomLink()
 				if !ok {
-					return "", fmt.Errorf("the phantom bridge is not available")
+					return "", fmt.Errorf("the messaging bridge is not available")
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {
@@ -592,9 +673,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
-				images := collectMessageAttachments(sess, text)
+				images := messageImages(sess, args, text)
 				if IsContactBlocked(RootDB, owner, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings — not sent.", label), nil
+				}
+				// Replying to the conversation that just messaged us is in-thread,
+				// not a proactive reach-out — deliver without the approval queue.
+				if isReplyToActiveInbound(sess, recip) {
+					if _, err := operatorDeliverMessage(owner, rec.ChatID, rec.Handle, text, images); err != nil {
+						return "", err
+					}
+					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				// Pre-authorized recipient: send immediately, skip the queue.
 				if IsContactPreAuthorized(RootDB, owner, recip) {
@@ -627,7 +716,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				link, ok := ActivePhantomLink()
 				if !ok {
-					return "", fmt.Errorf("the phantom bridge is not available")
+					return "", fmt.Errorf("the messaging bridge is not available")
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {

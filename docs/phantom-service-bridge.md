@@ -6,6 +6,11 @@ client-side process that connects a real messaging platform to phantom).
 Any bridge, in any language, that honors this contract can feed messages
 into phantom's agent engine and deliver its replies.
 
+> **Status.** The live transport is now the **Bridges app** (`apps/bridges/`,
+> see `docs/bridges-telegram.md`), which implements this same hook/poll
+> contract. The contract below still holds; the phantom-specific pieces (the
+> `ServicePolicy` adapter) describe the predecessor as it is folded into Bridges.
+
 > **Terminology.** We call a messaging platform (iMessage, Telegram,
 > Slack, email, a generic webhook source) a **service**, not a "channel."
 > "Channel" already means the Master Control agent-thread concept
@@ -136,10 +141,13 @@ Delivery notes:
   apart (the `ServicePolicy.AttachmentDelay` behavior) so the upload
   lands first; preserve order and the gap is already encoded by when the
   items appear.
-- **Formatting.** The server currently renders outbound text as plain
-  text sized for SMS. Per-service formatting (markdown passthrough,
-  different length limits) is a planned `ServicePolicy` extension; until
-  then, send `text` as given.
+- **Formatting.** Outbound text is flattened to plain text at the
+  transport's single `enqueueOutbox` chokepoint, gated per service: a
+  service whose `RendersMarkdown` flag is set (the Bridges `bridgeServices`
+  registry in `core/channel.go`) keeps its markdown; everything else
+  (iMessage, SMS) is stripped via `core.MarkdownToPlain`. Send `text` as
+  given; the server decides. Per-service length limits / chunking are still
+  pending.
 
 ## Identity and threading summary
 
@@ -172,10 +180,11 @@ func init() {
 
 Adding a service server-side is registering one of these. An unknown
 service falls back to a safe generic policy (no cleaning, atomic
-delivery). Planned additions (when the second real service lands):
-`Markdown bool` and `ChunkSize int`, with all outbound markdown
-stripping moved to the single `enqueueOutbox` chokepoint so it can be
-gated per service.
+delivery). The markdown half of this has shipped in the Bridges transport:
+stripping happens at the single `enqueueOutbox` chokepoint, gated per
+service by `core.ServiceRendersMarkdown` (the `bridgeServices` registry),
+rather than a phantom `ServicePolicy.Markdown` field. Per-service length
+limits / chunking (`ChunkSize`) are still pending.
 
 ## Bridge side: responsibilities
 

@@ -526,6 +526,18 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 			tools = mergeToolsDedup(tools, subTurn.inheritableParentTools(parent, subSess))
 		}
 	}
+	// Channel-scoped messaging tools (list_chats / read_chat / send_message)
+	// for the TARGET's own bound channels. Without this a channel-bound agent
+	// (e.g. a WiWee transport agent) dispatched via agents(action="run") has no
+	// send_message tool, so "post this to the group" becomes a hallucinated
+	// success — the agent claims it sent but nothing reaches the channel. The
+	// external dispatch paths (RunAgentSync / RunAgentSyncContinuing) already
+	// add these; the in-session path was the lone gap. Self-gates: returns nil
+	// when the target has no channels or no transport is registered, and
+	// send_message still routes through its own pre-auth / approval check.
+	if chTools := channelChatTools(subSess, t.user, target.ID); len(chTools) > 0 {
+		tools = append(tools, chTools...)
+	}
 
 	// V1 — wrap the sub-agent's tools so their calls emit into the
 	// caller's SSE activity pane. Reuses the parent's wiring (cmd
