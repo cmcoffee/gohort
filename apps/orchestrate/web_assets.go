@@ -2735,6 +2735,9 @@ const orchestrateWebAssets = `<style>
           if (!a) return;
           if (a.disable_explicit) factsSection.style.display = 'none';
           if (a.disable_inferred) inferredSection.style.display = 'none';
+          // Graph memory rides the Explicit gate (same !explicitOff attach as
+          // store_fact), so it hides whenever Saved facts do.
+          if (a.disable_explicit && typeof graphSection !== 'undefined') graphSection.style.display = 'none';
           if (a.disable_explicit && a.disable_inferred) {
             disabledNotice.style.display = '';
           }
@@ -2946,6 +2949,121 @@ const orchestrateWebAssets = `<style>
           .then(function(r){ return r.ok ? r.json() : null; })
           .then(function(d){ renderInferred(d ? d.items : []); })
           .catch(function(){ renderInferred([]); });
+
+        // --- Graph Memory section ---
+        // Entities + relationships recorded via link_entities. Read-only with
+        // delete-per-entity and delete-per-edge (pruning); the LLM owns adding
+        // and editing through the tools. Part of the Explicit layer, so it
+        // hides with disable_explicit (same gate as Saved facts).
+        var graphURL = 'api/agents/' + encodeURIComponent(id) + '/graph';
+        var graphSection = document.createElement('div');
+        graphSection.style.marginTop = '1.2rem';
+        graphSection.style.paddingTop = '0.8rem';
+        graphSection.style.borderTop = '1px solid var(--border)';
+        var graphTitle = document.createElement('div');
+        graphTitle.style.fontWeight = '600';
+        graphTitle.style.color = 'var(--text)';
+        graphTitle.style.marginBottom = '0.3rem';
+        graphTitle.textContent = 'Graph Memory';
+        graphSection.appendChild(graphTitle);
+        var graphHelp = document.createElement('div');
+        graphHelp.className = 'ui-orch-modal-help';
+        graphHelp.style.marginBottom = '0.5rem';
+        graphHelp.textContent = 'Entities and relationships the agent recorded via link_entities, looked up on demand with recall_about. Delete an entity (with its links) or a single relationship to prune.';
+        graphSection.appendChild(graphHelp);
+        var graphList = document.createElement('div');
+        graphList.className = 'ui-orch-list';
+        graphSection.appendChild(graphList);
+        m.body.appendChild(graphSection);
+
+        function renderGraph(data) {
+          graphList.innerHTML = '';
+          var ents = (data && data.entities) || [];
+          var counts = (data && data.counts) || {};
+          if (counts.entities != null) {
+            graphTitle.textContent = 'Graph Memory (' + counts.entities + ' entit' + (counts.entities === 1 ? 'y' : 'ies') + ', ' + (counts.edges || 0) + ' link' + (counts.edges === 1 ? '' : 's') + ')';
+          }
+          if (!ents.length) {
+            var empty = document.createElement('div');
+            empty.style.cssText = 'color:var(--text-mute);font-style:italic;padding:0.4rem 0';
+            empty.textContent = 'No graph entries yet. Relationships the agent records with link_entities will appear here.';
+            graphList.appendChild(empty);
+            return;
+          }
+          ents.forEach(function(e) {
+            var row = document.createElement('div');
+            row.className = 'ui-orch-list-row';
+            row.style.alignItems = 'flex-start';
+            var body = document.createElement('div');
+            body.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+            var head = document.createElement('div');
+            var nm = document.createElement('span');
+            nm.style.fontWeight = '600';
+            nm.textContent = e.name;
+            head.appendChild(nm);
+            if (e.kind) {
+              var kd = document.createElement('span');
+              kd.style.cssText = 'color:var(--text-mute);font-size:0.74rem;margin-left:0.35rem';
+              kd.textContent = '(' + e.kind + ')';
+              head.appendChild(kd);
+            }
+            body.appendChild(head);
+            if (e.aliases && e.aliases.length) {
+              var al = document.createElement('div');
+              al.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
+              al.textContent = 'aka ' + e.aliases.join(', ');
+              body.appendChild(al);
+            }
+            if (e.attrs) {
+              Object.keys(e.attrs).sort().forEach(function(k) {
+                var at = document.createElement('div');
+                at.style.cssText = 'color:var(--text-mute);font-size:0.74rem';
+                at.textContent = k + ': ' + e.attrs[k];
+                body.appendChild(at);
+              });
+            }
+            (e.edges || []).forEach(function(ed) {
+              var er = document.createElement('div');
+              er.style.cssText = 'display:flex;align-items:center;gap:0.35rem;margin-top:0.15rem';
+              var lbl = document.createElement('span');
+              lbl.style.fontSize = '0.8rem';
+              lbl.textContent = String.fromCharCode(8594) + ' ' + ed.rel + ' ' + String.fromCharCode(8594) + ' ' + (ed.to_name || ed.to) + (ed.note ? ' (' + ed.note + ')' : '');
+              er.appendChild(lbl);
+              var edel = document.createElement('span');
+              edel.style.cssText = 'cursor:pointer;color:var(--text-mute);font-size:0.8rem';
+              edel.textContent = String.fromCharCode(215);
+              edel.title = 'Remove this relationship';
+              edel.onclick = async function() {
+                if (!(await window.uiConfirm('Remove the relationship: ' + e.name + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + '?'))) return;
+                var u = graphURL + '/edge?from=' + encodeURIComponent(e.id) + '&rel=' + encodeURIComponent(ed.rel) + '&to=' + encodeURIComponent(ed.to);
+                fetch(u, {method: 'DELETE'})
+                  .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); er.remove(); })
+                  .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+              };
+              er.appendChild(edel);
+              body.appendChild(er);
+            });
+            var del = document.createElement('button');
+            del.className = 'ui-orch-list-del';
+            del.type = 'button';
+            del.textContent = String.fromCharCode(215);
+            del.title = 'Delete this entity and all its relationships';
+            del.onclick = async function() {
+              if (!(await window.uiConfirm('Delete ' + e.name + ' and all its relationships?'))) return;
+              fetch(graphURL + '/entity/' + encodeURIComponent(e.id), {method: 'DELETE'})
+                .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); })
+                .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+            };
+            row.appendChild(body);
+            row.appendChild(del);
+            graphList.appendChild(row);
+          });
+        }
+
+        fetch(graphURL)
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(d){ renderGraph(d || {}); })
+          .catch(function(){ renderGraph({}); });
 
         var cancelBtn = document.createElement('button');
         cancelBtn.className = 'ui-orch-modal-btn';

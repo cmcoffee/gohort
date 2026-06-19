@@ -345,6 +345,51 @@ func scanGraphEdges(db Database, namespace string, keep func(GraphEdge) bool) []
 	return out
 }
 
+// DeleteGraphEntity removes an entity and EVERY edge touching it (inbound or
+// outbound), so the graph can't be left with dangling edges. Returns false if
+// the entity didn't exist.
+func DeleteGraphEntity(db Database, namespace, id string) bool {
+	namespace = strings.TrimSpace(namespace)
+	id = strings.TrimSpace(id)
+	if db == nil || namespace == "" || id == "" {
+		return false
+	}
+	if _, ok := getGraphEntity(db, namespace, id); !ok {
+		return false
+	}
+	db.Unset(GraphEntityTable, graphEntityKey(namespace, id))
+	prefix := namespace + "/"
+	for _, k := range db.Keys(GraphEdgeTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var e GraphEdge
+		if db.Get(GraphEdgeTable, k, &e) && (e.From == id || e.To == id) {
+			db.Unset(GraphEdgeTable, k)
+		}
+	}
+	return true
+}
+
+// DeleteGraphEdge removes one edge by (from, rel, to). rel is slugged so a
+// display-form verb ("works at") resolves to the stored key. Returns false
+// when no such edge exists.
+func DeleteGraphEdge(db Database, namespace, from, rel, to string) bool {
+	namespace = strings.TrimSpace(namespace)
+	from = strings.TrimSpace(from)
+	to = strings.TrimSpace(to)
+	rel = graphRel(rel)
+	if db == nil || namespace == "" || from == "" || rel == "" || to == "" {
+		return false
+	}
+	key := graphEdgeKey(namespace, from, rel, to)
+	if !db.Get(GraphEdgeTable, key, &GraphEdge{}) {
+		return false
+	}
+	db.Unset(GraphEdgeTable, key)
+	return true
+}
+
 // GraphCounts returns the number of entities and edges in a namespace — for
 // the introspect "Graph: N entities, M edges" line.
 func GraphCounts(db Database, namespace string) (entities, edges int) {

@@ -1948,6 +1948,18 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentInferredDelete(w, r, user, id, chunkID)
 		return
 	}
+	if action == "graph" {
+		T.handleAgentGraph(w, r, user, id)
+		return
+	}
+	if strings.HasPrefix(action, "graph/entity/") {
+		T.handleAgentGraphEntityDelete(w, r, user, id, strings.TrimPrefix(action, "graph/entity/"))
+		return
+	}
+	if action == "graph/edge" {
+		T.handleAgentGraphEdgeDelete(w, r, user, id)
+		return
+	}
 	if action == "knowledge" {
 		T.handleAgentKnowledge(w, r, user, id)
 		return
