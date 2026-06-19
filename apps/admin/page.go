@@ -271,9 +271,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		Title:     "Administrator",
 		ShowTitle: true,
 		BackURL:   "/",
-		MaxWidth:  "1200px", // desktop admin — room for a 2-col section grid + full-width tables
-		Grid:      true,      // flow sections into a responsive grid; wide sections (tagged below) span full width
-		Tabbed:    true,      // category tab bar across the top; sections grouped below
+		MaxWidth:  "1200px", // desktop admin: wide enough for full-width tables in a single column
+		Grid:      false,     // single column: sections stack vertically within each tab (Wide flags become no-ops)
+		Tabbed:    true,      // category tab bar across the top (the multiple menus); sections grouped below
 		Sections: []ui.Section{
 			{
 				Title:    "System Status",
