@@ -15,7 +15,13 @@ var (
 	mdLink     = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)  // [text](url) → "text (url)"
 	mdBold     = regexp.MustCompile(`\*\*([^*]+)\*\*`)          // **x** → x
 	mdItalic1  = regexp.MustCompile(`\*([^*]+)\*`)              // *x* → x
-	mdItalic2  = regexp.MustCompile(`_([^_]+)_`)                // _x_ → x
+	// _x_ → x, but ONLY at word boundaries. Intra-word underscores are NOT
+	// emphasis in CommonMark, so snake_case identifiers (link_entities,
+	// recall_about, store_fact) must survive to plain-text transports. A naive
+	// `_([^_]+)_` pairs the underscores across two such tokens on one line and
+	// silently eats them (link_entities … recall_about → linkentities …
+	// recallabout). Boundary chars are captured ($1/$3) and re-emitted.
+	mdItalic2  = regexp.MustCompile(`(^|[^\w])_([^_\n]+)_([^\w]|$)`)
 	mdInlineCo = regexp.MustCompile("`([^`]+)`")                // `x` → x
 	mdHeader   = regexp.MustCompile(`^#{1,6}\s+(.+)$`)          // # Title → Title
 	mdBullet   = regexp.MustCompile(`^(\s*)[-*+]\s+(.+)$`)      // - item / * item → • item
@@ -75,7 +81,7 @@ func MarkdownToPlain(md string) string {
 		ln = mdLink.ReplaceAllString(ln, "$1 ($2)")
 		ln = mdBold.ReplaceAllString(ln, "$1")
 		ln = mdItalic1.ReplaceAllString(ln, "$1")
-		ln = mdItalic2.ReplaceAllString(ln, "$1")
+		ln = mdItalic2.ReplaceAllString(ln, "${1}${2}${3}")
 		ln = mdInlineCo.ReplaceAllString(ln, "$1")
 		out.WriteString(ln)
 		out.WriteByte('\n')
