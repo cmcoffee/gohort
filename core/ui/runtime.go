@@ -4191,6 +4191,21 @@ const runtimeJS = `
     var allBtn = el('button', {class: 'ui-row-btn', onclick: function() {
       if (allActive) {
         Object.keys(selectedMap).forEach(function(k){ delete selectedMap[k]; });
+        reload();
+        return;
+      }
+      // Scope Select-all to what the search currently SHOWS. Rows are appended
+      // AFTER this bar is built, so read visibility at click time. When the list
+      // tags its rows (data-bulk-id), select only the ones not hidden by the
+      // active filter; otherwise fall back to every item (callers whose rows
+      // aren't searchable behave exactly as before).
+      var taggedRows = listEl.querySelectorAll('[data-bulk-id]');
+      if (taggedRows.length) {
+        taggedRows.forEach(function(row) {
+          if (row.style.display === 'none') return;
+          var k = row.getAttribute('data-bulk-id');
+          if (k) selectedMap[k] = true;
+        });
       } else {
         items.forEach(function(s){ var k = idOf(s); if (k) selectedMap[k] = true; });
       }
@@ -4800,15 +4815,21 @@ const runtimeJS = `
       placeholder: 'Search…',
       autocomplete: 'off', autocorrect: 'off', spellcheck: 'false',
     });
-    input.addEventListener('input', function() {
+    var sel = itemSelector || '.ui-chat-side-item';
+    // applyFilter re-runs the show/hide pass against the CURRENT rows. Exposed
+    // on the input so a list that rebuilds itself (select-mode toggle, bulk
+    // delete) can re-apply the active query — otherwise the rebuilt rows come
+    // back all-visible and the filter is silently lost.
+    function applyFilter() {
       var q = (input.value || '').trim().toLowerCase();
-      var sel = itemSelector || '.ui-chat-side-item';
       sideList.querySelectorAll(sel).forEach(function(it) {
         if (!q) { it.style.display = ''; return; }
         var hay = (it.textContent || '').toLowerCase();
         it.style.display = hay.indexOf(q) >= 0 ? '' : 'none';
       });
-    });
+    }
+    input.addEventListener('input', applyFilter);
+    input.applyFilter = applyFilter;
     return input;
   }
 
@@ -12562,6 +12583,9 @@ const runtimeJS = `
               style: 'margin-left:0.4rem;font-size:0.66rem;padding:0 0.3rem;flex:0 0 auto;vertical-align:middle'}, [parts.join('  ')]));
           }
           var row = el('div', {class: rowClass}, rowKids);
+          // Tag the row with its id so a search-scoped Select-all (renderBulkBar)
+          // can pick only the rows the active filter currently shows.
+          row.setAttribute('data-bulk-id', sid);
           row.addEventListener('click', function() {
             if (inMode) {
               if (bulkSelected[sid]) delete bulkSelected[sid];
@@ -12674,6 +12698,11 @@ const runtimeJS = `
         var rest = items.filter(function(rec) { return !hasBgWork(rec); });
         actives.forEach(buildAndAppendRow);
         rest.forEach(buildAndAppendRow);
+        // Re-apply the side-search filter to the freshly rebuilt rows so an
+        // active query survives reloads (entering select mode, bulk delete).
+        // Without this the rebuilt rows come back all-visible and Select-all,
+        // which is scoped to visible rows, would grab everything not just matches.
+        if (sideSearch && sideSearch.applyFilter) sideSearch.applyFilter();
       }).catch(function() {
         sideList.innerHTML = '';
         sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['(failed to load)']));
