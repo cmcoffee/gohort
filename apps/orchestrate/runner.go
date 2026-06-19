@@ -4460,6 +4460,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if !t.explicitOff() {
 		knowTools = append(knowTools,
 			t.storeFactToolDef(), t.forgetFactToolDef(),
+			// Graph memory — the structured relationship layer beside the flat
+			// facts. Pull-only (recall_about costs no prompt tokens until used).
+			t.linkEntitiesToolDef(), t.recallAboutToolDef(),
 		)
 	}
 	// Build-plan UI — present_build_plan paints the visible
@@ -5398,7 +5401,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		toolNames = append(toolNames, "memory")
 	}
 	if !t.explicitOff() {
-		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef())
+		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(),
+			t.linkEntitiesToolDef(), t.recallAboutToolDef())
 	}
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.

@@ -147,6 +147,9 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				b.WriteString("## Memory & state\n")
 				facts := ListMemoryFacts(t.udb, factsNamespace(a.ID))
 				b.WriteString(fmt.Sprintf("- Explicit memory (always-in-prompt saved facts): %d\n", len(facts)))
+				if ents, edges := GraphCounts(t.udb, factsNamespace(a.ID)); ents > 0 || edges > 0 {
+					b.WriteString(fmt.Sprintf("- Graph memory (entities + relationships, via link_entities / recall_about): %d entities, %d edges\n", ents, edges))
+				}
 				if a.Cortex {
 					if sess, ok := loadChatSession(t.udb, a.ID, cortexSessionID(a.ID)); ok && len(sess.Messages) > 0 {
 						obs := 0
