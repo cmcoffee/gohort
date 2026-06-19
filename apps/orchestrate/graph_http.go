@@ -89,6 +89,54 @@ func (T *OrchestrateApp) handleAgentGraphEntityDelete(w http.ResponseWriter, r *
 	http.NotFound(w, r)
 }
 
+// handleAgentGraphAttrDelete removes one attribute key from an entity.
+//
+//	DELETE /api/agents/{id}/graph/entity/{entity_id}/attr?key=orientation → 204
+func (T *OrchestrateApp) handleAgentGraphAttrDelete(w http.ResponseWriter, r *http.Request, user, agentID, entityID string) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if T.DB == nil {
+		http.Error(w, "DB not initialized", http.StatusInternalServerError)
+		return
+	}
+	key := r.URL.Query().Get("key")
+	if strings.TrimSpace(entityID) == "" || strings.TrimSpace(key) == "" {
+		http.Error(w, "entity id and key required", http.StatusBadRequest)
+		return
+	}
+	if DeleteGraphEntityAttr(UserDB(T.DB, user), factsNamespace(agentID), entityID, key) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// handleAgentGraphAliasDelete removes one alias from an entity.
+//
+//	DELETE /api/agents/{id}/graph/entity/{entity_id}/alias?value=Rory → 204
+func (T *OrchestrateApp) handleAgentGraphAliasDelete(w http.ResponseWriter, r *http.Request, user, agentID, entityID string) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if T.DB == nil {
+		http.Error(w, "DB not initialized", http.StatusInternalServerError)
+		return
+	}
+	val := r.URL.Query().Get("value")
+	if strings.TrimSpace(entityID) == "" || strings.TrimSpace(val) == "" {
+		http.Error(w, "entity id and value required", http.StatusBadRequest)
+		return
+	}
+	if DeleteGraphEntityAlias(UserDB(T.DB, user), factsNamespace(agentID), entityID, val) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.NotFound(w, r)
+}
+
 // handleAgentGraphEdgeDelete removes one edge identified by from/rel/to query
 // params (the values the GET view carries on each edge).
 func (T *OrchestrateApp) handleAgentGraphEdgeDelete(w http.ResponseWriter, r *http.Request, user, agentID string) {

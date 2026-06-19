@@ -3010,15 +3010,45 @@ const orchestrateWebAssets = `<style>
             body.appendChild(head);
             if (e.aliases && e.aliases.length) {
               var al = document.createElement('div');
-              al.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
-              al.textContent = 'aka ' + e.aliases.join(', ');
+              al.style.cssText = 'color:var(--text-mute);font-size:0.72rem;display:flex;flex-wrap:wrap;gap:0.3rem;align-items:center';
+              al.appendChild(document.createTextNode('aka'));
+              e.aliases.forEach(function(a) {
+                var chip = document.createElement('span');
+                chip.style.cssText = 'display:inline-flex;align-items:center;gap:0.2rem';
+                chip.appendChild(document.createTextNode(a));
+                var adel = document.createElement('span');
+                adel.style.cssText = 'cursor:pointer;font-size:0.75rem';
+                adel.textContent = String.fromCharCode(215);
+                adel.title = 'Remove alias';
+                adel.onclick = async function() {
+                  if (!(await window.uiConfirm('Remove alias "' + a + '" from ' + e.name + '?'))) return;
+                  fetch(graphURL + '/entity/' + encodeURIComponent(e.id) + '/alias?value=' + encodeURIComponent(a), {method: 'DELETE'})
+                    .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); chip.remove(); })
+                    .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+                };
+                chip.appendChild(adel);
+                al.appendChild(chip);
+              });
               body.appendChild(al);
             }
             if (e.attrs) {
               Object.keys(e.attrs).sort().forEach(function(k) {
                 var at = document.createElement('div');
-                at.style.cssText = 'color:var(--text-mute);font-size:0.74rem';
-                at.textContent = k + ': ' + e.attrs[k];
+                at.style.cssText = 'display:flex;align-items:center;gap:0.35rem;color:var(--text-mute);font-size:0.74rem';
+                var atl = document.createElement('span');
+                atl.textContent = k + ': ' + e.attrs[k];
+                at.appendChild(atl);
+                var atdel = document.createElement('span');
+                atdel.style.cssText = 'cursor:pointer;font-size:0.8rem';
+                atdel.textContent = String.fromCharCode(215);
+                atdel.title = 'Remove this attribute';
+                atdel.onclick = async function() {
+                  if (!(await window.uiConfirm('Remove "' + k + '" from ' + e.name + '?'))) return;
+                  fetch(graphURL + '/entity/' + encodeURIComponent(e.id) + '/attr?key=' + encodeURIComponent(k), {method: 'DELETE'})
+                    .then(function(r) { if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); at.remove(); })
+                    .catch(function(err) { window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+                };
+                at.appendChild(atdel);
                 body.appendChild(at);
               });
             }

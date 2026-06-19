@@ -390,6 +390,63 @@ func DeleteGraphEdge(db Database, namespace, from, rel, to string) bool {
 	return true
 }
 
+// DeleteGraphEntityAttr removes one attribute key from an entity (so a single
+// false key/value can be pruned without dropping the whole node). Returns
+// false if the entity or key didn't exist.
+func DeleteGraphEntityAttr(db Database, namespace, id, key string) bool {
+	namespace = strings.TrimSpace(namespace)
+	id = strings.TrimSpace(id)
+	key = strings.TrimSpace(key)
+	if db == nil || namespace == "" || id == "" || key == "" {
+		return false
+	}
+	e, ok := getGraphEntity(db, namespace, id)
+	if !ok {
+		return false
+	}
+	if _, exists := e.Attrs[key]; !exists {
+		return false
+	}
+	delete(e.Attrs, key)
+	if len(e.Attrs) == 0 {
+		e.Attrs = nil
+	}
+	e.Updated = time.Now()
+	db.Set(GraphEntityTable, graphEntityKey(namespace, id), e)
+	return true
+}
+
+// DeleteGraphEntityAlias removes one alias from an entity (case-insensitive).
+// The canonical Name is never touched here. Returns false if not found.
+func DeleteGraphEntityAlias(db Database, namespace, id, alias string) bool {
+	namespace = strings.TrimSpace(namespace)
+	id = strings.TrimSpace(id)
+	alias = strings.TrimSpace(alias)
+	if db == nil || namespace == "" || id == "" || alias == "" {
+		return false
+	}
+	e, ok := getGraphEntity(db, namespace, id)
+	if !ok {
+		return false
+	}
+	var out []string
+	removed := false
+	for _, a := range e.Aliases {
+		if strings.EqualFold(a, alias) {
+			removed = true
+			continue
+		}
+		out = append(out, a)
+	}
+	if !removed {
+		return false
+	}
+	e.Aliases = out
+	e.Updated = time.Now()
+	db.Set(GraphEntityTable, graphEntityKey(namespace, id), e)
+	return true
+}
+
 // GraphCounts returns the number of entities and edges in a namespace — for
 // the introspect "Graph: N entities, M edges" line.
 func GraphCounts(db Database, namespace string) (entities, edges int) {

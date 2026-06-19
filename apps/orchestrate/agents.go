@@ -1953,7 +1953,17 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if strings.HasPrefix(action, "graph/entity/") {
-		T.handleAgentGraphEntityDelete(w, r, user, id, strings.TrimPrefix(action, "graph/entity/"))
+		rest := strings.TrimPrefix(action, "graph/entity/")
+		// Entity IDs are "<kind>:<slug>" — never contain a slash — so a
+		// trailing /attr or /alias unambiguously selects the sub-action.
+		switch {
+		case strings.HasSuffix(rest, "/attr"):
+			T.handleAgentGraphAttrDelete(w, r, user, id, strings.TrimSuffix(rest, "/attr"))
+		case strings.HasSuffix(rest, "/alias"):
+			T.handleAgentGraphAliasDelete(w, r, user, id, strings.TrimSuffix(rest, "/alias"))
+		default:
+			T.handleAgentGraphEntityDelete(w, r, user, id, rest)
+		}
 		return
 	}
 	if action == "graph/edge" {
