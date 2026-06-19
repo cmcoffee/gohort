@@ -27,24 +27,38 @@ func channelSurfaceContext(in ChannelInbound) string {
 	if !ok {
 		return ""
 	}
-	convo := chFirst(in.ConversationName, in.SenderName, ch.Name, "this conversation")
-	where := "on a connected channel"
-	if svc := ServiceDisplayName(ch.Service); svc != "" {
-		where = "over " + svc
+	// Three DISTINCT identifiers, surfaced separately so the agent doesn't
+	// conflate them (it was calling the SERVICE the channel name):
+	//   - channel:      the user's label for THIS binding (e.g. "iPhone")
+	//   - service:      the transport it rides (e.g. iMessage)
+	//   - conversation: the room/contact (e.g. "Craig Coffee")
+	channel := strings.TrimSpace(ch.Name)
+	service := ServiceDisplayName(ch.Service)
+	convo := chFirst(in.ConversationName, in.SenderName, "this conversation")
+	var origin string
+	switch {
+	case channel != "" && service != "":
+		origin = fmt.Sprintf("your %q channel (transport: %s)", channel, service)
+	case channel != "":
+		origin = fmt.Sprintf("your %q channel", channel)
+	case service != "":
+		origin = fmt.Sprintf("a %s channel", service)
+	default:
+		origin = "a connected channel"
 	}
 	// A receive-only channel doesn't reply on this surface; bidirectional (the
 	// default) does. Ground the agent on which it is.
 	if ch.Direction == DirectionInbound {
-		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived %s in \"%s\". This is a receive-only channel — your reply is NOT delivered back here; act on the information or route it elsewhere if needed.]", where, convo)
+		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed.]", origin, convo)
 	}
-	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived %s in \"%s\". Your reply is delivered straight back to this same conversation automatically — you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message.]", where, convo)
+	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message.]", origin, convo)
 }
 
 // channelObsFrom labels a channel inbound for its cortex report card: the
-// sender (the "who") enriched with the conversation/room and transport (the
-// "where"), so the standing thread — and any session that forks from it —
-// records which channel a message came in on, not just who sent it. Falls back
-// to the bare sender when no channel resolves.
+// sender (the "who") enriched with the CHANNEL name + transport (the "where",
+// e.g. "iPhone (iMessage)"), so the standing thread — and any session that
+// forks from it — records which channel a message came in on, not just who
+// sent it. Falls back to the bare sender when no channel resolves.
 func channelObsFrom(in ChannelInbound) string {
 	who := chFirst(in.SenderName, in.ConversationName, "someone")
 	ch, ok := channelForChat(in.Owner, in.ChatID, in.Handle)
@@ -52,20 +66,22 @@ func channelObsFrom(in ChannelInbound) string {
 		return who
 	}
 	svc := ServiceDisplayName(ch.Service)
-	where := chFirst(in.ConversationName, ch.Name)
-	if strings.EqualFold(strings.TrimSpace(where), strings.TrimSpace(who)) {
-		where = "" // 1:1 — conversation name == sender; don't repeat it
-	}
+	channel := strings.TrimSpace(ch.Name)
+	// "where" labels the CHANNEL (the user's binding label, e.g. "iPhone")
+	// with the transport in parens — distinct from the sender/conversation.
+	var where string
 	switch {
-	case where != "" && svc != "":
-		return fmt.Sprintf("%s · %s (%s)", who, where, svc)
+	case channel != "" && svc != "":
+		where = channel + " (" + svc + ")"
+	case channel != "":
+		where = channel
 	case svc != "":
-		return fmt.Sprintf("%s (%s)", who, svc)
-	case where != "":
-		return fmt.Sprintf("%s · %s", who, where)
-	default:
+		where = svc
+	}
+	if where == "" || strings.EqualFold(strings.TrimSpace(where), strings.TrimSpace(who)) {
 		return who
 	}
+	return who + " · " + where
 }
 
 // registerChannelAgentRunner installs the closure core invokes to run a
