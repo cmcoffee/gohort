@@ -349,6 +349,9 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		extraTools = append(extraTools,
 			subTurn.storeFactToolDef(),
 			subTurn.forgetFactToolDef(),
+			// Graph memory — structured relationship layer beside the flat facts.
+			subTurn.linkEntitiesToolDef(),
+			subTurn.recallAboutToolDef(),
 		)
 	}
 	// agents grouped tool — sub-agents (OwnedBy set) are LEAVES in the

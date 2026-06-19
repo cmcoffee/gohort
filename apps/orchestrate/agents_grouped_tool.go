@@ -504,7 +504,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		tools = append(tools, subTurn.memoryToolDef())
 	}
 	if !subTurn.explicitOff() {
-		tools = append(tools, subTurn.storeFactToolDef(), subTurn.forgetFactToolDef())
+		tools = append(tools, subTurn.storeFactToolDef(), subTurn.forgetFactToolDef(),
+			// Graph memory — structured relationship layer beside the flat facts.
+			subTurn.linkEntitiesToolDef(), subTurn.recallAboutToolDef())
 	}
 	// Agents grouped tool — sub-agents (OwnedBy set) are LEAVES and
 	// don't get the dispatch surface (eliminates depth cascades and
