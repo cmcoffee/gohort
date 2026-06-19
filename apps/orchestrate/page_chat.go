@@ -228,7 +228,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// every thread, not only the home thread). What remains is the
 					// fleet-management views + the channel-wide actions.
 					OrchestratorNav: []ui.OrchestratorNavItem{
-						{Label: "Enabled agents", Source: "api/console/agents", RowActions: []ui.OrchestratorRowAction{
+						// Cards layout so each agent's mission (the standing brief it
+						// runs with — "what it's told to do") renders as a detail line
+						// under the name, alongside its schedule / status / next run.
+						{Label: "Enabled agents", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},

@@ -1421,6 +1421,9 @@ func init_database() {
 	// This persists results from source hooks so repeated runs on the same
 	// topic don't re-hit rate-limited upstream APIs. TTL default is 30 days.
 	SetHookCacheDB(global.cache)
+	// Keep that cache bounded: daily background sweep of expired entries
+	// (lazy delete-on-read handles the re-queried ones).
+	StartHookCacheSweeper()
 
 	// Load global source hooks — available to all agents regardless of entry point.
 	LoadSourceHooks(global.db)

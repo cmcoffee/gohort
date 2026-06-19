@@ -175,7 +175,12 @@ func (T *OrchestrateApp) handleChannelDecommission(w http.ResponseWriter, r *htt
 }
 
 type consoleAgentRow struct {
-	Name     string `json:"name"`
+	Name string `json:"name"`
+	// Mission is the standing brief handed to the agent each run — "what it's
+	// told to do." Surfaced so the Enabled-agents view shows each agent's
+	// instructions, not just its schedule/status. Renders as a detail line
+	// under the name in the cards layout.
+	Mission  string `json:"mission,omitempty"`
 	State    string `json:"state"` // active | paused
 	Schedule string `json:"schedule"`
 	Status   string `json:"status"`
@@ -211,7 +216,7 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		if sa.Paused {
 			state = "paused"
 		}
-		row := consoleAgentRow{Name: sa.Name, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
+		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)
 		}
@@ -684,6 +689,9 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		if _, err := operatorDeliverMessage(a.Owner, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
 			Log("[operator.approval] send_message to %s failed: %v", recip, err)
 		}
+		// Approved post: if the target is a bound channel, make its agent see it
+		// (channel session + cortex) so it can field follow-ups.
+		recordChannelPost(UserDB(T.DB, a.Owner), a.Owner, a.ChatID, a.Handle, a.Text)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

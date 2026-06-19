@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -189,6 +190,9 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 					if _, err := operatorDeliverMessage(owner, chatID, handle, text, images); err != nil {
 						return "", err
 					}
+					// If this chat is a bound channel, make its agent see the post
+					// (channel session + cortex) so it can field follow-ups.
+					recordChannelPost(sess.DB, owner, chatID, handle, text)
 					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
 				}
 				a := SaveAuthorization(RootDB, Authorization{
@@ -212,6 +216,100 @@ func looksLikeHandle(s string) bool {
 	}
 	c := s[0]
 	return c == '+' || (c >= '0' && c <= '9')
+}
+
+// channelForChat finds the channel (any of the owner's) bound to a chat — by a
+// per-contact/group binding whose Address is the chat id or the contact handle.
+// Whole-service channels (Address=="") are skipped: matching one needs the
+// service to disambiguate, which the send path doesn't carry. Returns false when
+// no channel is bound to the chat.
+func channelForChat(owner, chatID, handle string) (Channel, bool) {
+	chatID, handle = strings.TrimSpace(chatID), strings.TrimSpace(handle)
+	var wholeService *Channel
+	for _, ch := range ListChannels(RootDB, owner) {
+		if ch.Address == "" {
+			if ch.Service != "" && wholeService == nil {
+				c := ch
+				wholeService = &c
+			}
+			continue
+		}
+		if ch.Address == chatID || (handle != "" && ch.Address == handle) {
+			return ch, true // exact per-contact binding wins
+		}
+	}
+	// Fall back to a whole-service ("global view") channel when no per-contact
+	// channel claims the chat — so a send to a conversation only covered by the
+	// agent's global channel still records (notify_me to the owner, the owner's
+	// own 1:1 reached via a whole-service binding). Single-service deployments
+	// resolve uniquely; with multiple whole-service channels this picks the
+	// first — fine until per-service disambiguation actually matters.
+	if wholeService != nil {
+		return *wholeService, true
+	}
+	return Channel{}, false
+}
+
+// recordChannelPost makes a channel's bound agent SEE a message sent down its
+// channel — by ANY agent (the Operator sharing a profile into a group WiWee
+// fronts) OR by the channel agent itself via a dispatch (which runs in a
+// throwaway dispatch:<…> session, disconnected from the channel thread). Direct
+// messaging is allowed; the rule is just that the channel's agent sees
+// everything on its channel. Without this the post is delivered but never enters
+// the channel agent's session or cortex, so when the group replies the agent has
+// no idea what was "said" (relayed-and-forgot). Records the text as an assistant
+// turn in the channel session (so it's in-context on the next inbound) AND feeds
+// the cortex (durable awareness past compaction). The dedupe below absorbs a
+// double-send (sent directly AND via a dispatch). No-op when no channel is bound
+// to the chat. db is the owner's per-user session store.
+func recordChannelPost(db Database, owner, chatID, handle, text string) {
+	text = strings.TrimSpace(text)
+	if db == nil || owner == "" || text == "" {
+		return
+	}
+	ch, ok := channelForChat(owner, chatID, handle)
+	if !ok || ch.AgentID == "" {
+		return
+	}
+	// Channel = relay, Cortex = thread: a DEDICATED cortex agent's traffic lives
+	// in its cortex — the same session channel_runner runs its inbound in — so
+	// write the post there, as a real assistant turn, where the agent reads it.
+	// A per-room agent (non-cortex, or multi-channel) writes to its channel
+	// session and gets a separate cortex digest.
+	toCortex := false
+	if ag, ok := loadAgent(db, ch.AgentID); ok && ag.Cortex &&
+		len(ListChannelsForAgent(RootDB, owner, ch.AgentID)) == 1 {
+		toCortex = true
+	}
+	sid := ChannelSessionKey(ch, chatID)
+	if toCortex {
+		sid = cortexSessionID(ch.AgentID)
+	}
+	sess, _ := loadChatSession(db, ch.AgentID, sid)
+	now := time.Now()
+	if strings.TrimSpace(sess.ID) == "" {
+		sess.ID, sess.AgentID, sess.Created = sid, ch.AgentID, now
+	}
+	// Dedupe a double-send (the agent both sent directly AND dispatched the
+	// channel agent to post): if the last turn is the same text, do nothing.
+	if n := len(sess.Messages); n > 0 && strings.TrimSpace(sess.Messages[n-1].Content) == text {
+		return
+	}
+	sess.Messages = append(sess.Messages, ChatMessage{Role: "assistant", Content: text, Created: now})
+	sess.LastAt = now
+	if _, err := saveChatSession(db, sess); err != nil {
+		Log("[orchestrate] recordChannelPost: session save failed (%s): %v", sid, err)
+	}
+	// Per-room agents also get a cortex DIGEST (awareness past compaction). For a
+	// dedicated cortex agent the post is already IN the cortex above, so skip the
+	// duplicate report card.
+	if !toCortex {
+		dest := "Posted to " + chFirst(ch.Name, handle, chatID)
+		if svc := ServiceDisplayName(ch.Service); svc != "" {
+			dest += " (" + svc + ")"
+		}
+		appendCortexObs(db, ch.AgentID, dest, cortexKindMessage, text)
+	}
 }
 
 // chFirst returns the first non-blank string.

@@ -146,6 +146,20 @@ type AgentRecord struct {
 	// Applied by passing it into AgentLoopConfig.ThinkBudget at each run path.
 	ThinkBudget int `json:"think_budget,omitempty"`
 
+	// LeadModel, when true, escalates THIS agent's main reasoning (the
+	// orchestrator plan + synthesis turns) to the lead/precision LLM instead
+	// of the worker-locked default. Opt-in per agent; the dispatched plan_set
+	// step phases still run on the worker. Three gates apply:
+	//   1. Degrades to worker automatically when no distinct lead model is
+	//      configured (LeadChat falls back to the worker LLM).
+	//   2. Never escalates when the agent is ForcePrivate or the turn is
+	//      Private-toggled — the conversation stays local (gate in
+	//      chatTurn.shouldUseLeadModel + LeadChat's NoLead guard).
+	//   3. Routes through the non-private app.orchestrate.orchestrator.lead
+	//      stage, so admin keeps a global worker-or-lead ceiling.
+	// Builder ignores this flag — it has its own always-lead stage.
+	LeadModel bool `json:"lead_model,omitempty"`
+
 	// Exposed publishes this agent under the public /agents/ surface
 	// (apps/agents) so non-admin users can chat with it. The exposed
 	// surface is a stripped chat pane — only the chat + per-user

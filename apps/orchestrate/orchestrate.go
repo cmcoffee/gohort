@@ -68,6 +68,18 @@ func init() {
 		Group:   "Agency",
 	})
 	RegisterRouteStage(RouteStage{
+		Key:   "app.orchestrate.orchestrator.lead",
+		Label: "Agency: Agent reasoning (lead-escalated agents)",
+		// Per-agent opt-in: agents with "Use Lead model" enabled route their
+		// main reasoning (plan + synthesis) here instead of the worker-locked
+		// orchestrator stage. NOT Private, so it can escalate; admin can flip
+		// it back to worker as a global ceiling, and it degrades to worker
+		// automatically when no lead model is configured. The dispatched
+		// plan_set worker phases stay on app.orchestrate.worker regardless.
+		Default: "lead",
+		Group:   "Agency",
+	})
+	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.worker",
 		Label:   "Agency: Worker (no-think)",
 		Default: "worker",

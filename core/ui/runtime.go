@@ -3749,6 +3749,27 @@ body { min-height: 100vh; min-height: 100dvh; }
   color: var(--text); cursor: pointer; user-select: none;
 }
 .ui-cw-coll-chip:hover { border-color: var(--accent); }
+.ui-cw-coll-add {
+  background: var(--bg-2); color: var(--text-mute);
+  border: 1px dashed var(--border); border-radius: 999px;
+  padding: 0.12rem 0.6rem; font-size: 0.74rem; cursor: pointer;
+  font-family: inherit;
+}
+.ui-cw-coll-add:hover { color: var(--text); border-color: var(--accent); }
+.ui-cw-coll-x {
+  cursor: pointer; color: var(--text-mute); font-weight: 700;
+  padding-left: 0.1rem;
+}
+.ui-cw-coll-x:hover { color: var(--danger, #f85149); }
+.ui-cw-list-check { display: flex; align-items: center; margin: 0; padding: 0; }
+.ui-cw-modal-sub {
+  font-size: 0.72rem; color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 0.55rem 0 0.3rem;
+}
+.ui-cw-coll-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.ui-cw-list-btn.add { color: var(--accent); border-color: var(--accent); font-weight: 700; min-width: 1.9rem; }
+.ui-cw-list-btn.add:hover { background: var(--accent); color: var(--text-on-accent, #1a1a1a); border-color: var(--accent); }
 .ui-cw-ctx-editor {
   flex: 1; width: 100%; min-height: 80px;
   resize: none; outline: none;
@@ -4204,6 +4225,14 @@ const runtimeJS = `
     return n;
   }
   function fetchJSON(url, opts) {
+    // Live dashboard data — never serve a stale HTTP-cached copy. Embedded
+    // webviews (e.g. the gohort-desktop WKWebView behind its proxy) will
+    // otherwise cache a list GET on first fetch and keep returning the old
+    // body, so a list that was empty when first opened stays empty even
+    // after the underlying data changes (the "Add conversation picker is
+    // empty in desktop but populated in a browser" bug). no-store forces a
+    // fresh fetch every time; callers can still override via opts.cache.
+    opts = Object.assign({cache: 'no-store'}, opts || {});
     return fetch(url, opts).then(function(r) {
       if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
       var ct = r.headers.get('Content-Type') || '';
@@ -4523,7 +4552,10 @@ const runtimeJS = `
       dlg.appendChild(sub);
     }
     var body = document.createElement('div');
-    body.style.cssText = 'overflow-y:auto;flex:1;padding-right:0.3rem;display:flex;flex-direction:column;gap:1rem';
+    // flex:1 1 auto (not flex:1) — flex-basis:0 collapses to zero height in
+    // WKWebView inside an indefinite-height flex column (the dialog). See the
+    // ModalButton body note below for the full why.
+    body.style.cssText = 'overflow-y:auto;flex:1 1 auto;min-height:0;padding-right:0.3rem;display:flex;flex-direction:column;gap:1rem';
     dlg.appendChild(body);
     var actions = document.createElement('div');
     actions.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';
@@ -7361,7 +7393,14 @@ const runtimeJS = `
         dlg.appendChild(el('p', {style: 'margin:0 0 0.8rem;font-size:0.82rem;color:var(--text-mute);line-height:1.45'}, [cfg.subtitle]));
       }
 
-      var body = el('div', {style: 'overflow-y:auto;flex:1;padding-right:0.3rem'});
+      // flex:1 1 auto (NOT flex:1) — a flex:1 child has flex-basis:0, which
+      // WebKit/WKWebView collapses to ZERO height inside a flex column whose
+      // own height is indefinite (a <dialog> sizes to content). Chrome/Firefox
+      // fall back to content height so it looked fine in a browser, but in the
+      // gohort-desktop webview the modal opened with a blank body. flex-basis
+      // auto makes the body size to its content; min-height:0 lets it shrink
+      // and scroll when content exceeds the dialog's max-height.
+      var body = el('div', {style: 'overflow-y:auto;flex:1 1 auto;min-height:0;padding-right:0.3rem'});
       dlg.appendChild(body);
       if (cfg.body) {
         mountComponent(cfg.body, body, ctx);
@@ -7974,6 +8013,9 @@ const runtimeJS = `
 
     function openSession(id) {
       currentSessionId = id;
+      // Record the surface for this agent's next open (cortex hero vs a session).
+      var landAg = window.GOHORT_AGENT_ID || '';
+      setLanding(landAg, (id && id === altPinnedSession(landAg)) ? 'cortex' : 'session');
       thread.innerHTML = '';
       history = [];
       // Reset cumulative stats — historical rounds aren't summed
@@ -8763,6 +8805,12 @@ const runtimeJS = `
     // agent resumes its OWN ongoing thread (core/ui stays agnostic of the
     // app's session-id scheme). Empty string for non-alt-nav agents.
     function altPinnedSession(agentId) { var m = altNavAgents(); return (m && agentId && m[agentId]) || ''; }
+    // Last surface this agent was on — so opening it later lands the same way: its
+    // standing thread (cortex/home) → the cortex; a session → a NEW session.
+    // Per-agent, browser-local (a landing preference, not synced state).
+    function landingKey(agentId) { return 'gohort_landing_' + (agentId || ''); }
+    function getLanding(agentId) { try { return localStorage.getItem(landingKey(agentId)) || ''; } catch (e) { return ''; } }
+    function setLanding(agentId, surface) { try { localStorage.setItem(landingKey(agentId), surface); } catch (e) {} }
 
     var activeSessionId = '';
     // Channel-thread live polling: a watched channel is fed server-side (from
@@ -9317,6 +9365,7 @@ const runtimeJS = `
         if (navEl && navEl.style.display && navEl.style.display !== 'none' &&
             manageControl && !manageControl.contains(ev.target)) closeManageMenu();
       });
+      var lastOrchAgent; // last agent applyOrchMode saw — tells a real switch from the double-fire on initial load
       function applyOrchMode(agentId) {
         var isOrch = isAltNavAgent(agentId);
         // Fleet agents get the "Manage ▾" control in the topbar; the rail is
@@ -9330,9 +9379,18 @@ const runtimeJS = `
         if (!isOrch && orchView) orchView.style.display = 'none';
         if (isOrch) {
           refreshChannelBadges();
-          // Land on the home thread (a pinned session in the rail).
-          openHomeThread();
+          // Land on the surface this agent was LAST on: its cortex (standing
+          // thread) → the cortex; a session → a NEW session (sessions are
+          // task-shaped, so a fresh one, not the last). The cortex is always one
+          // click away via its hero row. A real agent switch re-lands; the first
+          // page load respects a ?session deep-link (which set activeSessionId).
+          var switched = (typeof lastOrchAgent !== 'undefined' && lastOrchAgent !== agentId);
+          if (switched || !activeSessionId) {
+            if (getLanding(agentId) === 'cortex' && altPinnedSession(agentId)) openHomeThread();
+            else openSession(null);
+          }
         }
+        lastOrchAgent = agentId;
       }
       window.addEventListener('gohort-agent-id-changed', function(e) {
         applyOrchMode(e && e.detail && e.detail.agent_id);
@@ -12247,8 +12305,16 @@ const runtimeJS = `
           if (!ch.service) {
             rowKids.push(el('span', {class: 'ui-channels-inert', title: 'No source hooked in — inert'}, ['inert']));
           }
-          var row = el('div', {class: 'ui-chat-side-item ui-channels-item ui-chat-side-item-renable' + (sid === activeSessionId ? ' active' : '')}, rowKids);
-          row.addEventListener('click', function() { openSession(sid); closeDrawer(); });
+          // manage_only: the channel relays into its agent's cortex (no thread of
+          // its own — the conversation is the cortex hero above), so clicking it
+          // MANAGES the relay (opens the edit dialog) instead of opening an empty
+          // thread. Other channels (per-room) still open their own thread.
+          var manageOnly = !!ch.manage_only;
+          var row = el('div', {class: 'ui-chat-side-item ui-channels-item ui-chat-side-item-renable' + (!manageOnly && sid === activeSessionId ? ' active' : '')}, rowKids);
+          row.addEventListener('click', function() {
+            if (manageOnly) { if (cfg.channel_save_url) channelForm(ch); return; }
+            openSession(sid); closeDrawer();
+          });
           if (cfg.channel_save_url) {
             row.appendChild(el('button', {class: 'ui-chat-side-ren', title: 'Edit channel',
               onclick: function(ev) { ev.stopPropagation(); channelForm(ch); }}, ['✎']));
@@ -14772,38 +14838,49 @@ const runtimeJS = `
       spellcheck: 'false',
     });
     // Reference-collections picker. Rendered only when the host wires
-    // cfg.collections_list_url; checkboxes are populated below. The IDs
-    // the user checks ride on every chat POST as a "collections" array.
-    var collChecks = [];
-    var collBar    = el('div', {class: 'ui-cw-coll-bar'});
+    // cfg.collections_list_url. A compact "+ Add <noun>" button opens a
+    // modal listing each collection by name + description + size; the chosen
+    // stores show as removable chips here. The selected IDs ride every chat
+    // POST as a "collections" array (pickedCollections). The user-facing noun
+    // is host-supplied (cfg.collections_noun) so this stays domain-agnostic;
+    // it defaults to a generic label when the host doesn't set one.
+    var collNoun     = cfg.collections_noun || 'Reference';
+    var collList     = [];   // [{id, name, description, documents, chunks}]
+    var collSelected = {};   // id -> true
+    var collBar      = el('div', {class: 'ui-cw-coll-bar'});
     if (!cfg.collections_list_url) collBar.style.display = 'none';
     function pickedCollections() {
       var out = [];
-      for (var i = 0; i < collChecks.length; i++) {
-        if (collChecks[i].checked) out.push(collChecks[i].value);
+      for (var i = 0; i < collList.length; i++) {
+        if (collSelected[collList[i].id]) out.push(collList[i].id);
       }
       return out;
+    }
+    function renderCollBar() {
+      collBar.innerHTML = '';
+      collBar.appendChild(el('span', {class: 'ui-cw-coll-lbl'}, [collNoun]));
+      collBar.appendChild(el('button', {class: 'ui-cw-coll-add', type: 'button',
+        onclick: function(){ openCollectionsModal(); }}, ['+ Add ' + collNoun]));
+      collList.forEach(function(c){
+        if (!collSelected[c.id]) return;
+        var x = el('span', {class: 'ui-cw-coll-x', title: 'Remove'}, ['×']);
+        x.addEventListener('click', function(){ delete collSelected[c.id]; renderCollBar(); });
+        collBar.appendChild(el('span', {class: 'ui-cw-coll-chip'}, [(c.name || c.id) + ' ', x]));
+      });
     }
     var ctxPane    = el('div', {class: 'ui-cw-ctx-pane open'}, [collBar, ctxEditor]);
     var ctxSection = el('div', {class: 'ui-cw-ctx-section'}, [ctxToggle, ctxPane]);
 
-    // Populate the collections picker from the list endpoint. Best-
-    // effort: any failure (no endpoint, error, empty list) just leaves
-    // the bar hidden so the panel degrades to plain context-only.
+    // Load the collection list once for the picker. Best-effort: any
+    // failure (no endpoint, error, empty list) just hides the bar so the
+    // panel degrades to plain context-only.
     if (cfg.collections_list_url) {
       fetch(cfg.collections_list_url, {credentials: 'same-origin'})
         .then(function(r){ return r.ok ? r.json() : []; })
         .then(function(list){
-          list = list || [];
-          if (!list.length) { collBar.style.display = 'none'; return; }
-          collBar.appendChild(el('span', {class: 'ui-cw-coll-lbl'}, ['Reference collections:']));
-          list.forEach(function(c){
-            var cb = document.createElement('input');
-            cb.type = 'checkbox';
-            cb.value = c.id;
-            collChecks.push(cb);
-            collBar.appendChild(el('label', {class: 'ui-cw-coll-chip'}, [cb, ' ' + (c.name || c.id)]));
-          });
+          collList = list || [];
+          if (!collList.length) { collBar.style.display = 'none'; return; }
+          renderCollBar();
         })
         .catch(function(){ collBar.style.display = 'none'; });
     }
@@ -15316,6 +15393,66 @@ const runtimeJS = `
     document.addEventListener('keydown', function(ev) {
       if (ev.key === 'Escape' && modalOverlay.classList.contains('open')) closeModal();
     });
+
+    // --- Reference-collections modal ---
+    // Two sections: the Enabled stores as removable pills, and an Available
+    // list of everything not yet added — each row carries a "+" that MOVES
+    // it out of the list and into the pills. Removing a pill returns it to
+    // the available list. Mirrors the inline chip bar (renderCollBar), which
+    // is refreshed on every change so the panel stays in sync. The noun is
+    // host-supplied (collNoun) so this surface names no specific app.
+    function openCollectionsModal() {
+      if (!collList.length) { showToast('No collections available'); return; }
+      modalBox.innerHTML = '';
+      modalBox.appendChild(el('h3', {}, ['Add ' + collNoun]));
+      modalBox.appendChild(el('div', {class: 'ui-cw-modal-desc'},
+        ['Add the collections this chat should draw on. Enabled stores are searched and the best-matching passages ride along with each message.']));
+
+      modalBox.appendChild(el('div', {class: 'ui-cw-modal-sub'}, ['Enabled']));
+      var pillsEl = el('div', {class: 'ui-cw-coll-pills'});
+      modalBox.appendChild(pillsEl);
+      modalBox.appendChild(el('div', {class: 'ui-cw-modal-sub'}, ['Available']));
+      var availEl = el('div', {class: 'ui-cw-list'});
+      modalBox.appendChild(availEl);
+
+      function paint() {
+        // Enabled pills
+        pillsEl.innerHTML = '';
+        var anyEnabled = false;
+        collList.forEach(function(c){
+          if (!collSelected[c.id]) return;
+          anyEnabled = true;
+          var x = el('span', {class: 'ui-cw-coll-x', title: 'Remove'}, ['×']);
+          x.addEventListener('click', function(){ delete collSelected[c.id]; renderCollBar(); paint(); });
+          pillsEl.appendChild(el('span', {class: 'ui-cw-coll-chip'}, [(c.name || c.id) + ' ', x]));
+        });
+        if (!anyEnabled) pillsEl.appendChild(el('span', {class: 'ui-cw-empty', style: 'padding:0.1rem 0;text-align:left'}, ['None enabled yet.']));
+        // Available list (everything not enabled), each with a + to add
+        availEl.innerHTML = '';
+        var anyAvail = false;
+        collList.forEach(function(c){
+          if (collSelected[c.id]) return;
+          anyAvail = true;
+          var info = el('div', {class: 'ui-cw-list-info'});
+          info.appendChild(el('div', {class: 'ui-cw-list-title'}, [c.name || c.id]));
+          if (c.description) info.appendChild(el('div', {class: 'ui-cw-list-meta'}, [c.description]));
+          var bits = [];
+          if (c.documents != null) bits.push(c.documents + (c.documents === 1 ? ' doc' : ' docs'));
+          if (c.chunks != null)    bits.push(c.chunks + ' chunks');
+          if (bits.length) info.appendChild(el('div', {class: 'ui-cw-list-meta mono'}, [bits.join(' · ')]));
+          var addBtn = el('button', {class: 'ui-cw-list-btn add', type: 'button', title: 'Add'}, ['+']);
+          addBtn.addEventListener('click', function(){ collSelected[c.id] = true; renderCollBar(); paint(); });
+          availEl.appendChild(el('div', {class: 'ui-cw-list-row'}, [info, addBtn]));
+        });
+        if (!anyAvail) availEl.appendChild(el('div', {class: 'ui-cw-empty'}, ['All collections added.']));
+      }
+      paint();
+
+      var doneBtn = el('button', {class: 'ui-row-btn primary'}, ['Done']);
+      doneBtn.addEventListener('click', function(){ closeModal(); });
+      modalBox.appendChild(el('div', {class: 'ui-cw-modal-btns'}, [doneBtn]));
+      openModal();
+    }
 
     // --- Variables modal ---
     // Scans the editor for {{NAME}} placeholders. Two modes: "apply"

@@ -317,14 +317,18 @@ func (T *CodeWriterAgent) handleCollectionsList(w http.ResponseWriter, r *http.R
 		return
 	}
 	type item struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
 	}
 	out := []item{}
 	// Collections live in the shared collections home, not codewriter's
-	// own bucket — list from UserDB(CollectionsDB(), uid).
+	// own bucket — list from UserDB(CollectionsDB(), uid). Description
+	// rides along so the picker can show what each store holds; doc/chunk
+	// counts are intentionally omitted (they'd cost an EmbeddedChunks walk
+	// per collection — the picker renders the size line only when present).
 	for _, c := range ListCollections(UserDB(CollectionsDB(), uid), uid) {
-		out = append(out, item{ID: c.ID, Name: c.Name})
+		out = append(out, item{ID: c.ID, Name: c.Name, Description: c.Description})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

@@ -229,10 +229,9 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 			return nil
 		}
 		allow := func(c EmbeddedChunk) bool { return sources[c.Source] }
-		if len(vec) > 0 {
-			return SearchChunksByPredicate(db, allow, vec, k)
-		}
-		return SearchChunksSubstringByPredicate(db, allow, query, k)
+		// Hybrid: vector + keyword, so an exact term the embedding misses still
+		// surfaces (also covers the no-embedding case, keyword only).
+		return HybridSearchByPredicate(db, allow, query, vec, k)
 	}
 	hits := search(base, baseSources)
 	if len(rootSources) > 0 && RootDB != nil {

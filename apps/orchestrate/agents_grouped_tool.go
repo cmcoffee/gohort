@@ -269,6 +269,7 @@ func slimAgentJSON(a AgentRecord) []byte {
 		"hidden":                   a.Hidden,
 		"force_private":            a.ForcePrivate,
 		"allow_private_mode":       a.AllowPrivateMode,
+		"lead_model":               a.LeadModel,
 		"disable_explicit":         a.DisableExplicit,
 		"disable_inferred":         a.DisableInferred,
 		"disable_skills":           a.DisableSkills,
@@ -495,7 +496,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// Knowledge layer — always-on read tool over the target's
 	// corpus + its AttachedCollections + auto-injected deployment
 	// collections (the empty-list default-attach rule).
-	tools = append(tools, subTurn.searchKnowledgeToolDef())
+	tools = append(tools, subTurn.searchKnowledgeToolDef(), subTurn.introspectToolDef())
 	// Memory layers — only if the target has them enabled. The
 	// helpers gate internally on agent.DisableInferred /
 	// DisableExplicit, so just appending unconditionally is safe.
@@ -664,6 +665,16 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		return "", errors.New("agents(run): target returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
+	// Feed the request into the target's cortex (cortex agents only — a no-op
+	// otherwise) so a dispatched cortex/channel agent is AWARE another agent
+	// asked it to do something. The dispatch ran in the throwaway
+	// dispatch:<…> session, disconnected from the agent's standing thread, so
+	// without this a channel agent (WiWee) posts to its group on request and
+	// then can't field follow-ups about what it just "said". from = the
+	// dispatching parent; the request text itself is the observation.
+	if target.Cortex {
+		appendCortexObs(t.udb, target.ID, t.agent.Name, cortexKindRequest, msg)
+	}
 	// Persist the exchange for the next follow-up. Store the RAW brief (not
 	// the delegated wrapper) so re-threaded history reads cleanly, and cap to
 	// the most recent turns to keep continuity cheap and ephemeral.

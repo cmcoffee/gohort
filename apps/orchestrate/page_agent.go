@@ -112,6 +112,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	agentLocked := false
+	// ForcePrivate agents can't escalate to the remote lead model (gate 2),
+	// so the "Use Lead model" toggle is hidden for them.
+	leadModelLocked := false
 	if id != "" {
 		source = "../api/agents/" + id
 		title = "Edit agent"
@@ -122,6 +125,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
 			agentLocked = rec.Locked
+			leadModelLocked = rec.ForcePrivate
 			if rec.OwnedBy != "" {
 				subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
@@ -187,6 +191,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
 			Placeholder: "0",
 			Help:        "Max thinking tokens per LLM call for this agent. 0 = inherit the deployment default (4096). The admin global budget is a hard ceiling — this can only LOWER the budget (snappier turns); a value above the admin ceiling is clamped. Only applies when Think is on."},
+	}
+	// Per-agent lead-model escalation. Only offered when a distinct lead LLM
+	// is actually wired (HasDistinctLead) — otherwise it degrades straight
+	// back to the worker, so showing it would be a no-op control. Hidden for
+	// ForcePrivate agents: their conversation must never leave for the remote
+	// lead model (gate 2), so the option doesn't apply.
+	if T.HasDistinctLead() && !leadModelLocked {
+		fields = append(fields, ui.FormField{
+			Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
+			Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local.",
+		})
 	}
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -758,6 +759,9 @@ func lookupHookCache(hookName, query string) (string, bool) {
 		effectiveTTL = emptyTTL
 	}
 	if time.Since(entry.FetchedAt) > effectiveTTL {
+		// Lazy delete-on-read: reclaim the expired entry now rather than
+		// letting it linger until a sweep. Cheap — we already have the key.
+		db.Unset(hookCacheBucket, key)
 		return "", false
 	}
 	return entry.Result, true
@@ -775,6 +779,88 @@ func storeHookCache(hookName, query, result string) {
 	}
 	entry := hookCacheEntry{Result: result, FetchedAt: time.Now()}
 	db.Set(hookCacheBucket, hookCacheKey(hookName, query), entry)
+}
+
+// SweepHookCache removes expired entries from both the source-hook result
+// cache and the authoritative-domain cache. Lazy delete-on-read (in
+// lookupHookCache / LookupAuthDomainCache) reclaims entries that get
+// re-queried after they expire; this sweep reclaims the long tail of
+// entries that are never queried again, keeping the persistent cache
+// bounded the way the fetch_url cache stays bounded via its quota eviction.
+// Returns the number of entries removed.
+func SweepHookCache() int {
+	hookCacheMu.RLock()
+	db := hookCacheDB
+	ttl := hookCacheTTL
+	emptyTTL := hookCacheEmptyTTL
+	hookCacheMu.RUnlock()
+	if db == nil {
+		return 0
+	}
+	removed := 0
+	// Source-hook entries: empty (negative-cache) results expire on the
+	// shorter empty TTL, matching lookupHookCache.
+	for _, key := range db.Keys(hookCacheBucket) {
+		var entry hookCacheEntry
+		if !db.Get(hookCacheBucket, key, &entry) {
+			continue
+		}
+		effectiveTTL := ttl
+		if entry.Result == "" {
+			effectiveTTL = emptyTTL
+		}
+		if time.Since(entry.FetchedAt) > effectiveTTL {
+			db.Unset(hookCacheBucket, key)
+			removed++
+		}
+	}
+	// Authoritative-domain entries: single TTL.
+	for _, key := range db.Keys(authDomainBucket) {
+		var entry authDomainEntry
+		if !db.Get(authDomainBucket, key, &entry) {
+			continue
+		}
+		if time.Since(entry.FetchedAt) > ttl {
+			db.Unset(authDomainBucket, key)
+			removed++
+		}
+	}
+	return removed
+}
+
+// hookCacheSweepOnce guards StartHookCacheSweeper so the background goroutine
+// is launched at most once even if startup wiring calls it more than once.
+var hookCacheSweepOnce sync.Once
+
+// StartHookCacheSweeper launches a background goroutine that sweeps expired
+// cache entries once at startup and then daily. Lazy delete-on-read handles
+// re-queried entries; this keeps the never-re-queried tail from accumulating.
+// Call once during startup after SetHookCacheDB. Safe to call repeatedly.
+func StartHookCacheSweeper() {
+	hookCacheSweepOnce.Do(func() {
+		go func() {
+			for {
+				if n := SweepHookCache(); n > 0 {
+					Log("[cache] swept %d expired source-hook/auth-domain cache entries", n)
+				}
+				time.Sleep(24 * time.Hour)
+			}
+		}()
+	})
+}
+
+// Expose the sweep as an admin-triggered maintenance action too, so an
+// operator can reclaim space on demand without waiting for the daily pass.
+func init() {
+	RegisterMaintenanceFunc(
+		"sweep_expired_caches",
+		"Sweep expired caches",
+		"Remove expired entries from the source-hook result cache and the "+
+			"authoritative-domain cache (past their 30-day / 7-day TTLs). Lazy "+
+			"delete-on-read already reclaims entries that get re-queried after "+
+			"expiry; this reclaims the long tail that is never queried again.",
+		func(ctx context.Context) int { return SweepHookCache() },
+	)
 }
 
 // authDomainBucket is the kvlite bucket for cached authoritative-domain
@@ -806,6 +892,8 @@ func LookupAuthDomainCache(question string) ([]string, bool) {
 		return nil, false
 	}
 	if time.Since(entry.FetchedAt) > ttl {
+		// Lazy delete-on-read, same as lookupHookCache.
+		db.Unset(authDomainBucket, key)
 		return nil, false
 	}
 	return entry.Domains, true

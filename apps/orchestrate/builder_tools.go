@@ -238,12 +238,19 @@ func isBuilderAgent(agentID string) bool {
 
 // orchestratorRouteKey picks the lead-routing stage for the main reasoning +
 // synthesis calls. Builder gets its own stage (default lead, admin-flippable)
-// so its agent-design reasoning runs on the stronger model; every other agent
-// stays on the worker-locked orchestrator stage. Degrades to worker
-// automatically when no lead model is configured (agent_loop's NoLead guard).
-func orchestratorRouteKey(agentID string) string {
+// so its agent-design reasoning runs on the stronger model. Every other agent
+// stays on the worker-locked orchestrator stage UNLESS it opted into the lead
+// model (leadModel), in which case it routes through the non-private
+// orchestrator.lead stage (default lead, admin-flippable as a global ceiling).
+// All three degrade to worker automatically when no lead model is configured
+// (agent_loop's NoLead guard). The leadModel flag is gated for privacy
+// upstream — see chatTurn.shouldUseLeadModel.
+func orchestratorRouteKey(agentID string, leadModel bool) string {
 	if isBuilderAgent(agentID) {
 		return "app.orchestrate.builder"
+	}
+	if leadModel {
+		return "app.orchestrate.orchestrator.lead"
 	}
 	return "app.orchestrate.orchestrator"
 }

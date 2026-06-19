@@ -951,13 +951,10 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// collection chunks both live there now, so the allow predicate
 	// (agentPrefix OR exact[c.Source]) covers everything in one ranked
 	// search. The prior RootDB second-pass + merge dance is gone.
-	var hits []SearchHit
-	if len(vec) > 0 {
-		hits = SearchChunksByPredicate(VectorDB, allow, vec, k)
-	} else {
-		hits = SearchChunksSubstringByPredicate(VectorDB, allow, query, k)
-	}
-	return hits
+	// Hybrid recall: vector (semantic) + keyword (lexical), merged — so an exact
+	// term the embedding semantically near-misses still surfaces. Hybrid also
+	// covers the no-embedding case (keyword only), replacing the old fallback.
+	return HybridSearchByPredicate(VectorDB, allow, query, vec, k)
 }
 
 // mergeHitsByScore combines two hit slices, dedups by chunk ID,

@@ -341,7 +341,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		ownerUser: ownerUser,
 		ownerDB:   ownerDB,
 	}
-	extraTools = append(extraTools, subTurn.searchKnowledgeToolDef())
+	extraTools = append(extraTools, subTurn.searchKnowledgeToolDef(), subTurn.introspectToolDef())
 	if !subTurn.inferredOff() {
 		extraTools = append(extraTools, subTurn.memoryToolDef())
 	}
@@ -542,6 +542,12 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	}
 	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
 	sysPrompt += availableBlock
+	// Cortex awareness on the dispatch path — see RunAgentSyncContinuingRich for
+	// the full why. The interactive turn injects this; the RunAgentLoop dispatch
+	// path was missing it, so a dispatched cortex agent ran blind to its cortex.
+	if target.Cortex && subSessID != cortexSessionID(target.ID) {
+		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
+	}
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -667,6 +673,13 @@ type AgentSyncRun struct {
 	// without the approval gate — replying to whoever just messaged you is not a
 	// proactive reach-out. Empty for dispatch / web runs. See ToolSession.
 	ReplyAuthorizedKey string
+	// SurfaceContext, when set, is a one-line provenance note appended to the
+	// LLM's copy of THIS user message only (NOT persisted to the transcript, so
+	// it doesn't bloat a long thread on replay). A channel inbound passes it so
+	// the agent knows which transport / conversation the message arrived on and
+	// that its reply goes straight back there — preventing it from confabulating
+	// a destination or offering to "send it to" the channel it's already on.
+	SurfaceContext string
 }
 
 // AgentSyncResult is the bound agent's output: reply text plus any attachments
@@ -838,6 +851,16 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
 	sysPrompt += availableBlock
+	// Cortex awareness on the channel/dispatch path. The INTERACTIVE web turn
+	// injects the agent's recent cortex observations (runner.go), but channel
+	// inbound + dispatch run through RunAgentLoop HERE and were MISSING it — so
+	// the cortex feed (received messages, posts made on its channels, inter-agent
+	// requests) never reached the answering LLM, which is why a channel agent
+	// looked "blind to its cortex" when fielding follow-ups. Gated to non-cortex
+	// sessions (the cortex doesn't summarize itself) and to Cortex-on agents.
+	if target.Cortex && subSessionID != cortexSessionID(target.ID) {
+		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
+	}
 	// freshSession wipes the prior session BEFORE the load — caller
 	// (phantom's dispatch_agent fresh_session=true) is signaling a
 	// new thread, so the deterministic-ID session record gets cleared
@@ -889,7 +912,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	for _, m := range bounded {
 		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
 	}
-	llmMessages = append(llmMessages, Message{Role: "user", Content: deliveredMessage, Images: run.Images})
+	// Provenance for the LLM ONLY — appended to the run-time copy of the user
+	// message so the agent knows which channel/transport this arrived on, but
+	// NOT persisted (the stored message below stays clean, so a long thread
+	// doesn't replay the banner on every turn).
+	llmMessage := deliveredMessage
+	if sc := strings.TrimSpace(run.SurfaceContext); sc != "" {
+		llmMessage += "\n" + sc
+	}
+	llmMessages = append(llmMessages, Message{Role: "user", Content: llmMessage, Images: run.Images})
 
 	// Optional injection-queue drain hook for mid-flight user notes.
 	// Cheap no-op when the queue isn't registered.

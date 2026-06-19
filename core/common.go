@@ -231,6 +231,15 @@ func (T *AppCore) GetLeadLLM() LLM {
 	return T.LLM
 }
 
+// HasDistinctLead reports whether a separate lead (precision) LLM is wired —
+// i.e. escalating to lead would actually reach a different, stronger model
+// rather than falling straight back to the worker. False when NoLead is set
+// or no distinct lead tier is configured. UI uses this to gate the per-agent
+// "use lead model" option (no point offering an escalation that's a no-op).
+func (T *AppCore) HasDistinctLead() bool {
+	return !T.NoLead && T.LeadLLM != nil && LeadIsDistinct()
+}
+
 // WorkerContextSize returns the worker LLM's context window size, or 0
 // if the LLM doesn't implement ContextSizer.
 func (T *AppCore) WorkerContextSize() int {
@@ -499,7 +508,7 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 	// came from the worker LLM (fallback path). Matters for the
 	// UsageTracker tier attribution — worker pricing, not lead.
 	fellBackToWorker := false
-	if err != nil && T.LeadLLM != nil && T.LLM != nil && T.LeadLLM != T.LLM {
+	if err != nil && T.LeadLLM != nil && T.LLM != nil && LeadIsDistinct() {
 		Debug("[llm] lead chat failed after %s: %s — falling back to primary", elapsed.Round(time.Millisecond), err)
 		T.LeadFallback = true
 		fellBackToWorker = true
@@ -514,7 +523,7 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 	} else if err != nil {
 		Debug("[llm] lead chat failed after %s: %s", elapsed.Round(time.Millisecond), err)
 		return nil, err
-	} else if resp.OutputTokens == 0 && resp.Content == "" && T.LeadLLM != nil && T.LLM != nil && T.LeadLLM != T.LLM {
+	} else if resp.OutputTokens == 0 && resp.Content == "" && T.LeadLLM != nil && T.LLM != nil && LeadIsDistinct() {
 		// Lead returned empty output (possible safety filter) — fall back to primary.
 		Debug("[llm] lead chat returned empty after %s (input: %d, thinking: %d) — falling back to primary", elapsed.Round(time.Millisecond), resp.InputTokens, len(resp.Reasoning))
 		T.LeadFallback = true

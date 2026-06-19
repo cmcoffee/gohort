@@ -65,14 +65,15 @@ func SearchRecall(db Database, source, query string, k int) []SearchHit {
 		return nil
 	}
 	allow := func(c EmbeddedChunk) bool { return c.Source == source }
+	var vec []float32
 	if GetEmbeddingConfig().Enabled {
-		if vec, err := Embed(context.Background(), query); err == nil && len(vec) > 0 {
-			if hits := SearchChunksByPredicate(db, allow, vec, k); len(hits) > 0 {
-				return hits
-			}
+		if v, err := Embed(context.Background(), query); err == nil && len(v) > 0 {
+			vec = v
 		}
 	}
-	return SearchChunksSubstringByPredicate(db, allow, query, k)
+	// Hybrid: vector + keyword, merged — so an exact term the embedding misses
+	// still surfaces. Hybrid handles the no-embedding case (keyword only).
+	return HybridSearchByPredicate(db, allow, query, vec, k)
 }
 
 // FetchRecallSpanChunks returns every chunk for one (source, reportID) span so a

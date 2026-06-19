@@ -1774,13 +1774,14 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			toolNames = append(toolNames, lt.Name())
 		}
 	}
-	// Wrap the client-bridge tools so tool_call / tool_result SSE
-	// events fire to the chat panel like every other tool. Without
-	// this the UI shows "still working" with no indication the
-	// agent is in a server→desktop round-trip, including while the
-	// user is staring at the approval modal — exactly the case
-	// where they want to see what's happening.
-	t.wrapToolsForActivity(sess, fromClient)
+	// NOTE: do NOT wrapToolsForActivity here. The client-bridge tools are
+	// part of the returned slice, which both callers wrap as a whole
+	// (resolveWorkerTools' result → wrapToolsForActivity at the orchestrator
+	// and worker call sites). Wrapping here too double-wrapped ONLY the
+	// from_client.* tools, so each fired two tool_call/tool_result SSE events
+	// and two recordToolCall entries — the catalog showed (and the tool log
+	// recorded) every desktop call twice. The single call-site wrap gives
+	// them the same inline chips + cache as every other tool, once.
 	tools = append(tools, fromClient...)
 	return tools, toolNames, nil
 }
@@ -3896,6 +3897,16 @@ func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, ag
 
 // --- LLM rounds -------------------------------------------------------------
 
+// shouldUseLeadModel reports whether this agent's main reasoning should
+// escalate to the lead model this turn. Honors the per-agent opt-in, but
+// the privacy gate wins (gate 2): a ForcePrivate agent or a Private-toggled
+// turn keeps reasoning on the local worker so the conversation never leaves
+// for the remote lead model. Gate 1 (no lead configured) and gate 3 (admin
+// route ceiling) are enforced downstream by LeadChat / the route stage.
+func (t *chatTurn) shouldUseLeadModel() bool {
+	return t.agent.LeadModel && !t.agent.ForcePrivate && !t.privateMode
+}
+
 // runPlan asks the orchestrator (thinking LLM) to decide its next
 // move. The orchestrator picks ONE of three tools:
 //
@@ -4376,7 +4387,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// for zero value.
 	var knowTools []AgentToolDef
 	if t.agentHasRetrievableContent() {
-		knowTools = append(knowTools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
+		knowTools = append(knowTools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef(), t.introspectToolDef())
 	}
 	// find_tools — always-on classifier-fallback. The LLM uses this
 	// to discover tools that didn't surface from the per-turn vector
@@ -4683,7 +4694,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 
 	stopKeepalive := startKeepalive(t.sse)
 	think := true
-	if p := RouteThink(orchestratorRouteKey(t.agent.ID)); p != nil {
+	if p := RouteThink(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())); p != nil {
 		think = *p
 	}
 	// Per-agent override wins over the route default — the author may
@@ -5100,7 +5111,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// attach calls. The architecture itself enforces deliberate
 		// per-file delivery now.)
 		ChatOptions: []ChatOption{
-			WithRouteKey(orchestratorRouteKey(t.agent.ID)),
+			WithRouteKey(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())),
 			WithThink(think),
 		},
 	})
@@ -5692,7 +5703,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// Worker tier (Private: true route stage) — same routing as the
 	// plan round; honors the "worker (thinking)" preference.
 	think := true
-	if p := RouteThink(orchestratorRouteKey(t.agent.ID)); p != nil {
+	if p := RouteThink(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())); p != nil {
 		think = *p
 	}
 	// Per-agent override wins over the route default (see plan round
@@ -5722,7 +5733,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 		msgs,
 		handler,
 		WithSystemPrompt(synthSys),
-		WithRouteKey(orchestratorRouteKey(t.agent.ID)),
+		WithRouteKey(orchestratorRouteKey(t.agent.ID, t.shouldUseLeadModel())),
 		WithThink(think),
 	)
 	stopKeepalive()

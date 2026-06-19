@@ -32,13 +32,25 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 		type channelView struct {
 			Channel
 			ServiceLabel string `json:"service_label,omitempty"`
+			// ManageOnly: this channel relays into its agent's cortex (a DEDICATED
+			// cortex agent — Cortex on + exactly one channel), so it has no
+			// per-channel thread of its own. The rail makes its row open the manage
+			// dialog instead of an (empty) thread; the conversation is read in the
+			// cortex hero. Multi-channel / non-cortex agents keep per-room threads.
+			ManageOnly bool `json:"manage_only,omitempty"`
 		}
+		udb := UserDB(T.DB, user)
 		out := []channelView{}
 		for _, ch := range ListChannels(RootDB, user) {
 			if agentID != "" && ch.AgentID != agentID {
 				continue
 			}
-			out = append(out, channelView{Channel: ch, ServiceLabel: ServiceDisplayName(ch.Service)})
+			manage := false
+			if ag, ok := loadAgent(udb, ch.AgentID); ok && ag.Cortex &&
+				len(ListChannelsForAgent(RootDB, user, ch.AgentID)) == 1 {
+				manage = true
+			}
+			out = append(out, channelView{Channel: ch, ServiceLabel: ServiceDisplayName(ch.Service), ManageOnly: manage})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)
@@ -78,6 +90,7 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			ch.Gatekeeper = strings.TrimSpace(req.Gatekeeper)
 			if a := strings.TrimSpace(req.AgentID); a != "" {
 				ch.AgentID = a
+				T.ensureAgentCortex(user, a) // re-pointed: the new agent gets a cortex too
 			}
 			SaveChannel(RootDB, ch)
 			w.Header().Set("Content-Type", "application/json")
@@ -108,6 +121,9 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			Created:     time.Now().UTC().Format(time.RFC3339),
 		}
 		SaveChannel(RootDB, ch)
+		// A channel relays into its agent's cortex (the conversation thread), so
+		// attaching one implies cortex — turn it on if it isn't already.
+		T.ensureAgentCortex(user, agentID)
 		Log("[orchestrate.channels] user=%q attached channel %q (service=%s scope=%q) to agent=%s",
 			user, ch.Name, ch.Service, ch.Address, agentID)
 		w.Header().Set("Content-Type", "application/json")
@@ -124,5 +140,29 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// ensureAgentCortex turns Cortex ON for the agent a channel was just attached to.
+// A channel is a relay into its agent's cortex (the conversation thread) — a
+// channel on a cortex-less agent has nowhere to relay, so attaching one implies
+// cortex. Idempotent: no-op when already on or the agent can't be loaded. For a
+// seed agent this writes the per-user shadow the same way any editor save does.
+func (T *OrchestrateApp) ensureAgentCortex(user, agentID string) {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return
+	}
+	udb := UserDB(T.DB, user)
+	if udb == nil {
+		return
+	}
+	a, ok := loadAgent(udb, agentID)
+	if !ok || a.Cortex {
+		return
+	}
+	a.Cortex = true
+	if _, err := saveAgent(udb, a); err != nil {
+		Log("[orchestrate.channels] enable cortex on agent %s failed: %v", agentID, err)
 	}
 }

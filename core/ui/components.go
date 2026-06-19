@@ -1901,6 +1901,10 @@ type CodeWriterPanel struct {
 	// from those corpora. Domain-agnostic — collections are a framework
 	// primitive (core.SearchCollections); leave blank to hide the picker.
 	CollectionsListURL string `json:"collections_list_url,omitempty"`
+	// CollectionsNoun is the user-facing label for the picker (the chip-bar
+	// label, the "+ Add <noun>" button, the modal title). Host-supplied so
+	// core/ui names no specific app; defaults to a generic label when blank.
+	CollectionsNoun string `json:"collections_noun,omitempty"`
 
 	// Field name mapping — defaults match SnippetRecord.
 	IDField   string `json:"id_field,omitempty"`   // default "id"

@@ -1964,66 +1964,136 @@ const orchestrateWebAssets = `<style>
           }
           var checked = {};
           (agent[opts.agentField] || []).forEach(function(id){ checked[id] = true; });
-          items.forEach(function(item) {
-            // Skip items the user explicitly disabled (skills carry a
-            // disabled flag — hide from the picker so the user isn't
-            // tempted to allowlist something muted).
-            if (item.disabled) return;
-            var row = document.createElement('label');
-            row.style.cssText = 'display:flex;align-items:flex-start;gap:0.55rem;padding:0.35rem 0.6rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px;cursor:pointer';
-            var box = document.createElement('input');
-            box.type = 'checkbox';
-            box.value = item.id;
-            box.style.marginTop = '0.15rem';
-            if (checked[item.id]) box.checked = true;
-            var meta = document.createElement('div');
-            meta.style.cssText = 'flex:1;min-width:0';
-            var nm = document.createElement('div');
-            nm.style.cssText = 'font-size:0.85rem;color:var(--text);font-weight:500';
-            nm.textContent = item[nameField] || item.id;
-            meta.appendChild(nm);
-            var desc = (item[descField] || '').trim();
-            if (desc) {
-              var d = document.createElement('div');
-              d.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.4;margin-top:0.15rem';
-              if (desc.length > 200) desc = desc.slice(0, 200) + '…';
-              d.textContent = desc;
-              meta.appendChild(d);
-            }
-            row.appendChild(box);
-            row.appendChild(meta);
-            host.appendChild(row);
-            box.addEventListener('change', function(){
-              if (box.checked) {
-                checked[item.id] = true;
-              } else {
-                delete checked[item.id];
-              }
-              var picked = Object.keys(checked);
-              // POST /api/agents is a FULL-record replace, not a merge
-              // (that's only the LLM-side update_agent tool). Send the
-              // full agent record with the one field patched in. We
-              // already have the record in the closure from the initial
-              // fetch; mutate the field and ship the whole thing.
-              agent[opts.agentField] = picked;
-              box.disabled = true;
-              fetch('api/agents', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(agent)
-              })
-                .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); box.disabled = false; })
-                .catch(function(err){
-                  window.uiAlert('Save failed: ' + (err && err.message || err));
-                  // Roll back the visual state since the save didn't
-                  // stick. Without this the UI lies until next refresh.
-                  box.checked = !box.checked;
-                  if (box.checked) checked[item.id] = true; else delete checked[item.id];
-                  agent[opts.agentField] = Object.keys(checked);
-                  box.disabled = false;
-                });
+          var byId = {};  // id -> item record (chip labels + available rows)
+          items.forEach(function(it){ byId[it.id] = it; });
+          var pool = items.filter(function(it){ return !it.disabled; }); // selectable (skills carry a disabled flag)
+          var noun = opts.noun || 'item';
+
+          // POST /api/agents is a FULL-record replace, not a merge (that's
+          // only the LLM-side update_agent tool). We hold the record in the
+          // closure from the initial fetch; patch the one field and ship it.
+          function save() {
+            agent[opts.agentField] = Object.keys(checked);
+            return fetch('api/agents', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(agent)
+            }).then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); });
+          }
+          // Single add/remove path shared by the "+" buttons and the pill
+          // ×'s; rolls the visual state back on a failed save.
+          function toggle(id, on) {
+            if (on) checked[id] = true; else delete checked[id];
+            renderChips(); renderAvail();
+            save().catch(function(err){
+              window.uiAlert('Save failed: ' + (err && err.message || err));
+              if (on) delete checked[id]; else checked[id] = true;
+              renderChips(); renderAvail();
             });
-          });
+          }
+
+          // Enabled stores as removable pills.
+          var chipBar = document.createElement('div');
+          chipBar.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.5rem';
+          host.appendChild(chipBar);
+          function renderChips() {
+            chipBar.innerHTML = '';
+            var ids = Object.keys(checked);
+            if (!ids.length) {
+              var none = document.createElement('span');
+              none.style.cssText = 'font-size:0.74rem;color:var(--text-mute);font-style:italic';
+              none.textContent = 'None enabled yet.';
+              chipBar.appendChild(none);
+              return;
+            }
+            ids.forEach(function(cid){
+              var it = byId[cid];
+              var chip = document.createElement('span');
+              chip.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;padding:0.1rem 0.35rem 0.1rem 0.55rem;border:1px solid var(--border);border-radius:999px;font-size:0.74rem;color:var(--text)';
+              chip.appendChild(document.createTextNode((it && (it[nameField] || it.id)) || cid));
+              var x = document.createElement('span');
+              x.textContent = '×';
+              x.title = 'Remove';
+              x.style.cssText = 'cursor:pointer;color:var(--text-mute);font-weight:700';
+              x.onmouseover = function(){ x.style.color = 'var(--danger,#ff7b72)'; };
+              x.onmouseout  = function(){ x.style.color = 'var(--text-mute)'; };
+              x.onclick = function(){ toggle(cid, false); };
+              chip.appendChild(x);
+              chipBar.appendChild(chip);
+            });
+          }
+
+          // "+ Add <noun>" reveals the available list on demand rather than
+          // dumping the full catalog by default. Each available row carries a
+          // "+" that MOVES it out of the list and into the pills above.
+          var availOpen = false;
+          var addBtn = document.createElement('button');
+          addBtn.type = 'button';
+          addBtn.className = 'ui-row-btn';
+          addBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:0.8rem;margin-bottom:0.5rem';
+          host.appendChild(addBtn);
+          var availWrap = document.createElement('div');
+          availWrap.style.cssText = 'display:none;flex-direction:column;gap:0.3rem';
+          host.appendChild(availWrap);
+          function setAddLabel(){ addBtn.textContent = availOpen ? 'Hide list' : ('+ Add ' + noun); }
+          addBtn.onclick = function(){ availOpen = !availOpen; setAddLabel(); renderAvail(); };
+
+          function renderAvail() {
+            availWrap.style.display = availOpen ? 'flex' : 'none';
+            if (!availOpen) return;
+            availWrap.innerHTML = '';
+            var any = false;
+            pool.forEach(function(item) {
+              if (checked[item.id]) return;  // enabled ones live in the pills
+              any = true;
+              var row = document.createElement('div');
+              row.style.cssText = 'display:flex;align-items:flex-start;gap:0.55rem;padding:0.35rem 0.6rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px';
+              var meta = document.createElement('div');
+              meta.style.cssText = 'flex:1;min-width:0';
+              var nm = document.createElement('div');
+              nm.style.cssText = 'font-size:0.85rem;color:var(--text);font-weight:500';
+              nm.textContent = item[nameField] || item.id;
+              meta.appendChild(nm);
+              var desc = (item[descField] || '').trim();
+              if (desc) {
+                var d = document.createElement('div');
+                d.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.4;margin-top:0.15rem';
+                if (desc.length > 200) desc = desc.slice(0, 200) + '…';
+                d.textContent = desc;
+                meta.appendChild(d);
+              }
+              // Size line — only collections carry documents/chunks; skills
+              // and pipelines have neither, so it renders for collections only.
+              var bits = [];
+              if (item.documents != null) bits.push(item.documents + (item.documents === 1 ? ' doc' : ' docs'));
+              if (item.chunks != null) bits.push(item.chunks + ' chunks');
+              if (bits.length) {
+                var cnt = document.createElement('div');
+                cnt.style.cssText = 'font-size:0.72rem;color:var(--text-mute);margin-top:0.12rem;font-family:ui-monospace,Menlo,Consolas,monospace';
+                cnt.textContent = bits.join(' · ');
+                meta.appendChild(cnt);
+              }
+              var add = document.createElement('button');
+              add.type = 'button';
+              add.textContent = '+';
+              add.title = 'Add';
+              add.style.cssText = 'flex-shrink:0;align-self:center;background:transparent;color:var(--accent,#56d364);border:1px solid var(--accent,#56d364);border-radius:6px;padding:0.15rem 0.55rem;font-size:1rem;font-weight:700;cursor:pointer';
+              add.onclick = function(){ toggle(item.id, true); };
+              row.appendChild(meta);
+              row.appendChild(add);
+              availWrap.appendChild(row);
+            });
+            if (!any) {
+              var done = document.createElement('div');
+              done.style.cssText = 'font-size:0.78rem;color:var(--text-mute);font-style:italic;padding:0.2rem 0';
+              done.textContent = 'Everything is added.';
+              availWrap.appendChild(done);
+            }
+          }
+
+          setAddLabel();
+          renderChips();
+          renderAvail();
         }).catch(function(err){
           host.innerHTML = '';
           var fail = document.createElement('div');
@@ -3072,6 +3142,7 @@ const orchestrateWebAssets = `<style>
           listURL: 'api/collections',
           agentField: 'attached_collections',
           agentID: id,
+          noun: 'Knowledge',
           emptyText: '(no collections yet — use + Create knowledge for this agent, or author one under Knowledge)'
         };
         renderAllowlistPicker(pickerOpts);
@@ -3130,6 +3201,7 @@ const orchestrateWebAssets = `<style>
           listURL: 'api/pipelines',
           agentField: 'attached_pipelines',
           agentID: id,
+          noun: 'Pipeline',
           emptyText: '(no pipelines yet — author one from chat with the pipeline tool)'
         });
       });
@@ -3166,6 +3238,7 @@ const orchestrateWebAssets = `<style>
           listURL: 'api/skills/list',
           agentField: 'allowed_skills',
           agentID: id,
+          noun: 'Skill',
           emptyText: '(no skills authored yet — use skill_def in Builder to make one)'
         });
       });
@@ -3997,7 +4070,9 @@ const orchestrateWebAssets = `<style>
             message: '💬',      // a channel inbound from a person
             scheduled: '⏰',    // a standing-agent report
             monitor: '🔔',      // an event-monitor wake
-            deliverable: '📄'   // a filed-artifact pointer
+            deliverable: '📄',  // a filed-artifact pointer
+            request: '🤖',      // a dispatch/request from another agent (agent-to-agent)
+            session: '📝'       // a one-line pointer a session left behind
           };
           var icon = document.createElement('span'); icon.className = 'orch-report-card-icon';
           icon.textContent = kindIcon[msg.report_kind] || '⏰';

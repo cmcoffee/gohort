@@ -10,10 +10,63 @@ package orchestrate
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// channelSurfaceContext renders a one-line provenance note for a channel
+// inbound — which transport and conversation it arrived on, and where the
+// agent's reply goes. It is appended (LLM-only, not persisted) to the inbound
+// message so the agent stays grounded about its reply destination and won't
+// confabulate one or offer to "send it to" the channel it's already on.
+// Returns "" when no channel resolves (nothing trustworthy to say).
+func channelSurfaceContext(in ChannelInbound) string {
+	ch, ok := channelForChat(in.Owner, in.ChatID, in.Handle)
+	if !ok {
+		return ""
+	}
+	convo := chFirst(in.ConversationName, in.SenderName, ch.Name, "this conversation")
+	where := "on a connected channel"
+	if svc := ServiceDisplayName(ch.Service); svc != "" {
+		where = "over " + svc
+	}
+	// A receive-only channel doesn't reply on this surface; bidirectional (the
+	// default) does. Ground the agent on which it is.
+	if ch.Direction == DirectionInbound {
+		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived %s in \"%s\". This is a receive-only channel — your reply is NOT delivered back here; act on the information or route it elsewhere if needed.]", where, convo)
+	}
+	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived %s in \"%s\". Your reply is delivered straight back to this same conversation automatically — you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message.]", where, convo)
+}
+
+// channelObsFrom labels a channel inbound for its cortex report card: the
+// sender (the "who") enriched with the conversation/room and transport (the
+// "where"), so the standing thread — and any session that forks from it —
+// records which channel a message came in on, not just who sent it. Falls back
+// to the bare sender when no channel resolves.
+func channelObsFrom(in ChannelInbound) string {
+	who := chFirst(in.SenderName, in.ConversationName, "someone")
+	ch, ok := channelForChat(in.Owner, in.ChatID, in.Handle)
+	if !ok {
+		return who
+	}
+	svc := ServiceDisplayName(ch.Service)
+	where := chFirst(in.ConversationName, ch.Name)
+	if strings.EqualFold(strings.TrimSpace(where), strings.TrimSpace(who)) {
+		where = "" // 1:1 — conversation name == sender; don't repeat it
+	}
+	switch {
+	case where != "" && svc != "":
+		return fmt.Sprintf("%s · %s (%s)", who, where, svc)
+	case svc != "":
+		return fmt.Sprintf("%s (%s)", who, svc)
+	case where != "":
+		return fmt.Sprintf("%s · %s", who, where)
+	default:
+		return who
+	}
+}
 
 // registerChannelAgentRunner installs the closure core invokes to run a
 // channel's bound agent on one inbound message. Call once at startup.
@@ -41,11 +94,23 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 				images = append(images, data)
 			}
 		}
+		// Channel = relay, Cortex = the thread. A DEDICATED cortex agent (a single
+		// channel) runs its inbound IN its cortex — the channel is just the pipe
+		// into the agent's one standing thread, so the conversation lives where the
+		// agent always reads + writes (in AND out unified, no parallel store). A
+		// multi-channel cortex agent (the Operator with many contacts) keeps its
+		// per-room session so contacts don't merge into one thread — the
+		// per-contact-vs-unified choice there is a deferred setting.
+		sessionID := in.SessionID
+		if ag, ok := loadAgent(UserDB(app.DB, in.Owner), in.AgentID); ok && ag.Cortex &&
+			len(ListChannelsForAgent(RootDB, in.Owner, in.AgentID)) == 1 {
+			sessionID = cortexSessionID(in.AgentID)
+		}
 		res, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 			AgentOwner:     in.Owner,
 			RuntimeUser:    in.Owner,
 			AgentKey:       in.AgentID,
-			SubSessionID:   in.SessionID,
+			SubSessionID:   sessionID,
 			Title:          title,
 			MessageSender:  in.SenderName,
 			Message:        in.Text,
@@ -54,7 +119,12 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// Replying BACK to this same conversation is in-thread, not a
 			// proactive reach-out — so it skips the send approval gate.
 			ReplyAuthorizedKey: operatorRecipientKey(in.ChatID, in.Handle),
-			StatusCallback:     in.StatusCallback,
+			// Tell the agent which channel/transport this arrived on (LLM-only,
+			// not persisted) so it knows its reply goes straight back here and
+			// doesn't confabulate a destination or offer to "send it to" the
+			// channel it's already on.
+			SurfaceContext: channelSurfaceContext(in),
+			StatusCallback: in.StatusCallback,
 		})
 		if err != nil {
 			return ChannelReply{}, err
@@ -75,7 +145,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		if rt := strings.TrimSpace(replyText); rt != "" {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
-		app.AppendCortexObservation(in.Owner, in.AgentID, chFirst(in.SenderName, in.ConversationName, "someone"), cortexKindMessage, obs)
+		app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
 		return ChannelReply{Text: replyText, Images: res.Images}, nil
 	})
 }

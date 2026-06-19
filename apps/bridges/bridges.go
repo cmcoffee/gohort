@@ -385,6 +385,27 @@ func (T *Bridges) listBridgeKeys(owner string) []BridgeKey {
 	return out
 }
 
+// bridgeKeyOwner resolves a bridge-key secret to its owner username, READ-ONLY
+// — no LastSeen stamp, no desktop-record creation. Registered as a core
+// API-key validator (RegisterAPIKeyValidator) so userFromAPIKey and
+// DesktopClientUser resolve bridge keys; those run on the hot path (every
+// desktop-authed chat request consults DesktopClientUser), so this must not
+// write. The core desktop key is resolved by its own validator, so this only
+// needs to cover the bridges_keys store. Returns ("", false) on no match.
+func (T *Bridges) bridgeKeyOwner(secret string) (string, bool) {
+	secret = strings.TrimSpace(secret)
+	if secret == "" || T.DB == nil {
+		return "", false
+	}
+	for _, id := range T.DB.Keys(bridgeKeysTable) {
+		var k BridgeKey
+		if T.DB.Get(bridgeKeysTable, id, &k) && k.Key == secret && k.Owner != "" {
+			return k.Owner, true
+		}
+	}
+	return "", false
+}
+
 // validateBridgeKey resolves a secret to its key record, stamping LastSeen so
 // the dashboard can show "connected N ago".
 func (T *Bridges) validateBridgeKey(secret string) (BridgeKey, bool) {

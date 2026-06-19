@@ -44,6 +44,16 @@ func SharedLeadLLM() LLM {
 	return sharedLeadLLM
 }
 
+// LeadIsDistinct reports whether a separate lead (precision) LLM provider is
+// configured — i.e. escalating to lead reaches a different model than the
+// worker. This is the ONLY safe way to ask that question: do NOT compare the
+// LLM interface values directly (T.LeadLLM != T.LLM). Apps hold reloadableLLM
+// forwarding wrappers, which are structs with a func field — uncomparable, so
+// == / != panics at runtime ("comparing uncomparable type"). The shared lead
+// reference is nil exactly when no distinct lead is wired (ReloadableLeadLLM
+// then falls back to the worker), so a nil check answers it without comparing.
+func LeadIsDistinct() bool { return SharedLeadLLM() != nil }
+
 // RegisterLLMReloader installs the function that rebuilds the shared worker +
 // lead LLMs from current config and swaps them in via SetSharedLLMs. Called once
 // at startup by the main package (which owns config access). Lets the admin UI

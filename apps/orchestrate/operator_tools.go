@@ -640,6 +640,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if _, err := operatorDeliverMessage(owner, "", self, text, images); err != nil {
 					return "", err
 				}
+				// The owner's channel (their phone) must see what was sent — record
+				// into its cortex/session so when the owner replies, the agent knows
+				// what it just told them (fixes "I sent you a joke but have no idea
+				// what it was" — the reply lands over the bridge in a different
+				// session than this notify_me). Recorded by AGENT ID, not by
+				// matching the owner's handle to a channel address (those rarely
+				// match: SelfHandle is a phone, the channel address may be an email
+				// or chat-id form, so channelForChat misses and the cortex is
+				// skipped). notify_me IS this agent notifying the owner, so it
+				// belongs in this agent's cortex. No-op if the agent has no cortex.
+				appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
 				if len(images) > 0 {
 						return fmt.Sprintf("Sent to your phone with %d attachment(s).", len(images)), nil
 					}
@@ -690,6 +701,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if _, err := operatorDeliverMessage(owner, rec.ChatID, rec.Handle, text, images); err != nil {
 						return "", err
 					}
+					// If the target is a bound channel, make its agent see the post
+					// (channel session + cortex) so it can field follow-ups.
+					recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
 					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
 				}
 				a := SaveAuthorization(RootDB, Authorization{

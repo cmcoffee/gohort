@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // chunkAgeHalflifeDays is the soft half-life for temporal-decay
@@ -1081,6 +1082,116 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 		}
 	}
 	return out
+}
+
+// keywordTerms tokenizes a query into distinct content terms for lexical
+// matching: lowercased, split on non-alphanumerics, stopwords + very short
+// tokens dropped, deduped. Empty when the query is all stopwords/punctuation.
+func keywordTerms(query string) []string {
+	fields := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range fields {
+		if len(f) < 3 || hookCacheStopwords[f] || seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+	}
+	return out
+}
+
+// keywordCoverage is the fraction of the query's content terms present in the
+// chunk text (case-insensitive substring — cheap, and fine for the multi-char
+// identifiers this exists to catch). 0 = no term present.
+func keywordCoverage(text string, terms []string) float32 {
+	if len(terms) == 0 {
+		return 0
+	}
+	lt := strings.ToLower(text)
+	matched := 0
+	for _, t := range terms {
+		if strings.Contains(lt, t) {
+			matched++
+		}
+	}
+	return float32(matched) / float32(len(terms))
+}
+
+// SearchChunksKeywordByPredicate ranks chunks by LEXICAL overlap with the query
+// — the keyword half of hybrid search, so an exact term the embedding glosses
+// over (a product name, an acronym, an identifier like "OPNsense") still
+// surfaces. Score is synthesized into a cosine-comparable range (stronger
+// term-coverage ≈ a stronger match) so these hits compete fairly when merged
+// with vector hits AND survive similarity-floor filters. Nil when the query has
+// no usable terms. (First pass: plain coverage; IDF weighting to prioritize rare
+// terms over common ones is the obvious refinement.)
+func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) bool, query string, k int) []SearchHit {
+	if db == nil || allow == nil || k <= 0 {
+		return nil
+	}
+	terms := keywordTerms(query)
+	if len(terms) == 0 {
+		return nil
+	}
+	chunks := snapshotChunks(db)
+	type scored struct {
+		hit   SearchHit
+		score float32
+	}
+	var all []scored
+	for i := range chunks {
+		c := &chunks[i]
+		if !allow(*c) {
+			continue
+		}
+		cov := keywordCoverage(c.Section+"\n"+c.Text, terms)
+		if cov <= 0 {
+			continue
+		}
+		s := 0.35 + 0.5*cov // 0.35 (one of several terms) … 0.85 (all terms)
+		all = append(all, scored{
+			hit: SearchHit{
+				ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,
+				Section: c.Section, Text: c.Text, Score: s,
+				Locator: c.Locator, Date: c.Date, Kind: c.Kind,
+			},
+			score: applyTemporalDecay(s, c.Date),
+		})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	if k > len(all) {
+		k = len(all)
+	}
+	out := make([]SearchHit, k)
+	for i := 0; i < k; i++ {
+		out[i] = all[i].hit
+	}
+	return out
+}
+
+// HybridSearchByPredicate fuses semantic (vector) and lexical (keyword) recall:
+// it runs both and merges by score, so a chunk strong in EITHER signal makes the
+// top-k. This catches the failure mode of pure vector search — an exact term
+// (identifier, acronym, product name) the embedding semantically near-misses —
+// without giving up semantic recall. Falls back to keyword-only when no
+// embedding is available (vec empty). queryText is the raw query (keyword
+// extraction); vec is its embedding.
+func HybridSearchByPredicate(db Database, allow func(c EmbeddedChunk) bool, queryText string, vec []float32, k int) []SearchHit {
+	if db == nil || allow == nil || k <= 0 {
+		return nil
+	}
+	if len(vec) == 0 {
+		return SearchChunksKeywordByPredicate(db, allow, queryText, k)
+	}
+	vHits := SearchChunksByPredicate(db, allow, vec, k)
+	kHits := SearchChunksKeywordByPredicate(db, allow, queryText, k)
+	if len(kHits) == 0 {
+		return vHits
+	}
+	return MergeHitsByScore(vHits, kHits, k)
 }
 
 // MergeHitsByScore unions two hit lists, dedups by chunk ID, sorts by

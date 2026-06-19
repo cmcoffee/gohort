@@ -53,6 +53,20 @@ func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text string,
 		}
 	}
 	svc = firstNonEmpty(svc, "imessage")
+	// notify_me + proactive sends address the owner/contact by HANDLE with no
+	// chat id; resolve the handle to its conversation so the outbound carries a
+	// chat id to route + thread on (the daemon delivers by chat id, and the
+	// thread mirror below keys by ChatID — a blank id orphans it). Falls through
+	// with chatID="" only when the handle has no thread yet; the daemon then
+	// starts a fresh chat to the bare handle.
+	if chatID == "" && strings.TrimSpace(handle) != "" {
+		for _, cv := range c.T.listConvos() {
+			if cv.Handle == handle || containsFold(cv.AliasHandles, handle) {
+				chatID = cv.ChatID
+				break
+			}
+		}
+	}
 	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Type: "reply"})
 	// Mirror the outbound into the thread store so the dashboard + read_chat see it.
 	c.T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})

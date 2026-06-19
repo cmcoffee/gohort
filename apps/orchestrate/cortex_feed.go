@@ -23,6 +23,8 @@ const (
 	cortexKindScheduled   = "scheduled"   // a standing-agent report
 	cortexKindMonitor     = "monitor"     // an event-monitor wake
 	cortexKindDeliverable = "deliverable" // a filed-artifact pointer
+	cortexKindRequest     = "request"     // a dispatch/request from ANOTHER agent
+	cortexKindSession     = "session"     // a one-line pointer a session left behind
 )
 
 // AppendCortexObservation records one non-triggering observation into an agent's
@@ -113,6 +115,24 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 				// stays lean but records that the deliverable exists.
 				appendCortexObs(db, agentID, "Deliverable", cortexKindDeliverable, title+" — filed as a session; open it from the rail.")
 				return fmt.Sprintf("Filed %q as a session (id %s). Point the user to it from the rail — do NOT paste the full body into your reply.", title, saved.ID), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "note_to_cortex",
+				Description: "Drop a ONE-LINE pointer about what THIS session did into your standing thread (cortex), so your future self and your OTHER sessions stay aware of it without re-reading this conversation. Use it when the session produced something notable — a deliverable, a decision, an action taken on the user's behalf. A POINTER, not a transcript: \"Drafted the Q3 brief\", \"Texted Mom her flight info\", \"Decided on Postgres for the billing service\". Keep your cortex a lean command center — the gist only; the details ride the memory layer (memory_save) or a filed session (file_deliverable). Distinct from store_fact (always-in-prompt rules) and memory_save (pull-only reference).",
+				Parameters: map[string]ToolParam{
+					"note": {Type: "string", Description: "The one-line pointer. Self-contained, so it makes sense out of context later. e.g. \"Booked the dentist for Jun 24, 2pm.\""},
+				},
+				Required: []string{"note"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				note := strings.TrimSpace(oArgStr(args, "note"))
+				if note == "" {
+					return "", fmt.Errorf("note is required")
+				}
+				appendCortexObs(db, agentID, "Session", cortexKindSession, note)
+				return fmt.Sprintf("Noted to your cortex: %q.", note), nil
 			},
 		},
 	}

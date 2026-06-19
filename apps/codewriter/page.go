@@ -41,6 +41,7 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 					ContextsListURL:    "api/contexts",
 					ContextURL:         "api/context/{id}",
 					CollectionsListURL: "api/collections",
+					CollectionsNoun:    "Knowledge",
 					Languages: []string{
 						"bash", "sql", "python", "powershell", "go", "regex", "",
 					},

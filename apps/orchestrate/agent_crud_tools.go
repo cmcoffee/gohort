@@ -438,6 +438,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"max_plan_steps":    {Type: "integer", Description: "Optional 1-12. Default 5."},
 		"max_worker_rounds": {Type: "integer", Description: "Optional 1-20. Default 5."},
 		"think_budget":      {Type: "integer", Description: "Optional. Max thinking tokens (thinking_budget_tokens) per LLM call for this agent. 0 (default) = inherit the deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER the budget (for snappier agents) — setting it above the admin ceiling has no effect. Only applies when thinking is on."},
+		"lead_model":        {Type: "boolean", Description: "Optional. When true, this agent's MAIN reasoning (orchestrator plan + synthesis turns) escalates to the lead/precision LLM instead of the local worker. The dispatched per-step worker phases still run on the worker. Off by default. Degrades to worker automatically when no distinct lead model is configured, and never escalates when the agent is force_private or the turn is Private-toggled (the conversation stays local). Use for high-leverage agents whose planning/synthesis quality justifies the remote model's cost."},
 		"gap_check":         {Type: "boolean", Description: "Optional. When true, the runner runs a structural-gap review pass after the plan finishes (research-style quality bar). Default false."},
 		"disable_explicit":  {Type: "boolean", Description: "Optional. When true, turn off the Explicit Memory layer — the always-in-prompt structured facts (store_fact / list_facts / forget_fact + the prompt block). Set for impersonal agents that shouldn't accumulate any always-in-prompt state (KB readers, one-shot transformers, stateless tools). Composes orthogonally with disable_inferred. Default false."},
 		"disable_inferred":  {Type: "boolean", Description: "Optional. When true, turn off the Reference Memory layer — the vector-grown store the LLM writes to via memory_save. memory_save / memory_search / memory_forget stripped from catalog; derived chunks excluded from recall. Use for agents that should answer from authoritative sources only and never grow their own fuzzy recall (KB readers, compliance bots). The per-turn Clean toggle on the chat surface is the same switch scoped to a single turn. Default false."},
@@ -515,6 +516,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["force_private"].(bool); ok {
 		rec.ForcePrivate = v
+	}
+	if v, ok := args["lead_model"].(bool); ok {
+		rec.LeadModel = v
 	}
 	if v, ok := args["disable_skills"].(bool); ok {
 		rec.DisableSkills = v
@@ -629,6 +633,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["force_private"].(bool); ok {
 		rec.ForcePrivate = v
+	}
+	if v, ok := args["lead_model"].(bool); ok {
+		rec.LeadModel = v
 	}
 	if v, ok := args["disable_skills"].(bool); ok {
 		rec.DisableSkills = v
