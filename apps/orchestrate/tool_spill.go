@@ -38,7 +38,12 @@ import (
 // any cap south of ~250 KB would have prevented it. 100 KB is the
 // "noisy outputs still feel normal; obviously-huge ones get caught"
 // sweet spot. Tune up or down per real-world observation.
-const spillThresholdBytes = 100 * 1024
+func spillThresholdBytes() int { return TuneInt("tune_spill_threshold_bytes") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_spill_threshold_bytes", Category: "Limits", Label: "Tool-result spill threshold (bytes)", Help: "Tool results larger than this spill to a workspace file.", Kind: KindInt, Default: 102400, Min: 8192, Max: 10485760})
+	RegisterTunable(TunableSpec{Key: "tune_attachment_spill_threshold_bytes", Category: "Limits", Label: "Attachment spill threshold (bytes)", Help: "Attachments larger than this spill to a workspace file.", Kind: KindInt, Default: 102400, Min: 8192, Max: 10485760})
+}
 
 // spillHeadBytes / spillTailBytes are sampled from the start/end of
 // the original body and embedded in the stub. Sized so the LLM gets
@@ -73,7 +78,7 @@ var spillCounter uint64
 // "tool call appeared to return nothing." The Log line surfaces the
 // failure for operator diagnosis.
 func maybeSpillToolResult(sess *ToolSession, toolName, body string) (string, bool) {
-	if len(body) <= spillThresholdBytes {
+	if len(body) <= spillThresholdBytes() {
 		return "", false
 	}
 	if sess == nil {
@@ -197,7 +202,7 @@ func min2(a, b int) int {
 // large ones (a 50+ page PDF, a multi-MB transcript) get spilled to
 // a queryable workspace file. Attachments are user-intentional so
 // the bar is the same as for tool results, not stricter.
-const attachmentSpillThresholdBytes = 100 * 1024
+func attachmentSpillThresholdBytes() int { return TuneInt("tune_attachment_spill_threshold_bytes") }
 
 // attachmentSpillDirName is where extracted attachment text lands
 // inside the session workspace.
@@ -217,7 +222,7 @@ const attachmentSpillDirName = ".attachments"
 // worse outcome than the spill stub, but it's better than dropping
 // the user's content entirely.
 func buildAttachmentPreamble(sess *ToolSession, name, mime, text string) string {
-	if len(text) <= attachmentSpillThresholdBytes {
+	if len(text) <= attachmentSpillThresholdBytes() {
 		return FormatAttachmentPreamble(name, mime, text)
 	}
 	// Audio transcripts are special — even when long, the agent prompt

@@ -94,3 +94,40 @@ results, combined := RunConsensusSearches(cache, shortTopic, jurisdiction)
 result := CachedCrossSearch(cache, query)
 result := CachedSearch(cache, query)
 ```
+
+## Tunables Registry
+
+Framework knobs self-register instead of living as hardcoded constants, so they
+surface in the admin **Tuning** tab automatically:
+
+```go
+// Register once (typically in an init()), then read through the typed accessor.
+RegisterTunable(TunableSpec{
+    Key: "document_extract_timeout", Category: "Timeouts",
+    Kind: KindSeconds, Default: 30,
+    Label: "Document extract timeout", Help: "Max wall-clock per PDF/DOCX extract.",
+})
+
+timeout := TuneDuration("document_extract_timeout") // honors the admin override, else Default
+maxK    := TuneInt("knowledge_top_k")
+ratio   := TuneFloat("hybrid_search_alpha")
+```
+
+Each knob gets an editable, revert-to-default row in the admin UI; no per-knob UI code.
+
+## Memory Primitives
+
+Per-namespace stores agents layer on top of:
+
+- `factstore.go` — flat always-in-prompt facts (semantic dedup + supersession at save).
+- `graphstore.go` — entities + typed relationships (`UpsertGraphEntity` / `LinkGraphEdge`, queried via the agent's `link_entities` / `recall_about` tools), with a query-time graph→vector bridge that folds the top related knowledge passages into a recall.
+- `vector_store.go` — embedded-chunk semantic index (reference memory + knowledge).
+
+## External-Cost Ledger
+
+Source hooks and API credentials carry an optional per-call cost; record it once
+and it accrues per-source for the admin **Costs** tab:
+
+```go
+RecordExternalCost(sourceID, label, costPerCall) // accrues per-source; read via CostBySource
+```

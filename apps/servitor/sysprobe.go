@@ -32,7 +32,20 @@ const max_output = 10000
 // runs `tail -f`, `journalctl -f`, `top`, or any other non-terminating command
 // would block the worker goroutine forever — the agent loop sits inside the
 // tool handler and the user only sees heartbeat status events.
-const command_timeout = 90 * time.Second
+func command_timeout() time.Duration { return TuneDuration("tune_sysprobe_command_timeout") }
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_sysprobe_command_timeout",
+		Category: "Timeouts",
+		Label:    "Sysprobe command timeout",
+		Help:     "Per-command wall-clock cap for SSH probe commands before they are killed.",
+		Kind:     KindSeconds,
+		Default:  90,
+		Min:      15,
+		Max:      450,
+	})
+}
 
 // always_destructive holds commands considered dangerous regardless of
 // arguments. Any command in this set requires user authorization.
@@ -697,7 +710,7 @@ func (T *Servitor) exec_command_ctx(ctx context.Context, cmd string) (string, er
 		done <- runResult{out: out, err: err}
 	}()
 
-	timer := time.NewTimer(command_timeout)
+	timer := time.NewTimer(command_timeout())
 	defer timer.Stop()
 
 	var (
@@ -737,7 +750,7 @@ func (T *Servitor) exec_command_ctx(ctx context.Context, cmd string) (string, er
 		)
 	}
 	if timedOut {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own (e.g. `tail -f`, `journalctl -f`, `top`, `watch`), use a bounded variant: `tail -n N`, `journalctl --since=...`, `top -bn1`, etc.]", command_timeout)
+		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own (e.g. `tail -f`, `journalctl -f`, `top`, `watch`), use a bounded variant: `tail -n N`, `journalctl --since=...`, `top -bn1`, etc.]", command_timeout())
 		if result == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
@@ -775,7 +788,7 @@ func (T *Servitor) exec_local(cmd, workDir string, envVars []string) (string, er
 // command_timeout and aborting if ctx is cancelled. Same rationale as
 // exec_command_ctx — long-running commands would otherwise block the worker.
 func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envVars []string) (string, error) {
-	runCtx, cancel := context.WithTimeout(ctx, command_timeout)
+	runCtx, cancel := context.WithTimeout(ctx, command_timeout())
 	defer cancel()
 
 	c := exec.CommandContext(runCtx, "sh", "-c", cmd)
@@ -798,7 +811,7 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 	}
 	// Distinguish timeout from caller cancellation from a normal nonzero exit.
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.Canceled) {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own, use a bounded variant.]", command_timeout)
+		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own, use a bounded variant.]", command_timeout())
 		if result == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}

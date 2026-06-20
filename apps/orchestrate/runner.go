@@ -40,7 +40,7 @@ var (
 // the budget shows up in the editor.
 const (
 	defaultMaxPlanSteps    = 5
-	defaultMaxWorkerRounds = 5
+	defaultMaxWorkerRounds = 10 // 10 rounds + the 5 wrap-up grace rounds (grace only arms at MaxRounds >= 10)
 	// buildPlanRoundsPerStep is how many execution rounds each build-plan
 	// step grants once Builder calls present_build_plan. A step is
 	// typically draft script → test → fix → verify → mark_step_done, so
@@ -61,6 +61,44 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 		return a.MaxWorkerRounds
 	}
 	return defaultMaxWorkerRounds
+}
+
+// dispatchSystemPrompt assembles the system prompt for an external/channel
+// dispatch (RunAgentSync / RunAgentSyncContinuingRich): the agent's context
+// (rules + facts) over its OrchestratorPrompt, then the Available-agents/skills
+// block, then the "Your custom tools (load before use)" section, then — for a
+// Cortex agent answering OUTSIDE its own cortex thread — its recent cortex feed.
+// Single source of truth so adding a prompt block (as custom-tools just did)
+// can't get appended to one dispatch site and forgotten on the other.
+func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database) string {
+	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
+	sysPrompt += availableBlock
+	sysPrompt += customToolPrompt
+	if target.Cortex && sessID != cortexSessionID(target.ID) {
+		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
+	}
+	return sysPrompt
+}
+
+// resolveDispatchThink decides whether a dispatched agent thinks, the SAME way
+// the chat surface does — so an agent reached via a channel, an external
+// dispatch, or an inline agents(run) runs with the same default as if invoked
+// directly from Agency. Base = the orchestrator route default; the target's
+// explicit Think="on"/"off" wins; empty Think falls through to the route default
+// rather than a dispatch-only override. Single source of truth: this was
+// copy-pasted at three dispatch sites.
+func resolveDispatchThink(target AgentRecord) bool {
+	think := true
+	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
+		think = *p
+	}
+	switch target.Think {
+	case "on":
+		think = true
+	case "off":
+		think = false
+	}
+	return think
 }
 
 // sseWriter wraps an SSE-frame destination. Each Send assembles
@@ -1028,6 +1066,98 @@ func (t *chatTurn) captureActiveWorkspace(sess *ToolSession) {
 	}
 }
 
+// loadAgentTempTools hydrates sess.TempTools with the agent's custom (temp)
+// tools and records the agent's uniquely-attached kit in t.agentOwnTools. Two
+// sources: the user's approved PERSISTENT pool (drawn from poolUser/poolDB — the
+// AGENT OWNER, so a channel/dispatch run under a synthetic runtime user still
+// gets the owner's tools, not the empty pool of "phantom:<chat>") gated by the
+// agent's AllowedTools allow-list + per-agent deny list + private mode + the
+// Builder-authors-fresh skip; and the agent-scoped AgentRecord.Tools kit (no
+// allow-list gate — attached directly to the record). Extracted from
+// newToolSession so the web and channel/dispatch surfaces hydrate IDENTICALLY:
+// without this, a dispatched/channel session built its own ToolSession and
+// loaded ZERO custom tools, so an agent-authored tool (e.g. ts3_client_status)
+// worked in the web chat but was invisible over a channel.
+func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB Database) {
+	if sess == nil || poolDB == nil || poolUser == "" {
+		return
+	}
+	noTools := isNoToolsSentinel(t.agent.AllowedTools)
+	isSeed := t.agent.Owner == seedOwner
+	disabledPersistent := make(map[string]bool, len(t.agent.DisabledPersistentTools))
+	for _, n := range t.agent.DisabledPersistentTools {
+		disabledPersistent[n] = true
+	}
+	// User-crafted agents only: an explicit AllowedTools list still gates
+	// persistent temp tools. Empty list = default pool = include all. Nil for
+	// seed agents (admin approval is enough).
+	var allowPersistent map[string]bool
+	if !isSeed && !noTools && len(t.agent.AllowedTools) > 0 {
+		allowPersistent = make(map[string]bool, len(t.agent.AllowedTools))
+		for _, n := range t.agent.AllowedTools {
+			allowPersistent[n] = true
+		}
+	}
+	// Builder authors fresh — hide the user's pre-existing custom tools from its
+	// executable catalog (it can still ENUMERATE via tool_def(action="list")).
+	loaded := LoadPersistentTempTools(poolDB, poolUser)
+	if isBuilderAgent(t.agent.ID) {
+		if n := len(loaded); n > 0 {
+			Debug("[orchestrate.tools] Builder catalog: skipped loading %d user-authored persistent tool(s) — Builder authors fresh, doesn't reuse", n)
+		}
+		loaded = nil
+	}
+	for _, p := range loaded {
+		if noTools {
+			continue
+		}
+		// Private mode hides API-mode temp tools (network side effects);
+		// shell-mode stays (sandboxed local).
+		if t.privateMode && p.Tool.Mode == TempToolModeAPI {
+			continue
+		}
+		if disabledPersistent[p.Tool.Name] { // per-agent opt-out
+			continue
+		}
+		if allowPersistent != nil && !allowPersistent[p.Tool.Name] { // user-crafted allow-list
+			continue
+		}
+		tool := p.Tool
+		if err := sess.AppendTempTool(&tool); err != nil {
+			Log("[orchestrate.tools] persistent temp tool %q failed to load: %v", tool.Name, err)
+		}
+	}
+	if n := len(loaded); n > 0 {
+		Log("[orchestrate.tools] loaded %d persistent temp tool(s) for %s", n, poolUser)
+	}
+	// Agent-scoped tools (AgentRecord.Tools) layer on top — attached directly to
+	// the record, so NO AllowedTools gate; deduped against the persistent pool.
+	agentToolsSkipped := 0
+	if t.agentOwnTools == nil {
+		t.agentOwnTools = map[string]bool{}
+	}
+	for i := range t.agent.Tools {
+		tool := t.agent.Tools[i]
+		if t.privateMode && tool.Mode == TempToolModeAPI {
+			continue
+		}
+		if sess.HasTempTool(tool.Name) {
+			agentToolsSkipped++
+			continue
+		}
+		t.agentOwnTools[tool.Name] = true // the agent's deliberate kit (first-classed in setupCustomTools)
+		if err := sess.AppendTempTool(&tool); err != nil {
+			Log("[orchestrate.tools] agent-scoped tool %q failed to load: %v", tool.Name, err)
+		}
+	}
+	if agentToolsSkipped > 0 {
+		Debug("[orchestrate.tools] %d agent-scoped tool(s) already present from the persistent pool (not re-loaded) for agent=%s", agentToolsSkipped, t.agent.ID)
+	}
+	if n := len(t.agentOwnTools); n > 0 {
+		Log("[orchestrate.tools] attached %d uniquely-agent-scoped tool(s) for agent=%s", n, t.agent.ID)
+	}
+}
+
 func (t *chatTurn) newToolSession() *ToolSession {
 	sess := &ToolSession{
 		LLM:      t.app.LLM,
@@ -1123,126 +1253,10 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// Both honor DisabledPersistentTools (per-agent deny list) as a
 	// per-agent opt-out, and the no-tools sentinel (the "give me
 	// absolutely no optional tools" mode) still suppresses everything.
-	noTools := isNoToolsSentinel(t.agent.AllowedTools)
-	isSeed := t.agent.Owner == seedOwner
-	disabledPersistent := make(map[string]bool, len(t.agent.DisabledPersistentTools))
-	for _, n := range t.agent.DisabledPersistentTools {
-		disabledPersistent[n] = true
-	}
-	// User-crafted agents only: an explicit AllowedTools list still
-	// gates persistent temp tools as before. Empty list = default
-	// pool = include all (matching pre-change behavior). The map is
-	// nil for seed agents because they don't use this gate at all.
-	var allowPersistent map[string]bool
-	if !isSeed && !noTools && len(t.agent.AllowedTools) > 0 {
-		allowPersistent = make(map[string]bool, len(t.agent.AllowedTools))
-		for _, n := range t.agent.AllowedTools {
-			allowPersistent[n] = true
-		}
-	}
-	// Builder exception: hide the user's pre-existing custom tools from
-	// Builder's executable catalog. Builder's job is to AUTHOR new
-	// tools, not to use existing ones — having get_weather, news_aggregator,
-	// place_vapi_call, etc. callable from Builder's prompt invites the
-	// LLM to "use" one of them when it should be authoring fresh, and
-	// inflates the catalog (each tool's description costs prompt tokens
-	// every turn). Builder can still ENUMERATE existing tools via
-	// tool_def(action="list") for collision-avoidance or pipeline-mode
-	// composition, and re-authoring with the same name is the iteration
-	// path (the in-place persistent update fix makes that work). Same
-	// skip applies to plan_set worker steps under Builder — they
-	// inherit Builder's agent identity, so authoring discipline stays
-	// consistent across the orchestrator + worker boundary.
-	loaded := LoadPersistentTempTools(sess.DB, sess.Username)
-	if isBuilderAgent(t.agent.ID) {
-		if n := len(loaded); n > 0 {
-			Debug("[orchestrate.tools] Builder catalog: skipped loading %d user-authored persistent tool(s) — Builder authors fresh, doesn't reuse", n)
-		}
-		loaded = nil
-	}
-	for _, p := range loaded {
-		if noTools {
-			continue
-		}
-		// Private mode hides API-mode temp tools (network side
-		// effects); shell-mode is allowed because the sandbox keeps
-		// them local.
-		if t.privateMode && p.Tool.Mode == TempToolModeAPI {
-			continue
-		}
-		// Per-agent opt-out applies to BOTH seed and user-crafted
-		// agents — the deny list is the universal "this agent
-		// shouldn't see that tool" lever.
-		if disabledPersistent[p.Tool.Name] {
-			continue
-		}
-		// User-crafted agents: persistent tool must be in the
-		// AllowedTools allow-list (when one is set). Seed agents
-		// skip this gate — admin approval is enough.
-		if allowPersistent != nil && !allowPersistent[p.Tool.Name] {
-			continue
-		}
-		tool := p.Tool
-		if err := sess.AppendTempTool(&tool); err != nil {
-			Log("[orchestrate.tools] persistent temp tool %q failed to load: %v", tool.Name, err)
-		}
-	}
-	if n := len(loaded); n > 0 {
-		Log("[orchestrate.tools] loaded %d persistent temp tool(s) for %s", n, t.user)
-	}
-	// Agent-scoped tools (AgentRecord.Tools) layer on top of the
-	// user's persistent pool. Same private-mode + name-conflict
-	// rules; AppendTempTool surfaces a clean error if an agent-
-	// scoped name collides with a persistent one (admin renames to
-	// resolve). These don't go through the approval queue — they
-	// live inside the AgentRecord and inherit its trust boundary.
-	agentToolsSkipped := 0
-	// agentOwnTools = the tools UNIQUELY attached to this agent (actually
-	// appended below), NOT the ones skipped because they're already in the
-	// user's persistent pool. This is the agent's deliberate kit; the lazy
-	// split first-classes exactly these and leaves pool-shared tools (e.g.
-	// seed-chat's accumulated toolbox) on the normal lazy path.
-	t.agentOwnTools = map[string]bool{}
-	for i := range t.agent.Tools {
-		tool := t.agent.Tools[i]
-		if t.privateMode && tool.Mode == TempToolModeAPI {
-			continue
-		}
-		// NO AllowedTools gate here: agent.Tools entries are attached
-		// DIRECTLY to this agent's record (via add_tool, the editor's
-		// Tools field, or autoCopySessionToolsForAgent). They're
-		// inherently allowed by virtue of being on the agent — the
-		// AllowedTools list is for the registered-pool intersection,
-		// not for per-agent attachments. Gating these here was a
-		// regression that hid pipeline tools / session-drafts-promoted-
-		// to-agent / admin-added shell tools from agents whose
-		// AllowedTools didn't happen to name them.
-		//
-		// Skip silently when the tool is already loaded from the
-		// user's persistent pool above — that's a common case (admin
-		// approves the tool to the pool AND it stays attached to the
-		// agent that authored it) and isn't a real failure. The
-		// persistent copy already satisfies the agent's tool surface.
-		if sess.HasTempTool(tool.Name) {
-			agentToolsSkipped++
-			continue
-		}
-		// Uniquely attached (not already in the persistent pool) — the
-		// agent's own kit.
-		t.agentOwnTools[tool.Name] = true
-		if err := sess.AppendTempTool(&tool); err != nil {
-			Log("[orchestrate.tools] agent-scoped tool %q failed to load: %v", tool.Name, err)
-		}
-	}
-	// Accurate accounting: how many were actually attached vs already
-	// present from the pool (the old "loaded N" line printed len(agent.Tools)
-	// regardless of skips, which read as a contradiction next to the skip log).
-	if agentToolsSkipped > 0 {
-		Debug("[orchestrate.tools] %d agent-scoped tool(s) already present from the persistent pool (not re-loaded) for agent=%s", agentToolsSkipped, t.agent.ID)
-	}
-	if n := len(t.agentOwnTools); n > 0 {
-		Log("[orchestrate.tools] attached %d uniquely-agent-scoped tool(s) for agent=%s", n, t.agent.ID)
-	}
+	// Custom (temp) tools — persistent pool (this user) + the agent-scoped kit.
+	// Shared with the channel/dispatch path via loadAgentTempTools so both
+	// surfaces hydrate identically.
+	t.loadAgentTempTools(sess, sess.Username, sess.DB)
 	// Session-scoped tool drafts — the LLM authored these in THIS
 	// conversation (e.g. for_agent-attached pipeline + bundled inline
 	// tools from create_agent). Load them so the LLM can dispatch by
@@ -1695,7 +1709,15 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// agents + read the run-ledger + event-monitor management + history
 	// recall. Not globally registered; appended here only when Fleet is on,
 	// same shape as Builder's authoring tools.
-	if t.agent.Fleet && forOrchestrator {
+	// Owner-only: the Fleet toolset reaches owner-scoped management endpoints
+	// (delegate, standing agents, run ledger, monitors), so it attaches ONLY
+	// when the runtime user IS the agent's owner. A public-app visitor (or any
+	// granted non-owner user) running a Fleet agent never sees these — which is
+	// what lets publiclyExposable honor Publish on a Fleet agent without leaking
+	// owner controls. Seeds load with Owner unset until shadowed; treat that as
+	// the caller's own so the owner keeps Fleet on their own seed.
+	ownerRun := t.agent.Owner == "" || t.agent.Owner == t.user
+	if t.agent.Fleet && forOrchestrator && ownerRun {
 		om := append(operatorManagementTools(sess, t.agent.ID), operatorHistoryTools(sess, t.agent.ID)...)
 		tools = append(tools, om...)
 		for _, td := range om {
@@ -1719,14 +1741,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 				toolNames = append(toolNames, td.Tool.Name)
 			}
 		}
-		// Cortex agents get file_deliverable — file a sizable artifact as its own
-		// session, keep only a pointer in the standing thread (cortex stays lean).
-		if dTools := cortexDeliverableTools(t.udb, t.agent.ID); len(dTools) > 0 {
-			tools = append(tools, dTools...)
-			for _, td := range dTools {
-				toolNames = append(toolNames, td.Tool.Name)
-			}
-		}
+		// (cortex deliverables — file_deliverable / note_to_cortex — now come from
+		// frameworkConversationalTools, the shared web+channel set.)
 	}
 	// Parent-tool inheritance — an owned sub-agent that opted in (InheritParentTools)
 	// resolves its parent's NON-consequential catalog at runtime in addition to
@@ -2603,10 +2619,14 @@ func (t *chatTurn) emitStatus(text string) {
 	})
 }
 
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_ack_timeout", Category: "Timeouts", Label: "Acknowledgment timeout", Help: "Bounds the fast \"On it…\" acknowledgment call.", Kind: KindSeconds, Default: 8, Min: 1, Max: 60})
+}
+
 // ackTimeout bounds the fast acknowledgment call. Short — the ack
 // is only useful if it lands while the user is staring at dead air;
 // a slow ack is worse than none.
-const ackTimeout = 8 * time.Second
+func ackTimeout() time.Duration { return TuneDuration("tune_ack_timeout") }
 
 // ackEnabled gates the concurrent "On it…" acknowledgment (see emitAck
 // and its launch site). Off by default — on small llama.cpp slot pools
@@ -2629,7 +2649,7 @@ func (t *chatTurn) emitAck(ctx context.Context, userMsg string) {
 	if t == nil || t.app == nil {
 		return
 	}
-	cctx, cancel := context.WithTimeout(ctx, ackTimeout)
+	cctx, cancel := context.WithTimeout(ctx, ackTimeout())
 	defer cancel()
 	sys := "A user just messaged an assistant that may need tools, web search, or sub-agents to answer. In ONE short, natural sentence, acknowledge you're on it (e.g. \"On it — let me look that up.\" / \"Sure, checking now.\" / \"Give me a sec to dig into that.\"). Do NOT answer the request, do NOT ask questions, do NOT name tools or agents. If the message is a greeting, a thanks, or something you'd answer instantly with no lookup, reply with exactly NONE."
 	resp, err := t.app.WorkerChat(cctx,
@@ -3217,7 +3237,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		if len(ingestQueue) > 0 {
 			go func(items []ingestPair, user, agentID string) {
 				for _, it := range items {
-					ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+					ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 					ingestAgentKnowledge(ctx, T.DB, user, agentID, "attachments", it.name, it.text)
 					cancel()
 					Log("[orchestrate.attachments] ingested %q (%d chars) into agent=%s knowledge[attachments]", it.name, len(it.text), agentID)
@@ -3881,12 +3901,20 @@ func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []Persisted
 // handleCancel aborts an in-flight runner by session ID. The runner
 // goroutine cleans up on ctx.Done.
 func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
-	var body struct {
-		SessionID string `json:"session_id"`
+	// The Agency chat panel POSTs the session id as the ?id= query param (no
+	// body); older callers send {session_id} in the JSON body. Accept BOTH —
+	// reading only the body meant the Agency cancel button silently no-opped
+	// (empty body → empty id → cancel() never fired, loop ran to completion).
+	sid := strings.TrimSpace(r.URL.Query().Get("id"))
+	if sid == "" {
+		var body struct {
+			SessionID string `json:"session_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		sid = strings.TrimSpace(body.SessionID)
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.SessionID != "" {
-		if v, ok := inflightCancels.Load(body.SessionID); ok {
+	if sid != "" {
+		if v, ok := inflightCancels.Load(sid); ok {
 			if cancel, ok := v.(context.CancelFunc); ok {
 				cancel()
 			}
@@ -3905,6 +3933,124 @@ func (T *OrchestrateApp) handleCancel(w http.ResponseWriter, r *http.Request, ag
 // route ceiling) are enforced downstream by LeadChat / the route stage.
 func (t *chatTurn) shouldUseLeadModel() bool {
 	return t.agent.LeadModel && !t.agent.ForcePrivate && !t.privateMode
+}
+
+// frameworkConversationalTools is the single source of truth for the always-on
+// framework toolset every CONVERSATIONAL turn gets — IDENTICAL on the web
+// (runPlan) and the channel/dispatch (buildDispatchTurnExtras) surfaces. Built
+// once here so the two catalogs can't drift: the recurring "works in the web UI
+// but not over a channel" class of bug (send_status, stay_silent, graph memory,
+// fetch_knowledge_doc, …) all came from these being hand-maintained in two
+// places. Genuinely path-specific tools stay in their callers: compact_context
+// (web closure var), the Builder authoring set, the agents-grouped tool's
+// per-path gating, recurring, Fleet, and attached pipelines (the web wraps those
+// for its activity pane). Session-bound where the handler needs it: find_tools
+// searches the session catalog, send_status reaches the StatusCallback,
+// stay_silent sets Silenced.
+func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDef {
+	out := []AgentToolDef{t.introspectToolDef()} // self-awareness — always
+	// Knowledge — only when the agent has a corpus, else it hallucinates
+	// doc_ids the handler must refuse.
+	if t.agentHasRetrievableContent() {
+		out = append(out, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
+	}
+	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going"} {
+		if ct, ok := LookupChatTool(n); ok {
+			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))
+		}
+	}
+	out = append(out, t.loadToolToolDef())  // gateway for the agent's lazy custom tools
+	out = append(out, t.skillToolDefs()...) // read_skill / skill_knowledge_*; nil when skills off
+	if !t.inferredOff() {
+		out = append(out, t.memoryToolDef()) // Reference Memory (memory_save / search / forget)
+	}
+	if !t.explicitOff() {
+		// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
+		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef())
+	}
+	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID)...) // file_deliverable + note_to_cortex; nil for non-cortex
+	if !isBuilderAgent(t.agent.ID) {
+		out = append(out, t.sendToBuilderToolDef()) // escape to a full Builder session
+	}
+	return out
+}
+
+// dispatchExtraTools assembles the framework + custom-tool catalog every
+// SUB-AGENT surface shares: the channel/dispatch path (RunAgentSync /
+// RunAgentSyncContinuingRich) and the inline agents(action="run") path. It
+// operates on an ALREADY-BUILT subTurn (receiver t) so each caller keeps its own
+// subTurn wiring — dispatchChain, network, topic — that this shared assembly must
+// not clobber. Returns the framework conversational tools (+ the agents grouped
+// tool, attached pipelines, and direct custom tools) plus the custom-tool prompt
+// section the caller appends to the system prompt. The caller MUST also wire
+// ToolFallbackResolver = t.lazyToolFallback and DynamicTools =
+// t.dynamicNewTempTools(sess) on the agent loop, and supplies poolUser/poolDB =
+// the AGENT OWNER (so a synthetic channel runtime user still draws the owner's
+// custom-tool pool). channel-chat tools and parent-tool inheritance stay in the
+// callers — their gating differs per surface.
+func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB Database) (extraTools []AgentToolDef, customToolPrompt string) {
+	extraTools = append(extraTools, t.frameworkConversationalTools(sess)...)
+	// agents grouped tool — sub-agents (OwnedBy set) are LEAVES (no dispatch
+	// surface → no depth cascades); top-level targets get the full surface;
+	// Builder targets stay read-only on dispatch.
+	if t.agent.OwnedBy == "" {
+		extraTools = append(extraTools, t.agentsGroupedToolDef(!isBuilderAgent(t.agent.ID)))
+	}
+	extraTools = append(extraTools, t.buildAttachedPipelineToolDefs()...)
+	// Custom (temp) tools — hydrate the session from the owner's pool + the
+	// agent-scoped kit, then split direct/lazy. Without the hydrate the session
+	// is empty (the ts3_client_status-over-a-channel bug).
+	t.privateMode = t.agent.ForcePrivate
+	t.loadAgentTempTools(sess, poolUser, poolDB)
+	direct, ctp := t.setupCustomTools(sess)
+	extraTools = append(extraTools, direct...)
+	return extraTools, ctp
+}
+
+// setupCustomTools resolves the agent's custom (temp) tools the SAME way on the
+// web (runPlan) and channel/dispatch surfaces — the third catalog beside the
+// framework set. Zero-arg customs (and the agent's own deliberately-attached
+// kit) come back as DIRECTLY callable tools; has-args customs are presented as a
+// name+desc prompt section (returned) and loaded on demand via load_tool, with
+// the turn's lazy-tool maps populated so load_tool + lazyToolFallback resolve
+// them. Callers must: append the direct tools to the catalog, append the prompt
+// section to the system prompt, and wire ToolFallbackResolver = lazyToolFallback
+// + DynamicTools = dynamicNewTempTools(sess) on the agent loop. Without this on
+// the dispatch path, a channel agent simply never sees its own custom tools
+// (e.g. ts3_client_status works in the web chat but is absent over a channel).
+func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, lazyPromptSection string) {
+	allCustomTools := temptool.BuildAgentToolDefs(sess)
+	t.wrapToolsForActivity(sess, allCustomTools)
+	t.staticTempToolNames = map[string]bool{}
+	t.lazyCustomToolNames = map[string]bool{}
+	t.loadedCustomTools = map[string]bool{}
+	t.lazyCustomToolDefs = map[string]AgentToolDef{}
+	agentKit := t.agentOwnTools // nil on the dispatch path → has-args customs go lazy
+	var lazyCustomTools []AgentToolDef
+	for _, td := range allCustomTools {
+		if len(td.Tool.Parameters) == 0 || agentKit[td.Tool.Name] {
+			direct = append(direct, td)
+			t.staticTempToolNames[td.Tool.Name] = true
+		} else {
+			lazyCustomTools = append(lazyCustomTools, td)
+			t.lazyCustomToolNames[td.Tool.Name] = true
+			t.lazyCustomToolDefs[td.Tool.Name] = td
+		}
+	}
+	if len(lazyCustomTools) > 0 {
+		var b strings.Builder
+		b.WriteString("\n\n## Your custom tools (load before use)\n")
+		b.WriteString("These tools exist but their full definitions aren't loaded. To use them, call `load_tool(names=[\"<name>\", ...])` first — pass ALL the ones you'll need in that one call; it returns their parameters and makes them callable. Then call them normally.\n\n")
+		for _, td := range lazyCustomTools {
+			desc := strings.TrimSpace(td.Tool.Description)
+			if len(desc) > 200 {
+				desc = desc[:200] + "…"
+			}
+			b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
+		}
+		lazyPromptSection = b.String()
+	}
+	return direct, lazyPromptSection
 }
 
 // runPlan asks the orchestrator (thinking LLM) to decide its next
@@ -4385,49 +4531,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// catalog, reach for them anyway, and hallucinate doc_ids that
 	// the handler then has to refuse with "not found" — burns rounds
 	// for zero value.
+	// Framework conversational tools — the always-on set shared VERBATIM with
+	// the channel/dispatch surface via frameworkConversationalTools(): knowledge
+	// (introspect always; search/fetch when there's a corpus), find_tools,
+	// send_status, stay_silent/keep_going, load_tool, skills, the memory layers
+	// (Reference + Explicit + Graph), cortex deliverables, and send_to_builder.
+	// Single source of truth so the web and channel catalogs can't drift.
 	var knowTools []AgentToolDef
-	if t.agentHasRetrievableContent() {
-		knowTools = append(knowTools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef(), t.introspectToolDef())
-	}
-	// find_tools — always-on classifier-fallback. The LLM uses this
-	// to discover tools that didn't surface from the per-turn vector
-	// pre-selection (mid-conversation pivot, unusual phrasing,
-	// specialty tools the classifier missed). Tagged IsFrameworkTool
-	// at the source, which excludes it from the worker pool builder;
-	// explicit knowTools injection is the right path for always-on
-	// framework infrastructure.
-	if ct, ok := LookupChatTool("find_tools"); ok {
-		// MUST bind the session — find_tools.RunWithSession searches the
-		// session's catalog; the bare ChatToolToAgentToolDef(ct) wires
-		// Handler=ct.Run, which hard-errors "find_tools requires a session
-		// context". Latent bug: find_tools is rarely called (vector
-		// pre-selection usually surfaces tools), so it only bit when an
-		// agent (Builder, mid-authoring) actually invoked it.
-		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(ct, sess))
-	}
-	// send_status — always-on mid-turn channel. Tagged IsFrameworkTool at
-	// the source (so it's out of the default worker pool + curation UI);
-	// force-included here so EVERY agent has it, matching the round-shape
-	// contract in the prompt ("prose alongside a tool call is dropped —
-	// call send_status to talk mid-turn"). Session-bound so its handler
-	// reaches sess.StatusCallback (wired in newToolSession → topbar status).
-	if ct, ok := LookupChatTool("send_status"); ok {
-		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(ct, sess))
-	}
-	// load_tool — gateway for the LLM's custom tools, which are
-	// presented by name+desc only (prompt section) to keep their
-	// verbose schemas out of the catalog. Always available; harmless
-	// when the agent has no lazy custom tools (LLM just never calls it).
-	knowTools = append(knowTools, t.loadToolToolDef())
-	// send_to_builder — the ESCAPE for genuinely complex / open-ended authoring:
-	// hands the user a one-click link into a full interactive Builder session.
-	// NOT the default — the prompt makes dispatching Builder as a sub-agent
-	// (intake-then-dispatch, drafts held for approval) the default for the common
-	// case; this is the fallback for designs an in-thread intake + one-shot
-	// dispatch can't capture. Not for Builder itself (no self-handoff).
-	if !isBuilderAgent(t.agent.ID) {
-		knowTools = append(knowTools, t.sendToBuilderToolDef())
-	}
+	knowTools = append(knowTools, t.frameworkConversationalTools(sess)...)
 	// compact_context — LLM-driven context management. Lets the model
 	// proactively discard the bodies of EARLIER tool results it has
 	// consumed and no longer needs (a smoke-test report, a big fetch, a
@@ -4444,27 +4555,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},
 	})
-	// Skill tools — read_skill / skill_knowledge_search /
-	// skill_knowledge_fetch_doc. Stateless one-shot calls in the agent's
-	// own context. skillToolDefs returns nil when skills are off.
-	knowTools = append(knowTools, t.skillToolDefs()...)
-	// (dispatch_to_worker temporarily unmounted — the LLM wasn't
-	// reaching for it reliably and the surface area was diluting
-	// agent dispatch. Skills still auto-activate inline via the
-	// classifier; cross-agent work uses agents(action="run", ...).
-	// Re-mount here when the dispatch path's discoverability is
-	// figured out.)
-	if !t.inferredOff() {
-		knowTools = append(knowTools, t.memoryToolDef())
-	}
-	if !t.explicitOff() {
-		knowTools = append(knowTools,
-			t.storeFactToolDef(), t.forgetFactToolDef(),
-			// Graph memory — the structured relationship layer beside the flat
-			// facts. Pull-only (recall_about costs no prompt tokens until used).
-			t.linkEntitiesToolDef(), t.recallAboutToolDef(),
-		)
-	}
+	// (skills + the memory layers now come from frameworkConversationalTools
+	// above; dispatch_to_worker stays unmounted — the LLM wasn't reaching for it
+	// reliably and the surface area diluted agent dispatch. Skills still
+	// auto-activate inline via the classifier; cross-agent work uses
+	// agents(action="run", ...).)
 	// Build-plan UI — present_build_plan paints the visible
 	// checklist when Builder reaches end of Phase 2; mark_step_done
 	// updates it as each Phase 4 tool call completes. Builder-only
@@ -4541,7 +4636,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// self-serve authoring agent gets them here. The matching
 		// credentialFirstGuidance is injected into the system prompt above under
 		// the same !isBuilderAgent condition.
-		knowTools = append(knowTools, draftOAuthCredentialToolDef(), draftAPICredentialToolDef())
+		knowTools = append(knowTools, draftOAuthCredentialToolDef(), draftAPICredentialToolDef(), checkCredentialToolDef())
 	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.
@@ -4560,60 +4655,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// below knows to skip them (and only surface NEW temp tools
 	// created mid-turn).
 	Debug("[orchestrate.orch] runPlan: building temp tool defs")
-	allCustomTools := temptool.BuildAgentToolDefs(sess)
-	Debug("[orchestrate.orch] runPlan: %d custom tool(s)", len(allCustomTools))
-	t.wrapToolsForActivity(sess, allCustomTools)
-	// Custom (temp) tools are the unbounded, per-user, often-verbose
-	// category. Rather than inject every one's full schema into the
-	// catalog each turn (the bulk of a heavy orchestrator prompt), we
-	// present them by name + description in a prompt section and load
-	// the full schema on demand via load_tool. Zero-arg custom tools
-	// are the exception: their name+desc IS their schema, so they stay
-	// directly callable (a lookup would be pure overhead).
-	//
-	//   staticTempToolNames — zero-arg customs that go in the catalog now.
-	//   lazyCustomToolNames — has-args customs presented as name+desc.
-	t.staticTempToolNames = map[string]bool{}
-	t.lazyCustomToolNames = map[string]bool{}
-	t.loadedCustomTools = map[string]bool{}
-	t.lazyCustomToolDefs = map[string]AgentToolDef{}
-	// An agent's UNIQUELY-attached tools (t.agentOwnTools, populated when
-	// they were appended above) are the author's DELIBERATE kit — keep them
-	// FIRST-CLASS even when they take args, instead of behind load_tool. An
-	// agent you built WITH a tool should just be able to call it. NOTE: we
-	// use agentOwnTools, NOT all of agent.Tools — tools that are also in the
-	// user's persistent pool (e.g. seed-chat's accumulated general toolbox)
-	// were skipped during attach and stay on the normal lazy path, so the
-	// default Chat isn't re-bloated by 10 first-classed general tools.
-	agentKit := t.agentOwnTools
-	var directCustomTools []AgentToolDef // zero-arg OR agent kit → callable now
-	var lazyCustomTools []AgentToolDef   // has-args opportunistic → name+desc + load_tool
-	for _, td := range allCustomTools {
-		if len(td.Tool.Parameters) == 0 || agentKit[td.Tool.Name] {
-			directCustomTools = append(directCustomTools, td)
-			t.staticTempToolNames[td.Tool.Name] = true
-		} else {
-			lazyCustomTools = append(lazyCustomTools, td)
-			t.lazyCustomToolNames[td.Tool.Name] = true
-			t.lazyCustomToolDefs[td.Tool.Name] = td
-		}
-	}
-	// Prompt section listing the lazy customs (name + desc). The LLM
-	// sees everything that exists — no discovery miss — and is told to
-	// load_tool before calling.
-	if len(lazyCustomTools) > 0 {
-		var b strings.Builder
-		b.WriteString("\n\n## Your custom tools (load before use)\n")
-		b.WriteString("These tools exist but their full definitions aren't loaded. To use them, call `load_tool(names=[\"<name>\", ...])` first — pass ALL the ones you'll need in that one call; it returns their parameters and makes them callable. Then call them normally.\n\n")
-		for _, td := range lazyCustomTools {
-			desc := strings.TrimSpace(td.Tool.Description)
-			if len(desc) > 200 {
-				desc = desc[:200] + "…"
-			}
-			b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
-		}
-		sys += b.String()
-	}
+	// Custom (temp) tools — the unbounded, per-user, often-verbose category.
+	// Resolved via the shared setupCustomTools so the web and channel/dispatch
+	// surfaces present them identically (zero-arg → direct, has-args → load_tool
+	// + prompt section). The staticTempToolNames snapshot it populates is what
+	// the DynamicTools feed below uses to surface only NEW mid-turn temp tools.
+	directCustomTools, lazyCustomPrompt := t.setupCustomTools(sess)
+	sys += lazyCustomPrompt
 	allTools := append(controlTools, knowTools...)
 	allTools = append(allTools, workerTools...)
 	allTools = append(allTools, directCustomTools...)

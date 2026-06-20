@@ -35,8 +35,14 @@ import (
 const (
 	runLedgerTable    = "run_ledger"     // metadata: <owner>:<id> -> RunRecord (Raw stripped)
 	runLedgerRawTable = "run_ledger_raw" // raw output: <owner>:<id> -> string (CryptSet)
-	maxRunsPerOwner   = 500              // cap retained runs per owner; oldest pruned past this
 )
+
+// maxRunsPerOwner caps retained runs per owner; oldest pruned past this.
+func maxRunsPerOwner() int { return TuneInt("tune_max_runs_per_owner") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_max_runs_per_owner", Category: "Limits", Label: "Run ledger retention per owner", Help: "Cap on retained run records per owner; oldest are pruned past this.", Kind: KindInt, Default: 500, Min: 50, Max: 5000})
+}
 
 // RunStatus is the outcome of a run. The Operator badges on it and the
 // fixer escalates on anything that isn't ok.
@@ -183,10 +189,11 @@ func ListRuns(db Database, owner string, filter RunFilter) []RunRecord {
 // list is bounded.
 func pruneRuns(db Database, owner string) {
 	all := ListRuns(db, owner, RunFilter{})
-	if len(all) <= maxRunsPerOwner {
+	maxRuns := maxRunsPerOwner()
+	if len(all) <= maxRuns {
 		return
 	}
-	for _, r := range all[maxRunsPerOwner:] { // newest-first; drop the tail
+	for _, r := range all[maxRuns:] { // newest-first; drop the tail
 		key := runLedgerKey(owner, r.ID)
 		db.Unset(runLedgerTable, key)
 		db.Unset(runLedgerRawTable, key)

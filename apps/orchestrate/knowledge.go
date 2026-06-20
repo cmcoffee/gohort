@@ -37,9 +37,13 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_knowledge_ingest_timeout", Category: "Timeouts", Label: "Knowledge ingest timeout", Help: "Caps any embedding round-trip during knowledge ingest/search.", Kind: KindSeconds, Default: 45, Min: 5, Max: 300})
+}
+
 // knowledgeIngestTimeout caps any embedding round-trip — long stalls
 // would hang the consolidation goroutine or the user-facing tool call.
-const knowledgeIngestTimeout = 45 * time.Second
+func knowledgeIngestTimeout() time.Duration { return TuneDuration("tune_knowledge_ingest_timeout") }
 
 // knowledgeTopicsTable stores the per-(user, agent) accumulator of
 // topics the classifier has seen so future classifications can prefer
@@ -954,7 +958,20 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// Hybrid recall: vector (semantic) + keyword (lexical), merged — so an exact
 	// term the embedding semantically near-misses still surfaces. Hybrid also
 	// covers the no-embedding case (keyword only), replacing the old fallback.
-	return HybridSearchByPredicate(VectorDB, allow, query, vec, k)
+	hits := HybridSearchByPredicate(VectorDB, allow, query, vec, k)
+	// Operator-set recall floor (admin tunable; default 0 = off): drop hits
+	// below the cosine threshold so a high min-score deployment trades recall
+	// for precision. No-op at 0, preserving the prior "return top-k" behavior.
+	if ms := RecallMinScore(); ms > 0 {
+		kept := hits[:0]
+		for _, h := range hits {
+			if float64(h.Score) >= ms {
+				kept = append(kept, h)
+			}
+		}
+		hits = kept
+	}
+	return hits
 }
 
 // mergeHitsByScore combines two hit slices, dedups by chunk ID,
@@ -1104,7 +1121,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	if subject == "" {
 		subject = topic
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
 	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
 	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory(action=\"search\").",
@@ -1153,11 +1170,11 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			if query == "" {
 				return "", errors.New("query is required")
 			}
-			k := 5
+			k := KnowledgeTopK()
 			if v, ok := args["k"].(float64); ok && v > 0 {
 				k = int(v)
-				if k > 20 {
-					k = 20
+				if maxK := KnowledgeMaxK(); k > maxK {
+					k = maxK
 				}
 			}
 			// Topic scoping: the LLM picks the slug via the topic= arg
@@ -1165,7 +1182,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			// Empty or garbage collapses to generalTopic — agent-wide
 			// retrieval without a per-subject filter.
 			topic := normalizeTopic(stringArg(args, "topic"))
-			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
 			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
@@ -1412,15 +1429,15 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	if query == "" {
 		return "", errors.New("query is required")
 	}
-	k := 5
+	k := ReferenceRecallK()
 	if v, ok := args["k"].(float64); ok && v > 0 {
 		k = int(v)
-		if k > 20 {
-			k = 20
+		if maxK := KnowledgeMaxK(); k > maxK {
+			k = maxK
 		}
 	}
 	topic := normalizeTopic(stringArg(args, "topic"))
-	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
 	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	rawHits := len(hits)
@@ -1523,7 +1540,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		}
 	}
 	topic := normalizeTopic(stringArg(args, "topic"))
-	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
 	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	if len(hits) == 0 {

@@ -199,7 +199,7 @@ func (T *OrchestrateApp) runPipelineHTTP(w http.ResponseWriter, r *http.Request,
 	dispatch := func(ctx context.Context, agentID, stageInput string) (string, error) {
 		return T.RunAgentSync(ctx, user, user, agentID, stageInput)
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), knowledgeIngestTimeout*8)
+	ctx, cancel := context.WithTimeout(r.Context(), knowledgeIngestTimeout()*8)
 	defer cancel()
 	out, err := T.RunPipelineDefSync(ctx, def, input, dispatch, nil)
 	if err != nil {

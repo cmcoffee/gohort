@@ -11,6 +11,7 @@
 package orchestrate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -18,6 +19,37 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 )
+
+// entityRelatedPassages bridges graph → vector: it runs the hybrid knowledge
+// recall on the entity's name + aliases and renders the top few hits, so a
+// recall_about returns the structured graph AND the unstructured passages the
+// knowledge store holds about the same entity. The entity name is the live
+// join key — no stored cross-link to keep in sync. Returns "" when nothing
+// matches or there's no corpus.
+func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
+	query := strings.TrimSpace(e.Name + " " + strings.Join(e.Aliases, " "))
+	if query == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
+	defer cancel()
+	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, generalTopic, query, 3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeAll)
+	if len(hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Related passages (from your knowledge)\n")
+	b.WriteString("Top knowledge-store matches about this entity. Cite specifics ONLY from these, not from memory.\n")
+	for _, h := range hits {
+		title := chFirst(h.Title, h.Section, h.Source, "passage")
+		loc := ""
+		if strings.TrimSpace(h.Locator) != "" {
+			loc = " (" + h.Locator + ")"
+		}
+		b.WriteString("- " + title + loc + ": " + truncateObs(h.Text, 280) + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
 
 // linkEntitiesToolDef lets the model record a RELATIONSHIP between two named
 // things (subject -[relation]-> object), auto-creating/merging the entities.
@@ -70,7 +102,7 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "recall_about",
-			Description: "Look up what you know about a named thing in your graph memory — its attributes and relationships — resolved by name or alias. Use it when a person/org/project/place comes up and you want the FACTS you've recorded (who they are, how they connect to others) instead of guessing. Returns the entity's attributes plus its relationships; ask for depth 2 to also see the neighbors' connections (one more hop). Read-only; pairs with link_entities (which records).",
+			Description: "Look up what you know about a named thing in your graph memory — its attributes and relationships — resolved by name or alias. Use it when a person/org/project/place comes up and you want the FACTS you've recorded (who they are, how they connect to others) instead of guessing. Returns the entity's attributes plus its relationships; ask for depth 2 to also see the neighbors' connections (one more hop). It ALSO folds in the top matching passages your knowledge store has about the entity, so you get the structured graph and the unstructured detail in one lookup. Read-only; pairs with link_entities (which records).",
 			Parameters: map[string]ToolParam{
 				"name":  {Type: "string", Description: "The entity to look up, by name or any alias. e.g. \"Rory\"."},
 				"depth": {Type: "integer", Description: "How many hops to expand: 1 (default, the entity and its direct relationships) or 2 (also the neighbors' relationships)."},
@@ -108,7 +140,14 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 			if depth > 2 {
 				depth = 2
 			}
-			return renderGraphRecall(t.udb, ns, e, depth), nil
+			out := renderGraphRecall(t.udb, ns, e, depth)
+			// Graph → vector bridge: fold in the top passages the knowledge
+			// store has about this entity, so one recall returns structured +
+			// unstructured together.
+			if passages := t.entityRelatedPassages(e); passages != "" {
+				out += "\n\n" + passages
+			}
+			return out, nil
 		},
 	}
 }

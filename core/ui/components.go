@@ -391,6 +391,19 @@ type FormPanel struct {
 	// "Test connectivity" when TestURL is set and this is empty.
 	TestLabel string `json:"test_label,omitempty"`
 
+	// ResetURL — when set, renders a "Revert to defaults" button. Click
+	// confirms, POSTs to this URL (the server clears the stored overrides so
+	// the fields fall back to their code/config defaults), then re-loads the
+	// form from Source to show the reverted values. Domain-agnostic: the app
+	// supplies the URL and decides what "default" means server-side.
+	ResetURL string `json:"reset_url,omitempty"`
+	// ResetLabel — button text for the reset affordance. Defaults to
+	// "Revert to defaults" when ResetURL is set and this is empty.
+	ResetLabel string `json:"reset_label,omitempty"`
+	// ResetConfirm — confirmation prompt before the reset POST. Defaults to a
+	// generic warning when ResetURL is set and this is empty.
+	ResetConfirm string `json:"reset_confirm,omitempty"`
+
 	// Templates — optional named presets. When set, the form renders a
 	// "Start from template" dropdown above the fields; picking one
 	// applies its Values to the matching fields (via the same per-field

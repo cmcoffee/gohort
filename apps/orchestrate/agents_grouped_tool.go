@@ -493,31 +493,17 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// further agents(run) the sub-turn makes.
 		dispatchChain: append(append([]string(nil), t.dispatchChain...), t.agent.ID),
 	}
-	// Knowledge layer — always-on read tool over the target's
-	// corpus + its AttachedCollections + auto-injected deployment
-	// collections (the empty-list default-attach rule).
-	tools = append(tools, subTurn.searchKnowledgeToolDef(), subTurn.introspectToolDef())
-	// Memory layers — only if the target has them enabled. The
-	// helpers gate internally on agent.DisableInferred /
-	// DisableExplicit, so just appending unconditionally is safe.
-	if !subTurn.inferredOff() {
-		tools = append(tools, subTurn.memoryToolDef())
-	}
-	if !subTurn.explicitOff() {
-		tools = append(tools, subTurn.storeFactToolDef(), subTurn.forgetFactToolDef(),
-			// Graph memory — structured relationship layer beside the flat facts.
-			subTurn.linkEntitiesToolDef(), subTurn.recallAboutToolDef())
-	}
-	// Agents grouped tool — sub-agents (OwnedBy set) are LEAVES and
-	// don't get the dispatch surface (eliminates depth cascades and
-	// forces hierarchical composition: peers under one parent, not
-	// chained sub-agents). Top-level targets keep the full grouped
-	// surface; Builder targets stay read-only on dispatch (same
-	// cycle-prevention as before).
-	if target.OwnedBy == "" {
-		tools = append(tools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
-	}
-	tools = append(tools, subTurn.skillToolDefs()...)
+	// Shared sub-agent dispatch catalog — framework conversational tools
+	// (knowledge, find_tools, send_status, stay_silent, load_tool, skills, the
+	// memory layers, cortex deliverables, send_to_builder), the agents grouped
+	// tool, attached pipelines, AND the target's custom tools. dispatchExtraTools
+	// is the SAME assembly the channel/dispatch path uses, so an inline
+	// agents(run) sub-agent sees the identical surface (this is the path that
+	// previously had neither the full framework set nor any custom tools) and the
+	// two sub-agent surfaces can't drift. Parent + sub-agent share the user/db, so
+	// the custom-tool pool owner is the caller's user.
+	dispatchExtra, customToolPrompt := subTurn.dispatchExtraTools(subSess, t.user, t.udb)
+	tools = append(tools, dispatchExtra...)
 	// Parent-tool inheritance on the DISPATCH path (this resolves tools directly,
 	// not via resolveWorkerTools, so the runtime block there wouldn't fire here).
 	// An owned sub-agent that opted in pulls its parent's non-consequential
@@ -560,6 +546,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		t.gatedPersona(target.OrchestratorPrompt),
 		target, subFacts,
 	)
+	sysPrompt += customToolPrompt // "Your custom tools (load before use)" section
 
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
 	// SAME parent session re-threads the prior exchange, so the parent can
@@ -630,22 +617,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// strips CapNetwork tools from the catalog. No-op when
 	// target.ForcePrivate is false.
 	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
-	// Resolve thinking the same way the chat surface does so a
-	// dispatched agent runs with the SAME default as if it were
-	// invoked directly from Agency. Base = route default (true for
-	// orchestrator stage). Target's explicit Think="on"/"off" wins
-	// over the route default; empty Think falls through to the route
-	// default rather than getting a different "dispatch-only" default.
-	think := true
-	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
-		think = *p
-	}
-	switch target.Think {
-	case "on":
-		think = true
-	case "off":
-		think = false
-	}
+	think := resolveDispatchThink(target)
 	resp, _, runErr := t.app.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
@@ -653,6 +625,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:      func(name, args string) bool { return true },
 		OnStep:       stepNotice,
+		// Custom-tool resolution, same as the channel/dispatch + web paths:
+		// lazyToolFallback resolves a direct call to a has-args custom tool;
+		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.
+		ToolFallbackResolver: subTurn.lazyToolFallback,
+		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),

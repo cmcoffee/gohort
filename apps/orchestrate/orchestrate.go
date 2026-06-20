@@ -257,6 +257,11 @@ func (T *OrchestrateApp) Routes() {
 	// name model where admin pool cleanup silently broke agents.
 	T.migrateAgentPersistentTools()
 
+	// One-shot: rewrite legacy Mode=="orchestrator" agents into the split
+	// Cortex + Fleet flags + clear the marker, so a legacy cortex agent's
+	// Fleet flag can actually be turned off (and the agent published).
+	T.migrateLegacyOrchestratorMode()
+
 	// One-shot fact-store migration. Walks core_facts rows and
 	// converts the old keyed shape ({Namespace, Key, Value, ...})
 	// to the new flat shape ({Namespace, ID, Note, Created}),

@@ -45,22 +45,28 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-const (
-	// desktopInvokeDeadline caps how long an LLM tool call can wait
-	// on the desktop side. Most local tools (read file, take
-	// screenshot, show notification) return in under a second; 60s
-	// is generous headroom without making the agent loop stall
-	// forever on a hung client.
-	desktopInvokeDeadline = 60 * time.Second
-	// desktopPingInterval keeps idle WS connections alive through
-	// reverse proxies / load balancers (nginx default 60s,
-	// CloudFlare 100s).
-	desktopPingInterval = 25 * time.Second
-	// desktopReadDeadline — drop a connection that hasn't sent any
-	// frame (data or pong) in this long. Should be > ping interval
-	// + reasonable RTT.
-	desktopReadDeadline = 70 * time.Second
-)
+// desktopInvokeDeadline caps how long an LLM tool call can wait
+// on the desktop side. Most local tools (read file, take
+// screenshot, show notification) return in under a second; 60s
+// is generous headroom without making the agent loop stall
+// forever on a hung client.
+func desktopInvokeDeadline() time.Duration { return TuneDuration("tune_desktop_invoke_deadline") }
+
+// desktopPingInterval keeps idle WS connections alive through
+// reverse proxies / load balancers (nginx default 60s,
+// CloudFlare 100s).
+func desktopPingInterval() time.Duration { return TuneDuration("tune_desktop_ping_interval") }
+
+// desktopReadDeadline — drop a connection that hasn't sent any
+// frame (data or pong) in this long. Should be > ping interval
+// + reasonable RTT.
+func desktopReadDeadline() time.Duration { return TuneDuration("tune_desktop_read_deadline") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_desktop_invoke_deadline", Category: "Timeouts", Label: "Desktop tool invoke deadline", Help: "Max wait for a desktop-bridge tool call before the agent loop gives up on the client.", Kind: KindSeconds, Default: 60, Min: 10, Max: 300})
+	RegisterTunable(TunableSpec{Key: "tune_desktop_ping_interval", Category: "Timeouts", Label: "Desktop WS ping interval", Help: "Keepalive ping cadence for idle desktop-bridge WebSocket connections.", Kind: KindSeconds, Default: 25, Min: 5, Max: 120})
+	RegisterTunable(TunableSpec{Key: "tune_desktop_read_deadline", Category: "Timeouts", Label: "Desktop WS read deadline", Help: "Drop a desktop-bridge connection with no frame for this long; keep above the ping interval.", Kind: KindSeconds, Default: 70, Min: 15, Max: 360})
+}
 
 // DesktopToolDescriptor is the wire shape for one tool the desktop
 // has registered locally. Mirrors gohort-desktop/core/tool.go's
@@ -254,9 +260,9 @@ func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
 		// Each pong from the client extends the read deadline; if
 		// no pong arrives within the window, ReadMessage errors and
 		// the loop exits, cleaning up.
-		conn.SetReadDeadline(time.Now().Add(desktopReadDeadline))
+		conn.SetReadDeadline(time.Now().Add(desktopReadDeadline()))
 		conn.SetPongHandler(func(string) error {
-			conn.SetReadDeadline(time.Now().Add(desktopReadDeadline))
+			conn.SetReadDeadline(time.Now().Add(desktopReadDeadline()))
 			return nil
 		})
 
@@ -277,7 +283,7 @@ func HandleDesktopBridge(userOf func(r *http.Request) string) http.HandlerFunc {
 }
 
 func (c *desktopClient) pingLoop(stop <-chan struct{}) {
-	t := time.NewTicker(desktopPingInterval)
+	t := time.NewTicker(desktopPingInterval())
 	defer t.Stop()
 	for {
 		select {
@@ -403,8 +409,8 @@ func (c *desktopClient) invoke(name string, args map[string]any) (string, error)
 			return "", errors.New(res.Error)
 		}
 		return res.Result, nil
-	case <-time.After(desktopInvokeDeadline):
-		return "", fmt.Errorf("desktop tool %q timed out after %s", name, desktopInvokeDeadline)
+	case <-time.After(desktopInvokeDeadline()):
+		return "", fmt.Errorf("desktop tool %q timed out after %s", name, desktopInvokeDeadline())
 	}
 }
 

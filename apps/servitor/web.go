@@ -193,7 +193,20 @@ type termWriterEntry struct {
 	write func([]byte)
 }
 
-const termBufferCap = 256 * 1024
+func termBufferCap() int { return TuneInt("tune_term_buffer_cap") }
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_term_buffer_cap",
+		Category: "Limits",
+		Label:    "Terminal buffer cap (bytes)",
+		Help:     "Max bytes retained per live terminal buffer before old output is trimmed.",
+		Kind:     KindInt,
+		Default:  262144,
+		Min:      32768,
+		Max:      4194304,
+	})
+}
 
 // termBufferFor returns (or creates) the buffer for a user+appliance
 // pair. Buffers persist for the process lifetime; that's fine — they
@@ -217,11 +230,11 @@ func (tb *termBuffer) append(data []byte) []*termWriterEntry {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	tb.bytes = append(tb.bytes, data...)
-	if len(tb.bytes) > termBufferCap {
+	if cap := termBufferCap(); len(tb.bytes) > cap {
 		// Trim from the start. Copy into a fresh slice so the dropped
 		// prefix's underlying memory is reclaimable.
-		fresh := make([]byte, termBufferCap)
-		copy(fresh, tb.bytes[len(tb.bytes)-termBufferCap:])
+		fresh := make([]byte, cap)
+		copy(fresh, tb.bytes[len(tb.bytes)-cap:])
 		tb.bytes = fresh
 	}
 	writers := make([]*termWriterEntry, 0, len(tb.writers))

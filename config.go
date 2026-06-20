@@ -1425,6 +1425,14 @@ func init_database() {
 	// (lazy delete-on-read handles the re-queried ones).
 	StartHookCacheSweeper()
 
+	// Wire the operator-set retrieval / limit tunables (admin Site Settings)
+	// to the main DB. Until this runs, every getter sits on its const fallback.
+	SetTunablesDB(global.db)
+
+	// Wire the per-source external-call cost ledger (cost hooks). Until this
+	// runs, RecordExternalCost is a no-op.
+	SetCostLedgerDB(global.db)
+
 	// Load global source hooks — available to all agents regardless of entry point.
 	LoadSourceHooks(global.db)
 

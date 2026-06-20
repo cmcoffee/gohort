@@ -32,16 +32,21 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_gap_check_timeout", Category: "Timeouts", Label: "Gap-check timeout", Help: "Caps the structural-gap detection LLM call.", Kind: KindSeconds, Default: 90, Min: 15, Max: 600})
+	RegisterTunable(TunableSpec{Key: "tune_max_gaps_per_check", Category: "Limits", Label: "Max gaps per check", Help: "Max extra worker steps the gap pass may inject.", Kind: KindInt, Default: 3, Min: 1, Max: 15})
+}
+
 // gapCheckTimeout caps the gap-detection LLM call. Pays its way only
 // when the worker output is genuinely hollow; tight cap keeps a slow
 // detection round from blowing the user's perceived latency.
-const gapCheckTimeout = 90 * time.Second
+func gapCheckTimeout() time.Duration { return TuneDuration("tune_gap_check_timeout") }
 
 // maxGapsPerCheck limits how many extra worker steps the gap pass may
 // inject. Belt-and-suspenders on top of the prompt's "1-3" guidance —
 // a hallucinating detector that returns 10 gaps would otherwise turn
 // one turn into a marathon.
-const maxGapsPerCheck = 3
+func maxGapsPerCheck() int { return TuneInt("tune_max_gaps_per_check") }
 
 // runGapCheck inspects the completed plan steps for structural gaps
 // and returns 0-N additional PlanStep entries to execute before
@@ -57,7 +62,7 @@ func (t *chatTurn) runGapCheck(userMsg string, steps []PlanStep, nextID int) []P
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(t.ctx, gapCheckTimeout)
+	ctx, cancel := context.WithTimeout(t.ctx, gapCheckTimeout())
 	defer cancel()
 
 	prompt := buildGapCheckPrompt(userMsg, steps)
@@ -80,8 +85,8 @@ func (t *chatTurn) runGapCheck(userMsg string, steps []PlanStep, nextID int) []P
 	if len(questions) == 0 {
 		return nil
 	}
-	if len(questions) > maxGapsPerCheck {
-		questions = questions[:maxGapsPerCheck]
+	if len(questions) > maxGapsPerCheck() {
+		questions = questions[:maxGapsPerCheck()]
 	}
 
 	out := make([]PlanStep, 0, len(questions))
@@ -137,7 +142,7 @@ func buildGapCheckPrompt(userMsg string, steps []PlanStep) string {
 	b.WriteString("3. **Mechanism gaps** — the output argues a conclusion but never names HOW it happens — no specific program, policy, court ruling, or historical incident. A question asking for the mechanism in action.\n\n")
 	b.WriteString("Output format:\n")
 	b.WriteString("- If everything looks solid, reply with the single word NONE.\n")
-	b.WriteString(fmt.Sprintf("- Otherwise, reply with %d or fewer gap questions, one per line, each starting with '- '. Each question must be self-contained (no \"this section\" / \"the above\") and phrased so a worker can answer it with one focused web_search.\n", maxGapsPerCheck))
+	b.WriteString(fmt.Sprintf("- Otherwise, reply with %d or fewer gap questions, one per line, each starting with '- '. Each question must be self-contained (no \"this section\" / \"the above\") and phrased so a worker can answer it with one focused web_search.\n", maxGapsPerCheck()))
 	b.WriteString("\nBe stingy. A turn that's already concrete and well-cited gets NONE — don't manufacture gaps to look thorough.")
 	return b.String()
 }

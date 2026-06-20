@@ -603,13 +603,19 @@ func strconvAtoi(s string) (int, error) {
 
 // --- Autofill ---------------------------------------------------------------
 
-const (
-	autofillMaxDocs    = 50
-	autofillMaxQueries = 20               // hard ceiling; effective count scales with MaxDocs
-	autofillFetchLimit = 50 * 1024 * 1024 // 50 MB per file
-	autofillTimeout    = 10 * time.Minute
-	autofillPerFetch   = 30 * time.Second
-)
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_autofill_max_docs", Category: "Limits", Label: "Autofill max docs", Help: "Max documents a single autofill run ingests.", Kind: KindInt, Default: 50, Min: 5, Max: 250})
+	RegisterTunable(TunableSpec{Key: "tune_autofill_max_queries", Category: "Limits", Label: "Autofill max queries", Help: "Hard ceiling on autofill search queries per run.", Kind: KindInt, Default: 20, Min: 4, Max: 100})
+	RegisterTunable(TunableSpec{Key: "tune_autofill_fetch_limit", Category: "Limits", Label: "Autofill per-file fetch limit (bytes)", Help: "Max bytes fetched per autofill candidate file.", Kind: KindInt, Default: 52428800, Min: 1048576, Max: 268435456})
+	RegisterTunable(TunableSpec{Key: "tune_autofill_timeout", Category: "Timeouts", Label: "Autofill total timeout", Help: "Overall wall-clock cap for one autofill run.", Kind: KindMinutes, Default: 10, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_autofill_per_fetch", Category: "Timeouts", Label: "Autofill per-fetch timeout", Help: "Per-candidate fetch timeout during autofill.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
+}
+
+func autofillMaxDocs() int              { return TuneInt("tune_autofill_max_docs") }
+func autofillMaxQueries() int           { return TuneInt("tune_autofill_max_queries") }
+func autofillFetchLimit() int           { return TuneInt("tune_autofill_fetch_limit") }
+func autofillTimeout() time.Duration    { return TuneDuration("tune_autofill_timeout") }
+func autofillPerFetch() time.Duration   { return TuneDuration("tune_autofill_per_fetch") }
 
 // queriesForMaxDocs picks how many search queries to run for a
 // requested ingest count. Roughly one query per ~4 desired docs
@@ -622,8 +628,8 @@ func queriesForMaxDocs(maxDocs int) int {
 	if n < 4 {
 		n = 4
 	}
-	if n > autofillMaxQueries {
-		n = autofillMaxQueries
+	if maxQ := autofillMaxQueries(); n > maxQ {
+		n = maxQ
 	}
 	return n
 }
@@ -659,8 +665,8 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 		MaxDocs int      `json:"max_docs"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.MaxDocs <= 0 || body.MaxDocs > autofillMaxDocs {
-		body.MaxDocs = autofillMaxDocs
+	if maxDocs := autofillMaxDocs(); body.MaxDocs <= 0 || body.MaxDocs > maxDocs {
+		body.MaxDocs = maxDocs
 	}
 
 	if !WebSearchAvailable() {
@@ -668,7 +674,7 @@ func (T *OrchestrateApp) handleCollectionAutofill(w http.ResponseWriter, r *http
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), autofillTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), autofillTimeout())
 	defer cancel()
 
 	// Step 1: queries. Use what the caller provided; otherwise ask the
@@ -1230,8 +1236,8 @@ Skip news articles, opinions, tutorials, and explainer/commentary sites that mer
 	// to a generous per-query budget otherwise.
 	perQuery := 8 * time.Second
 	budget := 30*time.Second + time.Duration(want)*perQuery
-	if budget > autofillTimeout/2 {
-		budget = autofillTimeout / 2
+	if budget > autofillTimeout()/2 {
+		budget = autofillTimeout() / 2
 	}
 	cctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
@@ -1477,7 +1483,7 @@ func fetchAutofillURL(ctx context.Context, u string) ([]byte, string, error) {
 	if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
 		return nil, "", fmt.Errorf("refusing non-public host: %s", host)
 	}
-	fctx, cancel := context.WithTimeout(ctx, autofillPerFetch)
+	fctx, cancel := context.WithTimeout(ctx, autofillPerFetch())
 	defer cancel()
 	req, err := http.NewRequestWithContext(fctx, "GET", u, nil)
 	if err != nil {
@@ -1497,13 +1503,14 @@ func fetchAutofillURL(ctx context.Context, u string) ([]byte, string, error) {
 	if resp.StatusCode >= 400 {
 		return nil, "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	limited := io.LimitReader(resp.Body, autofillFetchLimit+1)
+	fetchLimit := int64(autofillFetchLimit())
+	limited := io.LimitReader(resp.Body, fetchLimit+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, "", err
 	}
-	if int64(len(raw)) > autofillFetchLimit {
-		return nil, "", fmt.Errorf("file exceeds %d-byte cap", autofillFetchLimit)
+	if int64(len(raw)) > fetchLimit {
+		return nil, "", fmt.Errorf("file exceeds %d-byte cap", fetchLimit)
 	}
 	return raw, resp.Header.Get("Content-Type"), nil
 }
@@ -1517,7 +1524,11 @@ const ingestMinChars = 200
 // ingestBrowserMaxChars bounds how much rendered text the browser
 // fallback returns. Generous (full statute / spec pages run long); the
 // caller's own doc-size cap still applies downstream.
-const ingestBrowserMaxChars = 1 * 1024 * 1024
+func ingestBrowserMaxChars() int { return TuneInt("tune_ingest_browser_max_chars") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_ingest_browser_max_chars", Category: "Limits", Label: "Ingest browser max chars", Help: "Caps rendered text the headless-browser ingest fallback returns.", Kind: KindInt, Default: 1048576, Min: 65536, Max: 16777216})
+}
 
 // fetchAndExtractForIngest pulls a URL and returns a display name plus
 // extracted text ready for ingestion. It tries the cheap static HTTP
@@ -1545,7 +1556,7 @@ func fetchAndExtractForIngest(ctx context.Context, u string) (name, text string,
 	// Static path got a JS-only skeleton / soft block / nothing. Retry
 	// through the headless browser; keep whichever extraction is richer.
 	if BrowserFetchFunc != nil {
-		if rendered, berr := BrowserFetchFunc(u, ingestBrowserMaxChars); berr == nil {
+		if rendered, berr := BrowserFetchFunc(u, ingestBrowserMaxChars()); berr == nil {
 			if rendered = strings.TrimSpace(rendered); len(rendered) > len(text) {
 				if name == "" {
 					name = nameFromURL(u, "text/html")

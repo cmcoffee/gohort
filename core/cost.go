@@ -250,6 +250,7 @@ type DailyCost struct {
 	LeadOutput   int64   `json:"lead_output"`
 	SearchCalls  int64   `json:"search_calls"`
 	ImageCalls   int64   `json:"image_calls"`
+	ExternalCost float64 `json:"external_cost"` // metered source-hook / credential spend folded in at aggregation (already priced)
 	RunCount     int     `json:"run_count"`
 }
 

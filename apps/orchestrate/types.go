@@ -47,8 +47,11 @@ type AgentRecord struct {
 	// reports land, with ongoing-thread compaction (running summary + recent
 	// tail) applied to keep it bounded. Cortex agents also get the management
 	// sidebar (the pinned hero row + Permissions / Enabled agents / Event
-	// monitors box) and are never publicly exposable. Independent of Fleet —
-	// an agent can have a Cortex without delegation tools, or vice versa.
+	// monitors box). A Cortex agent CAN be published (each public visitor gets
+	// their own per-(user, agent) Cortex thread) — the only publish gate is
+	// Fleet (publiclyExposable = Exposed && !Fleet); Cortex is not checked.
+	// Independent of Fleet — an agent can have a Cortex without delegation
+	// tools, or vice versa.
 	// This is the generalized form of what used to be Mode == "orchestrator".
 	//
 	// The JSON/storage key stays "channel" (legacy) so existing agent records

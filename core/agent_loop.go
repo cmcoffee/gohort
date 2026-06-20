@@ -1696,6 +1696,15 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		for _, w := range work {
 			if w.tc.Name == "stay_silent" && !results[w.index].IsError {
 				Debug("[agent_loop] stay_silent fired — closing turn")
+				// Honor the suppression — stay_silent's whole purpose. Blank the
+				// reply text so every caller (web reply, channel outbound,
+				// dispatch result) emits NOTHING; attachments gathered this turn
+				// still flow via their own path. Without this the Silenced flag
+				// was set but never consumed, so stay_silent closed the turn yet
+				// the model's text still showed ("stay_silent doesn't work").
+				if resp != nil {
+					resp.Content = ""
+				}
 				return resp, history, nil
 			}
 		}

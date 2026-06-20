@@ -145,6 +145,14 @@ func ParseWindowBounds(spec string) (sh, sm, eh, em int, err error) {
 // N must be >= 1; firedSoFar should be the number of fires already completed
 // in today's window (callers that just want one random time per day pass
 // n=1, firedSoFar=0).
+// cronMinGap is the safety margin that prevents back-to-back fires when
+// scheduling slots are short.
+func cronMinGap() time.Duration { return TuneDuration("tune_cron_min_gap") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_cron_min_gap", Category: "Limits", Label: "Cron minimum gap", Help: "Safety margin that shifts a randomly-scheduled fire into the next slot to avoid back-to-back runs.", Kind: KindMinutes, Default: 20, Min: 1, Max: 120})
+}
+
 func NextRandomWindowTime(spec string, from time.Time, n, firedSoFar int) (time.Time, error) {
 	sh, sm, eh, em, err := ParseWindowBounds(spec)
 	if err != nil {
@@ -154,7 +162,7 @@ func NextRandomWindowTime(spec string, from time.Time, n, firedSoFar int) (time.
 		n = 1
 	}
 
-	const minGap = 20 * time.Minute
+	minGap := cronMinGap()
 
 	loc := from.Location()
 	windowStart := func(day time.Time) time.Time {

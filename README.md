@@ -43,8 +43,9 @@ Apps register themselves via `init()` and compose framework primitives (`FormPan
 - **Declarative UI framework** (`core/ui`) — `FormPanel`, `Table`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `ChipPicker`, `Stack`, `RecordView`, `JSONView`, plus per-field affordances like `Presets` (static one-click fills), `ChipsSource` (dynamic chips), `SuggestURL` (per-field AI fill), `TestURL` (connectivity check button), and `Templates` (a "start from template" picker that prefills a create-form from named presets).
 - **Channel agents (Master Control)** — a fleet-capable agent gets a persistent **Master Control** home thread pinned above its ordinary sessions, where its event-monitor wakes and standing-agent reports land as distinct titled cards (producer + fire time) rather than chat bubbles. A pinned **Permissions** page is the agent's permission center: a Claude-Desktop-style three-state policy control per delegation target / contact (Always allow · Needs approval · **Blocked**, the last enforced server-side as auto-deny) plus the live approval queue, all on one page. Fleet-management views collapse into a topbar **Manage** menu; the rail stays a clean list of threads.
 - **Reserved internal marker** — anything an agent wraps in `<gohort-meta>…</gohort-meta>` is scrubbed from user-facing output (both the saved/exported copy and the client render), so framework-internal directives and stray delivery markers can never leak into a reply.
-- **Web-based admin** — most operator config (LLM provider/model/key, embeddings, STT, image gen, web search, SMTP, cost rates, routing, worker thinking, network timeouts) lives in the admin web UI with inline test buttons. `--setup` is now mostly first-boot bootstrap (TLS, listen addr, admin user).
-- **Cost telemetry** — per-day spend chart with per-tier breakdown (worker in/out, lead in/out, search calls, image calls); apps plug in record scanners via `RegisterCostRecordScanner` so the chart stays generic.
+- **Web-based admin** — most operator config (LLM provider/model/key, embeddings, STT, image gen, web search, SMTP, cost rates, routing, worker thinking) lives in the admin web UI with inline test buttons. `--setup` is now mostly first-boot bootstrap (TLS, listen addr, admin user).
+- **Data-driven tunables** — framework knobs that used to be hardcoded constants (timeouts, caps, budgets, thresholds across the core) self-register via `RegisterTunable` and read through `TuneInt` / `TuneFloat` / `TuneDuration`; the admin **Tuning** tab generates an editable row per knob, grouped by area, each with revert-to-default. Add a tunable in one line and it appears in the UI automatically.
+- **Cost telemetry** — a dedicated **Costs** tab: per-day spend chart with per-tier breakdown (worker in/out, lead in/out, search calls, image calls), inline per-tier rates, and a **cost-by-source** table. Apps plug in record scanners via `RegisterCostRecordScanner` so the chart stays generic; source hooks and API credentials carry an optional **per-call cost** that accrues per-source via `RecordExternalCost`, so external API spend shows up next to model spend.
 - **Auth + access** — cookie sessions, signup with admin approval, forgot/reset password, per-user app access, auto-lockout, optional shared API key for machine-to-machine.
 - **Per-user data isolation** — namespaced sub-stores; admin can reassign or purge an account's data via registered `UserDataHandler`s before deletion.
 - **TLS + notifications** — self-signed cert generation or explicit paths; email for signups/approvals/task completion.
@@ -96,8 +97,9 @@ Sign in to the web dashboard and visit **/admin**. Almost every operational sett
 - LLM routing (per-stage worker / lead / worker-thinking)
 - Worker LLM thinking defaults
 - Embeddings, STT, image generation, web search, SMTP — each with a **Test connectivity** button
-- Cost history (chart) + per-tier rates
-- Network timeouts, Ollama proxy, vector index stats
+- Costs tab — spend chart, per-tier rates, cost-by-source breakdown
+- Tuning tab — framework knobs (timeouts, caps, budgets) with revert-to-default
+- Ollama proxy, vector index stats
 - Maintenance one-shots, scheduled tasks
 - User management, default apps, signup policy, lockout
 
@@ -201,7 +203,7 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 | App | Purpose |
 |-----|---------|
 | `admin` | Administrator panel — user management, app permissions, secure-API credentials, remote MCP servers (incl. per-user OAuth connect), pending-tool approval, skills curation, tool groups, pipeline view/delete (across all users), **all service config** (LLM, embeddings, STT, image gen, search, SMTP, network, cost rates), maintenance one-shots, scheduled tasks |
-| `orchestrate` | Agency — central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory + knowledge; plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; attachable pipelines surfaced as callable tools; SSE streaming + interjections |
+| `orchestrate` | Agency — central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory across four layers (always-in-prompt facts, vector-grown reference memory, semantic knowledge, and a **graph layer** of entities + relationships via `link_entities` / `recall_about`); plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; attachable pipelines surfaced as callable tools; SSE streaming + interjections |
 | `agents` | Public per-agent surface — exposed agents from Agency get individual `/agents/<slug>/` URLs (admins flip Exposed=true; end-users get a chat surface scoped to that one agent) |
 | `knowledge` | Document Collections — shared / per-user RAG buckets agents attach to. Upload PDFs/DOCX/text; autofill from web with optional LLM judge; FilterRules-driven scope |
 | `phantom` | iMessage assistant — gatekeeper, per-conversation curation, chat-scoped vector knowledge, async agent dispatch with SMS-friendly digestion, interactive progress narration (tool/agent-call status), scheduled callbacks |
@@ -293,6 +295,9 @@ gohort/
 │   ├── skills.go            # Skill records + classifier (triggers + embedding similarity) + activation injection
 │   ├── skill_knowledge_tool.go # skill_knowledge tool — read/write the skill's vector corpus slice
 │   ├── factstore.go         # Flat per-namespace memory primitive (text + semantic dedup at save, plus supersession: a changed fact replaces the stale one)
+│   ├── graphstore.go        # Graph memory primitive — entities + typed relationships per namespace (link_entities / recall_about), with a query-time graph→vector bridge
+│   ├── tunables.go          # Data-driven tunables registry (RegisterTunable + TuneInt/TuneFloat/TuneDuration) backing the admin Tuning tab
+│   ├── cost_ledger.go       # Per-source external-cost ledger (RecordExternalCost) for source-hook / API-credential per-call costs
 │   ├── vector_store.go      # Embedded-chunk index, source-prefixed search, ingestion helpers
 │   ├── embeddings.go        # Embedding provider config + API
 │   ├── document_extract.go  # PDF / DOCX text extraction for attachment uploads

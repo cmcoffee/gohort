@@ -184,9 +184,11 @@ func clearLockout(ip string) {
 
 // --- Password reset tokens ---
 
-const (
-	resetTokenExpiry = 1 * time.Hour
-)
+func resetTokenExpiry() time.Duration { return TuneDuration("tune_reset_token_expiry") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_reset_token_expiry", Category: "Timeouts", Label: "Password reset token expiry", Help: "How long a password-reset link stays valid after it is issued.", Kind: KindHours, Default: 1, Min: 1, Max: 72})
+}
 
 type resetToken struct {
 	Username string `json:"username"`
@@ -199,7 +201,7 @@ func createResetToken(db Database, username string) string {
 	token := generateToken()
 	db.Set(AuthResetTable, token, resetToken{
 		Username: username,
-		Expires:  time.Now().Add(resetTokenExpiry).Unix(),
+		Expires:  time.Now().Add(resetTokenExpiry()).Unix(),
 	})
 	return token
 }

@@ -36,11 +36,20 @@ import (
 
 const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"
 
-const (
-	orchUpdateMinInterval   = 60 * time.Second
-	orchUpdateMaxPerSession = 5
-	orchUpdateMaxFires      = 50
-)
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_orch_update_min_interval", Category: "Timeouts", Label: "Scheduled update min interval", Help: "Minimum interval allowed for a recurring orchestrate update.", Kind: KindSeconds, Default: 60, Min: 10, Max: 3600})
+	RegisterTunable(TunableSpec{Key: "tune_orch_update_max_per_session", Category: "Limits", Label: "Scheduled updates per session", Help: "Max active recurring updates a single session may hold.", Kind: KindInt, Default: 5, Min: 1, Max: 50})
+	RegisterTunable(TunableSpec{Key: "tune_orch_update_max_fires", Category: "Limits", Label: "Scheduled update fire cap", Help: "Max times a recurring update fires before auto-cancel.", Kind: KindInt, Default: 50, Min: 5, Max: 1000})
+}
+
+// orchUpdateMinInterval is the floor on a recurring update's interval.
+func orchUpdateMinInterval() time.Duration { return TuneDuration("tune_orch_update_min_interval") }
+
+// orchUpdateMaxPerSession caps active recurring updates per session.
+func orchUpdateMaxPerSession() int { return TuneInt("tune_orch_update_max_per_session") }
+
+// orchUpdateMaxFires caps how many times a recurring update fires.
+func orchUpdateMaxFires() int { return TuneInt("tune_orch_update_max_fires") }
 
 type orchUpdatePayload struct {
 	SessionID       string `json:"session_id"`
@@ -84,8 +93,8 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 		Log("[orchestrate/scheduled] not initialized, dropping task for session %s", p.SessionID)
 		return
 	}
-	if p.FireCount >= orchUpdateMaxFires {
-		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, orchUpdateMaxFires)
+	if p.FireCount >= orchUpdateMaxFires() {
+		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, orchUpdateMaxFires())
 		return
 	}
 
@@ -191,7 +200,7 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 // reschedule emits the next fire of a recurring orchestrate update.
 func reschedule(p orchUpdatePayload) {
 	p.FireCount++
-	if p.FireCount >= orchUpdateMaxFires {
+	if p.FireCount >= orchUpdateMaxFires() {
 		return
 	}
 	next := time.Now().Add(time.Duration(p.IntervalSeconds) * time.Second)
@@ -223,12 +232,12 @@ func ScheduleOrchestrateUpdate(sessionID, agentID, username, prompt string, inte
 	if strings.TrimSpace(prompt) == "" {
 		return "", errors.New("recurring(schedule) requires a prompt")
 	}
-	if time.Duration(intervalSeconds)*time.Second < orchUpdateMinInterval {
-		return "", fmt.Errorf("interval too small — minimum %s", orchUpdateMinInterval)
+	if time.Duration(intervalSeconds)*time.Second < orchUpdateMinInterval() {
+		return "", fmt.Errorf("interval too small — minimum %s", orchUpdateMinInterval())
 	}
 	active := ListOrchestrateUpdates(sessionID)
-	if len(active) >= orchUpdateMaxPerSession {
-		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d) — cancel one first", sessionID, len(active), orchUpdateMaxPerSession)
+	if len(active) >= orchUpdateMaxPerSession() {
+		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d) — cancel one first", sessionID, len(active), orchUpdateMaxPerSession())
 	}
 	p := orchUpdatePayload{
 		SessionID:       sessionID,

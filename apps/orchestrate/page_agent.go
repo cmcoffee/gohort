@@ -248,12 +248,12 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "disable_compaction", Type: "toggle", Label: "Disable rolling summary",
 				Help: "Off (default) summarizes older messages into a running summary; on drops them to the context-depth tail instead. Both stay bounded — this just chooses summarize-old vs forget-old."},
 
-			ui.FormField{Type: "header", Label: "Cortex & fleet", Collapsed: true,
+			ui.FormField{Type: "header", Label: "Cortex & delegation", Collapsed: true,
 				Help: "Always-on behaviors. Independent of each other."},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
-				Help: "Gives the agent a persistent Cortex thread (its mind — the ⚡ row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Can be published as a public app (each visitor gets their own private Cortex thread + compaction) as long as Fleet tools are off."},
-			ui.FormField{Field: "fleet", Type: "toggle", Label: "Fleet management tools",
-				Help: "Grants delegation + standing-agent + event-monitor + run-ledger + history-recall tools. Unlike the old orchestrator mode it does NOT stop the agent doing work itself — it just adds the tools. Fleet agents are never published publicly (the tools reach owner-only management endpoints)."},
+				Help: "Gives the agent a persistent Cortex thread (its mind — the ⚡ row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Can be published as a public app (each visitor gets their own private Cortex thread + compaction) as long as the delegation & management tools (below) are off."},
+			ui.FormField{Field: "fleet", Type: "toggle", Label: "Delegation & management tools",
+				Help: "Grants the conductor toolset: delegation to other agents + standing-agent scheduling + event-monitors + run-ledger + history-recall. This is DISTINCT from \"the fleet\" (the collection of all your agents — every agent is in that). It does NOT stop the agent doing work itself; it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
 
 			ui.FormField{Type: "header", Label: "Access & visibility", Collapsed: true,
 				Help: "Who can use this agent, fleet visibility, and Private-mode policy. (The edit/delete lock is the 🔒 icon at the top-right.)"},

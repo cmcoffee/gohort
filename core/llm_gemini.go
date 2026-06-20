@@ -25,7 +25,7 @@ func GeminiModels(apiKey string) ([]string, error) {
 	client := &apiclient.APIClient{
 		Server:         "generativelanguage.googleapis.com",
 		VerifySSL:      true,
-		ConnectTimeout: llmConnectTimeout,
+		ConnectTimeout: llmConnectTimeout(),
 		RequestTimeout: 15 * time.Second,
 		AuthFunc: func(req *http.Request) {
 			q := req.URL.Query()
@@ -84,8 +84,8 @@ func newGeminiLLM(apiKey string, model string, disableThinking bool, thinkingBud
 	if api == nil {
 		api = &apiclient.APIClient{
 			VerifySSL:      true,
-			ConnectTimeout: llmConnectTimeout,
-			RequestTimeout: llmRequestTimeout,
+			ConnectTimeout: llmConnectTimeout(),
+			RequestTimeout: llmRequestTimeout(),
 		}
 	}
 	api.Server = "generativelanguage.googleapis.com"

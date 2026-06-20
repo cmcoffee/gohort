@@ -131,16 +131,17 @@ type ExposedAgentEntry struct {
 // (<100 users, <20 agents/user); add a deployment-wide index if a
 // scan becomes noticeable.
 // publiclyExposable reports whether an agent may be served on the public
-// /agents/ surface. Fleet agents (delegation + standing-agent + event-monitor
-// tools that reach admin-gated owner-only endpoints) are NEVER public,
-// regardless of the Exposed flag. A plain Channel agent (a persistent home
-// thread + rolling-summary compaction, no fleet tools) CAN be published — the
-// agents app pins each visitor to their own per-(user, agent) channel thread,
-// and the fleet management box is owner-only so it never renders publicly.
-// Enforced at the read points so the rule holds even if a record drifts to
-// Exposed=true.
+// /agents/ surface. The ONLY gate is the Exposed flag — Publish means
+// published. Earlier this also refused Fleet agents (their delegation /
+// standing-agent / event-monitor tools reach owner-only endpoints), but that
+// silently dropped the whole publish when you checked the box. The owner-only
+// concern is now handled where it belongs: the Fleet toolset is attached only
+// when the RUNTIME USER IS THE OWNER (see runner.go's Fleet block), so a public
+// visitor never gets those tools even on a Fleet agent — no reason to refuse
+// the publish. Cortex agents publish too (each visitor gets their own
+// per-(user, agent) home thread).
 func publiclyExposable(a AgentRecord) bool {
-	return a.Exposed && !a.Fleet
+	return a.Exposed
 }
 
 // CortexSessionID exposes a channel agent's pinned home-thread session id so

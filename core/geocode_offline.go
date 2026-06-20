@@ -43,15 +43,23 @@ const (
 	geonamesCountryFile  = "countryInfo.txt"
 	offlineMaxDistanceKM = 50.0 // farther than this: fall through to Nominatim
 	geocodeDownloadUA    = "gohort (https://github.com/cmcoffee/gohort)"
-
-	// geocodeIdleTimeout is the moving-window timeout applied to the
-	// download body via iotimeout.NewReadCloser. If no bytes flow for
-	// this long, the read errors and we fall to the next mirror. Lets
-	// genuinely-fast transfers run uncapped while killing stalled ones.
-	geocodeIdleTimeout    = 30 * time.Second
-	geocodeConnectTimeout = 10 * time.Second
-	geocodeMaxAttempts    = 3
 )
+
+// geocodeIdleTimeout is the moving-window timeout applied to the
+// download body via iotimeout.NewReadCloser. If no bytes flow for
+// this long, the read errors and we fall to the next mirror. Lets
+// genuinely-fast transfers run uncapped while killing stalled ones.
+func geocodeIdleTimeout() time.Duration { return TuneDuration("tune_geocode_idle_timeout") }
+func geocodeConnectTimeout() time.Duration {
+	return TuneDuration("tune_geocode_connect_timeout")
+}
+func geocodeMaxAttempts() int { return TuneInt("tune_geocode_max_attempts") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_geocode_idle_timeout", Category: "Timeouts", Label: "Geocode download idle timeout", Help: "Moving-window no-bytes timeout for offline geocode-database downloads before falling to the next mirror.", Kind: KindSeconds, Default: 30, Min: 5, Max: 180})
+	RegisterTunable(TunableSpec{Key: "tune_geocode_connect_timeout", Category: "Timeouts", Label: "Geocode connect timeout", Help: "Dial + TLS handshake cap for offline geocode-database downloads.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_geocode_max_attempts", Category: "Concurrency", Label: "Geocode download attempts", Help: "Number of mirror attempts when downloading the offline geocode database.", Kind: KindInt, Default: 3, Min: 1, Max: 10})
+}
 
 // geocodeMirrors lists candidate URLs for each data file in priority order.
 // The downloader iterates the list per file; first one to deliver wins.
@@ -276,7 +284,8 @@ func ensureGeoFiles(dir string) error {
 		}
 		var lastErr error
 		ok := false
-		for attempt := 1; attempt <= geocodeMaxAttempts && !ok; attempt++ {
+		maxAttempts := geocodeMaxAttempts()
+		for attempt := 1; attempt <= maxAttempts && !ok; attempt++ {
 			for _, url := range j.mirrors {
 				Log("[geocode] downloading %s (attempt %d, %s) …", j.filename, attempt, url)
 				if err := downloadGeo(dir, j.filename, url); err != nil {
@@ -287,7 +296,7 @@ func ensureGeoFiles(dir string) error {
 				ok = true
 				break
 			}
-			if !ok && attempt < geocodeMaxAttempts {
+			if !ok && attempt < maxAttempts {
 				backoff := time.Duration(attempt) * 2 * time.Second
 				Debug("[geocode] all mirrors failed on attempt %d, sleeping %s before retry", attempt, backoff)
 				time.Sleep(backoff)
@@ -310,13 +319,14 @@ func ensureGeoFiles(dir string) error {
 // a moving window of geocodeIdleTimeout — so a stalled mirror dies fast
 // while genuinely fast transfers run uncapped.
 func downloadGeo(dir, filename, url string) error {
+	connectTimeout := geocodeConnectTimeout()
 	client := &http.Client{
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
-				Timeout:   geocodeConnectTimeout,
+				Timeout:   connectTimeout,
 				KeepAlive: 30 * time.Second,
 			}).DialContext,
-			TLSHandshakeTimeout:   geocodeConnectTimeout,
+			TLSHandshakeTimeout:   connectTimeout,
 			ResponseHeaderTimeout: 30 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 			IdleConnTimeout:       30 * time.Second,
@@ -335,7 +345,7 @@ func downloadGeo(dir, filename, url string) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
 	}
-	body := iotimeout.NewReadCloser(resp.Body, geocodeIdleTimeout)
+	body := iotimeout.NewReadCloser(resp.Body, geocodeIdleTimeout())
 	defer body.Close()
 
 	tmp, err := os.CreateTemp(dir, ".geo-*.tmp")

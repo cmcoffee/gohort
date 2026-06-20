@@ -9,23 +9,27 @@ import (
 // genuine loops without false-firing on normal LLM output. A typical
 // streamed response is 4-12 KB; a loop produces tens of KB of repeated
 // phrases or arbitrarily long babble.
-const (
-	// StreamGuardMaxChars caps total streamed output per call. 50 KB
-	// leaves comfortable headroom for long-but-legitimate responses
-	// while catching runaway generation.
-	StreamGuardMaxChars = 50 * 1024
+// StreamGuardMaxChars caps total streamed output per call. 50 KB
+// leaves comfortable headroom for long-but-legitimate responses
+// while catching runaway generation.
+func StreamGuardMaxChars() int { return TuneInt("tune_stream_guard_max_chars") }
 
-	// StreamGuardRepeatSegLen is the length of the tail segment sampled
-	// when checking for repetition. 40 chars is long enough to avoid
-	// false positives on common short phrases and short enough to catch
-	// real loops.
-	StreamGuardRepeatSegLen = 40
+// StreamGuardRepeatSegLen is the length of the tail segment sampled
+// when checking for repetition. 40 chars is long enough to avoid
+// false positives on common short phrases and short enough to catch
+// real loops.
+func StreamGuardRepeatSegLen() int { return TuneInt("tune_stream_guard_repeat_seg_len") }
 
-	// StreamGuardRepeatThreshold is how many times the same tail segment
-	// must appear inside the recent window to trigger abort. 5
-	// occurrences of an exact 40-char string is well beyond coincidence.
-	StreamGuardRepeatThreshold = 5
-)
+// StreamGuardRepeatThreshold is how many times the same tail segment
+// must appear inside the recent window to trigger abort. 5
+// occurrences of an exact 40-char string is well beyond coincidence.
+func StreamGuardRepeatThreshold() int { return TuneInt("tune_stream_guard_repeat_threshold") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_stream_guard_max_chars", Category: "Limits", Label: "Stream guard max chars", Help: "Hard cap on total streamed output per LLM call before the stream is aborted.", Kind: KindInt, Default: 51200, Min: 8192, Max: 524288})
+	RegisterTunable(TunableSpec{Key: "tune_stream_guard_repeat_seg_len", Category: "Limits", Label: "Stream guard repeat segment length", Help: "Length of the tail segment sampled when detecting a repetition loop.", Kind: KindInt, Default: 40, Min: 10, Max: 200})
+	RegisterTunable(TunableSpec{Key: "tune_stream_guard_repeat_threshold", Category: "Limits", Label: "Stream guard repeat threshold", Help: "How many times the sampled tail segment must repeat in-window to abort the stream.", Kind: KindInt, Default: 5, Min: 2, Max: 25})
+}
 
 // StreamGuardHandler wraps an LLM stream chunk handler with two aborts:
 //
@@ -67,31 +71,33 @@ func StreamGuardHandler(inner func(chunk string), cancel context.CancelFunc, onA
 		out := total.String()
 
 		// Hard cap.
-		if total.Len() > StreamGuardMaxChars {
+		if maxChars := StreamGuardMaxChars(); total.Len() > maxChars {
 			aborted = true
 			if onAbort != nil {
 				onAbort("stream exceeded max chars")
 			}
-			Log("[stream-guard] aborted at %d chars (cap %d)", total.Len(), StreamGuardMaxChars)
+			Log("[stream-guard] aborted at %d chars (cap %d)", total.Len(), maxChars)
 			cancel()
 			return
 		}
 
 		// Repetition detector. Need at least threshold * segment-length
 		// bytes from the tail to sample.
-		windowBytes := StreamGuardRepeatSegLen * StreamGuardRepeatThreshold
+		segLen := StreamGuardRepeatSegLen()
+		threshold := StreamGuardRepeatThreshold()
+		windowBytes := segLen * threshold
 		if total.Len() < windowBytes {
 			return
 		}
 		tail := out[total.Len()-windowBytes:]
-		seg := out[total.Len()-StreamGuardRepeatSegLen:]
-		if strings.Count(tail, seg) >= StreamGuardRepeatThreshold {
+		seg := out[total.Len()-segLen:]
+		if strings.Count(tail, seg) >= threshold {
 			aborted = true
 			if onAbort != nil {
 				onAbort("repetition loop detected")
 			}
 			Log("[stream-guard] aborted on repetition loop (segment %q x%d in last %d chars)",
-				seg, StreamGuardRepeatThreshold, windowBytes)
+				seg, threshold, windowBytes)
 			cancel()
 			return
 		}

@@ -24,9 +24,15 @@ import (
 const (
 	toolStatesSubdir   = "_state"
 	toolDispatchSubdir = "_dispatch"
-	maxRecipeFileSize  = 2 * 1024 * 1024  // 2 MB per file
-	maxRecipeTotalSize = 10 * 1024 * 1024 // 10 MB across all files in one recipe
 )
+
+func maxRecipeFileSize() int64  { return int64(TuneInt("tune_recipe_max_file_size")) }
+func maxRecipeTotalSize() int64 { return int64(TuneInt("tune_recipe_max_total_size")) }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_recipe_max_file_size", Category: "Limits", Label: "Tool recipe per-file size cap", Help: "Max size of any single file packed into a tool recipe archive.", Kind: KindInt, Default: 2097152, Min: 65536, Max: 33554432})
+	RegisterTunable(TunableSpec{Key: "tune_recipe_max_total_size", Category: "Limits", Label: "Tool recipe total size cap", Help: "Max combined size of all files in one tool recipe archive.", Kind: KindInt, Default: 10485760, Min: 1048576, Max: 134217728})
+}
 
 // MintToolDispatchDir creates a fresh per-invocation directory for a
 // tool's recipe deployment. Lives under WorkspacesDir()/_dispatch/
@@ -132,12 +138,12 @@ func BuildRecipeFromWorkspace(workspaceDir string) ([]RecipeFile, error) {
 		if fi.IsDir() {
 			return nil
 		}
-		if fi.Size() > maxRecipeFileSize {
-			return fmt.Errorf("file %q exceeds recipe per-file size cap (%d bytes)", rel, maxRecipeFileSize)
+		if maxFile := maxRecipeFileSize(); fi.Size() > maxFile {
+			return fmt.Errorf("file %q exceeds recipe per-file size cap (%d bytes)", rel, maxFile)
 		}
 		total += fi.Size()
-		if total > maxRecipeTotalSize {
-			return fmt.Errorf("recipe exceeds total size cap (%d bytes) — simplify the tool's workspace or split into multiple tools", maxRecipeTotalSize)
+		if maxTotal := maxRecipeTotalSize(); total > maxTotal {
+			return fmt.Errorf("recipe exceeds total size cap (%d bytes) — simplify the tool's workspace or split into multiple tools", maxTotal)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

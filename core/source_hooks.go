@@ -111,6 +111,11 @@ type SourceHook struct {
 	// Rate limiting.
 	MaxRPS int `json:"max_rps"` // Max requests per second (0 = unlimited)
 
+	// CostPerCall, when > 0, prices each real (cache-miss) call to this hook
+	// into the admin cost chart + per-source breakdown (a "cost hook"). 0 =
+	// untracked (a free endpoint). Recorded via RecordExternalCost.
+	CostPerCall float64 `json:"cost_per_call,omitempty"`
+
 	// LLM-tool exposure. When ExposeToLLM is true, the framework
 	// auto-generates an AgentToolDef from this hook (via
 	// BuildSourceHookAgentToolDefs) so agents can invoke it
@@ -962,6 +967,9 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 		Debug("[source-hooks] cache SKIP-STORE %s: %q — live error: %v", hook.Name, query, err)
 		return result, err
 	}
+	// Cost hook: a real (cache-miss) call to a metered hook hit the API, so
+	// price it into the per-source cost ledger. No-op when CostPerCall is 0.
+	RecordExternalCost("hook:"+hook.Name, hook.Name, hook.CostPerCall)
 	// Store both empty and non-empty results. Empty results use a
 	// shorter TTL inside lookupHookCache so they get retried sooner.
 	storeHookCache(hook.Name, query, result)

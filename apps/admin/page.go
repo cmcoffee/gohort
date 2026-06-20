@@ -8,11 +8,62 @@ package admin
 
 import (
 	"net/http"
+	"net/url"
 	"sort"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
+
+// buildTunableSections renders the operator tunable registry as one admin
+// FormPanel section per category, each with a per-category "Revert to
+// defaults". Field type, bounds, and help come straight from each TunableSpec,
+// so the admin UI never grows by hand as knobs are registered.
+func buildTunableSections() []ui.Section {
+	var order []string
+	byCat := map[string][]ui.FormField{}
+	for _, s := range AllTunableSpecs() {
+		if _, seen := byCat[s.Category]; !seen {
+			order = append(order, s.Category)
+		}
+		unit := ""
+		switch s.Kind {
+		case KindSeconds:
+			unit = " (seconds)"
+		case KindMinutes:
+			unit = " (minutes)"
+		case KindHours:
+			unit = " (hours)"
+		case KindDays:
+			unit = " (days)"
+		}
+		byCat[s.Category] = append(byCat[s.Category], ui.FormField{
+			Field:    s.Key,
+			Label:    s.Label + unit,
+			Type:     "number",
+			Help:     s.Help,
+			Min:      int(s.Min),
+			Max:      int(s.Max),
+			Decimals: s.Decimals,
+		})
+	}
+	sections := make([]ui.Section, 0, len(order))
+	for _, cat := range order {
+		sections = append(sections, ui.Section{
+			Title:    cat,
+			Group:    "Tuning",
+			Subtitle: "Operator knobs, saved automatically as you edit. Use Revert to defaults to clear overrides.",
+			Body: ui.FormPanel{
+				Source:       "api/settings",
+				ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
+				ResetLabel:   "Revert to defaults",
+				ResetConfirm: "Revert the " + cat + " settings to their built-in defaults?",
+				Fields:       byCat[cat],
+			},
+		})
+	}
+	return sections
+}
 
 // sourceHookFormTemplates turns the built-in SourceHookTemplates into
 // FormPanel presets for the "Start from template" dropdown — so an
@@ -51,6 +102,7 @@ func sourceHookFormFields() []ui.FormField {
 		{Field: "always_active", Label: "Always active", Type: "toggle", Help: "Query this hook for every topic, regardless of trigger domains."},
 		{Field: "domains", Label: "Paywall domains", Type: "tags", Help: "(paywall only) domains this hook attaches auth to, e.g. wsj.com."},
 		{Field: "max_rps", Label: "Max requests/sec", Type: "number", Min: 0, Max: 100, Help: "0 = unlimited."},
+		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one real (cache-miss) call to this hook, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
 		{Field: "llm", Type: "header", Label: "LLM exposure"},
 		{Field: "expose_to_llm", Label: "Expose as an agent tool", Type: "toggle", Help: "When on, agents can call this hook directly as a named tool. Paywall hooks are never exposed."},
 		{Field: "tool_name", Label: "Tool name", Placeholder: "pubmed_search", Help: "Lowercase, underscores. Defaults to \"<name>_search\" when blank."},
@@ -141,6 +193,7 @@ func credentialFormFields() []ui.FormField {
 		{Field: "denied_url_patterns", Label: "Denied URL patterns", Type: "tags", Help: "Optional explicit denies, checked before the allow pattern."},
 		{Field: "allowed_methods", Label: "Allowed methods", Type: "tags", Help: "e.g. GET, POST. Blank = all methods allowed."},
 		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},
+		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one dispatched call through this credential, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle"},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to the LLM as the call_<name> tool description."},
 	}
@@ -503,54 +556,63 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			// retained for compatibility but no longer surfaced here.
 			{
 				Title:    "Cost History (Last 30 Days)",
-				Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown. Tap **Adjust prices** to edit the per-token / per-call rates that feed the dollar estimate.",
-				Body: ui.Stack{
-					Children: []ui.Component{
-						ui.BarChart{
-							Source:    "api/cost-history?days=30",
-							XField:    "date",
-							YField:    "cost",
-							XFormat:   "date",
-							YPrefix:   "$",
-							YDecimals: 4,
-							HeightPx:  220,
-							EmptyText: "No usage recorded in the last 30 days.",
-							Breakdown: []ui.DisplayPair{
-								{Label: "Runs", Field: "run_count", Format: "thousands"},
-								{Label: "Worker in", Field: "worker_input", Format: "thousands", Mono: true},
-								{Label: "Worker out", Field: "worker_output", Format: "thousands", Mono: true},
-								{Label: "Lead in", Field: "lead_input", Format: "thousands", Mono: true},
-								{Label: "Lead out", Field: "lead_output", Format: "thousands", Mono: true},
-								{Label: "Searches", Field: "search_calls", Format: "thousands", Mono: true},
-								{Label: "Images", Field: "image_calls", Format: "thousands", Mono: true},
-							},
-						},
-						ui.ModalButton{
-							Label:    "Adjust prices",
-							Title:    "Adjust prices",
-							Subtitle: "Per-token and per-call dollar rates used to estimate run costs. Worker = local LLM, Lead = remote LLM. Set to 0 for free tiers.",
-							Body: ui.FormPanel{
-								Source: "api/cost-rates",
-								Method: "PUT",
-								Fields: []ui.FormField{
-									{Field: "worker_input_per_1k", Label: "Worker input ($/1K tokens)",
-										Type: "number", Decimals: 6, Min: 0,
-										Help: "Cost of one thousand input tokens to the worker LLM."},
-									{Field: "worker_output_per_1k", Label: "Worker output ($/1K tokens)",
-										Type: "number", Decimals: 6, Min: 0},
-									{Field: "lead_input_per_1k", Label: "Lead input ($/1K tokens)",
-										Type: "number", Decimals: 6, Min: 0,
-										Help: "Cost of one thousand input tokens to the lead (remote) LLM."},
-									{Field: "lead_output_per_1k", Label: "Lead output ($/1K tokens)",
-										Type: "number", Decimals: 6, Min: 0},
-									{Field: "search_per_call", Label: "Search ($/call)",
-										Type: "number", Decimals: 6, Min: 0,
-										Help: "Cost per web-search API call (Brave, Tavily, etc.)."},
-									{Field: "image_per_call", Label: "Image generation ($/call)",
-										Type: "number", Decimals: 6, Min: 0},
-								},
-							},
-						},
+				Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown of runs, tokens, searches, and images.",
+				Body: ui.BarChart{
+					Source:    "api/cost-history?days=30",
+					XField:    "date",
+					YField:    "cost",
+					XFormat:   "date",
+					YPrefix:   "$",
+					YDecimals: 4,
+					HeightPx:  220,
+					EmptyText: "No usage recorded in the last 30 days.",
+					Breakdown: []ui.DisplayPair{
+						{Label: "Runs", Field: "run_count", Format: "thousands"},
+						{Label: "Worker in", Field: "worker_input", Format: "thousands", Mono: true},
+						{Label: "Worker out", Field: "worker_output", Format: "thousands", Mono: true},
+						{Label: "Lead in", Field: "lead_input", Format: "thousands", Mono: true},
+						{Label: "Lead out", Field: "lead_output", Format: "thousands", Mono: true},
+						{Label: "Searches", Field: "search_calls", Format: "thousands", Mono: true},
+						{Label: "Images", Field: "image_calls", Format: "thousands", Mono: true},
+					},
+				},
+			},
+			{
+				Title:    "Cost by source",
+				Subtitle: "Metered source-hook + credential spend over the last 30 days (a \"cost hook\" per source). Set a per-call cost on a source hook or API credential to track it here; it also folds into the chart total above.",
+				Body: ui.Table{
+					Source:    "api/cost-by-source?days=30",
+					RowKey:    "source_id",
+					EmptyText: "No metered external calls recorded yet. Set a \"Cost per call\" on a source hook or API credential to track its spend here.",
+					Columns: []ui.Col{
+						{Field: "label", Label: "Source", Flex: 2},
+						{Field: "calls", Label: "Calls", Format: "thousands", Flex: 1},
+						{Field: "cost", Label: "Cost ($)", Flex: 1},
+					},
+				},
+			},
+			{
+				Title:    "Prices",
+				Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above. Worker = local LLM, Lead = remote LLM. Set to 0 for free tiers. Saved automatically as you edit.",
+				Body: ui.FormPanel{
+					Source: "api/cost-rates",
+					Method: "PUT",
+					Fields: []ui.FormField{
+						{Field: "worker_input_per_1k", Label: "Worker input ($/1K tokens)",
+							Type: "number", Decimals: 6, Min: 0,
+							Help: "Cost of one thousand input tokens to the worker LLM."},
+						{Field: "worker_output_per_1k", Label: "Worker output ($/1K tokens)",
+							Type: "number", Decimals: 6, Min: 0},
+						{Field: "lead_input_per_1k", Label: "Lead input ($/1K tokens)",
+							Type: "number", Decimals: 6, Min: 0,
+							Help: "Cost of one thousand input tokens to the lead (remote) LLM."},
+						{Field: "lead_output_per_1k", Label: "Lead output ($/1K tokens)",
+							Type: "number", Decimals: 6, Min: 0},
+						{Field: "search_per_call", Label: "Search ($/call)",
+							Type: "number", Decimals: 6, Min: 0,
+							Help: "Cost per web-search API call (Brave, Tavily, etc.)."},
+						{Field: "image_per_call", Label: "Image generation ($/call)",
+							Type: "number", Decimals: 6, Min: 0},
 					},
 				},
 			},
@@ -1464,7 +1526,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"System Status": "System", "Site Settings": "System",
 		"Users": "System", "Default Apps": "System",
 
-		"Cost History (Last 30 Days)": "System",
+		"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
 
 		"Worker LLM": "LLMs", "Lead LLM": "LLMs", "LLM Routing": "LLMs",
 		"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
@@ -1472,8 +1534,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 
 		"Embeddings": "Capabilities",
 		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
-		"Web Search": "Capabilities", "Mail (SMTP)": "Capabilities",
-		"Network Timeouts": "Capabilities",
+		"Web Search": "Capabilities", "Mail (SMTP)": "System",
+		"Network Timeouts": "Tuning",
 
 		"API Credentials": "Tools", "MCP Servers": "Tools",
 		"Source Hooks": "Tools", "Persistent Tools (Pending)": "Tools",
@@ -1486,12 +1548,17 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	}
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true,
-		"Cost History (Last 30 Days)": true, "Scheduled Tasks": true,
+		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true,
 		"Migrations": true, "Database Browser": true,
 	}
+	// Generated tunable sections — one FormPanel per registered category, built
+	// from core's tunable registry so a newly-registered knob appears here with
+	// no admin edit. Pre-grouped under the "Tuning" tab; the loop below skips
+	// them (their titles aren't in sectionGroup, so their Group is preserved).
+	page.Sections = append(page.Sections, buildTunableSections()...)
 	for i := range page.Sections {
 		t := page.Sections[i].Title
 		if g, ok := sectionGroup[t]; ok {
@@ -1505,7 +1572,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// by this rank so the tabs read in a sensible order regardless of the
 	// section authoring order above; sections keep their relative order
 	// within each group.
-	groupRank := map[string]int{"System": 0, "LLMs": 1, "Capabilities": 2, "Tools": 3, "Maintenance": 4}
+	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Tools": 4, "Tuning": 5, "Maintenance": 6}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})

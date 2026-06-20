@@ -173,16 +173,16 @@ type SearchHit struct {
 	Kind     string  `json:"kind,omitempty"`    // mirrored from EmbeddedChunk.Kind — provenance tag ("user_comment", "related_link", "author_bio") so consumers can frame the hit appropriately. Empty = authoritative.
 }
 
-// maxChunkChars caps how large a single chunk can be before it gets
-// sub-split. Sized conservatively for 512-token embedding-server batch
-// limits. The 4-chars/token rule of thumb breaks down on dense
-// technical content (PDFs with tables, code blocks, RFC-style citation
-// blocks, math-heavy text) where the ratio dips to ~2 chars/token —
-// so a 1800-char chunk could be 900 tokens, well past the 512 cap on
-// a constrained embedding server. 1000 chars targets ~250-500 tokens
-// across content densities, with embedWithRetry below handling the
-// rare overflow.
-const maxChunkChars = 1000
+// The embed chunk-size limit caps how large a single chunk can be before it
+// gets sub-split. Sized conservatively for 512-token embedding-server batch
+// limits. The 4-chars/token rule of thumb breaks down on dense technical
+// content (PDFs with tables, code blocks, RFC-style citation blocks,
+// math-heavy text) where the ratio dips to ~2 chars/token — so a 1800-char
+// chunk could be 900 tokens, well past the 512 cap on a constrained embedding
+// server. The default (DefaultChunkChars, 1000) targets ~250-500 tokens across
+// content densities, with embedWithRetry below handling the rare overflow.
+// Operator-tunable via ChunkChars() (admin Site Settings); applies to NEW
+// ingestions only — existing chunks keep the size they were split at.
 
 // SplitReportIntoChunks splits a synthesized report's body at `## section`
 // boundaries. The opening (everything before the first `##`) becomes
@@ -191,7 +191,7 @@ const maxChunkChars = 1000
 // is dropped — it's a bibliography, not semantic content. Empty or
 // all-whitespace sections are skipped.
 //
-// Oversized sections (> maxChunkChars) are sub-split at paragraph
+// Oversized sections (> the chunk-size limit) are sub-split at paragraph
 // boundaries — a single overlong section can't blow past the
 // embedder's batch limit. Sub-chunks inherit the section name with a
 // " (part N)" suffix so the retrieval payload still attributes the
@@ -201,6 +201,7 @@ func SplitReportIntoChunks(report string) []struct{ Section, Text string } {
 	if report == "" {
 		return nil
 	}
+	cc := ChunkChars() // operator-tunable chunk-size limit; read once per ingestion
 	var chunks []struct{ Section, Text string }
 	lines := strings.Split(report, "\n")
 	var curSection string
@@ -223,7 +224,7 @@ func SplitReportIntoChunks(report string) []struct{ Section, Text string } {
 		// Sub-split if this section is too big for one embedding call.
 		// splitOnParagraphsCap returns the original text as a single-
 		// element slice when it fits, so the cheap path stays cheap.
-		for i, part := range splitOnParagraphsCap(text, maxChunkChars) {
+		for i, part := range splitOnParagraphsCap(text, cc) {
 			name := section
 			if len(part) > 0 && i > 0 {
 				name = section + fmt.Sprintf(" (part %d)", i+1)
@@ -231,7 +232,7 @@ func SplitReportIntoChunks(report string) []struct{ Section, Text string } {
 			if i == 0 && len(part) > 0 {
 				// Mark the first part too only when there's more than one
 				// — single-chunk sections stay un-suffixed.
-				if len(splitOnParagraphsCap(text, maxChunkChars)) > 1 {
+				if len(splitOnParagraphsCap(text, cc)) > 1 {
 					name = section + " (part 1)"
 				}
 			}

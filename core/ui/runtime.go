@@ -6436,6 +6436,27 @@ const runtimeJS = `
         testRow.appendChild(testResult);
         wrap.appendChild(testRow);
       }
+      // ResetURL — "Revert to defaults" button. Confirms, POSTs to the reset
+      // endpoint (server clears the stored overrides), then reloads the form
+      // from Source so the fields show the reverted default values.
+      if (cfg.reset_url) {
+        var resetRow = el('div', {style: 'margin-top:0.5rem'});
+        var resetBtn = el('button', {class: 'ui-row-btn', type: 'button'},
+          [cfg.reset_label || 'Revert to defaults']);
+        resetBtn.addEventListener('click', async function() {
+          var msg = cfg.reset_confirm || 'Revert these settings to their defaults? Any custom values here will be cleared.';
+          if (!(await window.uiConfirm(msg))) return;
+          resetBtn.disabled = true;
+          var orig = resetBtn.textContent;
+          resetBtn.textContent = 'Reverting…';
+          fetch(cfg.reset_url, {method: 'POST'})
+            .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); load(); })
+            .catch(function(err){ showToast('Revert failed: ' + (err && err.message || err)); })
+            .then(function(){ resetBtn.disabled = false; resetBtn.textContent = orig; });
+        });
+        resetRow.appendChild(resetBtn);
+        wrap.appendChild(resetRow);
+      }
       // Submit-button mode — append an explicit submit button after
       // the last field. Click POSTs the full record and (if
       // RedirectURL is set) navigates on success.
@@ -6473,12 +6494,15 @@ const runtimeJS = `
     // Source empty / unset → render with an empty record. Lets a
     // FormPanel act as a create-form when there's nothing to load,
     // posting the typed fields to PostURL on save.
-    if (cfg.source) {
-      fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); })
-        .catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
-    } else {
-      render();
+    function load() {
+      if (cfg.source) {
+        fetchJSON(cfg.source).then(function(d){ current = d || {}; render(); })
+          .catch(function(err){ wrap.textContent = 'Failed to load: ' + err.message; });
+      } else {
+        render();
+      }
     }
+    load();
     return wrap;
   };
 

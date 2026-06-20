@@ -25,8 +25,13 @@ const (
 	geocodeCacheTable = "geocode_cache"
 	nominatimEndpoint = "https://nominatim.openstreetmap.org/reverse"
 	geocodeUserAgent  = "gohort (https://github.com/cmcoffee/gohort)"
-	geocodeTimeout    = 5 * time.Second
 )
+
+func geocodeTimeout() time.Duration { return TuneDuration("tune_geocode_timeout") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_geocode_timeout", Category: "Timeouts", Label: "Geocode HTTP timeout", Help: "Per-request timeout for online (Nominatim) reverse-geocoding lookups.", Kind: KindSeconds, Default: 5, Min: 1, Max: 30})
+}
 
 // nominatimAddress mirrors the subset of /reverse fields we use.
 type nominatimAddress struct {
@@ -103,7 +108,7 @@ func fetchNominatim(lat, lon float64) string {
 	req.Header.Set("User-Agent", geocodeUserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: geocodeTimeout}
+	client := &http.Client{Timeout: geocodeTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
 		Debug("[geocode] request error for %.4f,%.4f: %v", lat, lon, err)

@@ -109,7 +109,7 @@ func TestRunLedgerPrune(t *testing.T) {
 	db := memDB(t)
 	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	var oldest RunRecord
-	for i := 0; i < maxRunsPerOwner+5; i++ {
+	for i := 0; i < maxRunsPerOwner()+5; i++ {
 		r := RecordRun(db, RunRecord{
 			Owner:   "alice",
 			Agent:   "loop",
@@ -121,8 +121,8 @@ func TestRunLedgerPrune(t *testing.T) {
 			oldest = r
 		}
 	}
-	if n := len(ListRuns(db, "alice", RunFilter{})); n != maxRunsPerOwner {
-		t.Fatalf("expected ledger capped at %d, got %d", maxRunsPerOwner, n)
+	if n := len(ListRuns(db, "alice", RunFilter{})); n != maxRunsPerOwner() {
+		t.Fatalf("expected ledger capped at %d, got %d", maxRunsPerOwner(), n)
 	}
 	if _, ok := GetRun(db, "alice", oldest.ID); ok {
 		t.Fatal("oldest run should have been pruned")

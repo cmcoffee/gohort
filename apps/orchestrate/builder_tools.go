@@ -198,6 +198,45 @@ func draftAPICredentialToolDef() AgentToolDef {
 	}
 }
 
+// checkCredentialToolDef is Builder's verify-before-complete check: it reports
+// whether a drafted credential is now configured (exists + enabled + secret
+// pasted) WITHOUT ever returning the secret. Builder calls it before declaring
+// a build done so it can't ship an agent wired to a still-disabled credential —
+// instead it tells the user to finish it in Admin > APIs and come back.
+func checkCredentialToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "check_credential",
+			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done. Returns whether it exists, is ENABLED, and has its SECRET set — never the secret itself. Call this after telling the user to paste the secret in Admin > APIs. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left, ask them to complete it and come back, and do NOT declare success or wire a tool/agent to it yet.",
+			Parameters: map[string]ToolParam{
+				"name": {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
+			},
+			Required: []string{"name"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			name := strings.TrimSpace(stringArg(args, "name"))
+			if name == "" {
+				return "", fmt.Errorf("name is required")
+			}
+			exists, enabled, hasSecret := Secure().CredentialStatus(name)
+			if !exists {
+				return fmt.Sprintf("Credential %q does not exist — draft it first (draft_api_credential / draft_oauth_credential). NOT READY.", name), nil
+			}
+			if enabled && hasSecret {
+				return fmt.Sprintf("Credential %q is READY — enabled and its secret is set. Safe to wire the tool/agent to it and finish.", name), nil
+			}
+			var missing []string
+			if !hasSecret {
+				missing = append(missing, "no secret pasted yet")
+			}
+			if !enabled {
+				missing = append(missing, "still disabled")
+			}
+			return fmt.Sprintf("Credential %q is NOT READY (%s). Tell the user to open Admin > APIs, finish it (paste the secret, enable it), then come back — do NOT declare the build complete or wire anything to it yet.", name, strings.Join(missing, "; ")), nil
+		},
+	}
+}
+
 // builderWorkerResearchTools is the small set of EXTRA tools workers
 // get when their parent agent is Builder. The bulk of a worker's
 // catalog comes from the standard AllowedTools resolution (web_search,

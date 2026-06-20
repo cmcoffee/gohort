@@ -33,13 +33,19 @@ const (
 	// mcpServersTable holds both the per-server config records (keyed by
 	// server name) and the encrypted bearer tokens (keyed name+"__token").
 	mcpServersTable = "mcp_servers"
-
-	// mcpHandshakeTimeout bounds initialize + tools/list at connect time.
-	mcpHandshakeTimeout = 20 * time.Second
-	// mcpCallTimeout bounds a single tools/call. Generous: remote search
-	// over a wiki can be slow, but a hung call must not pin a round.
-	mcpCallTimeout = 55 * time.Second
 )
+
+// mcpHandshakeTimeout bounds initialize + tools/list at connect time.
+func mcpHandshakeTimeout() time.Duration { return TuneDuration("tune_mcp_handshake_timeout") }
+
+// mcpCallTimeout bounds a single tools/call. Generous: remote search
+// over a wiki can be slow, but a hung call must not pin a round.
+func mcpCallTimeout() time.Duration { return TuneDuration("tune_mcp_call_timeout") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_mcp_handshake_timeout", Category: "Timeouts", Label: "MCP handshake timeout", Help: "Caps initialize + tools/list when connecting to an MCP server.", Kind: KindSeconds, Default: 20, Min: 4, Max: 120})
+	RegisterTunable(TunableSpec{Key: "tune_mcp_call_timeout", Category: "Timeouts", Label: "MCP call timeout", Help: "Caps a single MCP tools/call invocation.", Kind: KindSeconds, Default: 55, Min: 10, Max: 300})
+}
 
 // MCPAuthMode selects how outbound requests to a server are authorized.
 type MCPAuthMode string
@@ -300,7 +306,7 @@ func (m *MCPManager) connect(cfg MCPServerConfig) (*mcpConn, error) {
 func (m *MCPManager) dialMCP(cfg MCPServerConfig, auth mcpclient.Authorizer) (*mcpConn, error) {
 	tr := mcpclient.NewHTTPTransport(cfg.URL, mcpclient.HTTPOptions{Auth: auth})
 	cl := mcpclient.New(tr)
-	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
 	defer cancel()
 	if err := cl.Initialize(ctx); err != nil {
 		cl.Close()
@@ -398,7 +404,7 @@ func (m *MCPManager) authorizer(cfg MCPServerConfig) mcpclient.Authorizer {
 // per-call timeout. user is "" for shared servers (the ChatTool Run path
 // carries no context/user); oauth servers require a non-empty user.
 func (m *MCPManager) callTool(user, server, rawName string, args map[string]any) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout())
 	defer cancel()
 	return m.callToolForUser(ctx, user, server, rawName, args)
 }
@@ -546,7 +552,7 @@ func (m *MCPManager) Test(cfg MCPServerConfig, token string) (string, error) {
 	}
 	cl := mcpclient.New(mcpclient.NewHTTPTransport(strings.TrimSpace(cfg.URL), mcpclient.HTTPOptions{Auth: auth}))
 	defer cl.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
 	defer cancel()
 	if err := cl.Initialize(ctx); err != nil {
 		return "", err
@@ -610,7 +616,7 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 	}
 	oc, ok := m.loadOAuthCfg(server)
 	if !ok || oc.AuthEndpoint == "" {
-		ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
 		defer cancel()
 		disc, err := mcpDiscover(ctx, cfg.URL)
 		if err != nil {
@@ -649,7 +655,7 @@ func (m *MCPManager) CompleteOAuth(state, code string) error {
 	if !ok {
 		return fmt.Errorf("no oauth config for %q", p.server)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
 	defer cancel()
 	tok, err := mcpExchangeCode(ctx, oc, code, p.verifier, p.redirectURI)
 	if err != nil {

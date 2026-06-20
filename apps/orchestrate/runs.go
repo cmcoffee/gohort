@@ -44,18 +44,24 @@ const (
 	RunStatusCanceled  = "canceled"
 )
 
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_run_max_events", Category: "Limits", Label: "Run event ring size", Help: "Max in-memory SSE events buffered per run.", Kind: KindInt, Default: 500, Min: 100, Max: 5000})
+	RegisterTunable(TunableSpec{Key: "tune_run_cleanup_age", Category: "Cache", Label: "Run buffer retention", Help: "How long a completed run's buffer is kept for reconnect.", Kind: KindMinutes, Default: 30, Min: 5, Max: 240})
+	RegisterTunable(TunableSpec{Key: "tune_run_cleanup_interval", Category: "Timeouts", Label: "Run sweep interval", Help: "How often the registry sweeps for old completed runs.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
+}
+
 // runMaxEvents bounds the in-memory ring per run. Chat turns are
 // short — typical worker-loop emits 20-50 events. 500 leaves plenty
 // of headroom for long planning runs while keeping memory bounded.
-const runMaxEvents = 500
+func runMaxEvents() int { return TuneInt("tune_run_max_events") }
 
 // runCleanupAge — how long to keep a completed Run's buffer around
 // after it finishes. Long enough for a desktop user to reconnect
 // after a sleep / network blip; short enough that memory stays sane.
-const runCleanupAge = 30 * time.Minute
+func runCleanupAge() time.Duration { return TuneDuration("tune_run_cleanup_age") }
 
 // runCleanupInterval — how often the registry sweeps for old runs.
-const runCleanupInterval = 5 * time.Minute
+func runCleanupInterval() time.Duration { return TuneDuration("tune_run_cleanup_interval") }
 
 // RunEvent is one pre-serialized SSE frame plus its sequence number.
 // Stored ready-to-write so subscribers can replay backlog with no
@@ -133,10 +139,10 @@ func (r *Run) Append(frame []byte) {
 	r.nextSeq++
 	ev := RunEvent{Seq: r.nextSeq, Frame: append([]byte(nil), frame...)}
 	r.events = append(r.events, ev)
-	if len(r.events) > runMaxEvents {
+	if max := runMaxEvents(); len(r.events) > max {
 		// Drop oldest. Cheap append+slice; ring grows once then
 		// stays at runMaxEvents for the rest of the run.
-		r.events = r.events[len(r.events)-runMaxEvents:]
+		r.events = r.events[len(r.events)-max:]
 	}
 	for _, ch := range r.subscribers {
 		// Non-blocking — a slow subscriber loses events rather than
@@ -309,7 +315,7 @@ func (rr *RunRegistry) BySession(sessionID string) *Run {
 func (rr *RunRegistry) startSweeper() {
 	rr.sweeper.Do(func() {
 		go func() {
-			ticker := time.NewTicker(runCleanupInterval)
+			ticker := time.NewTicker(runCleanupInterval())
 			defer ticker.Stop()
 			for range ticker.C {
 				rr.sweep()
@@ -319,7 +325,7 @@ func (rr *RunRegistry) startSweeper() {
 }
 
 func (rr *RunRegistry) sweep() {
-	cutoff := time.Now().Add(-runCleanupAge)
+	cutoff := time.Now().Add(-runCleanupAge())
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
 	for id, r := range rr.runs {

@@ -168,7 +168,7 @@ func (s *SecureAPI) mintOAuthGrant(c SecureCredential, secret string) (string, s
 		form.Set("scope", c.Scope)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), secureAPIRequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), secureAPIRequestTimeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "POST", c.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {

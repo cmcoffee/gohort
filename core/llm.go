@@ -768,7 +768,7 @@ func isTransientError(err error) bool {
 }
 
 func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	return doWithRetry(ctx, r.maxRetries, opts, func() (*Response, error) {
+	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// First attempt: original opts, original messages.
 		resp, err := r.inner.Chat(ctx, messages, opts...)
 		if !shouldRetryEmpty(resp, err) {
@@ -811,7 +811,7 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 		handlerCalled = true
 		handler(chunk)
 	}
-	return doWithRetry(ctx, r.maxRetries, opts, func() (*Response, error) {
+	return doWithRetry(ctx, LLMMaxRetries(), opts, func() (*Response, error) {
 		// Stream-aware empty retry: only safe to retry if the handler
 		// hasn't already received chunks (otherwise the user has seen
 		// partial output and a retry would duplicate or contradict it).

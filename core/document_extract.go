@@ -33,7 +33,11 @@ import (
 // DocumentExtractTimeout caps any extraction call. Large PDFs can
 // take seconds; a per-doc timeout keeps a runaway extraction from
 // holding the user's send open.
-const DocumentExtractTimeout = 30 * time.Second
+func DocumentExtractTimeout() time.Duration { return TuneDuration("tune_document_extract_timeout") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_document_extract_timeout", Category: "Timeouts", Label: "Document extraction timeout", Help: "Per-document cap for text extraction (PDFs, office files) on a user send.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
+}
 
 // DocumentAttachment is one inbound document the user uploaded via
 // the paperclip. Data is base64-decoded raw bytes; MimeType drives
@@ -404,7 +408,7 @@ func extractPDF(ctx context.Context, data []byte) (string, error) {
 	if _, err := exec.LookPath("pdftotext"); err != nil {
 		return "", fmt.Errorf("pdftotext not installed (poppler-utils): %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout)
+	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "pdftotext", "-layout", "-", "-")
 	cmd.Stdin = bytes.NewReader(data)
@@ -426,7 +430,7 @@ func extractWithPandoc(ctx context.Context, data []byte, inputFmt string) (strin
 	if _, err := exec.LookPath("pandoc"); err != nil {
 		return "", fmt.Errorf("pandoc not installed: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout)
+	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
 	defer cancel()
 	tmp, err := os.CreateTemp("", "gohort-doc-*."+inputFmt)
 	if err != nil {

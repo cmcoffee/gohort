@@ -66,7 +66,7 @@ func StripPromotionEscape(msg string) (string, bool) {
 // typically reply within seconds-to-minutes of a sub-agent's reply,
 // and "I'll get back to it tomorrow" almost always indicates a
 // topic shift that shouldn't be pulled back into the prior context.
-const PromotionWindow = 5 * time.Minute
+func PromotionWindow() time.Duration { return TuneDuration("tune_promotion_window") }
 
 // PromotionTurnCap is the maximum number of follow-up turns a single
 // sub-session will serve. Beyond this, the user is firmly in a
@@ -75,7 +75,12 @@ const PromotionWindow = 5 * time.Minute
 //
 // 8 turns is generous enough for a meaningful back-and-forth without
 // crowding out the host's primary role.
-const PromotionTurnCap = 8
+func PromotionTurnCap() int { return TuneInt("tune_promotion_turn_cap") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Timeouts", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply before the next turn falls through to the host LLM.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_promotion_turn_cap", Category: "Limits", Label: "Sub-session turn cap", Help: "Maximum number of follow-up turns a single promoted sub-session will serve.", Kind: KindInt, Default: 8, Min: 1, Max: 50})
+}
 
 // RouteAction is the tri-state result from ResolveDispatchRoute,
 // telling the host how to handle the next user turn given the state
@@ -237,10 +242,10 @@ func mostRecentActive(hostSessionID string) *SubSession {
 // promotion (the cap check fires AFTER an MarkSubSessionActive bumps
 // TurnCount; this re-check catches it on the next intake).
 func shouldRetire(s SubSession, now time.Time) bool {
-	if !s.LastReplyAt.IsZero() && now.Sub(s.LastReplyAt) > PromotionWindow {
+	if !s.LastReplyAt.IsZero() && now.Sub(s.LastReplyAt) > PromotionWindow() {
 		return true
 	}
-	if s.TurnCount >= PromotionTurnCap {
+	if s.TurnCount >= PromotionTurnCap() {
 		return true
 	}
 	return false
@@ -250,10 +255,10 @@ func shouldRetire(s SubSession, now time.Time) bool {
 // matters: window timeout is the common case, cap is the explicit
 // hand-off case.
 func retireReason(s SubSession, now time.Time) string {
-	if !s.LastReplyAt.IsZero() && now.Sub(s.LastReplyAt) > PromotionWindow {
+	if !s.LastReplyAt.IsZero() && now.Sub(s.LastReplyAt) > PromotionWindow() {
 		return "window"
 	}
-	if s.TurnCount >= PromotionTurnCap {
+	if s.TurnCount >= PromotionTurnCap() {
 		return "cap"
 	}
 	return "stale"

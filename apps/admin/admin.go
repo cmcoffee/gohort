@@ -5,6 +5,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"fmt"
 	"net/http"
 	"sort"
@@ -324,11 +325,20 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		switch r.Method {
 		case http.MethodGet:
 			a.handleGetSettings(w, r)
-		case http.MethodPut:
+		case http.MethodPut, http.MethodPost:
+			// FormPanel auto-save defaults to POST; accept both so an
+			// in-place edit form saves without a per-field Method override.
 			a.handleUpdateSettings(w, r)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+	// API: revert retrieval/limit tunables to their code defaults.
+	sub.HandleFunc("/api/settings/reset-tunables", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleResetTunables(w, r)
 	})
 
 	// API: cost rates — dollar pricing for per-run LLM + search usage
@@ -358,6 +368,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		a.handleCostHistory(w, r)
+	})
+	sub.HandleFunc("/api/cost-by-source", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		a.handleCostBySource(w, r)
 	})
 
 	// Embeddings config — GET returns current settings, POST persists +
@@ -1127,6 +1143,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				AllowedMethods    []string `json:"allowed_methods"`
 				DeniedURLPatterns []string `json:"denied_url_patterns"`
 				MaxCallsPerDay    int      `json:"max_calls_per_day"`
+				CostPerCall       float64  `json:"cost_per_call"`
 				// OAuth2 (type == "oauth2").
 				Grant       string `json:"grant"`
 				TokenURL    string `json:"token_url"`
@@ -1155,6 +1172,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				AllowedMethods:    req.AllowedMethods,
 				DeniedURLPatterns: req.DeniedURLPatterns,
 				MaxCallsPerDay:    req.MaxCallsPerDay,
+				CostPerCall:       req.CostPerCall,
 				Grant:             strings.TrimSpace(req.Grant),
 				TokenURL:          strings.TrimSpace(req.TokenURL),
 				ClientID:          strings.TrimSpace(req.ClientID),
@@ -1498,6 +1516,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				TriggerDomains  []string `json:"trigger_domains"`
 				AlwaysActive    bool     `json:"always_active"`
 				MaxRPS          int      `json:"max_rps"`
+				CostPerCall     float64  `json:"cost_per_call"`
 				ExposeToLLM     bool     `json:"expose_to_llm"`
 				ToolName        string   `json:"tool_name"`
 				ToolDescription string   `json:"tool_description"`
@@ -1539,6 +1558,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				TriggerDomains:  req.TriggerDomains,
 				AlwaysActive:    req.AlwaysActive,
 				MaxRPS:          req.MaxRPS,
+				CostPerCall:     req.CostPerCall,
 				ExposeToLLM:     req.ExposeToLLM,
 				ToolName:        strings.TrimSpace(req.ToolName),
 				ToolDescription: strings.TrimSpace(req.ToolDescription),
@@ -2948,7 +2968,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		ollama_active = m != ""
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	resp := map[string]interface{}{
 		"allow_signup":         allow_signup,
 		"session_days":         session_days,
 		"max_login_attempts":   max_attempts,
@@ -2962,7 +2982,13 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"ollama_proxy_url":     proxy_url,
 		"ollama_active":        ollama_active,
 		"fetch_cache_quota_mb": fetch_cache_quota_mb,
-	})
+	}
+	// Tunables — effective values (stored override or spec default), generated
+	// from the registry so a newly-registered knob surfaces here automatically.
+	for _, s := range AllTunableSpecs() {
+		resp[s.Key] = TunableEffectiveValue(s.Key)
+	}
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -2979,7 +3005,15 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		OllamaProxyPort    *int      `json:"ollama_proxy_port,omitempty"`
 		FetchCacheQuotaMB  *int      `json:"fetch_cache_quota_mb,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Read the body once: the static settings decode into the typed struct
+	// above, the tunables come off the same bytes as a generic map (validated
+	// against the registry below).
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if err := json.Unmarshal(raw, &req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -3028,8 +3062,54 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		a.db.Set(WebTable, "fetch_cache_quota_mb", *req.FetchCacheQuotaMB)
 		Log("[admin] user %q set fetch_cache_quota_mb=%d", current, *req.FetchCacheQuotaMB)
 	}
+	// Tunables — validated against the registry, so adding a knob needs no
+	// change here. A present numeric key within its spec's [Min, Max] is
+	// stored as float64 (TuneInt casts); out-of-range or non-numeric is
+	// silently ignored. Invalidate the cache once if anything changed.
+	var generic map[string]any
+	if json.Unmarshal(raw, &generic) == nil {
+		tuned := false
+		for _, s := range AllTunableSpecs() {
+			v, ok := generic[s.Key]
+			if !ok {
+				continue
+			}
+			f, ok := v.(float64) // JSON numbers decode as float64
+			if !ok || f < s.Min || f > s.Max {
+				continue
+			}
+			a.db.Set(WebTable, s.Key, f)
+			Log("[admin] user %q set %s=%g", current, s.Key, f)
+			tuned = true
+		}
+		if tuned {
+			InvalidateTunables()
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// handleResetTunables clears every retrieval/limit tunable override so the
+// getters fall back to their code defaults. Backs the "Revert to defaults"
+// button on the admin Retrieval & limits panel.
+func (a *AdminApp) handleResetTunables(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Optional ?category=X scopes the revert to one section's knobs; absent,
+	// every tunable resets. Either way the getters fall back to spec defaults.
+	cat := r.URL.Query().Get("category")
+	for _, s := range AllTunableSpecs() {
+		if cat == "" || s.Category == cat {
+			a.db.Unset(WebTable, s.Key)
+		}
+	}
+	InvalidateTunables()
+	Log("[admin] user %q reverted tunables to defaults (category=%q)", AuthCurrentUser(r), cat)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "reset"})
 }
 
 // handleGetCostRates returns the currently configured dollar-rate values
@@ -3123,8 +3203,37 @@ func (a *AdminApp) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	records := CollectAllUsage()
 	daily := AggregateDailyCost(records, days)
+	// Fold metered source-hook / credential spend (cost hooks) into each day's
+	// total. A day that had ONLY external spend (no LLM usage) won't have a row
+	// from AggregateDailyCost, so append one for it.
+	ext := CostExternalDaily(days)
+	seen := map[string]int{}
+	for i := range daily {
+		seen[daily[i].Date] = i
+	}
+	for date, cost := range ext {
+		if i, ok := seen[date]; ok {
+			daily[i].ExternalCost = cost
+			daily[i].Cost += cost
+		} else {
+			daily = append(daily, DailyCost{Date: date, Cost: cost, ExternalCost: cost})
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(daily)
+}
+
+// handleCostBySource returns each metered source's total spend over the
+// window — the admin "Cost by source" breakdown table.
+func (a *AdminApp) handleCostBySource(w http.ResponseWriter, r *http.Request) {
+	days := 30
+	if s := r.URL.Query().Get("days"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			days = n
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"items": CostBySource(days)})
 }
 
 // handleListApps returns all registered web apps (excluding admin and

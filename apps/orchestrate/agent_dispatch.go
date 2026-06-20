@@ -298,7 +298,7 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 // it could reach from the Agency chat UI was invisible. Both
 // RunAgentSync and RunAgentSyncContinuing call this so the experience
 // matches across surfaces.
-func (T *OrchestrateApp) buildDispatchTurnExtras(ctx context.Context, target AgentRecord, runtimeUser string, runtimeDB Database, subSess *ToolSession) (extraTools []AgentToolDef, availableBlock string) {
+func (T *OrchestrateApp) buildDispatchTurnExtras(ctx context.Context, target AgentRecord, runtimeUser string, runtimeDB Database, subSess *ToolSession) (extraTools []AgentToolDef, availableBlock string, customToolPrompt string, subTurn *chatTurn) {
 	return T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, "", nil)
 }
 
@@ -312,7 +312,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtras(ctx context.Context, target Age
 // OSINT couldn't find "OSINT Family Tracker" etc. because the fleet
 // read hit phantom:<chatID>'s empty DB. Sessions / memory / facts
 // remain on the runtime user's DB regardless.
-func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, target AgentRecord, runtimeUser string, runtimeDB Database, subSess *ToolSession, ownerUser string, ownerDB Database) (extraTools []AgentToolDef, availableBlock string) {
+func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, target AgentRecord, runtimeUser string, runtimeDB Database, subSess *ToolSession, ownerUser string, ownerDB Database) (extraTools []AgentToolDef, availableBlock string, customToolPrompt string, subTurn *chatTurn) {
 	// Phantom-dispatched runs accumulate Reference Memory and
 	// Explicit facts under the synthetic per-chat user
 	// (phantom:<chatID>) — a namespace the agent's owner can't see
@@ -331,7 +331,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		target.DisableInferred = true
 		target.DisableExplicit = true
 	}
-	subTurn := &chatTurn{
+	subTurn = &chatTurn{
 		app:       T,
 		agent:     target,
 		user:      runtimeUser,
@@ -341,32 +341,20 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 		ownerUser: ownerUser,
 		ownerDB:   ownerDB,
 	}
-	extraTools = append(extraTools, subTurn.searchKnowledgeToolDef(), subTurn.introspectToolDef())
-	if !subTurn.inferredOff() {
-		extraTools = append(extraTools, subTurn.memoryToolDef())
+	// Shared sub-agent dispatch catalog — framework conversational tools, the
+	// agents grouped tool, attached pipelines, and the agent's custom tools
+	// (hydrated from the OWNER's pool: the runtime user may be a synthetic channel
+	// identity whose pool is empty). dispatchExtraTools is the SINGLE source of
+	// truth shared with the inline agents(action="run") path, so the two sub-agent
+	// surfaces can't drift. The caller wires the fallback resolver + dynamic feed
+	// (below) and appends customToolPrompt to the system prompt.
+	poolUser, poolDB := ownerUser, ownerDB
+	if poolDB == nil || poolUser == "" {
+		poolUser, poolDB = runtimeUser, runtimeDB
 	}
-	if !subTurn.explicitOff() {
-		extraTools = append(extraTools,
-			subTurn.storeFactToolDef(),
-			subTurn.forgetFactToolDef(),
-			// Graph memory — structured relationship layer beside the flat facts.
-			subTurn.linkEntitiesToolDef(),
-			subTurn.recallAboutToolDef(),
-		)
-	}
-	// agents grouped tool — sub-agents (OwnedBy set) are LEAVES in the
-	// dispatch tree: their job is one focused capability, return result,
-	// done. Stripping the agents tool from sub-agents eliminates depth-
-	// limit cascades (parent → sub → sub-sub-…) and forces hierarchical
-	// composition: if a workflow needs two specialists, they become
-	// siblings under the parent, not chained sub-agents. Builder targets
-	// stay read-only on dispatch (no recursive Builder-from-Builder).
-	// Top-level targets get the full grouped surface so they can reach
-	// their own sub-agents the same way they would from the Agency chat.
-	if target.OwnedBy == "" {
-		extraTools = append(extraTools, subTurn.agentsGroupedToolDef(!isBuilderAgent(target.ID)))
-	}
-	extraTools = append(extraTools, subTurn.skillToolDefs()...)
+	var extra []AgentToolDef
+	extra, customToolPrompt = subTurn.dispatchExtraTools(subSess, poolUser, poolDB)
+	extraTools = append(extraTools, extra...)
 	// Sub-agents also skip the Available agents block — no point
 	// telling a leaf about fleet peers it can't dispatch to. Saves
 	// tokens AND removes the "DELEGATE FIRST" nudge that would
@@ -389,7 +377,7 @@ func (T *OrchestrateApp) buildDispatchTurnExtrasWithOwner(ctx context.Context, t
 	// snake_case slugs instead of minting near-duplicates. Cheap to
 	// add; matches what the direct path does.
 	availableBlock += subTurn.renderKnownTopicsBlock()
-	return extraTools, availableBlock
+	return extraTools, availableBlock, customToolPrompt, subTurn
 }
 
 func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUser, agentKey, message string) (string, error) {
@@ -526,7 +514,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// peer fleet — the exact gap that hid sub-agents from phantom-
 	// dispatched runs even though they were reachable from the
 	// Agency chat UI.
-	extraTools, availableBlock := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
 	tools = append(tools, extraTools...)
 	// ForcePrivate enforcement — drop network tools + attach blocked
 	// connector. Done AFTER tools are fully assembled (allowlist +
@@ -543,14 +531,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
-	sysPrompt += availableBlock
-	// Cortex awareness on the dispatch path — see RunAgentSyncContinuingRich for
-	// the full why. The interactive turn injects this; the RunAgentLoop dispatch
-	// path was missing it, so a dispatched cortex agent ran blind to its cortex.
-	if target.Cortex && subSessID != cortexSessionID(target.ID) {
-		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
-	}
+	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -559,22 +540,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if isBuilderAgent(target.ID) {
 		deliveredMessage = markAsDelegated(message)
 	}
-	// Resolve thinking the same way the chat surface does so a
-	// dispatched agent runs with the SAME default as if it were
-	// invoked directly from Agency. Base = route default. Target's
-	// explicit Think="on"/"off" wins; empty Think falls through to
-	// the route default rather than getting a different "dispatch-
-	// only" default.
-	think := true
-	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
-		think = *p
-	}
-	switch target.Think {
-	case "on":
-		think = true
-	case "off":
-		think = false
-	}
+	think := resolveDispatchThink(target)
 	// Telemetry — each RunAgentSync invocation gets its own per-turn
 	// accumulator so pipeline agent stages, external dispatches, and
 	// any other sync sub-agent run leaves a grep-able forensic record
@@ -588,6 +554,11 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		OnStep:       func(info StepInfo) { telem.record(info) },
 		Confirm:      confirm,
+		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
+		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
+		// surfaces tools the LLM loaded via load_tool this turn.
+		ToolFallbackResolver: subTurn.lazyToolFallback,
+		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),
@@ -843,7 +814,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Per-turn closure tools + Available agents block (mirrors
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
-	extraTools, availableBlock := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
+	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
 	tools = append(tools, extraTools...)
 	// ForcePrivate enforcement — see applyForcePrivateToDispatch.
 	// No-op when target.ForcePrivate is false.
@@ -852,18 +823,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
-	sysPrompt += availableBlock
-	// Cortex awareness on the channel/dispatch path. The INTERACTIVE web turn
-	// injects the agent's recent cortex observations (runner.go), but channel
-	// inbound + dispatch run through RunAgentLoop HERE and were MISSING it — so
-	// the cortex feed (received messages, posts made on its channels, inter-agent
-	// requests) never reached the answering LLM, which is why a channel agent
-	// looked "blind to its cortex" when fielding follow-ups. Gated to non-cortex
-	// sessions (the cortex doesn't summarize itself) and to Cortex-on agents.
-	if target.Cortex && subSessionID != cortexSessionID(target.ID) {
-		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
-	}
+	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB)
 	// freshSession wipes the prior session BEFORE the load — caller
 	// (phantom's dispatch_agent fresh_session=true) is signaling a
 	// new thread, so the deterministic-ID session record gets cleared
@@ -949,25 +909,16 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		}
 	}
 
-	// Resolve thinking the same way the chat surface does — see
-	// RunAgentSync above for the rationale. Empty Think falls through
-	// to the route default, NOT a dispatch-specific override.
-	think := true
-	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
-		think = *p
-	}
-	switch target.Think {
-	case "on":
-		think = true
-	case "off":
-		think = false
-	}
+	think := resolveDispatchThink(target)
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
 		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:      func(name, args string) bool { return true },
+		// Custom-tool resolution, same as the web runPlan (see RunAgentSync).
+		ToolFallbackResolver: subTurn.lazyToolFallback,
+		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
 		// InjectionDrain (not OnRoundStart): the queue-drain closure
 		// returns nil when empty, so the loop's pre-finalize re-call
 		// terminates. A mid-flight note pushed while this dispatch runs

@@ -93,6 +93,10 @@ type SecureCredential struct {
 	Description       string `json:"description,omitempty"`
 	ParamName         string `json:"param_name,omitempty"`
 	RequiresConfirm   bool   `json:"requires_confirm"`
+	// CostPerCall, when > 0, prices each dispatched call through this
+	// credential into the admin cost chart + per-source breakdown (a "cost
+	// hook"). 0 = untracked (a free endpoint). Recorded via RecordExternalCost.
+	CostPerCall float64 `json:"cost_per_call,omitempty"`
 	// InsecureSkipTLS skips TLS certificate verification for this
 	// credential's requests. Required for LAN appliances (firewalls, NAS,
 	// switches) that present self-signed certs OR are addressed by IP — no
@@ -217,41 +221,51 @@ type SecureAPIAuditEntry struct {
 	Error          string    `json:"error,omitempty"`
 }
 
-const (
-	// secureAPIMaxResponseBytes caps response bodies returned to the
-	// LLM as text directly (no pipe). 256KB ≈ ~64K tokens — generous
-	// for most APIs but leaves room for prompt + tool history within
-	// a 200K-class context window. Use save_to for large binary
-	// content; use response_pipe in api-mode tool defs to jq-filter
-	// large JSON down to needed fields before context.
-	secureAPIMaxResponseBytes = 256 * 1024 // 256 KB
+// secureAPIMaxResponseBytes caps response bodies returned to the
+// LLM as text directly (no pipe). 256KB ≈ ~64K tokens — generous
+// for most APIs but leaves room for prompt + tool history within
+// a 200K-class context window. Use save_to for large binary
+// content; use response_pipe in api-mode tool defs to jq-filter
+// large JSON down to needed fields before context.
+func secureAPIMaxResponseBytes() int { return TuneInt("tune_secure_api_max_response_bytes") }
 
-	// secureAPIMaxResponseBytesForPipe is the higher input cap used
-	// when the caller has a response_pipe configured. The pipe will
-	// project the response down to a small output, so reading more
-	// of it doesn't bloat the LLM's context. This is what enables
-	// list-style endpoints (Vapi /call?limit=50, etc.) to be safely
-	// jq-filtered to {id, status, cost} projections — without this,
-	// the prior 256KB read cap truncated the JSON mid-string and jq
-	// would fail with "Unfinished string at EOF".
-	secureAPIMaxResponseBytesForPipe = 4 * 1024 * 1024 // 4 MB
+// secureAPIMaxResponseBytesForPipe is the higher input cap used
+// when the caller has a response_pipe configured. The pipe will
+// project the response down to a small output, so reading more
+// of it doesn't bloat the LLM's context. This is what enables
+// list-style endpoints (Vapi /call?limit=50, etc.) to be safely
+// jq-filtered to {id, status, cost} projections — without this,
+// the prior 256KB read cap truncated the JSON mid-string and jq
+// would fail with "Unfinished string at EOF".
+func secureAPIMaxResponseBytesForPipe() int {
+	return TuneInt("tune_secure_api_max_response_bytes_pipe")
+}
 
-	// secureAPIMaxSaveBytes caps response bodies written to the
-	// workspace via save_to. Higher than the text cap because the
-	// LLM never reads the bytes — they go straight to disk and the
-	// LLM only sees a short metadata line. 100MB covers most
-	// generated audio (10+ minutes of ElevenLabs MP3), short videos,
-	// PDFs, etc. Larger downloads are still within the workspace
-	// disk-quota footprint so they don't escape the sandbox.
-	secureAPIMaxSaveBytes = 100 * 1024 * 1024 // 100 MB
+// secureAPIMaxSaveBytes caps response bodies written to the
+// workspace via save_to. Higher than the text cap because the
+// LLM never reads the bytes — they go straight to disk and the
+// LLM only sees a short metadata line. 100MB covers most
+// generated audio (10+ minutes of ElevenLabs MP3), short videos,
+// PDFs, etc. Larger downloads are still within the workspace
+// disk-quota footprint so they don't escape the sandbox.
+func secureAPIMaxSaveBytes() int64 { return int64(TuneInt("tune_secure_api_max_save_bytes")) }
 
-	// secureAPIRequestTimeout caps wall-clock time per call.
-	secureAPIRequestTimeout = 30 * time.Second
+// secureAPIRequestTimeout caps wall-clock time per call.
+func secureAPIRequestTimeout() time.Duration {
+	return TuneDuration("tune_secure_api_request_timeout")
+}
 
-	// auditRingSize is the per-credential audit-log retention. Older
-	// entries are dropped FIFO.
-	auditRingSize = 50
-)
+// auditRingSize is the per-credential audit-log retention. Older
+// entries are dropped FIFO.
+func auditRingSize() int { return TuneInt("tune_secure_api_audit_ring_size") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes", Category: "Limits", Label: "SecureAPI response byte cap", Help: "Max response body returned directly to the LLM as text (no response pipe).", Kind: KindInt, Default: 262144, Min: 16384, Max: 4194304})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes_pipe", Category: "Limits", Label: "SecureAPI response byte cap (piped)", Help: "Higher response read cap used when a response_pipe is configured.", Kind: KindInt, Default: 4194304, Min: 262144, Max: 67108864})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_save_bytes", Category: "Limits", Label: "SecureAPI save byte cap", Help: "Max response body written to the workspace via save_to.", Kind: KindInt, Default: 104857600, Min: 1048576, Max: 1073741824})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_request_timeout", Category: "Timeouts", Label: "SecureAPI request timeout", Help: "Wall-clock cap per SecureAPI call.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_audit_ring_size", Category: "Limits", Label: "SecureAPI audit ring size", Help: "Per-credential audit-log retention; older entries drop FIFO.", Kind: KindInt, Default: 50, Min: 10, Max: 1000})
+}
 
 // ----------------------------------------------------------------------
 // SecureAPI singleton
@@ -558,8 +572,8 @@ func (s *SecureAPI) recordAudit(e SecureAPIAuditEntry) {
 	var entries []SecureAPIAuditEntry
 	s.db.Get(secureAPIAuditTable, e.CredentialName, &entries)
 	entries = append([]SecureAPIAuditEntry{e}, entries...)
-	if len(entries) > auditRingSize {
-		entries = entries[:auditRingSize]
+	if ringSize := auditRingSize(); len(entries) > ringSize {
+		entries = entries[:ringSize]
 	}
 	s.db.Set(secureAPIAuditTable, e.CredentialName, entries)
 }
@@ -587,6 +601,19 @@ func (s *SecureAPI) loadSecret(name string) (string, bool) {
 	var secret string
 	ok := s.db.Get(secureAPITable, secureCredSecretKey(name), &secret)
 	return secret, ok
+}
+
+// CredentialStatus reports a credential's readiness as plain booleans — never
+// the secret value. Lets Builder verify a credential it drafted is actually
+// configured (enabled + secret pasted) before declaring a dependent build
+// complete, while keeping the secret out of the LLM's context entirely.
+func (s *SecureAPI) CredentialStatus(name string) (exists, enabled, hasSecret bool) {
+	c, ok := s.Load(name)
+	if !ok {
+		return false, false, false
+	}
+	_, hasSecret = s.loadSecret(name)
+	return true, !c.Disabled, hasSecret
 }
 
 // ----------------------------------------------------------------------
@@ -917,7 +944,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	}
 	baseCtx, releaseConn := connector.DeriveCancelCtx(context.Background())
 	defer releaseConn()
-	ctx, cancel := context.WithTimeout(baseCtx, secureAPIRequestTimeout)
+	ctx, cancel := context.WithTimeout(baseCtx, secureAPIRequestTimeout())
 	defer cancel()
 
 	var bodyReader io.Reader
@@ -1015,7 +1042,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		return s
 	}
 
-	httpClient := &http.Client{Timeout: secureAPIRequestTimeout}
+	httpClient := &http.Client{Timeout: secureAPIRequestTimeout()}
 	if c.InsecureSkipTLS {
 		// Per-credential opt-out of cert verification (self-signed / IP-addressed
 		// LAN appliances). Scoped to this credential's allow-listed host only.
@@ -1024,6 +1051,12 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		httpClient.Transport = tr
 	}
 	resp, err := httpClient.Do(req)
+	if err == nil {
+		// Cost hook: the request reached the endpoint (any status code is
+		// billable), so price it into the per-source cost ledger. No-op when
+		// this credential's CostPerCall is 0.
+		RecordExternalCost("cred:"+c.Name, c.Name, c.CostPerCall)
+	}
 	auditEntry := SecureAPIAuditEntry{
 		CredentialName: c.Name,
 		Method:         method,
@@ -1047,7 +1080,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if parsed != nil && parsed.Host != "" {
 				host = parsed.Host
 			}
-			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT — a slow LAN appliance, connection warmup, or a momentary network blip — and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, secureAPIRequestTimeout)
+			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT — a slow LAN appliance, connection warmup, or a momentary network blip — and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, secureAPIRequestTimeout())
 		}
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
@@ -1064,8 +1097,8 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if saveTo != "" {
 		// Read with cap+1 so we can detect truncation. ResponseBytes
 		// in the audit reflects what we actually wrote.
-		limited := io.LimitReader(resp.Body, secureAPIMaxSaveBytes+1)
-		written, err := writeWorkspaceFile(savePath, limited, secureAPIMaxSaveBytes)
+		limited := io.LimitReader(resp.Body, secureAPIMaxSaveBytes()+1)
+		written, err := writeWorkspaceFile(savePath, limited, secureAPIMaxSaveBytes())
 		if err != nil {
 			auditEntry.Status = resp.StatusCode
 			auditEntry.Error = redact("save_to write: " + err.Error())
@@ -1087,9 +1120,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// LLM-visible side, so the pipe path is safe with a larger
 	// upstream read.
 	pipeFollowing, _ := args["__pipe_following"].(bool)
-	readCap := secureAPIMaxResponseBytes
+	readCap := secureAPIMaxResponseBytes()
 	if pipeFollowing {
-		readCap = secureAPIMaxResponseBytesForPipe
+		readCap = secureAPIMaxResponseBytesForPipe()
 	}
 	limited := io.LimitReader(resp.Body, int64(readCap)+1)
 	bodyBytes, err := io.ReadAll(limited)

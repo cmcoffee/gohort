@@ -24,10 +24,17 @@ import (
 )
 
 const (
-	managedWorkspaceTable     = "managed_workspaces"
-	managedWorkspaceSubdir    = "_ws"
-	managedWorkspaceIdleLimit = 24 * time.Hour
+	managedWorkspaceTable  = "managed_workspaces"
+	managedWorkspaceSubdir = "_ws"
 )
+
+func managedWorkspaceIdleLimit() time.Duration {
+	return TuneDuration("tune_managed_workspace_idle_limit")
+}
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_managed_workspace_idle_limit", Category: "Cache", Label: "Managed workspace idle limit", Help: "How long an idle managed (disposable) workspace is retained before it is eligible for cleanup.", Kind: KindHours, Default: 24, Min: 1, Max: 720})
+}
 
 // ManagedWorkspace is the persistent record for an LLM-created
 // workspace. The actual files live on disk under managedWorkspaceDir().
@@ -253,7 +260,7 @@ func init() {
 				continue
 			}
 			idle := now.Sub(w.LastUsedAt)
-			if idle < managedWorkspaceIdleLimit {
+			if idle < managedWorkspaceIdleLimit() {
 				continue
 			}
 			if err := DeleteManagedWorkspace(w.ID); err != nil {

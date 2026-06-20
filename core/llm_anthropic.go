@@ -35,8 +35,8 @@ func newAnthropicLLM(apiKey string, model string, api *apiclient.APIClient) LLM 
 	if api == nil {
 		api = &apiclient.APIClient{
 			VerifySSL:      true,
-			ConnectTimeout: llmConnectTimeout,
-			RequestTimeout: llmRequestTimeout,
+			ConnectTimeout: llmConnectTimeout(),
+			RequestTimeout: llmRequestTimeout(),
 		}
 	}
 	api.Server = "api.anthropic.com"

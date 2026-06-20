@@ -436,6 +436,45 @@ func (T *OrchestrateApp) migrateAgentPersistentTools() {
 	}
 }
 
+// migrateLegacyOrchestratorMode rewrites every remaining Mode=="orchestrator"
+// agent record into the split Cortex + Fleet flags and clears the marker, so
+// applyLegacyMode stops re-forcing Cortex=Fleet=true on every load. Without
+// this, a legacy record's Fleet flag could never be turned off (and the agent
+// never published) until it was re-saved by hand. Preserves the effective
+// behavior the marker produced (both flags on); the owner can then toggle
+// Fleet off and have it stick. Runs once, deployment-wide, via the migration
+// runner (so it shows in the admin Migrations table and never re-runs).
+func (T *OrchestrateApp) migrateLegacyOrchestratorMode() {
+	NewMigrationRunner("orchestrate", "").Once("clear_legacy_orchestrator_mode:v1", func() int {
+		if T.DB == nil || AuthDB == nil {
+			return 0
+		}
+		authDB := AuthDB()
+		if authDB == nil {
+			return 0
+		}
+		changed := 0
+		for _, u := range AuthListUsers(authDB) {
+			udb := UserDB(T.DB, u.Username)
+			if udb == nil {
+				continue
+			}
+			for _, k := range udb.Keys(agentsTable) {
+				var a AgentRecord
+				if !udb.Get(agentsTable, k, &a) || a.Mode != "orchestrator" {
+					continue
+				}
+				a.Cortex = true
+				a.Fleet = true
+				a.Mode = ""
+				udb.Set(agentsTable, k, a)
+				changed++
+			}
+		}
+		return changed
+	})
+}
+
 // noToolsSentinel is the reserved AllowedTools[0] marker meaning
 // "admin explicitly disabled all optional tools." The framework
 // distinguishes this from a bare empty list (which means "use the
@@ -565,6 +604,13 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	if a.Hidden && !a.Exposed {
 		a.Exposed = true
 	}
+	// Drop the retired "orchestrator" mode marker on save. The record now
+	// carries the split Cortex + Fleet flags explicitly (the form's toggles),
+	// so applyLegacyMode must stop re-forcing Cortex=Fleet=true on every load —
+	// which is exactly what kept a cloned-from-Operator cortex agent from ever
+	// going Fleet-off, and therefore from being publishable. Saving the record
+	// IS its one-time migration to the split model.
+	a.Mode = ""
 	now := time.Now()
 	if a.ID == "" {
 		a.ID = UUIDv4()
@@ -1052,7 +1098,7 @@ These are the only capability declarations you ever need to write — bare ` + "
 **Wiring an authenticated API is credential-first, and the auth must WORK before you build anything against it.** Do it strictly in this order, do NOT skip ahead:
 1. CREATE the gohort credential FIRST. OAuth2 uses draft_oauth_credential; a plain API key, bearer token, custom header, or HTTP basic-auth (e.g. OPNsense) uses draft_api_credential. Set its base_url to the host (e.g. https://192.168.0.1); the admin manages which endpoints under it are allowed.
 2. STOP and hand off, then END THE TURN. The credential is created DISABLED. Tell the user exactly which secret the admin pastes in Admin > APIs, to enable it, and for a LAN appliance or any self-signed or IP-addressed host to also turn on "Allow self-signed / skip TLS verification". Do NOT write the tool or agent yet. You cannot author a correct tool against auth that does not exist and that you cannot call.
-3. VERIFY before building. When the user says it is set up, make ONE probe call through the credential (the auto-generated fetch_url_<name>, or fetch_via in a script) to a simple endpoint. If it errors (bad auth, a cert error, or a connection timeout meaning the server cannot reach the host), report the EXACT error and stop, that is a setup problem to fix with the user, not something to code around. Only a clean response means the auth works.
+3. VERIFY before building. When the user says it is set up, FIRST call check_credential(name): if it reports NOT READY (still disabled, or no secret pasted), tell the user exactly what is left, ask them to finish it in Admin > APIs and come back, and STOP, do not probe or build against an unconfigured credential. Once check_credential says READY, make ONE probe call through the credential (the auto-generated fetch_url_<name>, or fetch_via in a script) to a simple endpoint. If the probe errors (bad auth, a cert error, or a connection timeout meaning the server cannot reach the host), report the EXACT error and stop, that is a setup problem to fix with the user, not something to code around. Only check_credential READY plus a clean probe means the auth works. Never call a credentialed build DONE until check_credential reports READY.
 4. THEN build the tool, and only then, now that you can actually probe the API to learn its real endpoints and shapes. Prefer tool_def(mode="api", credential="<name>") over a hand-written shell script.
 **NEVER take an api key, secret, token, password, or host as a tool PARAMETER**, and NEVER ask the user to paste a secret into the chat: the credential injects auth server-side. When you author an AGENT around a credentialed API, do NOT write its prompt to collect login details either. You draft the credential; the admin only pastes the secret in Admin > APIs.
 
@@ -2088,6 +2134,36 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(a)
+	case http.MethodPost:
+		// PARTIAL update of one existing agent. The full edit form posts the
+		// whole record to /api/agents (handleAgentList); single-field surfaces
+		// like the dispatch-allowlist ChipPicker POST just their field HERE.
+		// Without this case the POST fell to default → 405, so the
+		// allowed_dispatch_targets picker silently never saved (the dispatch
+		// allowlist "didn't work"). Decoding the posted body INTO the loaded
+		// record merges: present fields overwrite, absent fields keep their
+		// stored value — and Locked (owned by the lock icon) is preserved since
+		// the partial body never carries it.
+		existing, ok := loadAgent(udb, id)
+		if !ok || (existing.Owner != "" && existing.Owner != user && existing.Owner != seedOwner) {
+			http.NotFound(w, r)
+			return
+		}
+		locked := existing.Locked // owned by the lock icon, not the form/picker
+		if err := json.NewDecoder(r.Body).Decode(&existing); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		existing.ID = id
+		existing.Owner = user
+		existing.Locked = locked
+		saved, err := saveAgent(udb, existing)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(saved)
 	case http.MethodDelete:
 		if err := deleteAgent(udb, id, user); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

@@ -17,7 +17,11 @@ import (
 // generation. Operators tuning for genuinely slow models (heavy
 // thinking budgets, cold cache prefills) can raise this via
 // LLMProviderConfig.StreamIdleTimeout.
-const DefaultStreamIdleTimeout = 60 * time.Second
+func DefaultStreamIdleTimeout() time.Duration { return TuneDuration("tune_stream_idle_timeout") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_stream_idle_timeout", Category: "Timeouts", Label: "Stream idle timeout", Help: "Max wall-clock gap with no bytes on a streaming LLM response before the read aborts.", Kind: KindSeconds, Default: 60, Min: 10, Max: 600})
+}
 
 // streamIdleTimeoutMarker is the substring isTransientError matches on
 // so the retry layer kicks in when an idle deadline fires. Keep this
@@ -85,7 +89,7 @@ type streamWatchdog struct {
 // the operator can correlate which backend stalled.
 func newStreamWatchdog(body io.ReadCloser, timeout time.Duration, provider string) *streamWatchdog {
 	if timeout <= 0 {
-		timeout = DefaultStreamIdleTimeout
+		timeout = DefaultStreamIdleTimeout()
 	}
 	w := &streamWatchdog{
 		src:      body,

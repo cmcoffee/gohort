@@ -20,10 +20,13 @@ import (
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
-const (
-	visionMaxDim  = 1024 // longest side for images sent to LLM
-	visionJQQual  = 82   // JPEG quality for resized images
-)
+func visionMaxDim() int { return TuneInt("tune_vision_max_dim") } // longest side for images sent to LLM
+func visionJQQual() int  { return TuneInt("tune_vision_jpeg_quality") } // JPEG quality for resized images
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_vision_max_dim", Category: "Limits", Label: "Vision image max dimension", Help: "Longest-side pixel cap for images downscaled before sending to the LLM.", Kind: KindInt, Default: 1024, Min: 256, Max: 4096})
+	RegisterTunable(TunableSpec{Key: "tune_vision_jpeg_quality", Category: "Limits", Label: "Vision JPEG quality", Help: "JPEG quality (1-100) for resized images sent to the LLM.", Kind: KindInt, Default: 82, Min: 30, Max: 100})
+}
 
 // LLM API clients apply iotimeout.NewReadCloser to every response body using
 // c.api.RequestTimeout as the per-read idle timeout. These defaults give:
@@ -33,10 +36,13 @@ const (
 //                         newLLMAPIClient (in llm.go) which honors the
 //                         operator-configured request_timeout_seconds and
 //                         falls back to 12 min when unset.
-const (
-	llmConnectTimeout = 10 * time.Second
-	llmRequestTimeout = 12 * time.Minute
-)
+func llmConnectTimeout() time.Duration { return TuneDuration("tune_llm_connect_timeout") }
+func llmRequestTimeout() time.Duration { return TuneDuration("tune_llm_request_timeout") }
+
+func init() {
+	RegisterTunable(TunableSpec{Key: "tune_llm_connect_timeout", Category: "Timeouts", Label: "LLM connect timeout", Help: "Dial + TLS handshake cap for LLM API connections.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_llm_request_timeout", Category: "Timeouts", Label: "LLM request timeout (fallback)", Help: "Fallback per-request timeout for LLM endpoints when request_timeout_seconds is unset.", Kind: KindMinutes, Default: 12, Min: 1, Max: 60})
+}
 
 const (
 	openAIEndpoint = "https://api.openai.com/v1"
@@ -350,7 +356,7 @@ func OpenAIModels(apiKey string) ([]string, error) {
 	client := &apiclient.APIClient{
 		Server:         "api.openai.com",
 		VerifySSL:      true,
-		ConnectTimeout: llmConnectTimeout,
+		ConnectTimeout: llmConnectTimeout(),
 		RequestTimeout: 15 * time.Second, // small, fast models listing
 		AuthFunc: func(req *http.Request) {
 			req.Header.Set("Authorization", "Bearer "+apiKey)
@@ -399,7 +405,7 @@ func LlamaCppModels(baseURL string) ([]string, error) {
 	client := &apiclient.APIClient{
 		Server:         u.Host,
 		URLScheme:      u.Scheme,
-		ConnectTimeout: llmConnectTimeout,
+		ConnectTimeout: llmConnectTimeout(),
 		RequestTimeout: 15 * time.Second,
 		AuthFunc:       func(req *http.Request) {},
 	}
@@ -438,7 +444,7 @@ func OllamaModels(baseURL string) ([]string, error) {
 	client := &apiclient.APIClient{
 		Server:         u.Host,
 		URLScheme:      u.Scheme,
-		ConnectTimeout: llmConnectTimeout,
+		ConnectTimeout: llmConnectTimeout(),
 		RequestTimeout: 15 * time.Second,
 		AuthFunc:       func(req *http.Request) {},
 	}
@@ -485,8 +491,8 @@ func newOpenAILLM(apiKey string, model string, endpoint string, api *apiclient.A
 	if api == nil {
 		api = &apiclient.APIClient{
 			VerifySSL:      true,
-			ConnectTimeout: llmConnectTimeout,
-			RequestTimeout: llmRequestTimeout,
+			ConnectTimeout: llmConnectTimeout(),
+			RequestTimeout: llmRequestTimeout(),
 		}
 	}
 	// Parse the endpoint to set the server and scheme on the APIClient.
@@ -622,21 +628,22 @@ func resizeImage(src []byte) []byte {
 	}
 	bounds := img.Bounds()
 	w, h := bounds.Dx(), bounds.Dy()
-	if w <= visionMaxDim && h <= visionMaxDim {
+	maxDim := visionMaxDim()
+	if w <= maxDim && h <= maxDim {
 		return src // already small enough
 	}
 	// Compute new dimensions preserving aspect ratio.
 	var nw, nh int
 	if w >= h {
-		nw = visionMaxDim
-		nh = h * visionMaxDim / w
+		nw = maxDim
+		nh = h * maxDim / w
 	} else {
-		nh = visionMaxDim
-		nw = w * visionMaxDim / h
+		nh = maxDim
+		nw = w * maxDim / h
 	}
 	resized := resizePNG(img, nw, nh)
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: visionJQQual}); err != nil {
+	if err := jpeg.Encode(&buf, resized, &jpeg.Options{Quality: visionJQQual()}); err != nil {
 		return src
 	}
 	return buf.Bytes()
@@ -967,7 +974,7 @@ func snoopOAIResponse(statusCode int, body []byte) {
 func (c *openAIClient) streamReadTimeout() time.Duration {
 	t := c.streamIdleTimeout
 	if t == 0 {
-		t = DefaultStreamIdleTimeout
+		t = DefaultStreamIdleTimeout()
 	}
 	if c.api.RequestTimeout > t {
 		t = c.api.RequestTimeout
@@ -1781,7 +1788,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	// strangling legitimately-slow streams.
 	watchdogTimeout := c.streamIdleTimeout
 	if watchdogTimeout == 0 {
-		watchdogTimeout = DefaultStreamIdleTimeout
+		watchdogTimeout = DefaultStreamIdleTimeout()
 	}
 	streamRead := c.streamReadTimeout()
 	ctxDeadline := "none"

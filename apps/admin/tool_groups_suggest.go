@@ -29,7 +29,20 @@ var fieldsSuggestableToolGroup = map[string]bool{
 	"description": true,
 }
 
-const toolGroupSuggestTimeout = 60 * time.Second
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_tool_group_suggest_timeout",
+		Category: "Timeouts",
+		Label:    "Tool Group Suggest Timeout",
+		Help:     "Max time for the LLM call backing the Tool Groups suggest/auto-create endpoints.",
+		Kind:     KindSeconds,
+		Default:  60,
+		Min:      10,
+		Max:      300,
+	})
+}
+
+func toolGroupSuggestTimeout() time.Duration { return TuneDuration("tune_tool_group_suggest_timeout") }
 
 func (a *AdminApp) handleToolGroupSuggest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -62,7 +75,7 @@ func (a *AdminApp) handleToolGroupSuggest(w http.ResponseWriter, r *http.Request
 	// it'll be the one referencing the group by name later.
 	wantsBoth := req.Field == "description" && emptyRecordField(req.Record, "name")
 
-	ctx, cancel := context.WithTimeout(r.Context(), toolGroupSuggestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), toolGroupSuggestTimeout())
 	defer cancel()
 
 	var prompt, sysPrompt string
@@ -336,7 +349,7 @@ func (a *AdminApp) handleToolGroupAutoCreate(w http.ResponseWriter, r *http.Requ
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), toolGroupSuggestTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), toolGroupSuggestTimeout())
 	defer cancel()
 
 	// Reuse the same "give me NAME + DESCRIPTION" prompt the suggest
