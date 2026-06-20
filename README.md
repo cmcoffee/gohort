@@ -204,9 +204,9 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 |-----|---------|
 | `admin` | Administrator panel — user management, app permissions, secure-API credentials, remote MCP servers (incl. per-user OAuth connect), pending-tool approval, skills curation, tool groups, pipeline view/delete (across all users), **all service config** (LLM, embeddings, STT, image gen, search, SMTP, network, cost rates), maintenance one-shots, scheduled tasks |
 | `orchestrate` | Agency — central agent fleet runner. Chat with seed agents (Chat, Builder, Research, Code Reviewer, …) or user-authored ones; per-(user, agent) memory across four layers (always-in-prompt facts, vector-grown reference memory, semantic knowledge, and a **graph layer** of entities + relationships via `link_entities` / `recall_about`); plan-driven multi-step authoring; sub-agent dispatch with per-caller allowlists; attachable pipelines surfaced as callable tools; SSE streaming + interjections |
-| `agents` | Public per-agent surface — exposed agents from Agency get individual `/agents/<slug>/` URLs (admins flip Exposed=true; end-users get a chat surface scoped to that one agent) |
+| `agents` | Dashboard per-agent surface — agents an admin publishes from Agency ("Publish App to Dashboard") get individual `/agents/<slug>/` URLs. Streamlined chat-first; permission-gated (a granted user gets a chat surface scoped to that one agent, with their own per-(user, agent) sessions + data). Not management — config lives in admin-only Agency |
 | `knowledge` | Document Collections — shared / per-user RAG buckets agents attach to. Upload PDFs/DOCX/text; autofill from web with optional LLM judge; FilterRules-driven scope |
-| `phantom` | iMessage assistant — gatekeeper, per-conversation curation, chat-scoped vector knowledge, async agent dispatch with SMS-friendly digestion, interactive progress narration (tool/agent-call status), scheduled callbacks |
+| `bridges` | Messaging transport — connect a messaging service (iMessage, Telegram, …) to a channel agent: inbound routes to the bound agent, its replies route back out. Gatekeeper, per-conversation curation, auto-reply policy, outbound de-markdown at the single send chokepoint, and per-service key management. Pure transport — the agent intelligence is an `orchestrate` channel agent; the macOS iMessage relay runs in `gohort-desktop`. (Replaces the retired `phantom` app, whose own agent engine was folded into `orchestrate`.) |
 | `servitor` | SSH-based system investigator with plan-driven flow (set_plan / execute / revise / gap-detect / skip-and-revisit), persistent technique recording, mapping runs saved as sessions, exportable knowledge brief (`.md`, secrets redacted), private-only routing, xterm terminal pane |
 | `techwriter` | Technical documentation co-editor |
 | `codewriter` | Script/query co-author with saved snippets, reusable values, and saved context blocks |
@@ -217,7 +217,7 @@ For Ollama models without native tool support, set Native Tool Calling to "no" i
 
 | Client | Purpose |
 |--------|---------|
-| `gohort-desktop` | Native desktop host (Wails), shipped as **two apps**: **Gohort.app** — the viewer window (reverse-proxies the gohort web UI; no special permissions) — and **Gohort-Bridge.app** — an always-on menu-bar daemon that owns the host's OS permissions and exposes local capabilities (filesystem read/write, screenshot, contacts) plus, on macOS, the iMessage relay, all dispatched from the gohort server over a per-user WebSocket. One unified API key authenticates both the tool bridge and `/phantom/api/*`. Per-invocation approval (auto-approve toggle), read/write folder consent, MCP host. See `gohort-desktop/README.md`. |
+| `gohort-desktop` | Native desktop host (Wails), shipped as **two apps**: **Gohort.app** — the viewer window (reverse-proxies the gohort web UI; no special permissions) — and **Gohort-Bridge.app** — an always-on menu-bar daemon that owns the host's OS permissions and exposes local capabilities (filesystem read/write, screenshot, contacts) plus, on macOS, the iMessage relay that feeds the **Bridges** transport app, all dispatched from the gohort server over a per-user WebSocket. One unified API key authenticates both the tool bridge and `/bridges/api/*`. Per-invocation approval (auto-approve toggle), read/write folder consent, MCP host. See `gohort-desktop/README.md`. |
 
 ## Where it's going
 
@@ -308,13 +308,13 @@ gohort/
 │   └── webui/               # Shared web UI theme + embedded Orbitron wordmark font
 ├── apps/                # Built-in apps
 │   ├── admin/               # Administrator panel — users, settings, credentials, pending tools, skills, tool groups, all service config
-│   ├── agents/              # Public per-agent surface — one URL per exposed agent
+│   ├── agents/              # Dashboard per-agent surface — one URL per published agent
+│   ├── bridges/             # Messaging transport — services (iMessage/Telegram/…) → channel agents (Mac relay lives in gohort-desktop)
 │   ├── codewriter/          # Script/query co-author with snippets, values, saved contexts
 │   ├── hello/               # Minimal scaffold app — canonical core/ui reference
 │   ├── knowledge/           # Document Collections — RAG buckets agents attach to (upload, autofill, filter rules)
 │   ├── ollama_proxy/        # Ollama-compatible HTTP proxy
 │   ├── orchestrate/         # Agency — agent fleet runner, plan-driven authoring, memory + knowledge per (user, agent), skill activation, sub-agent dispatch
-│   ├── phantom/             # iMessage assistant (Mac relay lives in gohort-desktop)
 │   ├── servitor/            # SSH-based system investigator with plan-driven flow + xterm terminal pane
 │   └── techwriter/          # Technical documentation editor
 └── tools/               # Chat tools (built-in, registered via init)

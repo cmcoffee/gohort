@@ -9336,6 +9336,12 @@ const runtimeJS = `
       // the session list; everything else lives in the Manage dropdown. One pass
       // keeps orchBtns/orchBadges index-aligned with cfg.orchestrator_nav.
       pinnedEl = el('div', {class: 'ui-channel-pinned', style: 'display:none;flex-direction:column;gap:0.2rem;padding:0.45rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'});
+      // The "Manage ▾" dropdown only earns its place when there's at least one
+      // NON-pinned nav item to put in it (a management view or a channel action).
+      // An alt-nav agent with no such items (e.g. a published dashboard agent that
+      // carries the Cortex hero thread but no management surface) shows no empty
+      // Manage button — applyOrchMode gates manageControl on this.
+      var hasManageMenu = (cfg.orchestrator_nav || []).some(function(it){ return !it.pinned; });
       (cfg.orchestrator_nav || []).forEach(function(item, i) {
         var badge = null;
         var b;
@@ -9415,7 +9421,7 @@ const runtimeJS = `
         var isOrch = isAltNavAgent(agentId);
         // Fleet agents get the "Manage ▾" control in the topbar; the rail is
         // threads only. Non-fleet agents hide it (and any open overlay/menu).
-        if (manageControl) manageControl.style.display = isOrch ? '' : 'none';
+        if (manageControl) manageControl.style.display = (isOrch && hasManageMenu) ? '' : 'none';
         if (pinnedEl) pinnedEl.style.display = isOrch ? '' : 'none';
         // Hide the Channel hero immediately for non-fleet agents; loadSessions
         // re-shows + fills it for fleet agents from the home thread.

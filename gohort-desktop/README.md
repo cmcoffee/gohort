@@ -25,8 +25,8 @@ launchd / Run-key ── Gohort-Bridge.app (cmd/gohort-bridge; always on)
                        ├─ WS tool bridge → gohort  /api/desktop/ws   (X-API-Key)
                        ├─ local tools: filesystem.* , contacts.lookup / contacts.search
                        ├─ MCP host (configured stdio MCP servers → tools)
-                       ├─ iMessage relay (macOS): chat.db → /phantom/api/hook,
-                       │                          outbox poll → /phantom/api/poll
+                       ├─ iMessage relay (macOS): chat.db → /bridges/api/hook,
+                       │                          outbox poll → /bridges/api/poll
                        ├─ owns Full Disk Access, Contacts, folder consent
                        └─ "Open Gohort" → launches Gohort.app
 
@@ -37,9 +37,9 @@ user / tray opens ──── Gohort.app (Wails viewer; quittable, no perms)
 
 ## Unified auth + config
 
-- **One API key** authenticates **both** `/phantom/api/*` and the tool
+- **One API key** authenticates **both** `/bridges/api/*` and the tool
   bridge `/api/desktop/ws` (server side: `core.RegisterAPIKeyValidator` +
-  the phantom key's `Owner`). Set it once in the viewer.
+  the bridge key's `Owner`). Set it once in the viewer.
 - **Config is a lock-free JSON sidecar** — `core.BridgeConfig`
   (`server_url`, `api_key`, allowed read/write roots, …) at
   `<app-support>/gohort-desktop/bridge-config.json` (0600). The viewer

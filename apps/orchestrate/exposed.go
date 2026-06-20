@@ -316,6 +316,48 @@ func (T *OrchestrateApp) PublicHandleAgentFacts(w http.ResponseWriter, r *http.R
 	T.handleAgentFacts(w, r, agentID)
 }
 
+// PublicHandleAgentGraph* expose the per-(user, agent) graph memory (the
+// entities + relationships the agent linked about THIS visitor via
+// link_entities) on the dashboard surface — read + delete only, scoped via
+// RequireUser so a visitor only ever sees and prunes their OWN graph. Same
+// data-hygiene posture as the Reference Memory wipe; the underlying handlers are
+// already per-user (UserDB + factsNamespace), so these just supply the visitor.
+func (T *OrchestrateApp) PublicHandleAgentGraph(w http.ResponseWriter, r *http.Request, agentID string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentGraph(w, r, user, agentID)
+}
+func (T *OrchestrateApp) PublicHandleAgentGraphEntityDelete(w http.ResponseWriter, r *http.Request, agentID, entityID string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentGraphEntityDelete(w, r, user, agentID, entityID)
+}
+func (T *OrchestrateApp) PublicHandleAgentGraphAttrDelete(w http.ResponseWriter, r *http.Request, agentID, entityID string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentGraphAttrDelete(w, r, user, agentID, entityID)
+}
+func (T *OrchestrateApp) PublicHandleAgentGraphAliasDelete(w http.ResponseWriter, r *http.Request, agentID, entityID string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentGraphAliasDelete(w, r, user, agentID, entityID)
+}
+func (T *OrchestrateApp) PublicHandleAgentGraphEdgeDelete(w http.ResponseWriter, r *http.Request, agentID string) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentGraphEdgeDelete(w, r, user, agentID)
+}
+
 // PublicHandleAgentKnowledge serves the per-(user, agent) vector
 // knowledge chunk count + wipe without the admin gate. Mirrors
 // handleAgentKnowledge.

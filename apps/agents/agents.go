@@ -135,6 +135,20 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleSessionOne(w, r, agent.ID, strings.TrimPrefix(rest, "api/sessions/"))
 	case rest == "api/facts":
 		orch.PublicHandleAgentFacts(w, r, agent.ID)
+	case rest == "api/graph":
+		orch.PublicHandleAgentGraph(w, r, agent.ID)
+	case rest == "api/graph/edge":
+		orch.PublicHandleAgentGraphEdgeDelete(w, r, agent.ID)
+	case strings.HasPrefix(rest, "api/graph/entity/"):
+		sub := strings.TrimPrefix(rest, "api/graph/entity/")
+		switch {
+		case strings.HasSuffix(sub, "/attr"):
+			orch.PublicHandleAgentGraphAttrDelete(w, r, agent.ID, strings.TrimSuffix(sub, "/attr"))
+		case strings.HasSuffix(sub, "/alias"):
+			orch.PublicHandleAgentGraphAliasDelete(w, r, agent.ID, strings.TrimSuffix(sub, "/alias"))
+		default:
+			orch.PublicHandleAgentGraphEntityDelete(w, r, agent.ID, sub)
+		}
 	case rest == "api/knowledge":
 		orch.PublicHandleAgentKnowledge(w, r, agent.ID)
 	case rest == "api/agent":
@@ -297,11 +311,12 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		//     shared knowledge base (read-only — admin
 		//     curated) + the end-user's own uploaded docs
 		//     (editable, private to them).
-		// Streamlined chat-first surface: the secondary per-visitor actions collapse
-		// into a single "⋯ ▾" overflow (ToolbarAction.Group, honored by the
-		// agent_loop_panel toolbar) so the page lands you straight in the chat with
-		// just New + ⋯ visible. No management here — config lives in admin-only
-		// Agency; the dashboard app is purely for using the agent.
+		// Per-visitor surfaces — the granted user managing THEIR OWN data (notes,
+		// uploads, session export). These collapse into a single "⋯" overflow that
+		// sits AFTER the Private / Clean mode toggles (the dashboardBarCSS order
+		// rule), so the bar reads [Private] [Clean] [⋯] and the page lands you
+		// straight in the chat. What does NOT belong here is agent MANAGEMENT —
+		// config lives in admin-only Agency, never on the dashboard surface.
 		Actions: []ui.ToolbarAction{
 			{Label: "Memory", Group: "⋯", Title: "Review and prune the notes this agent has accumulated from your conversations.",
 				Method: "client", URL: "agents_memory_modal"},
@@ -314,20 +329,14 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	}
 
 	// Channel agents publish as a single ongoing home thread per visitor.
-	// Swap the topbar-dropdown session layout for the rail + channel box,
-	// pin the visitor to their per-(user, agent) channel thread, and show
-	// only the per-visitor-safe nav items. The owner's fleet-management
-	// rows (Enabled agents / Authorizations / Event monitors / standing
-	// agents) are deliberately ABSENT — those reach admin-only endpoints
-	// that aren't mounted on this public surface.
+	// Swap the topbar-dropdown session layout for the rail + channel box and
+	// pin the visitor to their per-(user, agent) channel thread. NO "Manage ▾"
+	// menu and no channel-admin actions here — those belong to Agency. We don't
+	// set OrchestratorNav at all, so the dashboard app carries only the Cortex
+	// hero thread; the empty-menu guard in core/ui hides the Manage control.
 	if agent.Cortex {
 		panel.ListPosition = "" // use the left rail so the channel box has a home
 		panel.AltNavFlag = "ORCH_CHANNEL_AGENTS"
-		panel.OrchestratorNav = []ui.OrchestratorNavItem{
-			{Label: "Channel"},
-			{Label: "Clear channel", ActionURL: "api/channel/clear", Variant: "warning",
-				Confirm: "Clear this conversation and its rolling summary? This can't be undone."},
-		}
 	}
 
 	page := ui.Page{
@@ -341,7 +350,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 				Body:     panel,
 			},
 		},
-		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + memoryModalScript + docsModalScript,
+		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -839,6 +848,44 @@ const intakeFormAssets = `<style>
 
 // memoryModalScript wires the toolbar's "Memory" client action to a
 // modal that mirrors the orchestrate admin memory modal — Notes +
+// dashboardBarCSS gives the dashboard app's top bar the same compact, transparent
+// treatment list-top mode already ships — but applies it to rail-mode (Cortex)
+// agents too, which otherwise keep the default boxy, lighter-bg ui-row-btn (the
+// "square around each button" look). One horizontal row, the mode toggles
+// (Private / Clean) BEFORE the actions / ⋯ overflow (CSS order), and the action
+// buttons + the ⋯ toggle styled like the mode pills (transparent, compact, same
+// padding/font/radius) instead of standing out as boxes. App-scoped via
+// ExtraHeadHTML so Agency / bridges / servitor layouts are untouched.
+const dashboardBarCSS = `<style>
+/* One uniform top bar: the dark background goes on the topbar itself (not the
+   per-container bands), spanning the full width, with the modes + actions
+   containers made transparent so they don't leave a gap where one ends. Modes
+   (Private / Clean) render before the actions / ⋯ overflow (CSS order), and the
+   buttons match the mode pills (transparent, compact). Mirrors list-top mode for
+   rail-mode Cortex agents. App-scoped via ExtraHeadHTML. */
+.ui-agent-topbar {
+  flex-direction: row !important; align-items: center; flex-wrap: wrap; gap: 0.4rem;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  padding: 0.3rem 0.7rem;
+}
+.ui-agent-extras-slot { order: 1; flex: 0 1 auto; }
+.ui-agent-modes { background: transparent !important; border-top: 0 !important; padding: 0 !important; }
+.ui-agent-actions {
+  order: 2; flex: 0 1 auto;
+  background: transparent !important; border-bottom: 0 !important; padding: 0 !important;
+  gap: 0.3rem; align-items: center;
+}
+.ui-agent-actions .ui-row-btn,
+.ui-agent-actions button {
+  min-width: 0 !important; min-height: 0 !important;
+  padding: 0.2rem 0.55rem !important;
+  font-size: 0.75rem !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+}
+</style>`
+
 // Saved facts (or framing-overridden header) + Knowledge (uploads
 // + accumulated corpus + chunk count + wipe). Scoped to the end-user
 // via the public /agents/<slug>/api/* endpoints; the calling user
@@ -971,6 +1018,105 @@ const memoryModalScript = `<script>
       inferredWrap.appendChild(inferredList);
       body.appendChild(inferredWrap);
 
+      // --- Graph Memory section (read-only list + per-entity / per-link delete) ---
+      // The visitor's OWN entities + relationships the agent linked about them via
+      // link_entities, recalled on demand with recall_about. Rides the Explicit
+      // Memory gate (hidden when disable_explicit), same as in Agency. Read + delete.
+      var graphWrap = document.createElement('div');
+      graphWrap.style.cssText = 'margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)';
+      var graphTitle = document.createElement('div');
+      graphTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
+      graphTitle.textContent = 'Graph Memory';
+      graphWrap.appendChild(graphTitle);
+      var graphIntro = document.createElement('div');
+      graphIntro.style.cssText = 'color:var(--text-mute);font-size:0.8rem;margin-bottom:0.5rem';
+      graphIntro.textContent = 'Entities and relationships this agent has recorded about you. Delete an entity (with its links) or a single relationship to prune what it remembers.';
+      graphWrap.appendChild(graphIntro);
+      var graphList = document.createElement('div');
+      graphWrap.appendChild(graphList);
+      body.appendChild(graphWrap);
+
+      function renderGraph(data) {
+        graphList.innerHTML = '';
+        var ents = (data && data.entities) || [];
+        var counts = (data && data.counts) || {};
+        if (counts.entities != null) {
+          graphTitle.textContent = 'Graph Memory (' + counts.entities + ' entit' + (counts.entities === 1 ? 'y' : 'ies') + ', ' + (counts.edges || 0) + ' link' + (counts.edges === 1 ? '' : 's') + ')';
+        }
+        if (!ents.length) {
+          var empty = document.createElement('div');
+          empty.style.cssText = 'color:var(--text-mute);font-style:italic;padding:0.4rem 0';
+          empty.textContent = 'No graph entries yet. Relationships the agent records about you will appear here.';
+          graphList.appendChild(empty);
+          return;
+        }
+        ents.forEach(function(e) {
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:flex-start;gap:0.5rem;padding:0.4rem 0;border-bottom:1px solid var(--border)';
+          var col = document.createElement('div');
+          col.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+          var head = document.createElement('div');
+          var nm = document.createElement('span');
+          nm.style.fontWeight = '600';
+          nm.textContent = e.name;
+          head.appendChild(nm);
+          if (e.kind) {
+            var kd = document.createElement('span');
+            kd.style.cssText = 'color:var(--text-mute);font-size:0.74rem;margin-left:0.35rem';
+            kd.textContent = '(' + e.kind + ')';
+            head.appendChild(kd);
+          }
+          col.appendChild(head);
+          if (e.aliases && e.aliases.length) {
+            var al = document.createElement('div');
+            al.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
+            al.textContent = 'aka ' + e.aliases.join(', ');
+            col.appendChild(al);
+          }
+          if (e.attrs) {
+            Object.keys(e.attrs).sort().forEach(function(k) {
+              var at = document.createElement('div');
+              at.style.cssText = 'color:var(--text-mute);font-size:0.74rem';
+              at.textContent = k + ': ' + e.attrs[k];
+              col.appendChild(at);
+            });
+          }
+          (e.edges || []).forEach(function(ed) {
+            var er = document.createElement('div');
+            er.style.cssText = 'display:flex;align-items:center;gap:0.35rem;margin-top:0.15rem';
+            var lbl = document.createElement('span');
+            lbl.style.fontSize = '0.8rem';
+            lbl.textContent = String.fromCharCode(8594) + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + (ed.note ? ' (' + ed.note + ')' : '');
+            er.appendChild(lbl);
+            var edel = document.createElement('span');
+            edel.style.cssText = 'cursor:pointer;color:var(--text-mute);font-size:0.85rem';
+            edel.textContent = String.fromCharCode(215);
+            edel.title = 'Remove this relationship';
+            edel.onclick = function() {
+              if (!confirm('Remove the relationship: ' + e.name + ' ' + ed.rel + ' ' + (ed.to_name || ed.to) + '?')) return;
+              var u = 'api/graph/edge?from=' + encodeURIComponent(e.id) + '&rel=' + encodeURIComponent(ed.rel) + '&to=' + encodeURIComponent(ed.to);
+              fetch(u, {method: 'DELETE'}).then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); er.remove(); }).catch(function(err){ alert('Delete failed: ' + (err && err.message || err)); });
+            };
+            er.appendChild(edel);
+            col.appendChild(er);
+          });
+          var del = document.createElement('button');
+          del.type = 'button';
+          del.style.cssText = 'padding:0.15rem 0.45rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px;color:var(--danger,#ff7b72);font-size:0.85rem;cursor:pointer;flex:0 0 auto';
+          del.textContent = String.fromCharCode(215);
+          del.title = 'Delete this entity and all its relationships';
+          del.onclick = function() {
+            if (!confirm('Delete ' + e.name + ' and all its relationships?')) return;
+            fetch('api/graph/entity/' + encodeURIComponent(e.id), {method: 'DELETE'}).then(function(r){ if (!r.ok && r.status !== 204) throw new Error('HTTP ' + r.status); row.remove(); }).catch(function(err){ alert('Delete failed: ' + (err && err.message || err)); });
+          };
+          row.appendChild(col);
+          row.appendChild(del);
+          graphList.appendChild(row);
+        });
+      }
+
+      fetch('api/graph').then(function(r){ return r.ok ? r.json() : null; }).then(function(d){ renderGraph(d); }).catch(function(){ renderGraph(null); });
+
       function renderInferred(items) {
         inferredList.innerHTML = '';
         wipeBtn.disabled = !items || !items.length;
@@ -986,14 +1132,26 @@ const memoryModalScript = `<script>
           row.style.cssText = 'display:flex;gap:0.4rem;align-items:flex-start;padding:0.35rem 0;border-bottom:1px solid var(--border)';
           var col = document.createElement('div');
           col.style.cssText = 'flex:1;font-size:0.85rem;line-height:1.4';
+          // Collapsed by default (match Agency): the topic line is the disclosure
+          // trigger; the chunk text stays hidden until clicked, so the list reads
+          // as a scannable set of topics even with many entries.
           var topic = document.createElement('div');
-          topic.style.cssText = 'color:var(--text-mute);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em';
-          topic.textContent = (item.topic || 'general') + (item.source_doc ? ' · ' + item.source_doc : '');
+          topic.style.cssText = 'color:var(--text-mute);font-size:0.7rem;text-transform:uppercase;letter-spacing:0.04em;cursor:pointer;user-select:none';
+          var topicCaret = document.createElement('span');
+          topicCaret.style.cssText = 'display:inline-block;margin-right:0.4rem;transition:transform 0.15s';
+          topicCaret.textContent = String.fromCharCode(9656); // ▸
+          topic.appendChild(topicCaret);
+          topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' · ' + item.source_doc : '')));
           col.appendChild(topic);
           var content = document.createElement('div');
-          content.style.cssText = 'white-space:pre-wrap;margin-top:0.15rem';
+          content.style.cssText = 'white-space:pre-wrap;margin-top:0.15rem;display:none';
           content.textContent = item.content || '';
           col.appendChild(content);
+          topic.addEventListener('click', function() {
+            var open = content.style.display === 'none';
+            content.style.display = open ? '' : 'none';
+            topicCaret.style.transform = open ? 'rotate(90deg)' : '';
+          });
           var del = document.createElement('button');
           del.type = 'button';
           del.textContent = String.fromCharCode(215);
@@ -1031,6 +1189,7 @@ const memoryModalScript = `<script>
       fetch('api/agent').then(function(r){ return r.ok ? r.json() : null; }).then(function(a) {
         if (!a) return;
         if (a.disable_explicit) factsWrap.style.display = 'none';
+        if (a.disable_explicit) graphWrap.style.display = 'none'; // graph rides the Explicit gate
         if (a.disable_inferred) inferredWrap.style.display = 'none';
         if (a.disable_explicit && a.disable_inferred) {
           disabledNotice.style.display = '';
