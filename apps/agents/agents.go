@@ -297,12 +297,17 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		//     shared knowledge base (read-only — admin
 		//     curated) + the end-user's own uploaded docs
 		//     (editable, private to them).
+		// Streamlined chat-first surface: the secondary per-visitor actions collapse
+		// into a single "⋯ ▾" overflow (ToolbarAction.Group, honored by the
+		// agent_loop_panel toolbar) so the page lands you straight in the chat with
+		// just New + ⋯ visible. No management here — config lives in admin-only
+		// Agency; the dashboard app is purely for using the agent.
 		Actions: []ui.ToolbarAction{
-			{Label: "Memory", Title: "Review and prune the notes this agent has accumulated from your conversations.",
+			{Label: "Memory", Group: "⋯", Title: "Review and prune the notes this agent has accumulated from your conversations.",
 				Method: "client", URL: "agents_memory_modal"},
-			{Label: "Knowledge", Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus.",
+			{Label: "Knowledge", Group: "⋯", Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus.",
 				Method: "client", URL: "agents_knowledge_modal"},
-			{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+			{Label: "Copy session", Group: "⋯", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
 				Method: "client", URL: "copy_session"},
 		},
 		Modes: modes,

@@ -1627,7 +1627,7 @@ type AgentLoopPanel struct {
 	// hardcodes no app-specific global or session-id scheme; the app owns the
 	// name, the membership, and the per-agent session.
 	AltNavFlag string `json:"alt_nav_flag,omitempty"`
-	// AltPrimaryLabel names the pinned home-thread hero row (the ⚡ row at the
+	// AltPrimaryLabel names the pinned home-thread hero row (the 🧠 row at the
 	// top of the rail) for alt-nav agents. App-owned wording; core/ui defaults
 	// to "Channel" when unset rather than hardcoding any one app's term.
 	AltPrimaryLabel string `json:"alt_primary_label,omitempty"`

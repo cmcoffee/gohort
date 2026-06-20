@@ -4121,14 +4121,33 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		facts = nil
 	}
 	sys := prependAgentContext(persona, t.agent, facts)
-	// Cortex fork-seeding: a NON-cortex, NON-incognito session of a Cortex-enabled
-	// agent inherits the cortex's recent STANDING context (received channel
-	// messages, monitor fires) as background awareness — so the agent greets you
-	// already aware. Skip the cortex's own thread (it already holds these).
-	// Concise live-read; empty when nothing's recent. Cross-session FACT
-	// continuity rides memory, not this.
-	if !incognito && t.agent.Cortex && t.session != nil && t.session.ID != cortexSessionID(t.agent.ID) {
-		sys += cortexContextBlock(t.udb, t.agent.ID)
+	// Cortex awareness injection — recent STANDING context (received channel
+	// messages, monitor fires) as read-only background so the agent greets you
+	// already aware. Concise live-read; empty when nothing's recent. Cross-session
+	// FACT continuity rides memory, not this. Two cases:
+	//
+	//   - Normal (owner/admin): a NON-cortex session seeds from the agent's real
+	//     cortex in the caller's own namespace; the cortex's OWN thread skips it
+	//     (it already holds these messages).
+	//
+	//   - Shared publish: a GRANTED user on a "Share Cortex awareness" agent is
+	//     pinned to their OWN (blank) per-visitor cortex thread, so seeding from
+	//     t.udb gives them nothing. Instead inject the OWNER's real cortex
+	//     read-only — even on the cortex thread — so they get the agent that
+	//     "knows the things" without ever reaching the thread itself. Skipped for
+	//     seed agents (no single owner namespace) and for owner runs (t.udb is
+	//     already the real cortex).
+	if !incognito && t.agent.Cortex && t.session != nil {
+		shareFromOwner := t.agent.ShareCortexKnowledge &&
+			t.agent.Owner != "" && t.agent.Owner != seedOwner && t.user != t.agent.Owner
+		switch {
+		case shareFromOwner:
+			if odb := UserDB(t.app.DB, t.agent.Owner); odb != nil {
+				sys += cortexContextBlock(odb, t.agent.ID)
+			}
+		case t.session.ID != cortexSessionID(t.agent.ID):
+			sys += cortexContextBlock(t.udb, t.agent.ID)
+		}
 	}
 	if g := strings.TrimSpace(t.agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g

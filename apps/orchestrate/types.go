@@ -60,6 +60,18 @@ type AgentRecord struct {
 	// an agent (see docs/channels-and-agents.md).
 	Cortex bool `json:"channel,omitempty"`
 
+	// ShareCortexKnowledge, when true, lets a GRANTED user on the dashboard
+	// surface get answers informed by the agent's REAL Cortex awareness
+	// (its recent channel feed + monitor fires), sourced read-only from the
+	// OWNER's namespace, instead of the blank per-visitor thread they get by
+	// default. The granted user still cannot open, read, or manage the Cortex
+	// thread itself — only the agent's distilled awareness informs the answer.
+	// Owner/admin runs (Agency) are unaffected (they already read the real
+	// Cortex from their own namespace). Default off: a personal-assistant agent
+	// fed by private channels stays a blank clone for granted users until the
+	// owner explicitly opts in. Only meaningful when Cortex is on.
+	ShareCortexKnowledge bool `json:"share_cortex_knowledge,omitempty"`
+
 	// Fleet, when true, attaches the fleet-management toolset to the agent:
 	// delegate, create/list/run/pause/delete standing agents, the run
 	// ledger, event-monitor management, and history recall. Independent of
