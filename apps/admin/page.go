@@ -1439,6 +1439,20 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Agent Capabilities — Outward & Spending",
+				Subtitle: "The blast radius of each agent: what it can do that reaches REAL PEOPLE or COSTS MONEY. Read-only, derived live from each agent's bound channels, its messaging tools, and the paid credentials its attached tools dispatch through. Agents with no outward or spending reach are omitted — so this list IS the surface to watch.",
+				Body: ui.Table{
+					Source: "/orchestrate/api/capabilities",
+					RowKey: "agent_id",
+					Columns: []ui.Col{
+						{Field: "agent", Label: "Agent", Flex: 1},
+						{Field: "message_summary", Label: "Can message (people)", Flex: 2},
+						{Field: "spend_summary", Label: "Can spend (paid APIs)", Flex: 2},
+					},
+					EmptyText: "No agent has outward or spending capability — none can text people, send email, or spend through a paid credential.",
+				},
+			},
+			{
 				Title:    "Local Model Scheduler",
 				Subtitle: "Concurrent-request caps for local LLM backends. Default 1 (strict serial). Raise only when the backend supports parallel requests. Applies immediately on save (the live LLM is rebuilt).",
 				Body: ui.FormPanel{
@@ -1542,6 +1556,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Persistent Tools (Active)": "Tools", "Tool Groups": "Tools",
 		"Skills": "Tools", "Pipelines": "Tools",
 
+		"Agent Capabilities — Outward & Spending": "Agents",
+
 		"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
 		"Migrations": "Maintenance", "Vector Index": "Maintenance",
 		"Database Browser": "Maintenance",
@@ -1553,6 +1569,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true,
 		"Migrations": true, "Database Browser": true,
+		"Agent Capabilities — Outward & Spending": true,
 	}
 	// Generated tunable sections — one FormPanel per registered category, built
 	// from core's tunable registry so a newly-registered knob appears here with
@@ -1572,7 +1589,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// by this rank so the tabs read in a sensible order regardless of the
 	// section authoring order above; sections keep their relative order
 	// within each group.
-	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Tools": 4, "Tuning": 5, "Maintenance": 6}
+	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Tools": 5, "Tuning": 6, "Maintenance": 7}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})

@@ -286,6 +286,7 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/agent/", g(T.handleAgentPage))
 
 	T.HandleFunc("/api/agents", g(T.handleAgentList))
+	T.HandleFunc("/api/capabilities", g(T.handleAgentCapabilities))
 	T.HandleFunc("/api/channels", g(T.handleChannels))
 	T.HandleFunc("/api/agents/import", g(T.handleAgentImport))
 	T.HandleFunc("/api/agents/suggest", g(T.handleAgentSuggest))

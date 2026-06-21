@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -186,10 +187,21 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 // tool by the same name (the session version is what the LLM just
 // authored / iterated on; persistent is the older approved copy).
 func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) int {
-	if sess == nil || len(rec.AllowedTools) == 0 {
+	if sess == nil {
 		return 0
 	}
+	// An "everything" surface (empty / nil AllowedTools — including the "*"
+	// sentinel that create_agent already collapsed to nil) STILL needs its
+	// freshly-authored tools snapshotted. Otherwise the LLM's documented "make a
+	// tool, then make an agent that uses it" flow silently loses the tool when the
+	// agent is given the full pool: the session draft dies at session end and was
+	// never copied onto the record. For that case we snapshot the SESSION DRAFTS
+	// only — persistent-pool tools load via the default pool anyway, so copying
+	// them would just bloat the record.
+	everything := len(rec.AllowedTools) == 0
+
 	byName := make(map[string]*TempTool)
+	draftNames := []string{}
 	// Persistent pool first; session overrides.
 	if sess.Username != "" {
 		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
@@ -201,17 +213,26 @@ func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) int {
 		for _, draft := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
 			t := draft
 			byName[t.Name] = &t
+			draftNames = append(draftNames, t.Name)
 		}
 	}
 	if len(byName) == 0 {
 		return 0
+	}
+	// Which names to snapshot: a specific allowlist snapshots its named tools
+	// (persistent OR session, for self-containment); an everything surface
+	// snapshots the session drafts authored this session.
+	names := rec.AllowedTools
+	if everything {
+		sort.Strings(draftNames) // deterministic Tools[] order
+		names = draftNames
 	}
 	already := make(map[string]bool, len(rec.Tools))
 	for _, t := range rec.Tools {
 		already[t.Name] = true
 	}
 	copied := 0
-	for _, name := range rec.AllowedTools {
+	for _, name := range names {
 		if already[name] {
 			continue
 		}

@@ -240,19 +240,16 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// agent app (one slug → one agent); no need for a dropdown-change
 	// listener like Agency has.
 	agentIDJSON, _ := json.Marshal(agent.ID)
-	// Channel agents pin every visitor to one ongoing home thread (a
-	// rolling summary keeps it bounded) instead of ad-hoc sessions. The
-	// runtime reads this agentId→pinned-session map (named via AltNavFlag)
-	// to know which agents pin AND what thread to pin them to. The session
-	// id is identical for all visitors; per-(user, agent) scoping resolves
-	// it to a different physical thread per person.
-	channelGlobal := ""
-	if agent.Cortex {
-		chMap, _ := json.Marshal(map[string]string{agent.ID: orchestrate.CortexSessionID(agent.ID)})
-		channelGlobal = "window.ORCH_CHANNEL_AGENTS = " + string(chMap) + ";"
-	}
+	// Cortex agents do NOT pin dashboard visitors to a Cortex/home thread: the
+	// Cortex is the agent's MIND and lives in admin-only Agency, not on this
+	// consumption surface. Granted users (and the owner viewing their own card)
+	// get ordinary ad-hoc chat sessions here. Each NEW session is still SEEDED
+	// from the Cortex's standing awareness at turn time (runPlan's
+	// cortexContextBlock) — the owner's real Cortex when "Share Cortex awareness"
+	// is on, else the visitor's own namespace — so the agent shows up already
+	// aware without anyone being able to open/read/manage the thread itself.
 	intakeHead := "<script>window.AGENT_INTAKE_FORM = " + intakeJSON + ";" +
-		"window.GOHORT_AGENT_ID = " + string(agentIDJSON) + ";" + channelGlobal + "</script>" +
+		"window.GOHORT_AGENT_ID = " + string(agentIDJSON) + ";</script>" +
 		intakeFormAssets
 	// Private-mode toggle only renders when the agent's admin opted
 	// in via AllowPrivateMode AND ForcePrivate isn't on. ForcePrivate
@@ -283,6 +280,24 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 			SendField: "inferred_disabled",
 		})
 	}
+	// Toolbar actions (all in the "⋯" overflow). Memory is offered only when the
+	// agent actually has a memory layer to manage — when BOTH the Explicit
+	// (facts + graph) and Reference layers are disabled, the Memory modal would be
+	// empty, so the button is dropped entirely rather than opening to nothing.
+	// Knowledge (uploads + shared base) and Copy session are independent of memory.
+	var dashboardActions []ui.ToolbarAction
+	if !(agent.DisableExplicit && agent.DisableInferred) {
+		dashboardActions = append(dashboardActions, ui.ToolbarAction{
+			Label: "Memory", Group: "⋯", Method: "client", URL: "agents_memory_modal",
+			Title: "Review and prune the notes this agent has accumulated from your conversations.",
+		})
+	}
+	dashboardActions = append(dashboardActions,
+		ui.ToolbarAction{Label: "Knowledge", Group: "⋯", Method: "client", URL: "agents_knowledge_modal",
+			Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus."},
+		ui.ToolbarAction{Label: "Copy session", Group: "⋯", Method: "client", URL: "copy_session",
+			Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat."},
+	)
 	panel := ui.AgentLoopPanel{
 		ListURL:     "api/sessions",
 		LoadURL:     "api/sessions/{id}",
@@ -317,27 +332,15 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		// rule), so the bar reads [Private] [Clean] [⋯] and the page lands you
 		// straight in the chat. What does NOT belong here is agent MANAGEMENT —
 		// config lives in admin-only Agency, never on the dashboard surface.
-		Actions: []ui.ToolbarAction{
-			{Label: "Memory", Group: "⋯", Title: "Review and prune the notes this agent has accumulated from your conversations.",
-				Method: "client", URL: "agents_memory_modal"},
-			{Label: "Knowledge", Group: "⋯", Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus.",
-				Method: "client", URL: "agents_knowledge_modal"},
-			{Label: "Copy session", Group: "⋯", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
-				Method: "client", URL: "copy_session"},
-		},
-		Modes: modes,
+		Actions: dashboardActions,
+		Modes:   modes,
 	}
 
-	// Channel agents publish as a single ongoing home thread per visitor.
-	// Swap the topbar-dropdown session layout for the rail + channel box and
-	// pin the visitor to their per-(user, agent) channel thread. NO "Manage ▾"
-	// menu and no channel-admin actions here — those belong to Agency. We don't
-	// set OrchestratorNav at all, so the dashboard app carries only the Cortex
-	// hero thread; the empty-menu guard in core/ui hides the Manage control.
-	if agent.Cortex {
-		panel.ListPosition = "" // use the left rail so the channel box has a home
-		panel.AltNavFlag = "ORCH_CHANNEL_AGENTS"
-	}
+	// (Cortex agents intentionally get NO special dashboard layout: no pinned
+	// home thread, no rail channel box, no alt-nav, no "Manage ▾". The Cortex
+	// is the agent's mind and is reached only from Agency; here every published
+	// agent — Cortex or not — uses the same ordinary topbar-dropdown sessions.
+	// New sessions still seed from the Cortex at turn time, see intakeHead above.)
 
 	page := ui.Page{
 		Title:     display,

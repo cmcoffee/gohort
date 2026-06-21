@@ -3969,9 +3969,9 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef())
 	}
 	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID)...) // file_deliverable + note_to_cortex; nil for non-cortex
-	if !isBuilderAgent(t.agent.ID) {
-		out = append(out, t.sendToBuilderToolDef()) // escape to a full Builder session
-	}
+	// (send_to_builder removed — agents reach Builder by DIRECT dispatch
+	// (agents action="run", agent="builder") and iterate with it in-thread, rather
+	// than handing the user a one-click link into a separate Builder session.)
 	return out
 }
 
@@ -4130,18 +4130,17 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	//     cortex in the caller's own namespace; the cortex's OWN thread skips it
 	//     (it already holds these messages).
 	//
-	//   - Shared publish: a GRANTED user on a "Share Cortex awareness" agent is
-	//     pinned to their OWN (blank) per-visitor cortex thread, so seeding from
-	//     t.udb gives them nothing. Instead inject the OWNER's real cortex
-	//     read-only — even on the cortex thread — so they get the agent that
-	//     "knows the things" without ever reaching the thread itself. Skipped for
-	//     seed agents (no single owner namespace) and for owner runs (t.udb is
-	//     already the real cortex).
+	//   - Granted user (non-owner): runs in their OWN namespace, whose cortex is
+	//     blank — so seeding from t.udb gives them nothing. Inject the OWNER's
+	//     real cortex read-only, so they get the agent that "knows the things"
+	//     without ever reaching the thread itself (the dashboard exposes no cortex
+	//     thread at all). No opt-in: publishing the agent + granting access IS the
+	//     consent to share its standing awareness. Skipped for seed agents (no
+	//     single owner namespace).
 	if !incognito && t.agent.Cortex && t.session != nil {
-		shareFromOwner := t.agent.ShareCortexKnowledge &&
-			t.agent.Owner != "" && t.agent.Owner != seedOwner && t.user != t.agent.Owner
+		fromOwner := t.agent.Owner != "" && t.agent.Owner != seedOwner && t.user != t.agent.Owner
 		switch {
-		case shareFromOwner:
+		case fromOwner:
 			if odb := UserDB(t.app.DB, t.agent.Owner); odb != nil {
 				sys += cortexContextBlock(odb, t.agent.ID)
 			}
@@ -4554,7 +4553,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// the channel/dispatch surface via frameworkConversationalTools(): knowledge
 	// (introspect always; search/fetch when there's a corpus), find_tools,
 	// send_status, stay_silent/keep_going, load_tool, skills, the memory layers
-	// (Reference + Explicit + Graph), cortex deliverables, and send_to_builder.
+	// (Reference + Explicit + Graph), and cortex deliverables.
 	// Single source of truth so the web and channel catalogs can't drift.
 	var knowTools []AgentToolDef
 	knowTools = append(knowTools, t.frameworkConversationalTools(sess)...)

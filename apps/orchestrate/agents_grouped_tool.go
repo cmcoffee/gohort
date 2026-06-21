@@ -495,7 +495,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	}
 	// Shared sub-agent dispatch catalog — framework conversational tools
 	// (knowledge, find_tools, send_status, stay_silent, load_tool, skills, the
-	// memory layers, cortex deliverables, send_to_builder), the agents grouped
+	// memory layers, cortex deliverables), the agents grouped
 	// tool, attached pipelines, AND the target's custom tools. dispatchExtraTools
 	// is the SAME assembly the channel/dispatch path uses, so an inline
 	// agents(run) sub-agent sees the identical surface (this is the path that

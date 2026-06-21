@@ -140,49 +140,9 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession) string {
 	return b.String()
 }
 
-// sendToBuilderToolDef lets an orchestrator agent hand an authoring request off
-// to Builder as a one-click link instead of a prose punt. It stages a brief (the
-// request, composed by the calling agent) and returns a deep-link into a fresh
-// Builder session that auto-loads it, so Builder runs its normal back-and-forth
-// intake. Request-driven and LLM-triggered, mirroring the toolbar "Send to
-// Builder" handoff (which is session-transcript and button-driven).
-func (t *chatTurn) sendToBuilderToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "send_to_builder",
-			Description: "Hand an agent / pipeline / skill AUTHORING request off to Builder. Use this whenever the user wants to MAKE, MODIFY, CLONE, or DELETE an agent, pipeline, or skill, instead of describing Builder in prose. It stages the request and returns a one-click link; put that link in your reply so the user lands in a fresh Builder session with their request pre-loaded, where Builder asks clarifying questions, drafts, and confirms. You do not author agents/pipelines/skills yourself.",
-			Parameters: map[string]ToolParam{
-				"request": {Type: "string", Description: "A clear, first-person description of what the user wants built or changed, with the relevant detail from this conversation (what it should do, who it is for, examples, constraints). Builder reads this as its opening brief, so be specific enough that it need not re-ask everything."},
-			},
-			Required: []string{"request"},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			request := strings.TrimSpace(stringArg(args, "request"))
-			if request == "" {
-				return "", fmt.Errorf("request is required: describe what the user wants built or changed")
-			}
-			if t.udb == nil {
-				return "", fmt.Errorf("no user store available to stage the request")
-			}
-			brief := builderBriefRecord{
-				ID:      UUIDv4(),
-				Text:    buildBuilderRequestBrief(request),
-				Created: time.Now(),
-			}
-			t.udb.Set(builderBriefTable, brief.ID, brief)
-			link := "?agent=seed-builder&builder_brief=" + brief.ID
-			return fmt.Sprintf("Request staged for Builder. Put this link in your reply verbatim (a clickable markdown link) and end your turn. Clicking it opens a fresh Builder session with the request loaded:\n\n[✦ Open this in Builder](%s)", link), nil
-		},
-	}
-}
-
-// buildBuilderRequestBrief frames a request-driven handoff as Builder's opening
-// message: a build/modify ask plus the request, telling Builder to run its
-// normal clarify, draft, confirm intake.
-func buildBuilderRequestBrief(request string) string {
-	var b strings.Builder
-	b.WriteString("I want to build or change something, described below. Please run your normal intake: ask me any clarifying questions, then draft it and confirm with me before you apply anything.\n\n")
-	b.WriteString("---\n\n")
-	b.WriteString(request)
-	return b.String()
-}
+// (The agent-facing send_to_builder TOOL was removed: agents reach Builder by
+// DIRECT dispatch — agents(action="run", agent="builder") — and iterate with it
+// in-thread, rather than handing the user a one-click link into a separate
+// session. The handlers above remain for the USER-initiated toolbar "Send to
+// Builder" button, which loads a misbehaving agent's session into Builder to
+// improve it — a different, button-driven flow.)

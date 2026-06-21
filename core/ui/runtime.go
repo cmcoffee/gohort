@@ -8956,16 +8956,34 @@ const runtimeJS = `
         title: 'Hide ' + (cfg.list_title || 'list'),
         onclick: function(){ toggleSideCollapse(); },
       }, ['☰']);
-      // Select toggle — bulk-select entry point. Sits next to the
-      // collapse button in the side header so users discover it
-      // without scrolling. Mirrors the ChatPanel pattern; toggling
-      // off clears any prior selection so the next entry starts
-      // fresh. Only rendered when the app opted into bulk_select.
+      // Secondary sidebar actions (Mark all read, Select) live behind ONE "⋯"
+      // overflow so they don't crowd (and overlap) the "Sessions" title — the
+      // header reads just "⋯ · + New". The menu is built whenever at least one
+      // secondary action exists; each app opts into its members (mark_all_read_url
+      // / bulk_select).
+      var leftExtras = [collapseBtn];
+      var moreMenu = el('div', {class: 'ui-side-menu', style: 'display:none'});
+      function closeMoreMenu() { moreMenu.style.display = 'none'; }
+      var moreItemCount = 0;
+      if (cfg.mark_all_read_url) {
+        moreMenu.appendChild(el('button', {class: 'ui-side-menu-item', onclick: function() {
+          closeMoreMenu();
+          fetch(substituteExtras(cfg.mark_all_read_url), {method: 'POST'})
+            .then(function() { loadSessions(); })
+            .catch(function(err) { console.error('mark all read failed: ' + err.message); });
+        }}, ['Mark all read']));
+        moreItemCount++;
+      }
+      // Select toggle — bulk-select entry point, now a "⋯" menu item (was a
+      // standalone header pill). Toggling off clears any prior selection so the
+      // next entry starts fresh. sideSelectBtn stays the element reference the
+      // auto-exit reset (further below) updates. Only when the app opted in.
       var sideSelectBtn = null;
       if (cfg.bulk_select) {
         sideSelectBtn = el('button', {
-          class: 'ui-chat-side-btn', title: 'Tap items to select multiple',
+          class: 'ui-side-menu-item', title: 'Tap items to select multiple',
           onclick: function() {
+            closeMoreMenu();
             bulkState.mode = !bulkState.mode;
             if (!bulkState.mode) {
               Object.keys(bulkSelected).forEach(function(k){ delete bulkSelected[k]; });
@@ -8975,31 +8993,19 @@ const runtimeJS = `
             loadSessions();
           },
         }, ['Select']);
+        moreMenu.appendChild(sideSelectBtn);
+        moreItemCount++;
       }
-      var leftExtras = [collapseBtn];
-      // Secondary sidebar actions live behind a "⋯" overflow menu so they
-      // don't crowd (and overlap) the "Sessions" title. Currently: Mark all
-      // read. The app opts in by setting the action's URL. Ordered first
-      // (before Select) so the header reads: ⋯ · Select · + New.
-      if (cfg.mark_all_read_url) {
-        var moreMenu = el('div', {class: 'ui-side-menu', style: 'display:none'}, [
-          el('button', {class: 'ui-side-menu-item', onclick: function() {
-            moreMenu.style.display = 'none';
-            fetch(substituteExtras(cfg.mark_all_read_url), {method: 'POST'})
-              .then(function() { loadSessions(); })
-              .catch(function(err) { console.error('mark all read failed: ' + err.message); });
-          }}, ['Mark all read']),
-        ]);
+      if (moreItemCount > 0) {
         var moreBtn = el('button', {class: 'ui-chat-side-btn', title: 'More actions',
           onclick: function(ev) {
             ev.stopPropagation();
             moreMenu.style.display = (moreMenu.style.display === 'none') ? 'block' : 'none';
           }}, ['⋯']);
         // Any click outside the menu closes it.
-        document.addEventListener('click', function() { moreMenu.style.display = 'none'; });
+        document.addEventListener('click', closeMoreMenu);
         leftExtras.push(el('div', {class: 'ui-side-menu-wrap'}, [moreBtn, moreMenu]));
       }
-      if (sideSelectBtn) leftExtras.push(sideSelectBtn);
       var sideHdrBuilt = renderSideHeader({
         label:    cfg.list_title || 'Sessions',
         className: 'ui-chat-side-h',

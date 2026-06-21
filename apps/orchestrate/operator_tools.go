@@ -251,9 +251,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
 					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run."},
 					"mission":          {Type: "string", Description: "What the agent should do each run."},
-					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in LOCAL time — the SAME zone get_local_time / time_in_zone report. Use the time the user stated VERBATIM; do NOT convert to UTC (the schedule already runs in local time, so converting fires it hours off). e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". Leave empty if using interval_seconds."},
+					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM — NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone get_local_time / time_in_zone report; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
 					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
-					"interval_seconds": {Type: "number", Description: "Recurrence interval in seconds (86400 = daily, 21600 = every 6h, 3600 = hourly). Use with optional start_at. Omit when using cron."},
+					"interval_seconds": {Type: "number", Description: "Recurrence interval in seconds (60 = every minute, 3600 = hourly, 21600 = every 6h, 86400 = daily). This is the way to schedule sub-hourly / every-N-minutes runs (cron can't). Use with optional start_at. Omit when using cron."},
 				},
 				Required: []string{"name", "agent_id"},
 			},
@@ -466,6 +466,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\" — prefer the cheapest that fits (see the tool description)."},
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
+					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread — use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
 					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes — the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
@@ -500,8 +501,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				default:
 					notify = EventNotifyChannel
 				}
+				// deliver_to routes the formatted alert straight to a specific chat
+				// (a group / channel) with no LLM — the DeliverChatID + notify=direct
+				// path that already exists in operator_wake. Setting it forces direct
+				// delivery to that chat (channel/text wouldn't make sense here).
+				deliverTo := strings.TrimSpace(oArgStr(args, "deliver_to"))
+				if deliverTo != "" {
+					notify = EventNotifyDirect
+				}
 				m := EventMonitor{
 					Name: name, Owner: owner, Kind: kind, Notify: notify,
+					DeliverChatID: deliverTo,
 					// Wake the agent that created this monitor, IN the session it
 					// was created in, so the event lands back where the user set
 					// it up (not a hardcoded default thread). WakeSession falls
@@ -577,6 +587,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						return "", fmt.Errorf("saved but scheduling failed: %w", err)
 					}
 					got, _ := GetEventMonitor(RootDB, owner, name)
+					if m.DeliverChatID != "" {
+						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s — no LLM, it does NOT come back to this thread. Next check: %s.",
+							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
+					}
 					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes — no LLM runs in between. Next check: %s.",
 						name, got.IntervalSeconds, m.ToolName, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
 				}
