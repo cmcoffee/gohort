@@ -190,6 +190,20 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 					},
 				}},
 			},
+			{
+				Title:    "MCP Server",
+				Subtitle: "Lets an external MCP client (e.g. Claude Desktop) reach your agents over a JSON-RPC endpoint — a tool-API, not a messaging bridge: the client calls tools/call to dispatch to an agent. It authenticates with one of the bridge keys above in the X-API-Key header.",
+				Body: ui.DisplayPanel{
+					Source: "/mcp/status",
+					Pairs: []ui.DisplayPair{
+						{Label: "Endpoint", Field: "endpoint", Mono: true},
+						{Label: "Transport", Field: "transport"},
+						{Label: "Auth", Field: "auth"},
+						{Label: "Exposed tools", Field: "tools"},
+						{Label: "Default agent", Field: "agent", Mono: true},
+					},
+				},
+			},
 			// "Add a bridge" (manual key mint) is intentionally omitted for now: the
 			// only live connector, the iMessage desktop daemon, auto-registers its
 			// own key on first connect, and no other connector exists yet — so a

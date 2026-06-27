@@ -68,6 +68,12 @@ func (T *MCPServer) WebPath() string { return "/mcp" }
 func (T *MCPServer) WebName() string { return "MCP Server" }
 func (T *MCPServer) WebDesc() string { return "External MCP client bridge." }
 
+// WebHidden keeps the /mcp/ endpoint mounted but drops the dashboard tile —
+// the human-facing info now lives as a section in Bridges (where its auth
+// bridge keys are managed), so a standalone tile would be redundant. The
+// status page at /mcp/ still renders for anyone who navigates there directly.
+func (T *MCPServer) WebHidden() bool { return true }
+
 func (T *MCPServer) Routes() {
 	// Public path: auth is the X-API-Key header, NOT a dashboard cookie, so it
 	// must bypass AuthMiddleware. Mirrors how bridges registers /api/hook.
