@@ -137,19 +137,32 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// won't decode, or a host with no ffmpeg, is skipped silently.
 		videoNote := ""
 		vidFrames := 0
+		sttOK := strings.TrimSpace(GetTranscribeConfig().Endpoint) != "" // STT configured?
 		for _, b64 := range in.Videos {
 			data, derr := base64.StdEncoding.DecodeString(b64)
 			if derr != nil {
 				continue
 			}
-			frames, ferr := ExtractVideoFrames(data, inboundVideoFrameCount)
-			if ferr != nil || len(frames) == 0 {
-				continue
+			// Visual: sample frames into the multimodal stream. Independent of
+			// audio below, so a frame-extract failure doesn't lose the transcript.
+			if frames, ferr := ExtractVideoFrames(data, inboundVideoFrameCount); ferr == nil && len(frames) > 0 {
+				images = append(images, frames...)
+				vidFrames += len(frames)
 			}
-			images = append(images, frames...)
-			vidFrames += len(frames)
 			if md := strings.TrimSpace(ExtractVideoMetadata(data)); md != "" {
 				videoNote += "\n" + md
+			}
+			// Audio: extract the track and run STT so the agent also gets the
+			// spoken words, not just frames. Best-effort — needs a configured
+			// STT endpoint, an audio track, and ffmpeg; any miss is skipped.
+			if sttOK {
+				if audio, aerr := ExtractVideoAudio(data); aerr == nil && len(audio) > 0 {
+					if txt, terr := Transcribe(ctx, audio, "inbound.mp3"); terr == nil {
+						if txt = strings.TrimSpace(txt); txt != "" {
+							videoNote += "\n[Video transcript] " + txt
+						}
+					}
+				}
 			}
 		}
 		if vidFrames > 0 {
