@@ -1005,13 +1005,14 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	}
 
 	html := `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="%THEME%">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 %FAVICON%
 <title>Gohort Dashboard</title>
 <style>
+%THEMECSS%
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -1102,6 +1103,18 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     .grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .card { padding: 1rem; }
   }
+  /* Theme overrides — re-point chrome surfaces to the active theme's tokens
+     (injected above via %THEMECSS%). Additive + same selector specificity as
+     the rules above, so these win; anything not re-pointed keeps its original
+     color as a fallback. */
+  body { background: var(--bg-0); color: var(--text); }
+  .subtitle, .card-desc, .auth-user, .live-status, #live-panel h3 { color: var(--text-mute); }
+  .card, .card.featured, .live-item, .auth-link { background: var(--bg-1); border-color: var(--border); color: var(--text); }
+  .card-name { color: var(--text-hi); }
+  .card:hover, .auth-link:hover, .live-item:hover { border-color: var(--accent); }
+  .auth-link:hover { color: var(--text-hi); }
+  .live-badge.running { background: var(--success); }
+  .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 0%, var(--border) 100%); -webkit-background-clip: text; background-clip: text; }
 </style>
 </head>
 <body>
@@ -1158,6 +1171,8 @@ setInterval(refreshLive, 10000);
 </script>
 </body>
 </html>`
+	html = strings.Replace(html, "%THEME%", ui.ActiveTheme(), 1)
+	html = strings.Replace(html, "%THEMECSS%", ui.ThemeCSS(), 1)
 	html = strings.Replace(html, "%FAVICON%", faviconLinkTag, 1)
 	html = strings.Replace(html, "%AUTH%", auth_html, 1)
 	html = strings.Replace(html, "%CARDS%", cards.String(), 1)

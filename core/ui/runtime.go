@@ -214,7 +214,9 @@ body { min-height: 100vh; min-height: 100dvh; }
   position: sticky; top: 0; z-index: 10;
   margin: -0.6rem -0.6rem 0.8rem; padding: 0.6rem;
   padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
-  background: rgba(12, 20, 36, 0.85); backdrop-filter: blur(8px);
+  background: var(--bg-0); /* solid fallback if color-mix unsupported */
+  background: color-mix(in srgb, var(--bg-0) 85%, transparent); /* themed + translucent */
+  backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
 .ui-panic-btn {

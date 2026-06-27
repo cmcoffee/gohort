@@ -57,6 +57,18 @@ func IsValidTheme(name string) bool {
 	return ok
 }
 
+// ActiveTheme returns the resolved active theme name: the registered resolver's
+// value, or the built-in default when unset. Use it for chrome pages (login,
+// dashboard) that render outside ui.Page but still need the right data-theme.
+func ActiveTheme() string {
+	if themeResolver != nil {
+		if t := themeResolver(); t != "" {
+			return t
+		}
+	}
+	return "indigo"
+}
+
 // ThemeCSS assembles the :root[data-theme="..."] block for every registered
 // theme; MountRuntime prepends it to the runtime CSS. Tokens are emitted in
 // SORTED order so the output is byte-stable — the runtime CSS is served with a

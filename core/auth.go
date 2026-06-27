@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 const (
@@ -1408,12 +1410,13 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
 	}
 
 	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="THEME_PH">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gohort - Login</title>
 <style>
+/*THEMECSS_PH*/
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
@@ -1464,6 +1467,16 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
     font-size: 0.85rem; color: #58a6ff; text-decoration: none;
   }
   .alt-link:hover { text-decoration: underline; }
+  /* Theme overrides — active-theme tokens (injected above); additive over the
+     defaults so anything not re-pointed keeps its original color. */
+  body { background: var(--bg-0); color: var(--text); }
+  .login-box { background: var(--bg-1); border-color: var(--border); }
+  label { color: var(--text-mute); }
+  input[type="text"], input[type="password"] { background: var(--bg-0); border-color: var(--border); color: var(--text); }
+  input:focus { border-color: var(--accent); }
+  button, button:hover { background: var(--accent); border-color: var(--accent); }
+  .alt-link { color: var(--accent); }
+  .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 0%%, var(--border) 100%%); -webkit-background-clip: text; background-clip: text; }
 </style>
 </head>
 <body>
@@ -1486,6 +1499,8 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
 </body>
 </html>`, error_html, links)
 
+	html = strings.Replace(html, "THEME_PH", ui.ActiveTheme(), 1)
+	html = strings.Replace(html, "/*THEMECSS_PH*/", ui.ThemeCSS(), 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, html)
 }
