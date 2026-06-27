@@ -162,7 +162,7 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 // falls back to the default when empty.
 func RenderPageJSON(w io.Writer, pageJSON []byte, theme, extraHead, title string) error {
 	if theme == "" {
-		theme = "blackboard"
+		theme = "indigo" // platform default (was "blackboard"); see runtime.go theme tokens
 	}
 	fmt.Fprintf(w, `<!doctype html>
 <html lang="en" data-theme=%q>

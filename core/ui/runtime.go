@@ -41,6 +41,26 @@ const runtimeCSS = `
   --success: #56d364;
   --tap: 44px;
 }
+/* "indigo" — cool slate surfaces + an indigo accent. Ported from a
+ * standalone HTML app the user preferred; mapped onto gohort's token set so
+ * the whole platform adopts it. The source palette's extra shades (a 4th
+ * surface, a dim-accent, a separate warning/orange, a 3rd text mute) have no
+ * gohort token slot and are absorbed — the signature (slate depth + cool text
+ * + indigo accent + slate borders) is what carries. */
+:root[data-theme="indigo"] {
+  --bg-0: #0f1117;       /* page — deepest slate */
+  --bg-1: #1a1d27;       /* card / row */
+  --bg-2: #232733;       /* elevated surfaces / inputs */
+  --text:     #e4e7ef;
+  --text-hi:  #ffffff;
+  --text-mute:#9ca3b8;
+  --border:   #333848;
+  --accent:   #6366f1;   /* indigo */
+  --accent-hi:#818cf8;
+  --danger:   #ef4444;
+  --success:  #22c55e;
+  --tap: 44px;
+}
 
 * { box-sizing: border-box; }
 html, body {
