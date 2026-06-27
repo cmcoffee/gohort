@@ -862,17 +862,11 @@ func writeForbidden(w http.ResponseWriter, r *http.Request, app_path string) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	fmt.Fprintf(w, `<!doctype html><html><head><meta charset="utf-8"><title>Access denied</title>`+
-		`<style>body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,sans-serif;`+
-		`background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;`+
-		`min-height:100vh;margin:0}.box{max-width:520px;padding:32px;background:#161b22;`+
-		`border:1px solid #30363d;border-radius:10px;text-align:center}h1{color:#f85149;`+
-		`font-size:22px;margin:0 0 12px}p{margin:8px 0;line-height:1.5}a{color:#58a6ff}`+
-		`code{background:#0d1117;padding:2px 6px;border-radius:4px}</style></head><body>`+
-		`<div class="box"><h1>Access denied</h1>`+
-		`<p>Your account does not have access to <code>%s</code>.</p>`+
-		`<p>Contact an administrator if you need access.</p>`+
-		`<p><a href="/">Return to dashboard</a></p></div></body></html>`, app_path)
+	body := fmt.Sprintf(`    <h1>Access denied</h1>
+    <p>Your account does not have access to <code>%s</code>.</p>
+    <p>Contact an administrator if you need access.</p>
+    <p><a href="/">Return to dashboard</a></p>`, app_path)
+	fmt.Fprint(w, authPageHTML("Access denied", body))
 }
 
 func redirectToLogin(w http.ResponseWriter, r *http.Request) {
@@ -1051,75 +1045,92 @@ func SignupHandler(db Database) http.HandlerFunc {
 	}
 }
 
+// authPageHTML wraps a page body in the shared, themed auth-page shell used by
+// login / sign-up / forgot / reset / access-denied. Built by concatenation (not
+// fmt) so CSS percent literals need no escaping, and themed via the active
+// theme's tokens (data-theme + injected ThemeCSS). The body brings its own
+// header (ascii-logo or an h1/h2) plus its form/content; the shell supplies the
+// chrome + the .auth-box wrapper. Replaces five near-identical hand-rolled
+// page templates.
+func authPageHTML(title, body string) string {
+	return `<!DOCTYPE html>
+<html lang="en" data-theme="` + ui.ActiveTheme() + `">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>` + title + `</title>
+<style>
+` + ui.ThemeCSS() + `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg-0); color: var(--text); min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .auth-box {
+    background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 2rem; width: 100%; max-width: 380px;
+  }
+  .ascii-logo {
+    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+    font-size: 2.4rem; font-weight: 700; line-height: 1; letter-spacing: 0.15em;
+    text-transform: uppercase; margin-bottom: 1.5rem; text-align: center;
+    background: linear-gradient(180deg, var(--text-hi) 0%, var(--border) 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  h1 { color: var(--danger); font-size: 1.4rem; margin-bottom: 0.75rem; }
+  h2 { font-size: 1.1rem; color: var(--text-hi); margin-bottom: 1rem; }
+  p { margin: 8px 0; line-height: 1.5; }
+  a { color: var(--accent); }
+  code { background: var(--bg-0); padding: 2px 6px; border-radius: 4px; }
+  .form-group { margin-bottom: 1rem; }
+  label { display: block; font-size: 0.85rem; color: var(--text-mute); margin-bottom: 0.3rem; }
+  input[type="text"], input[type="email"], input[type="password"] {
+    width: 100%; padding: 0.6rem 0.8rem; background: var(--bg-0);
+    border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+    font-size: 0.95rem; transition: border-color 0.2s;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; padding: 0.7rem; background: var(--accent); border: 1px solid var(--accent);
+    border-radius: 6px; color: #fff; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+    transition: filter 0.2s;
+  }
+  button:hover { filter: brightness(1.08); }
+  .error {
+    background: color-mix(in srgb, var(--danger) 18%, transparent);
+    border: 1px solid var(--danger); border-radius: 6px;
+    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: var(--danger); font-size: 0.85rem;
+  }
+  .success {
+    background: color-mix(in srgb, var(--success) 18%, transparent);
+    border: 1px solid var(--success); border-radius: 6px;
+    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: var(--success); font-size: 0.85rem;
+  }
+  .alt-link {
+    display: block; text-align: center; margin-top: 1rem;
+    font-size: 0.85rem; color: var(--accent); text-decoration: none;
+  }
+  .alt-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+  <div class="auth-box">
+` + body + `
+  </div>
+</body>
+</html>`
+}
+
 func serveSignupPage(w http.ResponseWriter, errMsg string) {
 	error_html := ""
 	if errMsg != "" {
 		error_html = fmt.Sprintf(`<div class="error">%s</div>`, errMsg)
 	}
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gohort - Sign Up</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: #0d1117; color: #c9d1d9; min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 20px;
-  }
-  .login-box {
-    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-    padding: 2rem; width: 100%%; max-width: 360px;
-  }
-  /* Wordmark: "GOHORT" in Orbitron (all-caps) with steel gradient. */
-  .ascii-logo {
-    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
-    font-size: 2.4rem; font-weight: 700; line-height: 1; letter-spacing: 0.15em;
-    text-transform: uppercase;
-    margin-bottom: 1.5rem; text-align: center;
-    background: linear-gradient(180deg, #f0f6fc 0%%, #30363d 100%%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .form-group { margin-bottom: 1rem; }
-  label {
-    display: block; font-size: 0.85rem; color: #8b949e;
-    margin-bottom: 0.3rem;
-  }
-  input[type="text"], input[type="password"], input[type="email"] {
-    width: 100%%; padding: 0.6rem 0.8rem;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 0.95rem;
-    transition: border-color 0.2s;
-  }
-  input:focus { outline: none; border-color: #58a6ff; }
-  button {
-    width: 100%%; padding: 0.7rem;
-    background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-    color: #fff; font-size: 0.95rem; font-weight: 600;
-    cursor: pointer; transition: background 0.2s;
-  }
-  button:hover { background: #2ea043; }
-  .error {
-    background: #da363340; border: 1px solid #da3633; border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem;
-    color: #f85149; font-size: 0.85rem;
-  }
-  .alt-link {
-    display: block; text-align: center; margin-top: 1rem;
-    font-size: 0.85rem; color: #58a6ff; text-decoration: none;
-  }
-  .alt-link:hover { text-decoration: underline; }
-</style>
-</head>
-<body>
-  <div class="login-box">
-    <div class="ascii-logo">Gohort</div>
-    %s
+	body := `    <div class="ascii-logo">Gohort</div>
+    ` + error_html + `
     <form method="POST" action="/signup">
       <div class="form-group">
         <label for="email">Email</label>
@@ -1135,10 +1146,8 @@ func serveSignupPage(w http.ResponseWriter, errMsg string) {
       </div>
       <button type="submit">Create Account</button>
     </form>
-    <a class="alt-link" href="/login">Already have an account? Sign in</a>
-  </div>
-</body>
-</html>`, error_html)
+    <a class="alt-link" href="/login">Already have an account? Sign in</a>`
+	html := authPageHTML("Gohort - Sign Up", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, html)
@@ -1242,59 +1251,8 @@ func serveForgotPage(w http.ResponseWriter, msg string, success bool) {
 		msg_html = fmt.Sprintf(`<div class="%s">%s</div>`, class, msg)
 	}
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Forgot Password</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: #0d1117; color: #c9d1d9; min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 20px;
-  }
-  .login-box {
-    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-    padding: 2rem; width: 100%%; max-width: 360px;
-  }
-  .form-group { margin-bottom: 1rem; }
-  label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 0.3rem; }
-  input[type="text"], input[type="email"] {
-    width: 100%%; padding: 0.6rem 0.8rem;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 0.95rem; transition: border-color 0.2s;
-  }
-  input:focus { outline: none; border-color: #58a6ff; }
-  button {
-    width: 100%%; padding: 0.7rem;
-    background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-    color: #fff; font-size: 0.95rem; font-weight: 600;
-    cursor: pointer; transition: background 0.2s;
-  }
-  button:hover { background: #2ea043; }
-  .error {
-    background: #da363340; border: 1px solid #da3633; border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: #f85149; font-size: 0.85rem;
-  }
-  .success {
-    background: #23863640; border: 1px solid #238636; border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: #3fb950; font-size: 0.85rem;
-  }
-  .alt-link {
-    display: block; text-align: center; margin-top: 1rem;
-    font-size: 0.85rem; color: #58a6ff; text-decoration: none;
-  }
-  .alt-link:hover { text-decoration: underline; }
-  h2 { font-size: 1.1rem; color: #f0f6fc; margin-bottom: 1rem; }
-</style>
-</head>
-<body>
-  <div class="login-box">
-    <h2>Forgot Password</h2>
-    %s
+	body := `    <h2>Forgot Password</h2>
+    ` + msg_html + `
     <form method="POST" action="/forgot">
       <div class="form-group">
         <label for="email">Email</label>
@@ -1302,10 +1260,8 @@ func serveForgotPage(w http.ResponseWriter, msg string, success bool) {
       </div>
       <button type="submit">Send Reset Link</button>
     </form>
-    <a class="alt-link" href="/login">Back to login</a>
-  </div>
-</body>
-</html>`, msg_html)
+    <a class="alt-link" href="/login">Back to login</a>`
+	html := authPageHTML("Forgot Password", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, html)
@@ -1333,60 +1289,11 @@ func serveResetPage(w http.ResponseWriter, token string, errMsg string) {
     </form>`, token)
 	}
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Reset Password</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: #0d1117; color: #c9d1d9; min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 20px;
-  }
-  .login-box {
-    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-    padding: 2rem; width: 100%%; max-width: 360px;
-  }
-  .form-group { margin-bottom: 1rem; }
-  label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 0.3rem; }
-  input[type="password"] {
-    width: 100%%; padding: 0.6rem 0.8rem;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 0.95rem; transition: border-color 0.2s;
-  }
-  input:focus { outline: none; border-color: #58a6ff; }
-  button {
-    width: 100%%; padding: 0.7rem;
-    background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-    color: #fff; font-size: 0.95rem; font-weight: 600;
-    cursor: pointer; transition: background 0.2s;
-  }
-  button:hover { background: #2ea043; }
-  .error {
-    background: #da363340; border: 1px solid #da3633; border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem; color: #f85149; font-size: 0.85rem;
-  }
-  .alt-link {
-    display: block; text-align: center; margin-top: 1rem;
-    font-size: 0.85rem; color: #58a6ff; text-decoration: none;
-  }
-  .alt-link:hover { text-decoration: underline; }
-  h2 { font-size: 1.1rem; color: #f0f6fc; margin-bottom: 1rem; }
-</style>
-</head>
-<body>
-  <div class="login-box">
-    <h2>Reset Password</h2>
-    %s
-    %s
-    <a class="alt-link" href="/login">Back to login</a>
-  </div>
-</body>
-</html>`, error_html, form_html)
+	body := `    <h2>Reset Password</h2>
+    ` + error_html + `
+    ` + form_html + `
+    <a class="alt-link" href="/login">Back to login</a>`
+	html := authPageHTML("Reset Password", body)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, html)
@@ -1409,80 +1316,8 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
 		links += `<a class="alt-link" href="/signup">Don't have an account? Sign up</a>`
 	}
 
-	html := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en" data-theme="THEME_PH">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Gohort - Login</title>
-<style>
-/*THEMECSS_PH*/
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    background: #0d1117; color: #c9d1d9; min-height: 100vh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 20px;
-  }
-  .login-box {
-    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
-    padding: 2rem; width: 100%%; max-width: 360px;
-  }
-  /* Wordmark: "GOHORT" in Orbitron (all-caps) with steel gradient. */
-  .ascii-logo {
-    font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
-    font-size: 2.4rem; font-weight: 700; line-height: 1; letter-spacing: 0.15em;
-    text-transform: uppercase;
-    margin-bottom: 1.5rem; text-align: center;
-    background: linear-gradient(180deg, #f0f6fc 0%%, #30363d 100%%);
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .form-group { margin-bottom: 1rem; }
-  label {
-    display: block; font-size: 0.85rem; color: #8b949e;
-    margin-bottom: 0.3rem;
-  }
-  input[type="text"], input[type="password"] {
-    width: 100%%; padding: 0.6rem 0.8rem;
-    background: #0d1117; border: 1px solid #30363d; border-radius: 6px;
-    color: #c9d1d9; font-size: 0.95rem;
-    transition: border-color 0.2s;
-  }
-  input:focus { outline: none; border-color: #58a6ff; }
-  button {
-    width: 100%%; padding: 0.7rem;
-    background: #238636; border: 1px solid #2ea043; border-radius: 6px;
-    color: #fff; font-size: 0.95rem; font-weight: 600;
-    cursor: pointer; transition: background 0.2s;
-  }
-  button:hover { background: #2ea043; }
-  .error {
-    background: #da363340; border: 1px solid #da3633; border-radius: 6px;
-    padding: 0.5rem 0.8rem; margin-bottom: 1rem;
-    color: #f85149; font-size: 0.85rem;
-  }
-  .alt-link {
-    display: block; text-align: center; margin-top: 1rem;
-    font-size: 0.85rem; color: #58a6ff; text-decoration: none;
-  }
-  .alt-link:hover { text-decoration: underline; }
-  /* Theme overrides — active-theme tokens (injected above); additive over the
-     defaults so anything not re-pointed keeps its original color. */
-  body { background: var(--bg-0); color: var(--text); }
-  .login-box { background: var(--bg-1); border-color: var(--border); }
-  label { color: var(--text-mute); }
-  input[type="text"], input[type="password"] { background: var(--bg-0); border-color: var(--border); color: var(--text); }
-  input:focus { border-color: var(--accent); }
-  button, button:hover { background: var(--accent); border-color: var(--accent); }
-  .alt-link { color: var(--accent); }
-  .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 0%%, var(--border) 100%%); -webkit-background-clip: text; background-clip: text; }
-</style>
-</head>
-<body>
-  <div class="login-box">
-    <div class="ascii-logo">Gohort</div>
-    %s
+	body := `    <div class="ascii-logo">Gohort</div>
+    ` + error_html + `
     <form method="POST" action="/login">
       <div class="form-group">
         <label for="username">Email</label>
@@ -1494,13 +1329,8 @@ func serveLoginPage(w http.ResponseWriter, errMsg string) {
       </div>
       <button type="submit">Sign In</button>
     </form>
-    %s
-  </div>
-</body>
-</html>`, error_html, links)
-
-	html = strings.Replace(html, "THEME_PH", ui.ActiveTheme(), 1)
-	html = strings.Replace(html, "/*THEMECSS_PH*/", ui.ThemeCSS(), 1)
+    ` + links
+	html := authPageHTML("Gohort - Login", body)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, html)
 }
