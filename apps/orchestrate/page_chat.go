@@ -48,6 +48,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		ID    string
 		Name  string
 		Order int
+		App   string // owning app, for App Agents grouping/sort
 	}
 	// subAgentsByParent groups every owned sub-agent under its parent
 	// ID so the chat UI can render a contextual secondary picker. The
@@ -60,7 +61,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// Three picker groups: the seeds (Built-in), the user's cortex-enabled
 	// conversation agents (a standing brain — carved out so they're easy to
 	// find), and everything else custom.
-	var builtIns, conversation, customs []pickerRow
+	var builtIns, conversation, customs, appAgents []pickerRow
 	for _, a := range agents {
 		if a.Cortex {
 			cortexAgents[a.ID] = cortexSessionID(a.ID)
@@ -85,7 +86,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		// here, Hidden or not. Filtering Hidden here just made KB agents
 		// (published to /agents/ but marked Hidden to keep them out of
 		// the fleet) silently disappear from Agency. Don't.
-		if ord, ok := builtInOrder[a.ID]; ok {
+		// App agents (registered by an app via core.RegisterAppAgent) get
+		// their own group, separate from the user's own agents — checked
+		// first so a Cortex-enabled app agent still lands here, not in
+		// Conversation Agents.
+		if spec, isApp := AppAgentByID(a.ID); isApp {
+			appAgents = append(appAgents, pickerRow{ID: a.ID, Name: a.Name, App: spec.OwningApp})
+		} else if ord, ok := builtInOrder[a.ID]; ok {
 			builtIns = append(builtIns, pickerRow{ID: a.ID, Name: a.Name, Order: ord})
 		} else if a.Cortex {
 			conversation = append(conversation, pickerRow{ID: a.ID, Name: a.Name})
@@ -96,6 +103,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	sort.Slice(builtIns, func(i, j int) bool { return builtIns[i].Order < builtIns[j].Order })
 	sort.Slice(conversation, func(i, j int) bool { return conversation[i].Name < conversation[j].Name })
 	sort.Slice(customs, func(i, j int) bool { return customs[i].Name < customs[j].Name })
+	// App agents sort by owning app, then name — so a deployment with several
+	// app-registered agents reads grouped-by-app within the one optgroup.
+	sort.Slice(appAgents, func(i, j int) bool {
+		if appAgents[i].App != appAgents[j].App {
+			return appAgents[i].App < appAgents[j].App
+		}
+		return appAgents[i].Name < appAgents[j].Name
+	})
 	for _, a := range builtIns {
 		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Built-in"})
 	}
@@ -104,6 +119,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	}
 	for _, a := range customs {
 		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Specialized Agents"})
+	}
+	// App Agents last — framework/app-provided, below the user's own agents.
+	for _, a := range appAgents {
+		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "App Agents"})
 	}
 
 	// Default the dropdown to the requested agent if the URL carries
