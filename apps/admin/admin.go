@@ -3078,7 +3078,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		// Validate against the known token blocks (core/ui/runtime.go) so a
 		// typo can't blank the whole UI.
 		switch t := strings.TrimSpace(*req.UITheme); t {
-		case "indigo", "blackboard", "github-dark":
+		case "indigo", "blackboard", "github-dark", "light":
 			AuthSetUITheme(a.db, t)
 			Log("[admin] user %q set ui_theme=%q", current, t)
 		default:

@@ -357,6 +357,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Value: "indigo", Label: "Indigo — cool slate + indigo accent"},
 								{Value: "blackboard", Label: "Blackboard — warm navy + amber"},
 								{Value: "github-dark", Label: "GitHub Dark"},
+								{Value: "light", Label: "Light — slate-on-white + indigo"},
 							},
 							Help: "Platform-wide UI theme. Reload the page after saving to see it."},
 						{Field: "service_name", Label: "Service name", Type: "text",

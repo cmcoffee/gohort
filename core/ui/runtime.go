@@ -61,6 +61,23 @@ const runtimeCSS = `
   --success:  #22c55e;
   --tap: 44px;
 }
+/* "light" — the one light theme: slate-on-white surfaces (GitHub-light-ish)
+ * with the indigo accent kept for continuity with the default. Danger/success
+ * are darkened for legible contrast on white. */
+:root[data-theme="light"] {
+  --bg-0: #f6f7f9;       /* page */
+  --bg-1: #ffffff;       /* card / row */
+  --bg-2: #eceef2;       /* elevated surfaces / inputs */
+  --text:     #24292f;
+  --text-hi:  #0d1117;
+  --text-mute:#57606a;
+  --border:   #d0d7de;
+  --accent:   #4f46e5;   /* indigo-600 — stronger on white */
+  --accent-hi:#6366f1;
+  --danger:   #cf222e;
+  --success:  #1a7f37;
+  --tap: 44px;
+}
 
 * { box-sizing: border-box; }
 html, body {
