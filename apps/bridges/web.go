@@ -116,6 +116,7 @@ type hookRequest struct {
 	DisplayName string   `json:"display_name"`
 	Text        string   `json:"text"`
 	Images      []string `json:"images,omitempty"`
+	Videos      []string `json:"videos,omitempty"` // base64 inbound video clips (e.g. an mp4 in a text); frames sampled for the vision model — connector must send them
 	MsgID       string   `json:"msg_id"`
 	RowID       int64    `json:"row_id"`
 }
@@ -234,7 +235,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	sender := T.resolveSender(activeChatID, req.Handle, req.DisplayName)
 	sessionID := ChannelSessionKey(ch, activeChatID)
 	replyHere := ChannelDirection(ch) != DirectionInbound
-	chatID, handle, text, images := activeChatID, req.Handle, req.Text, req.Images
+	chatID, handle, text, images, videos := activeChatID, req.Handle, req.Text, req.Images, req.Videos
 
 	Log("[bridges] channel %q (svc=%s agent=%s dir=%s) handling inbound from %s",
 		ch.Name, svc, ch.AgentID, ChannelDirection(ch), handle)
@@ -247,7 +248,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		// gatekeeper's worker-LLM call.
 		if !ChannelGatekeeperAllow(context.Background(), ChannelInbound{
 			Owner: ch.Owner, AgentID: ch.AgentID, SessionID: sessionID,
-			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images,
+			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images, Videos: videos,
 		}) {
 			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
 			return
@@ -262,6 +263,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 			ConversationName: sender,
 			Text:             text,
 			Images:           images,
+			Videos:           videos,
 			StatusCallback: func(s string) {
 				if !replyHere {
 					return

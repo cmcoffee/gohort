@@ -262,6 +262,7 @@ type ChannelInbound struct {
 	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
 	Text             string   // the inbound message text
 	Images           []string // base64 inbound attachments (a contact's photo) — delivered to the agent as multimodal content it can see this turn
+	Videos           []string // base64 inbound video clips (e.g. an mp4 in a text) — the runner samples frames into the multimodal stream so the vision model can analyze them (it can't ingest raw mp4)
 	// StatusCallback, when set, receives mid-turn status pings (the agent's
 	// send_status / progress notes) so the transport can deliver them ahead
 	// of the final reply. nil = no status (graceful).

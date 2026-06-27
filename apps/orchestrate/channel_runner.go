@@ -99,6 +99,11 @@ func (app *OrchestrateApp) effectiveChannelSession(owner, agentID, sessionID str
 	return sessionID
 }
 
+// inboundVideoFrameCount bounds how many frames we sample from an inbound
+// channel video (an mp4 in a text). Kept small: enough to convey the clip's
+// content to the vision model without ballooning the multimodal payload.
+const inboundVideoFrameCount = 4
+
 // registerChannelAgentRunner installs the closure core invokes to run a
 // channel's bound agent on one inbound message. Call once at startup.
 func registerChannelAgentRunner(app *OrchestrateApp) {
@@ -125,6 +130,31 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 				images = append(images, data)
 			}
 		}
+		// Inbound videos: the vision model can't ingest raw mp4, so sample a
+		// few frames per clip into the SAME multimodal image stream, and fold a
+		// metadata note into the message so the agent treats them as a video
+		// (duration/resolution), not loose stills. Best-effort — a clip that
+		// won't decode, or a host with no ffmpeg, is skipped silently.
+		videoNote := ""
+		vidFrames := 0
+		for _, b64 := range in.Videos {
+			data, derr := base64.StdEncoding.DecodeString(b64)
+			if derr != nil {
+				continue
+			}
+			frames, ferr := ExtractVideoFrames(data, inboundVideoFrameCount)
+			if ferr != nil || len(frames) == 0 {
+				continue
+			}
+			images = append(images, frames...)
+			vidFrames += len(frames)
+			if md := strings.TrimSpace(ExtractVideoMetadata(data)); md != "" {
+				videoNote += "\n" + md
+			}
+		}
+		if vidFrames > 0 {
+			videoNote = fmt.Sprintf("\n[Inbound video: %d frame(s) sampled and attached above as images for you to analyze; the raw video itself can't be inspected.]%s", vidFrames, videoNote)
+		}
 		// Channel = relay, Cortex = the thread. A DEDICATED cortex agent (a single
 		// channel) runs its inbound IN its cortex — the channel is just the pipe
 		// into the agent's one standing thread, so the conversation lives where the
@@ -140,7 +170,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			SubSessionID:   sessionID,
 			Title:          title,
 			MessageSender:  in.SenderName,
-			Message:        in.Text,
+			Message:        in.Text + videoNote,
 			Images:         images,
 			Interactive:    true, // a real person is texting — no delegation marker
 			// Replying BACK to this same conversation is in-thread, not a
