@@ -99,24 +99,24 @@ func init() {
 		"--bg-0": "#0f1117", "--bg-1": "#1a1d27", "--bg-2": "#232733",
 		"--text": "#e4e7ef", "--text-hi": "#ffffff", "--text-mute": "#9ca3b8",
 		"--border": "#333848", "--accent": "#6366f1", "--accent-hi": "#818cf8",
-		"--danger": "#ef4444", "--success": "#22c55e", "--tap": "44px",
+		"--danger": "#ef4444", "--success": "#22c55e", "--warning": "#f59e0b", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "blackboard", Label: "Blackboard — warm navy + amber", Tokens: map[string]string{
 		"--bg-0": "#0c1424", "--bg-1": "#142037", "--bg-2": "#1c2a45",
 		"--text": "#f5f0e1", "--text-hi": "#ffffff", "--text-mute": "#9aa3b8",
 		"--border": "#2a3a5e", "--accent": "#d4a657", "--accent-hi": "#f0c878",
-		"--danger": "#c97474", "--success": "#56d364", "--tap": "44px",
+		"--danger": "#c97474", "--success": "#56d364", "--warning": "#e3b341", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "github-dark", Label: "GitHub Dark", Tokens: map[string]string{
 		"--bg-0": "#0d1117", "--bg-1": "#161b22", "--bg-2": "#21262d",
 		"--text": "#c9d1d9", "--text-hi": "#f0f6fc", "--text-mute": "#8b949e",
 		"--border": "#30363d", "--accent": "#4f8cff", "--accent-hi": "#79c0ff",
-		"--danger": "#f85149", "--success": "#56d364", "--tap": "44px",
+		"--danger": "#f85149", "--success": "#56d364", "--warning": "#d29922", "--tap": "44px",
 	}})
 	RegisterTheme(ThemeSpec{Name: "light", Label: "Light — slate-on-white + indigo", Tokens: map[string]string{
 		"--bg-0": "#f6f7f9", "--bg-1": "#ffffff", "--bg-2": "#eceef2",
 		"--text": "#24292f", "--text-hi": "#0d1117", "--text-mute": "#57606a",
 		"--border": "#d0d7de", "--accent": "#4f46e5", "--accent-hi": "#6366f1",
-		"--danger": "#cf222e", "--success": "#1a7f37", "--tap": "44px",
+		"--danger": "#cf222e", "--success": "#1a7f37", "--warning": "#9a6700", "--tap": "44px",
 	}})
 }

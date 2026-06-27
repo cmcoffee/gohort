@@ -1072,8 +1072,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px;
     font-weight: 600; white-space: nowrap;
   }
-  .live-badge.running { background: #238636; color: #fff; }
-  .live-badge.queued { background: #d29922; color: #fff; }
+  .live-badge.running { background: var(--success); color: #fff; }
+  .live-badge.queued { background: var(--warning); color: #fff; }
   .live-label { flex: 1; }
   .live-status { color: #8b949e; font-size: 0.8rem; }
   .auth-bar {
