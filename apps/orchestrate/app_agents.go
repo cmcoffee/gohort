@@ -13,13 +13,13 @@
 package orchestrate
 
 import (
-	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
-// appAgentSpecToRecord maps a portable core.AppAgentSpec onto orchestrate's
+// appAgentSpecToRecord maps a portable appagents.AppAgentSpec onto orchestrate's
 // AgentRecord. Owner=seedOwner marks it framework/app-owned (read-mostly, with
 // a per-user shadow for customization), matching how seeds are tagged.
-func appAgentSpecToRecord(s AppAgentSpec) AgentRecord {
+func appAgentSpecToRecord(s appagents.AppAgentSpec) AgentRecord {
 	return AgentRecord{
 		ID:                 s.ID,
 		Owner:              seedOwner,
@@ -34,7 +34,7 @@ func appAgentSpecToRecord(s AppAgentSpec) AgentRecord {
 
 // registeredAppAgents converts every cross-app registered agent to a record.
 func registeredAppAgents() []AgentRecord {
-	specs := AppAgents()
+	specs := appagents.AppAgents()
 	out := make([]AgentRecord, 0, len(specs))
 	for _, s := range specs {
 		out = append(out, appAgentSpecToRecord(s))

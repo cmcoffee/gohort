@@ -31,6 +31,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -39,7 +40,7 @@ func init() {
 	// Demo: prove the cross-app agent registry end to end — this app declares
 	// an agent that orchestrate resolves + lists like one of its own seeds.
 	// Replace/remove once the "App Agents" dashboard section lands.
-	RegisterAppAgent(AppAgentSpec{
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
 		ID:          "app-customapps-notes-helper",
 		OwningApp:   "Custom Apps",
 		Name:        "Notes Helper",

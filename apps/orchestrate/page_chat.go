@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -86,11 +87,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		// here, Hidden or not. Filtering Hidden here just made KB agents
 		// (published to /agents/ but marked Hidden to keep them out of
 		// the fleet) silently disappear from Agency. Don't.
-		// App agents (registered by an app via core.RegisterAppAgent) get
+		// App agents (registered by an app via appagents.RegisterAppAgent) get
 		// their own group, separate from the user's own agents — checked
 		// first so a Cortex-enabled app agent still lands here, not in
 		// Conversation Agents.
-		if spec, isApp := AppAgentByID(a.ID); isApp {
+		if spec, isApp := appagents.AppAgentByID(a.ID); isApp {
 			// App agents aren't the user's own to manage, so — unlike user
 			// agents, which stay visible in their own Agency picker even when
 			// Hidden — a Hidden app agent stays OUT of the picker. Lets a

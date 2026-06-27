@@ -1,17 +1,20 @@
-// App-agent registry — the cross-app seam for "App Agents". Any app can
-// declare agents it owns (an investigator, a synthesizer, a domain persona)
-// by calling RegisterAppAgent in its init(); orchestrate folds them into its
-// agent resolution so they load, list, and accept a per-user customization
-// shadow exactly like its own in-code seeds. The agent definition stays
-// CODE/APP-DECLARED and read-mostly (a third tier between per-user agents and
+// Package appagents is the cross-app registry for "App Agents": any app can
+// declare agents it owns (an investigator, a synthesizer, a domain persona) by
+// calling RegisterAppAgent in its init(); orchestrate folds them into its agent
+// resolution so they load, list, and accept a per-user customization shadow
+// exactly like its own in-code seeds. The agent definition stays CODE/APP-
+// DECLARED and read-mostly (a third tier between per-user agents and
 // orchestrate's own seeds) — the deployment owns operational state (a user's
 // Rules, approved tools) via the shadow overlay, but the prompt/structure is
 // the app's.
 //
-// AppAgentSpec is deliberately a MINIMAL, portable subset: core can't import
-// orchestrate's AgentRecord, so the owning app layer (orchestrate) maps spec →
-// record at resolution time. Keep this struct domain-agnostic.
-package core
+// This is a pure leaf package: it depends on nothing in core (only the
+// stdlib), so the owning app layer (orchestrate) maps AppAgentSpec → its own
+// AgentRecord at resolution time. Keep this struct domain-agnostic.
+//
+// Extracted from core/ (was core.app_agents) as the first leaf seam off the
+// core package — see the core dependency-graph map.
+package appagents
 
 import "sync"
 
@@ -31,9 +34,9 @@ type AppAgentSpec struct {
 }
 
 var (
-	appAgentsMu    sync.RWMutex
-	appAgentSpecs  = map[string]AppAgentSpec{}
-	appAgentsOrder []string // registration order, for stable display
+	mu    sync.RWMutex
+	specs = map[string]AppAgentSpec{}
+	order []string // registration order, for stable display
 )
 
 // RegisterAppAgent adds (or replaces, by ID) an app-owned agent. Call once per
@@ -42,21 +45,21 @@ func RegisterAppAgent(spec AppAgentSpec) {
 	if spec.ID == "" {
 		return
 	}
-	appAgentsMu.Lock()
-	if _, exists := appAgentSpecs[spec.ID]; !exists {
-		appAgentsOrder = append(appAgentsOrder, spec.ID)
+	mu.Lock()
+	if _, exists := specs[spec.ID]; !exists {
+		order = append(order, spec.ID)
 	}
-	appAgentSpecs[spec.ID] = spec
-	appAgentsMu.Unlock()
+	specs[spec.ID] = spec
+	mu.Unlock()
 }
 
 // AppAgents returns every registered app agent in registration order.
 func AppAgents() []AppAgentSpec {
-	appAgentsMu.RLock()
-	defer appAgentsMu.RUnlock()
-	out := make([]AppAgentSpec, 0, len(appAgentsOrder))
-	for _, id := range appAgentsOrder {
-		out = append(out, appAgentSpecs[id])
+	mu.RLock()
+	defer mu.RUnlock()
+	out := make([]AppAgentSpec, 0, len(order))
+	for _, id := range order {
+		out = append(out, specs[id])
 	}
 	return out
 }
@@ -65,8 +68,8 @@ func AppAgents() []AppAgentSpec {
 // tell an app-owned agent (and its owning app) apart from orchestrate's own
 // seeds and per-user records.
 func AppAgentByID(id string) (AppAgentSpec, bool) {
-	appAgentsMu.RLock()
-	defer appAgentsMu.RUnlock()
-	s, ok := appAgentSpecs[id]
+	mu.RLock()
+	defer mu.RUnlock()
+	s, ok := specs[id]
 	return s, ok
 }
