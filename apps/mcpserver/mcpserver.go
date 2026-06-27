@@ -71,7 +71,53 @@ func (T *MCPServer) Routes() {
 	// Public path: auth is the X-API-Key header, NOT a dashboard cookie, so it
 	// must bypass AuthMiddleware. Mirrors how bridges registers /api/hook.
 	RegisterPublicPath("/mcp/")
-	T.HandleFunc("/", T.handleRPC)
+	T.HandleFunc("/", T.handle)
+}
+
+// handle dispatches by method. MCP's Streamable HTTP transport opens the
+// server→client channel with a GET (an SSE stream) and sends JSON-RPC with
+// POST; a POST-only endpoint 405s the GET and the client never connects.
+func (T *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		T.handleSSE(w, r)
+	case http.MethodPost:
+		T.handleRPC(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleSSE serves the GET server→client stream. We have no server-initiated
+// messages to push (every JSON-RPC response rides its POST), so this just
+// opens text/event-stream and holds the connection open with heartbeats until
+// the client disconnects — which is what a Streamable HTTP client needs to
+// consider itself connected. Open (no auth): no data flows here; tools/call
+// is the gated action.
+func (T *MCPServer) handleSSE(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	fl.Flush()
+	Log("[mcpserver] SSE stream opened from %s", r.RemoteAddr)
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			Log("[mcpserver] SSE stream closed (%s)", r.RemoteAddr)
+			return
+		case <-ticker.C:
+			fmt.Fprint(w, ": keep-alive\n\n")
+			fl.Flush()
+		}
+	}
 }
 
 // --- JSON-RPC plumbing -------------------------------------------------------
