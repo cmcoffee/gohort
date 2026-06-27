@@ -43,7 +43,11 @@ func (T *Bridges) handleKeys(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		svc := strings.TrimSpace(req.Service)
 		if svc == "" {
-			svc = "imessage"
+			// A MANUALLY minted key is for the MCP server or a server-side
+			// connector — never iMessage, whose key the gohort-bridge daemon
+			// auto-registers (with Service:"imessage" set explicitly). So an
+			// unspecified service here means a generic API key, not iMessage.
+			svc = "api"
 		}
 		k := BridgeKey{
 			ID:      newToken()[:12],
