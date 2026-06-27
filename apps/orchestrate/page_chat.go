@@ -91,6 +91,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		// first so a Cortex-enabled app agent still lands here, not in
 		// Conversation Agents.
 		if spec, isApp := AppAgentByID(a.ID); isApp {
+			// App agents aren't the user's own to manage, so — unlike user
+			// agents, which stay visible in their own Agency picker even when
+			// Hidden — a Hidden app agent stays OUT of the picker. Lets a
+			// secret-sauce or demo app agent register without cluttering the
+			// menu (Hidden still also drops it from fleet dispatch).
+			if a.Hidden {
+				continue
+			}
 			appAgents = append(appAgents, pickerRow{ID: a.ID, Name: a.Name, App: spec.OwningApp})
 		} else if ord, ok := builtInOrder[a.ID]; ok {
 			builtIns = append(builtIns, pickerRow{ID: a.ID, Name: a.Name, Order: ord})

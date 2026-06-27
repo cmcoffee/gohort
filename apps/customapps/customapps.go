@@ -45,6 +45,7 @@ func init() {
 		Name:        "Notes Helper",
 		Description: "Demo app agent registered by customapps — drafts and tidies notes.",
 		Prompt:      "You are a concise notes assistant. Help the user capture, tidy, and summarize notes. Keep replies short and actionable.",
+		Hidden:      true, // demo — kept out of the picker; proves the registry without cluttering the menu
 	})
 }
 
