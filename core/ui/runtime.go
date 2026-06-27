@@ -230,6 +230,14 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-panic-btn:active { background: var(--danger); transform: scale(0.98); }
 .ui-panic-status { font-size: 0.8rem; color: var(--text-mute); text-align: center; display: block; margin-top: 0.3rem; min-height: 1em; }
 
+/* --- EmptyState (centered "nothing here yet" placeholder) --- */
+.ui-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 3rem 1rem; min-height: 200px; }
+.ui-empty-icon { font-size: 48px; line-height: 1; opacity: 0.3; margin-bottom: 1rem; }
+.ui-empty-title { font-size: 1.05rem; color: var(--text); margin-bottom: 0.35rem; }
+.ui-empty-hint { font-size: 0.85rem; color: var(--text-mute); opacity: 0.85; max-width: 360px; line-height: 1.5; }
+.ui-empty-action { margin-top: 1.25rem; min-height: var(--tap); background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.ui-empty-action:hover { filter: brightness(1.08); }
+
 /* --- iOS-style switch --- */
 .ui-switch {
   -webkit-appearance: none; appearance: none;
@@ -16812,6 +16820,22 @@ const runtimeJS = `
       var deepLinkArticle = new URLSearchParams(window.location.search).get('article');
       if (deepLinkArticle) { openArticle(deepLinkArticle); }
     } catch (e) {}
+    return wrap;
+  };
+
+  components.empty_state = function(cfg) {
+    var wrap = el('div', {class: 'ui-empty'});
+    if (cfg.icon) wrap.appendChild(el('div', {class: 'ui-empty-icon'}, [cfg.icon]));
+    if (cfg.title) wrap.appendChild(el('div', {class: 'ui-empty-title'}, [cfg.title]));
+    if (cfg.hint) wrap.appendChild(el('div', {class: 'ui-empty-hint'}, [cfg.hint]));
+    if (cfg.action_label && cfg.action_url) {
+      var btn = el('button', {class: 'ui-empty-action'}, [cfg.action_label]);
+      btn.addEventListener('click', function() {
+        if ((cfg.action_method || 'GET').toUpperCase() === 'GET') { window.location.href = cfg.action_url; return; }
+        fetch(cfg.action_url, {method: cfg.action_method}).then(function(){ location.reload(); });
+      });
+      wrap.appendChild(btn);
+    }
     return wrap;
   };
 

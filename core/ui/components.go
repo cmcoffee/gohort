@@ -1962,3 +1962,26 @@ func (c Card) MarshalJSON() ([]byte, error) {
 		alias
 	}{"card", alias(c)})
 }
+
+// EmptyState is the centered "nothing here yet" placeholder — a large dimmed
+// Icon, a Title, an optional Hint, and an optional call-to-action button. Use
+// it as a Section.Body (or a panel's body) for a surface that has no content
+// yet, instead of a bare EmptyText string. The considered empty state is a
+// deliberate default: every list/viewer surface should have one.
+type EmptyState struct {
+	Icon         string `json:"icon,omitempty"`          // shown large + dimmed, e.g. "📖"
+	Title        string `json:"title"`                   // primary line, e.g. "No guide selected"
+	Hint         string `json:"hint,omitempty"`          // secondary guidance line
+	ActionLabel  string `json:"action_label,omitempty"`  // optional CTA button text
+	ActionURL    string `json:"action_url,omitempty"`    // CTA target (relative or absolute)
+	ActionMethod string `json:"action_method,omitempty"` // "GET" (navigate, default) | "POST" (then reload)
+}
+
+func (EmptyState) componentType() string { return "empty_state" }
+func (e EmptyState) MarshalJSON() ([]byte, error) {
+	type alias EmptyState
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"empty_state", alias(e)})
+}
