@@ -21,7 +21,7 @@ import "sync"
 // public-facing pickers (it still resolves for dispatch).
 type AppAgentSpec struct {
 	ID           string   `json:"id"`
-	OwningApp    string   `json:"owning_app"` // dashboard grouping ("App Agents" section)
+	OwningApp    string   `json:"owning_app"` // DISPLAY label for the App Agents grouping — the app's own optgroup in the picker (e.g. "Custom Apps"). Falls back to "App Agents" when empty.
 	Name         string   `json:"name"`
 	Description  string   `json:"description,omitempty"`
 	Prompt       string   `json:"prompt"`

@@ -41,7 +41,7 @@ func init() {
 	// Replace/remove once the "App Agents" dashboard section lands.
 	RegisterAppAgent(AppAgentSpec{
 		ID:          "app-customapps-notes-helper",
-		OwningApp:   "customapps",
+		OwningApp:   "Custom Apps",
 		Name:        "Notes Helper",
 		Description: "Demo app agent registered by customapps — drafts and tidies notes.",
 		Prompt:      "You are a concise notes assistant. Help the user capture, tidy, and summarize notes. Keep replies short and actionable.",

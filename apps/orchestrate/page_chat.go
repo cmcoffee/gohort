@@ -121,8 +121,15 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Specialized Agents"})
 	}
 	// App Agents last — framework/app-provided, below the user's own agents.
+	// Each app gets its OWN optgroup named after the app, so the menu reads
+	// "<App> → its agents" rather than a flat "App Agents" bucket. Falls back
+	// to "App Agents" when an app didn't supply a label.
 	for _, a := range appAgents {
-		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "App Agents"})
+		group := a.App
+		if group == "" {
+			group = "App Agents"
+		}
+		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: group})
 	}
 
 	// Default the dropdown to the requested agent if the URL carries
