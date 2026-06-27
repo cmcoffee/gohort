@@ -196,7 +196,24 @@ func (g *GroupedTool) Run(args map[string]any) (string, error) {
 // RunWithSession dispatches by action. The "help" action is auto-handled.
 func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
 	action := strings.TrimSpace(StringArg(args, "action"))
-	if action == "" || action == "help" {
+	if action == "help" {
+		return g.formatHelp(), nil
+	}
+	if action == "" {
+		// No action given. A bare call (no other args) is a probe — return
+		// the usage spec. But a call that carries operation params with NO
+		// action is a MISFIRE: the model picked the wrong arg shape (e.g.
+		// passed create's fields without action="create"). Returning the
+		// help dump as a SUCCESS there is a trap — the model can't tell help
+		// text from a real result, "sees" the long spec, and proceeds as if
+		// the operation ran. (This is exactly how one fat-fingered tool_def
+		// call cascaded into building an agent around a tool that never got
+		// created.) Return a directive ERROR so the misfire is unmistakable.
+		if extras := nonActionArgKeys(args); len(extras) > 0 {
+			return "", fmt.Errorf(
+				"%s was called with no \"action\" but WITH params (%s) — nothing was done. Pick an action: %s. Re-call with action=\"<one>\" plus its params (action=\"help\" for the full spec)",
+				g.name, strings.Join(extras, ", "), strings.Join(g.sortedActionNames(), ", "))
+		}
 		return g.formatHelp(), nil
 	}
 	def, ok := g.actions[action]
@@ -216,6 +233,21 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 }
 
 // --- internals ---
+
+// nonActionArgKeys returns the arg keys other than "action", sorted. Used to
+// tell a bare probe (no args → show help) from a misfire (operation params
+// but no action → directive error).
+func nonActionArgKeys(args map[string]any) []string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		if k == "action" {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 func (g *GroupedTool) sortedActionNames() []string {
 	names := make([]string, 0, len(g.actions))

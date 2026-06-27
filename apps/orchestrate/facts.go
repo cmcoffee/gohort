@@ -33,7 +33,7 @@ func factsNamespace(agentID string) string {
 // into the existing entry rather than accumulating.
 func (t *chatTurn) storeFactToolDef() AgentToolDef {
 	desc := "Record a SHORT note (Explicit Memory) that needs to be ACCOUNTED FOR EVERY TIME a new question is raised — instructions, preferences, durable user/context facts. Pre-injected into your system prompt on every future turn; the LLM sees them automatically without having to search.\n\n**Use store_fact when**: the note shapes how you should respond to ANY future question (user preferences, recurring constraints, identity facts, project context). Right examples: \"user prefers metric units\", \"all responses go to a vegetarian audience\", \"production API needs JWT in X-Auth header\".\n\n**Use memory_save instead when**: the finding is complicated reference material you MIGHT need to recall later for specific questions — API specs, website navigation steps, recipes, configuration details. Those are pull-only via memory_search, not always-in-prompt. If you're tempted to dump research findings into store_fact, use memory_save instead.\n\nThe framework dedupes automatically (same wording OR semantically similar = skipped). Quantity here costs prompt tokens forever (these inject on every turn), so keep total around a screen's worth.\n\nDistinct from `knowledge_search` (read-only over user-uploaded files) and `memory_search` (your own prior memory_save findings, pull-only)."
-	if _, _, suffix := memoryModeCopy(t.agent.MemoryMode); suffix != "" {
+	if suffix := memoryModeCopy(t.agent.MemoryMode).StoreToolSuffix; suffix != "" {
 		desc = desc + "\n\n" + suffix
 	}
 	return AgentToolDef{
@@ -167,13 +167,13 @@ func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request
 		for _, f := range facts {
 			notes = append(notes, f.Note)
 		}
-		header, intro, _ := memoryModeCopy(a.MemoryMode)
+		c := memoryModeCopy(a.MemoryMode)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"notes": notes,
 			"framing": map[string]string{
-				"block_header": header,
-				"block_intro":  intro,
+				"block_header": c.Header,
+				"block_intro":  c.Intro,
 			},
 		})
 	case http.MethodPost:

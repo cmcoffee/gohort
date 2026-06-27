@@ -17,6 +17,13 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
+// DEFAULT_THINKING_BUDGET is the worker + lead default thinking budget when
+// the operator hasn't set one — the Qwen 3.6 sweet spot in practice (the
+// model card's 8192 is a safe ceiling, but 4096 is plenty for our worker).
+// It also doubles as the hard ceiling for any per-agent/route budget
+// (0 = unlimited / no ceiling).
+const DEFAULT_THINKING_BUDGET = 4096
+
 // browseModels queries the provider's API for available models and presents
 // a selection menu. Sets *target to the chosen model name.
 func browseModels(provider, apiKey, endpoint string, target *string) bool {
@@ -90,33 +97,12 @@ func (d dbCFG) llm() LLMProviderConfig {
 	global.db.Get(LLMTable, "endpoint", &c.Endpoint)
 	global.db.Get(LLMTable, "context_size", &c.ContextSize)
 	global.db.Get(LLMTable, "disable_thinking", &c.DisableThinking)
-	// Default thinking budget = 4096 (the Qwen 3.6 sweet spot in practice;
-	// the model card's 8192 is a safe ceiling but 4096 is plenty for our
-	// worker) when unset; operator overrides in --setup / admin, and this
-	// value also acts as the hard ceiling for any per-agent/route budget
-	// (0 = unlimited / no ceiling).
-	c.ThinkingBudget = 4096
+	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
 	global.db.Get(LLMTable, "thinking_budget", &c.ThinkingBudget)
 	global.db.Get(LLMTable, "native_tools", &c.NativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
 	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
-	// No-think signals: load each toggle individually. If the operator
-	// has never configured no-think (no_think_configured key absent),
-	// fall back to defaults that match the empirically-proven combo —
-	// kwarg + budget on, prepends off. Without this fallback, fresh
-	// installs would send no signals at all on no-think calls.
-	var noThinkConfigured bool
-	global.db.Get(LLMTable, "no_think_configured", &noThinkConfigured)
-	if noThinkConfigured {
-		global.db.Get(LLMTable, "no_think_use_kwarg", &c.NoThinkUseKwarg)
-		global.db.Get(LLMTable, "no_think_send_budget", &c.NoThinkSendBudget)
-		global.db.Get(LLMTable, "no_think_prepend_system", &c.NoThinkPrependSystem)
-		global.db.Get(LLMTable, "no_think_prepend_user", &c.NoThinkPrependUser)
-	} else {
-		c.NoThinkUseKwarg = true
-		c.NoThinkSendBudget = true
-	}
-	global.db.Get(LLMTable, "no_think_budget", &c.NoThinkBudget)
+	loadNoThinkConfig(LLMTable, &c)
 	var timeout_seconds int
 	global.db.Get(LLMTable, "request_timeout_seconds", &timeout_seconds)
 	if timeout_seconds > 0 {
@@ -132,24 +118,39 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	global.db.Get(LeadLLMTable, "api_key", &c.APIKey)
 	global.db.Get(LeadLLMTable, "endpoint", &c.Endpoint)
 	global.db.Get(LeadLLMTable, "disable_thinking", &c.DisableThinking)
-	c.ThinkingBudget = 4096 // default budget when unset (see worker load)
+	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
 	global.db.Get(LeadLLMTable, "thinking_budget", &c.ThinkingBudget)
 	global.db.Get(LeadLLMTable, "native_tools", &c.NativeTools)
+	// Parallel limits load from LLMTable (the worker table) on purpose: they
+	// describe the local inference server's slot count (Ollama / llama.cpp
+	// --parallel), which is a single global property of the box, not a
+	// per-tier setting. Worker and lead share the same backend, so there's
+	// one source of truth.
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
 	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
-	var leadNoThinkConfigured bool
-	global.db.Get(LeadLLMTable, "no_think_configured", &leadNoThinkConfigured)
-	if leadNoThinkConfigured {
-		global.db.Get(LeadLLMTable, "no_think_use_kwarg", &c.NoThinkUseKwarg)
-		global.db.Get(LeadLLMTable, "no_think_send_budget", &c.NoThinkSendBudget)
-		global.db.Get(LeadLLMTable, "no_think_prepend_system", &c.NoThinkPrependSystem)
-		global.db.Get(LeadLLMTable, "no_think_prepend_user", &c.NoThinkPrependUser)
+	loadNoThinkConfig(LeadLLMTable, &c)
+	return c
+}
+
+// loadNoThinkConfig overlays the no-think signal toggles from the given table
+// onto c. When the operator has never configured no-think (no_think_configured
+// key absent), it falls back to the empirically-proven combo — kwarg + budget
+// on, prepends off — so a fresh install still sends sane signals on no-think
+// calls instead of nothing. Shared by both the worker and lead loaders so the
+// shape lives in one place.
+func loadNoThinkConfig(table string, c *LLMProviderConfig) {
+	var configured bool
+	global.db.Get(table, "no_think_configured", &configured)
+	if configured {
+		global.db.Get(table, "no_think_use_kwarg", &c.NoThinkUseKwarg)
+		global.db.Get(table, "no_think_send_budget", &c.NoThinkSendBudget)
+		global.db.Get(table, "no_think_prepend_system", &c.NoThinkPrependSystem)
+		global.db.Get(table, "no_think_prepend_user", &c.NoThinkPrependUser)
 	} else {
 		c.NoThinkUseKwarg = true
 		c.NoThinkSendBudget = true
 	}
-	global.db.Get(LeadLLMTable, "no_think_budget", &c.NoThinkBudget)
-	return c
+	global.db.Get(table, "no_think_budget", &c.NoThinkBudget)
 }
 
 // reloadSharedLLMs rebuilds the shared worker + lead LLMs from current DB config

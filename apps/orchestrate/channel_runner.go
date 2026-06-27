@@ -84,6 +84,21 @@ func channelObsFrom(in ChannelInbound) string {
 	return who + " · " + where
 }
 
+// effectiveChannelSession resolves the session id a channel inbound actually
+// runs in. A DEDICATED cortex agent (Cortex on, exactly one channel) runs its
+// inbound IN its single standing thread (the channel is just the pipe), so its
+// per-contact session id collapses to the cortex session; everyone else keeps
+// the per-contact id passed in. The gatekeeper resolves the same id so its
+// turn-taking bypass + recent-context read look at the thread the agent
+// actually writes, not an empty parallel one.
+func (app *OrchestrateApp) effectiveChannelSession(owner, agentID, sessionID string) string {
+	if ag, ok := loadAgent(UserDB(app.DB, owner), agentID); ok && ag.Cortex &&
+		len(ListChannelsForAgent(RootDB, owner, agentID)) == 1 {
+		return cortexSessionID(agentID)
+	}
+	return sessionID
+}
+
 // registerChannelAgentRunner installs the closure core invokes to run a
 // channel's bound agent on one inbound message. Call once at startup.
 func registerChannelAgentRunner(app *OrchestrateApp) {
@@ -117,11 +132,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// multi-channel cortex agent (the Operator with many contacts) keeps its
 		// per-room session so contacts don't merge into one thread — the
 		// per-contact-vs-unified choice there is a deferred setting.
-		sessionID := in.SessionID
-		if ag, ok := loadAgent(UserDB(app.DB, in.Owner), in.AgentID); ok && ag.Cortex &&
-			len(ListChannelsForAgent(RootDB, in.Owner, in.AgentID)) == 1 {
-			sessionID = cortexSessionID(in.AgentID)
-		}
+		sessionID := app.effectiveChannelSession(in.Owner, in.AgentID, in.SessionID)
 		res, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
 			AgentOwner:     in.Owner,
 			RuntimeUser:    in.Owner,

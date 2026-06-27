@@ -38,14 +38,12 @@ import (
 
 func init() {
 	RegisterApp(new(OrchestrateApp))
-	// Wire the temp-tool-approval hook so admin's "approve" gate (and
-	// the chat-side "promote to global" path) auto-enable the tool on
-	// the user's seed-chat agent. Without this, a user who customized
-	// their Chat agent's AllowedTools list would have to re-edit it
-	// every time admin approves a new tool — surprising friction. Seed
-	// agents with empty AllowedTools (the default-pool case) are
-	// unaffected — they already see every persistent tool.
-	OnTempToolApproved = enableApprovedToolOnSeedChat
+	// The temp-tool-approval hook (enableApprovedToolOnSeedChat) is left
+	// UNWIRED on purpose. seed-chat now uses AllowedTools=nil (the auto-
+	// include sentinel) plus DisabledPersistentTools as the only opt-out,
+	// so every newly approved tool appears automatically at runtime and in
+	// the Tools modal — there's nothing for an approval hook to persist.
+	// The function is kept for its deny-list diagnostic, not registered.
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.orchestrator",
 		Label:   "Agency: Orchestrator (thinking)",
@@ -221,6 +219,9 @@ func (T *OrchestrateApp) Routes() {
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
 	// this registers the agent-execution half. See docs/channels-and-agents.md.
 	registerChannelAgentRunner(T)
+	// Channel wake-rule gatekeeper: the transport calls this before dispatching
+	// an inbound, so master (admin) + per-channel rules gate the agent run.
+	registerChannelGatekeeper(T)
 
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
 	// channel agent (inject into its home thread + run a turn) when something
@@ -243,6 +244,12 @@ func (T *OrchestrateApp) Routes() {
 	// callers see. Idempotent — running it twice produces the same
 	// record.
 	T.migrateBuilderShadows()
+
+	// One-shot reset of seed-chat shadows whose AllowedTools were frozen by
+	// the old enableApprovedToolOnSeedChat expansion path. Restores the
+	// default-pool sentinel so toolbox-mode tools and other non-standard
+	// approvals are no longer silently blocked.
+	T.migrateSeedChatFrozenAllowedTools()
 
 	// One-shot removal of the retired Operator seed. It folded into Chat
 	// (seed-chat) and is gone from seedAgents(); this deletes any stale

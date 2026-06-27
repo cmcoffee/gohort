@@ -313,3 +313,39 @@ func RunChannelAgent(ctx context.Context, in ChannelInbound) (ChannelReply, erro
 	}
 	return fn(ctx, in)
 }
+
+// ChannelGatekeeperFunc evaluates whether an inbound message should wake the
+// bound agent. It returns true to ALLOW (run the agent) and false to BLOCK
+// (record only, no run). The agent-aware package (orchestrate) owns the logic
+// because the decision reads the agent's name and the worker LLM; the transport
+// (bridges) calls it via ChannelGatekeeperAllow before dispatching. Mirrors the
+// ChannelAgentRunnerFunc seam.
+type ChannelGatekeeperFunc func(ctx context.Context, in ChannelInbound) bool
+
+var (
+	channelGatekeeper   ChannelGatekeeperFunc
+	channelGatekeeperMu sync.RWMutex
+)
+
+// RegisterChannelGatekeeper installs the wake-rule evaluator. Call once at
+// startup from orchestrate.
+func RegisterChannelGatekeeper(fn ChannelGatekeeperFunc) {
+	channelGatekeeperMu.Lock()
+	channelGatekeeper = fn
+	channelGatekeeperMu.Unlock()
+}
+
+// ChannelGatekeeperAllow reports whether an inbound may wake its bound agent.
+// Fails OPEN (allow) when no evaluator is registered — orchestrate not loaded
+// means there are no channel agents to gate anyway. The evaluator itself fails
+// open when no rules are configured and fails closed only when rules exist but
+// could not be evaluated (see orchestrate channel_gatekeeper.go).
+func ChannelGatekeeperAllow(ctx context.Context, in ChannelInbound) bool {
+	channelGatekeeperMu.RLock()
+	fn := channelGatekeeper
+	channelGatekeeperMu.RUnlock()
+	if fn == nil {
+		return true
+	}
+	return fn(ctx, in)
+}

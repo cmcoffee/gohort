@@ -60,6 +60,12 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 		ChatToolToAgentToolDefWithSession(addToolTool{}, sess),
 		ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess),
 		ChatToolToAgentToolDefWithSession(skillDefTool(), sess),
+		// bridge — wire a registered API credential to a schedule so an
+		// agent gets woken when an external service changes. Pure
+		// composition over SecureAPI credentials + watch-kind event
+		// monitors; Builder references the credential by name (admin owns
+		// the secret).
+		ChatToolToAgentToolDefWithSession(bridgeDefTool(""), sess),
 		// collections — read-only enumeration so Builder can
 		// resolve user-named collections to IDs when authoring
 		// agents (attached_collections=[...]). Mutating

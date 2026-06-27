@@ -371,6 +371,18 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Channel Wake Rules",
+				Subtitle: "Master gatekeeper applied to every channel before an inbound message wakes its agent. One rule per line; rules are OR'd (a message that matches ANY rule wakes the agent). These merge on top of each channel's own per-channel rules (set in the channel rail). Leave blank to apply no global rule.",
+				Body: ui.FormPanel{
+					Source: "api/settings",
+					Fields: []ui.FormField{
+						{Field: "channel_wake_rules", Label: "Master rules", Type: "textarea", Rows: 5,
+							Placeholder: "Respond only when called by name\nAlways respond to a direct 1:1 message",
+							Help:        "A cheap worker-LLM check runs these on each inbound. Follow-ups to the agent's own last message bypass the rules; owner messages are evaluated like anyone else's unless a rule says otherwise."},
+					},
+				},
+			},
+			{
 				Title:    "Users",
 				Subtitle: "Approve pending signups, grant or revoke admin, manage app access, or delete accounts. Pending users see a placeholder page until approved.",
 				Body: ui.Table{

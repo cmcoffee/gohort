@@ -177,31 +177,11 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 }
 
 // enableApprovedToolOnSeedChat is the OnTempToolApproved hook target.
-// When admin approves a temp tool, ensure it shows up as enabled on
-// the user's seed-chat — both at runtime (LLM can call it) and in
-// the Tools modal (checkbox visibly checked).
-//
-// Two cases:
-//
-//  1. seed-chat already has a custom AllowedTools list: append the
-//     new tool. Existing behavior.
-//
-//  2. seed-chat is at the "default pool" sentinel (empty AllowedTools):
-//     EXPAND the list to the current effective set (framework defaults
-//     + every persistent tool the user already has) and append the
-//     new tool. Final runtime behavior is identical (same effective
-//     set), but the list is now explicit so the Tools modal renders
-//     every box checked instead of relying on the "empty means
-//     everything" sentinel — which previously made the just-approved
-//     tool look disabled even though the runtime auto-included it.
-//
-// Trade-off of expanding the sentinel: future framework default-pool
-// expansions don't auto-roll-forward to this user. They can re-check
-// the new tool in the Tools modal once. Worth it for the friction-free
-// "approve a tool, it shows up enabled immediately" UX.
-//
-// No-op when seed-chat doesn't exist for the user, or already has
-// the tool listed.
+// Seed-chat now uses DisabledPersistentTools as its sole opt-out lever;
+// AllowedTools stays nil so every newly approved tool auto-appears
+// without any per-tool enable step. This function's only remaining job
+// is to log when a re-approved tool is staying suppressed because the
+// user explicitly disabled it in the past.
 func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
 	if db == nil || username == "" || toolName == "" {
 		return
@@ -212,64 +192,17 @@ func enableApprovedToolOnSeedChat(db Database, username, toolName string) {
 	}
 	var rec AgentRecord
 	if !udb.Get(agentsTable, "seed-chat", &rec) {
-		// No user shadow yet — chat-seed has never been customized.
-		// Create a minimal shadow record so the auto-enable below can
-		// land. The shadow only needs the ID + Owner; everything else
-		// overlays from the in-code seed at load time. Without this,
-		// the function silently bailed out and the runtime auto-include
-		// for seed agents was the only signal the tool worked — invisible
-		// in the Tools modal.
-		rec = AgentRecord{
-			ID:    "seed-chat",
-			Owner: seedOwner,
-		}
+		return // no shadow; tool auto-loads via default pool
 	}
-	// Respect a previous explicit-disable. If the user manually
-	// unchecked this tool in the past, it's on the deny list; the
-	// admin re-approving (often = author iterated and re-approved
-	// the new version) is not strong enough signal to override the
-	// user's choice silently. The tool stays disabled until the
-	// user re-checks it themselves.
 	for _, n := range rec.DisabledPersistentTools {
 		if n == toolName {
 			Log("[orchestrate.agents] approved tool %q stays disabled on seed-chat for user=%s (on user deny list)", toolName, username)
 			return
 		}
 	}
-	for _, n := range rec.AllowedTools {
-		if n == toolName {
-			return
-		}
-	}
-	if len(rec.AllowedTools) == 0 {
-		// Expand the "default pool" sentinel to the current effective
-		// set so the modal can render every effective tool as checked.
-		// Framework defaults + persistent temp tools the user already
-		// has + the new one being approved.
-		current := availableWorkerToolNames()
-		seen := make(map[string]bool, len(current)+8)
-		for _, n := range current {
-			seen[n] = true
-		}
-		for _, p := range LoadPersistentTempTools(db, username) {
-			if !seen[p.Tool.Name] {
-				seen[p.Tool.Name] = true
-				current = append(current, p.Tool.Name)
-			}
-		}
-		if !seen[toolName] {
-			current = append(current, toolName)
-		}
-		rec.AllowedTools = current
-		rec.Updated = time.Now()
-		udb.Set(agentsTable, "seed-chat", rec)
-		Log("[orchestrate.agents] expanded seed-chat default-pool sentinel to explicit list (%d tools) and enabled approved %q for user=%s", len(current), toolName, username)
-		return
-	}
-	rec.AllowedTools = append(rec.AllowedTools, toolName)
-	rec.Updated = time.Now()
-	udb.Set(agentsTable, "seed-chat", rec)
-	Log("[orchestrate.agents] enabled approved tool %q on seed-chat for user=%s", toolName, username)
+	// Tool is approved and not on the deny list — it auto-loads at
+	// runtime and the modal renders it checked (AllowedTools=nil means
+	// all-on, minus DisabledPersistentTools). Nothing to write.
 }
 
 // migrateBuilderShadows is the one-shot startup migration that
@@ -358,6 +291,56 @@ func (T *OrchestrateApp) dropLegacyOperator() {
 	}
 	if dropped > 0 {
 		Log("[orchestrate.migrate] dropLegacyOperator: removed %d Operator shadow(s)", dropped)
+	}
+}
+
+// migrateSeedChatFrozenAllowedTools clears the AllowedTools field on
+// every user's seed-chat shadow that was materialized by the old
+// enableApprovedToolOnSeedChat expansion path. The old code froze an
+// explicit snapshot on first tool-approval; tools enabled via non-standard
+// paths (toolbox enables, agency menu) were absent from the snapshot and
+// filtered at runtime. Resetting to empty restores the default-pool
+// sentinel so all approved persistent tools auto-load. Idempotent —
+// shadows already at empty (or no shadow at all) are skipped.
+func (T *OrchestrateApp) migrateSeedChatFrozenAllowedTools() {
+	if T == nil || T.DB == nil || AuthDB == nil {
+		return
+	}
+	authDB := AuthDB()
+	if authDB == nil {
+		return
+	}
+	cleared := 0
+	for _, u := range AuthListUsers(authDB) {
+		udb := UserDB(T.DB, u.Username)
+		if udb == nil {
+			continue
+		}
+		var shadow AgentRecord
+		if !udb.Get(agentsTable, "seed-chat", &shadow) {
+			continue
+		}
+		// Skip only when both fields are already clean. The first migration
+		// run may have cleared AllowedTools but not DisabledPersistentTools
+		// (before that clear was added), so we can't stop at AllowedTools==nil.
+		alreadyClean := (len(shadow.AllowedTools) == 0 || isNoToolsSentinel(shadow.AllowedTools)) &&
+			len(shadow.DisabledPersistentTools) == 0
+		if alreadyClean {
+			continue
+		}
+		if !isNoToolsSentinel(shadow.AllowedTools) {
+			shadow.AllowedTools = nil
+		}
+		// DisabledPersistentTools was populated by the frozen-list save path
+		// (tools absent from the snapshot were written to the deny list).
+		shadow.DisabledPersistentTools = nil
+		shadow.Updated = time.Now()
+		udb.Set(agentsTable, "seed-chat", shadow)
+		cleared++
+		Log("[orchestrate.migrate] migrateSeedChatFrozenAllowedTools: reset seed-chat for user=%q", u.Username)
+	}
+	if cleared > 0 {
+		Log("[orchestrate.migrate] migrateSeedChatFrozenAllowedTools: cleared %d frozen AllowedTools snapshot(s)", cleared)
 	}
 }
 
@@ -939,7 +922,10 @@ func sandboxPythonNoteSection() string {
 
 // seedAgents returns the built-in starters. Stable IDs so they stay
 // recognizable across rebuilds. Users clone these to customize.
-func seedAgents() []AgentRecord {
+// coreSeedAgents are orchestrate's own in-code seeds. seedAgents() (see
+// app_agents.go) wraps this to also fold in cross-app registered App Agents,
+// so both resolve through the same shadow-overlay machinery.
+func coreSeedAgents() []AgentRecord {
 	return []AgentRecord{
 		{
 			ID:          "seed-chat",
@@ -983,7 +969,7 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 
 ## Authoring: tools are yours; agents and pipelines go to Builder
 
-**Tools are self-serve.** When the user wants a new TOOL, author it yourself with tool_def — you don't punt this to Builder. The loop: for an API endpoint, tool_def(mode="api", credential=...) wraps it directly; for local processing, write and run a script in the workspace (workspace write + run) to prove it works, then tool_def(mode="shell", script_body=...) to wrap it. The tool is callable immediately in this session; cross-session persistence is auto-queued for admin approval in the background (don't ask permission, just author it). Once a tool works, you can wrap it in a monitor (create_event_monitor kind="watch") to watch it for changes.
+**Tools are self-serve.** When the user wants a new TOOL, author it yourself with tool_def — you don't punt this to Builder. The loop: for an API endpoint, tool_def(mode="api", credential=...) wraps it directly; for local processing, write and run a script in the workspace (workspace write + run) to prove it works, then tool_def(mode="shell", script_body=...) to wrap it. The tool is callable immediately in this session; cross-session persistence is auto-queued for admin approval in the background (don't ask permission, just author it). Once a tool works, you can wrap it in a monitor (create_event_monitor kind="watch") to watch it for changes. Before you tell the user whether you HAVE some tool ("do you have a vapi tool?"), or build one that might already exist, call tool_def(action="list") and look: it is the only surface that shows every custom tool in scope (session drafts, your approved persistent tools, AND ones still pending approval). Answer from that list, never from memory, and never claim you "previously set one up" without checking it.
 
 **Agents, pipelines, and skills are built THROUGH Builder, in this thread: you do the quick intake, then Builder does the build.** When the user wants an AGENT, PIPELINE, or SKILL made:
 
@@ -1749,6 +1735,36 @@ When the user uploads a document (via paperclip or intake), the framework extrac
 
 // --- handlers ---------------------------------------------------------------
 
+// foldUncheckedIntoDenyList recomputes a seed agent's DisabledPersistentTools
+// from the Tools modal's picked (checked) set. Any of the user's persistent
+// temp tools NOT in the picked set is added to the deny list; picked ones are
+// removed so re-checking re-enables them. Only persistent temp tools can land
+// on the deny list — framework/registered tools are gated by AllowedTools
+// instead, so they're left untouched here. Map iteration order is irrelevant:
+// the result is a stored set, not an LLM-facing schema.
+func foldUncheckedIntoDenyList(db Database, user string, picked, currentDisabled []string) []string {
+	pickedSet := make(map[string]bool, len(picked))
+	for _, n := range picked {
+		pickedSet[n] = true
+	}
+	disabledSet := make(map[string]bool, len(currentDisabled))
+	for _, n := range currentDisabled {
+		disabledSet[n] = true
+	}
+	for _, p := range LoadPersistentTempTools(db, user) {
+		if pickedSet[p.Tool.Name] {
+			delete(disabledSet, p.Tool.Name) // re-enabled
+		} else {
+			disabledSet[p.Tool.Name] = true // explicitly disabled
+		}
+	}
+	out := make([]string, 0, len(disabledSet))
+	for n := range disabledSet {
+		out = append(out, n)
+	}
+	return out
+}
+
 func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -1791,41 +1807,41 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.Locked = existing.Locked
 			}
 		}
-		// Seed agents auto-include every persistent_temp_tool the user
-		// has, regardless of AllowedTools. That makes unchecking a
-		// persistent tool in the Tools modal a silent no-op: the
-		// runtime would still include it. Translate the user's intent
-		// here — for seed agents under an explicit AllowedTools list,
-		// any persistent tool that's NOT in the list goes onto
-		// DisabledPersistentTools (the deny lever the runtime honors).
-		// Conversely, anything that IS in the list gets removed from
-		// the deny list so re-checking works too.
+		// Tool-curation translation for seed agents. The modal sends the
+		// set of CHECKED tools as req.AllowedTools; the no-tools sentinel
+		// (["__none__"]) bypasses this and the runtime handles it via
+		// noTools. Two seed shapes:
 		//
-		// The "default pool" sentinel (empty AllowedTools) and the
-		// no-tools sentinel (["__none__"]) bypass this — the first
-		// means "all on," the second means "all off and the runtime
-		// already handles it via noTools."
-		if isSeedID(req.ID) && len(req.AllowedTools) > 0 && !isNoToolsSentinel(req.AllowedTools) {
-			pickedSet := make(map[string]bool, len(req.AllowedTools))
-			for _, n := range req.AllowedTools {
-				pickedSet[n] = true
-			}
-			disabledSet := make(map[string]bool, len(req.DisabledPersistentTools))
-			for _, n := range req.DisabledPersistentTools {
-				disabledSet[n] = true
-			}
-			for _, p := range LoadPersistentTempTools(T.DB, user) {
-				if pickedSet[p.Tool.Name] {
-					delete(disabledSet, p.Tool.Name) // re-enabled
+		//  - Default-pool seeds (seed-chat): the in-code seed ships an
+		//    EMPTY AllowedTools, meaning "every approved tool, including
+		//    ones approved in the future." Unchecks fold into
+		//    DisabledPersistentTools and AllowedTools is forced back to nil
+		//    so it never freezes into a snapshot that blocks auto-add.
+		//
+		//  - Curated seeds (research, kb): the in-code seed ships a real
+		//    framework-tool allowlist that resolveWorkerTools intersects
+		//    against. Preserve it as the literal picked list; only the
+		//    user's persistent temp-tool unchecks fold into the deny list.
+		//    Wiping AllowedTools here would broaden the agent to the full
+		//    default pool (loadAgent does not restore the curated list).
+		if isSeedID(req.ID) && !isNoToolsSentinel(req.AllowedTools) {
+			seed, _ := seedAgentByID(req.ID)
+			if len(seed.AllowedTools) == 0 {
+				// Default-pool seed.
+				if len(req.AllowedTools) == 0 {
+					// All-checked: clear the deny list.
+					req.DisabledPersistentTools = nil
 				} else {
-					disabledSet[p.Tool.Name] = true // explicitly disabled
+					req.DisabledPersistentTools = foldUncheckedIntoDenyList(T.DB, user, req.AllowedTools, req.DisabledPersistentTools)
 				}
+				// Force the auto-include sentinel so future approvals appear
+				// without a per-tool enable step.
+				req.AllowedTools = nil
+			} else if len(req.AllowedTools) > 0 {
+				// Curated seed: keep the framework allowlist intact, fold only
+				// persistent temp-tool unchecks into the deny list.
+				req.DisabledPersistentTools = foldUncheckedIntoDenyList(T.DB, user, req.AllowedTools, req.DisabledPersistentTools)
 			}
-			newDisabled := make([]string, 0, len(disabledSet))
-			for n := range disabledSet {
-				newDisabled = append(newDisabled, n)
-			}
-			req.DisabledPersistentTools = newDisabled
 		}
 		saved, err := saveAgent(udb, req)
 		if err != nil {

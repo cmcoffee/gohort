@@ -52,8 +52,8 @@ func renderRulesPromptSection(rules string) string {
 // driven by the agent's MemoryMode (agent / chatbot).
 func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact) string {
 	out := base
-	header, intro, _ := memoryModeCopy(agent.MemoryMode)
-	if f := RenderMemoryFactsBlockWith(facts, header, intro); f != "" {
+	c := memoryModeCopy(agent.MemoryMode)
+	if f := RenderMemoryFactsBlockWith(facts, c.Header, c.Intro); f != "" {
 		out = f + out
 	}
 	if r := renderRulesPromptSection(agent.Rules); r != "" {
@@ -62,14 +62,23 @@ func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact) str
 	return out
 }
 
-// memoryModeCopy returns the (header, intro, storeToolSuffix) triple
-// for the given MemoryMode. Empty or unrecognized → "agent" defaults.
+// memoryModeText is the mode-specific wording for the memory section.
+// Returned as a struct (not a positional triple) so call sites read
+// .StoreToolSuffix instead of counting return positions.
 //
-//   - header: rendered atop the always-in-prompt facts block
-//   - intro: explanatory paragraph under the header (tells the LLM
+//   - Header: rendered atop the always-in-prompt facts block
+//   - Intro: explanatory paragraph under the header (tells the LLM
 //     how to read and use the facts)
-//   - storeToolSuffix: appended to the store_fact tool description
+//   - StoreToolSuffix: appended to the store_fact tool description
 //     so the LLM understands WHAT to put there in this mode
+type memoryModeText struct {
+	Header          string
+	Intro           string
+	StoreToolSuffix string
+}
+
+// memoryModeCopy returns the wording for the given MemoryMode. Empty or
+// unrecognized → "agent" defaults.
 //
 // Two modes:
 //
@@ -88,15 +97,19 @@ func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact) str
 //
 // Both modes use Reference Memory (memory_save) identically; the mode
 // only widens or narrows what fits in the Explicit Memory bucket.
-func memoryModeCopy(mode string) (header, intro, storeToolSuffix string) {
+func memoryModeCopy(mode string) memoryModeText {
 	switch mode {
 	case "chatbot":
-		return "## Saved notes",
-			"What you've kept in mind across sessions with this user — generalized lessons (design principles, recurring gotchas) PLUS personalization (their name, preferences, recurring details) PLUS conversation-coherence notes (\"the project we discussed last week\", \"the user is on the beta plan\"). Apply silently; don't list them back. Each entry is numbered so you can reference an index when one is no longer accurate.",
-			"This agent is in CHATBOT MODE — Explicit Memory is broad. Right for store_fact: generalized lessons (\"X always fails in dev environments\"), user personalization (\"prefers concise replies\", \"works at Acme on the platform team\"), memorable notes that keep conversations coherent (\"the project we've been discussing is named Atlas\"). API specifics, working approaches for a specific task, paragraph-length findings — those still belong in Reference Memory via memory_save (searchable by similarity, not always in prompt). The rule is the same: always-in-prompt vs. searchable; chatbot mode just widens what counts as worth always seeing."
+		return memoryModeText{
+			Header:          "## Saved notes",
+			Intro:           "What you've kept in mind across sessions with this user — generalized lessons (design principles, recurring gotchas) PLUS personalization (their name, preferences, recurring details) PLUS conversation-coherence notes (\"the project we discussed last week\", \"the user is on the beta plan\"). Apply silently; don't list them back. Each entry is numbered so you can reference an index when one is no longer accurate.",
+			StoreToolSuffix: "This agent is in CHATBOT MODE — Explicit Memory is broad. Right for store_fact: generalized lessons (\"X always fails in dev environments\"), user personalization (\"prefers concise replies\", \"works at Acme on the platform team\"), memorable notes that keep conversations coherent (\"the project we've been discussing is named Atlas\"). API specifics, working approaches for a specific task, paragraph-length findings — those still belong in Reference Memory via memory_save (searchable by similarity, not always in prompt). The rule is the same: always-in-prompt vs. searchable; chatbot mode just widens what counts as worth always seeing.",
+		}
 	default: // "" or "agent"
-		return "## Lessons learned",
-			"Generalized lessons from prior sessions — design principles, recurring gotchas, things that bit you and the workaround that worked. Apply when the current task touches similar territory. Each lesson is numbered so you can reference an index when forgetting one that's no longer accurate.",
-			"This agent is in AGENT MODE — Explicit Memory is narrow. Use store_fact ONLY for GENERALIZED lessons that apply across many future jobs: design principles (\"check the sandbox before authoring tools that depend on binaries\"), recurring gotchas (\"endpoint X returns 200 with empty body on missing key, not 404, so check for that pattern\"), \"X fails, route Y instead\" type rules. Specific API details, working approaches for a single task, paragraph-length findings — those go in Reference Memory via memory_save (searchable by similarity, not always in prompt). NOT for user personalization (\"user prefers concise replies\", \"user's name is Sarah\") — that's chatbot-mode territory and this agent is task-focused. If the lesson reads \"and then it worked\" with no generalized trap underneath — discard, that's a success story, not a lesson."
+		return memoryModeText{
+			Header:          "## Lessons learned",
+			Intro:           "Generalized lessons from prior sessions — design principles, recurring gotchas, things that bit you and the workaround that worked. Apply when the current task touches similar territory. Each lesson is numbered so you can reference an index when forgetting one that's no longer accurate.",
+			StoreToolSuffix: "This agent is in AGENT MODE — Explicit Memory is narrow. Use store_fact ONLY for GENERALIZED lessons that apply across many future jobs: design principles (\"check the sandbox before authoring tools that depend on binaries\"), recurring gotchas (\"endpoint X returns 200 with empty body on missing key, not 404, so check for that pattern\"), \"X fails, route Y instead\" type rules. Specific API details, working approaches for a single task, paragraph-length findings — those go in Reference Memory via memory_save (searchable by similarity, not always in prompt). NOT for user personalization (\"user prefers concise replies\", \"user's name is Sarah\") — that's chatbot-mode territory and this agent is task-focused. If the lesson reads \"and then it worked\" with no generalized trap underneath — discard, that's a success story, not a lesson.",
+		}
 	}
 }

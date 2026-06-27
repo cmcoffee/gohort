@@ -784,6 +784,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				return fmt.Sprintf("Deleted event monitor %q.", name), nil
 			},
 		},
+		// bridge — the friendly "connect an authenticated API to a schedule"
+		// front-end over a watch monitor + call_<credential>. Same family as
+		// the event-monitor tools above; defaults wake_agent to THIS agent so a
+		// Fleet/Cortex agent can self-monitor a service by leaving it blank.
+		ChatToolToAgentToolDefWithSession(bridgeDefTool(controllerAgentID), sess),
 	}
 }
 

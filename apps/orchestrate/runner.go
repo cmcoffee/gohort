@@ -1083,7 +1083,14 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 		return
 	}
 	noTools := isNoToolsSentinel(t.agent.AllowedTools)
-	isSeed := t.agent.Owner == seedOwner
+	// Treat any agent backed by an in-code seed as a seed regardless of
+	// whether its per-user shadow carries Owner==seedOwner. The seed-chat
+	// shadow may have Owner==username when the user saved customizations
+	// through the admin UI, but the AllowedTools gate must still be nil so
+	// all approved persistent tools (including toolbox-mode tools like vapi
+	// that bypass the OnTempToolApproved path) auto-load.
+	_, isSeedBacked := seedAgentByID(t.agent.ID)
+	isSeed := t.agent.Owner == seedOwner || isSeedBacked
 	disabledPersistent := make(map[string]bool, len(t.agent.DisabledPersistentTools))
 	for _, n := range t.agent.DisabledPersistentTools {
 		disabledPersistent[n] = true
@@ -1595,9 +1602,31 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		for _, n := range t.agent.AllowedTools {
 			allow[n] = true
 		}
+		matched := 0
 		for _, n := range defaultNames {
 			if allow[n] {
 				toolNames = append(toolNames, n)
+				matched++
+			}
+		}
+		// Credential-backed tools (fetch_url_<cred>) are synthesized per
+		// session by Secure().BuildTools and never appear in defaultNames
+		// (the registered worker pool), so the intersect above silently
+		// dropped any credential tool the author explicitly allowlisted.
+		// The agent then fell back to the generic fetch_url — which has no
+		// injected auth and refuses private hosts — instead of the bound,
+		// authed tool it was configured with. Re-add allowlisted names that
+		// resolve to a live credential tool for this session. (The dispatch
+		// path in agent_dispatch.go already resolves these via
+		// GetAgentToolsWithSession's per-session fallback; this brings the
+		// interactive / published-app surface to parity.) Only build the
+		// per-session credential set when some allowlisted name went
+		// unmatched above — the common all-registered case skips it.
+		if matched < len(allow) {
+			for _, td := range Secure().BuildTools(sess) {
+				if n := td.Tool.Name; allow[n] && !slices.Contains(toolNames, n) {
+					toolNames = append(toolNames, n)
+				}
 			}
 		}
 	default:

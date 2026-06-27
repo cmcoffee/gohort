@@ -32,6 +32,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -108,16 +109,29 @@ func (p Page) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Render writes the full HTML document for the page.
 func (p Page) Render(w http.ResponseWriter) error {
+	blob, err := p.ConfigJSON()
+	if err != nil {
+		return err
+	}
+	return RenderPageJSON(w, blob, p.Theme, p.ExtraHeadHTML, p.Title)
+}
+
+// ConfigJSON marshals the page into the JSON config blob the client runtime
+// reads (the same bytes Render embeds). Exposed so a data-driven host can build
+// a page from Go ui types once and STORE the result, then serve it later with
+// RenderPageJSON — no Go Component round-trip needed. The wire format already
+// carries each component's "type" tag, so the stored blob is self-describing.
+func (p Page) ConfigJSON() (json.RawMessage, error) {
 	cfg := pageConfig{
-		Title:    p.Title,
-		Sticky:   marshalComponent(p.Sticky),
-		Sections: make([]sectionConfig, 0, len(p.Sections)),
-		MaxWidth: p.MaxWidth,
-		Grid:     p.Grid,
-		Tabbed:   p.Tabbed,
-		Footer:   p.Footer,
+		Title:     p.Title,
+		Sticky:    marshalComponent(p.Sticky),
+		Sections:  make([]sectionConfig, 0, len(p.Sections)),
+		MaxWidth:  p.MaxWidth,
+		Grid:      p.Grid,
+		Tabbed:    p.Tabbed,
+		Footer:    p.Footer,
 		FooterURL: p.FooterURL,
-		BackURL:  p.BackURL,
+		BackURL:   p.BackURL,
 		ShowTitle: p.ShowTitle,
 	}
 	if cfg.MaxWidth == "" {
@@ -134,11 +148,19 @@ func (p Page) Render(w http.ResponseWriter) error {
 			Group:     s.Group,
 		})
 	}
-	jsonBlob, err := json.Marshal(cfg)
+	blob, err := json.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("ui: marshal page: %w", err)
+		return nil, fmt.Errorf("ui: marshal page: %w", err)
 	}
-	theme := p.Theme
+	return blob, nil
+}
+
+// RenderPageJSON writes the page HTML shell around a pre-built config blob
+// (from Page.ConfigJSON or stored as data). Same output as Render minus the
+// marshal step, so a host that keeps the page as data can serve it without
+// reconstructing the Go Component tree. title sets the document <title>; theme
+// falls back to the default when empty.
+func RenderPageJSON(w io.Writer, pageJSON []byte, theme, extraHead, title string) error {
 	if theme == "" {
 		theme = "blackboard"
 	}
@@ -150,14 +172,14 @@ func (p Page) Render(w http.ResponseWriter) error {
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%s">
 <title>%s</title>
 <link rel="stylesheet" href="/_ui/ui.css">
-%s</head>`, theme, webui.FaviconSVG, htmlEscape(p.Title), p.ExtraHeadHTML)
+%s</head>`, theme, webui.FaviconSVG, htmlEscape(title), extraHead)
 	fmt.Fprintf(w, `
 <body>
 <div id="ui-root"></div>
 <script id="ui-config" type="application/json">%s</script>
 <script src="/_ui/ui.js"></script>
 </body>
-</html>`, strings.ReplaceAll(string(jsonBlob), "</", "<\\/"))
+</html>`, strings.ReplaceAll(string(pageJSON), "</", "<\\/"))
 	return nil
 }
 

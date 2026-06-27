@@ -2214,13 +2214,18 @@ const orchestrateWebAssets = `<style>
           //   some checked  → [name, ...]  (literal list)
           var allowed = {};
           var listed = agent.allowed_tools || [];
+          // Tools the user has explicitly opted out of (seed agents only).
+          // These stay unchecked even in the all-checked / default-pool state.
+          var userDisabled = {};
+          (agent.disabled_persistent_tools || []).forEach(function(n) { userDisabled[n] = true; });
           var isNoneSentinel = listed.length === 1 && listed[0] === '__none__';
           if (isNoneSentinel) {
             // Sentinel — render with NOTHING checked.
           } else if (listed.length === 0) {
-            catalog.forEach(function(o) { allowed[o.value] = true; });
+            // Default pool: all tools on, except explicit user opt-outs.
+            catalog.forEach(function(o) { if (!userDisabled[o.value]) allowed[o.value] = true; });
           } else {
-            listed.forEach(function(n) { allowed[n] = true; });
+            listed.forEach(function(n) { if (!userDisabled[n]) allowed[n] = true; });
           }
           var m = openOrchModal('Tools — ' + (agent.name || id));
           var help = document.createElement('div');

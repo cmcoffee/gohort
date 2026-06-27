@@ -873,7 +873,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	bounded := T.compactOperatorHistory(runtimeDB, runtimeUser, target, subSessionID, priorSession.Messages)
 	llmMessages := make([]Message, 0, len(bounded)+1)
 	for _, m := range bounded {
-		llmMessages = append(llmMessages, Message{Role: m.Role, Content: m.Content})
+		llmMessages = append(llmMessages, Message{Role: m.Role, Content: attributeSender(m.Role, m.Sender, m.Content)})
 	}
 	// Provenance for the LLM ONLY — appended to the run-time copy of the user
 	// message so the agent knows which channel/transport this arrived on, but
@@ -883,7 +883,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if sc := strings.TrimSpace(run.SurfaceContext); sc != "" {
 		llmMessage += "\n" + sc
 	}
-	llmMessages = append(llmMessages, Message{Role: "user", Content: llmMessage, Images: run.Images})
+	// Attribute the live turn to its sender too (same rendering as history, so
+	// the prompt prefix stays cache-stable when this message replays next turn).
+	// Without this the LLM sees every group-room turn as an anonymous "user" and
+	// can't tell participants apart — the names are stored + shown in Cortex, but
+	// the model itself never saw them.
+	llmMessages = append(llmMessages, Message{Role: "user", Content: attributeSender("user", run.MessageSender, llmMessage), Images: run.Images})
 
 	// Optional injection-queue drain hook for mid-flight user notes.
 	// Cheap no-op when the queue isn't registered.
@@ -972,6 +977,23 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 // ignore the marker — the brief still reads naturally below.
 func markAsDelegated(msg string) string {
 	return "[DELEGATED INVOCATION] Headless one-shot run — no back-and-forth; work from the brief as a self-contained spec, making reasonable defaults for anything unspecified.\n\nBrief: " + msg
+}
+
+// attributeSender prefixes a user message with its author's name so the LLM
+// reads a multi-party thread by who-said-what — the same "who: text" rendering
+// the read_chat tool uses (channel_tools.go). Only user turns are attributed;
+// assistant turns are the agent's own. A no-op when no sender is known (plain
+// dispatch / web sessions), so those stay anonymous as before. Content stays
+// clean in storage — attribution is a render-time concern applied identically
+// to history and the live turn, keeping the prompt prefix cache-stable.
+func attributeSender(role, sender, content string) string {
+	if role != "user" {
+		return content
+	}
+	if sender = strings.TrimSpace(sender); sender == "" {
+		return content
+	}
+	return sender + ": " + content
 }
 
 // findAgentByNameOrID looks up an agent in udb either by exact ID

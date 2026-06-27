@@ -239,6 +239,19 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	Log("[bridges] channel %q (svc=%s agent=%s dir=%s) handling inbound from %s",
 		ch.Name, svc, ch.AgentID, ChannelDirection(ch), handle)
 	go func() {
+		// Wake-rule gatekeeper: master (admin) + per-channel rules decide whether
+		// this inbound wakes the agent. It was already recorded above for history;
+		// on a block we simply don't run or reply. Fails open when no rules are set
+		// or no evaluator is registered (see core.ChannelGatekeeperAllow). Runs in
+		// the goroutine so the connector's POST returns 202 without waiting on the
+		// gatekeeper's worker-LLM call.
+		if !ChannelGatekeeperAllow(context.Background(), ChannelInbound{
+			Owner: ch.Owner, AgentID: ch.AgentID, SessionID: sessionID,
+			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images,
+		}) {
+			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
+			return
+		}
 		reply, err := RunChannelAgent(context.Background(), ChannelInbound{
 			Owner:            ch.Owner,
 			AgentID:          ch.AgentID,

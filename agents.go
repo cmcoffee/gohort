@@ -11,7 +11,9 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/agents"
 	_ "github.com/cmcoffee/gohort/apps/bridges"
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
+	_ "github.com/cmcoffee/gohort/apps/customapps"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
+	_ "github.com/cmcoffee/gohort/apps/mcpserver"
 	_ "github.com/cmcoffee/gohort/apps/orchestrate"
 	// apps/phantom retired: transport + PhantomLink moved to apps/bridges, and
 	// proactive / scheduled-callbacks / goal-conversations were dropped (an agent

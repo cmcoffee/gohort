@@ -139,8 +139,15 @@ func (d PipelineDef) Validate() error {
 			return Error("duplicate stage name: " + s.Name)
 		}
 		seen[s.Name] = true
-		if (s.Kind == StageAgent || s.Kind == StageFanout) && s.Agent == "" {
-			return Error("stage " + s.Name + " is kind=" + string(s.Kind) + " but names no agent")
+		if s.Kind == StageAgent && s.Agent == "" {
+			return Error("stage " + s.Name + " is kind=agent but names no agent")
+		}
+		// A fanout stage runs as a worker by default (over the stage's
+		// resolved tools) and dispatches only when it names an agent — so
+		// the agent is optional. What it MUST have is something to fan
+		// over.
+		if s.Kind == StageFanout && s.FanOver == "" {
+			return Error("stage " + s.Name + " is kind=fanout but names no fan_over stage")
 		}
 		if s.FanOver != "" && !seen[s.FanOver] {
 			// FanOver must reference an EARLIER stage (already in seen,

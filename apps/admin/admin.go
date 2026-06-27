@@ -2982,6 +2982,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"ollama_proxy_url":     proxy_url,
 		"ollama_active":        ollama_active,
 		"fetch_cache_quota_mb": fetch_cache_quota_mb,
+		"channel_wake_rules":   AuthGetChannelWakeRules(a.db),
 	}
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
@@ -3004,6 +3005,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		OllamaProxyEnabled *bool     `json:"ollama_proxy_enabled,omitempty"`
 		OllamaProxyPort    *int      `json:"ollama_proxy_port,omitempty"`
 		FetchCacheQuotaMB  *int      `json:"fetch_cache_quota_mb,omitempty"`
+		ChannelWakeRules   *string   `json:"channel_wake_rules,omitempty"`
 	}
 	// Read the body once: the static settings decode into the typed struct
 	// above, the tunables come off the same bytes as a generic map (validated
@@ -3061,6 +3063,10 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.FetchCacheQuotaMB != nil && *req.FetchCacheQuotaMB >= 0 && *req.FetchCacheQuotaMB <= 10240 {
 		a.db.Set(WebTable, "fetch_cache_quota_mb", *req.FetchCacheQuotaMB)
 		Log("[admin] user %q set fetch_cache_quota_mb=%d", current, *req.FetchCacheQuotaMB)
+	}
+	if req.ChannelWakeRules != nil {
+		AuthSetChannelWakeRules(a.db, strings.TrimSpace(*req.ChannelWakeRules))
+		Log("[admin] user %q updated channel_wake_rules (%d chars)", current, len(strings.TrimSpace(*req.ChannelWakeRules)))
 	}
 	// Tunables — validated against the registry, so adding a knob needs no
 	// change here. A present numeric key within its spec's [Min, Max] is

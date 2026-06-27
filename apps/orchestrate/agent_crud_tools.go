@@ -140,13 +140,14 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		}
 	}
 	b, _ := json.Marshal(saved)
+	toolWarn := unresolvedToolsWarning(sess, &saved)
 	if dispatchedBuild {
 		// Held-for-approval path: the sub-agent is saved but not live, so there
 		// is nothing for Builder to verify by dispatch — it stays gated until
 		// the parent owner approves. Report and end the turn.
 		return fmt.Sprintf(
-			"AGENT_DRAFTED ok. id=%s name=%q — saved but HELD FOR APPROVAL. It will not run until the owner approves it in the Authorizations pane; on approval it goes live as a sub-agent of %s and inherits that parent's read-only tools. DONE — reply with a one-line summary of what you drafted and END THE TURN. Do NOT call ask_user or create_agent again.\n\nSaved record: %s",
-			saved.ID, saved.Name, sess.DispatchParentAgentID, string(b),
+			"AGENT_DRAFTED ok. id=%s name=%q — saved but HELD FOR APPROVAL. It will not run until the owner approves it in the Authorizations pane; on approval it goes live as a sub-agent of %s and inherits that parent's read-only tools.%s DONE — reply with a one-line summary of what you drafted and END THE TURN. Do NOT call ask_user or create_agent again.\n\nSaved record: %s",
+			saved.ID, saved.Name, sess.DispatchParentAgentID, toolWarn, string(b),
 		), nil
 	}
 	// Lead with a directive line so the LLM doesn't keep iterating
@@ -160,6 +161,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if copied > 0 {
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies (the agent will keep working past this session).", copied)
 	}
+	verifyHint += toolWarn
 	return fmt.Sprintf(
 		"AGENT_CREATED ok. id=%s name=%q.%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
 		saved.ID, saved.Name, verifyHint, string(b),
@@ -265,6 +267,67 @@ func autoCopySessionToolsForAgent(sess *ToolSession, rec *AgentRecord) int {
 	return copied
 }
 
+// unresolvedAllowedTools returns the allowed_tools names that won't resolve
+// to any tool the agent can actually reach at run time: a registered tool,
+// the agent's own bundled tools (rec.Tools — which already includes any
+// session/persistent drafts auto-copied by autoCopySessionToolsForAgent), or
+// this session's credential tools (fetch_url_<cred>, plus the legacy
+// call_<cred> alias the runtime accepts). Names that resolve to nothing are
+// silently dropped at dispatch (see GetAgentToolsWithSession's per-name
+// fallback), so the agent comes up with a smaller catalog than the author
+// asked for and nobody is told. Surfacing them lets the author catch a typo
+// or a tool they THOUGHT they created but didn't — the exact trap that turned
+// one fat-fingered tool_def into a 15-minute debugging session. An empty/nil
+// allowlist (the "*" everything surface) has nothing to validate.
+func unresolvedAllowedTools(sess *ToolSession, rec *AgentRecord) []string {
+	if len(rec.AllowedTools) == 0 {
+		return nil
+	}
+	known := make(map[string]bool)
+	for _, t := range rec.Tools {
+		known[t.Name] = true
+	}
+	if sess != nil {
+		for _, td := range Secure().BuildTools(sess) {
+			known[td.Tool.Name] = true
+			// Runtime also accepts the legacy call_<cred> alias for fetch_url_<cred>.
+			if strings.HasPrefix(td.Tool.Name, "fetch_url_") {
+				known["call_"+strings.TrimPrefix(td.Tool.Name, "fetch_url_")] = true
+			}
+		}
+	}
+	var missing []string
+	for _, n := range rec.AllowedTools {
+		name := strings.TrimSpace(n)
+		switch {
+		case name == "" || name == "*":
+			continue
+		case strings.HasPrefix(name, "from_client."): // per-user desktop tools, resolved at run time
+			continue
+		case known[name]:
+			continue
+		}
+		if _, ok := FindChatTool(name); ok {
+			continue
+		}
+		missing = append(missing, name)
+	}
+	return missing
+}
+
+// unresolvedToolsWarning renders the trailing warning clause for a create/
+// update success message, or "" when every allowed_tools name resolved.
+func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
+	missing := unresolvedAllowedTools(sess, rec)
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		" ⚠ WARNING: these allowed_tools entries match no known tool and were dropped (typo, or a tool you haven't actually created yet): %s. The agent will NOT have them. Create the tool first (tool_def), then update_agent to add it.",
+		strings.Join(missing, ", "),
+	)
+}
+
 // --- update_agent ---------------------------------------------------------
 
 type updateAgentTool struct{}
@@ -330,6 +393,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if copied > 0 {
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies.", copied)
 	}
+	verifyHint += unresolvedToolsWarning(sess, &saved)
 	b, _ := json.Marshal(saved)
 	return fmt.Sprintf(
 		"AGENT_UPDATED ok. id=%s name=%q.%s DONE — reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
@@ -607,8 +671,17 @@ func parseThinkArg(args map[string]any, isSubAgent bool) string {
 }
 
 // mergeAgentArgs overlays only the fields present in args onto rec.
-// Missing or zero-value-only fields are left untouched. Used by
-// update_agent so callers can patch one field at a time.
+// Used by update_agent so callers can patch one field at a time.
+//
+// Presence semantics (uniform across scalar, slice, and object fields):
+// an OMITTED key or an explicit `null` value is a no-op — the stored
+// value is left untouched. This honors update_agent's contract ("only
+// fields you supply are changed") even when a model re-emits the schema
+// and fills unchanged fields with null. An explicit EMPTY value ([] for
+// slices, "" for strings) is an intentional clear and IS applied. The
+// `v != nil` guard on every block is what draws that line — without it a
+// stray `"allowed_tools": null` from the LLM silently wiped an agent's
+// tool grant, collapsing it to the default pool.
 func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	if v, ok := args["name"]; ok && v != nil {
 		rec.Name = strings.TrimSpace(fmt.Sprint(v))
@@ -625,7 +698,7 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	if v, ok := args["rules"]; ok && v != nil {
 		rec.Rules = strings.TrimSpace(fmt.Sprint(v))
 	}
-	if _, ok := args["allowed_tools"]; ok {
+	if v, ok := args["allowed_tools"]; ok && v != nil {
 		rec.AllowedTools = stringSliceFromArgs(args, "allowed_tools")
 	}
 	if v, ok := args["max_plan_steps"]; ok && v != nil {
@@ -661,22 +734,22 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	if v, ok := args["disable_skills"].(bool); ok {
 		rec.DisableSkills = v
 	}
-	if _, ok := args["allowed_skills"]; ok {
+	if v, ok := args["allowed_skills"]; ok && v != nil {
 		rec.AllowedSkills = stringSliceFromArgs(args, "allowed_skills")
 	}
 	if v, ok := args["hidden"].(bool); ok {
 		rec.Hidden = v
 	}
-	if _, ok := args["allowed_dispatch_targets"]; ok {
+	if v, ok := args["allowed_dispatch_targets"]; ok && v != nil {
 		rec.AllowedDispatchTargets = stringSliceFromArgs(args, "allowed_dispatch_targets")
 	}
-	if _, ok := args["attached_collections"]; ok {
+	if v, ok := args["attached_collections"]; ok && v != nil {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
 	}
-	if _, ok := args["attached_pipelines"]; ok {
+	if v, ok := args["attached_pipelines"]; ok && v != nil {
 		rec.AttachedPipelines = stringSliceFromArgs(args, "attached_pipelines")
 	}
-	if _, ok := args["triggers"]; ok {
+	if v, ok := args["triggers"]; ok && v != nil {
 		rec.Triggers = stringSliceFromArgs(args, "triggers")
 	}
 	if v, ok := args["owned_by"]; ok && v != nil {
@@ -686,19 +759,19 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 		rec.IngestAttachments = v
 	}
 	// Think on UPDATE: only touch when the caller passed think
-	// explicitly. Omitted = preserve whatever's stored (the author's
-	// last decision). "auto" still flips to nil — that's the explicit
-	// "go back to route default" intent.
-	if _, ok := args["think"]; ok {
+	// explicitly and non-null. Omitted OR null = preserve whatever's
+	// stored (the author's last decision). "auto" still flips to nil —
+	// that's the explicit "go back to route default" intent.
+	if v, ok := args["think"]; ok && v != nil {
 		rec.Think = parseThinkArg(args, rec.OwnedBy != "")
 	}
-	if _, ok := args["intake_form"]; ok {
+	if v, ok := args["intake_form"]; ok && v != nil {
 		rec.IntakeForm = intakeFormFromArgs(args)
 	}
-	if _, ok := args["tools"]; ok {
+	if v, ok := args["tools"]; ok && v != nil {
 		rec.Tools = agentScopedToolsFromArgs(args)
 	}
-	if _, ok := args["evals"]; ok {
+	if v, ok := args["evals"]; ok && v != nil {
 		rec.Evals = evalsFromArgs(args)
 	}
 }

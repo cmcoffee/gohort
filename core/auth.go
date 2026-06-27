@@ -561,6 +561,21 @@ func AuthSetDefaultApps(db Database, apps []string) {
 	db.Set(WebTable, "default_apps", apps)
 }
 
+// AuthGetChannelWakeRules returns the deployment-wide channel wake rules: the
+// master gatekeeper ruleset merged on top of every channel's own per-channel
+// rule before an inbound is allowed to wake its bound agent. Empty = no global
+// rule (per-channel rules still apply). See core/channel.go Gatekeeper.
+func AuthGetChannelWakeRules(db Database) string {
+	var s string
+	db.Get(WebTable, "channel_wake_rules", &s)
+	return s
+}
+
+// AuthSetChannelWakeRules stores the deployment-wide channel wake rules.
+func AuthSetChannelWakeRules(db Database, rules string) {
+	db.Set(WebTable, "channel_wake_rules", rules)
+}
+
 // UserHasAppAccess checks whether the current request's user is allowed
 // to access the app at the given path. Admins have access to all apps.
 // When auth is not configured, everyone has access.

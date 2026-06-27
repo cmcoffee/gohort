@@ -103,7 +103,8 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 		// so a stage can be permissive (no Tools = inherit everything)
 		// OR restrictive (specific names from the inherited pool).
 		var stageTools []AgentToolDef
-		if stage.Kind == StageWorker || stage.Kind == StageSynthesize {
+		if stage.Kind == StageWorker || stage.Kind == StageSynthesize ||
+			(stage.Kind == StageFanout && strings.TrimSpace(stage.Agent) == "") {
 			stageTools = resolveStageTools(stage.Tools, inheritedTools)
 			if len(stageTools) > 0 {
 				names := make([]string, 0, len(stageTools))
@@ -137,11 +138,10 @@ func (T *AppCore) executePipelineDef(ctx context.Context, def PipelineDef, input
 			}
 			out, err = dispatch(ctx, stage.Agent, prompt)
 		case StageFanout:
-			// Phase 2: run the inner work across each element of the
-			// FanOver stage's JSON-array output, in parallel, then
-			// collect. Not yet implemented — fail loudly rather than
-			// silently treating it as a single worker call.
-			return "", Error("stage " + stage.Name + ": fanout stages are not yet supported (phase 2)")
+			// Run the stage's inner work across each element of the
+			// FanOver stage's JSON-array output, in parallel, then collect
+			// into one labeled block for the next stage to consume.
+			out, err = T.runFanoutStage(ctx, stage, input, prev, outputs, stageTools, dispatch, status)
 		default:
 			return "", Error("stage " + stage.Name + ": unknown kind " + string(stage.Kind))
 		}
@@ -225,6 +225,96 @@ func (T *AppCore) runWorkerStage(ctx context.Context, prompt string, tools []Age
 // signal the work should be split into multiple stages or moved to a
 // full agent stage.
 const pipelineStageMaxRounds = 10
+
+// Fanout caps. Items bounds how many branches a single fanout stage
+// runs (a runaway decompose stage shouldn't spawn hundreds of LLM
+// calls); Parallel bounds how many run concurrently so a fanout doesn't
+// monopolize the worker. Truncation past the item cap is logged, never
+// silent.
+const (
+	fanoutMaxItems = 12
+	fanoutParallel = 6
+)
+
+// runFanoutStage runs the stage's inner work once per element of the
+// FanOver stage's list output, bounded-parallel, and combines the
+// results into one labeled block ("## Item N: <item>\n<result>") that
+// the next stage reads via {prev} / {stage:NAME}. Each branch is a
+// worker (with the stage's resolved tools) unless the stage names an
+// agent, in which case it dispatches. The current element substitutes
+// into the stage prompt as {item}. Per-branch errors are non-fatal —
+// the branch records an error marker and the rest proceed — so one bad
+// search doesn't sink the whole fan.
+func (T *AppCore) runFanoutStage(ctx context.Context, stage PipelineStage, input, prev string, outputs map[string]string, stageTools []AgentToolDef, dispatch PipelineDispatch, status func(string)) (string, error) {
+	src, ok := outputs[stage.FanOver]
+	if !ok {
+		return "", Error("fanout stage " + stage.Name + ": fan_over stage " + stage.FanOver + " has no output")
+	}
+	// Parse uncapped first so we can report honest truncation.
+	items := DecodeJSONList(src, 0)
+	if len(items) == 0 {
+		return "", Error("fanout stage " + stage.Name + ": fan_over stage " + stage.FanOver + " produced no list items")
+	}
+	if len(items) > fanoutMaxItems {
+		if status != nil {
+			status(fmt.Sprintf("fanout %s: %d items, capping at %d", stage.Name, len(items), fanoutMaxItems))
+		}
+		items = items[:fanoutMaxItems]
+	}
+	if status != nil {
+		status(fmt.Sprintf("fanout %s: %d branches (parallel %d)", stage.Name, len(items), fanoutParallel))
+	}
+
+	think := false
+	if stage.Think != nil {
+		think = *stage.Think
+	}
+	agent := strings.TrimSpace(stage.Agent)
+
+	results := make([]string, len(items))
+	lg := NewLimitGroup(fanoutParallel)
+	for i, item := range items {
+		if ctx.Err() != nil {
+			break
+		}
+		lg.Add(1) // blocks until a slot frees, bounding concurrency
+		go func(idx int, it string) {
+			defer lg.Done()
+			// {item} is the per-branch element; the rest of the templating
+			// vocabulary ({input}/{prev}/{stage:NAME}) resolves as usual.
+			p := resolveStageTemplate(strings.ReplaceAll(stage.Prompt, "{item}", it), input, prev, outputs)
+			var out string
+			var err error
+			if agent != "" {
+				if dispatch == nil {
+					err = Error("agent fanout but no dispatch hook provided")
+				} else {
+					out, err = dispatch(ctx, agent, p)
+				}
+			} else {
+				out, err = T.runWorkerStage(ctx, p, stageTools, think)
+			}
+			if err != nil {
+				results[idx] = fmt.Sprintf("(branch error: %v)", err)
+				if status != nil {
+					status(fmt.Sprintf("fanout %s: branch %d/%d failed: %v", stage.Name, idx+1, len(items), err))
+				}
+				return
+			}
+			results[idx] = strings.TrimSpace(out)
+		}(i, item)
+	}
+	lg.Wait()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+
+	var b strings.Builder
+	for i, item := range items {
+		fmt.Fprintf(&b, "## Item %d: %s\n%s\n\n", i+1, strings.TrimSpace(item), results[i])
+	}
+	return strings.TrimSpace(b.String()), nil
+}
 
 // resolveStageTools picks the tool set a worker stage gets. Stage's
 // own Tools field is the override: when set, returns the intersection
