@@ -100,22 +100,16 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Bridge key -> owner. DesktopBridgeUserOf tries cookie then X-API-Key, so
-	// a stdio shim carrying only the key resolves fine.
-	owner := DesktopBridgeUserOf(r)
-	if owner == "" {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
 	var req rpcRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		Log("[mcpserver] bad request: %v", err)
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
 
 	// Notifications (no id) get no response body.
 	if len(req.ID) == 0 {
+		Log("[mcpserver] notification %q", req.Method)
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -123,21 +117,46 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 	resp := rpcResponse{JSONRPC: "2.0", ID: req.ID}
 	switch req.Method {
 	case "initialize":
+		// The handshake is OPEN — no auth — so a key problem can't kill the
+		// connection before it starts (only tools/call, the action, is gated
+		// below). Echo the client's protocol version when it sends one, for
+		// maximum compatibility; fall back to a known-good version.
+		pv := "2024-11-05"
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil && p.ProtocolVersion != "" {
+			pv = p.ProtocolVersion
+		}
 		resp.Result = map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": pv,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      map[string]any{"name": "gohort", "version": AppVersion},
 		}
+		Log("[mcpserver] initialize (protocol=%s)", pv)
 	case "tools/list":
 		resp.Result = map[string]any{"tools": toolDefs()}
+		Log("[mcpserver] tools/list -> %d tools", len(toolDefs()))
 	case "tools/call":
+		// Only the ACTION needs auth. Resolve the bridge key -> owner here and
+		// return a CLEAR JSON-RPC tool error (not an opaque HTTP 401 the client
+		// won't surface) when it's missing/unrecognized.
+		owner := DesktopBridgeUserOf(r)
+		if owner == "" {
+			Log("[mcpserver] tools/call REJECTED — no valid X-API-Key (mint a bridge key in Bridges admin)")
+			resp.Result = toolText("Unauthorized: this endpoint needs a valid gohort bridge key in the X-API-Key header. Mint one in Bridges admin and put it in the connector config.", true)
+			break
+		}
 		text, err := T.callTool(r.Context(), owner, req.Params)
 		if err != nil {
+			Log("[mcpserver] tools/call error (owner=%s): %v", owner, err)
 			resp.Result = toolText("error: "+err.Error(), true)
 		} else {
+			Log("[mcpserver] tools/call ok (owner=%s, %d chars)", owner, len(text))
 			resp.Result = toolText(text, false)
 		}
 	default:
+		Log("[mcpserver] unknown method %q", req.Method)
 		resp.Error = &rpcError{Code: -32601, Message: "method not found: " + req.Method}
 	}
 
