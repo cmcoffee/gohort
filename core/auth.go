@@ -576,6 +576,20 @@ func AuthSetChannelWakeRules(db Database, rules string) {
 	db.Set(WebTable, "channel_wake_rules", rules)
 }
 
+// AuthGetUITheme returns the deployment-wide UI theme name (the data-theme
+// value, e.g. "indigo"), or "" when unset — callers fall back to the framework
+// default. Deployment-wide for now; could become per-user later.
+func AuthGetUITheme(db Database) string {
+	var s string
+	db.Get(WebTable, "ui_theme", &s)
+	return s
+}
+
+// AuthSetUITheme stores the deployment-wide UI theme name.
+func AuthSetUITheme(db Database, theme string) {
+	db.Set(WebTable, "ui_theme", theme)
+}
+
 // UserHasAppAccess checks whether the current request's user is allowed
 // to access the app at the given path. Admins have access to all apps.
 // When auth is not configured, everyone has access.

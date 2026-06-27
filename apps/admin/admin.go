@@ -2967,6 +2967,10 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		_, m, _ := OllamaBackendFunc()
 		ollama_active = m != ""
 	}
+	ui_theme := AuthGetUITheme(a.db)
+	if ui_theme == "" {
+		ui_theme = "indigo"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	resp := map[string]interface{}{
 		"allow_signup":         allow_signup,
@@ -2983,6 +2987,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"ollama_active":        ollama_active,
 		"fetch_cache_quota_mb": fetch_cache_quota_mb,
 		"channel_wake_rules":   AuthGetChannelWakeRules(a.db),
+		"ui_theme":             ui_theme,
 	}
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
@@ -3006,6 +3011,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		OllamaProxyPort    *int      `json:"ollama_proxy_port,omitempty"`
 		FetchCacheQuotaMB  *int      `json:"fetch_cache_quota_mb,omitempty"`
 		ChannelWakeRules   *string   `json:"channel_wake_rules,omitempty"`
+		UITheme            *string   `json:"ui_theme,omitempty"`
 	}
 	// Read the body once: the static settings decode into the typed struct
 	// above, the tunables come off the same bytes as a generic map (validated
@@ -3067,6 +3073,17 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.ChannelWakeRules != nil {
 		AuthSetChannelWakeRules(a.db, strings.TrimSpace(*req.ChannelWakeRules))
 		Log("[admin] user %q updated channel_wake_rules (%d chars)", current, len(strings.TrimSpace(*req.ChannelWakeRules)))
+	}
+	if req.UITheme != nil {
+		// Validate against the known token blocks (core/ui/runtime.go) so a
+		// typo can't blank the whole UI.
+		switch t := strings.TrimSpace(*req.UITheme); t {
+		case "indigo", "blackboard", "github-dark":
+			AuthSetUITheme(a.db, t)
+			Log("[admin] user %q set ui_theme=%q", current, t)
+		default:
+			Log("[admin] user %q tried to set unknown ui_theme=%q — ignored", current, t)
+		}
 	}
 	// Tunables — validated against the registry, so adding a knob needs no
 	// change here. A present numeric key within its spec's [Min, Max] is

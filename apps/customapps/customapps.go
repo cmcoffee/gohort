@@ -131,7 +131,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, T.WebPath()+"/"+slug+"/", http.StatusFound)
 			return
 		}
-		_ = ui.RenderPageJSON(w, spec.Page, "blackboard", "", spec.Name)
+		_ = ui.RenderPageJSON(w, spec.Page, "", "", spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case "records":
 		T.handleRecords(w, r, udb, spec)
 	case "record":

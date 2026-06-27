@@ -352,6 +352,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Fields: []ui.FormField{
 						{Field: "allow_signup", Label: "Allow public signup", Type: "toggle",
 							Help: "When off, only existing accounts can sign in. Approvals can still happen via the user list."},
+						{Field: "ui_theme", Label: "Theme", Type: "select",
+							Options: []ui.SelectOption{
+								{Value: "indigo", Label: "Indigo — cool slate + indigo accent"},
+								{Value: "blackboard", Label: "Blackboard — warm navy + amber"},
+								{Value: "github-dark", Label: "GitHub Dark"},
+							},
+							Help: "Platform-wide UI theme. Reload the page after saving to see it."},
 						{Field: "service_name", Label: "Service name", Type: "text",
 							Placeholder: "gohort", Help: "Shown in the page title and email From: line."},
 						{Field: "external_url", Label: "External URL", Type: "text",

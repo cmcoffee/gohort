@@ -869,6 +869,10 @@ func ServeDashboard(addr string) error {
 	// once here so every app can use ui.Page.ServeHTTP without touching
 	// the mux directly.
 	uiMountRuntime(mux)
+	// Wire the active-theme lookup to the stored deployment setting, so every
+	// un-pinned page renders in the admin-selected theme (falls back to the
+	// ui default when unset).
+	ui.RegisterThemeResolver(func() string { return AuthGetUITheme(AuthDB()) })
 
 	// Authentication endpoints.
 	if AuthDB != nil {

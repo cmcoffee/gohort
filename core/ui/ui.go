@@ -155,6 +155,15 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 	return blob, nil
 }
 
+// themeResolver, when set, supplies the active theme name for pages that don't
+// pin one (Page.Theme == ""). The app layer registers it (core/webapp.go) so
+// core/ui needs no DB/settings dependency. Returns "" to fall through to the
+// built-in default.
+var themeResolver func() string
+
+// RegisterThemeResolver installs the active-theme lookup. Call once at startup.
+func RegisterThemeResolver(fn func() string) { themeResolver = fn }
+
 // RenderPageJSON writes the page HTML shell around a pre-built config blob
 // (from Page.ConfigJSON or stored as data). Same output as Render minus the
 // marshal step, so a host that keeps the page as data can serve it without
@@ -162,7 +171,16 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 // falls back to the default when empty.
 func RenderPageJSON(w io.Writer, pageJSON []byte, theme, extraHead, title string) error {
 	if theme == "" {
-		theme = "indigo" // platform default (was "blackboard"); see runtime.go theme tokens
+		// No page-pinned theme: ask the registered resolver (the app layer
+		// wires this to the stored deployment setting — see RegisterThemeResolver),
+		// then fall back to the built-in default. Keeps core/ui free of any
+		// DB/settings dependency.
+		if themeResolver != nil {
+			theme = themeResolver()
+		}
+		if theme == "" {
+			theme = "indigo"
+		}
 	}
 	fmt.Fprintf(w, `<!doctype html>
 <html lang="en" data-theme=%q>
