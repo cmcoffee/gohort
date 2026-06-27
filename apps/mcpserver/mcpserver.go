@@ -31,6 +31,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 func init() { RegisterApp(new(MCPServer)) }
@@ -72,6 +73,7 @@ func (T *MCPServer) Routes() {
 	// must bypass AuthMiddleware. Mirrors how bridges registers /api/hook.
 	RegisterPublicPath("/mcp/")
 	T.HandleFunc("/", T.handle)
+	T.HandleFunc("/status", T.handleStatus) // JSON for the status page (auth'd in-handler)
 }
 
 // handle dispatches by method. MCP's Streamable HTTP transport opens the
@@ -80,12 +82,74 @@ func (T *MCPServer) Routes() {
 func (T *MCPServer) handle(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		T.handleSSE(w, r)
+		// An MCP client opens the server→client channel with
+		// Accept: text/event-stream; a browser hitting the dashboard tile
+		// sends text/html. Stream to the former, show a status page to the
+		// latter (so clicking the tile isn't a hung event-stream).
+		if strings.Contains(r.Header.Get("Accept"), "text/event-stream") {
+			T.handleSSE(w, r)
+		} else {
+			T.handleStatusPage(w, r)
+		}
 	case http.MethodPost:
 		T.handleRPC(w, r)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleStatusPage renders the human-facing dashboard view: what the endpoint
+// is, how to connect, and what it exposes. Auth'd as a normal dashboard page
+// (the protocol GET/POST stay open; only this human view requires login).
+func (T *MCPServer) handleStatusPage(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	ui.Page{
+		Title:     "MCP Server",
+		ShowTitle: true,
+		BackURL:   "/",
+		MaxWidth:  "800px",
+		Sections: []ui.Section{{
+			Title:    "Inbound MCP endpoint",
+			Subtitle: "Point an MCP client (Streamable HTTP transport) at the endpoint below and authenticate with a gohort bridge key in the X-API-Key header. The client can then dispatch to your agents via tools/call.",
+			Body: ui.DisplayPanel{
+				Source: "status",
+				Pairs: []ui.DisplayPair{
+					{Label: "Endpoint", Field: "endpoint", Mono: true},
+					{Label: "Transport", Field: "transport"},
+					{Label: "Auth", Field: "auth"},
+					{Label: "Exposed tools", Field: "tools"},
+					{Label: "Default agent", Field: "agent", Mono: true},
+				},
+			},
+		}},
+	}.ServeHTTP(w, r)
+}
+
+// handleStatus is the JSON feed behind the status page's DisplayPanel.
+func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	names := make([]string, 0)
+	for _, d := range toolDefs() {
+		if n, ok := d["name"].(string); ok {
+			names = append(names, n)
+		}
+	}
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"endpoint":  scheme + "://" + r.Host + "/mcp/",
+		"transport": "Streamable HTTP (GET opens an SSE stream, POST carries JSON-RPC)",
+		"auth":      "X-API-Key header — a gohort bridge key (mint one in Bridges admin)",
+		"tools":     strings.Join(names, ", "),
+		"agent":     defaultAgent,
+	})
 }
 
 // handleSSE serves the GET server→client stream. We have no server-initiated
