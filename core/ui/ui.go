@@ -215,7 +215,7 @@ func MountRuntime(mux *http.ServeMux) {
 	// gradient page-title (font-family: Orbitron) actually resolves.
 	// Without this the title falls back to a system font and loses
 	// the wordmark look the legacy webui chrome has.
-	cssBlob := webui.FontFaceCSS() + runtimeCSS
+	cssBlob := webui.FontFaceCSS() + ThemeCSS() + runtimeCSS
 	cssETag := `"` + assetETag(cssBlob) + `"`
 	jsETag := `"` + assetETag(runtimeJS) + `"`
 	mux.HandleFunc("/_ui/ui.css", func(w http.ResponseWriter, r *http.Request) {

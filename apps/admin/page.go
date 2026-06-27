@@ -15,6 +15,16 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// themePickerOptions builds the Theme dropdown from the core/ui theme
+// registry, so a newly-registered theme appears here with no edit.
+func themePickerOptions() []ui.SelectOption {
+	opts := make([]ui.SelectOption, 0)
+	for _, t := range ui.Themes() {
+		opts = append(opts, ui.SelectOption{Value: t.Name, Label: t.Label})
+	}
+	return opts
+}
+
 // buildTunableSections renders the operator tunable registry as one admin
 // FormPanel section per category, each with a per-category "Revert to
 // defaults". Field type, bounds, and help come straight from each TunableSpec,
@@ -353,13 +363,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Field: "allow_signup", Label: "Allow public signup", Type: "toggle",
 							Help: "When off, only existing accounts can sign in. Approvals can still happen via the user list."},
 						{Field: "ui_theme", Label: "Theme", Type: "select",
-							Options: []ui.SelectOption{
-								{Value: "indigo", Label: "Indigo — cool slate + indigo accent"},
-								{Value: "blackboard", Label: "Blackboard — warm navy + amber"},
-								{Value: "github-dark", Label: "GitHub Dark"},
-								{Value: "light", Label: "Light — slate-on-white + indigo"},
-							},
-							Help: "Platform-wide UI theme. Reload the page after saving to see it."},
+							Options: themePickerOptions(),
+							Help:    "Platform-wide UI theme. Reload the page after saving to see it."},
 						{Field: "service_name", Label: "Service name", Type: "text",
 							Placeholder: "gohort", Help: "Shown in the page title and email From: line."},
 						{Field: "external_url", Label: "External URL", Type: "text",

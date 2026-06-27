@@ -14,6 +14,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // probeEmbeddingModels fetches and parses a model list from an
@@ -3075,13 +3076,12 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		Log("[admin] user %q updated channel_wake_rules (%d chars)", current, len(strings.TrimSpace(*req.ChannelWakeRules)))
 	}
 	if req.UITheme != nil {
-		// Validate against the known token blocks (core/ui/runtime.go) so a
-		// typo can't blank the whole UI.
-		switch t := strings.TrimSpace(*req.UITheme); t {
-		case "indigo", "blackboard", "github-dark", "light":
+		// Validate against the theme registry (core/ui) so a typo can't blank
+		// the whole UI — and so it stays correct as themes are added.
+		if t := strings.TrimSpace(*req.UITheme); ui.IsValidTheme(t) {
 			AuthSetUITheme(a.db, t)
 			Log("[admin] user %q set ui_theme=%q", current, t)
-		default:
+		} else {
 			Log("[admin] user %q tried to set unknown ui_theme=%q — ignored", current, t)
 		}
 	}

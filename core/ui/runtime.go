@@ -1,84 +1,11 @@
 package ui
 
-// runtimeCSS — theme tokens + every component's static styling.
-// Mobile-first, with safe-area insets, 44px minimum tap targets, and
-// the Blackboard color scheme as the default theme.
+// runtimeCSS — every component's static styling. The per-theme token blocks
+// (:root[data-theme="..."]) are NO LONGER here: they're declared in the theme
+// registry (themes.go) and prepended at serve time by MountRuntime via
+// ThemeCSS(). Adding a theme is one RegisterTheme call, not an edit here.
+// Mobile-first, with safe-area insets and 44px minimum tap targets.
 const runtimeCSS = `
-:root[data-theme="blackboard"] {
-  --bg-0: #0c1424;       /* page background — deepest navy */
-  --bg-1: #142037;       /* card / row background */
-  --bg-2: #1c2a45;       /* elevated surfaces */
-  /* Brighter, less-yellow than the original #f0e9c8 cream. The
-   * R/B gap was wide enough to read as yellow at surface scale
-   * (long reads looked dingy / faded). This keeps a hint of
-   * warmth — Blackboard character preserved — without the
-   * dingy cast. Dial cooler (#e6edf3) if you want pure cool-
-   * white; warmer (#f0e9c8) for the original. */
-  --text:     #f5f0e1;
-  --text-hi:  #ffffff;
-  --text-mute:#9aa3b8;
-  --border:   #2a3a5e;
-  --accent:   #d4a657;   /* warm amber, plays nice with cream */
-  --accent-hi:#f0c878;
-  /* Muted brick — still clearly "stop" against the warm cream/navy
-   * palette but doesn't read as high-contrast SOS the way a pure
-   * red would. */
-  --danger:   #c97474;
-  --success:  #56d364;
-  --tap: 44px;
-}
-:root[data-theme="github-dark"] {
-  --bg-0: #0d1117;
-  --bg-1: #161b22;
-  --bg-2: #21262d;
-  --text: #c9d1d9;
-  --text-hi: #f0f6fc;
-  --text-mute: #8b949e;
-  --border: #30363d;
-  --accent: #4f8cff;
-  --accent-hi: #79c0ff;
-  --danger: #f85149;
-  --success: #56d364;
-  --tap: 44px;
-}
-/* "indigo" — cool slate surfaces + an indigo accent. Ported from a
- * standalone HTML app the user preferred; mapped onto gohort's token set so
- * the whole platform adopts it. The source palette's extra shades (a 4th
- * surface, a dim-accent, a separate warning/orange, a 3rd text mute) have no
- * gohort token slot and are absorbed — the signature (slate depth + cool text
- * + indigo accent + slate borders) is what carries. */
-:root[data-theme="indigo"] {
-  --bg-0: #0f1117;       /* page — deepest slate */
-  --bg-1: #1a1d27;       /* card / row */
-  --bg-2: #232733;       /* elevated surfaces / inputs */
-  --text:     #e4e7ef;
-  --text-hi:  #ffffff;
-  --text-mute:#9ca3b8;
-  --border:   #333848;
-  --accent:   #6366f1;   /* indigo */
-  --accent-hi:#818cf8;
-  --danger:   #ef4444;
-  --success:  #22c55e;
-  --tap: 44px;
-}
-/* "light" — the one light theme: slate-on-white surfaces (GitHub-light-ish)
- * with the indigo accent kept for continuity with the default. Danger/success
- * are darkened for legible contrast on white. */
-:root[data-theme="light"] {
-  --bg-0: #f6f7f9;       /* page */
-  --bg-1: #ffffff;       /* card / row */
-  --bg-2: #eceef2;       /* elevated surfaces / inputs */
-  --text:     #24292f;
-  --text-hi:  #0d1117;
-  --text-mute:#57606a;
-  --border:   #d0d7de;
-  --accent:   #4f46e5;   /* indigo-600 — stronger on white */
-  --accent-hi:#6366f1;
-  --danger:   #cf222e;
-  --success:  #1a7f37;
-  --tap: 44px;
-}
-
 * { box-sizing: border-box; }
 html, body {
   margin: 0; padding: 0;
