@@ -943,6 +943,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		return AgentSyncResult{}, errors.New("agent returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
+	// Round-cap fallback: the loop ran out of its budget without producing any
+	// text (and even the loop's forced-final-answer rescue came up empty). Don't
+	// hand the caller (channel reply, MCP client, inline dispatch) an empty
+	// string — that reads as the agent silently doing nothing. Surface an
+	// explicit out-of-rounds note so there's always a reply. Mirrors the web
+	// runner's HitRoundCap fallback.
+	if cleanReply == "" && resp.HitRoundCap {
+		cleanReply = "I ran out of working rounds before I could finish this and didn't have a partial answer to show. Try narrowing the request, or ask me to continue."
+	}
 	// Persist the new exchange for the next continuation.
 	now := time.Now()
 	// Sender carries the author for channel-room transcripts: the inbound

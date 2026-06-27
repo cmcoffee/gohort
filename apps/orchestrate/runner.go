@@ -5379,6 +5379,20 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		}
 		return nil, "", clean, nil
 	}
+	// No content anywhere. If the loop ran out of its round budget (rather
+	// than ending naturally or being deliberately silenced via stay_silent,
+	// which returns from inside the loop without HitRoundCap), don't leave
+	// the user staring at a blank turn — say so explicitly so they can narrow
+	// the ask or retry instead of assuming the agent is broken. This is the
+	// "ran out of turns, got nothing back" failure (common for retrieval-heavy
+	// agents that exhaust rounds mid-investigation).
+	if resp != nil && resp.HitRoundCap {
+		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."
+		if lastFinalizedID == "" && strings.TrimSpace(lastFinalizedText) == "" {
+			emitCapturedAsBubble(msg)
+		}
+		return nil, "", msg, nil
+	}
 	return nil, "", "", nil
 }
 

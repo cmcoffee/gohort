@@ -1778,9 +1778,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if cfg.RouteKey != "" {
 			wrapOpts = append(wrapOpts, WithRouteKey(cfg.RouteKey))
 		}
-		if forced, err := T.LLM.Chat(ctx, wrapHistory, wrapOpts...); err == nil && forced != nil && strings.TrimSpace(forced.Content) != "" {
-			lastResp = forced
-			Debug("[agent_loop] forced-final-answer rescue produced %d chars", len(forced.Content))
+		if forced, err := T.LLM.Chat(ctx, wrapHistory, wrapOpts...); err == nil && forced != nil {
+			// Thinking workers often answer entirely in the reasoning
+			// channel with empty content — promote it rather than discard
+			// it, same as the in-loop reasoning→content promotion. Without
+			// this the rescue "succeeds" but hands back empty, and the
+			// caller shows the user nothing.
+			if strings.TrimSpace(forced.Content) == "" && strings.TrimSpace(forced.Reasoning) != "" {
+				forced.Content = forced.Reasoning
+			}
+			if strings.TrimSpace(forced.Content) != "" {
+				lastResp = forced
+				Debug("[agent_loop] forced-final-answer rescue produced %d chars", len(forced.Content))
+			} else {
+				Debug("[agent_loop] forced-final-answer rescue produced no usable content")
+			}
 		} else {
 			Debug("[agent_loop] forced-final-answer rescue produced no usable content (err=%v)", err)
 		}
