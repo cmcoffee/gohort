@@ -2009,6 +2009,10 @@ type WorkbenchPanel struct {
 	// NewButton mounts in the list header (typically a ModalButton+FormPanel
 	// whose FormPanel posts to ListURL and Invalidates it so the list refreshes).
 	NewButton Component `json:"-"`
+	// DeleteURL — when set, each list row gets a delete affordance (✕). DELETE to
+	// this URL with {id} substituted; the list refreshes and the viewer clears if
+	// the open record was the one removed.
+	DeleteURL string `json:"delete_url,omitempty"`
 	// Center — viewer of the selected record.
 	RecordURL        string `json:"record_url"`                   // GET with {id} → the record
 	BodyField        string `json:"body_field,omitempty"`         // markdown field rendered in the viewer (default "content")
@@ -2019,7 +2023,15 @@ type WorkbenchPanel struct {
 	// RefreshOn — when uiInvalidate fires with a source in this list, the open
 	// record re-fetches (so a co-author write shows up without a manual reload).
 	RefreshOn []string `json:"refresh_on,omitempty"`
-	// Right — chat (typically an AgentLoopPanel). Mounted as-is.
+	// CoAuthor — when set, each assistant chat reply gets an "Add to <noun>"
+	// button that APPENDS that reply's markdown to the open record's BodyField
+	// (fetch RecordURL, append, POST SaveURL as an upsert) and refreshes the
+	// viewer. The co-author flow: ask the assistant for a section, then commit it
+	// into the open document.
+	CoAuthor     bool   `json:"coauthor,omitempty"`
+	CoAuthorVerb string `json:"coauthor_verb,omitempty"` // button text (default "Add to document")
+	SaveURL      string `json:"save_url,omitempty"`      // POST (upsert) the modified record; default = ListURL
+	// Right — chat (typically an AgentLoopPanel or single ChatPanel). Mounted as-is.
 	Chat Component `json:"-"`
 }
 

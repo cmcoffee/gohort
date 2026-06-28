@@ -348,6 +348,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		EmptyText:        firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
 	}
 
+	noun := firstNonEmptyStr(mapStr(m, "item_noun"), "document")
 	return ui.WorkbenchPanel{
 		ListURL:          "records",
 		ItemKey:          spec.RecordKey,
@@ -355,6 +356,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		ListTitle:        firstNonEmptyStr(mapStr(m, "list_title"), "Items"),
 		ListEmpty:        firstNonEmptyStr(mapStr(m, "list_empty"), "Nothing yet — create one."),
 		NewButton:        newButton,
+		DeleteURL:        "record?id={id}",
 		RecordURL:        "record?id={id}",
 		BodyField:        bodyField,
 		ViewerTitleField: itemLabel,
@@ -362,7 +364,12 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		EmptyTitle:       firstNonEmptyStr(mapStr(m, "empty_title"), "Nothing selected"),
 		EmptyHint:        firstNonEmptyStr(mapStr(m, "empty_hint"), "Pick an item on the left, or create one."),
 		RefreshOn:        []string{"records"},
-		Chat:             chat,
+		// Co-author: each assistant reply gets an "Add to <noun>" button that
+		// appends it to the open record (upsert to the records store).
+		CoAuthor:     true,
+		CoAuthorVerb: "Add to " + noun,
+		SaveURL:      "records",
+		Chat:         chat,
 	}, nil
 }
 

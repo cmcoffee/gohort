@@ -260,11 +260,28 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-new .ui-modal-button-row { margin: 0; }
 .ui-wb-list-body { flex: 1 1 0; overflow-y: auto; padding: 0.4rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .ui-wb-item {
+  display: flex; align-items: center; gap: 0.4rem;
   padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer; font-size: 0.88rem;
-  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text);
 }
+.ui-wb-item-label { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ui-wb-item:hover { background: var(--bg-2); }
 .ui-wb-item.active { background: var(--accent); color: #fff; }
+.ui-wb-item-del {
+  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
+  color: var(--text-mute); font-size: 1.1rem; line-height: 1; padding: 0 0.2rem;
+  opacity: 0; transition: opacity 0.12s;
+}
+.ui-wb-item:hover .ui-wb-item-del { opacity: 0.7; }
+.ui-wb-item-del:hover { opacity: 1; color: var(--danger); }
+.ui-wb-item.active .ui-wb-item-del { color: #fff; }
+.ui-wb-coauthor-btn {
+  margin-top: 0.5rem; min-height: var(--tap); cursor: pointer;
+  background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
+}
+.ui-wb-coauthor-btn:hover { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
+.ui-wb-coauthor-btn:disabled { opacity: 0.6; cursor: default; }
 .ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
 .ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
 .ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
@@ -8768,6 +8785,22 @@ const runtimeJS = `
         retryFromMessage(msgEl);
       }}, ['Retry']));
       msgEl.appendChild(bar);
+      // Fire the SHARED message-decorator registry so app-side affordances
+      // (e.g. the workbench's "Add to document" co-author button) attach to
+      // chat_panel replies too — agent_loop_panel already fires these; the
+      // registry is meant to cover both panels uniformly.
+      var decorators = window.UIMessageDecorators || [];
+      for (var di = 0; di < decorators.length; di++) {
+        try {
+          decorators[di]({
+            role:    'assistant',
+            id:      msgEl.dataset.id || '',
+            wrap:    msgEl,
+            body:    msgEl.querySelector('.ui-chat-msg-body'),
+            rawText: msgEl.dataset.raw || '',
+          });
+        } catch (_) {}
+      }
     }
 
     // Walk back from msgEl to the most recent user message, drop everything
@@ -16954,6 +16987,16 @@ const runtimeJS = `
       }).catch(function() {});
     }
 
+    function deleteItem(id, label) {
+      if (!cfg.delete_url) return;
+      if (!confirm('Delete "' + (label || 'this item') + '"?')) return;
+      var url = cfg.delete_url.replace('{id}', encodeURIComponent(id));
+      fetch(url, {method: 'DELETE'}).then(function() {
+        if (selectedId === id) { selectedId = null; showEmpty(); }
+        loadList();
+      }).catch(function() {});
+    }
+
     function loadList() {
       fetchJSON(cfg.list_url).then(function(items) {
         listBody.innerHTML = '';
@@ -16963,12 +17006,53 @@ const runtimeJS = `
         }
         items.forEach(function(it) {
           var id = String(it[itemKey] != null ? it[itemKey] : '');
-          var row = el('div', {class: 'ui-wb-item', 'data-id': id, text: it[itemLabel] || '(untitled)'});
+          var label = it[itemLabel] || '(untitled)';
+          var row = el('div', {class: 'ui-wb-item', 'data-id': id});
+          row.appendChild(el('span', {class: 'ui-wb-item-label', text: label}));
           row.addEventListener('click', function() { loadViewer(id); });
+          if (cfg.delete_url) {
+            var del = el('button', {class: 'ui-wb-item-del', title: 'Delete', text: '×'});
+            del.addEventListener('click', function(ev) { ev.stopPropagation(); deleteItem(id, label); });
+            row.appendChild(del);
+          }
           listBody.appendChild(row);
         });
         highlight();
       }).catch(function() {});
+    }
+
+    // Co-author: each assistant reply gets an "Add to <noun>" button that appends
+    // that reply's markdown to the OPEN record's body field and saves it (an
+    // upsert), then invalidates so the viewer shows the new section. One global
+    // decorator — there is one workbench per page, and it captures selectedId
+    // live. No-op until a record is selected.
+    if (cfg.coauthor && window.uiRegisterMessageDecorator) {
+      window.uiRegisterMessageDecorator(function(msg) {
+        if (!msg || msg.role !== 'assistant' || !msg.wrap) return;
+        var raw = (msg.rawText || '').trim();
+        if (!raw) return;
+        var btn = el('button', {class: 'ui-wb-coauthor-btn', text: cfg.coauthor_verb || 'Add to document'});
+        btn.addEventListener('click', function() {
+          if (!selectedId) { alert('Select an item on the left first, then add this to it.'); return; }
+          if (!cfg.record_url) return;
+          btn.disabled = true; btn.textContent = 'Adding…';
+          var getURL = cfg.record_url.replace('{id}', encodeURIComponent(selectedId));
+          fetchJSON(getURL).then(function(rec) {
+            rec[bodyField] = ((rec[bodyField] || '').trim() + '\n\n' + raw).trim();
+            return fetch(cfg.save_url || cfg.list_url, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(rec),
+            });
+          }).then(function() {
+            btn.textContent = 'Added ✓';
+            if (window.uiInvalidate) window.uiInvalidate(cfg.list_url);
+          }).catch(function() {
+            btn.disabled = false; btn.textContent = cfg.coauthor_verb || 'Add to document';
+          });
+        });
+        msg.wrap.appendChild(btn);
+      });
     }
 
     // A create (the New modal's form posts to list_url + Invalidates it) or a
