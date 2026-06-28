@@ -174,6 +174,48 @@ func ExtractVideoAudio(data []byte) ([]byte, error) {
 	return audio, nil
 }
 
+// TranscodeAudioToWAV converts arbitrary input audio (m4a/aac/caf/ogg/amr/…)
+// to 16 kHz mono 16-bit PCM WAV — the one format whisper.cpp decodes NATIVELY,
+// without needing its own ffmpeg/codec build. Inbound voice memos arrive as m4a
+// (AAC in an mp4 container); a stock whisper server rejects those with a 400.
+// Normalizing here, on the gohort host (which already has ffmpeg for video),
+// makes transcription independent of the STT server's format support. ffmpeg
+// probes the container, so the input's extension is irrelevant.
+func TranscodeAudioToWAV(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("no audio data")
+	}
+	srcPath, err := writeTempFile(data, "*.audio")
+	if err != nil {
+		return nil, fmt.Errorf("tempfile: %w", err)
+	}
+	defer os.Remove(srcPath)
+
+	outPath := srcPath + ".wav"
+	defer os.Remove(outPath)
+	cmd := exec.Command("ffmpeg",
+		"-loglevel", "error",
+		"-y",
+		"-i", srcPath,
+		"-vn",
+		"-ac", "1",
+		"-ar", "16000",
+		"-c:a", "pcm_s16le",
+		outPath,
+	)
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg audio transcode: %w", err)
+	}
+	wav, err := os.ReadFile(outPath)
+	if err != nil {
+		return nil, fmt.Errorf("read wav: %w", err)
+	}
+	if len(wav) == 0 {
+		return nil, fmt.Errorf("transcode produced 0 bytes (no audio track?)")
+	}
+	return wav, nil
+}
+
 // extractVideosFrames is the multi-video helper used by buildMessages.
 // Returns frames concatenated in order of the input videos. Failures on
 // any single video are logged and skipped — the rest still flow through.

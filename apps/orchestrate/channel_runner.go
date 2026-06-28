@@ -122,15 +122,46 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		if title == "" {
 			title = in.SenderName
 		}
-		sttOK := strings.TrimSpace(GetTranscribeConfig().Endpoint) != "" // STT configured?
-		attachNote := ""                                                 // notes for non-image attachments (audio transcripts, unsupported types)
+		sttOK := GetTranscribeConfig().Enabled // STT on? (canonical flag — matches Transcribe + the admin toggle)
+		attachNote := ""                       // notes for non-image attachments (audio transcripts, unsupported types)
+		// transcribeAudio runs STT on one audio blob and returns the note to
+		// append. It distinguishes the REAL outcomes — disabled vs. a transcription
+		// ERROR (endpoint down / 404 / format whisper can't decode) vs. empty (no
+		// speech) — instead of reporting every miss as "not configured", which is
+		// actively misleading when STT IS on and the endpoint is just failing. The
+		// underlying error is logged so a broken endpoint is greppable in gohort.log.
+		// nameHint carries a real extension (whisper picks its decoder from it — a
+		// bogus ".audio" gets the request rejected).
+		transcribeAudio := func(data []byte, nameHint string) string {
+			if !sttOK {
+				return "\n[Audio attachment received, but speech-to-text isn't enabled — turn it on in Admin → Audio transcription to get a transcript.]"
+			}
+			// Normalize to 16kHz mono WAV first so STT doesn't depend on the whisper
+			// server decoding m4a/AAC/caf (a stock build 400s on those). Fall back to
+			// the raw bytes when ffmpeg isn't present or the input is already friendly.
+			sendData, sendName := data, nameHint
+			if wav, terr := TranscodeAudioToWAV(data); terr == nil && len(wav) > 0 {
+				sendData, sendName = wav, "inbound.wav"
+			} else if terr != nil {
+				Log("[channel] inbound audio transcode failed (%s) — sending raw to STT: %v", nameHint, terr)
+			}
+			txt, terr := Transcribe(ctx, sendData, sendName)
+			if terr != nil {
+				Log("[channel] inbound audio transcription failed (%s, %d bytes): %v", nameHint, len(data), terr)
+				return "\n[Audio attachment received, but transcription failed (" + terr.Error() + "). STT is enabled; the endpoint or audio format is the problem.]"
+			}
+			if txt = strings.TrimSpace(txt); txt == "" {
+				return "\n[Audio attachment received, but transcription returned no text — the clip may have no speech, or whisper couldn't decode this format.]"
+			}
+			return "\n[Audio transcript] " + txt
+		}
 		// Decode inbound photos (base64 on the wire) to the raw bytes the
 		// vision model takes; skip any that don't decode rather than failing
 		// the whole turn. Connectors sometimes lump ANY attachment (an m4a voice
 		// memo, a pdf) into the images field, so sniff each one: only real images
 		// go to the vision stream — a non-image is never presented as a picture.
-		// Audio is transcribed when STT is configured; anything else gets a typed
-		// note so the agent knows something arrived but can't pretend to see it.
+		// A non-image that looks like audio is transcribed; anything else gets a
+		// typed note so the agent knows something arrived but can't pretend to see it.
 		var images [][]byte
 		for _, b64 := range in.Images {
 			data, derr := base64.StdEncoding.DecodeString(b64)
@@ -142,13 +173,12 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 				images = append(images, data)
 				continue
 			}
-			if sttOK {
-				if txt, terr := Transcribe(ctx, data, "inbound.audio"); terr == nil {
-					if txt = strings.TrimSpace(txt); txt != "" {
-						attachNote += "\n[Audio transcript] " + txt
-						continue
-					}
-				}
+			// Not a picture. Audio (and the opaque containers iMessage voice memos
+			// decode to — m4a often sniffs as video/mp4 or octet-stream) goes to STT;
+			// a genuine other type (pdf, vcard) gets a typed note.
+			if strings.HasPrefix(ct, "audio/") || ct == "video/mp4" || ct == "application/octet-stream" {
+				attachNote += transcribeAudio(data, audioNameForType(ct))
+				continue
 			}
 			attachNote += fmt.Sprintf("\n[Attachment received (%s) — not an image; it can't be analyzed here. Don't describe it as a photo.]", ct)
 		}
@@ -159,15 +189,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if derr != nil {
 				continue
 			}
-			if sttOK {
-				if txt, terr := Transcribe(ctx, data, "inbound.audio"); terr == nil {
-					if txt = strings.TrimSpace(txt); txt != "" {
-						attachNote += "\n[Audio transcript] " + txt
-						continue
-					}
-				}
-			}
-			attachNote += "\n[Audio attachment received but speech-to-text isn't configured, so it can't be transcribed here.]"
+			attachNote += transcribeAudio(data, audioNameForType(http.DetectContentType(data)))
 		}
 		// Inbound videos: the vision model can't ingest raw mp4, so sample a
 		// few frames per clip into the SAME multimodal image stream, and fold a
@@ -272,4 +294,25 @@ func (T *OrchestrateApp) RenameChannelSession(owner, agentID, chatID, name strin
 		return
 	}
 	renameChatSession(udb, agentID, "chan:"+chatID, name)
+}
+
+// audioNameForType picks a filename (with a real extension) to hand the STT
+// server for a blob of the given sniffed content type. whisper inspects the
+// extension to choose its decoder, so a correct one matters — a bogus
+// ".audio" got requests rejected. m4a/aac and the mp4-family containers an
+// iMessage voice memo decodes to commonly sniff as video/mp4 or octet-stream,
+// so those default to .m4a (whisper.cpp needs ffmpeg to decode that family).
+func audioNameForType(ct string) string {
+	switch {
+	case strings.HasPrefix(ct, "audio/mpeg"):
+		return "inbound.mp3"
+	case strings.HasPrefix(ct, "audio/wav"), strings.HasPrefix(ct, "audio/x-wav"):
+		return "inbound.wav"
+	case strings.HasPrefix(ct, "audio/ogg"):
+		return "inbound.ogg"
+	case strings.HasPrefix(ct, "audio/flac"), strings.HasPrefix(ct, "audio/x-flac"):
+		return "inbound.flac"
+	default:
+		return "inbound.m4a"
+	}
 }
