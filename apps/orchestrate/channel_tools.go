@@ -105,7 +105,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "read_chat",
-				Description: "Read recent messages from one conversation on your channels. Use a chat_id from list_chats. Read-only.",
+				Description: "Read recent messages from one conversation, plus its participants and their handles (phone/email) — so in a group you can reach a specific person by number. Use a chat_id from list_chats. Read-only.",
 				Parameters: map[string]ToolParam{
 					"chat_id": {Type: "string", Description: "The conversation's chat id (from list_chats)."},
 					"limit":   {Type: "number", Description: "How many recent messages (default 20)."},
@@ -133,6 +133,20 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 					return "No messages in that conversation yet.", nil
 				}
 				var b strings.Builder
+				// Lead with the participant roster (name + handle) so a group-bound
+				// agent can reach a specific person by number — group messages are
+				// attributed by name, but the handle lives in the roster.
+				if members := ct.Members(owner, chatID); len(members) > 0 {
+					b.WriteString("Participants:\n")
+					for _, m := range members {
+						nm := m.Name
+						if nm == "" {
+							nm = m.Handle
+						}
+						fmt.Fprintf(&b, "  - %s (%s)\n", nm, m.Handle)
+					}
+					b.WriteString("\nMessages:\n")
+				}
 				for _, m := range msgs {
 					who := m.Sender
 					if who == "" {
@@ -147,6 +161,45 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 						ts = "[" + m.Timestamp + "] "
 					}
 					fmt.Fprintf(&b, "%s%s: %s\n", ts, who, m.Text)
+				}
+				return strings.TrimSpace(b.String()), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "list_members",
+				Description: "List a conversation's participants with their handles (phone/email) — the roster you need to reach a specific person in a group by number. Use a chat_id from list_chats. Read-only.",
+				Parameters: map[string]ToolParam{
+					"chat_id": {Type: "string", Description: "The conversation's chat id (from list_chats)."},
+				},
+				Required: []string{"chat_id"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				chatID := strings.TrimSpace(oArgStr(args, "chat_id"))
+				if chatID == "" {
+					return "", fmt.Errorf("chat_id is required")
+				}
+				ok := false
+				for _, t := range scopedThreads() {
+					if t.ChatID == chatID {
+						ok = true
+						break
+					}
+				}
+				if !ok {
+					return "", fmt.Errorf("no chat %q on your channels — use a chat_id from list_chats", chatID)
+				}
+				members := ct.Members(owner, chatID)
+				if len(members) == 0 {
+					return "No known participants for that conversation yet.", nil
+				}
+				var b strings.Builder
+				for _, m := range members {
+					nm := m.Name
+					if nm == "" {
+						nm = m.Handle
+					}
+					fmt.Fprintf(&b, "- %s — %s\n", nm, m.Handle)
 				}
 				return strings.TrimSpace(b.String()), nil
 			},

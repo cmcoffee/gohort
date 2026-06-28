@@ -26,6 +26,20 @@ func (c channelThreadsImpl) Threads(owner string) []ChannelThreadInfo {
 	return out
 }
 
+func (c channelThreadsImpl) Members(owner, chatID string) []ChannelMember {
+	// syncMembersFromHistory derives the full roster from the stored thread
+	// (catches anyone who messaged but wasn't captured live), then returns it.
+	conv := c.T.syncMembersFromHistory(chatID)
+	out := make([]ChannelMember, 0, len(conv.Members))
+	for _, m := range conv.Members {
+		if m.Handle == "" {
+			continue
+		}
+		out = append(out, ChannelMember{Name: m.Name, Handle: m.Handle})
+	}
+	return out
+}
+
 func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelLine {
 	if limit <= 0 {
 		limit = 30

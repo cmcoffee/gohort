@@ -32,6 +32,15 @@ type ChannelLine struct {
 	Timestamp string `json:"timestamp,omitempty"`
 }
 
+// ChannelMember is one participant in a conversation: a learned display name +
+// their handle (phone/email). This is the roster a group-bound agent needs to
+// reach a specific participant by number — group messages are attributed by
+// name, but the handle lives here.
+type ChannelMember struct {
+	Name   string `json:"name,omitempty"`
+	Handle string `json:"handle,omitempty"`
+}
+
 // ChannelThreads is implemented by the messaging transport (Bridges) and
 // consumed by orchestrate's channel-scoped chat tools.
 type ChannelThreads interface {
@@ -40,6 +49,11 @@ type ChannelThreads interface {
 	Threads(owner string) []ChannelThreadInfo
 	// Messages returns recent messages from one conversation (oldest first).
 	Messages(owner, chatID string, limit int) []ChannelLine
+	// Members returns the participant roster (name + handle) for one
+	// conversation, learned from messages. Lets a group-bound agent resolve a
+	// participant's number. Empty / single-entry for a 1:1 (the contact is the
+	// thread itself).
+	Members(owner, chatID string) []ChannelMember
 	// Deliver enqueues an outbound message to a conversation (by chatID) or a
 	// handle, on a service. images are base64 attachments (nil for text-only).
 	Deliver(owner, service, chatID, handle, text string, images []string) error
