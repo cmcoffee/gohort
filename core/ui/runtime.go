@@ -286,6 +286,14 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
 .ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
 .ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
+.ui-wb-md h1, .ui-wb-md h2 { margin: 1.4rem 0 0.6rem; color: var(--text-hi); border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
+.ui-wb-md h3, .ui-wb-md h4 { margin: 1.1rem 0 0.4rem; color: var(--text-hi); }
+.ui-wb-md h1:first-child, .ui-wb-md h2:first-child { margin-top: 0; }
+.ui-wb-md-empty {
+  display: flex; flex-direction: column; gap: 0.5rem; align-items: center; justify-content: center;
+  text-align: center; height: 100%; min-height: 200px; color: var(--text-mute);
+  font-size: 0.9rem; line-height: 1.5; max-width: 440px; margin: 0 auto;
+}
 /* The embedded chat fills its column (its own internal layout takes over).
  * Single-mode ChatPanel roots at .ui-chat; agent_loop_panel at .ui-agent. */
 .ui-wb-chat > .ui-chat,
@@ -16981,9 +16989,20 @@ const runtimeJS = `
         if (cfg.viewer_title_field && rec[cfg.viewer_title_field]) {
           viewerBody.appendChild(el('h2', {class: 'ui-wb-viewer-title', text: rec[cfg.viewer_title_field]}));
         }
-        var md = el('div', {class: 'ui-wb-md'});
-        viewerBody.appendChild(md);
-        uiRenderMarkdown(md, rec[bodyField] || '_(empty — ask the assistant to add a section)_');
+        var bodyVal = (rec[bodyField] || '').trim();
+        if (bodyVal) {
+          var md = el('div', {class: 'ui-wb-md'});
+          viewerBody.appendChild(md);
+          uiRenderMarkdown(md, bodyVal);
+        } else {
+          // Empty doc — guide the user to the ACTUAL commit path (the chat reply's
+          // "Add to document" button), not "ask the assistant" (which led people to
+          // a separate agent tool that writes elsewhere).
+          var hint = el('div', {class: 'ui-wb-md-empty'});
+          hint.appendChild(el('div', {text: 'This is empty.'}));
+          hint.appendChild(el('div', {text: 'Ask the assistant on the right for a section, then click "Add to document" under its reply to drop it in here.'}));
+          viewerBody.appendChild(hint);
+        }
       }).catch(function() {});
     }
 
