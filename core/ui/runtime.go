@@ -17025,7 +17025,10 @@ const runtimeJS = `
         if (bodyVal) {
           var md = el('div', {class: 'ui-wb-md'});
           viewerBody.appendChild(md);
-          uiRenderMarkdown(md, bodyVal);
+          // body_is_html: trusted server-rendered document HTML (ToC + sections);
+          // otherwise render the field as markdown.
+          if (cfg.body_is_html) { md.innerHTML = bodyVal; }
+          else { uiRenderMarkdown(md, bodyVal); }
         } else {
           // Empty doc — guide the user to the ACTUAL commit path (the chat reply's
           // "Add to document" button), not "ask the assistant" (which led people to
@@ -17085,7 +17088,9 @@ const runtimeJS = `
     // Default-on when the pieces exist (record_url to read/write + a chat),
     // opt out with coauthor:false. Gating on EXISTING fields means workbench
     // specs authored before the coauthor flag still get the affordance live.
-    var coauthorOn = (cfg.coauthor !== false) && !!cfg.record_url && !!cfg.chat;
+    // Not applicable when the body is server-rendered HTML (nothing to append
+    // markdown to — the agent edits via its own tools in that case).
+    var coauthorOn = (cfg.coauthor !== false) && !!cfg.record_url && !!cfg.chat && !cfg.body_is_html;
     if (coauthorOn && window.uiRegisterMessageDecorator) {
       window.uiRegisterMessageDecorator(function(msg) {
         if (!msg || msg.role !== 'assistant' || !msg.wrap) return;

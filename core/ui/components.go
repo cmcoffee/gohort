@@ -2015,7 +2015,8 @@ type WorkbenchPanel struct {
 	DeleteURL string `json:"delete_url,omitempty"`
 	// Center — viewer of the selected record.
 	RecordURL        string `json:"record_url"`                   // GET with {id} → the record
-	BodyField        string `json:"body_field,omitempty"`         // markdown field rendered in the viewer (default "content")
+	BodyField        string `json:"body_field,omitempty"`         // field rendered in the viewer (default "content")
+	BodyIsHTML       bool   `json:"body_is_html,omitempty"`       // render BodyField as trusted server HTML (innerHTML) instead of markdown — for apps that render a rich document (ToC + sections) server-side
 	ViewerTitleField string `json:"viewer_title_field,omitempty"` // optional record field shown as a heading
 	EmptyIcon        string `json:"empty_icon,omitempty"`
 	EmptyTitle       string `json:"empty_title,omitempty"`

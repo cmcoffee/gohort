@@ -1,0 +1,88 @@
+// Package guides is a built-in app for crafting living, multi-section guide
+// documents with an AI co-author. A guide is a list of markdown sections rendered
+// as a styled HTML document (table of contents + sections); you grow and edit it
+// by talking to a bound Guide Author agent, whose add_section / edit_section
+// tools write directly into the open guide. Built on the core/ui WorkbenchPanel
+// primitive (list | document viewer | chat) + the app-tools co-author seam.
+//
+// Phase 1: guides + sections + HTML/ToC rendering + co-author. Revisions and
+// export (PDF/HTML/markdown) layer on next.
+package guides
+
+import (
+	"net/http"
+
+	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
+
+	"github.com/cmcoffee/gohort/apps/orchestrate"
+)
+
+// guideAgentID is the curated Guide Author agent this app binds its chat to.
+const guideAgentID = "app-guides-author"
+
+func init() {
+	RegisterApp(new(Guides))
+	// Curated agent: a careful guide writer. Its job is to PRODUCE markdown and
+	// commit it via the app-provided add_section/edit_section tools — never to
+	// improvise its own storage. Tools for the co-author flow are injected per
+	// chat turn (see web.go), so AllowedTools here is just its research surface.
+	appagents.RegisterAppAgent(appagents.AppAgentSpec{
+		ID:           guideAgentID,
+		OwningApp:    "Guides",
+		Name:         "Guide Author",
+		Description:  "Drafts and edits multi-section guide documents — writes clear, well-structured markdown sections and commits them into the open guide.",
+		AllowedTools: []string{"web_search", "fetch_url"},
+		Hidden:       true, // reached through the Guides app, not the agent picker
+		Prompt: "You are the Guide Author — you help the user craft a living, multi-section guide document.\n\n" +
+			"The guide is shown in the middle of the screen, rendered as a formatted document with a table of contents. You edit it by CALLING TOOLS, not by pasting content into chat:\n" +
+			"- add_section(section_title, markdown): append a new section. The markdown is the section BODY — do NOT repeat the section title inside it. Use sub-headings (### …), lists, and fenced code blocks for structure. Write real, substantive content, not placeholders.\n" +
+			"- edit_section(section_title, markdown): replace the body of an existing section (matched by its title).\n\n" +
+			"When the user asks for a section or a change, make it with the tool so it lands in the document and the viewer updates. In chat, keep your prose short — a sentence confirming what you added/changed — because the CONTENT belongs in the guide, not the chat. Never describe your own storage or write files; the app stores the guide. If the user just wants to discuss or plan, answer normally without calling a tool.",
+	})
+}
+
+// Guides is the app. Most behavior is in web.go (endpoints + chat) and page.go
+// (the workbench page); this carries the framework boilerplate.
+type Guides struct {
+	AppCore
+}
+
+func (T Guides) Name() string         { return "guides" }
+func (T Guides) SystemPrompt() string { return "" }
+func (T Guides) Desc() string {
+	return "Apps: craft living, multi-section guide documents with an AI co-author."
+}
+func (T *Guides) Init() error { return T.Flags.Parse() }
+func (T *Guides) Main() error {
+	Log("guides is a dashboard-only app. Start with: gohort serve")
+	return nil
+}
+
+func (T *Guides) WebPath() string { return "/guides" }
+func (T *Guides) WebName() string { return "Guides" }
+func (T *Guides) WebDesc() string { return "Craft living guide documents with an AI co-author." }
+
+func (T *Guides) Routes() { T.HandleFunc("/", T.route) }
+
+// findOrchestrate resolves the registered OrchestrateApp so the chat routes can
+// dispatch to its PublicHandle* methods. Cached after first hit.
+var cachedOrch *orchestrate.OrchestrateApp
+
+func findOrchestrate() *orchestrate.OrchestrateApp {
+	if cachedOrch != nil {
+		return cachedOrch
+	}
+	a, ok := FindAgent("orchestrate")
+	if !ok {
+		return nil
+	}
+	o, ok := a.(*orchestrate.OrchestrateApp)
+	if !ok {
+		return nil
+	}
+	cachedOrch = o
+	return cachedOrch
+}
+
+var _ = http.MethodGet
