@@ -117,6 +117,7 @@ type hookRequest struct {
 	Text        string   `json:"text"`
 	Images      []string `json:"images,omitempty"`
 	Videos      []string `json:"videos,omitempty"` // base64 inbound video clips (e.g. an mp4 in a text); frames sampled for the vision model — connector must send them
+	Audios      []string `json:"audios,omitempty"` // base64 inbound audio (a voice memo / m4a); transcribed for the agent — connector must send them on this field, not images
 	MsgID       string   `json:"msg_id"`
 	RowID       int64    `json:"row_id"`
 }
@@ -235,7 +236,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	sender := T.resolveSender(activeChatID, req.Handle, req.DisplayName)
 	sessionID := ChannelSessionKey(ch, activeChatID)
 	replyHere := ChannelDirection(ch) != DirectionInbound
-	chatID, handle, text, images, videos := activeChatID, req.Handle, req.Text, req.Images, req.Videos
+	chatID, handle, text, images, videos, audios := activeChatID, req.Handle, req.Text, req.Images, req.Videos, req.Audios
 
 	Log("[bridges] channel %q (svc=%s agent=%s dir=%s) handling inbound from %s",
 		ch.Name, svc, ch.AgentID, ChannelDirection(ch), handle)
@@ -248,7 +249,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		// gatekeeper's worker-LLM call.
 		if !ChannelGatekeeperAllow(context.Background(), ChannelInbound{
 			Owner: ch.Owner, AgentID: ch.AgentID, SessionID: sessionID,
-			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images, Videos: videos,
+			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images, Videos: videos, Audios: audios,
 		}) {
 			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
 			return
@@ -264,6 +265,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 			Text:             text,
 			Images:           images,
 			Videos:           videos,
+			Audios:           audios,
 			StatusCallback: func(s string) {
 				if !replyHere {
 					return

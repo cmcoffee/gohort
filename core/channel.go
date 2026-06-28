@@ -263,6 +263,7 @@ type ChannelInbound struct {
 	Text             string   // the inbound message text
 	Images           []string // base64 inbound attachments (a contact's photo) — delivered to the agent as multimodal content it can see this turn
 	Videos           []string // base64 inbound video clips (e.g. an mp4 in a text) — the runner samples frames into the multimodal stream so the vision model can analyze them (it can't ingest raw mp4)
+	Audios           []string // base64 inbound audio (a voice memo / m4a) — the runner transcribes it so the agent gets the spoken words (it can't ingest raw audio)
 	// StatusCallback, when set, receives mid-turn status pings (the agent's
 	// send_status / progress notes) so the transport can deliver them ahead
 	// of the final reply. nil = no status (graceful).

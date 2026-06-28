@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -121,14 +122,52 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		if title == "" {
 			title = in.SenderName
 		}
+		sttOK := strings.TrimSpace(GetTranscribeConfig().Endpoint) != "" // STT configured?
+		attachNote := ""                                                 // notes for non-image attachments (audio transcripts, unsupported types)
 		// Decode inbound photos (base64 on the wire) to the raw bytes the
 		// vision model takes; skip any that don't decode rather than failing
-		// the whole turn.
+		// the whole turn. Connectors sometimes lump ANY attachment (an m4a voice
+		// memo, a pdf) into the images field, so sniff each one: only real images
+		// go to the vision stream — a non-image is never presented as a picture.
+		// Audio is transcribed when STT is configured; anything else gets a typed
+		// note so the agent knows something arrived but can't pretend to see it.
 		var images [][]byte
 		for _, b64 := range in.Images {
-			if data, derr := base64.StdEncoding.DecodeString(b64); derr == nil {
-				images = append(images, data)
+			data, derr := base64.StdEncoding.DecodeString(b64)
+			if derr != nil {
+				continue
 			}
+			ct := http.DetectContentType(data)
+			if strings.HasPrefix(ct, "image/") {
+				images = append(images, data)
+				continue
+			}
+			if sttOK {
+				if txt, terr := Transcribe(ctx, data, "inbound.audio"); terr == nil {
+					if txt = strings.TrimSpace(txt); txt != "" {
+						attachNote += "\n[Audio transcript] " + txt
+						continue
+					}
+				}
+			}
+			attachNote += fmt.Sprintf("\n[Attachment received (%s) — not an image; it can't be analyzed here. Don't describe it as a photo.]", ct)
+		}
+		// Dedicated inbound audio (voice memos, m4a/mp3) when the connector sends
+		// it on its own field: transcribe so the agent gets the spoken words.
+		for _, b64 := range in.Audios {
+			data, derr := base64.StdEncoding.DecodeString(b64)
+			if derr != nil {
+				continue
+			}
+			if sttOK {
+				if txt, terr := Transcribe(ctx, data, "inbound.audio"); terr == nil {
+					if txt = strings.TrimSpace(txt); txt != "" {
+						attachNote += "\n[Audio transcript] " + txt
+						continue
+					}
+				}
+			}
+			attachNote += "\n[Audio attachment received but speech-to-text isn't configured, so it can't be transcribed here.]"
 		}
 		// Inbound videos: the vision model can't ingest raw mp4, so sample a
 		// few frames per clip into the SAME multimodal image stream, and fold a
@@ -137,7 +176,6 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// won't decode, or a host with no ffmpeg, is skipped silently.
 		videoNote := ""
 		vidFrames := 0
-		sttOK := strings.TrimSpace(GetTranscribeConfig().Endpoint) != "" // STT configured?
 		for _, b64 := range in.Videos {
 			data, derr := base64.StdEncoding.DecodeString(b64)
 			if derr != nil {
@@ -183,7 +221,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			SubSessionID:   sessionID,
 			Title:          title,
 			MessageSender:  in.SenderName,
-			Message:        in.Text + videoNote,
+			Message:        in.Text + videoNote + attachNote,
 			Images:         images,
 			Interactive:    true, // a real person is texting — no delegation marker
 			// Replying BACK to this same conversation is in-thread, not a
