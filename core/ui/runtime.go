@@ -18,9 +18,9 @@ body { min-height: 100vh; min-height: 100dvh; }
 
 #ui-root {
   margin: 0 auto;
-  padding: 0.6rem;
-  padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
-  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+  padding: 0.95rem;
+  padding-top: calc(0.95rem + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(1.8rem + env(safe-area-inset-bottom, 0px));
 }
 
 /* --- Page header (back link + visible title) --- */
@@ -149,7 +149,7 @@ body { min-height: 100vh; min-height: 100dvh; }
 /* --- Section --- */
 .ui-section {
   background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
-  padding: 0.6rem 0.8rem; margin-bottom: 0.8rem;
+  padding: 1rem 1.15rem; margin-bottom: 1rem;
 }
 /* Page.Grid layout — sections flow into a responsive 2-column grid on
  * desktop, one column on mobile; a Wide section spans the full width.
@@ -157,7 +157,7 @@ body { min-height: 100vh; min-height: 100dvh; }
  * doesn't stretch to match a tall neighbor. gap replaces the per-card
  * margin so spacing stays even. */
 .ui-section-grid {
-  display: grid; grid-template-columns: 1fr; gap: 0.8rem; align-items: start;
+  display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start;
   /* dense: backfill the empty cell a full-width (Wide) section would
    * otherwise leave beside a lone narrow section, so narrow cards pack
    * tight instead of leaving holes on the left/right. */
@@ -194,7 +194,7 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 .ui-tab-hidden { display: none; }
 .ui-section-h {
-  font-size: 0.85rem; margin: 0 0 0.5rem 0;
+  font-size: 0.85rem; margin: 0 0 0.7rem 0;
   color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
   flex-wrap: wrap;
@@ -237,6 +237,47 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-empty-hint { font-size: 0.85rem; color: var(--text-mute); opacity: 0.85; max-width: 360px; line-height: 1.5; }
 .ui-empty-action { margin-top: 1.25rem; min-height: var(--tap); background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
 .ui-empty-action:hover { filter: brightness(1.08); }
+
+/* --- WorkbenchPanel: list | viewer | chat, full-height columns --- */
+.ui-wb {
+  display: flex; gap: 0.8rem; align-items: stretch;
+  /* Fill the viewport below the page header. Columns scroll internally. */
+  height: calc(100vh - 90px); min-height: 420px;
+}
+.ui-wb-col {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+}
+.ui-wb-list   { flex: 0 0 240px; }
+.ui-wb-viewer { flex: 1 1 0; }
+.ui-wb-chat   { flex: 0 0 380px; }
+.ui-wb-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+}
+.ui-wb-head-t { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); }
+.ui-wb-new .ui-modal-button-row { margin: 0; }
+.ui-wb-list-body { flex: 1 1 0; overflow-y: auto; padding: 0.4rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.ui-wb-item {
+  padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer; font-size: 0.88rem;
+  color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ui-wb-item:hover { background: var(--bg-2); }
+.ui-wb-item.active { background: var(--accent); color: #fff; }
+.ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
+.ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
+.ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
+.ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
+/* The embedded chat fills its column (its own internal layout takes over). */
+.ui-wb-chat > .ui-agent { height: 100%; border: 0; border-radius: 0; }
+@media (max-width: 900px) {
+  /* Stack on mobile; let the page scroll rather than three tiny panes. */
+  .ui-wb { flex-direction: column; height: auto; }
+  .ui-wb-list, .ui-wb-viewer, .ui-wb-chat { flex: 1 1 auto; }
+  .ui-wb-list-body { max-height: 220px; }
+  .ui-wb-chat { height: 70vh; }
+}
 
 /* --- iOS-style switch --- */
 .ui-switch {
@@ -6486,7 +6527,7 @@ const runtimeJS = `
       fetchJSON(cfg.source).then(function(d) {
         wrap.innerHTML = '';
         var data = d || {};
-        cfg.pairs.forEach(function(p) {
+        (cfg.pairs || []).forEach(function(p) {
           var row = el('div', {class: 'ui-display-row'}, [
             el('span', {class: 'ui-display-label'}, [p.label]),
             el('span', {class: 'ui-display-value' + (p.mono ? ' mono' : '')}, [fmt(data[p.field], p.format)]),
@@ -7473,7 +7514,7 @@ const runtimeJS = `
     var wrap = el('div', {class: 'ui-display'});
     function render(rec) {
       wrap.innerHTML = '';
-      cfg.pairs.forEach(function(p) {
+      (cfg.pairs || []).forEach(function(p) {
         var value = fmt(lookup(rec, p.field), p.format);
         // Block-style pairs (multi-line content: script bodies,
         // pipeline dumps, long command templates) render as a <pre>
@@ -16837,6 +16878,110 @@ const runtimeJS = `
       wrap.appendChild(btn);
     }
     return wrap;
+  };
+
+  // workbench_panel — three columns: item list (left), markdown viewer of the
+  // selected item (center), chat (right). Owns the shared selection state the
+  // three sub-surfaces lack on their own: clicking a list row loads that record
+  // into the viewer. New affordance + chat are mounted sub-components (reuse
+  // modal_button/form_panel + agent_loop_panel). See ui.WorkbenchPanel.
+  components.workbench_panel = function(cfg) {
+    var itemKey   = cfg.item_key   || 'id';
+    var itemLabel = cfg.item_label || 'title';
+    var bodyField = cfg.body_field || 'content';
+    var selectedId = null;
+
+    var root = el('div', {class: 'ui-wb'});
+
+    // --- LEFT: list -------------------------------------------------------
+    var left = el('div', {class: 'ui-wb-col ui-wb-list'});
+    var head = el('div', {class: 'ui-wb-head'}, [el('span', {class: 'ui-wb-head-t', text: cfg.list_title || 'Items'})]);
+    if (cfg.new_button) {
+      var nbWrap = el('div', {class: 'ui-wb-new'});
+      mountComponent(cfg.new_button, nbWrap);
+      head.appendChild(nbWrap);
+    }
+    left.appendChild(head);
+    var listBody = el('div', {class: 'ui-wb-list-body'});
+    left.appendChild(listBody);
+
+    // --- CENTER: viewer ---------------------------------------------------
+    var center = el('div', {class: 'ui-wb-col ui-wb-viewer'});
+    var viewerBody = el('div', {class: 'ui-wb-viewer-body'});
+    center.appendChild(viewerBody);
+
+    // --- RIGHT: chat ------------------------------------------------------
+    var right = el('div', {class: 'ui-wb-col ui-wb-chat'});
+    if (cfg.chat) mountComponent(cfg.chat, right);
+
+    root.appendChild(left);
+    root.appendChild(center);
+    root.appendChild(right);
+
+    function showEmpty() {
+      viewerBody.innerHTML = '';
+      var e = el('div', {class: 'ui-empty'});
+      if (cfg.empty_icon)  e.appendChild(el('div', {class: 'ui-empty-icon',  text: cfg.empty_icon}));
+      e.appendChild(el('div', {class: 'ui-empty-title', text: cfg.empty_title || 'Nothing selected'}));
+      if (cfg.empty_hint)  e.appendChild(el('div', {class: 'ui-empty-hint',  text: cfg.empty_hint}));
+      viewerBody.appendChild(e);
+    }
+
+    function highlight() {
+      var rows = listBody.querySelectorAll('.ui-wb-item');
+      for (var i = 0; i < rows.length; i++) {
+        rows[i].classList.toggle('active', rows[i].getAttribute('data-id') === selectedId);
+      }
+    }
+
+    function loadViewer(id) {
+      selectedId = id;
+      highlight();
+      if (!cfg.record_url) return;
+      var url = cfg.record_url.replace('{id}', encodeURIComponent(id));
+      fetchJSON(url).then(function(rec) {
+        if (selectedId !== id) return; // a newer click won
+        viewerBody.innerHTML = '';
+        if (cfg.viewer_title_field && rec[cfg.viewer_title_field]) {
+          viewerBody.appendChild(el('h2', {class: 'ui-wb-viewer-title', text: rec[cfg.viewer_title_field]}));
+        }
+        var md = el('div', {class: 'ui-wb-md'});
+        viewerBody.appendChild(md);
+        uiRenderMarkdown(md, rec[bodyField] || '_(empty — ask the assistant to add a section)_');
+      }).catch(function() {});
+    }
+
+    function loadList() {
+      fetchJSON(cfg.list_url).then(function(items) {
+        listBody.innerHTML = '';
+        if (!items || !items.length) {
+          listBody.appendChild(el('div', {class: 'ui-wb-list-empty', text: cfg.list_empty || 'No items yet.'}));
+          return;
+        }
+        items.forEach(function(it) {
+          var id = String(it[itemKey] != null ? it[itemKey] : '');
+          var row = el('div', {class: 'ui-wb-item', 'data-id': id, text: it[itemLabel] || '(untitled)'});
+          row.addEventListener('click', function() { loadViewer(id); });
+          listBody.appendChild(row);
+        });
+        highlight();
+      }).catch(function() {});
+    }
+
+    // A create (the New modal's form posts to list_url + Invalidates it) or a
+    // co-author write fires ui-data-changed; refresh the list, and re-fetch the
+    // open record so an appended section appears without a manual reload.
+    window.addEventListener('ui-data-changed', function(e) {
+      var srcs = (e.detail && e.detail.sources) || [];
+      var hitList = srcs.indexOf(cfg.list_url) >= 0;
+      var hitRec = (cfg.refresh_on || []).some(function(s) { return srcs.indexOf(s) >= 0; });
+      if (hitList) loadList();
+      if ((hitList || hitRec) && selectedId) loadViewer(selectedId);
+    });
+
+    showEmpty();
+    loadList();
+    return root;
   };
 
   components.card = function(cfg) {

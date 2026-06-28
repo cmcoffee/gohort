@@ -50,7 +50,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"agent_id":    {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app (reserved for the chat surface). Stored on the app; not required."},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added).\n\nkind=\"display\" — a read-only labeled-value panel over the records endpoint. Fields: `pairs` (array of {label, field}).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added).\n\nkind=\"display\" — a read-only labeled-value panel over the records endpoint. Fields: `pairs` (array of {label, field}).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a markdown viewer of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a reader in the middle, and an AI assistant on the side' — clicking a list item shows it in the viewer; the chat helps draft/edit. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown in the viewer, default content), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`, `placeholder`. The viewer renders record[body_field] as markdown.\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -83,9 +83,9 @@ const appDefHelpText = `app_def actions:
 - get  {id(slug)} — one app's full section definition.
 - delete {id(slug)}.
 
-Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id).
+Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id).
 
-Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app.`
+Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).`
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -179,6 +179,23 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 	}
 	if len(arr) == 0 {
 		return ui.Page{}, errors.New("an app needs at least one section")
+	}
+	// A workbench is a whole-page shape (three full-height columns), so when one
+	// is present it owns the page: full width, single no-chrome section.
+	for _, item := range arr {
+		if m, ok := item.(map[string]any); ok && strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), "workbench") {
+			wb, err := buildWorkbench(spec, m)
+			if err != nil {
+				return ui.Page{}, err
+			}
+			return ui.Page{
+				Title:     spec.Name,
+				ShowTitle: true,
+				BackURL:   "/custom/",
+				MaxWidth:  "100%",
+				Sections:  []ui.Section{{NoChrome: true, Body: wb}},
+			}, nil
+		}
 	}
 	page := ui.Page{
 		Title:     spec.Name,
@@ -281,9 +298,71 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything…"),
 		}
 	default:
-		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty | chat", kind)
+		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty | chat | workbench", kind)
 	}
 	return sec, nil
+}
+
+// buildWorkbench assembles the three-column WorkbenchPanel from a workbench
+// section spec: a list + viewer over the app's records, a New modal to create an
+// item, and a chat bound to the app's agent. Requires agent_id.
+func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
+	if strings.TrimSpace(spec.AgentID) == "" {
+		return ui.WorkbenchPanel{}, errors.New("a workbench needs the app to have an agent_id (the agent that powers the chat)")
+	}
+	itemLabel := firstNonEmptyStr(mapStr(m, "item_label"), "title")
+	bodyField := firstNonEmptyStr(mapStr(m, "body_field"), "content")
+
+	// The New form: the fields the LLM gave, or a sensible default (a title + the
+	// body field) so creating an item always works. Posts to the records store
+	// and invalidates it so the list refreshes.
+	newFields := appFormFields(m["new_fields"])
+	if len(newFields) == 0 {
+		newFields = []ui.FormField{
+			{Field: itemLabel, Label: "Title", Type: "text", Placeholder: "Name this " + firstNonEmptyStr(mapStr(m, "item_noun"), "item")},
+		}
+	}
+	newButton := ui.ModalButton{
+		Label: firstNonEmptyStr(mapStr(m, "new_label"), "New"),
+		Title: firstNonEmptyStr(mapStr(m, "new_title"), "Create"),
+		Body: ui.FormPanel{
+			PostURL:     "records",
+			SubmitLabel: firstNonEmptyStr(mapStr(m, "new_label"), "Create"),
+			Fields:      newFields,
+			Invalidate:  []string{"records"},
+		},
+	}
+
+	chat := ui.AgentLoopPanel{
+		ListURL:      "chat/sessions",
+		LoadURL:      "chat/sessions/{id}",
+		DeleteURL:    "chat/sessions/{id}",
+		SendURL:      "chat/send",
+		CancelURL:    "chat/cancel",
+		ListTitle:    "Chats",
+		NewLabel:     "New",
+		ListPosition: "top",
+		Markdown:     true,
+		EmptyText:    firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
+		Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask the assistant…"),
+	}
+
+	return ui.WorkbenchPanel{
+		ListURL:          "records",
+		ItemKey:          spec.RecordKey,
+		ItemLabel:        itemLabel,
+		ListTitle:        firstNonEmptyStr(mapStr(m, "list_title"), "Items"),
+		ListEmpty:        firstNonEmptyStr(mapStr(m, "list_empty"), "Nothing yet — create one."),
+		NewButton:        newButton,
+		RecordURL:        "record?id={id}",
+		BodyField:        bodyField,
+		ViewerTitleField: itemLabel,
+		EmptyIcon:        firstNonEmptyStr(mapStr(m, "empty_icon"), "📄"),
+		EmptyTitle:       firstNonEmptyStr(mapStr(m, "empty_title"), "Nothing selected"),
+		EmptyHint:        firstNonEmptyStr(mapStr(m, "empty_hint"), "Pick an item on the left, or create one."),
+		RefreshOn:        []string{"records"},
+		Chat:             chat,
+	}, nil
 }
 
 // appFormFields converts the declarative fields array into ui.FormField values.

@@ -1473,9 +1473,9 @@ type AgentLoopPanel struct {
 	// message (PATCH {delete_at: rawIndex}), keeping the rest of the thread —
 	// the in-thread per-turn scrub. Gated so apps whose PATCH endpoint only
 	// understands {at} truncation don't render a button that would misfire.
-	MessageScrub bool `json:"msg_scrub,omitempty"`
-	NewLabel    string `json:"new_label,omitempty"`  // default "New"
-	ListTitle   string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
+	MessageScrub bool   `json:"msg_scrub,omitempty"`
+	NewLabel     string `json:"new_label,omitempty"`  // default "New"
+	ListTitle    string `json:"list_title,omitempty"` // sidebar header (default "Sessions")
 	// ListPosition picks where the sessions list lives:
 	//   "rail" (default) — persistent left rail, collapsible.
 	//   "top"            — no inline rail; topbar gets a "Sessions"
@@ -1984,4 +1984,59 @@ func (e EmptyState) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		alias
 	}{"empty_state", alias(e)})
+}
+
+// WorkbenchPanel is the three-column document-workbench layout: an item LIST
+// (left), a markdown VIEWER of the selected item (center), and a CHAT bound to
+// an agent (right). It owns the shared selection state the three columns lack on
+// their own — clicking a list row loads that record into the viewer. The chat is
+// any Component (typically an AgentLoopPanel); the New affordance is any
+// Component (typically a ModalButton wrapping a FormPanel) mounted in the list
+// header. Generic: any "browse a list → read the selected doc → talk to an
+// assistant about it" surface uses it, not just training guides.
+//
+// The viewer renders record[BodyField] as markdown. The co-author flow (the
+// chat's agent appending to that field so the viewer updates) is wired by the
+// host app via a tool on the bound agent + RefreshOn; this component just
+// re-fetches the open record when told to.
+type WorkbenchPanel struct {
+	// Left — item list.
+	ListURL   string `json:"list_url"`             // GET → [records]
+	ItemKey   string `json:"item_key,omitempty"`   // record id field (default "id")
+	ItemLabel string `json:"item_label,omitempty"` // record label field (default "title")
+	ListTitle string `json:"list_title,omitempty"` // column header (default "Items")
+	ListEmpty string `json:"list_empty,omitempty"` // empty-list text
+	// NewButton mounts in the list header (typically a ModalButton+FormPanel
+	// whose FormPanel posts to ListURL and Invalidates it so the list refreshes).
+	NewButton Component `json:"-"`
+	// Center — viewer of the selected record.
+	RecordURL        string `json:"record_url"`                   // GET with {id} → the record
+	BodyField        string `json:"body_field,omitempty"`         // markdown field rendered in the viewer (default "content")
+	ViewerTitleField string `json:"viewer_title_field,omitempty"` // optional record field shown as a heading
+	EmptyIcon        string `json:"empty_icon,omitempty"`
+	EmptyTitle       string `json:"empty_title,omitempty"`
+	EmptyHint        string `json:"empty_hint,omitempty"`
+	// RefreshOn — when uiInvalidate fires with a source in this list, the open
+	// record re-fetches (so a co-author write shows up without a manual reload).
+	RefreshOn []string `json:"refresh_on,omitempty"`
+	// Right — chat (typically an AgentLoopPanel). Mounted as-is.
+	Chat Component `json:"-"`
+}
+
+func (WorkbenchPanel) componentType() string { return "workbench_panel" }
+func (w WorkbenchPanel) MarshalJSON() ([]byte, error) {
+	var newBtn, chat json.RawMessage
+	if w.NewButton != nil {
+		newBtn = marshalComponent(w.NewButton)
+	}
+	if w.Chat != nil {
+		chat = marshalComponent(w.Chat)
+	}
+	type alias WorkbenchPanel
+	return json.Marshal(struct {
+		Type      string          `json:"type"`
+		NewButton json.RawMessage `json:"new_button,omitempty"`
+		Chat      json.RawMessage `json:"chat,omitempty"`
+		alias
+	}{"workbench_panel", newBtn, chat, alias(w)})
 }

@@ -68,6 +68,50 @@ func TestBuildAppPage_FormAndTable(t *testing.T) {
 	}
 }
 
+// TestBuildAppPage_Workbench verifies a workbench section produces the full-page
+// three-column layout (one no-chrome WorkbenchPanel, full width) with the chat
+// + new-button sub-components and the viewer wired to the records store.
+func TestBuildAppPage_Workbench(t *testing.T) {
+	spec := AppSpec{Slug: "guides", Name: "Guides", RecordKey: "id", AgentID: "agent-x"}
+	sections := []any{
+		map[string]any{
+			"kind":        "workbench",
+			"item_label":  "title",
+			"body_field":  "content",
+			"empty_title": "No guide selected",
+		},
+	}
+	page, err := buildAppPage(spec, sections)
+	if err != nil {
+		t.Fatalf("buildAppPage workbench: %v", err)
+	}
+	if page.MaxWidth != "100%" {
+		t.Errorf("workbench page should be full width, got %q", page.MaxWidth)
+	}
+	if len(page.Sections) != 1 || !page.Sections[0].NoChrome {
+		t.Fatalf("workbench should be one no-chrome section, got %+v", page.Sections)
+	}
+	blob, err := page.ConfigJSON()
+	if err != nil {
+		t.Fatalf("ConfigJSON: %v", err)
+	}
+	js := string(blob)
+	for _, want := range []string{`"workbench_panel"`, `"agent_loop_panel"`, `"modal_button"`, `"record?id={id}"`, `"No guide selected"`} {
+		if !strings.Contains(js, want) {
+			t.Errorf("workbench page missing %s\n%s", want, js)
+		}
+	}
+}
+
+// A workbench with no agent_id must be refused — the chat column needs an agent.
+func TestBuildAppPage_WorkbenchNeedsAgent(t *testing.T) {
+	spec := AppSpec{Slug: "g", Name: "G", RecordKey: "id"} // no AgentID
+	_, err := buildAppPage(spec, []any{map[string]any{"kind": "workbench"}})
+	if err == nil || !strings.Contains(err.Error(), "agent_id") {
+		t.Errorf("workbench without agent_id should error on agent_id, got %v", err)
+	}
+}
+
 func TestBuildAppPage_Errors(t *testing.T) {
 	spec := AppSpec{Slug: "x", Name: "X", RecordKey: "id"}
 	if _, err := buildAppPage(spec, []any{}); err == nil {
