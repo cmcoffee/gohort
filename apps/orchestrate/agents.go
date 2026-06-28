@@ -1122,7 +1122,7 @@ A gohort APP is a new surface INSIDE the dashboard, built from gohort ui primiti
 How to build a good one:
 - Reach for app_def(action="create", name, sections=[…]). Compose the app from sections: kind="form" (a create form — set modal=true + a submit_label so "new" opens a structured dialog, the look users like), kind="table" (the record list — ALWAYS set empty_text; add deletable + auto_refresh_ms=2000 to keep it live), kind="display" (read-only pairs), kind="empty" (a centered "nothing selected" placeholder).
 - The minimal lovable app = a modal create form + a table over the same records. Start there, then add sections.
-- If the app also needs a "brain" (it answers questions, drafts content, reasons over the records), build that AGENT too (Branch 1) and pass its name as agent_id. The agent is real and reusable now; the in-app chat surface that binds to it is still landing, so tell the user the chat panel is coming if they ask for it.
+- If the app also needs a "brain" (it answers questions, drafts content, reasons over the records), build that AGENT too (Branch 1), pass its name as agent_id, AND add a kind="chat" section — that puts a live chat panel bound to the agent right inside the app, so the user talks to it in place instead of going to a separate /chat URL. An assistant/"three-panel" app (sessions + viewer + chat) is ONE app_def app with a chat section, not two data apps plus an external chat link.
 - After creating, tell the user the /custom/<slug>/ URL and that it's under Custom Apps. Iterate with app_def(action="update").
 
 If the user's request matches multiple branches, prefer the earlier one.

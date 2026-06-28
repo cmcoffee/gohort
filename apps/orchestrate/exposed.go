@@ -213,6 +213,22 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	return out
 }
 
+// LookupAppAgent resolves an agent by ID within an owner's store, for a
+// data-driven app (customapps) that binds an agent to power its chat surface.
+// Unlike LookupExposedAgent this does NOT require Exposed=true — an app's agent
+// is reached through the app, not published on its own. Returns (zero, false)
+// when the owner or agent doesn't resolve.
+func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (AgentRecord, bool) {
+	if T.DB == nil || owner == "" || agentID == "" {
+		return AgentRecord{}, false
+	}
+	udb := UserDB(T.DB, owner)
+	if udb == nil {
+		return AgentRecord{}, false
+	}
+	return loadAgent(udb, agentID)
+}
+
 // LookupExposedAgent resolves a slug to an exposed AgentRecord plus
 // the owner's username (used to scope memory/sessions in the right
 // sub-store). Returns (zero, "", false) when no exposed agent has

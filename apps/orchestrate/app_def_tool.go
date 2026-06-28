@@ -10,10 +10,15 @@
 //	delete          — remove an app.
 //
 // The LLM describes the app declaratively (sections of kind form/table/display/
-// empty); this tool translates that into a ui.Page, marshals it with
+// empty/chat); this tool translates that into a ui.Page, marshals it with
 // ConfigJSON, and stores the bytes via core.SaveAppSpec. customapps serves the
 // stored page + a generic per-app record store (the form writes records, the
-// table lists them) with no per-app Go code.
+// table lists them) with no per-app Go code. A chat section binds the app's
+// agent (agent_id) to a live chat panel served under /custom/<slug>/chat/*.
+//
+// Specs are stored owner-keyed in the SHARED deployment root (core/appspec.go),
+// NOT this app's DB bucket — otherwise a spec written here would be invisible to
+// the customapps host, which holds a different bucket.
 //
 // Builder-only, same as the pipeline tool — authoring apps is Builder's job.
 
@@ -45,7 +50,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"agent_id":    {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app (reserved for the chat surface). Stored on the app; not required."},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added).\n\nkind=\"display\" — a read-only labeled-value panel over the records endpoint. Fields: `pairs` (array of {label, field}).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added).\n\nkind=\"display\" — a read-only labeled-value panel over the records endpoint. Fields: `pairs` (array of {label, field}).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -78,9 +83,9 @@ const appDefHelpText = `app_def actions:
 - get  {id(slug)} — one app's full section definition.
 - delete {id(slug)}.
 
-Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder).
+Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id).
 
-Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints.`
+Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app.`
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -98,7 +103,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	var spec AppSpec
 	if isUpdate {
 		key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), name))
-		existing, ok := LoadAppSpec(t.udb, key)
+		existing, ok := LoadAppSpec(t.user, key)
 		if !ok {
 			return "", errors.New("no matching app to update — check the slug (app_def action=list)")
 		}
@@ -116,7 +121,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		if slug == "" {
 			return "", errors.New("could not derive a slug from the name — pass an explicit slug")
 		}
-		if _, exists := LoadAppSpec(t.udb, slug); exists {
+		if _, exists := LoadAppSpec(t.user, slug); exists {
 			return "", fmt.Errorf("an app with slug %q already exists — use action=update, or pick a different name/slug", slug)
 		}
 		spec = AppSpec{Slug: slug, Name: name, Owner: t.user}
@@ -155,7 +160,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		return "", errors.New("sections is required to create an app")
 	}
 
-	saved := SaveAppSpec(t.udb, spec)
+	saved := SaveAppSpec(spec)
 	verb := "Created"
 	if isUpdate {
 		verb = "Updated"
@@ -253,8 +258,30 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 		}
 		// EmptyState carries its own title; avoid a duplicate section heading.
 		sec.Title, sec.Subtitle = "", ""
+	case "chat":
+		// The chat panel binds to the app's agent (agent_id). customapps serves
+		// the SSE + session endpoints under chat/* (handleChat → orchestrate's
+		// PublicHandle*), so the URLs are relative to the app mount, same as the
+		// records store. Requires an agent_id on the app.
+		if strings.TrimSpace(spec.AgentID) == "" {
+			return ui.Section{}, errors.New("a chat section needs the app to have an agent_id (the agent that powers the chat)")
+		}
+		sec.NoChrome = true // the panel manages its own layout
+		sec.Body = ui.AgentLoopPanel{
+			ListURL:      "chat/sessions",
+			LoadURL:      "chat/sessions/{id}",
+			DeleteURL:    "chat/sessions/{id}",
+			SendURL:      "chat/send",
+			CancelURL:    "chat/cancel",
+			ListTitle:    firstNonEmptyStr(mapStr(m, "list_title"), "Sessions"),
+			NewLabel:     "New",
+			ListPosition: "top",
+			Markdown:     true,
+			EmptyText:    firstNonEmptyStr(mapStr(m, "empty_text"), "Ask the assistant to get started."),
+			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything…"),
+		}
 	default:
-		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty", kind)
+		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty | chat", kind)
 	}
 	return sec, nil
 }
@@ -357,7 +384,7 @@ func appDisplayPairs(raw any) []ui.DisplayPair {
 }
 
 func (t *chatTurn) appDefList() (string, error) {
-	specs := ListAppSpecs(t.udb)
+	specs := ListAppSpecs(t.user)
 	if len(specs) == 0 {
 		return "No apps yet. Author one with app_def(action=\"create\", name=…, sections=[…]).", nil
 	}
@@ -377,7 +404,7 @@ func (t *chatTurn) appDefList() (string, error) {
 
 func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.udb, key)
+	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
 		return "", errors.New("no matching app — check the slug (app_def action=list)")
 	}
@@ -396,11 +423,11 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 
 func (t *chatTurn) appDefDelete(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
-	spec, ok := LoadAppSpec(t.udb, key)
+	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
 		return "", errors.New("no matching app to delete")
 	}
-	DeleteAppSpec(t.udb, spec.Slug)
+	DeleteAppSpec(t.user, spec.Slug)
 	return fmt.Sprintf("Deleted app %q (/custom/%s/).", spec.Name, spec.Slug), nil
 }
 

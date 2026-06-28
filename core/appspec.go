@@ -5,6 +5,14 @@
 // its storage without importing each other. The Page bytes are built once from
 // ui.Page types (by whoever authors the spec) and stored verbatim — core itself
 // needs no ui dependency here, only json.RawMessage.
+//
+// IMPORTANT — specs live in a SHARED, deployment-root store keyed by owner, NOT
+// in either app's per-app bucket. Each app's AppCore.DB is global.db.Bucket(app
+// name), so a spec written through orchestrate's DB would be invisible to
+// customapps' DB and vice-versa. Routing all spec storage through RootDB (the
+// bucket-less deployment root) under user:<owner> gives both apps one place to
+// read and write, so an app authored by app_def actually shows up + serves in
+// customapps.
 package core
 
 import (
@@ -31,15 +39,35 @@ type AppSpec struct {
 	Updated   string          `json:"updated"`
 }
 
-// LoadAppSpec reads one spec by slug from the user's db.
-func LoadAppSpec(db Database, slug string) (AppSpec, bool) {
+// appSpecStore returns the shared per-owner spec store (RootDB → user:<owner>),
+// or nil when RootDB isn't wired yet / owner is empty. Both the authoring tool
+// and the host resolve the store here, so they always agree regardless of which
+// app's DB bucket they happen to hold.
+func appSpecStore(owner string) Database {
+	if RootDB == nil || owner == "" {
+		return nil
+	}
+	return UserDB(RootDB, owner)
+}
+
+// LoadAppSpec reads one spec by slug for an owner.
+func LoadAppSpec(owner, slug string) (AppSpec, bool) {
+	db := appSpecStore(owner)
+	if db == nil {
+		return AppSpec{}, false
+	}
 	var s AppSpec
 	ok := db.Get(AppSpecTable, slug, &s)
 	return s, ok
 }
 
-// SaveAppSpec writes a spec, stamping Updated (and Created on first write).
-func SaveAppSpec(db Database, s AppSpec) AppSpec {
+// SaveAppSpec writes a spec, stamping Owner/Created/Updated. Owner on the spec
+// wins; pass it set. No-op return when RootDB isn't available.
+func SaveAppSpec(s AppSpec) AppSpec {
+	db := appSpecStore(s.Owner)
+	if db == nil {
+		return s
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if s.Created == "" {
 		s.Created = now
@@ -49,16 +77,25 @@ func SaveAppSpec(db Database, s AppSpec) AppSpec {
 	return s
 }
 
-// ListAppSpecs returns every stored spec for the user.
-func ListAppSpecs(db Database) []AppSpec {
+// ListAppSpecs returns every stored spec owned by the user.
+func ListAppSpecs(owner string) []AppSpec {
+	db := appSpecStore(owner)
+	if db == nil {
+		return nil
+	}
 	var out []AppSpec
 	for _, k := range db.Keys(AppSpecTable) {
-		if s, ok := LoadAppSpec(db, k); ok {
+		var s AppSpec
+		if db.Get(AppSpecTable, k, &s) {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
-// DeleteAppSpec removes a spec by slug.
-func DeleteAppSpec(db Database, slug string) { db.Unset(AppSpecTable, slug) }
+// DeleteAppSpec removes a spec by slug for an owner.
+func DeleteAppSpec(owner, slug string) {
+	if db := appSpecStore(owner); db != nil {
+		db.Unset(AppSpecTable, slug)
+	}
+}

@@ -33,6 +33,8 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
+
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
 func init() {
@@ -95,7 +97,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		T.handleIndex(w, r)
 		return
 	case "_apps":
-		T.handleAppsList(w, r, udb)
+		T.handleAppsList(w, r, user)
 		return
 	}
 
@@ -105,13 +107,13 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		rest = parts[1]
 	}
-	spec, found := loadSpec(udb, slug)
+	spec, found := loadSpec(user, slug)
 	if !found {
 		http.NotFound(w, r)
 		return
 	}
-	switch rest {
-	case "":
+	switch {
+	case rest == "":
 		// Component Source/PostURL are relative ("records"), so the page must
 		// live at a trailing-slash URL or they resolve one level too high.
 		if !strings.HasSuffix(r.URL.Path, "/") {
@@ -119,10 +121,70 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = ui.RenderPageJSON(w, spec.Page, "", "", spec.Name) // "" → resolved theme (see RegisterThemeResolver)
-	case "records":
+	case rest == "records":
 		T.handleRecords(w, r, udb, spec)
-	case "record":
+	case rest == "record":
 		T.handleRecord(w, r, udb, spec)
+	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
+		// The app's chat surface: a chat section's AgentLoopPanel points at
+		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
+		// bound to the app's agent. Reuses ALL the chat/session/runner plumbing
+		// — customapps stores no chat state of its own.
+		T.handleChat(w, r, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// findOrchestrate locates the registered OrchestrateApp so the chat routes can
+// call its exported PublicHandle* methods. Cached after first hit (the registry
+// is fixed at runtime). Mirrors apps/agents' accessor.
+var cachedOrch *orchestrate.OrchestrateApp
+
+func findOrchestrate() *orchestrate.OrchestrateApp {
+	if cachedOrch != nil {
+		return cachedOrch
+	}
+	a, ok := FindAgent("orchestrate")
+	if !ok {
+		return nil
+	}
+	o, ok := a.(*orchestrate.OrchestrateApp)
+	if !ok {
+		return nil
+	}
+	cachedOrch = o
+	return cachedOrch
+}
+
+// handleChat dispatches the app's chat sub-routes to orchestrate. sub is the
+// path after "chat/" ("" | "send" | "cancel" | "sessions" | "sessions/<sid>").
+// The agent is resolved from the app's bound AgentID in the app owner's store;
+// session + memory scope come from PublicHandle* (per calling user).
+func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, spec AppSpec, sub string) {
+	if strings.TrimSpace(spec.AgentID) == "" {
+		http.Error(w, "this app has no chat agent bound", http.StatusNotFound)
+		return
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	agent, ok := orch.LookupAppAgent(spec.Owner, spec.AgentID)
+	if !ok {
+		http.Error(w, "the app's chat agent could not be resolved", http.StatusNotFound)
+		return
+	}
+	switch {
+	case sub == "send":
+		orch.PublicHandleSend(w, r, agent)
+	case sub == "cancel":
+		orch.PublicHandleCancel(w, r, agent)
+	case sub == "sessions":
+		orch.PublicHandleSessionList(w, r, agent.ID)
+	case strings.HasPrefix(sub, "sessions/"):
+		orch.PublicHandleSessionOne(w, r, agent.ID, strings.TrimPrefix(sub, "sessions/"))
 	default:
 		http.NotFound(w, r)
 	}
@@ -155,9 +217,9 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}.ServeHTTP(w, r)
 }
 
-func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, udb Database) {
+func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
 	out := []map[string]string{}
-	for _, s := range listSpecs(udb) {
+	for _, s := range listSpecs(owner) {
 		out = append(out, map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc})
 	}
 	writeJSON(w, out)
@@ -229,17 +291,19 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 
 // --- spec storage (core) + demo seed -----------------------------------------
 //
-// loadSpec/listSpecs are thin aliases onto the core storage so the handlers read
-// naturally; writes go straight to core.SaveAppSpec.
+// Specs live in the SHARED per-owner store (core/appspec.go via RootDB), NOT in
+// customapps' own DB bucket — app_def (running under orchestrate's bucket) and
+// this host must agree on one location, so both key by owner. loadSpec/listSpecs
+// take the current user as owner.
 
-func loadSpec(udb Database, slug string) (AppSpec, bool) { return LoadAppSpec(udb, slug) }
-func listSpecs(udb Database) []AppSpec                   { return ListAppSpecs(udb) }
+func loadSpec(owner, slug string) (AppSpec, bool) { return LoadAppSpec(owner, slug) }
+func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
 
 // seedDemo installs the "Notes" demo app on first access if absent. It builds
 // the Page with the real Go ui types, marshals it via ConfigJSON, and STORES
 // the bytes — so it's served back through the data-driven path, not rebuilt.
 func (T *CustomApps) seedDemo(user string, udb Database) {
-	if _, ok := loadSpec(udb, "notes"); ok {
+	if _, ok := loadSpec(user, "notes"); ok {
 		return
 	}
 	page := ui.Page{
@@ -285,7 +349,7 @@ func (T *CustomApps) seedDemo(user string, udb Database) {
 		Log("[customapps] seed demo: build page failed: %v", err)
 		return
 	}
-	SaveAppSpec(udb, AppSpec{
+	SaveAppSpec(AppSpec{
 		Slug: "notes", Name: "Notes", Desc: "A simple notepad — demo of a data-driven app.",
 		Owner: user, Page: blob, RecordKey: "id",
 	})
