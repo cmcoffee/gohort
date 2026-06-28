@@ -99,6 +99,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case "_apps":
 		T.handleAppsList(w, r, user)
 		return
+	case "_app":
+		// DELETE ?slug=… removes a custom app (its spec + records + active state).
+		T.handleDeleteApp(w, r, user, udb)
+		return
 	}
 
 	parts := strings.SplitN(path, "/", 2)
@@ -225,10 +229,31 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 				EmptyText: "No custom apps yet.",
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/"},
+					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}",
+						Confirm: "Delete this app and all its data? This can't be undone."},
 				},
 			},
 		}},
 	}.ServeHTTP(w, r)
+}
+
+// handleDeleteApp removes a custom app: its spec, its per-app record store, and
+// any workbench active-selection state. The demo "notes" app re-seeds on next
+// visit (by design); delete a real app and it stays gone.
+func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	if slug == "" {
+		http.Error(w, "slug required", http.StatusBadRequest)
+		return
+	}
+	DeleteAppSpec(user, slug)        // shared per-owner spec store
+	udb.Drop(recTable(slug))         // this app's records (customapps bucket)
+	udb.Unset(activeTable, slug)     // workbench open-document marker
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
@@ -313,10 +338,15 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 func loadSpec(owner, slug string) (AppSpec, bool) { return LoadAppSpec(owner, slug) }
 func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
 
-// seedDemo installs the "Notes" demo app on first access if absent. It builds
-// the Page with the real Go ui types, marshals it via ConfigJSON, and STORES
-// the bytes — so it's served back through the data-driven path, not rebuilt.
+// seedDemo installs the "Notes" demo app ONCE per user. Gated on a marker (not
+// the app's presence) so deleting the demo sticks — otherwise it would re-seed
+// on the next visit and look undeletable.
 func (T *CustomApps) seedDemo(user string, udb Database) {
+	var seeded bool
+	if udb.Get("customapps_meta", "demo_seeded", &seeded); seeded {
+		return
+	}
+	udb.Set("customapps_meta", "demo_seeded", true)
 	if _, ok := loadSpec(user, "notes"); ok {
 		return
 	}
