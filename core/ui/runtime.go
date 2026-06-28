@@ -16961,8 +16961,23 @@ const runtimeJS = `
     center.appendChild(viewerBody);
 
     // --- RIGHT: chat ------------------------------------------------------
+    // Build the chat in LIVE JS from the stored chat's ENDPOINTS, rather than
+    // mounting whatever panel type the spec baked in. This forces an
+    // agent_loop_panel (the panel whose SSE parser matches chat/send's wire
+    // format — a single-mode ChatPanel silently drops those frames), so a
+    // workbench authored before this fix renders correctly WITHOUT a rebuild.
+    // No-list (no session URLs) + lock_activity = one clean chat window.
     var right = el('div', {class: 'ui-wb-col ui-wb-chat'});
-    if (cfg.chat) mountComponent(cfg.chat, right);
+    var chatCfg = cfg.chat || {};
+    mountComponent({
+      type:          'agent_loop_panel',
+      send_url:      chatCfg.send_url   || 'chat/send',
+      cancel_url:    chatCfg.cancel_url || 'chat/cancel',
+      lock_activity: true,
+      markdown:      true,
+      empty_text:    chatCfg.empty_text || 'Ask the assistant to draft or add a section.',
+      placeholder:   chatCfg.placeholder || 'Ask the assistant…',
+    }, right);
 
     root.appendChild(left);
     root.appendChild(center);
