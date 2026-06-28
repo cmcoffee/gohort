@@ -16987,10 +16987,15 @@ const runtimeJS = `
       }).catch(function() {});
     }
 
+    // Delete endpoint: explicit delete_url, else DELETE the same record endpoint
+    // the viewer reads (record_url). Falling back to record_url means EXISTING
+    // workbench specs (authored before delete_url existed) still get the affordance
+    // from live JS — no recreate needed.
+    var delURL = cfg.delete_url || cfg.record_url || '';
     function deleteItem(id, label) {
-      if (!cfg.delete_url) return;
+      if (!delURL) return;
       if (!confirm('Delete "' + (label || 'this item') + '"?')) return;
-      var url = cfg.delete_url.replace('{id}', encodeURIComponent(id));
+      var url = delURL.replace('{id}', encodeURIComponent(id));
       fetch(url, {method: 'DELETE'}).then(function() {
         if (selectedId === id) { selectedId = null; showEmpty(); }
         loadList();
@@ -17010,7 +17015,7 @@ const runtimeJS = `
           var row = el('div', {class: 'ui-wb-item', 'data-id': id});
           row.appendChild(el('span', {class: 'ui-wb-item-label', text: label}));
           row.addEventListener('click', function() { loadViewer(id); });
-          if (cfg.delete_url) {
+          if (delURL) {
             var del = el('button', {class: 'ui-wb-item-del', title: 'Delete', text: '×'});
             del.addEventListener('click', function(ev) { ev.stopPropagation(); deleteItem(id, label); });
             row.appendChild(del);
@@ -17026,7 +17031,11 @@ const runtimeJS = `
     // upsert), then invalidates so the viewer shows the new section. One global
     // decorator — there is one workbench per page, and it captures selectedId
     // live. No-op until a record is selected.
-    if (cfg.coauthor && window.uiRegisterMessageDecorator) {
+    // Default-on when the pieces exist (record_url to read/write + a chat),
+    // opt out with coauthor:false. Gating on EXISTING fields means workbench
+    // specs authored before the coauthor flag still get the affordance live.
+    var coauthorOn = (cfg.coauthor !== false) && !!cfg.record_url && !!cfg.chat;
+    if (coauthorOn && window.uiRegisterMessageDecorator) {
       window.uiRegisterMessageDecorator(function(msg) {
         if (!msg || msg.role !== 'assistant' || !msg.wrap) return;
         var raw = (msg.rawText || '').trim();
