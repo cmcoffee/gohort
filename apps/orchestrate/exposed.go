@@ -271,6 +271,19 @@ func (T *OrchestrateApp) PublicHandleSend(w http.ResponseWriter, r *http.Request
 	T.handleSend(w, r, udb, user, agent)
 }
 
+// PublicHandleSendWithAppTools is PublicHandleSend plus host-app tools injected
+// into the agent's catalog for this run. A data-driven app (customapps) passes a
+// co-author tool — a closure over its own record store — so the bound agent can
+// write into the open document. The tools are built by the caller (with its own
+// data access); orchestrate just runs them, staying ignorant of app storage.
+func (T *OrchestrateApp) PublicHandleSendWithAppTools(w http.ResponseWriter, r *http.Request, agent AgentRecord, appTools []AgentToolDef) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleSendWithAppTools(w, r, udb, user, agent, appTools)
+}
+
 // PublicHandleCancel mirrors PublicHandleSend's bypass for cancel.
 func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
 	T.handleCancel(w, r, agent)

@@ -130,7 +130,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
 		// bound to the app's agent. Reuses ALL the chat/session/runner plumbing
 		// — customapps stores no chat state of its own.
-		T.handleChat(w, r, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
+		T.handleChat(w, r, udb, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
 	default:
 		http.NotFound(w, r)
 	}
@@ -158,12 +158,20 @@ func findOrchestrate() *orchestrate.OrchestrateApp {
 }
 
 // handleChat dispatches the app's chat sub-routes to orchestrate. sub is the
-// path after "chat/" ("" | "send" | "cancel" | "sessions" | "sessions/<sid>").
-// The agent is resolved from the app's bound AgentID in the app owner's store;
-// session + memory scope come from PublicHandle* (per calling user).
-func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, spec AppSpec, sub string) {
+// path after "chat/" ("" | "send" | "cancel" | "active" | "sessions" |
+// "sessions/<sid>"). The agent is resolved from the app's bound AgentID; session
+// + memory scope come from PublicHandle* (per calling user). For a WORKBENCH app
+// (spec.BodyField set) the send path injects a co-author tool so the agent can
+// write a section directly into the OPEN document's record.
+func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Database, spec AppSpec, sub string) {
 	if strings.TrimSpace(spec.AgentID) == "" {
 		http.Error(w, "this app has no chat agent bound", http.StatusNotFound)
+		return
+	}
+	// "active" records which record the workbench has open, so the co-author tool
+	// knows where to write. POST {id}. Stored per (user, slug) in this app's store.
+	if sub == "active" {
+		T.handleSetActiveRecord(w, r, udb, spec)
 		return
 	}
 	orch := findOrchestrate()
@@ -178,6 +186,12 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, spec App
 	}
 	switch {
 	case sub == "send":
+		// Workbench → give the agent a co-author tool bound to THIS app's store +
+		// the open document. Plain chat apps (no BodyField) get the ordinary send.
+		if strings.TrimSpace(spec.BodyField) != "" {
+			orch.PublicHandleSendWithAppTools(w, r, agent, T.coauthorTools(udb, spec))
+			return
+		}
 		orch.PublicHandleSend(w, r, agent)
 	case sub == "cancel":
 		orch.PublicHandleCancel(w, r, agent)

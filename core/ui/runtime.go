@@ -8775,6 +8775,9 @@ const runtimeJS = `
         cancelBtn.style.display = 'none';
         sendController = null;
         loadSessions();
+        // Let a host surface (e.g. a WorkbenchPanel) know a round finished — its
+        // co-author tool may have written into the open document.
+        try { window.dispatchEvent(new CustomEvent('ui-chat-round-done')); } catch (e) {}
       }
     }
 
@@ -16981,6 +16984,17 @@ const runtimeJS = `
     function loadViewer(id) {
       selectedId = id;
       highlight();
+      // Tell the server which document is open, so the chat agent's co-author
+      // tool writes into THIS record.
+      if (cfg.active_url) {
+        try {
+          fetch(cfg.active_url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id: id}),
+          });
+        } catch (e) {}
+      }
       if (!cfg.record_url) return;
       var url = cfg.record_url.replace('{id}', encodeURIComponent(id));
       fetchJSON(url).then(function(rec) {
@@ -17092,6 +17106,12 @@ const runtimeJS = `
       var hitRec = (cfg.refresh_on || []).some(function(s) { return srcs.indexOf(s) >= 0; });
       if (hitList) loadList();
       if ((hitList || hitRec) && selectedId) loadViewer(selectedId);
+    });
+
+    // The embedded chat fires this when a round completes; the agent's co-author
+    // tool may have appended a section to the open record, so re-fetch it.
+    window.addEventListener('ui-chat-round-done', function() {
+      if (selectedId) loadViewer(selectedId);
     });
 
     showEmpty();

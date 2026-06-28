@@ -262,12 +262,18 @@ func startKeepalive(sse *sseWriter) func() {
 // consolidator writes in the background goroutine don't race the
 // already-fired prompt injection.
 type chatTurn struct {
-	app         *OrchestrateApp
-	ctx         context.Context
-	sse         *sseWriter
-	udb         Database
-	user        string
-	agent       AgentRecord
+	app   *OrchestrateApp
+	ctx   context.Context
+	sse   *sseWriter
+	udb   Database
+	user  string
+	agent AgentRecord
+	// appTools are extra per-run tools supplied by the HOST APP dispatching this
+	// turn (e.g. a workbench's co-author tool that writes into the open document's
+	// record store). Injected into the orchestrator's catalog so the agent can call
+	// them; the host builds them as closures with its own data access, so core/
+	// orchestrate stays ignorant of the app's storage. Empty for ordinary runs.
+	appTools    []AgentToolDef
 	queue       *injectionQueue   // pending mid-flight user notes for this session
 	session     *ChatSession      // mutable session pointer so drained notes can be persisted
 	privateMode bool              // per-turn: drop internet tools from worker pool
@@ -3159,6 +3165,13 @@ func snippetOneLine(s string, max int) string {
 //
 // Plans auto-confirm — no operator pause between steps in Phase 1.
 func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb Database, user string, agent AgentRecord) {
+	T.handleSendWithAppTools(w, r, udb, user, agent, nil)
+}
+
+// handleSendWithAppTools is handleSend plus extra host-app tools injected into
+// the agent's catalog for this run (see chatTurn.appTools). The plain handleSend
+// passes nil.
+func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.Request, udb Database, user string, agent AgentRecord, appTools []AgentToolDef) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -3553,16 +3566,16 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 	}
 
 	turn := &chatTurn{
-		app:              T,
-		ctx:              ctx,
-		sse:              sse,
-		udb:              udb,
-		user:             user,
-		agent:            agent,
-		queue:            queue,
-		session:          &sess,
-		privateMode:      privateMode,
-		network:          turnConnector,
+		app:         T,
+		ctx:         ctx,
+		sse:         sse,
+		udb:         udb,
+		user:        user,
+		agent:       agent,
+		queue:       queue,
+		session:     &sess,
+		privateMode: privateMode,
+		network:     turnConnector,
 		// Incognito (clean-room) sessions also suppress the inferred memory layer
 		// (write side) — nothing accumulates back, matching "no baggage out".
 		inferredDisabled: req.InferredDisabled || sess.Incognito,
@@ -3577,6 +3590,7 @@ func (T *OrchestrateApp) handleSend(w http.ResponseWriter, r *http.Request, udb 
 		// reads this to decide whether to ingest the synthesis.
 		userDocsThisTurn: len(req.Documents) > 0,
 		deliveredSkills:  map[string]bool{},
+		appTools:         appTools,
 	}
 	for _, d := range req.Documents {
 		if n := strings.TrimSpace(d.Name); n != "" {
@@ -4586,6 +4600,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// Single source of truth so the web and channel catalogs can't drift.
 	var knowTools []AgentToolDef
 	knowTools = append(knowTools, t.frameworkConversationalTools(sess)...)
+	// Host-app tools (e.g. a workbench's co-author "add_section") — supplied by
+	// the app that dispatched this turn, callable directly by the orchestrator.
+	if len(t.appTools) > 0 {
+		knowTools = append(knowTools, t.appTools...)
+	}
 	// compact_context — LLM-driven context management. Lets the model
 	// proactively discard the bodies of EARLIER tool results it has
 	// consumed and no longer needs (a smoke-test report, a big fetch, a

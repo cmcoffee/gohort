@@ -2023,6 +2023,11 @@ type WorkbenchPanel struct {
 	// RefreshOn — when uiInvalidate fires with a source in this list, the open
 	// record re-fetches (so a co-author write shows up without a manual reload).
 	RefreshOn []string `json:"refresh_on,omitempty"`
+	// ActiveURL — when set, the panel POSTs {id} here whenever the open record
+	// changes, so the server (and the chat agent's co-author tool) knows which
+	// document is open. The viewer also re-fetches the open record whenever the
+	// embedded chat finishes a round (the agent may have written into it).
+	ActiveURL string `json:"active_url,omitempty"`
 	// CoAuthor — when set, each assistant chat reply gets an "Add to <noun>"
 	// button that APPENDS that reply's markdown to the open record's BodyField
 	// (fetch RecordURL, append, POST SaveURL as an upsert) and refreshes the

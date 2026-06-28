@@ -35,8 +35,11 @@ type AppSpec struct {
 	AgentID   string          `json:"agent_id,omitempty"`
 	Page      json.RawMessage `json:"page"`
 	RecordKey string          `json:"record_key"`
-	Created   string          `json:"created"`
-	Updated   string          `json:"updated"`
+	// BodyField is the record field a workbench's viewer renders + its co-author
+	// tool appends to (the document body). Empty for non-workbench apps.
+	BodyField string `json:"body_field,omitempty"`
+	Created   string `json:"created"`
+	Updated   string `json:"updated"`
 }
 
 // appSpecStore returns the shared per-owner spec store (RootDB → user:<owner>),
