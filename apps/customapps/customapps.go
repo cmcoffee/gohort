@@ -50,22 +50,9 @@ func init() {
 	})
 }
 
-const specTable = "app_specs"
-
-// AppSpec is a stored, data-driven app. Page holds the client-shaped pageConfig
-// JSON (from ui.Page.ConfigJSON) and is served verbatim — no Go Component
-// round-trip. RecordKey is the primary-key field of the per-app record store.
-type AppSpec struct {
-	Slug      string          `json:"slug"`
-	Name      string          `json:"name"`
-	Desc      string          `json:"desc"`
-	Owner     string          `json:"owner"`
-	AgentID   string          `json:"agent_id,omitempty"`
-	Page      json.RawMessage `json:"page"`
-	RecordKey string          `json:"record_key"`
-	Created   string          `json:"created"`
-	Updated   string          `json:"updated"`
-}
+// AppSpec + its storage now live in core (core/appspec.go) so the app_def
+// Builder tool can author specs this host serves. Dot-imported, so `AppSpec`,
+// `LoadAppSpec`, `SaveAppSpec`, `ListAppSpecs` below resolve to the core types.
 
 type CustomApps struct {
 	AppCore
@@ -240,25 +227,13 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 	}
 }
 
-// --- spec storage + demo seed ------------------------------------------------
+// --- spec storage (core) + demo seed -----------------------------------------
+//
+// loadSpec/listSpecs are thin aliases onto the core storage so the handlers read
+// naturally; writes go straight to core.SaveAppSpec.
 
-func loadSpec(udb Database, slug string) (AppSpec, bool) {
-	var s AppSpec
-	ok := udb.Get(specTable, slug, &s)
-	return s, ok
-}
-
-func saveSpec(udb Database, s AppSpec) { udb.Set(specTable, s.Slug, s) }
-
-func listSpecs(udb Database) []AppSpec {
-	var out []AppSpec
-	for _, k := range udb.Keys(specTable) {
-		if s, ok := loadSpec(udb, k); ok {
-			out = append(out, s)
-		}
-	}
-	return out
-}
+func loadSpec(udb Database, slug string) (AppSpec, bool) { return LoadAppSpec(udb, slug) }
+func listSpecs(udb Database) []AppSpec                   { return ListAppSpecs(udb) }
 
 // seedDemo installs the "Notes" demo app on first access if absent. It builds
 // the Page with the real Go ui types, marshals it via ConfigJSON, and STORES
@@ -310,10 +285,9 @@ func (T *CustomApps) seedDemo(user string, udb Database) {
 		Log("[customapps] seed demo: build page failed: %v", err)
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	saveSpec(udb, AppSpec{
+	SaveAppSpec(udb, AppSpec{
 		Slug: "notes", Name: "Notes", Desc: "A simple notepad — demo of a data-driven app.",
-		Owner: user, Page: blob, RecordKey: "id", Created: now, Updated: now,
+		Owner: user, Page: blob, RecordKey: "id",
 	})
 	Log("[customapps] seeded demo app 'notes' for %s", user)
 }

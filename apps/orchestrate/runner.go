@@ -4631,6 +4631,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// centralizes authoring (no more pipeline-tool clutter +
 			// LLM oscillation on general agents).
 			t.pipelineGroupedToolDef(),
+			// app_def (create / update / list / get / delete) — author
+			// data-driven gohort APPS (real in-dashboard surfaces served
+			// by customapps at /custom/<slug>/). Builder-only, same
+			// rationale as pipeline: composing an app is authoring work.
+			// This is what lets Builder answer "build me an app" with an
+			// actual gohort app instead of a standalone HTML file.
+			t.appDefToolDef(),
 		)
 	}
 	knowTools = append(knowTools,
