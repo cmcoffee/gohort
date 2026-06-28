@@ -11181,6 +11181,9 @@ const runtimeJS = `
           });
         } catch (_) {}
       }
+      // Tell a host surface (e.g. a WorkbenchPanel) a reply finalized — its
+      // co-author tool may have written into the open document. Idempotent.
+      try { window.dispatchEvent(new CustomEvent('ui-chat-round-done')); } catch (e) {}
     }
 
     // --- Inline tool-call rendering ---

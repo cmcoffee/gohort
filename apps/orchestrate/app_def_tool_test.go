@@ -96,7 +96,7 @@ func TestBuildAppPage_Workbench(t *testing.T) {
 		t.Fatalf("ConfigJSON: %v", err)
 	}
 	js := string(blob)
-	for _, want := range []string{`"workbench_panel"`, `"chat_panel"`, `"single":true`, `"modal_button"`, `"record?id={id}"`, `"No guide selected"`} {
+	for _, want := range []string{`"workbench_panel"`, `"agent_loop_panel"`, `"lock_activity":true`, `"modal_button"`, `"record?id={id}"`, `"No guide selected"`} {
 		if !strings.Contains(js, want) {
 			t.Errorf("workbench page missing %s\n%s", want, js)
 		}

@@ -342,19 +342,19 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		},
 	}
 
-	// Single-mode ChatPanel: ONE ongoing conversation, no sessions rail and no
-	// activity pane — just a chat window in the right column (the workbench's
-	// list IS the app's nav; a second session list would be redundant). Same
-	// chat/* endpoints (PublicHandle* session schema matches ChatPanel's).
-	chat := ui.ChatPanel{
-		Single:           true,
-		SessionsListURL:  "chat/sessions",
-		SessionLoadURL:   "chat/sessions/{id}",
-		SessionDeleteURL: "chat/sessions/{id}",
-		SendURL:          "chat/send",
-		CancelURL:        "chat/cancel",
-		Markdown:         true,
-		EmptyText:        firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
+	// AgentLoopPanel in no-list mode: one chat window, NO sessions rail (we omit
+	// list/load/delete URLs) and NO activity pane (LockActivity). The workbench's
+	// own document list is the app nav, so a second session list is redundant.
+	// MUST be AgentLoopPanel (not ChatPanel): chat/send emits the AgentLoopPanel
+	// SSE format (sse.Send) — ChatPanel's parser ignores those frames, so its
+	// replies never render. See sseWriter.SendChatEvent vs Send.
+	chat := ui.AgentLoopPanel{
+		SendURL:      "chat/send",
+		CancelURL:    "chat/cancel",
+		Markdown:     true,
+		LockActivity: true,
+		EmptyText:    firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
+		Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask the assistant…"),
 	}
 
 	noun := firstNonEmptyStr(mapStr(m, "item_noun"), "document")

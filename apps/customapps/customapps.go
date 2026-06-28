@@ -31,7 +31,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -39,17 +38,6 @@ import (
 
 func init() {
 	RegisterApp(new(CustomApps))
-	// Demo: prove the cross-app agent registry end to end — this app declares
-	// an agent that orchestrate resolves + lists like one of its own seeds.
-	// Replace/remove once the "App Agents" dashboard section lands.
-	appagents.RegisterAppAgent(appagents.AppAgentSpec{
-		ID:          "app-customapps-notes-helper",
-		OwningApp:   "Custom Apps",
-		Name:        "Notes Helper",
-		Description: "Demo app agent registered by customapps — drafts and tidies notes.",
-		Prompt:      "You are a concise notes assistant. Help the user capture, tidy, and summarize notes. Keep replies short and actionable.",
-		Hidden:      true, // demo — kept out of the picker; proves the registry without cluttering the menu
-	})
 }
 
 // AppSpec + its storage now live in core (core/appspec.go) so the app_def
@@ -89,7 +77,6 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	T.seedDemo(user, udb)
 
 	path := strings.Trim(r.URL.Path, "/")
 	switch path {
@@ -250,9 +237,9 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 		http.Error(w, "slug required", http.StatusBadRequest)
 		return
 	}
-	DeleteAppSpec(user, slug)        // shared per-owner spec store
-	udb.Drop(recTable(slug))         // this app's records (customapps bucket)
-	udb.Unset(activeTable, slug)     // workbench open-document marker
+	DeleteAppSpec(user, slug)    // shared per-owner spec store
+	udb.Drop(recTable(slug))     // this app's records (customapps bucket)
+	udb.Unset(activeTable, slug) // workbench open-document marker
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
@@ -337,68 +324,6 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 
 func loadSpec(owner, slug string) (AppSpec, bool) { return LoadAppSpec(owner, slug) }
 func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
-
-// seedDemo installs the "Notes" demo app ONCE per user. Gated on a marker (not
-// the app's presence) so deleting the demo sticks — otherwise it would re-seed
-// on the next visit and look undeletable.
-func (T *CustomApps) seedDemo(user string, udb Database) {
-	var seeded bool
-	if udb.Get("customapps_meta", "demo_seeded", &seeded); seeded {
-		return
-	}
-	udb.Set("customapps_meta", "demo_seeded", true)
-	if _, ok := loadSpec(user, "notes"); ok {
-		return
-	}
-	page := ui.Page{
-		Title:     "Notes",
-		ShowTitle: true,
-		BackURL:   "/custom/",
-		MaxWidth:  "900px",
-		Sections: []ui.Section{
-			{
-				Title:    "Add a note",
-				Subtitle: "Composed from a FormPanel — saves to this app's record store.",
-				Body: ui.FormPanel{
-					PostURL:     "records",
-					SubmitLabel: "Add note",
-					Fields: []ui.FormField{
-						{Field: "title", Label: "Title", Type: "text", Placeholder: "Groceries"},
-						{Field: "body", Label: "Body", Type: "textarea", Rows: 3},
-					},
-				},
-			},
-			{
-				Title:    "Notes",
-				Subtitle: "A Table over the same record store. Auto-refreshes so new notes appear.",
-				Body: ui.Table{
-					Source:        "records",
-					RowKey:        "id",
-					AutoRefreshMS: 2000,
-					EmptyText:     "No notes yet — add one above.",
-					Columns: []ui.Col{
-						{Field: "title", Flex: 1},
-						{Field: "body", Flex: 2, Mute: true},
-					},
-					RowActions: []ui.RowAction{
-						{Type: "button", Label: "Delete", Method: "DELETE",
-							PostTo: "record?id={id}", Confirm: "Delete this note?"},
-					},
-				},
-			},
-		},
-	}
-	blob, err := page.ConfigJSON()
-	if err != nil {
-		Log("[customapps] seed demo: build page failed: %v", err)
-		return
-	}
-	SaveAppSpec(AppSpec{
-		Slug: "notes", Name: "Notes", Desc: "A simple notepad — demo of a data-driven app.",
-		Owner: user, Page: blob, RecordKey: "id",
-	})
-	Log("[customapps] seeded demo app 'notes' for %s", user)
-}
 
 // --- helpers -----------------------------------------------------------------
 
