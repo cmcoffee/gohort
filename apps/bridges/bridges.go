@@ -205,7 +205,13 @@ func (T *Bridges) inboundIdentities(svc, chatID, handle string) []string {
 	return out
 }
 
-func (T *Bridges) upsertConvo(service, chatID, handle, displayName string) {
+// upsertConvo records a conversation + learns the sender as a participant.
+// senderName names the PERSON at handle (drives the handle→name roster a
+// group-bound agent reads); convoName is the group/chat title and names the
+// thread. They are distinct: in a named group every message shares one
+// convoName but each has its own senderName — conflating them (the old single
+// arg) stamped the group's name onto every participant.
+func (T *Bridges) upsertConvo(service, chatID, handle, senderName, convoName string) {
 	if strings.TrimSpace(chatID) == "" {
 		return
 	}
@@ -220,13 +226,18 @@ func (T *Bridges) upsertConvo(service, chatID, handle, displayName string) {
 		c.Handle = ""
 	}
 	if h := strings.TrimSpace(handle); h != "" {
-		c.Members = upsertMember(c.Members, h, displayName) // learn the participant
+		c.Members = upsertMember(c.Members, h, senderName) // learn the participant by their OWN name
 		if !isGroupChat(chatID) {
 			c.Handle = h // only a 1:1 chat has a single canonical handle
 		}
 	}
-	if d := strings.TrimSpace(displayName); d != "" {
-		c.DisplayName = d
+	// Title the thread: a group's title is convoName; a 1:1 is named for its one
+	// contact (the sender). Never let a group inbound rename the thread after the
+	// last person who spoke.
+	if title := strings.TrimSpace(convoName); title != "" {
+		c.DisplayName = title
+	} else if s := strings.TrimSpace(senderName); s != "" && !isGroupChat(chatID) {
+		c.DisplayName = s
 	}
 	c.LastAt = now()
 	T.saveConvo(c)

@@ -152,14 +152,16 @@ func ProbeChatDB() {
 
 // HookPayload is what we POST to /api/hook.
 type HookPayload struct {
-	RowID       int64    `json:"row_id,omitempty"` // DB ROWID for server-side deduplication
-	ChatID      string   `json:"chat_id"`
-	Handle      string   `json:"handle"`
-	DisplayName string   `json:"display_name"`
-	Text        string   `json:"text"`
-	Timestamp   string   `json:"timestamp"`
-	Images      []string `json:"images,omitempty"` // base64-encoded image data
-	Videos      []string `json:"videos,omitempty"` // base64-encoded video data; phantom samples frames + extracts metadata server-side
+	RowID            int64    `json:"row_id,omitempty"` // DB ROWID for server-side deduplication
+	ChatID           string   `json:"chat_id"`
+	Handle           string   `json:"handle"`
+	DisplayName      string   `json:"display_name"`                // the SENDER's name (the person at Handle), not the room name
+	ConversationName string   `json:"conversation_name,omitempty"` // the group/chat title, when the chat has one — names the thread, distinct from the sender
+	Text             string   `json:"text"`
+	Timestamp        string   `json:"timestamp"`
+	Images           []string `json:"images,omitempty"` // base64-encoded image data
+	Videos           []string `json:"videos,omitempty"` // base64-encoded video data; server samples frames + extracts metadata
+	Audios           []string `json:"audios,omitempty"` // base64-encoded audio (voice memo / m4a); server transcribes it
 }
 
 // OutboxItem is what /api/poll returns.
@@ -463,13 +465,17 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 		ts := appleTimeToRFC3339(appleDate)
 		images := readImageAttachments(db, rowID)
 		videos := readVideoAttachments(db, rowID)
-		if text == "" && len(images) == 0 && len(videos) == 0 {
+		audios := readAudioAttachments(db, rowID)
+		if text == "" && len(images) == 0 && len(videos) == 0 && len(audios) == 0 {
 			var attachCount int
 			db.QueryRow(`SELECT COUNT(*) FROM message_attachment_join WHERE message_id = ?`, rowID).Scan(&attachCount)
 			if attachCount > 0 {
-				// Has attachments but couldn't decode them — send a placeholder.
-				nfo.Log("rowid=%d: %d attachment(s), none processable — using [Image] placeholder", rowID, attachCount)
-				text = "[Image]"
+				// Has attachments but none we could read (not an image/video/audio —
+				// e.g. a pdf or vcard). Send a NEUTRAL placeholder, never "[Image]":
+				// claiming a picture when none was sent makes the agent hallucinate
+				// one. The server-side note tells the agent it can't inspect it.
+				nfo.Log("rowid=%d: %d attachment(s), none processable — using [Attachment] placeholder", rowID, attachCount)
+				text = "[Attachment]"
 			} else {
 				// Row exists but content not yet written — iMessage fills text
 				// asynchronously. Re-check for up to maxEmptyPolls, then give up.
@@ -497,21 +503,29 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 			}
 		}
 
-		// Resolve display name: prefer group chat name, then Contacts lookup, then handle.
-		displayName := chatDisplayName
-		if displayName == "" {
-			displayName = contacts.Lookup(handle)
+		// Sender name = the PERSON at this handle (Contacts lookup), falling back
+		// to the raw handle. Never the group's name — that's the conversation, not
+		// the sender. Conflating them mis-attributes every message in a named group
+		// to the group itself. The empty-handle (is_from_me) case stays blank so the
+		// server labels it as the owner's own message.
+		senderName := ""
+		if handle != "" {
+			if senderName = contacts.Lookup(handle); senderName == "" {
+				senderName = handle
+			}
 		}
 
 		payload := HookPayload{
-			RowID:       rowID,
-			ChatID:      chatID,
-			Handle:      handle,
-			DisplayName: displayName,
-			Text:        text,
-			Timestamp:   ts,
-			Images:      images,
-			Videos:      videos,
+			RowID:            rowID,
+			ChatID:           chatID,
+			Handle:           handle,
+			DisplayName:      senderName,
+			ConversationName: chatDisplayName, // group/chat title (empty for 1:1 / unnamed), names the thread
+			Text:             text,
+			Timestamp:        ts,
+			Images:           images,
+			Videos:           videos,
+			Audios:           audios,
 		}
 		if err := postHook(cfg, payload); err != nil {
 			if he, ok := err.(*hookErr); ok && he.skip {
@@ -527,12 +541,8 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, lastRowID int64, v
 		delete(emptyRowSeen, rowID)
 		emptyRowMu.Unlock()
 		switch {
-		case len(images) > 0 && len(videos) > 0:
-			nfo.Log("relayed [%d] from %s: %q [%d image(s), %d video(s)]", rowID, handle, truncate(text, 60), len(images), len(videos))
-		case len(videos) > 0:
-			nfo.Log("relayed [%d] from %s: %q [%d video(s)]", rowID, handle, truncate(text, 60), len(videos))
-		case len(images) > 0:
-			nfo.Log("relayed [%d] from %s: %q [%d image(s)]", rowID, handle, truncate(text, 60), len(images))
+		case len(images) > 0 || len(videos) > 0 || len(audios) > 0:
+			nfo.Log("relayed [%d] from %s: %q [%d image(s), %d video(s), %d audio(s)]", rowID, handle, truncate(text, 60), len(images), len(videos), len(audios))
 		default:
 			nfo.Log("relayed [%d] from %s: %q", rowID, handle, truncate(text, 60))
 		}
@@ -1030,6 +1040,76 @@ func readVideoAttachments(db *sql.DB, messageID int64) []string {
 
 		out = append(out, base64.StdEncoding.EncodeToString(data))
 		nfo.Log("attached video %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
+		if len(out) >= 1 {
+			break
+		}
+	}
+	return out
+}
+
+// readAudioAttachments returns base64 audio attachments (a voice memo / m4a) on
+// a message. Mirrors readVideoAttachments; the server transcribes these instead
+// of trying to "see" them. Without this an audio-only message looks empty to the
+// relay and gets sent as an "[Image]" placeholder — the agent then reports a
+// picture that was never sent.
+func readAudioAttachments(db *sql.DB, messageID int64) []string {
+	rows, err := db.Query(`
+		SELECT a.filename, IFNULL(a.mime_type,''), a.transfer_state
+		FROM message_attachment_join maj
+		JOIN attachment a ON a.ROWID = maj.attachment_id
+		WHERE maj.message_id = ?
+		LIMIT 10
+	`, messageID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	const maxAudioBytes = 50 * 1024 * 1024 // 50 MB hard cap per clip
+
+	var out []string
+	for rows.Next() {
+		var filename, mimeType string
+		var transferState int
+		if rows.Scan(&filename, &mimeType, &transferState) != nil {
+			continue
+		}
+
+		lower := strings.ToLower(filename)
+		isAudio := strings.HasPrefix(mimeType, "audio/") ||
+			strings.HasSuffix(lower, ".m4a") || strings.HasSuffix(lower, ".mp3") ||
+			strings.HasSuffix(lower, ".wav") || strings.HasSuffix(lower, ".aac") ||
+			strings.HasSuffix(lower, ".caf") || strings.HasSuffix(lower, ".amr") ||
+			strings.HasSuffix(lower, ".aiff") || strings.HasSuffix(lower, ".aif") ||
+			strings.HasSuffix(lower, ".ogg") || strings.HasSuffix(lower, ".opus") ||
+			strings.HasSuffix(lower, ".flac")
+		if !isAudio {
+			continue
+		}
+
+		path := expandHome(filename)
+		info, err := os.Stat(path)
+		if err != nil {
+			nfo.Log("audio attachment not found: %s: %v", filepath.Base(path), err)
+			continue
+		}
+		if info.Size() > maxAudioBytes {
+			nfo.Log("audio too large (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
+			continue
+		}
+		if info.Size() < 256 {
+			nfo.Log("audio too small (%d bytes), skipping: %s", info.Size(), filepath.Base(path))
+			continue
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			nfo.Log("read audio %s: %v", filepath.Base(path), err)
+			continue
+		}
+
+		out = append(out, base64.StdEncoding.EncodeToString(data))
+		nfo.Log("attached audio %s (%d bytes, mime=%s)", filepath.Base(path), len(data), mimeType)
 		if len(out) >= 1 {
 			break
 		}

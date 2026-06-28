@@ -111,15 +111,16 @@ func (T *Bridges) handleConfig(w http.ResponseWriter, r *http.Request) {
 // hookRequest is the inbound contract a connector POSTs. Mirrors the existing
 // bridge protocol so the gohort-desktop daemon needs only a URL change.
 type hookRequest struct {
-	ChatID      string   `json:"chat_id"`
-	Handle      string   `json:"handle"`
-	DisplayName string   `json:"display_name"`
-	Text        string   `json:"text"`
-	Images      []string `json:"images,omitempty"`
-	Videos      []string `json:"videos,omitempty"` // base64 inbound video clips (e.g. an mp4 in a text); frames sampled for the vision model — connector must send them
-	Audios      []string `json:"audios,omitempty"` // base64 inbound audio (a voice memo / m4a); transcribed for the agent — connector must send them on this field, not images
-	MsgID       string   `json:"msg_id"`
-	RowID       int64    `json:"row_id"`
+	ChatID           string   `json:"chat_id"`
+	Handle           string   `json:"handle"`
+	DisplayName      string   `json:"display_name"`                // the SENDER's name (person at Handle)
+	ConversationName string   `json:"conversation_name,omitempty"` // the group/chat title — names the thread, distinct from the sender
+	Text             string   `json:"text"`
+	Images           []string `json:"images,omitempty"`
+	Videos           []string `json:"videos,omitempty"` // base64 inbound video clips (e.g. an mp4 in a text); frames sampled for the vision model — connector must send them
+	Audios           []string `json:"audios,omitempty"` // base64 inbound audio (a voice memo / m4a); transcribed for the agent — connector must send them on this field, not images
+	MsgID            string   `json:"msg_id"`
+	RowID            int64    `json:"row_id"`
 }
 
 // handleHook is the inbound entry point: authenticate the connector, dedup,
@@ -154,7 +155,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 
 	// Record the conversation (identity + participant) and keep the message for
 	// the thread view.
-	T.upsertConvo(svc, activeChatID, req.Handle, req.DisplayName)
+	T.upsertConvo(svc, activeChatID, req.Handle, req.DisplayName, req.ConversationName)
 	T.storeMessage(StoredMessage{
 		ID: firstNonEmpty(req.MsgID, newToken()[:12]), ChatID: activeChatID, Role: "user",
 		Handle: req.Handle, DisplayName: T.resolveSender(activeChatID, req.Handle, req.DisplayName),
@@ -261,7 +262,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 			ChatID:           chatID,
 			Handle:           handle,
 			SenderName:       sender,
-			ConversationName: sender,
+			ConversationName: firstNonEmpty(req.ConversationName, sender),
 			Text:             text,
 			Images:           images,
 			Videos:           videos,
