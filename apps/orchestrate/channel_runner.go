@@ -49,9 +49,9 @@ func channelSurfaceContext(in ChannelInbound) string {
 	// A receive-only channel doesn't reply on this surface; bidirectional (the
 	// default) does. Ground the agent on which it is.
 	if ch.Direction == DirectionInbound {
-		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed.]", origin, convo)
+		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo)
 	}
-	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message.]", origin, convo)
+	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo)
 }
 
 // channelObsFrom labels a channel inbound for its cortex report card: the
