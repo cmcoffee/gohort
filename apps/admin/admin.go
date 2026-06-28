@@ -300,6 +300,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		a.handleStatus(w, r)
 	})
 
+	// System Dependencies — probes optional host binaries (ffmpeg, pdftotext,
+	// bwrap, …) so the admin panel can show what's installed and what each gates.
+	sub.HandleFunc("/api/dependencies", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(CheckDependencies())
+	})
+
 	// Vector Index snapshot — backs the admin DisplayPanel (page.go).
 	sub.HandleFunc("/api/vector-stats", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {

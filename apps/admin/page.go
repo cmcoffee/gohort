@@ -714,6 +714,24 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "System Dependencies",
+				Subtitle: "External tools gohort shells out to for media + document handling. A missing one disables the feature it gates (e.g. no ffmpeg → inbound voice memos can't be transcribed). Install on the gohort host and restart; this list refreshes on reload.",
+				Body: ui.Table{
+					Source: "api/dependencies",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Label: "Tool", Flex: 1},
+						{Field: "present", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Installed", Color: "success"},
+							{Value: false, Label: "Missing", Color: "danger"},
+						}},
+						{Field: "enables", Label: "Enables", Flex: 3, Mute: true},
+						{Field: "install", Label: "Install", Flex: 2, Mute: true},
+					},
+					EmptyText: "No dependency information.",
+				},
+			},
+			{
 				Title:    "Image Generation",
 				Subtitle: "LLM-driven image generation provider used by tools that produce illustrations or thumbnails. Leave API key blank to reuse the matching LLM provider's key (e.g. Gemini for the gemini image model).",
 				Body: ui.FormPanel{
