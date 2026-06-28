@@ -333,18 +333,19 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		},
 	}
 
-	chat := ui.AgentLoopPanel{
-		ListURL:      "chat/sessions",
-		LoadURL:      "chat/sessions/{id}",
-		DeleteURL:    "chat/sessions/{id}",
-		SendURL:      "chat/send",
-		CancelURL:    "chat/cancel",
-		ListTitle:    "Chats",
-		NewLabel:     "New",
-		ListPosition: "top",
-		Markdown:     true,
-		EmptyText:    firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
-		Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask the assistant…"),
+	// Single-mode ChatPanel: ONE ongoing conversation, no sessions rail and no
+	// activity pane — just a chat window in the right column (the workbench's
+	// list IS the app's nav; a second session list would be redundant). Same
+	// chat/* endpoints (PublicHandle* session schema matches ChatPanel's).
+	chat := ui.ChatPanel{
+		Single:           true,
+		SessionsListURL:  "chat/sessions",
+		SessionLoadURL:   "chat/sessions/{id}",
+		SessionDeleteURL: "chat/sessions/{id}",
+		SendURL:          "chat/send",
+		CancelURL:        "chat/cancel",
+		Markdown:         true,
+		EmptyText:        firstNonEmptyStr(mapStr(m, "chat_empty"), "Ask the assistant to draft or add a section."),
 	}
 
 	return ui.WorkbenchPanel{

@@ -269,8 +269,11 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
 .ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
 .ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
-/* The embedded chat fills its column (its own internal layout takes over). */
-.ui-wb-chat > .ui-agent { height: 100%; border: 0; border-radius: 0; }
+/* The embedded chat fills its column (its own internal layout takes over).
+ * Single-mode ChatPanel roots at .ui-chat; agent_loop_panel at .ui-agent. */
+.ui-wb-chat > .ui-chat,
+.ui-wb-chat > .ui-agent { height: 100%; border: 0; border-radius: 0; min-height: 0; }
+.ui-wb-chat > .ui-chat.ui-chat-single { height: 100%; }
 @media (max-width: 900px) {
   /* Stack on mobile; let the page scroll rather than three tiny panes. */
   .ui-wb { flex-direction: column; height: auto; }
