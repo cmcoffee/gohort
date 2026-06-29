@@ -592,6 +592,33 @@ func AuthSetUITheme(db Database, theme string) {
 	db.Set(WebTable, "ui_theme", theme)
 }
 
+// Deployment branding — a document/header brand (e.g. an org or research-group
+// name like "SnugLab Research") and a site name. Used on exported documents
+// (guide PDF/HTML headers + footers) and the PDF branding line. Both deployment-
+// wide; "" when unset (callers fall back to a default).
+func AuthGetDocBrand(db Database) string {
+	var s string
+	db.Get(WebTable, "doc_brand", &s)
+	return s
+}
+
+func AuthSetDocBrand(db Database, v string) {
+	db.Set(WebTable, "doc_brand", v)
+	if v = strings.TrimSpace(v); v != "" {
+		PDFBranding = v // keep PDF exports in sync without a restart
+	}
+}
+
+func AuthGetSiteName(db Database) string {
+	var s string
+	db.Get(WebTable, "site_name", &s)
+	return s
+}
+
+func AuthSetSiteName(db Database, v string) {
+	db.Set(WebTable, "site_name", v)
+}
+
 // UserHasAppAccess checks whether the current request's user is allowed
 // to access the app at the given path. Admins have access to all apps.
 // When auth is not configured, everyone has access.

@@ -1458,6 +1458,12 @@ func init_database() {
 	// Silent no-op when unconfigured — videodl falls back to
 	// frames-only.
 	LoadTranscribeConfigFromDB(global.db)
+
+	// Deployment document branding — set the PDF export header line from the
+	// admin-configured brand (falls back to the built-in default when unset).
+	if b := AuthGetDocBrand(global.db); strings.TrimSpace(b) != "" {
+		PDFBranding = b
+	}
 }
 
 // init_logging initializes the logging system. STD/AUX go to the

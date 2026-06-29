@@ -2999,6 +2999,8 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"fetch_cache_quota_mb": fetch_cache_quota_mb,
 		"channel_wake_rules":   AuthGetChannelWakeRules(a.db),
 		"ui_theme":             ui_theme,
+		"doc_brand":            AuthGetDocBrand(a.db),
+		"site_name":            AuthGetSiteName(a.db),
 	}
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
@@ -3023,6 +3025,8 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		FetchCacheQuotaMB  *int      `json:"fetch_cache_quota_mb,omitempty"`
 		ChannelWakeRules   *string   `json:"channel_wake_rules,omitempty"`
 		UITheme            *string   `json:"ui_theme,omitempty"`
+		DocBrand           *string   `json:"doc_brand,omitempty"`
+		SiteName           *string   `json:"site_name,omitempty"`
 	}
 	// Read the body once: the static settings decode into the typed struct
 	// above, the tunables come off the same bytes as a generic map (validated
@@ -3094,6 +3098,14 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		} else {
 			Log("[admin] user %q tried to set unknown ui_theme=%q — ignored", current, t)
 		}
+	}
+	if req.DocBrand != nil {
+		AuthSetDocBrand(a.db, strings.TrimSpace(*req.DocBrand)) // also syncs PDFBranding live
+		Log("[admin] user %q set doc_brand=%q", current, strings.TrimSpace(*req.DocBrand))
+	}
+	if req.SiteName != nil {
+		AuthSetSiteName(a.db, strings.TrimSpace(*req.SiteName))
+		Log("[admin] user %q set site_name=%q", current, strings.TrimSpace(*req.SiteName))
 	}
 	// Tunables — validated against the registry, so adding a knob needs no
 	// change here. A present numeric key within its spec's [Min, Max] is

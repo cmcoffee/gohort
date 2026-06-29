@@ -178,7 +178,7 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		"2. **Notable changes / new developments** since it was written that a reader should know.\n" +
 		"3. **Gaps** — important things it should cover but doesn't.\n\n" +
 		"Be specific: name the SECTION and the exact change needed, and cite sources for any claim that something changed. If a section is still accurate, say so briefly. End with a short prioritized list of recommended edits. If everything is current, say that plainly.\n\n" +
-		"GUIDE:\n\n" + renderGuideMarkdown(g)
+		"GUIDE:\n\n" + renderGuideMarkdownPlain(g)
 	report, err := orch.RunAgentSync(r.Context(), user, user, "seed-research", prompt)
 	if err != nil {
 		http.Error(w, "audit failed: "+err.Error(), http.StatusInternalServerError)

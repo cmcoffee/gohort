@@ -201,8 +201,33 @@ func sectionHeading(s Section, i int) string {
 }
 
 // renderGuideMarkdown assembles the whole guide as one markdown document — for
-// export (PDF/markdown) and as the source the HTML render derives from.
+// export (PDF/markdown). Includes a numbered Table of Contents so the PDF and the
+// markdown carry the same structure the HTML viewer shows.
 func renderGuideMarkdown(g Guide) string {
+	var b strings.Builder
+	b.WriteString("# " + g.Title + "\n\n")
+	if strings.TrimSpace(g.Subtitle) != "" {
+		b.WriteString("_" + g.Subtitle + "_\n\n")
+	}
+	secs := g.sorted()
+	if len(secs) > 0 {
+		b.WriteString("## Contents\n\n")
+		for i, s := range secs {
+			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sectionHeading(s, i)))
+		}
+		b.WriteString("\n")
+	}
+	for i, s := range secs {
+		b.WriteString(fmt.Sprintf("## %d. %s\n\n", i+1, sectionHeading(s, i)))
+		b.WriteString(strings.TrimSpace(s.Markdown) + "\n\n")
+	}
+	return b.String()
+}
+
+// renderGuideMarkdownPlain is the assembled guide WITHOUT the Contents block —
+// for feeding the audit (the agent doesn't need a ToC, and numbered "## N." would
+// just be noise it might echo).
+func renderGuideMarkdownPlain(g Guide) string {
 	var b strings.Builder
 	b.WriteString("# " + g.Title + "\n\n")
 	if strings.TrimSpace(g.Subtitle) != "" {

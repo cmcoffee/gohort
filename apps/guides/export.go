@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -41,20 +42,78 @@ func (T *Guides) handleExport(w http.ResponseWriter, r *http.Request, udb Databa
 	case "html", "":
 		// Inline preview — opens in a browser tab, prints/saves cleanly.
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(renderGuideStandaloneHTML(g)))
+		brand, siteName := docBranding()
+		_, _ = w.Write([]byte(renderGuideStandaloneHTML(g, brand, siteName)))
 	default:
 		http.Error(w, "unknown format — use pdf | html | md", http.StatusBadRequest)
 	}
 }
 
+// docBranding returns the deployment's configured document brand + site name
+// (admin Site Settings), used in exported-document headers/footers. Brand falls
+// back to the site name, then "".
+func docBranding() (brand, siteName string) {
+	db := AuthDB()
+	if db == nil {
+		return "", ""
+	}
+	brand = strings.TrimSpace(AuthGetDocBrand(db))
+	siteName = strings.TrimSpace(AuthGetSiteName(db))
+	if brand == "" {
+		brand = siteName
+	}
+	return brand, siteName
+}
+
 // renderGuideStandaloneHTML wraps the rendered guide in a self-contained HTML
 // document with inline styling (concrete colors, not theme tokens) so it reads
-// correctly outside gohort — shared, printed, or saved as a file.
-func renderGuideStandaloneHTML(g Guide) string {
+// correctly outside gohort — shared, printed, or saved as a file. brand renders
+// as a small header label above the title; siteName + date as a footer.
+func renderGuideStandaloneHTML(g Guide, brand, siteName string) string {
+	head := ""
+	if brand != "" {
+		head = `<div class="guide-brand">` + HTMLEscape(brand) + `</div>`
+	}
+	footParts := []string{}
+	if siteName != "" {
+		footParts = append(footParts, HTMLEscape(siteName))
+	}
+	if d := formatExportDate(g.Updated); d != "" {
+		footParts = append(footParts, d)
+	}
+	foot := ""
+	if len(footParts) > 0 {
+		foot = `<footer class="guide-foot">` + strings.Join(footParts, " &middot; ") + `</footer>`
+	}
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width, initial-scale=1">` +
 		`<title>` + HTMLEscape(g.Title) + `</title><style>` + standaloneCSS + `</style></head>` +
-		`<body>` + renderGuideHTML(g) + `</body></html>`
+		`<body><div class="guide-doc">` + head + extractDocInner(renderGuideHTML(g)) + foot + `</div></body></html>`
+}
+
+// extractDocInner strips the outer <article class="guide-doc">…</article> wrapper
+// from renderGuideHTML so the standalone export can wrap the content in its own
+// .guide-doc div (with brand header + footer) without nesting two.
+func extractDocInner(html string) string {
+	const open = `<article class="guide-doc">`
+	const close = `</article>`
+	if i := strings.Index(html, open); i >= 0 {
+		html = html[i+len(open):]
+		if j := strings.LastIndex(html, close); j >= 0 {
+			html = html[:j]
+		}
+	}
+	return html
+}
+
+// formatExportDate renders an RFC3339 timestamp as "Jan 2, 2006", or "" on parse
+// failure / empty.
+func formatExportDate(s string) string {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
+	if err != nil {
+		return ""
+	}
+	return t.Format("Jan 2, 2006")
 }
 
 func sanitizeFilename(s string) string {
@@ -82,6 +141,8 @@ const standaloneCSS = `
 * { box-sizing: border-box; }
 body { margin: 0; background: #f6f7f9; color: #1f2328; font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
 .guide-doc { max-width: 760px; margin: 0 auto; padding: 3rem 1.5rem 5rem; background: #fff; min-height: 100vh; }
+.guide-brand { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; color: #0969da; margin-bottom: 0.8rem; }
+.guide-foot { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #d6dae0; font-size: 0.8rem; color: #8893a0; }
 .guide-doc-head h1 { font-size: 2.1rem; line-height: 1.2; margin: 0 0 0.3rem; color: #0b1320; }
 .guide-doc-sub { font-size: 1.05rem; color: #59636e; margin: 0 0 1.6rem; }
 .guide-doc-empty { color: #59636e; font-style: italic; }
