@@ -27,7 +27,7 @@ func (T *Guides) handleExport(w http.ResponseWriter, r *http.Request, udb Databa
 	name := sanitizeFilename(firstNonEmpty(g.Title, "guide"))
 	switch format {
 	case "pdf":
-		pdf, err := MarkdownToPDFBytes(g.Title, g.Updated, renderGuideMarkdown(g))
+		pdf, err := renderGuidePDF(g)
 		if err != nil {
 			http.Error(w, "pdf render failed: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -63,6 +63,23 @@ func docBranding() (brand, siteName string) {
 		brand = siteName
 	}
 	return brand, siteName
+}
+
+// renderGuidePDF produces the guide PDF. Preferred path: print-to-PDF the
+// standalone HTML through the headless browser, so the PDF matches the HTML
+// preview exactly (CSS, tables, clickable ToC links). Falls back to the pure-Go
+// fpdf markdown renderer when the browser isn't available — weaker formatting but
+// always works, no dependency.
+func renderGuidePDF(g Guide) ([]byte, error) {
+	if HTMLToPDFAvailable() {
+		brand, siteName := docBranding()
+		if pdf, err := HTMLToPDF([]byte(renderGuideStandaloneHTML(g, brand, siteName))); err == nil {
+			return pdf, nil
+		} else {
+			Log("[guides] HTML→PDF failed, falling back to fpdf: %v", err)
+		}
+	}
+	return MarkdownToPDFBytes(g.Title, g.Updated, renderGuideMarkdown(g))
 }
 
 // renderGuideStandaloneHTML wraps the rendered guide in a self-contained HTML
