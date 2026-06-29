@@ -3349,6 +3349,26 @@ body { min-height: 100vh; min-height: 100dvh; }
   padding: 0.4rem 0.55rem; font: inherit;
   white-space: pre-wrap; word-wrap: break-word;
 }
+/* ui-ask-card — the default ask_user / ask_user_form clarifying card
+ * rendered inline in an AgentLoopPanel transcript (the framework control
+ * tools). Scoped + theme-tokened; the Agency chat ships a richer variant. */
+.ui-ask-card {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.9rem 1rem; margin: 0.3rem 0; max-width: 100%;
+}
+.ui-ask-card.submitted { opacity: 0.72; }
+.ui-ask-q { color: var(--text-hi); font-weight: 600; margin: 0 0 0.6rem; line-height: 1.45; }
+.ui-ask-field { margin: 0 0 0.8rem; }
+.ui-ask-field .ui-ask-q { font-weight: 500; }
+.ui-ask-opts { display: flex; flex-direction: column; gap: 0.35rem; margin: 0 0 0.6rem; }
+.ui-ask-opt { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; color: var(--text); font-size: 0.92rem; }
+.ui-ask-opt input { margin-top: 0.2rem; }
+.ui-ask-extra, .ui-ask-input {
+  width: 100%; box-sizing: border-box; background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 0.4rem 0.55rem; font: inherit;
+}
+.ui-ask-extra { resize: vertical; }
+.ui-ask-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
 /* Legacy .ui-agent-spinner — kept for any app that still wires it
  * up directly. Any chat-style panel now
  * uses .ui-agent-status-pill in the top bar instead (see below).
@@ -14252,6 +14272,143 @@ const runtimeJS = `
       wrap.appendChild(body);
       return {wrap: wrap, body: body};
     };
+
+    // Default renderers for the framework's clarifying-question control-tool
+    // card blocks (ask_user / ask_user_form). These block TYPE strings are the
+    // wire contract emitted by the agent runner; the renderers here are generic
+    // ({question, options}/{steps}) and know no app's shape. Any AgentLoopPanel
+    // surface renders the card + submits the answer with no per-app wiring. They
+    // defer to an app-registered renderer (via window.UIBlockRenderers) when one
+    // exists, so an app can ship a richer variant without this overriding it.
+    // The answer is sent through the panel's own input row — the same send flow
+    // a typed message takes — so the agent sees it as the next user turn.
+    function uiAskSubmitAnswer(answer) {
+      var inputArea = document.querySelector('.ui-agent-input');
+      var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
+      if (!inputArea || !sendBtn) {
+        if (window.uiAlert) window.uiAlert('Could not find the chat input to submit your answer.');
+        return false;
+      }
+      inputArea.value = answer;
+      sendBtn.click();
+      return true;
+    }
+    function uiAskQuestionHTML(elm, text) {
+      text = text || '';
+      if (window.uiMdToHTML) { elm.innerHTML = window.uiMdToHTML(text); } else { elm.textContent = text; }
+    }
+    if (!blockRenderers.orchestrate_ask) {
+      blockRenderers.orchestrate_ask = function(d) {
+        var wrap = el('div', {class: 'ui-ask-card'});
+        var q = el('div', {class: 'ui-ask-q'});
+        uiAskQuestionHTML(q, d.question);
+        wrap.appendChild(q);
+        var opts = (d.options || []).map(function(s){ return String(s || '').trim(); }).filter(function(s){ return s.length > 0; });
+        var multi = !!d.multi;
+        var inputs = [];
+        if (opts.length) {
+          var box = el('div', {class: 'ui-ask-opts'});
+          opts.forEach(function(opt) {
+            var row = el('label', {class: 'ui-ask-opt'});
+            var inp = document.createElement('input');
+            inp.type = multi ? 'checkbox' : 'radio';
+            inp.name = 'ui-ask-' + (d.id || '');
+            inp.value = opt;
+            row.appendChild(inp);
+            row.appendChild(el('span', {}, [opt]));
+            box.appendChild(row);
+            inputs.push(inp);
+          });
+          wrap.appendChild(box);
+        }
+        var extra = document.createElement('textarea');
+        extra.className = 'ui-ask-extra';
+        extra.rows = opts.length ? 2 : 3;
+        extra.placeholder = opts.length ? 'Or type your own answer / push back…' : 'Type your answer…';
+        wrap.appendChild(extra);
+        var submit = el('button', {class: 'ui-row-btn primary', type: 'button'}, ['Submit']);
+        wrap.appendChild(el('div', {class: 'ui-ask-actions'}, [submit]));
+        submit.addEventListener('click', function() {
+          var picked = inputs.filter(function(i){ return i.checked; }).map(function(i){ return i.value; });
+          var note = (extra.value || '').trim();
+          var parts = [];
+          if (picked.length) parts.push(picked.join(', '));
+          if (note) parts.push(note);
+          var answer = parts.join('. ');
+          if (!answer) { extra.focus(); return; }
+          if (!uiAskSubmitAnswer(answer)) return;
+          wrap.classList.add('submitted');
+          inputs.forEach(function(i){ i.disabled = true; });
+          extra.disabled = true;
+          submit.disabled = true;
+        });
+        return {wrap: wrap, body: null};
+      };
+    }
+    if (!blockRenderers.orchestrate_ask_form) {
+      blockRenderers.orchestrate_ask_form = function(d) {
+        var wrap = el('div', {class: 'ui-ask-card'});
+        var steps = (d.steps || []).filter(function(s){ return s && s.question; });
+        if (!steps.length) {
+          wrap.appendChild(el('div', {class: 'ui-ask-q'}, ['(form had no questions)']));
+          return {wrap: wrap, body: null};
+        }
+        // Render every step at once as a labeled field with one Submit (the
+        // compact default; the Agency chat ships a step-through variant).
+        var fields = [];
+        steps.forEach(function(step, i) {
+          var fw = el('div', {class: 'ui-ask-field'});
+          var lbl = el('div', {class: 'ui-ask-q'});
+          uiAskQuestionHTML(lbl, (i + 1) + '. ' + step.question);
+          fw.appendChild(lbl);
+          var opts = (step.options || []).map(function(s){ return String(s || '').trim(); }).filter(function(s){ return s.length > 0; });
+          var t = step.type || (opts.length ? 'choice' : 'text');
+          var input, getVal;
+          if (t === 'textarea') {
+            input = document.createElement('textarea'); input.className = 'ui-ask-extra'; input.rows = 3;
+            if (step.placeholder) input.placeholder = step.placeholder;
+            getVal = function(){ return (input.value || '').trim(); };
+          } else if (t === 'select') {
+            input = document.createElement('select'); input.className = 'ui-ask-input';
+            input.appendChild(el('option', {value: ''}, ['— choose —']));
+            opts.forEach(function(o){ input.appendChild(el('option', {value: o}, [o])); });
+            getVal = function(){ return input.value || ''; };
+          } else if (t === 'choice') {
+            input = el('div', {class: 'ui-ask-opts'});
+            var multi = !!step.multi;
+            opts.forEach(function(o) {
+              var row = el('label', {class: 'ui-ask-opt'});
+              var inp = document.createElement('input');
+              inp.type = multi ? 'checkbox' : 'radio';
+              inp.name = 'ui-askf-' + (d.id || '') + '-' + i;
+              inp.value = o;
+              row.appendChild(inp);
+              row.appendChild(el('span', {}, [o]));
+              input.appendChild(row);
+            });
+            getVal = function(){ var p = []; input.querySelectorAll('input').forEach(function(x){ if (x.checked) p.push(x.value); }); return p.join(', '); };
+          } else {
+            input = document.createElement('input');
+            input.type = (t === 'number') ? 'number' : (t === 'password' ? 'password' : 'text');
+            input.className = 'ui-ask-input';
+            if (step.placeholder) input.placeholder = step.placeholder;
+            getVal = function(){ return (input.value || '').trim(); };
+          }
+          fw.appendChild(input);
+          wrap.appendChild(fw);
+          fields.push({step: step, getVal: getVal});
+        });
+        var submit = el('button', {class: 'ui-row-btn primary', type: 'button'}, ['Submit']);
+        wrap.appendChild(el('div', {class: 'ui-ask-actions'}, [submit]));
+        submit.addEventListener('click', function() {
+          var lines = fields.map(function(f, i){ var v = f.getVal(); return (i + 1) + '. ' + f.step.question + ' -> ' + (v || '(no answer)'); });
+          if (!uiAskSubmitAnswer(lines.join('\n'))) return;
+          wrap.classList.add('submitted');
+          wrap.querySelectorAll('input, textarea, select, button').forEach(function(x){ x.disabled = true; });
+        });
+        return {wrap: wrap, body: null};
+      };
+    }
 
     function scrollTranscript() {
       var pin = function() { transcript.scrollTop = transcript.scrollHeight; };
