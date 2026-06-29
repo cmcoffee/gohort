@@ -255,6 +255,12 @@ const documentsDetailBody = `
       </label>
       <span id="docs-autofill-status"></span>
     </div>
+    <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border);flex-wrap:wrap">
+      <input id="docs-research-topic" type="text" placeholder="Research a topic (cited synthesis) — e.g. RKE2 agent join + ports"
+        style="flex:1;min-width:16rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.85rem">
+      <button id="docs-research" class="ui-row-btn">Research &amp; add</button>
+      <span id="docs-research-status"></span>
+    </div>
   </div>
 
   <div class="docs-section">
@@ -816,6 +822,48 @@ const documentsDetailAssets = `<style>
       st.textContent = 'Failed: ' + (err && err.message || err);
       stopSpinner(origLabel);
       btn.disabled = false;
+    });
+  });
+
+  // Research a topic with the seed-research agent (web search + cited synthesis)
+  // and ingest the distilled report into this collection. Higher-quality than
+  // auto-fill (which ingests raw pages); slower (an agent loop per topic).
+  $('#docs-research').addEventListener('click', async function() {
+    var topicInput = $('#docs-research-topic');
+    var topic = (topicInput && topicInput.value || '').trim();
+    if (!topic) { topicInput && topicInput.focus(); return; }
+    var btn = $('#docs-research');
+    var st = $('#docs-research-status');
+    var orig = btn.textContent;
+    btn.disabled = true;
+    var frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+    var fi = 0;
+    var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Researching…'; fi = (fi+1)%frames.length; }, 100);
+    st.style.color = 'var(--text-mute)';
+    st.textContent = 'Searching, reading sources, synthesizing…';
+    fetch(api('/api/collections/' + encodeURIComponent(cid) + '/research'), {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({topic: topic}),
+    }).then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+      return r.json();
+    }).then(function(out) {
+      clearInterval(timer); btn.textContent = orig; btn.disabled = false;
+      if (out.ingested > 0) {
+        st.style.color = 'var(--accent,#56d364)';
+        st.textContent = 'Added a cited research document.';
+        if (topicInput) topicInput.value = '';
+        loadSources(); loadDetail();
+      } else {
+        st.style.color = 'var(--danger,#ff7b72)';
+        st.textContent = 'Research produced nothing to add — try a more specific topic.';
+      }
+    }).catch(function(err) {
+      clearInterval(timer); btn.textContent = orig; btn.disabled = false;
+      st.style.color = 'var(--danger,#ff7b72)';
+      st.textContent = 'Failed: ' + (err && err.message || err);
     });
   });
 

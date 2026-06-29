@@ -281,11 +281,60 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 		T.handleCollectionSearch(w, r, c)
 	case action == "autofill":
 		T.handleCollectionAutofill(w, r, c)
+	case action == "research":
+		T.handleCollectionResearch(w, r, user, c)
 	case action == "suggest-description":
 		T.handleCollectionSuggestDescription(w, r, udb, user, c)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleCollectionResearch runs the seed-research agent on one or more topics —
+// web search + source fetch + cited synthesis — and ingests each synthesized,
+// cited report into the collection as a document. Distinct from autofill (which
+// ingests RAW source pages): this stores distilled, cited findings, the higher-
+// quality material for a knowledge base. Synchronous (research is an agent loop
+// of tens of seconds per topic); the caller shows a spinner.
+func (T *OrchestrateApp) handleCollectionResearch(w http.ResponseWriter, r *http.Request, user string, c Collection) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Topic  string   `json:"topic"`
+		Topics []string `json:"topics"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	topics := normalizeQueries(append(body.Topics, body.Topic))
+	if len(topics) == 0 {
+		http.Error(w, "a topic is required", http.StatusBadRequest)
+		return
+	}
+	// Cap per request so one click can't fan out into an unbounded run.
+	if len(topics) > 5 {
+		topics = topics[:5]
+	}
+
+	chunkDB := T.collectionDB(c)
+	ingested := 0
+	var failures []string
+	for _, topic := range topics {
+		report, err := T.RunAgentSync(r.Context(), user, user, "seed-research", topic)
+		if err != nil || strings.TrimSpace(report) == "" {
+			Log("[orchestrate.collections] research %q for collection %q failed: %v", topic, c.Name, err)
+			failures = append(failures, topic)
+			continue
+		}
+		reportID := fmt.Sprintf("research-%s-%d", c.ID, time.Now().UnixNano())
+		IngestReportTitled(r.Context(), chunkDB, collectionSource(c.ID), reportID, topic, report, "research")
+		ingested++
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ingested": ingested,
+		"failed":   failures,
+	})
 }
 
 // handleCollectionUpload extracts + ingests a document under the
