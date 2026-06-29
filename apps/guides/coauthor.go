@@ -302,7 +302,68 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		},
 	}
 
-	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge}
+	// list_reference_sources + pull_reference expose the cross-app reference
+	// registry: knowledge OTHER gohort services have gathered — servitor Systems
+	// (facts about the user's appliances) and connected document sources like
+	// Confluence (any ExposeReference MCP server). This is how a guide gets BUILT
+	// FROM internal knowledge, not just web research. Per-user and access-gated by
+	// the registry: the user only ever sees their own systems / connected docs.
+	listReferences := AgentToolDef{
+		Tool: Tool{
+			Name:        "list_reference_sources",
+			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services — e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
+		},
+		Handler: func(args map[string]any) (string, error) {
+			groups := ReferenceGroups(user)
+			if len(groups) == 0 {
+				return "No internal reference sources are available right now. (Systems appear once the user has appliances in the servitor app; document sources like Confluence appear once they're connected as a reference source.) Use the `research` tool for public/web topics instead.", nil
+			}
+			var b strings.Builder
+			b.WriteString("Internal reference sources you can pull from with pull_reference:\n")
+			for _, g := range groups {
+				fmt.Fprintf(&b, "\n%s (kind: %s):\n", g.Label, g.Kind)
+				for _, it := range g.Items {
+					if strings.TrimSpace(it.Desc) != "" {
+						fmt.Fprintf(&b, "- %s — %s [id: %s]\n", it.Name, it.Desc, it.ID)
+					} else {
+						fmt.Fprintf(&b, "- %s [id: %s]\n", it.Name, it.ID)
+					}
+				}
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+	}
+
+	pullReference := AgentToolDef{
+		Tool: Tool{
+			Name:        "pull_reference",
+			Description: "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it — e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and optionally a query describing what you're writing about (document sources use it to return the most relevant material; system sources return their full picture regardless). Then write the section with add_section using only details the reference actually contains — do not invent specifics it doesn't include.",
+			Parameters: map[string]ToolParam{
+				"kind":    {Type: "string", Description: "The source kind from list_reference_sources, e.g. \"system\" or \"mcp:confluence\"."},
+				"item_id": {Type: "string", Description: "The item id from list_reference_sources."},
+				"query":   {Type: "string", Description: "Optional: what you're writing about, to focus document-source results. System sources ignore it."},
+			},
+			Required: []string{"kind", "item_id"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			kind := strings.TrimSpace(fmt.Sprint(args["kind"]))
+			itemID := strings.TrimSpace(fmt.Sprint(args["item_id"]))
+			if kind == "" || itemID == "" {
+				return "", fmt.Errorf("kind and item_id are required — get them from list_reference_sources")
+			}
+			query := ""
+			if q, ok := args["query"]; ok {
+				query = strings.TrimSpace(fmt.Sprint(q))
+			}
+			txt := FetchReference(context.Background(), user, kind, itemID, query)
+			if strings.TrimSpace(txt) == "" {
+				return fmt.Sprintf("No content available for %s item %q — it may be empty, or the id is wrong; re-check with list_reference_sources.", kind, itemID), nil
+			}
+			return txt, nil
+		},
+	}
+
+	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
 }
 
 // reorderSections moves the section at idx to clampedTarget (0-based), clamping
