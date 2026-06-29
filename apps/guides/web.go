@@ -139,7 +139,7 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 		http.Error(w, "guide author agent unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	orch.PublicHandleSendWithAppTools(w, r, agent, T.coauthorTools(udb))
+	orch.PublicHandleSendWithAppTools(w, r, agent, T.coauthorTools(udb, orch, user))
 }
 
 // dispatchChat forwards cancel / session routes to orchestrate's PublicHandle*.

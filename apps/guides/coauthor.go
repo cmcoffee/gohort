@@ -6,13 +6,16 @@
 package guides
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
-func (T *Guides) coauthorTools(udb Database) []AgentToolDef {
+func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, user string) []AgentToolDef {
 	// openGuide resolves the active guide for this turn, fresh each call.
 	openGuide := func() (Guide, bool) {
 		id := activeGuideID(udb)
@@ -213,7 +216,37 @@ func (T *Guides) coauthorTools(udb Database) []AgentToolDef {
 		},
 	}
 
-	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection}
+	// research dispatches to the seed-research agent — web search + source
+	// fetching + cited synthesis — and returns its findings so the Guide Author
+	// can write a section GROUNDED in real, cited sources instead of its priors.
+	// Use before drafting accuracy-critical content (commands, flags, version
+	// specifics). Runs an agent loop (tens of seconds), so the agent should call
+	// it deliberately, not for every section.
+	research := AgentToolDef{
+		Tool: Tool{
+			Name:        "research",
+			Description: "Research a topic on the web before writing about it: searches, reads sources, and returns a cited synthesis (with a Sources list). Use this for accuracy-critical content — exact commands, flags, version numbers, API details — so the section is grounded in real sources rather than your own recollection. Then write the section with add_section, carrying the citations/links through. Takes tens of seconds; call it deliberately, not for trivial sections.",
+			Parameters: map[string]ToolParam{
+				"topic": {Type: "string", Description: "The specific thing to research — a focused question or subject, e.g. 'RKE2 agent join command and required ports' (not just 'Kubernetes')."},
+			},
+			Required: []string{"topic"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			topic := strings.TrimSpace(fmt.Sprint(args["topic"]))
+			if topic == "" {
+				return "", fmt.Errorf("topic is required")
+			}
+			// seed-research resolves as a seed agent in the user's store. Run it
+			// synchronously and hand its cited synthesis back to the Guide Author.
+			out, err := orch.RunAgentSync(context.Background(), user, user, "seed-research", topic)
+			if err != nil {
+				return "", fmt.Errorf("research failed: %w", err)
+			}
+			return out, nil
+		},
+	}
+
+	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection, research}
 }
 
 // reorderSections moves the section at idx to clampedTarget (0-based), clamping

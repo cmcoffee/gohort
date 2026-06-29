@@ -41,7 +41,8 @@ func init() {
 			"- rename_section(section_title, new_title): change a section's title.\n" +
 			"- delete_section(section_title): remove a section (only when the user clearly asks).\n" +
 			"- move_section(section_title, position): reorder a section to a 1-based position.\n" +
-			"- list_sections(): see the guide's current sections + order. Call this FIRST before renaming, deleting, moving, or editing, so you use exact titles and correct positions.\n\n" +
+			"- list_sections(): see the guide's current sections + order. Call this FIRST before renaming, deleting, moving, or editing, so you use exact titles and correct positions.\n" +
+			"- research(topic): search the web and get a CITED synthesis before writing accuracy-critical content. Use it for anything where being wrong matters — exact commands, flags, ports, version numbers, API/config details. Don't write technical specifics from memory; research first, then write the section grounded in what it returns, carrying the source links through into the body. Skip it for general/conceptual sections you can write well without sources.\n\n" +
 			"When the user asks for a section or a change, make it with the tool so it lands in the document and the viewer updates. In chat, keep your prose short — a sentence confirming what you added/changed — because the CONTENT belongs in the guide, not the chat. Never describe your own storage or write files; the app stores the guide. If the user just wants to discuss or plan, answer normally without calling a tool.",
 	})
 }
