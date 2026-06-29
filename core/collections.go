@@ -233,6 +233,22 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 		// surfaces (also covers the no-embedding case, keyword only).
 		return HybridSearchByPredicate(db, allow, query, vec, k)
 	}
+	// Chunks for both user- and deployment-scoped collections live in the
+	// dedicated VectorDB — all shared chunk I/O routes there, and new ingests
+	// (autofill, research) write ONLY there. Search it for the union of every
+	// resolved source. Fall back to the legacy split stores (base root for
+	// user-scoped, RootDB for deployment) only when VectorDB is unset (early
+	// init); the one-shot migration left those legacy rows in place.
+	if VectorDB != nil {
+		allSources := make(map[string]bool, len(baseSources)+len(rootSources))
+		for s := range baseSources {
+			allSources[s] = true
+		}
+		for s := range rootSources {
+			allSources[s] = true
+		}
+		return search(VectorDB, allSources)
+	}
 	hits := search(base, baseSources)
 	if len(rootSources) > 0 && RootDB != nil {
 		hits = MergeHitsByScore(hits, search(RootDB, rootSources), k)
@@ -287,6 +303,18 @@ func FetchCollectionDoc(base Database, user string, collectionIDs []string, docI
 			out = append(out, c)
 		}
 		return out
+	}
+	// Chunks live in the dedicated VectorDB (see SearchCollections); read the
+	// union there, falling back to the legacy split stores only pre-VectorDB.
+	if VectorDB != nil {
+		allSources := make(map[string]bool, len(baseSources)+len(rootSources))
+		for s := range baseSources {
+			allSources[s] = true
+		}
+		for s := range rootSources {
+			allSources[s] = true
+		}
+		return AssembleChunkDoc(collect(VectorDB, allSources), maxChars)
 	}
 	chunks := collect(base, baseSources)
 	chunks = append(chunks, collect(RootDB, rootSources)...)

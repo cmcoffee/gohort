@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 
@@ -241,6 +242,17 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			out, err := orch.RunAgentSync(context.Background(), user, user, "seed-research", topic)
 			if err != nil {
 				return "", fmt.Errorf("research failed: %w", err)
+			}
+			// Auto-persist the cited synthesis into the guide's own research
+			// collection, so it accretes a reusable knowledge base the
+			// search_knowledge tool can recall later (across sessions). Best-effort:
+			// the findings are still returned for immediate drafting even if there's
+			// no open guide or the ingest is skipped.
+			if g, ok := openGuide(); ok && strings.TrimSpace(out) != "" {
+				collID, _ := ensureGuideCollection(udb, user, g)
+				reportID := fmt.Sprintf("guide-research-%s-%d", collID, time.Now().UnixNano())
+				IngestReportTitled(context.Background(), VectorDB, CollectionSource(collID), reportID, topic, out, "research")
+				out += "\n\n_(Saved to this guide's research collection — you can recall it later with search_knowledge.)_"
 			}
 			return out, nil
 		},

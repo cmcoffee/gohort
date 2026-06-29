@@ -32,7 +32,7 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 	case path == "guides":
 		T.handleList(w, r, udb)
 	case path == "guide":
-		T.handleGuide(w, r, udb)
+		T.handleGuide(w, r, udb, user)
 	case path == "new":
 		T.handleNew(w, r, udb)
 	case path == "revisions":
@@ -83,7 +83,7 @@ func (T *Guides) handleList(w http.ResponseWriter, r *http.Request, udb Database
 
 // handleGuide GETs one guide rendered for the viewer ({id, title, html}) or
 // DELETEs it.
-func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Database) {
+func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	switch r.Method {
 	case http.MethodGet:
@@ -94,7 +94,7 @@ func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 		}
 		writeJSON(w, map[string]any{"id": g.ID, "title": g.Title, "html": renderGuideHTML(g, true)})
 	case http.MethodDelete:
-		deleteGuide(udb, id)
+		deleteGuide(udb, user, id)
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

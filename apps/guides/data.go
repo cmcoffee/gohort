@@ -96,9 +96,51 @@ func listGuides(udb Database) []Guide {
 	return out
 }
 
-func deleteGuide(udb Database, id string) {
+func deleteGuide(udb Database, user, id string) {
 	udb.Unset(guidesTable, id)
 	udb.Unset(revisionsTable, id)
+	// Vacuum the guide's auto-research collection (metadata + its chunks in
+	// VectorDB) so deleting a guide doesn't leave an orphaned collection behind.
+	DeleteCollection(UserDB(CollectionsDB(), user), VectorDB, user, guideCollectionID(id))
+}
+
+// --- per-guide research collection -------------------------------------------
+
+// guideCollectionID is the deterministic knowledge-collection ID for a guide's
+// auto-collected research. One collection per guide, derived from the guide ID.
+func guideCollectionID(guideID string) string { return "guide-" + guideID }
+
+// ensureGuideCollection returns the guide's own research collection, creating it
+// (user-scoped, in the shared collections home) on first use and AUTO-ATTACHING
+// it to the guide so the search_knowledge tool + Knowledge picker include it.
+// Returns the collection ID and the (possibly updated) guide. Collections live
+// in CollectionsDB(), so this never reaches into orchestrate.
+func ensureGuideCollection(udb Database, user string, g Guide) (string, Guide) {
+	collID := guideCollectionID(g.ID)
+	cdb := UserDB(CollectionsDB(), user)
+	if _, ok := LoadCollection(cdb, user, collID); !ok {
+		SaveCollection(cdb, Collection{
+			ID:          collID,
+			Owner:       user,
+			Name:        "Guide research: " + firstNonEmpty(g.Title, "Untitled guide"),
+			Description: "Cited research the Guide Author gathered while writing this guide. Searched via the guide's search_knowledge tool; grows as you ask it to research topics.",
+			Scope:       CollectionScopeUser,
+			Created:     time.Now(),
+		})
+	}
+	// Auto-attach so search_knowledge consults it and the picker shows it ticked.
+	attached := false
+	for _, id := range g.Collections {
+		if id == collID {
+			attached = true
+			break
+		}
+	}
+	if !attached {
+		g.Collections = append(g.Collections, collID)
+		g = saveGuide(udb, g)
+	}
+	return collID, g
 }
 
 // --- revisions ---------------------------------------------------------------
