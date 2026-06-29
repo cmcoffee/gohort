@@ -53,9 +53,14 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 					Description: "(create/update) Optional script-backed data endpoints — the way to give an app real LOGIC instead of plain stored-record CRUD. Each is {name, script, language?, capabilities?}. The script (python by default; set language:\"bash\" for shell) COMPUTES the JSON a table/display renders: it receives the app's stored records as the env var `records` (a JSON string — json.loads it) plus each request query param as its own env var, and must PRINT a JSON value to stdout (a JSON array for a table, a JSON object for a display). To pull external data, declare capabilities and call the gohort hook from the script: `from gohort import fetch, log` then `fetch(url)` (capabilities:[\"fetch\",\"log\"]) — the host performs the fetch (the sandbox itself has no raw network). A table/display section then sets source_script:\"<name>\" to read from it instead of the record store. Use this for apps that fetch/aggregate/transform (a dashboard over an API, a computed report) rather than just collecting form entries. Owner-only today.",
 					Items:       &ToolParam{Type: "object"},
 				},
+				"actions": {
+					Type:        "array",
+					Description: "(create/update) Optional script-backed action buttons — the WRITE side of the logic seam (data_sources is the read side). Each is {name, label?, desc?, script, language?, capabilities?, confirm?}. A button labeled `label` runs the script when clicked; the script receives the app's stored records (env var `records`, JSON) + any params, and PRINTS a JSON OBJECT {message?: string, records?: [...]}. The FRAMEWORK upserts any returned records into the app's store (so they appear in the tables — your script does NOT write the store itself) and shows the message. Use for app verbs like \"Sync now\", \"Generate\", \"Refresh from API\". Surface the buttons with an `actions` section. Set confirm for destructive ones. capabilities work the same as data_sources (e.g. [\"fetch\"] for `from gohort import fetch`).",
+					Items:       &ToolParam{Type: "object"},
+				},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -92,7 +97,9 @@ Section kinds: form (create form; set modal=true + submit_label for the structur
 
 Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
 
-For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that receives the app's records (env var 'records', a JSON string) + query params and PRINTS JSON; reach external data with 'from gohort import fetch' (capabilities:["fetch"]). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Owner-only.`
+For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that receives the app's records (env var 'records', a JSON string) + query params and PRINTS JSON; reach external data with 'from gohort import fetch' (capabilities:["fetch"]). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Owner-only.
+
+For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?}] — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Surface them with an "actions" section. Served at /custom/<slug>/action/<name>.`
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -155,6 +162,11 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// replaces the stored set on update (omit to keep existing).
 	if raw, ok := args["data_sources"]; ok && raw != nil {
 		spec.DataSources = appDataSources(raw)
+	}
+	// Script-backed actions (the write-side logic seam): buttons that run a
+	// script which returns records the framework persists.
+	if raw, ok := args["actions"]; ok && raw != nil {
+		spec.Actions = appActionDefs(raw)
 	}
 
 	// Build the Page from the declarative sections. On update with no sections
@@ -289,6 +301,18 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 		sec.Body = tbl
 	case "display":
 		sec.Body = ui.DisplayPanel{Source: appSectionSource(m), Pairs: appDisplayPairs(m["pairs"])}
+	case "actions":
+		// A row of buttons, one per declared action (the app's `actions`). Each
+		// button POSTs to action/<name>; the framework runs the script, persists
+		// any returned records, and refreshes the records table. Button labels +
+		// per-action confirm ride on the items (see handleActionsList).
+		sec.Body = ui.ActionList{
+			Source:     "actions",
+			DescField:  "desc",
+			PostTo:     "action/{name}",
+			Invalidate: []string{"records"},
+			EmptyText:  firstNonEmptyStr(mapStr(m, "empty_text"), "No actions."),
+		}
 	case "empty":
 		sec.Body = ui.EmptyState{
 			Icon:  mapStr(m, "icon"),
@@ -320,7 +344,7 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything…"),
 		}
 	default:
-		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty | chat | workbench", kind)
+		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty | chat | workbench | actions", kind)
 	}
 	return sec, nil
 }
@@ -508,6 +532,36 @@ func appDataSources(raw any) []AppDataSource {
 			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
 			Script:       script,
 			Capabilities: appStringList(m["capabilities"]),
+		})
+	}
+	return out
+}
+
+// appActionDefs parses the declarative actions array into AppAction records.
+func appActionDefs(raw any) []AppAction {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var out []AppAction
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := slugify(mapStr(m, "name"))
+		script := mapStr(m, "script")
+		if name == "" || strings.TrimSpace(script) == "" {
+			continue
+		}
+		out = append(out, AppAction{
+			Name:         name,
+			Label:        strings.TrimSpace(mapStr(m, "label")),
+			Desc:         strings.TrimSpace(mapStr(m, "desc")),
+			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
+			Script:       script,
+			Capabilities: appStringList(m["capabilities"]),
+			Confirm:      strings.TrimSpace(mapStr(m, "confirm")),
 		})
 	}
 	return out

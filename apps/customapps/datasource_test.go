@@ -65,3 +65,47 @@ func TestRunDataSourcePython(t *testing.T) {
 		t.Fatalf("records not passed through (expected n=2): %q", out)
 	}
 }
+
+// TestRunAppScriptAction dispatches an action-shaped script (prints a JSON object
+// {message, records}) through the shared runner — the write-side seam. The
+// framework's upsert of result.Records lives in handleAction; here we just prove
+// the script runs and its object output round-trips.
+func TestRunAppScriptAction(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	ws, err := os.MkdirTemp(home, "gohort-act-test-")
+	if err != nil {
+		t.Skipf("cannot create workspace outside /tmp: %v", err)
+	}
+	defer os.RemoveAll(ws)
+	SetWorkspacesDir(filepath.Join(ws, "workspaces"))
+
+	script := "import os, json\n" +
+		"recs = json.loads(os.environ.get('records', '[]'))\n" +
+		"print(json.dumps({'message': 'synced ' + os.environ.get('note',''), 'records': recs + [{'id':'new'}]}))\n"
+	args := map[string]any{"records": `[{"id":"a"}]`, "note": "ok"}
+
+	out, err := runAppScript("tester", nil, "demo-app", "action", "sync", "python", script, []string{}, args)
+	if err != nil {
+		t.Skipf("sandbox/python unavailable: %v", err)
+	}
+	out = strings.TrimSpace(out)
+	if !json.Valid([]byte(out)) {
+		t.Skipf("non-JSON output (likely no python3/sandbox): %q", out)
+	}
+	var result struct {
+		Message string           `json:"message"`
+		Records []map[string]any `json:"records"`
+	}
+	if e := json.Unmarshal([]byte(out), &result); e != nil {
+		t.Fatalf("output is not a JSON object: %q (%v)", out, e)
+	}
+	if result.Message != "synced ok" {
+		t.Fatalf("message/param not passed through: %q", out)
+	}
+	if len(result.Records) != 2 {
+		t.Fatalf("expected 2 records back (1 in + 1 added): %q", out)
+	}
+}

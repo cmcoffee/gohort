@@ -7279,16 +7279,25 @@ const runtimeJS = `
         }
         items.forEach(function(item) {
           var status = el('span', {class: 'ui-actionlist-status'});
+          // Per-item overrides (additive, backward-compatible): an item may
+          // carry its own button label + confirm prompt, so a list can render
+          // distinctly-labeled buttons (e.g. app action buttons) rather than
+          // one shared verb.
+          var itemBtnText = item.button || btnText;
+          var itemConfirm = item.confirm || cfg.confirm;
           var btn = el('button', {class: 'ui-row-btn', onclick: async function() {
-            if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
+            if (itemConfirm && !(await window.uiConfirm(itemConfirm))) return;
             var url = substitute(cfg.post_to, item);
             btn.disabled = true;
             status.textContent = '…';
             fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
               btn.disabled = false;
-              // Most maintenance endpoints return {fixed: N} or similar;
-              // surface a digit if present.
-              if (r && typeof r === 'object') {
+              // Prefer an explicit {message}; else surface a {fixed}/{removed}
+              // digit; else a bare "done".
+              if (r && typeof r === 'object' && r.message) {
+                status.textContent = 'done';
+                showToast(r.message);
+              } else if (r && typeof r === 'object') {
                 var n = r.fixed != null ? r.fixed : (r.removed != null ? r.removed : null);
                 status.textContent = n != null ? ('done — ' + n) : 'done';
               } else {
@@ -7304,10 +7313,13 @@ const runtimeJS = `
               status.textContent = '';
               showToast('Failed: ' + err.message);
             });
-          }}, [btnText]);
+          }}, [itemBtnText]);
           var row = el('div', {class: 'ui-actionlist-row'}, [
             el('div', {class: 'ui-actionlist-text'}, [
-              el('div', {class: 'ui-actionlist-label'}, [item[labelField] || '?']),
+              // Render the label only when present — items that label their
+              // OWN button (item.button) often have no separate row label, and
+              // a literal '?' placeholder reads as broken.
+              item[labelField] ? el('div', {class: 'ui-actionlist-label'}, [item[labelField]]) : null,
               item[descField] ? el('div', {class: 'ui-actionlist-desc'}, [item[descField]]) : null,
             ]),
             status, btn,

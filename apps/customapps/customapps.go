@@ -116,6 +116,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		_ = ui.RenderPageJSON(w, spec.Page, "", "", spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, user, udb, spec, strings.TrimPrefix(rest, "data/"))
+	case rest == "actions":
+		T.handleActionsList(w, r, spec)
+	case strings.HasPrefix(rest, "action/"):
+		T.handleAction(w, r, user, udb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "records":
 		T.handleRecords(w, r, udb, spec)
 	case rest == "record":
@@ -318,23 +322,27 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, user str
 	_, _ = w.Write([]byte(trimmed))
 }
 
-// runDataSource executes one data-source script as a sandboxed shell TempTool
-// and returns its stdout. Reuses the whole temptool execution path (bwrap
-// sandbox, the gohort hook for fetch/log, params-as-env-vars) — a data source is
-// just a TempTool the framework dispatches on the app owner's behalf. The script
-// file is named per (slug, source) so concurrent apps don't collide in the
-// owner's workspace.
+// runDataSource executes one data-source script and returns its stdout.
 func runDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any) (string, error) {
+	return runAppScript(user, db, slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, args)
+}
+
+// runAppScript executes one custom-app script (a data source or an action) as a
+// sandboxed shell TempTool and returns its stdout. Reuses the whole temptool
+// execution path (bwrap sandbox, the gohort hook for fetch/log, params-as-env-
+// vars) — the script is just a TempTool the framework dispatches on the app
+// owner's behalf. The script file is named per (kind, slug, name) so concurrent
+// apps/scripts don't collide in the owner's workspace.
+func runAppScript(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
 	ws, err := EnsureWorkspaceDir(user)
 	if err != nil {
 		return "", fmt.Errorf("workspace: %w", err)
 	}
 	interp, ext := "python3", "py"
-	if l := strings.ToLower(strings.TrimSpace(ds.Language)); l == "bash" || l == "sh" {
+	if l := strings.ToLower(strings.TrimSpace(language)); l == "bash" || l == "sh" {
 		interp, ext = "bash", "sh"
 	}
-	scriptName := fmt.Sprintf("ds_%s_%s.%s", sanitizeName(slug), sanitizeName(ds.Name), ext)
-	caps := ds.Capabilities
+	scriptName := fmt.Sprintf("%s_%s_%s.%s", kind, sanitizeName(slug), sanitizeName(name), ext)
 	if caps == nil {
 		caps = []string{"fetch", "log"} // sensible default: read external data + log
 	}
@@ -343,10 +351,10 @@ func runDataSource(user string, db Database, slug string, ds AppDataSource, args
 		params[k] = ToolParam{Type: "string"}
 	}
 	tt := &TempTool{
-		Name:             "app_data_source:" + slug + ":" + ds.Name,
-		Description:      "custom app data source",
+		Name:             "app_" + kind + ":" + slug + ":" + name,
+		Description:      "custom app " + kind,
 		Mode:             "shell",
-		ScriptBody:       ds.Script,
+		ScriptBody:       script,
 		ScriptName:       scriptName,
 		CommandTemplate:  interp + " {workspace_dir}/" + scriptName,
 		HookCapabilities: caps,
@@ -356,11 +364,123 @@ func runDataSource(user string, db Database, slug string, ds AppDataSource, args
 		Username:     user,
 		WorkspaceDir: ws,
 		DB:           db,
-		// The owner is viewing their own app — allow the hook's fetch/browse to
+		// The owner is acting in their own app — allow the hook's fetch/browse to
 		// reach the network (the sandbox itself stays network-isolated).
 		Network: NewNetworkConnector(false),
 	}
 	return temptool.DispatchTempToolDirect(sess, tt, args)
+}
+
+// handleActionsList feeds the actions section's button list: one {name, button,
+// desc, confirm} per declared action. GET only.
+func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, spec AppSpec) {
+	type item struct {
+		Name    string `json:"name"`
+		Button  string `json:"button"`
+		Desc    string `json:"desc,omitempty"`
+		Confirm string `json:"confirm,omitempty"`
+	}
+	out := []item{}
+	for _, a := range spec.Actions {
+		label := strings.TrimSpace(a.Label)
+		if label == "" {
+			label = a.Name
+		}
+		out = append(out, item{Name: a.Name, Button: label, Desc: a.Desc, Confirm: a.Confirm})
+	}
+	writeJSON(w, out)
+}
+
+// handleAction runs a named action script: POST /custom/<slug>/action/<name>.
+// The app's stored records + the request's params go in; the script prints a
+// JSON object {message?, records?}. The FRAMEWORK upserts any returned records
+// into the store (so they reach the viewer — the script never writes the store),
+// and returns {message} for the button. Owner-only (per-owner specs).
+func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, user string, udb Database, spec AppSpec, name string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var act *AppAction
+	for i := range spec.Actions {
+		if spec.Actions[i].Name == name {
+			act = &spec.Actions[i]
+			break
+		}
+	}
+	if act == nil || strings.TrimSpace(act.Script) == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Hand the script the app's records + request params (query + JSON body).
+	tbl := recTable(spec.Slug)
+	records := []map[string]any{}
+	for _, k := range udb.Keys(tbl) {
+		var rec map[string]any
+		if udb.Get(tbl, k, &rec) {
+			records = append(records, rec)
+		}
+	}
+	recJSON, _ := json.Marshal(records)
+	args := map[string]any{"records": string(recJSON)}
+	for k, vs := range r.URL.Query() {
+		if len(vs) > 0 {
+			args[k] = vs[0]
+		}
+	}
+	if r.Body != nil {
+		var body map[string]any
+		if json.NewDecoder(r.Body).Decode(&body) == nil {
+			for k, v := range body {
+				args[k] = fmt.Sprint(v)
+			}
+		}
+	}
+
+	out, err := runAppScript(user, udb, spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
+	if err != nil {
+		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
+		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Parse the script's JSON object: {message?, records?}. The framework owns
+	// persistence — it upserts the returned records so they reach the viewer.
+	var result struct {
+		Message string           `json:"message"`
+		Records []map[string]any `json:"records"`
+	}
+	trimmed := strings.TrimSpace(out)
+	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
+		Log("[customapps] action %q/%q returned non-object JSON (first 200B): %.200s", spec.Slug, name, trimmed)
+		http.Error(w, "the action script must print a JSON object {message?, records?} to stdout", http.StatusInternalServerError)
+		return
+	}
+	saved := 0
+	for _, rec := range result.Records {
+		if rec == nil {
+			continue
+		}
+		id, _ := rec[spec.RecordKey].(string)
+		if strings.TrimSpace(id) == "" {
+			id = newID()
+			rec[spec.RecordKey] = id
+		}
+		if _, ok := rec["created"]; !ok {
+			rec["created"] = time.Now().UTC().Format(time.RFC3339)
+		}
+		udb.Set(tbl, id, rec)
+		saved++
+	}
+	msg := strings.TrimSpace(result.Message)
+	if msg == "" {
+		if saved > 0 {
+			msg = fmt.Sprintf("Done — %d record(s) updated.", saved)
+		} else {
+			msg = "Done."
+		}
+	}
+	writeJSON(w, map[string]any{"message": msg, "saved": saved})
 }
 
 // sanitizeName reduces a slug/name to a safe filename fragment (alnum + _).

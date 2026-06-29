@@ -43,8 +43,12 @@ type AppSpec struct {
 	// This is the "logic" seam: structure stays declarative, computation/integration
 	// is a sandboxed script.
 	DataSources []AppDataSource `json:"data_sources,omitempty"`
-	Created     string          `json:"created"`
-	Updated     string          `json:"updated"`
+	// Actions are script-backed buttons (see AppAction) — the write-side of the
+	// logic seam. Served at /custom/<slug>/action/<name>; surfaced by an "actions"
+	// section.
+	Actions []AppAction `json:"actions,omitempty"`
+	Created string      `json:"created"`
+	Updated string      `json:"updated"`
 }
 
 // AppDataSource is a script-backed data endpoint for a custom app: a sandboxed
@@ -61,6 +65,23 @@ type AppDataSource struct {
 	Language     string   `json:"language,omitempty"`     // "python" (default) | "bash"
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps: fetch, log, browse_page, fetch_via:<cred>
+}
+
+// AppAction is a script-backed custom-app action: a sandboxed script a button
+// fires. Like AppDataSource it receives the app's stored records (env var
+// `records`, JSON) + request params, but it prints a JSON OBJECT to stdout:
+// {message?: string, records?: [...]}. The FRAMEWORK upserts any returned records
+// into the app's store (so the result reaches the viewer — the script never
+// writes the store itself, which keeps the no-workspace-divergence footgun shut)
+// and shows the message. The write-side counterpart to AppDataSource.
+type AppAction struct {
+	Name         string   `json:"name"`                   // referenced by the button (action/<name>)
+	Label        string   `json:"label,omitempty"`        // button text (default: humanized name)
+	Desc         string   `json:"desc,omitempty"`         // optional sub-label
+	Language     string   `json:"language,omitempty"`     // "python" (default) | "bash"
+	Script       string   `json:"script"`                 // the script body
+	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps
+	Confirm      string   `json:"confirm,omitempty"`      // optional confirm prompt before firing
 }
 
 // appSpecStore returns the shared per-owner spec store (RootDB → user:<owner>),
