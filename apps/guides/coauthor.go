@@ -246,7 +246,51 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		},
 	}
 
-	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection, research}
+	// search_knowledge searches the knowledge collections ATTACHED to the open
+	// guide (the user's own curated knowledge) and returns the most relevant
+	// passages. Distinct from `research` (which goes to the web): this grounds a
+	// section in the user's internal/private material. No-op-ish when the guide has
+	// no attached collections — it tells the agent to ask the user to attach some.
+	searchKnowledge := AgentToolDef{
+		Tool: Tool{
+			Name:        "search_knowledge",
+			Description: "Search the knowledge collections attached to the OPEN guide (the user's own curated documents) for passages relevant to a query, and return the best matches with their source labels. Use this BEFORE web research when the guide is about internal/private material the user has collected — it grounds the section in their own knowledge. If nothing is attached, it says so; then fall back to the `research` tool for public topics.",
+			Parameters: map[string]ToolParam{
+				"query": {Type: "string", Description: "What to look up — a focused question or topic, e.g. 'firewall failover configuration steps'."},
+			},
+			Required: []string{"query"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			query := strings.TrimSpace(fmt.Sprint(args["query"]))
+			if query == "" {
+				return "", fmt.Errorf("query is required")
+			}
+			g, ok := openGuide()
+			if !ok {
+				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+			}
+			if len(g.Collections) == 0 {
+				return "No knowledge collections are attached to this guide. Ask the user to attach one with the Knowledge button on the guide toolbar, or use the `research` tool for public topics.", nil
+			}
+			hits := SearchCollections(context.Background(), CollectionsDB(), user, g.Collections, query, 6)
+			if len(hits) == 0 {
+				return fmt.Sprintf("No matches for %q in the attached collections.", query), nil
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "Passages from the attached collections relevant to %q (use what fits, cite the source labels):\n", query)
+			for _, h := range hits {
+				label := strings.TrimSpace(h.Section)
+				if label == "" {
+					label = h.Source
+				}
+				b.WriteString("\n--- " + label + " ---\n")
+				b.WriteString(strings.TrimSpace(h.Text) + "\n")
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+	}
+
+	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge}
 }
 
 // reorderSections moves the section at idx to clampedTarget (0-based), clamping

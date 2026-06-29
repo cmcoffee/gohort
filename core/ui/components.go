@@ -2055,6 +2055,10 @@ type WorkbenchPanel struct {
 //   - "history"  — GET URL → [{id, at, note}]; render a list with Restore
 //     buttons that POST RestoreURL (with {id} = record, {rev} = entry id), then
 //     refresh the viewer.
+//   - "client"   — browser-side action: URL carries the name of a handler
+//     registered via window.uiRegisterClientAction. The handler receives
+//     ({recordId, button, action, refresh}) so an app can mount its own toolbar
+//     behavior (open a picker, copy, print, …) without core/ui knowing it.
 type WorkbenchAction struct {
 	Label      string `json:"label"`
 	URL        string `json:"url"`

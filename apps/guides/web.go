@@ -49,6 +49,8 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleSectionMove(w, r, udb)
 	case path == "section/add":
 		T.handleSectionAdd(w, r, udb)
+	case path == "collections":
+		T.handleCollections(w, r, udb, user)
 	case path == "chat/active":
 		T.handleSetActive(w, r, udb)
 	case path == "chat/send":
@@ -306,6 +308,51 @@ func (T *Guides) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Da
 	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: strings.TrimSpace(body.Markdown), Order: g.nextOrder()})
 	saveGuideRev(udb, g, "Added section: "+title)
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleCollections drives the per-guide knowledge picker. GET ?guide=<id>
+// returns {available: [{id,name,description}], attached: [ids]} — the
+// collections the user can attach (their own + deployment-scoped) plus the set
+// already attached to this guide. POST ?guide=<id> with {collections:[ids]}
+// stores the attachment on the guide. Collections live in the shared
+// collections home (CollectionsDB()), so guides never reaches into orchestrate.
+func (T *Guides) handleCollections(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
+	switch r.Method {
+	case http.MethodGet:
+		type item struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description,omitempty"`
+		}
+		available := []item{}
+		for _, c := range ListCollections(UserDB(CollectionsDB(), user), user) {
+			available = append(available, item{ID: c.ID, Name: c.Name, Description: c.Description})
+		}
+		attached := []string{}
+		if g, ok := loadGuide(udb, gid); ok && g.Collections != nil {
+			attached = g.Collections
+		}
+		writeJSON(w, map[string]any{"available": available, "attached": attached})
+	case http.MethodPost:
+		g, ok := loadGuide(udb, gid)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			Collections []string `json:"collections"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		g.Collections = body.Collections
+		saveGuide(udb, g) // not a content change — no revision snapshot
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (T *Guides) handleSetActive(w http.ResponseWriter, r *http.Request, udb Database) {

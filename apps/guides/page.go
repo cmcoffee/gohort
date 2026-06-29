@@ -44,6 +44,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			{Label: "Preview", Kind: "download", URL: "export?id={id}&format=html"},
 			{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 			{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
 			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…"},
 		},
@@ -68,7 +69,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		BackURL:       "/",
 		MaxWidth:      "100%",
 		Sections:      []ui.Section{{NoChrome: true, Body: wb}},
-		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS,
+		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS + guideKnowledgeJS,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -218,3 +219,69 @@ const guideSectionJS = `<script>
   });
 })();
 </script>`
+
+// guideKnowledgeJS registers the 'guides_knowledge' client action behind the
+// Knowledge toolbar button: a modal that attaches/detaches knowledge collections
+// to the open guide (the set the Guide Author's search_knowledge tool consults).
+// App-specific, injected via ExtraHeadHTML so the picker stays out of core/ui.
+const guideKnowledgeJS = `<script>
+(function(){
+  function el(tag, attrs, kids){
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function register(){
+    if (!window.uiRegisterClientAction) return;
+    window.uiRegisterClientAction('guides_knowledge', function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'guide=' + encodeURIComponent(gid);
+      fetch('collections?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+        var available = (d && d.available) || [];
+        var attached = {};
+        ((d && d.attached) || []).forEach(function(id){ attached[id] = true; });
+        window.uiOpenSimpleModal({title:'Attach knowledge', width:'560px', mount: function(body, dlg){
+          body.appendChild(el('p', {class:'guide-kn-intro', text:'Pick the knowledge collections the Guide Author can search while drafting this guide. It searches them with the search_knowledge tool to ground sections in your own material.'}));
+          if (!available.length){
+            body.appendChild(el('div', {class:'guide-kn-empty', text:'You have no knowledge collections yet. Create one in the Knowledge app, then attach it here.'}));
+            return;
+          }
+          var boxes = [];
+          var listWrap = el('div', {class:'guide-kn-list'});
+          available.forEach(function(c){
+            var cb = el('input', {type:'checkbox'}); cb.value = c.id; if (attached[c.id]) cb.checked = true;
+            boxes.push(cb);
+            var label = el('label', {class:'guide-kn-item'}, [cb,
+              el('span', {class:'guide-kn-name', text: c.name || c.id})]);
+            if (c.description) label.appendChild(el('span', {class:'guide-kn-desc', text: c.description}));
+            listWrap.appendChild(label);
+          });
+          body.appendChild(listWrap);
+          var save = el('button', {class:'ui-row-btn primary', text:'Save'});
+          body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
+          save.addEventListener('click', function(){
+            var ids = boxes.filter(function(b){ return b.checked; }).map(function(b){ return b.value; });
+            save.disabled = true; save.textContent = 'Saving…';
+            fetch('collections?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({collections: ids})})
+              .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+              .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} })
+              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
+          });
+        }});
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
+})();
+</script>
+<style>
+.guide-kn-intro { color: var(--text-mute); font-size: 0.88rem; margin: 0 0 0.9rem; }
+.guide-kn-empty { color: var(--text-mute); font-style: italic; padding: 0.5rem 0; }
+.guide-kn-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 22rem; overflow-y: auto; }
+.guide-kn-item { display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.55rem; align-items: center; cursor: pointer; padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; }
+.guide-kn-item:hover { border-color: var(--accent); }
+.guide-kn-name { font-weight: 600; color: var(--text-hi); font-size: 0.92rem; }
+.guide-kn-desc { grid-column: 2; color: var(--text-mute); font-size: 0.8rem; }
+</style>`

@@ -34,8 +34,12 @@ type Guide struct {
 	Title    string    `json:"title"`
 	Subtitle string    `json:"subtitle,omitempty"`
 	Sections []Section `json:"sections"`
-	Created  string    `json:"created"`
-	Updated  string    `json:"updated"`
+	// Collections are knowledge-collection IDs attached to this guide. The Guide
+	// Author searches them (search_knowledge tool) to ground sections in the
+	// user's own curated knowledge, alongside web research.
+	Collections []string `json:"collections,omitempty"`
+	Created     string   `json:"created"`
+	Updated     string   `json:"updated"`
 }
 
 func newID() string {

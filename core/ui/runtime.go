@@ -17039,6 +17039,19 @@ const runtimeJS = `
       if (!selectedId) return;
       var url = (a.url || '').replace('{id}', encodeURIComponent(selectedId));
       if (a.confirm && !window.confirm(a.confirm)) return;
+      if (a.kind === 'client') {
+        // Browser-side action — dispatch by name (a.url carries the action
+        // name) to a handler registered via window.uiRegisterClientAction.
+        // The handler gets the open record id + a refresh hook so app-specific
+        // toolbar behavior (open a picker, copy, print, …) stays out of core/ui.
+        var fn = window.UIClientActions && window.UIClientActions[a.url];
+        if (typeof fn === 'function') {
+          fn({recordId: selectedId, button: btn, action: a, refresh: function(){ loadViewer(selectedId); }});
+        } else {
+          showToast('No handler for client action: ' + a.url);
+        }
+        return;
+      }
       if (a.kind === 'download') {
         window.open(url, '_blank');
         return;
