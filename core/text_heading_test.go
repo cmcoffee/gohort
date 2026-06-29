@@ -50,3 +50,26 @@ func TestMarkdownToHTML_HeadingsInCode(t *testing.T) {
 		t.Errorf("heading inside code block was parsed as a real heading:\n%s", html)
 	}
 }
+
+func TestMarkdownLinks_SourcesLine(t *testing.T) {
+	md := "Sources: [OneUptime: Containerize Go](https://oneuptime.com/blog/post/x/view) | [Snyk: Go](https://snyk.io/blog/containerizing-go/)"
+	html := MarkdownToHTML(md)
+	// Both links convert to anchors with the title as the visible text.
+	if !strings.Contains(html, `<a href="https://oneuptime.com/blog/post/x/view" target="_blank" rel="noopener noreferrer">OneUptime: Containerize Go</a>`) {
+		t.Errorf("first source link not converted:\n%s", html)
+	}
+	if !strings.Contains(html, `>Snyk: Go</a>`) {
+		t.Errorf("second source link not converted:\n%s", html)
+	}
+	// No literal markdown-link brackets left over.
+	if strings.Contains(html, "](http") {
+		t.Errorf("literal markdown-link syntax leaked:\n%s", html)
+	}
+}
+
+func TestMarkdownLinks_BareURLStillAutolinks(t *testing.T) {
+	html := MarkdownToHTML("See https://example.com for details.")
+	if !strings.Contains(html, `<a href="https://example.com"`) {
+		t.Errorf("bare URL not autolinked:\n%s", html)
+	}
+}

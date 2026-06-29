@@ -90,17 +90,10 @@ func InlineMarkdownToHTML(s string) string {
 		`<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>`)
 	autolinkMailAngle := regexp.MustCompile(`&lt;([^\s@&]+@[^\s&]+)&gt;`)
 	s = autolinkMailAngle.ReplaceAllString(s, `<a href="mailto:$1">$1</a>`)
-	// Bare URL in prose — match http/https URLs that AREN'T already
-	// inside an anchor's href or following the ]( of a markdown link.
-	// Negative lookbehind isn't supported in Go's regexp engine, so
-	// we use a heuristic: only match URLs preceded by whitespace,
-	// a bracket open, or a punctuation-like char that ends a sentence.
-	// (?:^|[\s>(]) — start of string OR a context that's safe.
-	bareURL := regexp.MustCompile(`(^|[\s>(])(https?://[^\s<>"'()]+)`)
-	s = bareURL.ReplaceAllString(s,
-		`$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>`)
-
-	// Markdown links: [text](url) → <a href="url">text</a>.
+	// Markdown links: [text](url) → <a href="url">text</a>. These run BEFORE
+	// the bare-URL autolinker below — otherwise the autolinker links the URL
+	// inside `](url)` first, which breaks the [text](url) match and leaves the
+	// literal brackets in the output (the "Sources: [name](url) | …" bug).
 	// Two passes:
 	//   1) MDLinkPattern handles http/https URLs with one level of
 	//      balanced parens (Wikipedia disambiguation paths, MSDN
@@ -142,6 +135,16 @@ func InlineMarkdownToHTML(s string) string {
 			return fmt.Sprintf(`<a href="%s">%s</a>`, url, text)
 		}
 	})
+
+	// Bare URL in prose — match http/https URLs not already linked. Runs AFTER
+	// markdown links, so a URL inside a [text](url) is already in an href="…"
+	// (preceded by a quote) and won't re-match. Only truly loose URLs in prose
+	// get autolinked. Match URLs preceded by start/whitespace/`>`/`(` (the last
+	// for parenthetical "(https://…)"); the quote exclusion in the char class
+	// keeps it off href values.
+	bareURL := regexp.MustCompile(`(^|[\s>(])(https?://[^\s<>"'()]+)`)
+	s = bareURL.ReplaceAllString(s,
+		`$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>`)
 	// Bold.
 	for strings.Contains(s, "**") {
 		start := strings.Index(s, "**")
