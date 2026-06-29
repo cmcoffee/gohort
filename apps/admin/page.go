@@ -179,8 +179,10 @@ func credentialFormFields() []ui.FormField {
 			{Value: "jwt_bearer", Label: "jwt_bearer"},
 			{Value: "refresh_token", Label: "refresh_token"},
 			{Value: "password", Label: "password (user login)"},
+			{Value: "authorization_code", Label: "authorization_code (user connects their own account)"},
 		}},
 		{Field: "token_url", Label: "Token URL (https)", Placeholder: "https://api.ebay.com/identity/v1/oauth2/token", ShowWhen: "type:oauth2"},
+		{Field: "authorize_url", Label: "Authorize URL (https)", Placeholder: "https://accounts.google.com/o/oauth2/v2/auth", ShowWhen: "type:oauth2;grant:authorization_code", Help: "The provider's consent page. Each user is sent here to approve, then redirected back to /account/oauth/callback (PKCE). Register that callback URL with the provider, and set Whose credentials = Per user. The Client Secret below is the app's client secret (blank for a public/PKCE-only client)."},
 		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2"},
 		// Single shared secret field (one input avoids the duplicate-name
 		// clobber the form's submit loop would otherwise cause). For OAuth it

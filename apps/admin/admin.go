@@ -1157,15 +1157,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				MaxCallsPerDay    int      `json:"max_calls_per_day"`
 				CostPerCall       float64  `json:"cost_per_call"`
 				// OAuth2 (type == "oauth2").
-				Grant       string `json:"grant"`
-				TokenURL    string `json:"token_url"`
-				ClientID    string `json:"client_id"`
-				Username    string `json:"username"` // password grant: resource-owner username
-				Scope       string `json:"scope"`
-				JWTIssuer   string `json:"jwt_issuer"`
-				JWTSubject  string `json:"jwt_subject"`
-				JWTAudience string `json:"jwt_audience"`
-				JWTKeyID    string `json:"jwt_key_id"`
+				Grant        string `json:"grant"`
+				TokenURL     string `json:"token_url"`
+				AuthorizeURL string `json:"authorize_url"`
+				ClientID     string `json:"client_id"`
+				Username     string `json:"username"` // password grant: resource-owner username
+				Scope        string `json:"scope"`
+				JWTIssuer    string `json:"jwt_issuer"`
+				JWTSubject   string `json:"jwt_subject"`
+				JWTAudience  string `json:"jwt_audience"`
+				JWTKeyID     string `json:"jwt_key_id"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -1188,6 +1189,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				CostPerCall:       req.CostPerCall,
 				Grant:             strings.TrimSpace(req.Grant),
 				TokenURL:          strings.TrimSpace(req.TokenURL),
+				AuthorizeURL:      strings.TrimSpace(req.AuthorizeURL),
 				ClientID:          strings.TrimSpace(req.ClientID),
 				Username:          strings.TrimSpace(req.Username),
 				Scope:             strings.TrimSpace(req.Scope),
@@ -1207,6 +1209,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					}
 					if c.TokenURL == "" {
 						c.TokenURL = existing.TokenURL
+					}
+					if c.AuthorizeURL == "" {
+						c.AuthorizeURL = existing.AuthorizeURL
 					}
 					if c.ClientID == "" {
 						c.ClientID = existing.ClientID

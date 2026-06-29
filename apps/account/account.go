@@ -9,6 +9,7 @@ package account
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -41,7 +42,70 @@ func (T *Account) WebHidden() bool { return true }
 func (T *Account) Routes() {
 	T.HandleFunc("/api/prefs", T.handlePrefs)
 	T.HandleFunc("/api/connections", T.handleConnections)
+	T.HandleFunc("/oauth/start", T.handleOAuthStart)
+	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
 	T.HandleFunc("/", T.servePage)
+}
+
+// oauthCallbackURI is the absolute redirect URI the OAuth provider sends the user
+// back to. Prefers the admin External URL (must match what the admin registered
+// with the provider); falls back to the request's scheme+host.
+func oauthCallbackURI(r *http.Request) string {
+	base := ""
+	if db := AuthDB(); db != nil {
+		var ext string
+		db.Get(WebTable, "external_url", &ext)
+		base = strings.TrimRight(strings.TrimSpace(ext), "/")
+	}
+	if base == "" {
+		scheme := "https"
+		if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+			scheme = "http"
+		}
+		base = scheme + "://" + r.Host
+	}
+	return base + "/account/oauth/callback"
+}
+
+// handleOAuthStart begins the consent flow for ?cred=<name>: mints state + PKCE
+// and redirects the user to the provider's authorize page.
+func (T *Account) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("cred"))
+	c, found := Secure().Load(name)
+	if !found || !c.IsPerUser() || !c.IsAuthCode() {
+		http.Error(w, "no such OAuth integration", http.StatusNotFound)
+		return
+	}
+	authURL, err := Secure().OAuthStart(c, user, oauthCallbackURI(r))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// handleOAuthCallback completes the flow: exchanges the code for the user's token
+// and returns them to the Account page.
+func (T *Account) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if e := r.URL.Query().Get("error"); e != "" {
+		http.Redirect(w, r, "/account/?oauth=denied", http.StatusFound)
+		return
+	}
+	state := r.URL.Query().Get("state")
+	code := r.URL.Query().Get("code")
+	if _, _, err := Secure().OAuthCallback(r.Context(), state, code); err != nil {
+		Log("[account] oauth callback failed: %v", err)
+		http.Redirect(w, r, "/account/?oauth=failed", http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, "/account/?oauth=connected", http.StatusFound)
 }
 
 // handleConnections GET lists the per-user (per_user-scoped) credentials the user
@@ -61,23 +125,35 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, conns)
 	case http.MethodPost:
 		var body struct {
-			Name   string `json:"name"`
-			Secret string `json:"secret"`
+			Name       string `json:"name"`
+			Secret     string `json:"secret"`
+			Disconnect bool   `json:"disconnect"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		// Guard: only let a user set a secret for a credential that's actually
-		// per_user (don't let the account page touch shared/admin secrets).
+		// Guard: only per_user credentials are touchable from the account page
+		// (never the shared/admin secrets).
 		c, found := Secure().Load(body.Name)
 		if !found || !c.IsPerUser() {
 			http.Error(w, "no such per-user integration", http.StatusNotFound)
 			return
 		}
-		if err := Secure().SaveUserSecret(body.Name, user, body.Secret); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		switch {
+		case body.Disconnect && c.IsAuthCode():
+			Secure().ClearUserToken(body.Name, user) // OAuth: drop the token
+		case c.IsAuthCode():
+			// OAuth creds connect via the consent flow (oauth/start), not by
+			// posting a secret here.
+			http.Error(w, "this integration connects via OAuth — use Connect", http.StatusBadRequest)
 			return
+		default:
+			// Key creds: set or clear the user's key (empty secret = disconnect).
+			if err := Secure().SaveUserSecret(body.Name, user, body.Secret); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -192,12 +268,14 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
   var box = document.getElementById('acct-conns');
   if (!box) return;
   function el(t, a, k){ var n=document.createElement(t); if(a) for(var x in a){ if(x==='text') n.textContent=a[x]; else if(x==='class') n.className=a[x]; else n.setAttribute(x,a[x]); } (k||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
-  function save(name, secret, btn, label){
+  function post(body, btn){
     btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
-    fetch('api/connections', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:name, secret:secret})})
-      .then(function(r){ if(!r.ok && r.status!==204) throw new Error('HTTP '+r.status); load(); })
+    return fetch('api/connections', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+      .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); load(); })
       .catch(function(e){ btn.disabled=false; btn.textContent=orig; alert('Failed: '+(e&&e.message||e)); });
   }
+  function save(name, secret, btn){ return post({name:name, secret:secret}, btn); }
+  function disconnect(name, btn){ return post({name:name, disconnect:true}, btn); }
   function load(){
     fetch('api/connections', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(list){
       box.innerHTML = '';
@@ -207,14 +285,27 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
         var head = el('div', {class:'acct-conn-head'}, [el('span',{class:'acct-conn-name',text:c.name}), badge]);
         var card = el('div', {class:'acct-conn'}, [head]);
         if (c.description) card.appendChild(el('div',{class:'acct-conn-desc',text:c.description}));
-        var inp = el('input', {type:'password', placeholder: c.connected?'Replace your key…':'Paste your key / token'});
-        var saveBtn = el('button', {class:'ui-row-btn primary', text: c.connected?'Update':'Connect'});
-        saveBtn.addEventListener('click', function(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } save(c.name, v, saveBtn); });
-        var row = el('div', {class:'acct-conn-row'}, [inp, saveBtn]);
-        if (c.connected){
-          var dis = el('button', {class:'ui-row-btn', text:'Disconnect'});
-          dis.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your stored key is removed.')) return; save(c.name, '', dis); });
-          row.appendChild(dis);
+        var row = el('div', {class:'acct-conn-row'});
+        if (c.oauth){
+          // OAuth consent: a Connect button that redirects to the provider.
+          var conn = el('a', {class:'ui-row-btn primary', href:'oauth/start?cred='+encodeURIComponent(c.name), text: c.connected?'Reconnect':'Connect'});
+          row.appendChild(conn);
+          if (c.connected){
+            var d2 = el('button', {class:'ui-row-btn', text:'Disconnect'});
+            d2.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your authorization is removed.')) return; disconnect(c.name, d2); });
+            row.appendChild(d2);
+          }
+        } else {
+          // Per-user key: paste a key.
+          var inp = el('input', {type:'password', placeholder: c.connected?'Replace your key…':'Paste your key / token'});
+          var saveBtn = el('button', {class:'ui-row-btn primary', text: c.connected?'Update':'Connect'});
+          saveBtn.addEventListener('click', function(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } save(c.name, v, saveBtn); });
+          row.appendChild(inp); row.appendChild(saveBtn);
+          if (c.connected){
+            var dis = el('button', {class:'ui-row-btn', text:'Disconnect'});
+            dis.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your stored key is removed.')) return; disconnect(c.name, dis); });
+            row.appendChild(dis);
+          }
         }
         card.appendChild(row);
         box.appendChild(card);

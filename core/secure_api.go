@@ -151,7 +151,8 @@ type SecureCredential struct {
 	// refresh_token). The minted access token is stored encrypted + cached
 	// (apiclient TokenStore) and injected as Authorization: Bearer. See
 	// secure_api_oauth.go.
-	Grant       string `json:"grant,omitempty"`        // client_credentials | jwt_bearer | refresh_token
+	Grant       string `json:"grant,omitempty"`        // client_credentials | jwt_bearer | refresh_token | authorization_code
+	AuthorizeURL string `json:"authorize_url,omitempty"` // authorization_code: the provider's consent (authorize) endpoint
 	TokenURL    string `json:"token_url,omitempty"`    // OAuth token endpoint (https)
 	ClientID    string `json:"client_id,omitempty"`    // client_credentials / refresh_token / password
 	Username    string `json:"username,omitempty"`     // password grant: resource-owner username (config, not secret)
@@ -487,11 +488,12 @@ type PerUserConnection struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Connected   bool   `json:"connected"`
+	OAuth       bool   `json:"oauth"` // true → connect via the consent flow (Connect button), false → paste a key
 }
 
 // PerUserConnectionsFor returns the per_user credentials a user can connect, each
-// flagged with whether they've set their secret. Disabled credentials are
-// omitted. Used by the Account page's Connected-accounts section.
+// flagged connected/not + whether it's OAuth (consent) vs a pasted key. Disabled
+// credentials are omitted. Used by the Account page's Connected-accounts section.
 func (s *SecureAPI) PerUserConnectionsFor(user string) []PerUserConnection {
 	var out []PerUserConnection
 	for _, c := range s.List() {
@@ -501,7 +503,8 @@ func (s *SecureAPI) PerUserConnectionsFor(user string) []PerUserConnection {
 		out = append(out, PerUserConnection{
 			Name:        c.Name,
 			Description: c.Description,
-			Connected:   s.HasUserSecret(c.Name, user),
+			Connected:   s.UserConnected(c, user),
+			OAuth:       c.IsAuthCode(),
 		})
 	}
 	return out
@@ -1004,17 +1007,30 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// audit logging, rate limits, and HTTPS enforcement still apply.
 	var secret string
 	if c.Type != SecureCredNone {
-		var ok bool
 		callUser := ""
 		if sess != nil {
 			callUser = sess.Username
 		}
-		secret, ok = s.resolveSecret(c, callUser)
-		if !ok || secret == "" {
-			if c.IsPerUser() {
-				return "", fmt.Errorf("you haven't connected your %q account yet — set your key on your Account page (Connected accounts)", c.Name)
+		if c.IsAuthCode() {
+			// Interactive OAuth: use the CALLING user's per-user access token
+			// (refreshed when expired). secret holds the bearer token; the OAuth2
+			// injection branch below uses it directly instead of minting one.
+			tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			tok, terr := s.userAccessToken(tctx, c, callUser)
+			cancel()
+			if terr != nil || tok == "" {
+				return "", fmt.Errorf("you haven't connected your %q account yet — click Connect on your Account page (Connected accounts)", c.Name)
 			}
-			return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
+			secret = tok
+		} else {
+			var ok bool
+			secret, ok = s.resolveSecret(c, callUser)
+			if !ok || secret == "" {
+				if c.IsPerUser() {
+					return "", fmt.Errorf("you haven't connected your %q account yet — set your key on your Account page (Connected accounts)", c.Name)
+				}
+				return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
+			}
 		}
 	}
 
@@ -1096,6 +1112,13 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		auth := base64.StdEncoding.EncodeToString([]byte(pair))
 		req.Header.Set("Authorization", "Basic "+auth)
 	case SecureCredOAuth2:
+		if c.IsAuthCode() {
+			// Interactive consent: `secret` already holds the calling user's
+			// per-user access token (resolved + refreshed above). Inject directly.
+			req.Header.Set("Authorization", "Bearer "+secret)
+			oauthBearer = secret
+			break
+		}
 		// apiclient mints/caches/refreshes the access token and sets the
 		// Authorization header; we capture the token for redaction.
 		tok, oerr := s.oauthSetToken(c, secret, req)
