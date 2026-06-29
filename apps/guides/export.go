@@ -105,7 +105,7 @@ func renderGuideStandaloneHTML(g Guide, brand, siteName string) string {
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width, initial-scale=1">` +
 		`<title>` + HTMLEscape(g.Title) + `</title><style>` + standaloneCSS + `</style></head>` +
-		`<body><div class="guide-doc">` + head + extractDocInner(renderGuideHTML(g)) + foot + `</div></body></html>`
+		`<body><div class="guide-doc">` + head + extractDocInner(renderGuideHTML(g, false)) + foot + `</div></body></html>`
 }
 
 // extractDocInner strips the outer <article class="guide-doc">…</article> wrapper

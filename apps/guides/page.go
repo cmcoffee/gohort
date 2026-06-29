@@ -68,7 +68,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		BackURL:       "/",
 		MaxWidth:      "100%",
 		Sections:      []ui.Section{{NoChrome: true, Body: wb}},
-		ExtraHeadHTML: guideDocCSS,
+		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -112,3 +112,109 @@ const guideDocCSS = `<style>
 .guide-section-body table { border-collapse: collapse; margin: 0.8rem 0; }
 .guide-section-body th, .guide-section-body td { border: 1px solid var(--border); padding: 0.4rem 0.7rem; text-align: left; }
 </style>`
+
+// guideSectionCtrlCSS styles the inline per-section controls (hover-revealed),
+// the "+ Add section" button, and the empty-state add link.
+const guideSectionCtrlCSS = `<style>
+.guide-section { position: relative; }
+.guide-sec-ctrls {
+  position: absolute; top: 0.1rem; right: 0; display: flex; gap: 0.25rem;
+  opacity: 0; transition: opacity 0.12s;
+}
+.guide-section:hover .guide-sec-ctrls, .guide-sec-ctrls:focus-within { opacity: 1; }
+.guide-sec-btn {
+  cursor: pointer; background: var(--bg-2); color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.12rem 0.45rem;
+  font-size: 0.74rem; font-weight: 600; line-height: 1.4;
+}
+.guide-sec-btn:hover { color: var(--accent); border-color: var(--accent); }
+.guide-sec-del:hover { color: var(--danger); border-color: var(--danger); }
+.guide-add-row { margin-top: 1.5rem; }
+.guide-add-btn {
+  cursor: pointer; background: transparent; color: var(--text-mute);
+  border: 1px dashed var(--border); border-radius: 8px; padding: 0.5rem 1rem;
+  font-size: 0.85rem; font-weight: 600; width: 100%;
+}
+.guide-add-btn:hover { color: var(--accent); border-color: var(--accent); }
+.guide-add-link { background: none; border: 0; color: var(--accent); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; }
+.guide-edit-field { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.8rem; }
+.guide-edit-field label { font-size: 0.78rem; font-weight: 600; color: var(--text-mute); }
+.guide-edit-field input, .guide-edit-field textarea {
+  background: var(--bg-0); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.9rem;
+}
+.guide-edit-field textarea { min-height: 16rem; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+.guide-edit-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+</style>`
+
+// guideSectionJS wires the inline section controls (rendered server-side in
+// renderGuideHTML with data-guide-act attributes) to the section endpoints, then
+// refreshes the WorkbenchPanel viewer via uiInvalidate. App-specific behavior,
+// injected through ExtraHeadHTML so it stays out of the domain-agnostic core/ui.
+// One delegated listener handles edit / move / delete / add for the live viewer
+// (which re-renders, so per-element handlers would not survive).
+const guideSectionJS = `<script>
+(function(){
+  function el(tag, attrs, kids){
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function refresh(){ if (window.uiInvalidate) window.uiInvalidate('guides'); }
+  function jpost(url, body){
+    return fetch(url, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body||{})});
+  }
+  // Field builder for the edit/add modal.
+  function fieldText(label, value){
+    var inp = el('input', {type:'text', value: value||''});
+    return {wrap: el('div', {class:'guide-edit-field'}, [el('label', {text: label}), inp]), input: inp};
+  }
+  function fieldArea(label, value){
+    var ta = el('textarea'); ta.value = value || '';
+    return {wrap: el('div', {class:'guide-edit-field'}, [el('label', {text: label}), ta]), input: ta};
+  }
+  function openEditor(title, t0, m0, onSave){
+    if (!window.uiOpenSimpleModal) return;
+    window.uiOpenSimpleModal({title: title, width:'680px', mount: function(body, dlg){
+      var tf = fieldText('Section title', t0);
+      var mf = fieldArea('Body (markdown)', m0);
+      body.appendChild(tf.wrap); body.appendChild(mf.wrap);
+      var save = el('button', {class:'ui-row-btn primary', text:'Save'});
+      var actions = el('div', {class:'guide-edit-actions'}, [save]);
+      body.appendChild(actions);
+      save.addEventListener('click', function(){
+        save.disabled = true; save.textContent = 'Saving…';
+        onSave(tf.input.value, mf.input.value).then(function(){
+          try { dlg.close(); dlg.remove(); } catch(e){}
+          refresh();
+        }).catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
+      });
+    }});
+  }
+  document.addEventListener('click', function(e){
+    var btn = e.target.closest && e.target.closest('[data-guide-act]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-guide-act');
+    var doc = btn.closest('.guide-doc');
+    var gid = doc && doc.getAttribute('data-guide-id');
+    if (!gid) return;
+    var sec = btn.closest('.guide-section');
+    var sid = sec && sec.getAttribute('data-section-id');
+    var gp = 'guide=' + encodeURIComponent(gid);
+    var sp = sid ? '&section=' + encodeURIComponent(sid) : '';
+    if (act === 'add'){
+      openEditor('Add section', '', '', function(t, m){ return jpost('section/add?' + gp, {title:t, markdown:m}); });
+    } else if (act === 'edit'){
+      fetch('section?' + gp + sp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(s){
+        openEditor('Edit section', s.title || '', s.markdown || '', function(t, m){ return jpost('section?' + gp + sp, {title:t, markdown:m}); });
+      });
+    } else if (act === 'delete'){
+      if (!window.confirm('Delete this section? You can restore it from History.')) return;
+      fetch('section?' + gp + sp, {method:'DELETE', credentials:'same-origin'}).then(refresh);
+    } else if (act === 'up' || act === 'down'){
+      jpost('section/move?' + gp + sp + '&dir=' + act).then(refresh);
+    }
+  });
+})();
+</script>`

@@ -158,10 +158,13 @@ func loadRevision(udb Database, guideID, revID string) (GuideRevision, bool) {
 // MarkdownToHTML) — the viewer drops it in via innerHTML. Styling lives in
 // guideDocCSS (injected via the page's ExtraHeadHTML) so it reads like a
 // formatted document / PDF.
-func renderGuideHTML(g Guide) string {
+// renderGuideHTML renders the guide as an HTML document. When controls is true
+// (the live viewer), each section carries inline edit / move / delete buttons and
+// data-*-id attributes the guides JS wires up; exports pass false.
+func renderGuideHTML(g Guide, controls bool) string {
 	secs := g.sorted()
 	var b strings.Builder
-	b.WriteString(`<article class="guide-doc">`)
+	b.WriteString(`<article class="guide-doc" data-guide-id="` + HTMLEscape(g.ID) + `">`)
 	b.WriteString(`<header class="guide-doc-head"><h1>` + HTMLEscape(g.Title) + `</h1>`)
 	if strings.TrimSpace(g.Subtitle) != "" {
 		b.WriteString(`<p class="guide-doc-sub">` + HTMLEscape(g.Subtitle) + `</p>`)
@@ -169,7 +172,11 @@ func renderGuideHTML(g Guide) string {
 	b.WriteString(`</header>`)
 
 	if len(secs) == 0 {
-		b.WriteString(`<p class="guide-doc-empty">This guide has no sections yet. Ask the assistant on the right to draft one — for example, "Add an introduction section."</p></article>`)
+		b.WriteString(`<p class="guide-doc-empty">This guide has no sections yet. Ask the assistant on the right to draft one — for example, "Add an introduction section."`)
+		if controls {
+			b.WriteString(` Or <button type="button" class="guide-add-link" data-guide-act="add">add one yourself</button>.`)
+		}
+		b.WriteString(`</p></article>`)
 		return b.String()
 	}
 
@@ -184,10 +191,21 @@ func renderGuideHTML(g Guide) string {
 	// Sections.
 	for i, s := range secs {
 		anchor := fmt.Sprintf("sec-%d", i+1)
-		b.WriteString(`<section class="guide-section" id="` + anchor + `">`)
+		b.WriteString(`<section class="guide-section" id="` + anchor + `" data-section-id="` + HTMLEscape(s.ID) + `">`)
+		if controls {
+			b.WriteString(`<div class="guide-sec-ctrls">` +
+				`<button type="button" class="guide-sec-btn" data-guide-act="edit" title="Edit">Edit</button>` +
+				`<button type="button" class="guide-sec-btn" data-guide-act="up" title="Move up">&uarr;</button>` +
+				`<button type="button" class="guide-sec-btn" data-guide-act="down" title="Move down">&darr;</button>` +
+				`<button type="button" class="guide-sec-btn guide-sec-del" data-guide-act="delete" title="Delete">&times;</button>` +
+				`</div>`)
+		}
 		b.WriteString(`<h2><span class="guide-section-num">` + fmt.Sprint(i+1) + `.</span> ` + HTMLEscape(sectionHeading(s, i)) + `</h2>`)
 		b.WriteString(`<div class="guide-section-body">` + MarkdownToHTML(s.Markdown) + `</div>`)
 		b.WriteString(`</section>`)
+	}
+	if controls {
+		b.WriteString(`<div class="guide-add-row"><button type="button" class="guide-add-btn" data-guide-act="add">+ Add section</button></div>`)
 	}
 	b.WriteString(`</article>`)
 	return b.String()

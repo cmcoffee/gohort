@@ -13,7 +13,7 @@ func TestRenderGuideHTML(t *testing.T) {
 			{ID: "a", Title: "Intro", Markdown: "### Why\nIt orchestrates containers.", Order: 1},
 		},
 	}
-	html := renderGuideHTML(g)
+	html := renderGuideHTML(g, true)
 	// Title + subtitle.
 	for _, want := range []string{"K8s Guide", "A primer"} {
 		if !strings.Contains(html, want) {
@@ -39,7 +39,7 @@ func TestRenderGuideHTML(t *testing.T) {
 }
 
 func TestRenderGuideHTML_Empty(t *testing.T) {
-	html := renderGuideHTML(Guide{ID: "x", Title: "Empty"})
+	html := renderGuideHTML(Guide{ID: "x", Title: "Empty"}, true)
 	if !strings.Contains(html, "no sections yet") {
 		t.Errorf("empty guide should prompt to add a section:\n%s", html)
 	}

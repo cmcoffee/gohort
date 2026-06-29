@@ -43,6 +43,12 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleExport(w, r, udb)
 	case path == "audit":
 		T.handleAudit(w, r, udb, user)
+	case path == "section":
+		T.handleSection(w, r, udb)
+	case path == "section/move":
+		T.handleSectionMove(w, r, udb)
+	case path == "section/add":
+		T.handleSectionAdd(w, r, udb)
 	case path == "chat/active":
 		T.handleSetActive(w, r, udb)
 	case path == "chat/send":
@@ -84,7 +90,7 @@ func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, map[string]any{"id": g.ID, "title": g.Title, "html": renderGuideHTML(g)})
+		writeJSON(w, map[string]any{"id": g.ID, "title": g.Title, "html": renderGuideHTML(g, true)})
 	case http.MethodDelete:
 		deleteGuide(udb, id)
 		writeJSON(w, map[string]bool{"ok": true})
@@ -185,6 +191,121 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		return
 	}
 	writeJSON(w, map[string]string{"report": report})
+}
+
+// --- inline section editing (viewer controls) --------------------------------
+
+// sectionIdx finds a section by id in the guide, returning its slice index (-1
+// if absent).
+func sectionIdx(g Guide, sid string) int {
+	for i := range g.Sections {
+		if g.Sections[i].ID == sid {
+			return i
+		}
+	}
+	return -1
+}
+
+// handleSection GET (raw fields for the edit form) / POST (save title+markdown) /
+// DELETE (remove) one section. ?guide=&section=.
+func (T *Guides) handleSection(w http.ResponseWriter, r *http.Request, udb Database) {
+	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
+	sid := strings.TrimSpace(r.URL.Query().Get("section"))
+	g, ok := loadGuide(udb, gid)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	idx := sectionIdx(g, sid)
+	if idx < 0 {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		s := g.Sections[idx]
+		writeJSON(w, map[string]string{"id": s.ID, "title": s.Title, "markdown": s.Markdown})
+	case http.MethodPost:
+		var body struct {
+			Title    string `json:"title"`
+			Markdown string `json:"markdown"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		g.Sections[idx].Title = strings.TrimSpace(body.Title)
+		g.Sections[idx].Markdown = strings.TrimSpace(body.Markdown)
+		saveGuideRev(udb, g, "Edited section: "+g.Sections[idx].Title)
+		writeJSON(w, map[string]bool{"ok": true})
+	case http.MethodDelete:
+		removed := g.Sections[idx].Title
+		g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
+		normalizeOrder(&g)
+		saveGuideRev(udb, g, "Removed section: "+removed)
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleSectionMove reorders a section one step up/down. POST ?guide=&section=&dir=up|down.
+func (T *Guides) handleSectionMove(w http.ResponseWriter, r *http.Request, udb Database) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
+	sid := strings.TrimSpace(r.URL.Query().Get("section"))
+	dir := strings.TrimSpace(r.URL.Query().Get("dir"))
+	g, ok := loadGuide(udb, gid)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	secs := g.sorted()
+	idx := -1
+	for i := range secs {
+		if secs[i].ID == sid {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		http.NotFound(w, r)
+		return
+	}
+	target := idx - 1
+	if dir == "down" {
+		target = idx + 1
+	}
+	reordered, _ := reorderSections(secs, idx, target)
+	g.Sections = reordered
+	saveGuideRev(udb, g, "Moved section: "+sectionHeading(secs[idx], idx))
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleSectionAdd appends a new section. POST ?guide= with {title, markdown}.
+func (T *Guides) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Database) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
+	g, ok := loadGuide(udb, gid)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Title    string `json:"title"`
+		Markdown string `json:"markdown"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	title := firstNonEmpty(strings.TrimSpace(body.Title), "New section")
+	g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: strings.TrimSpace(body.Markdown), Order: g.nextOrder()})
+	saveGuideRev(udb, g, "Added section: "+title)
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 func (T *Guides) handleSetActive(w http.ResponseWriter, r *http.Request, udb Database) {
