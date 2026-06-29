@@ -283,6 +283,8 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 		T.handleCollectionAutofill(w, r, c)
 	case action == "research":
 		T.handleCollectionResearch(w, r, user, c)
+	case action == "audit":
+		T.handleCollectionAudit(w, r, user, c)
 	case action == "suggest-description":
 		T.handleCollectionSuggestDescription(w, r, udb, user, c)
 	default:
@@ -335,6 +337,109 @@ func (T *OrchestrateApp) handleCollectionResearch(w http.ResponseWriter, r *http
 		"ingested": ingested,
 		"failed":   failures,
 	})
+}
+
+// collectionAuditCap bounds how many documents one audit click checks. Each
+// audited doc is a full seed-research run (tens of seconds + tokens), so we cap
+// and audit the OLDEST documents first — the ones most likely to be stale.
+const collectionAuditCap = 6
+
+// handleCollectionAudit checks a collection for staleness: it walks the
+// collection's documents (oldest first), dispatches the seed-research agent over
+// each one's topic to find what has changed since it was ingested, and returns a
+// per-document markdown report with cited findings — the read-side counterpart to
+// "Research & add". Bounded by collectionAuditCap per click so one button press
+// can't fan out into an unbounded (and expensive) run. Synchronous; the caller
+// shows a spinner. Symmetric with the guide Audit, but per-document because a
+// collection is a bag of documents, not one narrative.
+func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Request, user string, c Collection) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Enumerate documents (group chunks by reportID), capturing the topic Title
+	// and the most-recent ingest date per doc.
+	type doc struct {
+		reportID string
+		title    string
+		latest   string
+	}
+	docs := map[string]*doc{}
+	prefix := collectionSource(c.ID)
+	chunkDB := T.collectionDB(c)
+	for _, key := range chunkDB.Keys(EmbeddedChunks) {
+		var ch EmbeddedChunk
+		if !chunkDB.Get(EmbeddedChunks, key, &ch) {
+			continue
+		}
+		if !strings.HasPrefix(ch.Source, prefix) {
+			continue
+		}
+		d, ok := docs[ch.ReportID]
+		if !ok {
+			d = &doc{reportID: ch.ReportID}
+			docs[ch.ReportID] = d
+		}
+		if ch.Title != "" {
+			d.title = ch.Title
+		} else if sect := stripChunkPartSuffix(ch.Section); sect != "" && (d.title == "" || len(sect) < len(d.title)) {
+			d.title = sect
+		}
+		if ch.Date > d.latest {
+			d.latest = ch.Date
+		}
+	}
+	total := len(docs)
+	if total == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"report": "_This collection has no documents yet — nothing to audit._"})
+		return
+	}
+	ordered := make([]*doc, 0, total)
+	for _, d := range docs {
+		ordered = append(ordered, d)
+	}
+	// Oldest first — the stalest candidates get audited within the cap.
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].latest < ordered[j].latest })
+	checked := ordered
+	if len(checked) > collectionAuditCap {
+		checked = checked[:collectionAuditCap]
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Collection audit: %s\n\n", c.Name)
+	if total > len(checked) {
+		fmt.Fprintf(&b, "_Checked the %d oldest of %d documents (most likely to be stale). The %d newer document(s) were not checked this run._\n\n", len(checked), total, total-len(checked))
+	} else {
+		fmt.Fprintf(&b, "_Checked all %d document(s) for currency as of today._\n\n", total)
+	}
+	for _, d := range checked {
+		title := firstNonEmptyStr(d.title, "Untitled document")
+		sample := FetchCollectionDoc(CollectionsDB(), user, []string{c.ID}, d.reportID, 2000)
+		dateClause := ""
+		if d.latest != "" {
+			dateClause = " on " + d.latest
+		}
+		prompt := "A document was added to a knowledge collection" + dateClause + ". Check whether its content is still accurate and current AS OF TODAY. Research the current state of what it covers, then report CONCISELY:\n" +
+			"- Is it still correct?\n" +
+			"- What (if anything) has CHANGED since it was written — renamed/deprecated/superseded items, changed defaults, newer versions? Cite a source for any change.\n" +
+			"- Keep as-is, update, or replace?\n" +
+			"If it is still fully current, say so in one line.\n\n" +
+			"DOCUMENT TITLE: " + title + "\n\nDOCUMENT CONTENT:\n" + sample
+		fmt.Fprintf(&b, "## %s\n\n", title)
+		if d.latest != "" {
+			fmt.Fprintf(&b, "_ingested %s_\n\n", d.latest)
+		}
+		verdict, err := T.RunAgentSync(r.Context(), user, user, "seed-research", prompt)
+		if err != nil || strings.TrimSpace(verdict) == "" {
+			Log("[orchestrate.collections] audit of %q in %q failed: %v", title, c.Name, err)
+			b.WriteString("_Audit failed for this document — try again._\n\n")
+			continue
+		}
+		b.WriteString(strings.TrimSpace(verdict) + "\n\n")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"report": b.String()})
 }
 
 // handleCollectionUpload extracts + ingests a document under the

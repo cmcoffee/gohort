@@ -264,7 +264,11 @@ const documentsDetailBody = `
   </div>
 
   <div class="docs-section">
-    <div class="docs-section-title">Documents</div>
+    <div class="docs-section-title" style="display:flex;align-items:center;gap:0.6rem">
+      <span>Documents</span>
+      <button id="docs-audit" class="ui-row-btn" style="margin-left:auto;font-weight:600" title="Check the oldest documents for staleness with cited web research">Audit</button>
+      <span id="docs-audit-status" style="font-size:0.74rem;color:var(--text-mute)"></span>
+    </div>
     <div id="docs-bulk-bar" style="display:none;align-items:center;gap:0.6rem;padding:0.4rem 0.6rem;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;margin-bottom:0.4rem">
       <span id="docs-bulk-count" style="font-size:0.82rem;color:var(--text);font-weight:600"></span>
       <button id="docs-bulk-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72);font-size:0.8rem;padding:0.25rem 0.6rem">Remove selected</button>
@@ -860,6 +864,39 @@ const documentsDetailAssets = `<style>
         st.style.color = 'var(--danger,#ff7b72)';
         st.textContent = 'Research produced nothing to add — try a more specific topic.';
       }
+    }).catch(function(err) {
+      clearInterval(timer); btn.textContent = orig; btn.disabled = false;
+      st.style.color = 'var(--danger,#ff7b72)';
+      st.textContent = 'Failed: ' + (err && err.message || err);
+    });
+  });
+
+  // Audit the collection: check the oldest documents for staleness via cited
+  // web research, and show the per-document report in a modal. Bounded server-
+  // side; one full research run per audited doc, so it can take a couple minutes.
+  $('#docs-audit').addEventListener('click', function() {
+    var btn = $('#docs-audit');
+    var st = $('#docs-audit-status');
+    var orig = btn.textContent;
+    btn.disabled = true;
+    var frames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
+    var fi = 0;
+    var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Auditing…'; fi = (fi+1)%frames.length; }, 100);
+    st.style.color = 'var(--text-mute)';
+    st.textContent = 'Checking the oldest documents — this can take a minute…';
+    fetch(api('/api/collections/' + encodeURIComponent(cid) + '/audit'), {
+      method: 'POST', credentials: 'same-origin',
+    }).then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+      return r.json();
+    }).then(function(out) {
+      clearInterval(timer); btn.textContent = orig; btn.disabled = false;
+      st.textContent = '';
+      window.uiOpenSimpleModal({title: 'Collection audit', width: '720px', mount: function(body) {
+        var md = document.createElement('div'); md.className = 'docs-audit-report';
+        body.appendChild(md);
+        window.uiRenderMarkdown(md, (out && out.report) || '_(no report)_');
+      }});
     }).catch(function(err) {
       clearInterval(timer); btn.textContent = orig; btn.disabled = false;
       st.style.color = 'var(--danger,#ff7b72)';
