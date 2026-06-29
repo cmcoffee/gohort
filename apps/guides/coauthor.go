@@ -318,15 +318,30 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			if len(groups) == 0 {
 				return "No internal reference sources are available right now. (Systems appear once the user has appliances in the servitor app; document sources like Confluence appear once they're connected as a reference source.) Use the `research` tool for public/web topics instead.", nil
 			}
+			// Which items did the user attach to THIS guide via the Sources picker?
+			attached := map[string]bool{}
+			if g, ok := openGuide(); ok {
+				for _, s := range g.References {
+					attached[s.Kind+"\x00"+s.ItemID] = true
+				}
+			}
 			var b strings.Builder
-			b.WriteString("Internal reference sources you can pull from with pull_reference:\n")
+			if len(attached) > 0 {
+				b.WriteString("Internal reference sources. Items marked [attached] were selected by the user via the Sources button as this guide's sources — build the guide from those unless told otherwise. Pull any item with pull_reference:\n")
+			} else {
+				b.WriteString("Internal reference sources you can pull from with pull_reference:\n")
+			}
 			for _, g := range groups {
 				fmt.Fprintf(&b, "\n%s (kind: %s):\n", g.Label, g.Kind)
 				for _, it := range g.Items {
+					mark := ""
+					if attached[g.Kind+"\x00"+it.ID] {
+						mark = " [attached]"
+					}
 					if strings.TrimSpace(it.Desc) != "" {
-						fmt.Fprintf(&b, "- %s — %s [id: %s]\n", it.Name, it.Desc, it.ID)
+						fmt.Fprintf(&b, "- %s — %s [id: %s]%s\n", it.Name, it.Desc, it.ID, mark)
 					} else {
-						fmt.Fprintf(&b, "- %s [id: %s]\n", it.Name, it.ID)
+						fmt.Fprintf(&b, "- %s [id: %s]%s\n", it.Name, it.ID, mark)
 					}
 				}
 			}

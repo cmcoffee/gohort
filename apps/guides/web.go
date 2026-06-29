@@ -51,6 +51,8 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleSectionAdd(w, r, udb)
 	case path == "collections":
 		T.handleCollections(w, r, udb, user)
+	case path == "references":
+		T.handleReferences(w, r, udb, user)
 	case path == "chat/active":
 		T.handleSetActive(w, r, udb)
 	case path == "chat/send":
@@ -349,6 +351,46 @@ func (T *Guides) handleCollections(w http.ResponseWriter, r *http.Request, udb D
 		}
 		g.Collections = body.Collections
 		saveGuide(udb, g) // not a content change — no revision snapshot
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleReferences drives the per-guide Sources picker. GET ?guide=<id> returns
+// {groups: [ReferenceGroup], attached: [{kind,item_id}]} — every reference source
+// available to the user (servitor Systems, connected document sources) plus the
+// selections already attached to this guide. POST ?guide=<id> with
+// {references:[{kind,item_id}]} stores the selection on the guide. The registry
+// is per-user + access-gated, so the user only ever sees their own sources.
+func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
+	switch r.Method {
+	case http.MethodGet:
+		groups := ReferenceGroups(user)
+		if groups == nil {
+			groups = []ReferenceGroup{}
+		}
+		attached := []ReferenceSelection{}
+		if g, ok := loadGuide(udb, gid); ok && g.References != nil {
+			attached = g.References
+		}
+		writeJSON(w, map[string]any{"groups": groups, "attached": attached})
+	case http.MethodPost:
+		g, ok := loadGuide(udb, gid)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		var body struct {
+			References []ReferenceSelection `json:"references"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		g.References = body.References
+		saveGuide(udb, g) // attachment is not a content change — no revision snapshot
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

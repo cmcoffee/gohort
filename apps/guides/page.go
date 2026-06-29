@@ -44,6 +44,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			{Label: "Preview", Kind: "download", URL: "export?id={id}&format=html"},
 			{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 			{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+			{Label: "Sources", Kind: "client", URL: "guides_sources"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
 			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…"},
@@ -69,7 +70,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		BackURL:       "/",
 		MaxWidth:      "100%",
 		Sections:      []ui.Section{{NoChrome: true, Body: wb}},
-		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS + guideKnowledgeJS,
+		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS + guideKnowledgeJS + guideSourcesJS,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -284,4 +285,72 @@ const guideKnowledgeJS = `<script>
 .guide-kn-item:hover { border-color: var(--accent); }
 .guide-kn-name { font-weight: 600; color: var(--text-hi); font-size: 0.92rem; }
 .guide-kn-desc { grid-column: 2; color: var(--text-mute); font-size: 0.8rem; }
+</style>`
+
+// guideSourcesJS registers the 'guides_sources' client action behind the Sources
+// toolbar button: a modal that attaches/detaches cross-app reference sources
+// (servitor Systems, connected document sources like Confluence) to the open
+// guide. The Guide Author's list_reference_sources flags the attached set so it
+// builds from them. App-specific, injected via ExtraHeadHTML to keep it out of
+// core/ui. Reuses the guide-kn-* picker styles plus a group header.
+const guideSourcesJS = `<script>
+(function(){
+  function el(tag, attrs, kids){
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function register(){
+    if (!window.uiRegisterClientAction) return;
+    window.uiRegisterClientAction('guides_sources', function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'guide=' + encodeURIComponent(gid);
+      fetch('references?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+        var groups = (d && d.groups) || [];
+        var attached = {};
+        ((d && d.attached) || []).forEach(function(s){ attached[s.kind + '::' + s.item_id] = true; });
+        window.uiOpenSimpleModal({title:'Guide sources', width:'560px', mount: function(body, dlg){
+          body.appendChild(el('p', {class:'guide-kn-intro', text:'Attach knowledge other gohort services have gathered: your Systems (servitor) and connected document sources (e.g. Confluence). The Guide Author builds the guide from the sources you pick here.'}));
+          if (!groups.length){
+            body.appendChild(el('div', {class:'guide-kn-empty', text:'No reference sources available yet. Systems appear once you have appliances in the servitor app; document sources appear once connected.'}));
+            return;
+          }
+          var boxes = [];
+          var listWrap = el('div', {class:'guide-kn-list'});
+          groups.forEach(function(g){
+            listWrap.appendChild(el('div', {class:'guide-src-group', text: g.label}));
+            (g.items||[]).forEach(function(it){
+              var key = g.kind + '::' + it.id;
+              var cb = el('input', {type:'checkbox'}); cb.value = key; cb._kind = g.kind; cb._item = it.id;
+              if (attached[key]) cb.checked = true;
+              boxes.push(cb);
+              var label = el('label', {class:'guide-kn-item'}, [cb,
+                el('span', {class:'guide-kn-name', text: it.name || it.id})]);
+              if (it.desc) label.appendChild(el('span', {class:'guide-kn-desc', text: it.desc}));
+              listWrap.appendChild(label);
+            });
+          });
+          body.appendChild(listWrap);
+          var save = el('button', {class:'ui-row-btn primary', text:'Save'});
+          body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
+          save.addEventListener('click', function(){
+            var refs = boxes.filter(function(b){ return b.checked; }).map(function(b){ return {kind: b._kind, item_id: b._item}; });
+            save.disabled = true; save.textContent = 'Saving…';
+            fetch('references?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({references: refs})})
+              .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+              .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} })
+              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
+          });
+        }});
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
+})();
+</script>
+<style>
+.guide-src-group { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); font-weight: 700; margin: 0.5rem 0 0.1rem; }
+.guide-src-group:first-child { margin-top: 0; }
 </style>`

@@ -38,8 +38,14 @@ type Guide struct {
 	// Author searches them (search_knowledge tool) to ground sections in the
 	// user's own curated knowledge, alongside web research.
 	Collections []string `json:"collections,omitempty"`
-	Created     string   `json:"created"`
-	Updated     string   `json:"updated"`
+	// References are cross-app reference-source selections ({kind, item_id})
+	// attached to this guide via the Sources picker — servitor Systems, connected
+	// document sources (Confluence), etc. The Guide Author pulls them
+	// (pull_reference) to build the guide from internal knowledge; list_reference_
+	// sources flags which are attached so it knows the user's chosen scope.
+	References []ReferenceSelection `json:"references,omitempty"`
+	Created    string               `json:"created"`
+	Updated    string               `json:"updated"`
 }
 
 func newID() string {
