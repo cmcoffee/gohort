@@ -39,6 +39,14 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		EmptyIcon:  "📖",
 		EmptyTitle: "No guide selected",
 		EmptyHint:  "Pick a guide on the left, or create one. Then ask the assistant to draft sections.",
+		// Per-document toolbar: preview/export, revision history, freshness audit.
+		ViewerActions: []ui.WorkbenchAction{
+			{Label: "Preview", Kind: "download", URL: "export?id={id}&format=html"},
+			{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
+			{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
+			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…"},
+		},
 		// The agent writes sections via its tools; re-render the open guide when a
 		// chat round finishes.
 		RefreshOn: []string{"guides"},

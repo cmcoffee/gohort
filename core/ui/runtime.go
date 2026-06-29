@@ -283,6 +283,21 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-coauthor-btn:hover { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
 .ui-wb-coauthor-btn:disabled { opacity: 0.6; cursor: default; }
 .ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
+.ui-wb-actions {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 0 0 auto;
+  padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
+}
+.ui-wb-action-btn {
+  cursor: pointer; background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 0.28rem 0.7rem; font-size: 0.8rem; font-weight: 600;
+}
+.ui-wb-action-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
+.ui-wb-action-btn:disabled { opacity: 0.45; cursor: default; }
+.ui-wb-hist-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+.ui-wb-hist-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.ui-wb-hist-note { font-size: 0.85rem; color: var(--text); }
+.ui-wb-hist-at { font-size: 0.72rem; color: var(--text-mute); }
+.ui-wb-hist-empty { color: var(--text-mute); font-style: italic; padding: 0.6rem 0; }
 .ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
 .ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
 .ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
@@ -16957,6 +16972,19 @@ const runtimeJS = `
 
     // --- CENTER: viewer ---------------------------------------------------
     var center = el('div', {class: 'ui-wb-col ui-wb-viewer'});
+    // Optional per-document action toolbar (export / history / audit). Buttons
+    // act on the selected record; disabled until one is selected.
+    var actionBar = null;
+    if (cfg.viewer_actions && cfg.viewer_actions.length) {
+      actionBar = el('div', {class: 'ui-wb-actions'});
+      cfg.viewer_actions.forEach(function(a) {
+        var b = el('button', {class: 'ui-wb-action-btn', text: a.label});
+        b.disabled = true;
+        b.addEventListener('click', function() { runViewerAction(a, b); });
+        actionBar.appendChild(b);
+      });
+      center.appendChild(actionBar);
+    }
     var viewerBody = el('div', {class: 'ui-wb-viewer-body'});
     center.appendChild(viewerBody);
 
@@ -16984,6 +17012,7 @@ const runtimeJS = `
     root.appendChild(right);
 
     function showEmpty() {
+      setActionsEnabled(false);
       viewerBody.innerHTML = '';
       var e = el('div', {class: 'ui-empty'});
       if (cfg.empty_icon)  e.appendChild(el('div', {class: 'ui-empty-icon',  text: cfg.empty_icon}));
@@ -16999,9 +17028,78 @@ const runtimeJS = `
       }
     }
 
+    function setActionsEnabled(on) {
+      if (!actionBar) return;
+      var btns = actionBar.querySelectorAll('.ui-wb-action-btn');
+      for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+    }
+
+    // runViewerAction dispatches a viewer toolbar button against the open record.
+    function runViewerAction(a, btn) {
+      if (!selectedId) return;
+      var url = (a.url || '').replace('{id}', encodeURIComponent(selectedId));
+      if (a.confirm && !window.confirm(a.confirm)) return;
+      if (a.kind === 'download') {
+        window.open(url, '_blank');
+        return;
+      }
+      if (a.kind === 'report') {
+        var orig = btn.textContent;
+        btn.disabled = true; btn.textContent = a.spinner || 'Working…';
+        fetch(url, {method: 'POST', credentials: 'same-origin'})
+          .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
+          .then(function(d) {
+            btn.disabled = false; btn.textContent = orig;
+            window.uiOpenSimpleModal({title: a.label, width: '720px', mount: function(body) {
+              var md = el('div', {class: 'ui-wb-md'});
+              body.appendChild(md);
+              uiRenderMarkdown(md, (d && d.report) || '_(no report)_');
+            }});
+          })
+          .catch(function(err) {
+            btn.disabled = false; btn.textContent = orig;
+            alert((a.label || 'Action') + ' failed: ' + (err && err.message || err));
+          });
+        return;
+      }
+      if (a.kind === 'history') {
+        fetch(url, {credentials: 'same-origin'})
+          .then(function(r){ return r.ok ? r.json() : []; })
+          .then(function(items) {
+            window.uiOpenSimpleModal({title: a.label, width: '560px', mount: function(body, dlg) {
+              if (!items || !items.length) {
+                body.appendChild(el('div', {class: 'ui-wb-hist-empty', text: 'No history yet.'}));
+                return;
+              }
+              items.forEach(function(it) {
+                var row = el('div', {class: 'ui-wb-hist-row'});
+                row.appendChild(el('div', {class: 'ui-wb-hist-meta'}, [
+                  el('span', {class: 'ui-wb-hist-note', text: it.note || '(change)'}),
+                  el('span', {class: 'ui-wb-hist-at', text: it.at || ''}),
+                ]));
+                var rb = el('button', {class: 'ui-wb-action-btn', text: 'Restore'});
+                rb.addEventListener('click', function() {
+                  if (!window.confirm('Restore this version? The current state is saved to history first, so this is undoable.')) return;
+                  var rurl = (a.restore_url || '').replace('{id}', encodeURIComponent(selectedId)).replace('{rev}', encodeURIComponent(it.id));
+                  rb.disabled = true; rb.textContent = 'Restoring…';
+                  fetch(rurl, {method: 'POST', credentials: 'same-origin'})
+                    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+                    .then(function() { try { dlg.close(); dlg.remove(); } catch(e){} loadList(); loadViewer(selectedId); })
+                    .catch(function(err) { rb.disabled = false; rb.textContent = 'Restore'; alert('Restore failed: ' + (err && err.message || err)); });
+                });
+                row.appendChild(rb);
+                body.appendChild(row);
+              });
+            }});
+          });
+        return;
+      }
+    }
+
     function loadViewer(id) {
       selectedId = id;
       highlight();
+      setActionsEnabled(true);
       // Tell the server which document is open, so the chat agent's co-author
       // tool writes into THIS record.
       if (cfg.active_url) {

@@ -2021,6 +2021,10 @@ type WorkbenchPanel struct {
 	EmptyIcon        string `json:"empty_icon,omitempty"`
 	EmptyTitle       string `json:"empty_title,omitempty"`
 	EmptyHint        string `json:"empty_hint,omitempty"`
+	// ViewerActions render as a button row above the document — actions on the
+	// SELECTED record (export, history, audit, …). Generic: any workbench can add
+	// per-document actions without core knowing what they do.
+	ViewerActions []WorkbenchAction `json:"viewer_actions,omitempty"`
 	// RefreshOn — when uiInvalidate fires with a source in this list, the open
 	// record re-fetches (so a co-author write shows up without a manual reload).
 	RefreshOn []string `json:"refresh_on,omitempty"`
@@ -2039,6 +2043,25 @@ type WorkbenchPanel struct {
 	SaveURL      string `json:"save_url,omitempty"`      // POST (upsert) the modified record; default = ListURL
 	// Right — chat (typically an AgentLoopPanel or single ChatPanel). Mounted as-is.
 	Chat Component `json:"-"`
+}
+
+// WorkbenchAction is one button in a WorkbenchPanel's viewer toolbar, acting on
+// the selected record. {id} in URL/RestoreURL is substituted with the record id.
+//
+// Kind:
+//   - "download" — open URL in a new tab (browser downloads, or previews HTML).
+//   - "report"   — POST URL, render the returned {report} markdown in a modal
+//     (e.g. an audit). Spinner shows while it runs.
+//   - "history"  — GET URL → [{id, at, note}]; render a list with Restore
+//     buttons that POST RestoreURL (with {id} = record, {rev} = entry id), then
+//     refresh the viewer.
+type WorkbenchAction struct {
+	Label      string `json:"label"`
+	URL        string `json:"url"`
+	Kind       string `json:"kind"`
+	RestoreURL string `json:"restore_url,omitempty"`
+	Confirm    string `json:"confirm,omitempty"`
+	Spinner    string `json:"spinner,omitempty"` // busy label for "report" (default "Working…")
 }
 
 func (WorkbenchPanel) componentType() string { return "workbench_panel" }

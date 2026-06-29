@@ -92,7 +92,64 @@ func listGuides(udb Database) []Guide {
 	return out
 }
 
-func deleteGuide(udb Database, id string) { udb.Unset(guidesTable, id) }
+func deleteGuide(udb Database, id string) {
+	udb.Unset(guidesTable, id)
+	udb.Unset(revisionsTable, id)
+}
+
+// --- revisions ---------------------------------------------------------------
+
+const revisionsTable = "guide_revisions"
+const maxRevisions = 50
+
+// GuideRevision is a point-in-time snapshot of a guide + a note describing the
+// change that produced it.
+type GuideRevision struct {
+	ID    string `json:"id"`
+	At    string `json:"at"`
+	Note  string `json:"note"`
+	Guide Guide  `json:"guide"`
+}
+
+// guideRevisions is the stored revision list for one guide (newest last).
+type guideRevisions struct {
+	Revisions []GuideRevision `json:"revisions"`
+}
+
+// saveGuideRev saves the guide AND records a revision snapshot of the resulting
+// state with a note. The revision timeline is the undo history for the destructive
+// co-author tools. Capped at maxRevisions (oldest dropped).
+func saveGuideRev(udb Database, g Guide, note string) Guide {
+	saved := saveGuide(udb, g)
+	var rl guideRevisions
+	udb.Get(revisionsTable, saved.ID, &rl)
+	rl.Revisions = append(rl.Revisions, GuideRevision{
+		ID:    newID(),
+		At:    now(),
+		Note:  strings.TrimSpace(note),
+		Guide: saved,
+	})
+	if len(rl.Revisions) > maxRevisions {
+		rl.Revisions = rl.Revisions[len(rl.Revisions)-maxRevisions:]
+	}
+	udb.Set(revisionsTable, saved.ID, rl)
+	return saved
+}
+
+func listRevisions(udb Database, guideID string) []GuideRevision {
+	var rl guideRevisions
+	udb.Get(revisionsTable, guideID, &rl)
+	return rl.Revisions
+}
+
+func loadRevision(udb Database, guideID, revID string) (GuideRevision, bool) {
+	for _, r := range listRevisions(udb, guideID) {
+		if r.ID == revID {
+			return r, true
+		}
+	}
+	return GuideRevision{}, false
+}
 
 // --- HTML rendering ----------------------------------------------------------
 

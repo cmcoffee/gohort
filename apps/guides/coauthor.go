@@ -65,7 +65,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
 			g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: md, Order: g.nextOrder()})
-			saveGuide(udb, g)
+			saveGuideRev(udb, g, "Added section: "+title)
 			return fmt.Sprintf("Added the %q section to %q (now %d section%s).", title, g.Title, len(g.Sections), plural(len(g.Sections))), nil
 		},
 	}
@@ -93,7 +93,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
 			}
 			g.Sections[idx].Markdown = md
-			saveGuide(udb, g)
+			saveGuideRev(udb, g, "Edited section: "+title)
 			return fmt.Sprintf("Updated the %q section in %q.", title, g.Title), nil
 		},
 	}
@@ -144,7 +144,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			removed := g.Sections[idx].Title
 			g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
 			normalizeOrder(&g)
-			saveGuide(udb, g)
+			saveGuideRev(udb, g, "Removed section: "+removed)
 			return fmt.Sprintf("Removed the %q section from %q (%d left).", removed, g.Title, len(g.Sections)), nil
 		},
 	}
@@ -175,7 +175,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
 			}
 			g.Sections[idx].Title = newTitle
-			saveGuide(udb, g)
+			saveGuideRev(udb, g, "Renamed section: "+title+" → "+newTitle)
 			return fmt.Sprintf("Renamed %q to %q.", title, newTitle), nil
 		},
 	}
@@ -211,7 +211,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			}
 			reordered, target := reorderSections(secs, idx, pos-1)
 			g.Sections = reordered
-			saveGuide(udb, g)
+			saveGuideRev(udb, g, "Moved section: "+title)
 			return fmt.Sprintf("Moved %q to position %d in %q.", title, target+1, g.Title), nil
 		},
 	}

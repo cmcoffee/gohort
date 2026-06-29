@@ -35,6 +35,14 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleGuide(w, r, udb)
 	case path == "new":
 		T.handleNew(w, r, udb)
+	case path == "revisions":
+		T.handleRevisions(w, r, udb)
+	case path == "restore":
+		T.handleRestore(w, r, udb)
+	case path == "export":
+		T.handleExport(w, r, udb)
+	case path == "audit":
+		T.handleAudit(w, r, udb, user)
 	case path == "chat/active":
 		T.handleSetActive(w, r, udb)
 	case path == "chat/send":
@@ -96,12 +104,87 @@ func (T *Guides) handleNew(w http.ResponseWriter, r *http.Request, udb Database)
 		Subtitle string `json:"subtitle"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	g := saveGuide(udb, Guide{
+	g := saveGuideRev(udb, Guide{
 		ID:       newID(),
 		Title:    firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide"),
 		Subtitle: strings.TrimSpace(body.Subtitle),
-	})
+	}, "Created guide")
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
+}
+
+// handleRevisions lists a guide's revision history (newest first): {id, at, note}.
+func (T *Guides) handleRevisions(w http.ResponseWriter, r *http.Request, udb Database) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	revs := listRevisions(udb, id)
+	type row struct {
+		ID   string `json:"id"`
+		At   string `json:"at"`
+		Note string `json:"note"`
+	}
+	out := []row{}
+	for i := len(revs) - 1; i >= 0; i-- { // newest first
+		out = append(out, row{ID: revs[i].ID, At: revs[i].At, Note: revs[i].Note})
+	}
+	writeJSON(w, out)
+}
+
+// handleRestore makes a revision's snapshot the current guide (recording the
+// restore itself as a new revision, so it's undoable too).
+func (T *Guides) handleRestore(w http.ResponseWriter, r *http.Request, udb Database) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	revID := strings.TrimSpace(r.URL.Query().Get("rev"))
+	rev, ok := loadRevision(udb, id, revID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	g := rev.Guide
+	g.ID = id // guard against a snapshot carrying a stale id
+	saveGuideRev(udb, g, "Restored revision from "+rev.At)
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleAudit checks whether a guide is still current: it dispatches the
+// seed-research agent over the guide's content to find outdated/now-incorrect
+// claims, important changes since it was written, and gaps to add — with sources.
+// Returns the audit as a markdown report for the UI to render. The user reads it,
+// then asks the Guide Author to apply the fixes. Synchronous (an agent loop).
+func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, ok := loadGuide(udb, id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if len(g.Sections) == 0 {
+		writeJSON(w, map[string]string{"report": "_This guide has no sections yet — nothing to audit._"})
+		return
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	prompt := "Audit the following guide for accuracy and CURRENCY as of today. Research the current state of what it covers and report:\n" +
+		"1. **Outdated or now-incorrect** content — anything that has changed (renamed commands/flags, deprecated APIs, changed defaults, superseded versions).\n" +
+		"2. **Notable changes / new developments** since it was written that a reader should know.\n" +
+		"3. **Gaps** — important things it should cover but doesn't.\n\n" +
+		"Be specific: name the SECTION and the exact change needed, and cite sources for any claim that something changed. If a section is still accurate, say so briefly. End with a short prioritized list of recommended edits. If everything is current, say that plainly.\n\n" +
+		"GUIDE:\n\n" + renderGuideMarkdown(g)
+	report, err := orch.RunAgentSync(r.Context(), user, user, "seed-research", prompt)
+	if err != nil {
+		http.Error(w, "audit failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]string{"report": report})
 }
 
 func (T *Guides) handleSetActive(w http.ResponseWriter, r *http.Request, udb Database) {
