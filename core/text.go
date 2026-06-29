@@ -146,7 +146,9 @@ func InlineMarkdownToHTML(s string) string {
 	for strings.Contains(s, "**") {
 		start := strings.Index(s, "**")
 		end := strings.Index(s[start+2:], "**")
-		if end < 0 { break }
+		if end < 0 {
+			break
+		}
 		end += start + 2
 		s = s[:start] + "<strong>" + s[start+2:end] + "</strong>" + s[end+2:]
 	}
@@ -154,7 +156,9 @@ func InlineMarkdownToHTML(s string) string {
 	for strings.Contains(s, "`") {
 		start := strings.Index(s, "`")
 		end := strings.Index(s[start+1:], "`")
-		if end < 0 { break }
+		if end < 0 {
+			break
+		}
 		end += start + 1
 		s = s[:start] + "<code>" + s[start+1:end] + "</code>" + s[end+1:]
 	}
@@ -162,7 +166,9 @@ func InlineMarkdownToHTML(s string) string {
 	for strings.Contains(s, "*") {
 		start := strings.Index(s, "*")
 		end := strings.Index(s[start+1:], "*")
-		if end < 0 { break }
+		if end < 0 {
+			break
+		}
 		end += start + 1
 		s = s[:start] + "<em>" + s[start+1:end] + "</em>" + s[end+1:]
 	}
@@ -240,16 +246,11 @@ func scanHeadingSlugs(md string) []headingSlug {
 		if in_code {
 			continue
 		}
-		var raw string
-		if strings.HasPrefix(line, "### ") {
-			raw = strings.TrimSpace(line[4:])
-		} else if strings.HasPrefix(line, "## ") {
-			raw = strings.TrimSpace(line[3:])
-		} else if strings.HasPrefix(line, "# ") {
-			raw = strings.TrimSpace(line[2:])
-		} else {
+		h := headingLevel(line)
+		if h == 0 {
 			continue
 		}
+		raw := strings.TrimSpace(line[h+1:])
 		clean := stripLink.ReplaceAllString(raw, "$1")
 		clean = stripInline.ReplaceAllString(clean, "")
 		clean = strings.TrimSpace(clean)
@@ -314,6 +315,21 @@ func resolveReferenceLinks(md string) string {
 }
 
 // MarkdownToHTML converts markdown text to HTML.
+// headingLevel returns the ATX heading level (1–6) of a line — the count of
+// leading '#' followed by a space — or 0 when the line is not a heading. Used by
+// both the renderer and the slug pre-scan so they detect the same headings (and
+// their slug lists stay aligned). Caps at 6: "####### x" is not a heading.
+func headingLevel(line string) int {
+	n := 0
+	for n < len(line) && line[n] == '#' {
+		n++
+	}
+	if n >= 1 && n <= 6 && n < len(line) && line[n] == ' ' {
+		return n
+	}
+	return 0
+}
+
 func MarkdownToHTML(md string) string {
 	md = resolveReferenceLinks(md)
 	headings := scanHeadingSlugs(md)
@@ -338,9 +354,18 @@ func MarkdownToHTML(md string) string {
 	}
 
 	closeBlocks := func() {
-		if in_list { out.WriteString("</ul>\n"); in_list = false }
-		if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-		if in_table { out.WriteString("</tbody></table>\n"); in_table = false }
+		if in_list {
+			out.WriteString("</ul>\n")
+			in_list = false
+		}
+		if in_ol {
+			out.WriteString("</ol>\n")
+			in_ol = false
+		}
+		if in_table {
+			out.WriteString("</tbody></table>\n")
+			in_table = false
+		}
 	}
 
 	for i := 0; i < len(lines); i++ {
@@ -384,8 +409,14 @@ func MarkdownToHTML(md string) string {
 			}
 			cells := strings.Split(strings.Trim(stripped, "|"), "|")
 			if !in_table {
-				if in_list { out.WriteString("</ul>\n"); in_list = false }
-				if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+				if in_list {
+					out.WriteString("</ul>\n")
+					in_list = false
+				}
+				if in_ol {
+					out.WriteString("</ol>\n")
+					in_ol = false
+				}
 				out.WriteString("<table><thead><tr>")
 				for _, cell := range cells {
 					fmt.Fprintf(&out, "<th>%s</th>", InlineMarkdownToHTML(strings.TrimSpace(cell)))
@@ -407,55 +438,71 @@ func MarkdownToHTML(md string) string {
 		}
 
 		if stripped == "" {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			continue
 		}
 
-		// Headers — IDs come from the pre-scan slug list so headings
-		// and TOC links share a stable, predictable mapping.
-		if strings.HasPrefix(stripped, "### ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			text := stripped[4:]
-			fmt.Fprintf(&out, "<h3 id=%q>%s</h3>\n", nextHeadingSlug(), InlineMarkdownToHTML(text))
-			continue
-		}
-		if strings.HasPrefix(stripped, "## ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			text := stripped[3:]
-			fmt.Fprintf(&out, "<h2 id=%q>%s</h2>\n", nextHeadingSlug(), InlineMarkdownToHTML(text))
-			continue
-		}
-		if strings.HasPrefix(stripped, "# ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			text := stripped[2:]
-			fmt.Fprintf(&out, "<h1 id=%q>%s</h1>\n", nextHeadingSlug(), InlineMarkdownToHTML(text))
+		// Headers (# through ######) — IDs come from the pre-scan slug list
+		// so headings and TOC links share a stable, predictable mapping.
+		if h := headingLevel(stripped); h > 0 {
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
+			text := stripped[h+1:]
+			fmt.Fprintf(&out, "<h%d id=%q>%s</h%d>\n", h, nextHeadingSlug(), InlineMarkdownToHTML(text), h)
 			continue
 		}
 
 		// Horizontal rules.
 		if stripped == "---" || stripped == "***" || stripped == "___" {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			out.WriteString("<hr>\n")
 			continue
 		}
 
 		// Bullet lists.
 		if strings.HasPrefix(stripped, "- ") || strings.HasPrefix(stripped, "* ") {
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			if !in_list { out.WriteString("<ul>\n"); in_list = true }
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
+			if !in_list {
+				out.WriteString("<ul>\n")
+				in_list = true
+			}
 			fmt.Fprintf(&out, "<li>%s</li>\n", InlineMarkdownToHTML(stripped[2:]))
 			continue
 		}
 
 		// Numbered lists.
 		if len(stripped) > 2 && stripped[0] >= '0' && stripped[0] <= '9' && strings.Contains(stripped[:min(5, len(stripped))], ". ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if !in_ol { out.WriteString("<ol>\n"); in_ol = true }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if !in_ol {
+				out.WriteString("<ol>\n")
+				in_ol = true
+			}
 			dot := strings.Index(stripped, ". ")
 			fmt.Fprintf(&out, "<li>%s</li>\n", InlineMarkdownToHTML(stripped[dot+2:]))
 			continue
@@ -463,21 +510,41 @@ func MarkdownToHTML(md string) string {
 
 		// Blockquote.
 		if strings.HasPrefix(stripped, "> ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			fmt.Fprintf(&out, "<blockquote>%s</blockquote>\n", InlineMarkdownToHTML(stripped[2:]))
 			continue
 		}
 
-		if in_list { out.WriteString("</ul>\n"); in_list = false }
-		if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+		if in_list {
+			out.WriteString("</ul>\n")
+			in_list = false
+		}
+		if in_ol {
+			out.WriteString("</ol>\n")
+			in_ol = false
+		}
 		fmt.Fprintf(&out, "<p>%s</p>\n", InlineMarkdownToHTML(stripped))
 	}
 
-	if in_code { out.WriteString("</code></pre>\n") }
-	if in_list { out.WriteString("</ul>\n") }
-	if in_ol { out.WriteString("</ol>\n") }
-	if in_table { out.WriteString("</tbody></table>\n") }
+	if in_code {
+		out.WriteString("</code></pre>\n")
+	}
+	if in_list {
+		out.WriteString("</ul>\n")
+	}
+	if in_ol {
+		out.WriteString("</ol>\n")
+	}
+	if in_table {
+		out.WriteString("</tbody></table>\n")
+	}
 	return out.String()
 }
 
@@ -487,7 +554,9 @@ func HTMLToMarkdown(html string) string {
 	// Code blocks.
 	s = regexp.MustCompile(`<pre><code>([\s\S]*?)</code></pre>`).ReplaceAllStringFunc(s, func(m string) string {
 		inner := regexp.MustCompile(`<pre><code>([\s\S]*?)</code></pre>`).FindStringSubmatch(m)
-		if inner == nil { return m }
+		if inner == nil {
+			return m
+		}
 		return "\n```\n" + strings.TrimSpace(HTMLUnescape(inner[1])) + "\n```\n"
 	})
 	// Headers.
@@ -499,7 +568,9 @@ func HTMLToMarkdown(html string) string {
 	s = regexp.MustCompile(`<em>(.*?)</em>`).ReplaceAllString(s, "*$1*")
 	s = regexp.MustCompile(`<code>(.*?)</code>`).ReplaceAllStringFunc(s, func(m string) string {
 		inner := regexp.MustCompile(`<code>(.*?)</code>`).FindStringSubmatch(m)
-		if inner == nil { return m }
+		if inner == nil {
+			return m
+		}
 		return "`" + HTMLUnescape(inner[1]) + "`"
 	})
 	// Lists.
@@ -682,9 +753,18 @@ func MarkdownToConfluence(md string) string {
 				in_code = false
 				code_lang = ""
 			} else {
-				if in_list { out.WriteString("</ul>\n"); in_list = false }
-				if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-				if in_table { out.WriteString("</tbody></table>\n"); in_table = false }
+				if in_list {
+					out.WriteString("</ul>\n")
+					in_list = false
+				}
+				if in_ol {
+					out.WriteString("</ol>\n")
+					in_ol = false
+				}
+				if in_table {
+					out.WriteString("</tbody></table>\n")
+					in_table = false
+				}
 				code_lang = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "```"))
 				if code_lang == "" {
 					code_lang = "none"
@@ -711,8 +791,14 @@ func MarkdownToConfluence(md string) string {
 			}
 			cells := strings.Split(strings.Trim(stripped, "|"), "|")
 			if !in_table {
-				if in_list { out.WriteString("</ul>\n"); in_list = false }
-				if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+				if in_list {
+					out.WriteString("</ul>\n")
+					in_list = false
+				}
+				if in_ol {
+					out.WriteString("</ol>\n")
+					in_ol = false
+				}
 				out.WriteString("<table><tbody><tr>")
 				for _, cell := range cells {
 					fmt.Fprintf(&out, "<th>%s</th>", InlineMarkdownToHTML(strings.TrimSpace(cell)))
@@ -734,27 +820,51 @@ func MarkdownToConfluence(md string) string {
 		}
 
 		if stripped == "" {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			continue
 		}
 
 		// Headers.
 		if strings.HasPrefix(stripped, "### ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			fmt.Fprintf(&out, "<h3>%s</h3>\n", InlineMarkdownToHTML(stripped[4:]))
 			continue
 		}
 		if strings.HasPrefix(stripped, "## ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			fmt.Fprintf(&out, "<h2>%s</h2>\n", InlineMarkdownToHTML(stripped[3:]))
 			continue
 		}
 		if strings.HasPrefix(stripped, "# ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			fmt.Fprintf(&out, "<h1>%s</h1>\n", InlineMarkdownToHTML(stripped[2:]))
 			continue
 		}
@@ -786,8 +896,14 @@ func MarkdownToConfluence(md string) string {
 
 		// Blockquotes → Confluence info panel.
 		if strings.HasPrefix(stripped, "> ") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
 			var body strings.Builder
 			fmt.Fprintf(&body, "<p>%s</p>", InlineMarkdownToHTML(stripped[2:]))
 			for i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "> ") {
@@ -800,31 +916,57 @@ func MarkdownToConfluence(md string) string {
 
 		// Bullet lists.
 		if strings.HasPrefix(stripped, "- ") || strings.HasPrefix(stripped, "* ") {
-			if in_ol { out.WriteString("</ol>\n"); in_ol = false }
-			if !in_list { out.WriteString("<ul>\n"); in_list = true }
+			if in_ol {
+				out.WriteString("</ol>\n")
+				in_ol = false
+			}
+			if !in_list {
+				out.WriteString("<ul>\n")
+				in_list = true
+			}
 			fmt.Fprintf(&out, "<li>%s</li>\n", InlineMarkdownToHTML(stripped[2:]))
 			continue
 		}
 
 		// Numbered lists.
 		if len(stripped) > 2 && stripped[0] >= '0' && stripped[0] <= '9' && strings.Contains(stripped[:3], ".") {
-			if in_list { out.WriteString("</ul>\n"); in_list = false }
-			if !in_ol { out.WriteString("<ol>\n"); in_ol = true }
+			if in_list {
+				out.WriteString("</ul>\n")
+				in_list = false
+			}
+			if !in_ol {
+				out.WriteString("<ol>\n")
+				in_ol = true
+			}
 			dot := strings.Index(stripped, ".")
 			fmt.Fprintf(&out, "<li>%s</li>\n", InlineMarkdownToHTML(strings.TrimSpace(stripped[dot+1:])))
 			continue
 		}
 
 		// Paragraph.
-		if in_list { out.WriteString("</ul>\n"); in_list = false }
-		if in_ol { out.WriteString("</ol>\n"); in_ol = false }
+		if in_list {
+			out.WriteString("</ul>\n")
+			in_list = false
+		}
+		if in_ol {
+			out.WriteString("</ol>\n")
+			in_ol = false
+		}
 		fmt.Fprintf(&out, "<p>%s</p>\n", InlineMarkdownToHTML(stripped))
 	}
 
-	if in_code { out.WriteString("]]></ac:plain-text-body></ac:structured-macro>\n") }
-	if in_list { out.WriteString("</ul>\n") }
-	if in_ol { out.WriteString("</ol>\n") }
-	if in_table { out.WriteString("</tbody></table>\n") }
+	if in_code {
+		out.WriteString("]]></ac:plain-text-body></ac:structured-macro>\n")
+	}
+	if in_list {
+		out.WriteString("</ul>\n")
+	}
+	if in_ol {
+		out.WriteString("</ol>\n")
+	}
+	if in_table {
+		out.WriteString("</tbody></table>\n")
+	}
 
 	return out.String()
 }

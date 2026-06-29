@@ -90,6 +90,8 @@ const guideDocCSS = `<style>
 .guide-section-body { font-size: 0.95rem; line-height: 1.65; color: var(--text); }
 .guide-section-body h3 { font-size: 1.08rem; color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
 .guide-section-body h4 { font-size: 0.98rem; color: var(--text-hi); margin: 1.1rem 0 0.4rem; }
+.guide-section-body h5 { font-size: 0.9rem; color: var(--text-hi); margin: 1rem 0 0.35rem; }
+.guide-section-body h6 { font-size: 0.85rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin: 0.9rem 0 0.3rem; }
 .guide-section-body pre {
   background: var(--bg-0); border: 1px solid var(--border); border-radius: 8px;
   padding: 0.8rem 1rem; overflow-x: auto; font-size: 0.86rem;
