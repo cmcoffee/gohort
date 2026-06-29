@@ -48,9 +48,14 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the app is for (shown on the Custom Apps index)."},
 				"record_key":  {Type: "string", Description: "(create/update) The primary-key field of each record. Default 'id' — the host allocates one on save. Only override if the records have a natural key."},
 				"agent_id":    {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app (reserved for the chat surface). Stored on the app; not required."},
+				"data_sources": {
+					Type:        "array",
+					Description: "(create/update) Optional script-backed data endpoints — the way to give an app real LOGIC instead of plain stored-record CRUD. Each is {name, script, language?, capabilities?}. The script (python by default; set language:\"bash\" for shell) COMPUTES the JSON a table/display renders: it receives the app's stored records as the env var `records` (a JSON string — json.loads it) plus each request query param as its own env var, and must PRINT a JSON value to stdout (a JSON array for a table, a JSON object for a display). To pull external data, declare capabilities and call the gohort hook from the script: `from gohort import fetch, log` then `fetch(url)` (capabilities:[\"fetch\",\"log\"]) — the host performs the fetch (the sandbox itself has no raw network). A table/display section then sets source_script:\"<name>\" to read from it instead of the record store. Use this for apps that fetch/aggregate/transform (a dashboard over an API, a computed report) rather than just collecting form entries. Owner-only today.",
+					Items:       &ToolParam{Type: "object"},
+				},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added).\n\nkind=\"display\" — a read-only labeled-value panel over the records endpoint. Fields: `pairs` (array of {label, field}).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute}), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -85,7 +90,9 @@ const appDefHelpText = `app_def actions:
 
 Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id).
 
-Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).`
+Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
+
+For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that receives the app's records (env var 'records', a JSON string) + query params and PRINTS JSON; reach external data with 'from gohort import fetch' (capabilities:["fetch"]). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Owner-only.`
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -142,6 +149,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		} else {
 			spec.AgentID = a // store as given; resolution is the chat surface's problem (step 2)
 		}
+	}
+	// Script-backed data sources (the "logic" seam): a table/display section can
+	// be backed by a python script instead of the record store. Passed wholesale
+	// replaces the stored set on update (omit to keep existing).
+	if raw, ok := args["data_sources"]; ok && raw != nil {
+		spec.DataSources = appDataSources(raw)
 	}
 
 	// Build the Page from the declarative sections. On update with no sections
@@ -258,7 +271,7 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 		}
 	case "table":
 		tbl := ui.Table{
-			Source:        "records",
+			Source:        appSectionSource(m),
 			RowKey:        spec.RecordKey,
 			Columns:       appTableCols(m["columns"]),
 			EmptyText:     firstNonEmptyStr(mapStr(m, "empty_text"), "Nothing here yet."),
@@ -275,7 +288,7 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 		}
 		sec.Body = tbl
 	case "display":
-		sec.Body = ui.DisplayPanel{Source: "records", Pairs: appDisplayPairs(m["pairs"])}
+		sec.Body = ui.DisplayPanel{Source: appSectionSource(m), Pairs: appDisplayPairs(m["pairs"])}
 	case "empty":
 		sec.Body = ui.EmptyState{
 			Icon:  mapStr(m, "icon"),
@@ -458,6 +471,63 @@ func appTableCols(raw any) []ui.Col {
 			Flex:  intFromArgs(m, "flex"),
 			Mute:  boolArg(m, "mute"),
 		})
+	}
+	return out
+}
+
+// appSectionSource resolves where a table/display reads its data: the generic
+// record store ("records") by default, or a script-backed data source
+// ("data/<name>") when the section names one via source_script.
+func appSectionSource(m map[string]any) string {
+	if name := slugify(mapStr(m, "source_script")); name != "" {
+		return "data/" + name
+	}
+	return "records"
+}
+
+// appDataSources parses the declarative data_sources array into AppDataSource
+// records. Each needs a name + script; language defaults to python at dispatch.
+func appDataSources(raw any) []AppDataSource {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var out []AppDataSource
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := slugify(mapStr(m, "name"))
+		script := mapStr(m, "script")
+		if name == "" || strings.TrimSpace(script) == "" {
+			continue
+		}
+		out = append(out, AppDataSource{
+			Name:         name,
+			Language:     strings.ToLower(strings.TrimSpace(mapStr(m, "language"))),
+			Script:       script,
+			Capabilities: appStringList(m["capabilities"]),
+		})
+	}
+	return out
+}
+
+// appStringList coerces a declarative value to []string: a JSON array of
+// strings, or a single string. Empty entries are dropped.
+func appStringList(raw any) []string {
+	var out []string
+	switch v := raw.(type) {
+	case []any:
+		for _, e := range v {
+			if s, ok := e.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, strings.TrimSpace(s))
+			}
+		}
+	case string:
+		if strings.TrimSpace(v) != "" {
+			out = append(out, strings.TrimSpace(v))
+		}
 	}
 	return out
 }

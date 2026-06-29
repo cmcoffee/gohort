@@ -38,8 +38,29 @@ type AppSpec struct {
 	// BodyField is the record field a workbench's viewer renders + its co-author
 	// tool appends to (the document body). Empty for non-workbench apps.
 	BodyField string `json:"body_field,omitempty"`
-	Created   string `json:"created"`
-	Updated   string `json:"updated"`
+	// DataSources are script-backed data endpoints (see AppDataSource), referenced
+	// by a table/display section's source_script. Served at /custom/<slug>/data/<name>.
+	// This is the "logic" seam: structure stays declarative, computation/integration
+	// is a sandboxed script.
+	DataSources []AppDataSource `json:"data_sources,omitempty"`
+	Created     string          `json:"created"`
+	Updated     string          `json:"updated"`
+}
+
+// AppDataSource is a script-backed data endpoint for a custom app: a sandboxed
+// script (python by default) that COMPUTES the JSON a table/display section
+// renders, instead of the generic record store. It receives the app's stored
+// records (JSON) plus the request's query params as environment variables, and
+// must print a JSON value to stdout — an array for a table, an object for a
+// display. The script may reach out via the gohort sandbox hook (capabilities
+// like "fetch", "log") so it can pull + transform external data (an API,
+// Confluence, …). Owner-only: custom apps are per-owner, and the script runs in
+// the owner's sandbox with the owner's network gate.
+type AppDataSource struct {
+	Name         string   `json:"name"`                   // referenced by a section's source_script
+	Language     string   `json:"language,omitempty"`     // "python" (default) | "bash"
+	Script       string   `json:"script"`                 // the script body
+	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps: fetch, log, browse_page, fetch_via:<cred>
 }
 
 // appSpecStore returns the shared per-owner spec store (RootDB → user:<owner>),

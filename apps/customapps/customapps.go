@@ -26,6 +26,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 func init() {
@@ -112,6 +114,8 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = ui.RenderPageJSON(w, spec.Page, "", "", spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+	case strings.HasPrefix(rest, "data/"):
+		T.handleData(w, r, user, udb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "records":
 		T.handleRecords(w, r, udb, spec)
 	case rest == "record":
@@ -249,6 +253,127 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		out = append(out, map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc})
 	}
 	writeJSON(w, out)
+}
+
+// --- script-backed data sources (the "logic" seam) ---------------------------
+
+// handleData serves a table/display section's script-backed data endpoint:
+// GET /custom/<slug>/data/<name>. It runs the named AppDataSource script
+// (sandboxed) with the app's stored records + the request's query params as
+// input, and passes the script's JSON stdout straight through as the response.
+// Owner-only by construction — custom apps are per-owner, so only the owner ever
+// reaches this; the script runs in the owner's sandbox with the owner's network
+// gate. Read-only: a data source computes a view, it never writes the store
+// (which keeps the framework as the sole owner of persistence — no workspace-vs-
+// store divergence).
+func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, user string, udb Database, spec AppSpec, name string) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var ds *AppDataSource
+	for i := range spec.DataSources {
+		if spec.DataSources[i].Name == name {
+			ds = &spec.DataSources[i]
+			break
+		}
+	}
+	if ds == nil || strings.TrimSpace(ds.Script) == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	// Gather the app's stored records to hand the script as input.
+	tbl := recTable(spec.Slug)
+	records := []map[string]any{}
+	for _, k := range udb.Keys(tbl) {
+		var rec map[string]any
+		if udb.Get(tbl, k, &rec) {
+			records = append(records, rec)
+		}
+	}
+	recJSON, _ := json.Marshal(records)
+
+	// Args become env vars in the script: the records JSON, plus each query param.
+	args := map[string]any{"records": string(recJSON)}
+	for k, vs := range r.URL.Query() {
+		if len(vs) > 0 {
+			args[k] = vs[0]
+		}
+	}
+
+	out, err := runDataSource(user, udb, spec.Slug, *ds, args)
+	if err != nil {
+		Log("[customapps] data source %q/%q failed: %v", spec.Slug, name, err)
+		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	trimmed := strings.TrimSpace(out)
+	if !json.Valid([]byte(trimmed)) {
+		Log("[customapps] data source %q/%q returned non-JSON (first 200B): %.200s", spec.Slug, name, trimmed)
+		http.Error(w, "the data source script must print a JSON value (array for a table, object for a display) to stdout", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(trimmed))
+}
+
+// runDataSource executes one data-source script as a sandboxed shell TempTool
+// and returns its stdout. Reuses the whole temptool execution path (bwrap
+// sandbox, the gohort hook for fetch/log, params-as-env-vars) — a data source is
+// just a TempTool the framework dispatches on the app owner's behalf. The script
+// file is named per (slug, source) so concurrent apps don't collide in the
+// owner's workspace.
+func runDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any) (string, error) {
+	ws, err := EnsureWorkspaceDir(user)
+	if err != nil {
+		return "", fmt.Errorf("workspace: %w", err)
+	}
+	interp, ext := "python3", "py"
+	if l := strings.ToLower(strings.TrimSpace(ds.Language)); l == "bash" || l == "sh" {
+		interp, ext = "bash", "sh"
+	}
+	scriptName := fmt.Sprintf("ds_%s_%s.%s", sanitizeName(slug), sanitizeName(ds.Name), ext)
+	caps := ds.Capabilities
+	if caps == nil {
+		caps = []string{"fetch", "log"} // sensible default: read external data + log
+	}
+	params := map[string]ToolParam{}
+	for k := range args {
+		params[k] = ToolParam{Type: "string"}
+	}
+	tt := &TempTool{
+		Name:             "app_data_source:" + slug + ":" + ds.Name,
+		Description:      "custom app data source",
+		Mode:             "shell",
+		ScriptBody:       ds.Script,
+		ScriptName:       scriptName,
+		CommandTemplate:  interp + " {workspace_dir}/" + scriptName,
+		HookCapabilities: caps,
+		Params:           params,
+	}
+	sess := &ToolSession{
+		Username:     user,
+		WorkspaceDir: ws,
+		DB:           db,
+		// The owner is viewing their own app — allow the hook's fetch/browse to
+		// reach the network (the sandbox itself stays network-isolated).
+		Network: NewNetworkConnector(false),
+	}
+	return temptool.DispatchTempToolDirect(sess, tt, args)
+}
+
+// sanitizeName reduces a slug/name to a safe filename fragment (alnum + _).
+func sanitizeName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	return b.String()
 }
 
 // --- generic record store ----------------------------------------------------
