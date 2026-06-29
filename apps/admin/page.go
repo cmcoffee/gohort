@@ -238,6 +238,11 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "token", Label: "Bearer token", Type: "password", ShowWhen: "auth_mode:bearer", Help: "Stored encrypted. Leave blank when editing to keep the existing token."},
 		{Field: "secure_cred", Label: "SecureAPI credential name", Placeholder: "confluence_oauth", ShowWhen: "auth_mode:secure_api", Help: "An OAuth2 credential configured under API Credentials. Its bearer token is minted/refreshed per request."},
 		{Field: "oauth_note", Type: "header", Label: "Hosted login: Save first, then click Connect on the server's row to authorize. Each user connects their own account. The callback host must be https or localhost.", ShowWhen: "auth_mode:oauth"},
+		{Field: "oauth_client_id", Label: "Client ID (only if no auto-registration)", ShowWhen: "auth_mode:oauth", Help: "Leave BLANK for the normal flow: gohort auto-registers a client (Dynamic Client Registration). Fill this ONLY when the provider doesn't support auto-registration — pre-register an OAuth app at the provider, set its redirect URI to <this host>/admin/api/mcp-servers/oauth/callback, and paste the issued client_id here."},
+		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth_mode:oauth", Help: "Only for a manual Client ID that the provider made confidential. Stored encrypted; leave blank to keep the existing one (and blank for public PKCE clients)."},
+		{Field: "oauth_authorize_url", Label: "Authorize URL (only if no discovery)", Placeholder: "https://provider/oauth/authorize", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Set only for a provider that doesn't publish .well-known OAuth metadata."},
+		{Field: "oauth_token_url", Label: "Token URL (only if no discovery)", Placeholder: "https://provider/oauth/token", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Pair with Authorize URL."},
+		{Field: "oauth_scopes", Label: "Scopes (optional)", Placeholder: "files.read folders.read", ShowWhen: "auth_mode:oauth", Help: "Space-separated OAuth scopes. Leave blank to use what discovery advertises."},
 
 		{Field: "expose_hdr", Type: "header", Label: "Exposure"},
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},

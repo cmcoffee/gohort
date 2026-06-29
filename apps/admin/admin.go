@@ -1353,7 +1353,8 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			}
 			var body struct {
 				MCPServerConfig
-				Token string `json:"token"`
+				Token             string `json:"token"`
+				OAuthClientSecret string `json:"oauth_client_secret"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
@@ -1363,6 +1364,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			// Manual OAuth client secret (non-DCR fallback) — stored encrypted,
+			// separately from the config; blank keeps any existing one.
+			MCP().SetOAuthClientSecret(body.Name, body.OAuthClientSecret)
 			MCP().Reload()
 			w.WriteHeader(http.StatusNoContent)
 		case http.MethodDelete:

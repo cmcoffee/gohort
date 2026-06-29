@@ -73,6 +73,17 @@ type MCPServerConfig struct {
 	ExposeReference bool        `json:"expose_reference"` // expose as a ReferenceSource (Stage 5)
 	SearchTool      string      `json:"search_tool"`      // MCP tool used for reference Fetch (default "search")
 	Enabled         bool        `json:"enabled"`
+	// Manual OAuth client (oauth mode) — the fallback when the authorization
+	// server does NOT support Dynamic Client Registration (RFC 7591). The admin
+	// pre-registers an OAuth app at the provider and supplies its client_id here
+	// (client_secret goes through the encrypted store, like the bearer token).
+	// Left blank ⇒ gohort auto-registers via DCR (the default). AuthorizeURL /
+	// TokenURL / Scopes are an additional fallback for providers that don't expose
+	// .well-known discovery either; blank ⇒ discovered.
+	OAuthClientID     string `json:"oauth_client_id,omitempty"`
+	OAuthAuthorizeURL string `json:"oauth_authorize_url,omitempty"`
+	OAuthTokenURL     string `json:"oauth_token_url,omitempty"`
+	OAuthScopes       string `json:"oauth_scopes,omitempty"`
 }
 
 // mcpConn is a live connection to one server plus the tools it reported.
@@ -135,6 +146,30 @@ func (m *MCPManager) ready() bool { return m != nil && m.db != nil }
 
 func mcpTokenKey(name string) string { return name + "__token" }
 
+// mcpOAuthClientSecretKey holds the manual OAuth client_secret (oauth mode, the
+// non-DCR fallback) for a server, encrypted. Sidecar record — excluded from List.
+func mcpOAuthClientSecretKey(name string) string { return name + "__oauthclientsecret" }
+
+// SetOAuthClientSecret stores (encrypted) the manual OAuth client secret. Empty
+// secret is a no-op so re-saving the form without re-typing it keeps the stored
+// one (same "leave blank to keep" convention as the bearer token).
+func (m *MCPManager) SetOAuthClientSecret(name, secret string) {
+	if m.ready() && strings.TrimSpace(secret) != "" {
+		m.mu.Lock()
+		m.db.CryptSet(mcpServersTable, mcpOAuthClientSecretKey(name), strings.TrimSpace(secret))
+		m.mu.Unlock()
+	}
+}
+
+func (m *MCPManager) loadOAuthClientSecret(name string) string {
+	if !m.ready() {
+		return ""
+	}
+	var s string
+	m.db.Get(mcpServersTable, mcpOAuthClientSecretKey(name), &s)
+	return s
+}
+
 // --- config CRUD ---
 
 // List returns every configured server (tokens excluded).
@@ -146,7 +181,7 @@ func (m *MCPManager) List() []MCPServerConfig {
 	for _, k := range m.db.Keys(mcpServersTable) {
 		// Skip sidecar records (bearer token + per-server/per-user oauth
 		// state) — only the config records are keyed by bare server name.
-		if strings.HasSuffix(k, "__token") || strings.Contains(k, "__oauthcfg") || strings.Contains(k, "__oauthtok__") {
+		if strings.HasSuffix(k, "__token") || strings.Contains(k, "__oauthcfg") || strings.Contains(k, "__oauthtok__") || strings.HasSuffix(k, "__oauthclientsecret") {
 			continue
 		}
 		var c MCPServerConfig
@@ -207,6 +242,7 @@ func (m *MCPManager) Delete(name string) error {
 	defer m.mu.Unlock()
 	m.db.Unset(mcpServersTable, name)
 	m.db.Unset(mcpServersTable, mcpTokenKey(name))
+	m.db.Unset(mcpServersTable, mcpOAuthClientSecretKey(name))
 	return nil
 }
 
@@ -618,16 +654,41 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 	if !ok || oc.AuthEndpoint == "" {
 		ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
 		defer cancel()
-		disc, err := mcpDiscover(ctx, cfg.URL)
-		if err != nil {
-			return "", fmt.Errorf("discovery: %w", err)
+		// Try discovery; tolerate failure here because the admin may have
+		// supplied the endpoints manually (a provider with no .well-known).
+		disc, discErr := mcpDiscover(ctx, cfg.URL)
+		// Manual overrides / fallback (non-DCR, non-discovery providers).
+		if u := strings.TrimSpace(cfg.OAuthAuthorizeURL); u != "" {
+			disc.AuthEndpoint = u
 		}
-		clientID, clientSecret, err := mcpRegisterClient(ctx, disc.RegistrationEndpoint, redirectURI)
-		if err != nil {
-			return "", fmt.Errorf("client registration: %w", err)
+		if u := strings.TrimSpace(cfg.OAuthTokenURL); u != "" {
+			disc.TokenEndpoint = u
 		}
-		disc.ClientID = clientID
-		disc.ClientSecret = clientSecret
+		if s := strings.TrimSpace(cfg.OAuthScopes); s != "" {
+			disc.Scope = s
+		}
+		if disc.Resource == "" {
+			disc.Resource = mcpCanonicalResource(cfg.URL)
+		}
+		if disc.AuthEndpoint == "" || disc.TokenEndpoint == "" {
+			if discErr != nil {
+				return "", fmt.Errorf("discovery failed (%w) — set Authorize URL + Token URL on the server for a provider without OAuth discovery", discErr)
+			}
+			return "", fmt.Errorf("no authorize/token endpoint found — set them on the server (Admin -> MCP Servers)")
+		}
+		// Client: a manually pre-registered client_id wins (the non-DCR path);
+		// otherwise fall back to Dynamic Client Registration.
+		if id := strings.TrimSpace(cfg.OAuthClientID); id != "" {
+			disc.ClientID = id
+			disc.ClientSecret = m.loadOAuthClientSecret(server)
+		} else {
+			clientID, clientSecret, err := mcpRegisterClient(ctx, disc.RegistrationEndpoint, redirectURI)
+			if err != nil {
+				return "", fmt.Errorf("client registration: %w — or set a Client ID on the server (Admin -> MCP Servers) to use a pre-registered OAuth app", err)
+			}
+			disc.ClientID = clientID
+			disc.ClientSecret = clientSecret
+		}
 		oc = disc
 		m.saveOAuthCfg(server, oc)
 	}
