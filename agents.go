@@ -11,6 +11,7 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/agents"
 	_ "github.com/cmcoffee/gohort/apps/bridges"
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
+	_ "github.com/cmcoffee/gohort/apps/account"
 	_ "github.com/cmcoffee/gohort/apps/customapps"
 	_ "github.com/cmcoffee/gohort/apps/guides"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"

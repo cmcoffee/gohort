@@ -1000,7 +1000,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	auth_html := ""
 	if username != "" {
 		auth_html = fmt.Sprintf(
-			`<div class="auth-bar"><span class="auth-user">%s</span><a class="auth-link" href="/logout">Logout</a></div>`,
+			`<div class="auth-bar"><span class="auth-user">%s</span><a class="auth-link" href="/account">Account</a><a class="auth-link" href="/logout">Logout</a></div>`,
 			username)
 	}
 
