@@ -1147,6 +1147,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				AllowedEndpoints  []string `json:"allowed_endpoints"`
 				ParamName         string   `json:"param_name"`
 				Description       string   `json:"description"`
+				CredScope         string   `json:"cred_scope"`
 				RequiresConfirm   bool     `json:"requires_confirm"`
 				InsecureSkipTLS   bool     `json:"insecure_skip_tls"`
 				Secret            string   `json:"secret"`
@@ -1178,6 +1179,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				AllowedEndpoints:  req.AllowedEndpoints,
 				ParamName:         strings.TrimSpace(req.ParamName),
 				Description:       strings.TrimSpace(req.Description),
+				CredScope:         strings.TrimSpace(req.CredScope),
 				RequiresConfirm:   req.RequiresConfirm,
 				InsecureSkipTLS:   req.InsecureSkipTLS,
 				AllowedMethods:    req.AllowedMethods,

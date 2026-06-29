@@ -160,8 +160,18 @@ type SecureCredential struct {
 	JWTSubject  string `json:"jwt_subject,omitempty"`  // jwt_bearer: sub claim (optional)
 	JWTAudience string `json:"jwt_audience,omitempty"` // jwt_bearer: aud (defaults to token_url)
 	JWTKeyID    string `json:"jwt_key_id,omitempty"`   // jwt_bearer: kid header (optional)
-	CreatedAt   time.Time `json:"created_at"`
-	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
+	// CredScope selects whose secret a request uses:
+	//   "" / "shared" — one deployment secret (the admin's), used for every
+	//     user's calls (the legacy/default behavior). Right for a shared service
+	//     account or a public-ish corporate read API.
+	//   "per_user" — each user supplies + stores their OWN secret (key/token),
+	//     entered on their Account page. The dispatch loads the CALLING user's
+	//     secret (sess.Username); calls error until that user has set theirs.
+	//     Right for "act as yourself" — per-user attribution, native permissions,
+	//     bounded blast radius. The admin configures everything EXCEPT the secret.
+	CredScope  string    `json:"cred_scope,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
 
 	// Pending is a computed (non-persisted) flag set by List() for an
 	// oauth2 credential whose secret is still the "(pending)" draft
@@ -458,13 +468,41 @@ func (s *SecureAPI) List() []SecureCredential {
 	}
 	var out []SecureCredential
 	for _, k := range s.db.Keys(secureAPITable) {
-		if strings.HasSuffix(k, "__secret") {
+		// Skip the per-credential secret blobs (shared __secret, password, and
+		// the per-user __usecret__<user> keys) — only metadata records list.
+		if strings.Contains(k, "__") {
 			continue
 		}
 		var c SecureCredential
 		if s.db.Get(secureAPITable, k, &c) {
 			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// PerUserConnection describes one per_user credential's state for a given user —
+// for the Account page. Never carries the secret value.
+type PerUserConnection struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Connected   bool   `json:"connected"`
+}
+
+// PerUserConnectionsFor returns the per_user credentials a user can connect, each
+// flagged with whether they've set their secret. Disabled credentials are
+// omitted. Used by the Account page's Connected-accounts section.
+func (s *SecureAPI) PerUserConnectionsFor(user string) []PerUserConnection {
+	var out []PerUserConnection
+	for _, c := range s.List() {
+		if !c.IsPerUser() || c.Disabled {
+			continue
+		}
+		out = append(out, PerUserConnection{
+			Name:        c.Name,
+			Description: c.Description,
+			Connected:   s.HasUserSecret(c.Name, user),
+		})
 	}
 	return out
 }
@@ -593,7 +631,7 @@ func (s *SecureAPI) touch(name string) {
 	s.db.Set(secureAPITable, name, c)
 }
 
-// loadSecret returns the decrypted secret value for a credential.
+// loadSecret returns the decrypted SHARED secret value for a credential.
 func (s *SecureAPI) loadSecret(name string) (string, bool) {
 	if !s.ready() {
 		return "", false
@@ -601,6 +639,56 @@ func (s *SecureAPI) loadSecret(name string) (string, bool) {
 	var secret string
 	ok := s.db.Get(secureAPITable, secureCredSecretKey(name), &secret)
 	return secret, ok
+}
+
+// IsPerUser reports whether a credential is scoped so each user supplies their
+// own secret.
+func (c SecureCredential) IsPerUser() bool { return c.CredScope == "per_user" }
+
+// secureCredUserSecretKey is the DB key for one user's secret on a per_user
+// credential. Kept distinct from the shared __secret key so the two never mix.
+func secureCredUserSecretKey(name, user string) string { return name + "__usecret__" + user }
+
+// SaveUserSecret stores (encrypted) a user's own secret for a per_user
+// credential. Empty value clears it (the user disconnecting).
+func (s *SecureAPI) SaveUserSecret(name, user, value string) error {
+	if !s.ready() || name == "" || user == "" {
+		return fmt.Errorf("name and user required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(value) == "" {
+		s.db.Unset(secureAPITable, secureCredUserSecretKey(name, user))
+		return nil
+	}
+	s.db.CryptSet(secureAPITable, secureCredUserSecretKey(name, user), value)
+	return nil
+}
+
+// loadUserSecret reads one user's decrypted secret for a per_user credential.
+func (s *SecureAPI) loadUserSecret(name, user string) (string, bool) {
+	if !s.ready() || user == "" {
+		return "", false
+	}
+	var secret string
+	ok := s.db.Get(secureAPITable, secureCredUserSecretKey(name, user), &secret)
+	return secret, ok
+}
+
+// HasUserSecret reports whether a user has set their secret for a credential —
+// never reveals the value (for the Account page's connected/disconnected badge).
+func (s *SecureAPI) HasUserSecret(name, user string) bool {
+	v, ok := s.loadUserSecret(name, user)
+	return ok && strings.TrimSpace(v) != ""
+}
+
+// resolveSecret picks the secret to dispatch with: the calling user's own for a
+// per_user credential, else the shared secret. user comes from the tool session.
+func (s *SecureAPI) resolveSecret(c SecureCredential, user string) (string, bool) {
+	if c.IsPerUser() {
+		return s.loadUserSecret(c.Name, user)
+	}
+	return s.loadSecret(c.Name)
 }
 
 // CredentialStatus reports a credential's readiness as plain booleans — never
@@ -917,12 +1005,16 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	var secret string
 	if c.Type != SecureCredNone {
 		var ok bool
-		secret, ok = s.loadSecret(c.Name)
-		if !ok {
-			return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
+		callUser := ""
+		if sess != nil {
+			callUser = sess.Username
 		}
-		if secret == "" {
-			return "", fmt.Errorf("credential %q has empty secret", c.Name)
+		secret, ok = s.resolveSecret(c, callUser)
+		if !ok || secret == "" {
+			if c.IsPerUser() {
+				return "", fmt.Errorf("you haven't connected your %q account yet — set your key on your Account page (Connected accounts)", c.Name)
+			}
+			return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
 		}
 	}
 

@@ -205,6 +205,12 @@ func credentialFormFields() []ui.FormField {
 		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},
 		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one dispatched call through this credential, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
 		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle"},
+		{Field: "cred_scope", Label: "Whose credentials", Type: "select",
+			Options: []ui.SelectOption{
+				{Value: "shared", Label: "Shared — one key for everyone (you set it here)"},
+				{Value: "per_user", Label: "Per user — each user sets their own key (on their Account page)"},
+			},
+			Help: "Shared: this credential's secret (below) is used for every user's calls — a service account / shared key. Per user: leave the secret blank here; each user supplies their OWN key on their Account page, and calls run as that user. Use per-user when writes need real attribution + per-user permissions."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to the LLM as the call_<name> tool description."},
 	}
 }
