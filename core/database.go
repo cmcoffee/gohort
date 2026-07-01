@@ -44,6 +44,16 @@ var (
 	// skills, deployment KB) routes here; per-app private corpora that
 	// must stay isolated (e.g. phantom) keep passing their own handle.
 	VectorDB Database
+
+	// RepoFilesDB is the dedicated store for cloned repository source used
+	// by the repo browser. It is a BULK, re-clonable cache — thousands of
+	// files per repo — so it is split off from RootDB to keep the main
+	// (often network-hosted) DB lean, and relocatable to fast local storage
+	// via [paths] repo_dir. Opened with the same hardware-locked at-rest
+	// encryption as the other stores, so file bodies are encrypted on disk
+	// with no extra work; the plaintext clone lives only transiently in a
+	// tmpfs before ingest. Set at startup; nil when unset.
+	RepoFilesDB Database
 )
 
 // OpenDB opens a database from the given filename.

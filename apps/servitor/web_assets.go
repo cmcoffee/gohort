@@ -941,6 +941,11 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         }).then(function(d) {
           m.close();
           if (d && d.session_id) {
+            // Map App runs in its OWN session (the server minted a fresh
+            // session_id) — clear the panes so it doesn't append to whatever
+            // conversation is currently open.
+            if (ctx.clearConvo) ctx.clearConvo();
+            if (ctx.clearActivity) ctx.clearActivity();
             ctx.subscribe('api/chat/v2/events?id=' + encodeURIComponent(d.session_id));
           }
         }).catch(function(err) {

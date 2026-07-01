@@ -1378,6 +1378,13 @@ logs_dir =
 # search is dominated by per-row latency, so local storage is the
 # single biggest win. It need not be backed up — if lost, re-ingest.
 vector_dir =
+
+# repo_dir holds the repo browser's cloned+encrypted source cache
+# (gohort_repos.db). Like vector_dir it is a bulk, re-clonable cache —
+# point it at a fast LOCAL disk when data_dir lives on network storage,
+# and it need not be backed up (if lost, re-clone). Empty = co-located
+# with data_dir.
+repo_dir =
 `
 
 // init_database initializes the application database.
@@ -1416,6 +1423,17 @@ func init_database() {
 	MkDir(vector_dir + "/")
 	vec_filename := FormatPath(fmt.Sprintf("%s/%s_vectors.db", vector_dir, APPNAME))
 	VectorDB, err = SecureDatabase(vec_filename)
+	Critical(err)
+
+	// Dedicated repo-file store — cloned+encrypted source for the repo
+	// browser. A bulk, re-clonable cache (thousands of files per repo), kept
+	// off the main DB and relocatable to local SSD via [paths] repo_dir.
+	// SecureDatabase gives hardware-locked at-rest encryption, so file bodies
+	// are encrypted on disk automatically.
+	repo_dir := loadPath("repo_dir", data_dir)
+	MkDir(repo_dir + "/")
+	repo_filename := FormatPath(fmt.Sprintf("%s/%s_repos.db", repo_dir, APPNAME))
+	RepoFilesDB, err = SecureDatabase(repo_filename)
 	Critical(err)
 
 	// Wire the persistent source hook cache to the global cache sub-database.
