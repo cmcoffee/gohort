@@ -3405,6 +3405,15 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	run := T.runsRegistry().Create(user, agent.ID, sess.ID, cancel)
 	sse := newTeeSSEWriter(w, run)
 
+	// SSE response headers — handleSend streams frames inline off this response.
+	// text/event-stream + X-Accel-Buffering:no so neither a reverse proxy nor the
+	// browser holds frames back (matches handleRunsStream, which set these; this
+	// handler historically relied on content sniffing + flush alone). Set before
+	// the first frame is written.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+
 	// Disconnect watchdog: when the original request's context fires
 	// (client navigated away, network blip, the desktop app quit),
 	// drop the live HTTP-response writer from sse. The loop runs to

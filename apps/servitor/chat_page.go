@@ -54,7 +54,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 		MaxWidth:  "100%",
 		// ExtraHeadHTML loads servitor's block renderers + CSS for
 		// app-specific events (intent, plan, etc.). See web_assets.go.
-		ExtraHeadHTML: servitorWebAssets,
+		ExtraHeadHTML: servitorWebAssets + applianceMemoryModalScript,
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
@@ -124,10 +124,10 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "servitor_edit_appliance"},
 						{Label: "Profile", Title: "View the system profile",
 							Method: "client", URL: "servitor_open_profile"},
-						{Label: "Facts", Title: "View accumulated facts for this appliance",
-							Method: "client", URL: "servitor_open_facts"},
 						{Label: "Rules", Title: "Edit the assistant's rules for this appliance",
 							Method: "client", URL: "servitor_open_rules"},
+						{Label: "Memory", Title: "Manage this appliance's agent memory — Saved facts, Reference Memory, and Graph Memory",
+							Method: "client", URL: "servitor_appliance_memory"},
 						{Label: "✨ Map System", Title: "Discover the system layout",
 							Method: "client", URL: "servitor_run_map", Variant: "primary"},
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",

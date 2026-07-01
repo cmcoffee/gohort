@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/apps/orchestrate"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"
@@ -21,6 +22,7 @@ import (
 
 func init() {
 	RegisterApp(new(Servitor))
+	registerServitorMCPTools()
 	RegisterRouteStage(RouteStage{
 		Key:     "app.servitor",
 		Label:   "Servitor (worker — runs SSH commands)",
@@ -371,6 +373,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/manage", T.handleManagePage)
 	sub.HandleFunc("/manage/", T.handleManagePage)
 	sub.HandleFunc("/api/appliances", T.handleAppliances)
+	sub.HandleFunc("/api/appliances/", T.handleApplianceMemory) // /api/appliances/<id>/{facts,graph,inferred,...} — shared agent-memory surface
 	sub.HandleFunc("/api/appliance/", T.handleAppliance)
 	sub.HandleFunc("/api/chat", T.handleChat)
 	// Persisted chat sessions back the left rail (see sessions.go).
@@ -573,6 +576,9 @@ func clearApplianceMemory(udb Database, applianceID string) {
 		a.Scanned = ""
 		udb.Set(applianceTable, applianceID, a)
 	}
+	// Also clear the orchestrate-scoped memory so "Clear Memory" is consistent
+	// across the dual-write split (legacy ssh_* AND the scope the modal reads).
+	clearApplianceScopedMemory(udb, applianceID)
 }
 
 // purgeAppliance removes all data associated with an appliance: the record itself,
@@ -593,6 +599,10 @@ func purgeAppliance(userID string, udb Database, applianceID string) {
 	// Notes and techniques are keyed directly by applianceID.
 	udb.Unset(notesTable, applianceID)
 	udb.Unset(techniquesTable, applianceID)
+
+	// Drop the orchestrate-scoped memory too, so a deleted appliance leaves no
+	// orphaned scope behind.
+	clearApplianceScopedMemory(udb, applianceID)
 
 	dropConn(userID, applianceID)
 }
@@ -1550,13 +1560,13 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 	b.WriteString("- **Dead ends are data**: if something is blocked, record it and redirect\n")
 	b.WriteString("- **`[OUTCOME: not_found]` means done**: accept the result — do not probe the same target again with different arguments. Issue a new probe only if a completely different angle (different tool, different config path) is genuinely warranted\n\n")
 	b.WriteString("## What to Record\n\n")
-	b.WriteString("`record_discovery` is your primary output — use it for insights:\n")
-	b.WriteString("- **Architecture**: how services connect and depend on each other (nginx:443 → node:3000 → postgres:5432 with Redis sessions)\n")
+	b.WriteString("`link_entities` builds the SYSTEM MAP as a graph — use it for architecture and every connection you find, one relationship per call: nginx → proxies to → node:3000; node → connects to → postgres:5432; node → uses → Redis (sessions). Each service/database/app is its OWN entity; record its version/port/path as subject_attrs. This is your primary structural output — a topology you can traverse, not flat facts on one node.\n")
+	b.WriteString("`record_discovery` is for narrative INSIGHTS that don't reduce to a single relationship:\n")
 	b.WriteString("- **Database access**: exact working connection method, credentials, schemas, key tables\n")
 	b.WriteString("- **Operations**: how to deploy, restart, tail logs, connect to databases on THIS system specifically\n")
 	b.WriteString("- **Configuration**: where configs live, key settings, non-standard paths\n")
 	b.WriteString("- **Security posture**: firewall state, sudo rules, exposed credentials, certificate expiry\n\n")
-	b.WriteString("`store_fact` for atomic lookups: version strings, port numbers, file paths.\n")
+	b.WriteString("`store_fact` for appliance-wide properties: os, hostname, kernel, architecture.\n")
 	b.WriteString("`record_technique` for confirmed working commands: exact auth methods, non-standard binary paths.\n\n")
 	b.WriteString("## Workflow\n\n")
 	b.WriteString("1. Orient yourself from the system snapshot — identify the primary role and main services\n")
@@ -1587,6 +1597,7 @@ func buildProbeWorkerPrompt(appliance Appliance) string {
 	b.WriteString("## Rules\n\n")
 	b.WriteString("- Run only the commands needed to complete the task — **maximum 10 tool calls**\n")
 	b.WriteString("- Call `store_fact` immediately after any command that returns a concrete value\n")
+	b.WriteString("- Call `link_entities` to record how parts of the system CONNECT — a service to its port, an app to its database, a process to its config file, a service to the host. This builds the system map as a real topology; `store_fact` is only for appliance-wide properties (os, hostname, kernel)\n")
 	b.WriteString("- Call `record_technique` when you find a working auth method or non-obvious command\n")
 	b.WriteString("- Call `note_lesson` when you hit a dead end future workers should avoid\n")
 	b.WriteString("- Do NOT explore beyond the task — the investigator directs all follow-up\n")
@@ -1672,6 +1683,47 @@ func buildMapSystemPrompt(base string, appliance Appliance) string {
 // buildLeadSystemPrompt constructs the prompt for the lead Knowledge Manager LLM.
 // The lead maintains structured knowledge docs about the system and dispatches the worker
 // on precise, context-rich investigations. It never runs SSH commands directly.
+// leadStaticGuidance writes the appliance-INDEPENDENT investigator core
+// (investigation approach, mid-investigation user-note handling, the
+// anti-fabrication rules, and the diagram rule). Extracted so the live
+// buildLeadSystemPrompt and the orchestrate template agent
+// (app-servitor-investigator, see appliance_memory.go) share ONE copy of the
+// guidance; the per-appliance persona, docs, facts, and rules are layered on
+// separately (scoped memory + the per-run message) at the call site.
+func leadStaticGuidance(b *strings.Builder) {
+	b.WriteString("## Investigation Approach\n\n")
+	b.WriteString("You are an investigator. Answer the user's question with verified facts — adapt your investigation to what you find.\n\n")
+	b.WriteString("1. **Start from what you know**: check knowledge docs and stored facts first — if the question is fully answered with verified values, respond directly without probing.\n")
+	b.WriteString("2. **Formulate a hypothesis**: what do you need to find to answer the question? What is the most direct path to that answer?\n")
+	b.WriteString("3. **Probe specifically**: each `probe` call has ONE clear goal. 'Show MySQL connection string from /etc/app/config.yml' not 'investigate databases'.\n")
+	b.WriteString("4. **Follow leads immediately**: when a probe reveals a promising pointer (file path, service name, credential), follow it now before moving to anything else.\n")
+	b.WriteString("5. **Update your docs**: call `update_doc` after each probe that yields new information.\n")
+	b.WriteString("6. **Synthesize when answered**: the moment the question is fully answered with verified values, write your response. Don't keep probing once the answer is in hand.\n")
+	b.WriteString("7. **Try different angles**: if initial probes don't answer it, try a different service, config location, or access method.\n\n")
+	b.WriteString("If a probe returns nothing useful, pivot immediately — different path, different service, different approach.\n\n")
+	b.WriteString("**REQUIRED FINAL STEP**: Every session MUST end with a plain-text response to the user. Never end on a tool call.\n\n")
+	b.WriteString("## Mid-Investigation User Notes\n\n")
+	b.WriteString("The user may inject a message during a running investigation. It will appear in your message history prefixed with `[USER NOTE — submitted mid-investigation]`. Workers in flight when the note arrived have already completed their current task without seeing it — only you see it, and only between rounds. When you encounter such a note:\n")
+	b.WriteString("- If the note is a clear directive (e.g. \"also check /var/log/foo\", \"focus on the database, ignore the web tier\"), incorporate it into your remaining plan and continue with the appropriate next probe. Briefly acknowledge it in your eventual final response.\n")
+	b.WriteString("- If the note is ambiguous or could meaningfully change direction, end your current response with a short clarifying question to the user and STOP probing. The user will reply on the next turn and you'll resume with the answer in hand.\n")
+	b.WriteString("- Never ignore a user note. Treat it as authoritative — the user has context you don't.\n\n")
+
+	b.WriteString("## Rules\n\n")
+	b.WriteString("- **No fabrication, ever.** Every specific value you write in a response — a path, IP address, port number, username, database name, table name, service name, version string, config value, or file name — MUST be a character-for-character copy from your knowledge docs, stored facts, or worker output from this session. Do not retype it from memory, do not normalize it, do not fix its capitalization or punctuation — find it in the text in front of you and copy it exactly. If you cannot find it in the text, do not write it.\n")
+	b.WriteString("- **No examples from imagination.** Do not write 'for example', 'e.g.', 'such as', or 'like' followed by a specific value you invented. If you need an example, probe the worker to get a real one.\n")
+	b.WriteString("- **No gap-filling.** If a doc has a gap — a missing field, an unknown value, an unanswered question — the correct response is to probe, not to fill it with a plausible-sounding value.\n")
+	b.WriteString("- **Never assume. Never guess.** The words 'likely', 'probably', 'typically', 'should be', 'usually', 'often', 'I assume', 'I believe', 'I expect', and 'I think' are forbidden in final responses. If you are not certain, you do not know — go find out.\n")
+	b.WriteString("- **Do not expand acronyms.** Internal/organizational acronyms have org-specific meanings that rarely match training-data priors. Treat any acronym as an opaque label until you have verified its meaning from the system itself — a README, comment, config-file annotation, log message, or explicit statement in documentation. If you only know the letters, use the letters. Writing 'GMS (Game Management System)' when you saw nothing on this system explaining what GMS stands for is fabrication, even when the expansion 'sounds plausible.' Probe to find the meaning, or leave it unexpanded.\n")
+	b.WriteString("- **Never answer 'I don't know'** without first having probed. If the docs are empty and no probe has run, you do not yet know — go find out.\n")
+	b.WriteString("- Never answer from training knowledge — only from probe findings or your knowledge docs.\n")
+	b.WriteString("- The richer the `context` you give the probe, the more precise its findings will be.\n")
+	b.WriteString("- For live state questions (running processes, logged-in users, open ports, disk usage), always probe — docs alone are never sufficient.\n")
+	b.WriteString("- `update_doc` is MANDATORY after every `probe` call that yields new information — call it even if findings are sparse.\n")
+	b.WriteString("- Synthesize clearly — do not dump raw command output at the user. Exact verified values only.\n\n")
+
+	b.WriteString(asciiDiagramRule)
+}
+
 func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool) string {
 	var b strings.Builder
 	writePersona(&b, appliance)
@@ -1705,37 +1757,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 		b.WriteString("\n")
 	}
 
-	b.WriteString("## Investigation Approach\n\n")
-	b.WriteString("You are an investigator. Answer the user's question with verified facts — adapt your investigation to what you find.\n\n")
-	b.WriteString("1. **Start from what you know**: check knowledge docs and stored facts first — if the question is fully answered with verified values, respond directly without probing.\n")
-	b.WriteString("2. **Formulate a hypothesis**: what do you need to find to answer the question? What is the most direct path to that answer?\n")
-	b.WriteString("3. **Probe specifically**: each `probe` call has ONE clear goal. 'Show MySQL connection string from /etc/app/config.yml' not 'investigate databases'.\n")
-	b.WriteString("4. **Follow leads immediately**: when a probe reveals a promising pointer (file path, service name, credential), follow it now before moving to anything else.\n")
-	b.WriteString("5. **Update your docs**: call `update_doc` after each probe that yields new information.\n")
-	b.WriteString("6. **Synthesize when answered**: the moment the question is fully answered with verified values, write your response. Don't keep probing once the answer is in hand.\n")
-	b.WriteString("7. **Try different angles**: if initial probes don't answer it, try a different service, config location, or access method.\n\n")
-	b.WriteString("If a probe returns nothing useful, pivot immediately — different path, different service, different approach.\n\n")
-	b.WriteString("**REQUIRED FINAL STEP**: Every session MUST end with a plain-text response to the user. Never end on a tool call.\n\n")
-	b.WriteString("## Mid-Investigation User Notes\n\n")
-	b.WriteString("The user may inject a message during a running investigation. It will appear in your message history prefixed with `[USER NOTE — submitted mid-investigation]`. Workers in flight when the note arrived have already completed their current task without seeing it — only you see it, and only between rounds. When you encounter such a note:\n")
-	b.WriteString("- If the note is a clear directive (e.g. \"also check /var/log/foo\", \"focus on the database, ignore the web tier\"), incorporate it into your remaining plan and continue with the appropriate next probe. Briefly acknowledge it in your eventual final response.\n")
-	b.WriteString("- If the note is ambiguous or could meaningfully change direction, end your current response with a short clarifying question to the user and STOP probing. The user will reply on the next turn and you'll resume with the answer in hand.\n")
-	b.WriteString("- Never ignore a user note. Treat it as authoritative — the user has context you don't.\n\n")
-
-	b.WriteString("## Rules\n\n")
-	b.WriteString("- **No fabrication, ever.** Every specific value you write in a response — a path, IP address, port number, username, database name, table name, service name, version string, config value, or file name — MUST be a character-for-character copy from your knowledge docs, stored facts, or worker output from this session. Do not retype it from memory, do not normalize it, do not fix its capitalization or punctuation — find it in the text in front of you and copy it exactly. If you cannot find it in the text, do not write it.\n")
-	b.WriteString("- **No examples from imagination.** Do not write 'for example', 'e.g.', 'such as', or 'like' followed by a specific value you invented. If you need an example, probe the worker to get a real one.\n")
-	b.WriteString("- **No gap-filling.** If a doc has a gap — a missing field, an unknown value, an unanswered question — the correct response is to probe, not to fill it with a plausible-sounding value.\n")
-	b.WriteString("- **Never assume. Never guess.** The words 'likely', 'probably', 'typically', 'should be', 'usually', 'often', 'I assume', 'I believe', 'I expect', and 'I think' are forbidden in final responses. If you are not certain, you do not know — go find out.\n")
-	b.WriteString("- **Do not expand acronyms.** Internal/organizational acronyms have org-specific meanings that rarely match training-data priors. Treat any acronym as an opaque label until you have verified its meaning from the system itself — a README, comment, config-file annotation, log message, or explicit statement in documentation. If you only know the letters, use the letters. Writing 'GMS (Game Management System)' when you saw nothing on this system explaining what GMS stands for is fabrication, even when the expansion 'sounds plausible.' Probe to find the meaning, or leave it unexpanded.\n")
-	b.WriteString("- **Never answer 'I don't know'** without first having probed. If the docs are empty and no probe has run, you do not yet know — go find out.\n")
-	b.WriteString("- Never answer from training knowledge — only from probe findings or your knowledge docs.\n")
-	b.WriteString("- The richer the `context` you give the probe, the more precise its findings will be.\n")
-	b.WriteString("- For live state questions (running processes, logged-in users, open ports, disk usage), always probe — docs alone are never sufficient.\n")
-	b.WriteString("- `update_doc` is MANDATORY after every `probe` call that yields new information — call it even if findings are sparse.\n")
-	b.WriteString("- Synthesize clearly — do not dump raw command output at the user. Exact verified values only.\n\n")
-
-	b.WriteString(asciiDiagramRule)
+	leadStaticGuidance(&b)
 
 	if len(docs) > 0 {
 		b.WriteString("## Current Knowledge Base\n\n")
@@ -1803,11 +1825,13 @@ func buildConsolidationPrompt(appliance Appliance) string {
 	b.WriteString("## Persistence Rules\n\n")
 	b.WriteString("1. Only persist information explicitly stated in the exchange — never infer or invent.\n")
 	b.WriteString("2. Call `read_doc` before `update_doc` — append new findings to existing content rather than replacing it wholesale.\n")
-	b.WriteString("3. Call `store_fact` for every concrete value in the worker output: version strings, port numbers, file paths, config values, service statuses, account names.\n")
-	b.WriteString("4. Call `record_technique` for every confirmed working approach: exact command syntax, successful auth method, non-standard binary path.\n")
-	b.WriteString("5. Do not duplicate — check `read_doc` content before updating a doc.\n")
-	b.WriteString("6. If nothing new was found beyond what is already stored, call no tools.\n")
-	b.WriteString("7. Do NOT produce any text response. Your output must be tool calls only.\n")
+	b.WriteString("3. Call `store_fact` for APPLIANCE-WIDE values — properties of the box as a whole: os, hostname, kernel, architecture.\n")
+	b.WriteString("4. Call `link_entities` for the SYSTEM TOPOLOGY — how named components connect: a service to its port, an app to its database, a process to its config file, a service to the host. Each service/database/app is its OWN entity; record its version/path/port as subject_attrs. This is the main way you build knowledge here — do it for every relationship in the findings so the map becomes a real graph, not flat facts on one node.\n")
+	b.WriteString("5. Call `record_technique` for every confirmed working approach: exact command syntax, successful auth method, non-standard binary path.\n")
+	b.WriteString("6. Call `note_lesson` for any dead end or wrong assumption the exchange revealed — a path that turned out empty, a config that wasn't where expected, an approach that failed — so future sessions don't repeat it.\n")
+	b.WriteString("7. Do not duplicate — check `read_doc` content before updating a doc; graph entities auto-merge by name.\n")
+	b.WriteString("8. If nothing new was found beyond what is already stored, call no tools.\n")
+	b.WriteString("9. Do NOT produce any text response. Your output must be tool calls only.\n")
 	return b.String()
 }
 
@@ -2568,6 +2592,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			udb.Get(notesTable, appliance.ID, &existing)
 			entry := fmt.Sprintf("- %s (%s)\n", note, time.Now().Format("2006-01-02"))
 			udb.Set(notesTable, appliance.ID, existing+entry)
+			recordScopedLesson(appliance, note) // lessons -> Explicit Memory (always-in-prompt), not Reference Memory
 			emit(id, probeEvent{Kind: "status", Text: "Noted: " + note})
 			return "noted", nil
 		},
@@ -2629,6 +2654,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 			}
 			recordTechnique(udb, appliance.ID, technique)
+			recordScopedReference(ctx, appliance, "techniques", refTitle(technique), technique) // dual-write to the orchestrate scope (lead migration, slice 1)
 			emit(id, probeEvent{Kind: "status", Text: "Technique saved: " + technique})
 			return "technique recorded", nil
 		},
@@ -2666,6 +2692,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				return "", fmt.Errorf("no database")
 			}
 			storeDiscovery(udb, appliance.ID, title, finding, category)
+			recordScopedReference(ctx, appliance, "discoveries", title, finding) // dual-write to the orchestrate scope (lead migration, slice 1)
 			emit(id, probeEvent{Kind: "discovery", Text: "★ " + strings.TrimSpace(title)})
 			return "discovery recorded", nil
 		},
@@ -2696,19 +2723,61 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				return "", fmt.Errorf("key and value are required")
 			}
 			ttl, _ := args["ttl"].(string)
-			var tags []string
-			if raw, ok := args["tags"]; ok {
-				if arr, ok := raw.([]any); ok {
-					for _, t := range arr {
-						if s, ok := t.(string); ok && s != "" {
-							tags = append(tags, s)
-						}
+			// Cutover: facts now live ONLY in the appliance scope (graph attrs);
+			// ssh_facts is retired. Short-TTL (ephemeral) facts are not persisted
+			// — the graph has no expiry, and live state should be re-probed.
+			recordScopedApplianceFact(appliance, key, value, ttl)
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Stored fact: %s = %s", key, value)})
+			return "fact stored", nil
+		},
+		NeedsConfirm: false,
+	}
+
+	// link_entities — record a RELATIONSHIP in this system's graph map so the
+	// knowledge is a real topology (services, configs, dependencies) instead of
+	// flat facts piled on one node. store_fact is for appliance-wide properties;
+	// link_entities is for everything with structure.
+	link_entities_tool := AgentToolDef{
+		Tool: Tool{
+			Name: "link_entities",
+			Description: "Record a RELATIONSHIP between two named parts of this system — the structured graph map. State it subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080', or subject='app' relation='connects to' object='postgres'. Entities auto-merge by name. Use this whenever you learn how parts connect: a service to its port, an app to its database, a process to its config file, a service to the host. Put non-relational details (version, path, port) in subject_attrs. Use `store_fact` ONLY for appliance-wide properties (os, hostname, kernel); use `link_entities` for anything with structure or relationships.",
+			Parameters: map[string]ToolParam{
+				"subject":       {Type: "string", Description: "The subject entity's name, e.g. 'nginx', 'app', 'postgres'."},
+				"subject_kind":  {Type: "string", Description: "Subject type: service, app, database, host, file, process, port, or thing. Defaults to thing."},
+				"relation":      {Type: "string", Description: "The relationship verb, e.g. 'runs on', 'proxies to', 'connects to', 'depends on', 'listens on', 'reads config from'."},
+				"object":        {Type: "string", Description: "The object entity's name, e.g. 'postgres', '/etc/nginx/nginx.conf', 'port 5432'."},
+				"object_kind":   {Type: "string", Description: "Object type (see subject_kind). Defaults to thing."},
+				"subject_attrs": {Type: "object", Description: "Optional non-relational facts about the subject as key/value strings, e.g. {\"version\": \"1.24\", \"port\": \"443\"}."},
+				"note":          {Type: "string", Description: "Optional qualifier on the relationship, e.g. 'over unix socket'."},
+				"replace":       {Type: "boolean", Description: "True if this CORRECTS a single-valued relation (removes the prior value for this subject+relation)."},
+			},
+			Required: []string{"subject", "relation", "object"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			subject, _ := args["subject"].(string)
+			relation, _ := args["relation"].(string)
+			object, _ := args["object"].(string)
+			if strings.TrimSpace(subject) == "" || strings.TrimSpace(relation) == "" || strings.TrimSpace(object) == "" {
+				return "", fmt.Errorf("subject, relation, and object are required")
+			}
+			subjectKind, _ := args["subject_kind"].(string)
+			objectKind, _ := args["object_kind"].(string)
+			note, _ := args["note"].(string)
+			replace, _ := args["replace"].(bool)
+			var attrs map[string]string
+			if raw, ok := args["subject_attrs"].(map[string]any); ok {
+				attrs = make(map[string]string)
+				for k, v := range raw {
+					if s, ok := v.(string); ok {
+						attrs[k] = s
 					}
 				}
 			}
-			storeFact(udb, appliance.ID, appliance.Name, key, value, ttl, tags)
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Stored fact: %s = %s", key, value)})
-			return "fact stored", nil
+			if err := recordScopedLink(appliance, subjectKind, subject, attrs, relation, objectKind, object, note, replace); err != nil {
+				return "", err
+			}
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Linked: %s → %s → %s", subject, relation, object)})
+			return "relationship recorded", nil
 		},
 		NeedsConfirm: false,
 	}
@@ -2826,13 +2895,27 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			if query == "" {
 				return "", fmt.Errorf("query is required")
 			}
-			appFilter, _ := args["appliance"].(string)
-			results := searchFacts(udb, query, appFilter)
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_facts %q: %d result(s)", query, len(results))})
-			if len(results) == 0 {
+			// Cutover: facts live in THIS appliance's scope (graph attrs). Cross-
+			// appliance search is no longer supported — each appliance is its own
+			// scope — so the optional "appliance" filter is ignored.
+			attrs := scopedApplianceFacts(udb, appliance)
+			keys := make([]string, 0, len(attrs))
+			for k := range attrs {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			q := strings.ToLower(query)
+			var lines []string
+			for _, k := range keys {
+				if strings.Contains(strings.ToLower(k), q) || strings.Contains(strings.ToLower(attrs[k]), q) {
+					lines = append(lines, "- "+k+": "+attrs[k])
+				}
+			}
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_facts %q: %d result(s)", query, len(lines))})
+			if len(lines) == 0 {
 				return "no facts found", nil
 			}
-			return formatFacts(results), nil
+			return strings.Join(lines, "\n"), nil
 		},
 		NeedsConfirm: false,
 	}
@@ -2856,12 +2939,16 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			workerPrompt += "\n\n## Key Discoveries (pre-established — do not re-investigate)\n\n"
 			workerPrompt += cachedDiscoveries + "\n"
 		}
-		if facts := factsForAppliance(udb, appliance.ID); len(facts) > 0 {
-			cachedFacts = formatFactsWithAge(facts, now)
+		// Facts now come from the appliance's SCOPE (graph entity attrs), not
+		// ssh_facts. Graph attrs carry no per-fact age, so the prompt leans on
+		// the standing "always re-probe live state" rule rather than age cutoffs.
+		if fb := scopedFactsBlock(udb, appliance); fb != "" {
+			cachedFacts = fb
 			workerPrompt += "\n\n## What We Already Know About This System\n\n"
 			workerPrompt += fmt.Sprintf("Current time: %s\n\n", now.Format("2006-01-02 15:04 MST"))
-			workerPrompt += "Facts are annotated with age. Re-run for anything about current state older than 30 minutes. " +
-				"Trust config, versions, hardware, and paths for 24 hours.\n\n"
+			workerPrompt += "Verified facts recorded in prior sessions. For anything about LIVE state " +
+				"(running processes, logged-in users, open ports, current disk/memory usage) always re-probe; " +
+				"configuration, versions, hardware, and paths can be trusted.\n\n"
 			workerPrompt += cachedFacts
 		}
 		var notes string
@@ -3015,13 +3102,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	if appliance.Type == "command" {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool,
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, store_rule_tool, search_facts_tool,
+			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			count_lines_tool, read_range_tool, save_to_codewriter_tool, save_to_techwriter_tool,
 		}
 	} else {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool, newRunPtyTool(),
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, store_rule_tool, search_facts_tool,
+			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			count_lines_tool, read_range_tool,
 			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool,
 		}
@@ -3503,7 +3590,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			investigatorTools := []AgentToolDef{
 				set_plan_tool, mark_step_in_progress_tool, record_step_findings_tool, mark_step_blocked_tool,
 				revise_plan_tool, report_gaps_tool,
-				probe_tool, store_fact_tool, record_discovery_tool, record_technique_tool, note_lesson_tool,
+				probe_tool, store_fact_tool, link_entities_tool, record_discovery_tool, record_technique_tool, note_lesson_tool,
 			}
 			assertOnlyAllowedTools("servitor.investigator", investigatorTools, servitorOrchestratorToolAllowList)
 			// Per-step pacing reset — the soft-pacing windows
@@ -3934,61 +4021,87 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			return out
 		}
 
-		var invResp *Response
-		var invHistory []Message
 		var err error
 		docInvestigatorTools := []AgentToolDef{read_doc_tool, update_doc_tool, probe_tool}
 		assertOnlyAllowedTools("servitor.doc_investigator", docInvestigatorTools, servitorOrchestratorToolAllowList)
 		const maxDocInvestigatorPasses = 2 // extra budgets while probes keep yielding new data
-		docInvCfg := AgentLoopConfig{
-			SystemPrompt:    leadPrompt,
-			Tools:           docInvestigatorTools,
-			MaxRounds:       75,
-			RouteKey:        "app.servitor",
-			MaskDebugOutput: true,
-			SerialTools:     true,
-			ChatOptions:     append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
-			// InjectionDrain (not OnRoundStart): drainInjections empties
-			// its queue and returns nil when nothing's pending, so the
-			// loop's pre-finalize re-call terminates cleanly. This also
-			// gets the pre-finalize protection — a note that lands during
-			// the final round is picked up before the answer is written.
-			InjectionDrain: drainInjections,
-			OnStep: func(step StepInfo) {
-				if step.Done && strings.TrimSpace(step.Content) != "" {
-					emit(id, probeEvent{Kind: "status", Text: "Investigator: synthesizing answer…"})
-				}
-			},
+
+		// Lead migration (slice 2b): the investigator runs through the orchestrate
+		// SCOPED path, so its sessions and tool recordings land in the appliance
+		// scope (app:servitor:<id>). It keeps its OWN complete prompt verbatim via
+		// SystemPromptOverride (content parity) and its loop knobs via Loop; the
+		// mid-flight injection drain (with the notes_consumed UI signal) rides
+		// Loop.OnRoundStart. All per-appliance context is in the system prompt, so
+		// the run message is just the conversation.
+		orch := servitorOrch()
+		if orch == nil {
+			emit(id, probeEvent{Kind: "error", Text: "orchestrate runtime unavailable"})
+			return
 		}
+		var leadImages [][]byte
+		for i := len(messages) - 1; i >= 0; i-- {
+			if messages[i].Role == "user" {
+				leadImages = messages[i].Images
+				break
+			}
+		}
+		leadScope := orchestrate.AgentScope{
+			AgentID:   servitorInvestigatorAgentID,
+			ScopeUser: applianceMemScope(appliance.ID),
+			SessionID: id,
+		}
+		leadLoop := &orchestrate.AgentLoopOverrides{
+			MaxRounds:    75,
+			SerialTools:  true,
+			ChatOptions:  append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
+			OnRoundStart: drainInjections,
+		}
+		leadStatus := func(s string) { emit(id, probeEvent{Kind: "status", Text: s}) }
+		var res orchestrate.AgentSyncResult
 		withHeartbeat(ctx, id, "Investigator: working", func() {
-			invResp, invHistory, err = a.RunAgentLoop(ctx, messages, docInvCfg)
+			res, err = orch.RunScopedAgentRich(ctx, leadScope, orchestrate.AgentSyncRun{
+				SubSessionID:         id,
+				Message:              buildScopedLeadMessage(messages),
+				Images:               leadImages,
+				FreshSession:         true,
+				SystemPromptOverride: leadPrompt,
+				AppTools:             docInvestigatorTools,
+				Loop:                 leadLoop,
+				StatusCallback:       leadStatus,
+			})
 		})
-		// Productive continuation — the Q&A investigator has no plan to pace
-		// against, so it would simply cap and answer with whatever it had.
-		// When it exhausts its budget (HitRoundCap) but probes are still
-		// yielding NEW data, grant another budget; stop as soon as a pass
-		// gathers nothing new (stuck) or the model finishes naturally. Bounded
-		// at (1 + maxDocInvestigatorPasses) budgets.
+		if res.Text != "" {
+			reply = strings.TrimSpace(res.Text)
+		}
+		// Productive continuation — when the run caps (HitRoundCap) but probes are
+		// still yielding NEW data, continue the SAME scoped session (FreshSession
+		// defaults false) with another budget; stop once a pass gathers nothing new.
 		for pass := 0; pass < maxDocInvestigatorPasses && err == nil && ctx.Err() == nil; pass++ {
-			if invResp == nil || !invResp.HitRoundCap {
+			if !res.HitRoundCap {
 				break // natural finish — not a cap hit
 			}
 			before := len(allProbeResults)
 			emit(id, probeEvent{Kind: "status", Text: "Investigator reached its round budget — continuing the investigation…"})
 			withHeartbeat(ctx, id, "Investigator: working (continued)", func() {
-				invResp, invHistory, err = a.RunAgentLoop(ctx, invHistory, docInvCfg)
+				res, err = orch.RunScopedAgentRich(ctx, leadScope, orchestrate.AgentSyncRun{
+					SubSessionID:         id,
+					Message:              "Continue the investigation from where you left off and finish answering the user's question.",
+					SystemPromptOverride: leadPrompt,
+					AppTools:             docInvestigatorTools,
+					Loop:                 leadLoop,
+					StatusCallback:       leadStatus,
+				})
 			})
+			if res.Text != "" {
+				reply = strings.TrimSpace(res.Text)
+			}
 			if len(allProbeResults) == before {
 				break // no new probe data this pass — stop rather than grind
 			}
 		}
-		_ = invHistory
 		if err != nil && ctx.Err() == nil {
 			emit(id, probeEvent{Kind: "error", Text: err.Error()})
 			return
-		}
-		if invResp != nil {
-			reply = strings.TrimSpace(invResp.Content)
 		}
 		if reply == "" && lastProbeResult != "" {
 			reply = lastProbeResult
@@ -4016,7 +4129,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 				a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, AgentLoopConfig{
 					SystemPrompt:    buildConsolidationPrompt(appliance),
-					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, record_technique_tool},
+					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, link_entities_tool, record_technique_tool, note_lesson_tool},
 					MaxRounds:       10,
 					RouteKey:        "app.servitor",
 					MaskDebugOutput: true,

@@ -29,6 +29,8 @@ func appAgentSpecToRecord(s appagents.AppAgentSpec) AgentRecord {
 		AllowedTools:       s.AllowedTools,
 		Hidden:             s.Hidden,
 		Cortex:             s.Cortex,
+		MemoryMode:         s.MemoryMode,
+		DisableExplicit:    s.DisableExplicit,
 	}
 }
 

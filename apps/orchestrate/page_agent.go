@@ -259,6 +259,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Who can use this agent, fleet visibility, and Private-mode policy. (The edit/delete lock is the 🔒 icon at the top-right.)"},
 			ui.FormField{Field: "exposed", Type: "toggle", Label: "Publish App to Dashboard",
 				Help: "Adds this agent to the dashboard as its own app (its own card + URL). NOT open to everyone — a user only sees and can use it once you grant them access (per-app permissions); admins always have access. Each user gets their own private sessions + data under the agent."},
+			ui.FormField{Field: "mcp_exposed", Type: "toggle", Label: "Reachable over MCP",
+				Help: "Lets an external MCP client (e.g. Claude Desktop, with a bridge key) dispatch to this agent via the ask_agent tool on gohort's /mcp/ endpoint. Off by default — turn on only the agents you want reachable from outside. Independent of publishing to the dashboard."},
 			ui.FormField{Field: "public_name", Type: "text", Label: "Published app name",
 				Placeholder: "(uses the agent name above when blank)",
 				Help:        "Optional. Name shown on the dashboard card + URL slug. Set when the internal name reads awkwardly as an app title.",

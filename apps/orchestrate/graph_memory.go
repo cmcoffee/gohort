@@ -33,7 +33,7 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, generalTopic, query, 3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeAll)
+	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, generalTopic, query, 3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeAll)
 	if len(hits) == 0 {
 		return ""
 	}

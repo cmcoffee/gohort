@@ -844,7 +844,12 @@ const (
 	ChunkScopeDerivedOnly
 )
 
-func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic, query string, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
+// baseUser, when set and different from user, adds the TEMPLATE owner's corpus as
+// a second searched layer: a scoped instance (runtimeUser != the agent's owner —
+// e.g. a per-appliance servitor agent) retrieves the template's general/base
+// knowledge ALONGSIDE what it gathered itself. Empty/equal ⇒ instance-only (the
+// normal single-scope behavior).
+func searchAgentKnowledge(ctx context.Context, db Database, user, baseUser, agentID, topic, query string, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
 	// db is kept in the signature for caller compatibility and acts as
 	// the system-readiness gate. The chunk search itself runs against
 	// VectorDB now (the dedicated shared store, partitioned by Source
@@ -867,6 +872,14 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	// scope the results by provenance (curated vs derived) for the
 	// Knowledge / Memory split.
 	agentPrefix := knowledgeSource(user, agentID, "")
+	// Template/base layer (enabler #1 of agent-as-template): a SCOPED instance
+	// (runtimeUser != the agent's owner) also searches the template owner's corpus,
+	// so a per-appliance instance inherits the template's base knowledge on top of
+	// its own. Empty when the run isn't scoped (baseUser unset or == user).
+	basePrefix := ""
+	if baseUser != "" && baseUser != user {
+		basePrefix = knowledgeSource(baseUser, agentID, "")
+	}
 	// Per-agent shared KB was deprecated in favor of attached
 	// collections — admins curate corpus by minting a Collection and
 	// attaching it to the agent (which makes the corpus reusable
@@ -915,6 +928,8 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 		inAllowed := false
 		if c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") {
 			inAllowed = true
+		} else if basePrefix != "" && (c.Source == basePrefix || strings.HasPrefix(c.Source, basePrefix+":")) {
+			inAllowed = true // template/base layer for a scoped instance
 		} else if exact[c.Source] {
 			inAllowed = true
 		}
@@ -1184,7 +1199,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			topic := normalizeTopic(stringArg(args, "topic"))
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
-			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
 			filtered := hits[:0]
 			for _, h := range hits {
@@ -1439,7 +1454,7 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	rawHits := len(hits)
 	filtered := hits[:0]
 	for _, h := range hits {
@@ -1542,7 +1557,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	if len(hits) == 0 {
 		return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query under this agent.", nil
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -122,6 +123,36 @@ func TestMCPDiscover(t *testing.T) {
 	}
 	if cfg.Resource != rs.URL+"/mcp" {
 		t.Fatalf("resource = %q, want %q", cfg.Resource, rs.URL+"/mcp")
+	}
+}
+
+func TestMCPWellKnownPRM(t *testing.T) {
+	// Path-aware (RFC 9728): well-known segment inserted before the path.
+	if got := mcpWellKnownPRM("https://mcp.example.com/v1/mcp"); got != "https://mcp.example.com/.well-known/oauth-protected-resource/v1/mcp" {
+		t.Errorf("path-aware = %q", got)
+	}
+	// Root variant ignores the path.
+	if got := mcpWellKnownPRMRoot("https://mcp.example.com/v1/mcp"); got != "https://mcp.example.com/.well-known/oauth-protected-resource" {
+		t.Errorf("root = %q", got)
+	}
+	// No path: both forms collapse to the same origin URL.
+	if got := mcpWellKnownPRM("https://mcp.example.com"); got != "https://mcp.example.com/.well-known/oauth-protected-resource" {
+		t.Errorf("no-path = %q", got)
+	}
+}
+
+func TestMCPApplyResourceParam(t *testing.T) {
+	// Audience set → send audience, drop resource (Auth0/Atlassian style).
+	aud := url.Values{}
+	mcpApplyResourceParam(aud, mcpOAuthConfig{Resource: "https://mcp.x/v1", Audience: "api.atlassian.com"})
+	if aud.Get("audience") != "api.atlassian.com" || aud.Get("resource") != "" {
+		t.Errorf("audience mode: %v", aud)
+	}
+	// No audience → send the RFC 8707 resource indicator (the MCP default).
+	res := url.Values{}
+	mcpApplyResourceParam(res, mcpOAuthConfig{Resource: "https://mcp.x/v1"})
+	if res.Get("resource") != "https://mcp.x/v1" || res.Get("audience") != "" {
+		t.Errorf("resource mode: %v", res)
 	}
 }
 

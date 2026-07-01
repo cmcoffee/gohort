@@ -31,6 +31,16 @@ type AppAgentSpec struct {
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 	Hidden       bool     `json:"hidden,omitempty"`
 	Cortex       bool     `json:"cortex,omitempty"`
+	// MemoryMode shapes the Explicit Memory layer: "agent" (narrow — generalized
+	// lessons only, specifics go to Reference Memory) or "chatbot" (broad — adds
+	// user personalization). Empty defaults to "agent". A task-focused app agent
+	// (an investigator, a probe) should set "agent"; a conversational one "chatbot".
+	MemoryMode string `json:"memory_mode,omitempty"`
+	// DisableExplicit turns the Explicit Memory layer OFF entirely (no store_fact,
+	// no always-in-prompt facts block, and the UI hides the "Saved facts" section).
+	// Set it for an app agent that records only into other layers (servitor writes
+	// facts to the graph and prose to Reference Memory, never Explicit Memory).
+	DisableExplicit bool `json:"disable_explicit,omitempty"`
 }
 
 var (

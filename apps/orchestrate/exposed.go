@@ -289,6 +289,19 @@ func (T *OrchestrateApp) PublicHandleCancel(w http.ResponseWriter, r *http.Reque
 	T.handleCancel(w, r, agent)
 }
 
+// PublicHandleRunsActive / PublicHandleRunsDispatch expose the run-stream
+// reconnect endpoints on the published /agents/ surface so a long turn whose
+// live /api/send socket drops can be resumed from the run buffer — the same
+// resilience the admin console has. The underlying handlers already RequireUser
+// and refuse a run whose UserID != the caller, so a leaked run id stays private.
+func (T *OrchestrateApp) PublicHandleRunsActive(w http.ResponseWriter, r *http.Request) {
+	T.handleRunsActive(w, r)
+}
+
+func (T *OrchestrateApp) PublicHandleRunsDispatch(w http.ResponseWriter, r *http.Request) {
+	T.handleRunsDispatch(w, r)
+}
+
 // PublicHandleChannelClear wipes the calling end-user's channel home thread
 // (conversation + rolling summary / fold cursor) for an exposed channel agent
 // — the per-visitor equivalent of the owner's "Clear channel" console action.
@@ -342,7 +355,118 @@ func (T *OrchestrateApp) PublicHandleMemoryModeSet(w http.ResponseWriter, r *htt
 // (store_fact entries) without the admin gate. Mirrors
 // handleAgentFacts for the public surface.
 func (T *OrchestrateApp) PublicHandleAgentFacts(w http.ResponseWriter, r *http.Request, agentID string) {
-	T.handleAgentFacts(w, r, agentID)
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.handleAgentFacts(w, r, user, agentID)
+}
+
+// --- per-SCOPE memory handlers (the agent-as-template display) ----------------
+//
+// These serve an agent's facts / graph / knowledge / Reference Memory for an
+// EXPLICIT scope (e.g. a servitor appliance instance, "app:servitor:<id>") rather
+// than the logged-in user. They require a valid session (the auth gate) but read
+// the data from scopeUser; the CALLER is responsible for authorizing that the
+// session user may view that scope (servitor checks the appliance is theirs
+// before calling). This lets servitor mount the SAME editable Memory surface
+// orchestrate uses, pointed at a per-appliance scope. agentID is the template's
+// id; loadAgent's seed fallback keeps the ownership gate satisfied for it.
+
+func (T *OrchestrateApp) PublicHandleAgentFactsForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentFacts(w, r, scopeUser, agentID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentGraphForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentGraph(w, r, scopeUser, agentID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentGraphEntityDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentGraphEntityDelete(w, r, scopeUser, agentID, entityID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentGraphAttrDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentGraphAttrDelete(w, r, scopeUser, agentID, entityID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentGraphAliasDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, entityID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentGraphAliasDelete(w, r, scopeUser, agentID, entityID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentGraphEdgeDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentGraphEdgeDelete(w, r, scopeUser, agentID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentKnowledgeForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentKnowledge(w, r, scopeUser, agentID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentInferredListForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentInferredList(w, r, scopeUser, agentID)
+}
+
+func (T *OrchestrateApp) PublicHandleAgentInferredDeleteForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID, chunkID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentInferredDelete(w, r, scopeUser, agentID, chunkID)
+}
+
+// PublicHandleAgentKnowledgeAutoInferredWipeForScope is the "Wipe all"
+// button on the per-scope Memory modal — drops every Reference Memory
+// chunk in the scope's namespace. Like the other ForScope handlers, the
+// session gate proves a logged-in user; the CALLER authorizes the scope.
+func (T *OrchestrateApp) PublicHandleAgentKnowledgeAutoInferredWipeForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	T.handleAgentKnowledgeAutoInferredWipe(w, r, scopeUser, agentID)
+}
+
+// PublicHandleAgentRecordForScope returns the template agent's record so
+// the Memory modal can gate its sections on the disable_explicit /
+// disable_inferred flags. The record is config (template-owned), so it
+// loads from the scope store via loadAgent's seed fallback — the same
+// path the facts handler relies on.
+func (T *OrchestrateApp) PublicHandleAgentRecordForScope(w http.ResponseWriter, r *http.Request, scopeUser, agentID string) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	a, ok := loadAgent(UserDB(T.DB, scopeUser), agentID)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = jsonEncode(w, a)
 }
 
 // PublicHandleAgentGraph* expose the per-(user, agent) graph memory (the

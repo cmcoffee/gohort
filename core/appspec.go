@@ -38,6 +38,10 @@ type AppSpec struct {
 	// BodyField is the record field a workbench's viewer renders + its co-author
 	// tool appends to (the document body). Empty for non-workbench apps.
 	BodyField string `json:"body_field,omitempty"`
+	// FullWidth renders the app's page edge-to-edge (MaxWidth 100%) instead of the
+	// default centered ~900px column. The author opts in for data-heavy surfaces
+	// (wide tables, dashboards). A workbench app is always full-width regardless.
+	FullWidth bool `json:"full_width,omitempty"`
 	// DataSources are script-backed data endpoints (see AppDataSource), referenced
 	// by a table/display section's source_script. Served at /custom/<slug>/data/<name>.
 	// This is the "logic" seam: structure stays declarative, computation/integration

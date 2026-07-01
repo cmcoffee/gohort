@@ -118,7 +118,7 @@ func (T *MCPServer) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		MaxWidth:  "800px",
 		Sections: []ui.Section{{
 			Title:    "Inbound MCP endpoint",
-			Subtitle: "Point an MCP client (Streamable HTTP transport) at the endpoint below and authenticate with a gohort bridge key in the X-API-Key header. The client can then dispatch to your agents via tools/call.",
+			Subtitle: "Point an MCP client (Streamable HTTP transport) at the endpoint below and authenticate with a personal access token (create one on your Account page) in the X-API-Key header. The client can then dispatch to your agents via tools/call.",
 			Body: ui.DisplayPanel{
 				Source: "status",
 				Pairs: []ui.DisplayPair{
@@ -152,7 +152,7 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"endpoint":  scheme + "://" + r.Host + "/mcp/",
 		"transport": "Streamable HTTP (GET opens an SSE stream, POST carries JSON-RPC)",
-		"auth":      "X-API-Key header — a gohort bridge key (mint one in Bridges admin)",
+		"auth":      "X-API-Key header — a personal access token (create one on your Account page: /account)",
 		"tools":     strings.Join(names, ", "),
 		"agent":     defaultAgent,
 	})
@@ -260,7 +260,7 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		owner := DesktopBridgeUserOf(r)
 		if owner == "" {
 			Log("[mcpserver] tools/call REJECTED — no valid X-API-Key (mint a bridge key in Bridges admin)")
-			resp.Result = toolText("Unauthorized: this endpoint needs a valid gohort bridge key in the X-API-Key header. Mint one in Bridges admin and put it in the connector config.", true)
+			resp.Result = toolText("Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", true)
 			break
 		}
 		text, err := T.callTool(r.Context(), owner, req.Params)
@@ -291,7 +291,7 @@ func toolText(s string, isErr bool) map[string]any {
 // --- the two tools -----------------------------------------------------------
 
 func toolDefs() []map[string]any {
-	return []map[string]any{
+	defs := []map[string]any{
 		{
 			"name":        "ask_agent",
 			"description": "Send a message to a gohort agent and get its reply. The agent has persistent memory, scheduling (it can set up recurring tasks that run on gohort's server), and delivery channels. To schedule something, just ask in plain language, e.g. 'every weekday at 8am, summarize my calendar and text it to me'. Pass times exactly as the user said them; do NOT convert to UTC.",
@@ -316,6 +316,25 @@ func toolDefs() []map[string]any {
 			},
 		},
 	}
+	// App-contributed tools (apps/guides etc. register via core.RegisterMCPTool):
+	// the MCP server stays domain-agnostic and just surfaces whatever apps add.
+	// Each is gated by the admin exposure policy (default off) so the external
+	// surface is opt-in.
+	for _, s := range RegisteredMCPTools() {
+		if !MCPAppToolExposed(s.Name) {
+			continue
+		}
+		schema := s.InputSchema
+		if schema == nil {
+			schema = map[string]any{"type": "object"}
+		}
+		defs = append(defs, map[string]any{
+			"name":        s.Name,
+			"description": s.Description,
+			"inputSchema": schema,
+		})
+	}
+	return defs
 }
 
 func (T *MCPServer) callTool(ctx context.Context, owner string, raw json.RawMessage) (string, error) {
@@ -332,6 +351,16 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, raw json.RawMess
 	case "recent_results":
 		return T.recentResults(owner, p.Arguments)
 	default:
+		// App-contributed tools registered via core.RegisterMCPTool. They run
+		// scoped to the bridge-key owner, like the built-ins above — but only when
+		// the admin has exposed them (defense in depth alongside the tools/list
+		// filter, since a client could call a name it learned elsewhere).
+		if spec, ok := LookupMCPTool(p.Name); ok {
+			if !MCPAppToolExposed(p.Name) {
+				return "", fmt.Errorf("tool %q is not exposed over MCP — enable it in Admin → MCP Tools", p.Name)
+			}
+			return spec.Handler(ctx, owner, p.Arguments)
+		}
 		return "", fmt.Errorf("unknown tool %q", p.Name)
 	}
 }
@@ -347,6 +376,11 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, args map[string]
 	}
 	if !ChannelAgentRunnerReady() {
 		return "", fmt.Errorf("agent runner not ready (orchestrate not loaded)")
+	}
+	// Only agents the owner has marked reachable-over-MCP can be dispatched, so a
+	// bridge key can't reach every agent. Fails closed.
+	if !MCPAgentExposed(owner, agent) {
+		return "", fmt.Errorf("agent %q is not reachable over MCP — turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
 	}
 	// Synchronous: blocks until the agent finishes, returns its reply. Exactly
 	// the MCP tools/call contract. SenderName attributes the turn to the

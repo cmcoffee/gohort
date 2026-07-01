@@ -11,7 +11,7 @@
 //     window.UIBlockRenderers[<type>] with the event data and
 //     expects a {wrap, body, onDone?} object back.
 //  3. JS registering client actions for the chat toolbar
-//     (servitor_open_facts, servitor_open_rules, servitor_run_map).
+//     (servitor_open_rules, servitor_run_map).
 //     Each opens a modal that hits the existing legacy endpoints.
 
 package servitor
@@ -473,6 +473,19 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       return sel ? sel.value : '';
     }
 
+    // servitorMemBase resolves the endpoint prefix for the shared agent-memory
+    // modal (orchestrate.AgentMemoryModalScript) at open time. Returns a
+    // RELATIVE base (matching every other servitor fetch) for the selected
+    // appliance, or null when nothing is picked so the modal aborts opening.
+    // Exposed on window: the shared modal script is a SEPARATE <script>, so it
+    // can't see functions local to this IIFE — it calls servitorMemBase() at
+    // global scope. (Defined here so it still closes over getApplianceID.)
+    window.servitorMemBase = function() {
+      var aid = getApplianceID();
+      if (!aid) { (window.uiAlert || window.alert)('Pick an appliance first'); return null; }
+      return 'api/appliances/' + encodeURIComponent(aid) + '/';
+    };
+
     // openModal — title bar with × icon in the upper-right, then
     // bodyEl. Returns an object so callers can append a footer
     // (e.g. Cancel + Save buttons) and close programmatically:
@@ -537,111 +550,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         },
       };
     }
-
-    // Refresh the count badge on the Facts toolbar button. The
-    // legacy UI shows "Facts (N)"; we mirror that. Fires on appliance
-    // change + after the facts modal commits an add/delete.
-    function refreshFactsBadge() {
-      var aid = getApplianceID();
-      var btn = null;
-      // Toolbar buttons live in .ui-agent-actions; find by label.
-      var btns = document.querySelectorAll('.ui-agent-actions button');
-      for (var i = 0; i < btns.length; i++) {
-        if (btns[i].textContent.indexOf('Facts') === 0) { btn = btns[i]; break; }
-      }
-      if (!btn) return;
-      if (!aid) { btn.textContent = 'Facts'; return; }
-      fetch('api/facts?id=' + encodeURIComponent(aid))
-        .then(function(r) { return r.ok ? r.json() : []; })
-        .then(function(facts) {
-          var n = Array.isArray(facts) ? facts.length : 0;
-          btn.textContent = n > 0 ? 'Facts (' + n + ')' : 'Facts';
-        });
-    }
-    // Hook the appliance picker so the badge stays in sync.
-    document.addEventListener('change', function(ev) {
-      if (ev.target && ev.target.matches &&
-          ev.target.matches('.ui-agent-extras select')) {
-        refreshFactsBadge();
-      }
-    });
-    // Initial fetch — wait a tick so the toolbar is mounted.
-    setTimeout(refreshFactsBadge, 50);
-
-    window.uiRegisterClientAction('servitor_open_facts', function() {
-      var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
-      var listBox = el('div', {class: 'ui-servitor-facts-list'},
-        [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
-      // Add-fact row at the top — key + value inputs + Add button.
-      var keyIn = el('input', {type: 'text', class: 'ui-form-input',
-        placeholder: 'Key', style: 'flex:1'});
-      var valIn = el('input', {type: 'text', class: 'ui-form-input',
-        placeholder: 'Value', style: 'flex:2'});
-      var addBtn = el('button', {class: 'ui-row-btn primary',
-        onclick: function() {
-          var k = keyIn.value.trim(), v = valIn.value.trim();
-          if (!k || !v) return;
-          addBtn.disabled = true;
-          fetch('api/facts', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({appliance_id: aid, key: k, value: v}),
-          }).then(function(r) {
-            addBtn.disabled = false;
-            if (!r.ok) { window.uiAlert('Failed to add fact'); return; }
-            keyIn.value = ''; valIn.value = '';
-            refresh();
-            refreshFactsBadge();
-          });
-        }}, ['Add']);
-      var addRow = el('div', {class: 'ui-servitor-facts-add'},
-        [keyIn, valIn, addBtn]);
-
-      function refresh() {
-        fetch('api/facts?id=' + encodeURIComponent(aid))
-          .then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-          })
-          .then(function(facts) {
-            listBox.innerHTML = '';
-            if (!Array.isArray(facts) || !facts.length) {
-              listBox.appendChild(el('div', {class: 'ui-pl-empty'},
-                ['No facts yet.']));
-              return;
-            }
-            facts.forEach(function(f) {
-              var item = el('div', {class: 'ui-servitor-fact'});
-              var head = el('div', {class: 'ui-servitor-fact-head'},
-                [el('div', {class: 'ui-servitor-fact-k'}, [f.key || ''])]);
-              var delBtn = el('button', {class: 'ui-row-btn danger',
-                onclick: async function() {
-                  if (!(await window.uiConfirm('Delete fact "' + (f.key || '') + '"?'))) return;
-                  fetch('api/facts?key=' + encodeURIComponent(f.id),
-                    {method: 'DELETE'}).then(function() {
-                    refresh();
-                    refreshFactsBadge();
-                  });
-                }}, ['Delete']);
-              head.appendChild(delBtn);
-              item.appendChild(head);
-              item.appendChild(el('div', {class: 'ui-servitor-fact-v'},
-                [f.value || '']));
-              listBox.appendChild(item);
-            });
-          })
-          .catch(function(err) {
-            listBox.innerHTML = '';
-            listBox.appendChild(el('div', {class: 'ui-pl-empty'},
-              ['Failed to load: ' + (err && err.message || err)]));
-          });
-      }
-      var body = el('div', {class: 'ui-pl-modal-body'}, [listBox, addRow]);
-      var m = openModal('Facts', body);
-      m.footer(el('button', {class: 'ui-row-btn primary',
-        onclick: function(){ m.close(); }}, ['Done']));
-      refresh();
-    });
 
     window.uiRegisterClientAction('servitor_open_rules', function() {
       var aid = getApplianceID();
@@ -996,8 +904,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         if (r.ok) {
           ctx.clearConvo();
           ctx.clearActivity();
-          // Reload so the Facts badge re-counts to zero.
-          setTimeout(function(){ refreshFactsBadge(); }, 100);
         } else {
           window.uiAlert('Failed to clear memory');
         }

@@ -1385,6 +1385,43 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	})
 
+	// Inbound MCP tool governance: which app-contributed MCP tools are exposed on
+	// gohort's own /mcp/ endpoint to external clients. GET lists every registered
+	// tool with its exposed state; POST?action=expose|hide&name= flips one. Tools
+	// default OFF so adding an app tool never silently widens the surface.
+	sub.HandleFunc("/api/mcp-tools", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(MCPAppToolStatuses())
+		case http.MethodPost:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			if _, ok := LookupMCPTool(name); !ok {
+				http.Error(w, "no such MCP tool", http.StatusNotFound)
+				return
+			}
+			// The On/Off toggle posts {exposed: bool}.
+			var body struct {
+				Exposed bool `json:"exposed"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			SetMCPAppToolExposed(name, body.Exposed)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// Inline "Test connection" for an MCP server. The declarative form
 	// POSTs its current working state (config + token); we connect,
 	// initialize, and tools/list, returning {ok,message}/{ok,error} so the

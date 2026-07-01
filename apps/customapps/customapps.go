@@ -35,7 +35,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
-	"github.com/cmcoffee/gohort/tools/temptool"
+	"github.com/cmcoffee/gohort/tools/appscript"
 )
 
 func init() {
@@ -113,7 +113,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, T.WebPath()+"/"+slug+"/", http.StatusFound)
 			return
 		}
-		_ = ui.RenderPageJSON(w, spec.Page, "", "", spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+		_ = ui.RenderPageJSON(w, spec.Page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, user, udb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "actions":
@@ -133,6 +133,27 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// recordsInvalidationBridge returns a <script> that refreshes the app's
+// data-source panels whenever the record store changes (the "records" source is
+// invalidated by a form save / action / row delete). A data source's output is
+// COMPUTED from the records, so any record write must refresh every computed
+// table/display — but a form's baked invalidate list only includes the data
+// sources for apps authored after that wiring landed. This host-level bridge
+// covers ALL apps (existing + new) without re-authoring; it skips any data
+// source the firing event ALREADY carries, so a new app whose form lists them
+// doesn't double-fetch. No-op for apps with no data sources.
+func recordsInvalidationBridge(spec AppSpec) string {
+	if len(spec.DataSources) == 0 {
+		return ""
+	}
+	urls := make([]string, 0, len(spec.DataSources))
+	for _, ds := range spec.DataSources {
+		urls = append(urls, "data/"+ds.Name)
+	}
+	b, _ := json.Marshal(urls)
+	return `<script>(function(){var U=` + string(b) + `;window.addEventListener('ui-data-changed',function(e){var s=e&&e.detail&&e.detail.sources;if(!s||s.indexOf('records')<0)return;var m=U.filter(function(u){return s.indexOf(u)<0;});if(m.length&&window.uiInvalidate)window.uiInvalidate(m);});})();</script>`
 }
 
 // findOrchestrate locates the registered OrchestrateApp so the chat routes can
@@ -327,48 +348,11 @@ func runDataSource(user string, db Database, slug string, ds AppDataSource, args
 	return runAppScript(user, db, slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, args)
 }
 
-// runAppScript executes one custom-app script (a data source or an action) as a
-// sandboxed shell TempTool and returns its stdout. Reuses the whole temptool
-// execution path (bwrap sandbox, the gohort hook for fetch/log, params-as-env-
-// vars) — the script is just a TempTool the framework dispatches on the app
-// owner's behalf. The script file is named per (kind, slug, name) so concurrent
-// apps/scripts don't collide in the owner's workspace.
+// runAppScript executes one custom-app script (a data source or an action) and
+// returns its stdout. Delegates to the shared appscript.Run seam so the host and
+// the app_def test action run scripts through byte-identical machinery.
 func runAppScript(user string, db Database, slug, kind, name, language, script string, caps []string, args map[string]any) (string, error) {
-	ws, err := EnsureWorkspaceDir(user)
-	if err != nil {
-		return "", fmt.Errorf("workspace: %w", err)
-	}
-	interp, ext := "python3", "py"
-	if l := strings.ToLower(strings.TrimSpace(language)); l == "bash" || l == "sh" {
-		interp, ext = "bash", "sh"
-	}
-	scriptName := fmt.Sprintf("%s_%s_%s.%s", kind, sanitizeName(slug), sanitizeName(name), ext)
-	if caps == nil {
-		caps = []string{"fetch", "log"} // sensible default: read external data + log
-	}
-	params := map[string]ToolParam{}
-	for k := range args {
-		params[k] = ToolParam{Type: "string"}
-	}
-	tt := &TempTool{
-		Name:             "app_" + kind + ":" + slug + ":" + name,
-		Description:      "custom app " + kind,
-		Mode:             "shell",
-		ScriptBody:       script,
-		ScriptName:       scriptName,
-		CommandTemplate:  interp + " {workspace_dir}/" + scriptName,
-		HookCapabilities: caps,
-		Params:           params,
-	}
-	sess := &ToolSession{
-		Username:     user,
-		WorkspaceDir: ws,
-		DB:           db,
-		// The owner is acting in their own app — allow the hook's fetch/browse to
-		// reach the network (the sandbox itself stays network-isolated).
-		Network: NewNetworkConnector(false),
-	}
-	return temptool.DispatchTempToolDirect(sess, tt, args)
+	return appscript.Run(user, db, slug, kind, name, language, script, caps, args)
 }
 
 // handleActionsList feeds the actions section's button list: one {name, button,
@@ -481,19 +465,6 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, user s
 		}
 	}
 	writeJSON(w, map[string]any{"message": msg, "saved": saved})
-}
-
-// sanitizeName reduces a slug/name to a safe filename fragment (alnum + _).
-func sanitizeName(s string) string {
-	var b strings.Builder
-	for _, r := range strings.ToLower(s) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else {
-			b.WriteRune('_')
-		}
-	}
-	return b.String()
 }
 
 // --- generic record store ----------------------------------------------------

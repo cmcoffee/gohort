@@ -145,9 +145,15 @@ func (t *chatTurn) listFactsToolDef() AgentToolDef {
 // Per-(user, agent) isolation comes from the same factsNamespace
 // scheme storeFactToolDef uses — the udb is already per-user, the
 // namespace is per-agent.
-func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request, agentID string) {
-	user, udb, ok := RequireUser(w, r, T.DB)
-	if !ok {
+// user is the STATE scope (the per-user/per-instance store); the caller resolves
+// + authorizes it (RequireUser for the web surfaces, an appliance scope for the
+// per-scope variant). loadAgent's seed fallback + the seedOwner allowance below
+// keep the ownership gate satisfied when agentID is a template the scope doesn't
+// own its own copy of.
+func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request, user, agentID string) {
+	udb := UserDB(T.DB, user)
+	if udb == nil {
+		http.Error(w, "no store for user", http.StatusInternalServerError)
 		return
 	}
 	if agentID == "" || strings.Contains(agentID, "/") {

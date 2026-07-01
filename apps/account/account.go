@@ -42,6 +42,7 @@ func (T *Account) WebHidden() bool { return true }
 func (T *Account) Routes() {
 	T.HandleFunc("/api/prefs", T.handlePrefs)
 	T.HandleFunc("/api/connections", T.handleConnections)
+	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
 	T.HandleFunc("/", T.servePage)
@@ -235,8 +236,42 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 				Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
 				Body:     ui.Card{HTML: connectionsHTML},
 			},
+			{
+				Title:    "API keys (personal access)",
+				Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Put the token in the client's X-API-Key header. Shown once at creation; revoke any time.",
+				Body:     ui.Card{HTML: tokensHTML},
+			},
 		},
 	}.ServeHTTP(w, r)
+}
+
+// handleTokens lists / mints / revokes the user's personal access tokens. The
+// full secret is returned ONLY by the POST (mint) response; GET masks it.
+func (T *Account) handleTokens(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, ListAccountTokens(user))
+	case http.MethodPost:
+		var req struct {
+			Name string `json:"name"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		writeJSON(w, MintAccountToken(user, req.Name)) // secret returned once
+	case http.MethodDelete:
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		RevokeAccountToken(user, id)
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -311,6 +346,68 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
         box.appendChild(card);
       });
     }).catch(function(){ box.textContent = 'Could not load connections.'; });
+  }
+  load();
+})();
+</script>`
+
+// tokensHTML is the personal-access-token panel: lists the user's tokens (name +
+// masked value + created), an inline create row that reveals the full secret
+// ONCE, and a themed-confirm revoke. App-specific, so it rides in a Card rather
+// than a core/ui primitive — same approach as the connections panel above.
+const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
+<style>
+.acct-tokens { display:flex; flex-direction:column; gap:0.55rem; }
+.acct-tok { border:1px solid var(--border); border-radius:8px; padding:0.55rem 0.75rem; display:flex; align-items:center; gap:0.6rem; }
+.acct-tok-meta { flex:1; min-width:0; }
+.acct-tok-name { font-weight:600; color:var(--text); }
+.acct-tok-sub { font-size:0.75rem; color:var(--text-mute); margin-top:0.1rem; }
+.acct-tok-code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.acct-tok-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:6px; padding:0.3rem 0.7rem; font:inherit; font-size:0.8rem; }
+.acct-tok-btn:hover { color:var(--danger); border-color:var(--danger); }
+.acct-tok-newrow { display:flex; gap:0.4rem; margin-top:0.3rem; }
+.acct-tok-input { flex:1; background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.85rem; }
+.acct-tok-create { cursor:pointer; background:var(--accent); color:#fff; border:0; border-radius:6px; padding:0.4rem 0.9rem; font:inherit; font-weight:600; }
+.acct-tok-create:disabled { opacity:0.6; cursor:default; }
+.acct-tok-reveal { border:1px solid var(--accent); border-radius:8px; padding:0.7rem 0.8rem; background:var(--bg-2); }
+.acct-tok-reveal code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.82rem; color:var(--text); word-break:break-all; display:block; margin-top:0.3rem; }
+.acct-tok-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
+</style>
+<script>
+(function(){
+  var root = document.getElementById('acct-tokens');
+  if (!root) return;
+  function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
+  function load(){ return fetch('api/tokens',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render).catch(function(){ root.textContent='Failed to load.'; }); }
+  function render(list){
+    root.innerHTML='';
+    list = list || [];
+    if(!list.length){ root.appendChild(el('div',{class:'acct-tok-empty',text:'No API keys yet. Create one to connect an external client.'})); }
+    list.forEach(function(t){
+      var meta = el('div',{class:'acct-tok-meta'},[
+        el('div',{class:'acct-tok-name',text: t.name || '(unnamed)'}),
+        el('div',{class:'acct-tok-sub'},[ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  ·  created '+String(t.created||'').slice(0,10)) ])
+      ]);
+      var del = el('button',{class:'acct-tok-btn',text:'Revoke'});
+      del.addEventListener('click',function(){
+        var go = window.uiConfirm ? window.uiConfirm('Revoke this API key? Any client using it stops working.') : Promise.resolve(true);
+        go.then(function(ok){ if(!ok) return; fetch('api/tokens?id='+encodeURIComponent(t.id),{method:'DELETE',credentials:'same-origin'}).then(load); });
+      });
+      root.appendChild(el('div',{class:'acct-tok'},[meta,del]));
+    });
+    var nameInput = el('input',{type:'text',class:'acct-tok-input',placeholder:'Name (e.g. Claude Desktop)'});
+    var create = el('button',{class:'acct-tok-create',text:'Create key'});
+    create.addEventListener('click',function(){
+      create.disabled=true; create.textContent='Creating…';
+      fetch('api/tokens',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:nameInput.value.trim()})})
+        .then(function(r){return r.json();}).then(function(t){ load().then(function(){ reveal(t); }); })
+        .catch(function(){ create.disabled=false; create.textContent='Create key'; });
+    });
+    root.appendChild(el('div',{class:'acct-tok-newrow'},[nameInput,create]));
+  }
+  function reveal(t){
+    if(!t || !t.token) return;
+    root.insertBefore(el('div',{class:'acct-tok-reveal'},[ el('div',{class:'acct-tok-sub',text:'Copy this now — it will not be shown again:'}), el('code',{text:t.token}) ]), root.firstChild);
   }
   load();
 })();

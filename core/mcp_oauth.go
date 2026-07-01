@@ -42,6 +42,24 @@ type mcpOAuthConfig struct {
 	RegistrationEndpoint string `json:"registration_endpoint,omitempty"`
 	Resource             string `json:"resource"` // canonical MCP server URI (RFC 8707)
 	Scope                string `json:"scope,omitempty"`
+	// Audience is the OAuth audience for Auth0/Okta-style authorization servers
+	// (e.g. Atlassian wants audience=api.atlassian.com). When set it is sent in
+	// place of the RFC 8707 `resource` param, which those providers ignore — and
+	// which some reject when it isn't a registered API identifier.
+	Audience string `json:"audience,omitempty"`
+}
+
+// mcpApplyResourceParam sets the resource-targeting parameter on an authorize or
+// token request: `audience` for Auth0-style servers when configured, otherwise
+// the RFC 8707 `resource` indicator (the MCP-spec default).
+func mcpApplyResourceParam(v url.Values, cfg mcpOAuthConfig) {
+	if cfg.Audience != "" {
+		v.Set("audience", cfg.Audience)
+		return
+	}
+	if cfg.Resource != "" {
+		v.Set("resource", cfg.Resource)
+	}
 }
 
 // mcpOAuthToken is a per-user token set. Persisted encrypted under
@@ -65,14 +83,31 @@ func mcpOAuthTokKey(server, user string) string { return server + "__oauthtok__"
 func mcpDiscover(ctx context.Context, serverURL string) (mcpOAuthConfig, error) {
 	var cfg mcpOAuthConfig
 
-	prmURL := mcpProbeResourceMetadataURL(ctx, serverURL)
 	var prm struct {
 		Resource             string   `json:"resource"`
 		AuthorizationServers []string `json:"authorization_servers"`
 		ScopesSupported      []string `json:"scopes_supported"`
 	}
-	if err := mcpGetJSON(ctx, prmURL, &prm); err != nil {
-		return cfg, fmt.Errorf("protected-resource metadata: %w", err)
+	// Try each candidate protected-resource-metadata URL in priority order
+	// (WWW-Authenticate pointer, then path-aware well-known, then origin
+	// well-known) until one yields metadata. A single guessed URL missed
+	// servers mounted at a subpath (RFC 9728 inserts the well-known segment
+	// BEFORE the resource path) — e.g. an MCP endpoint at /v1/mcp.
+	var prmErr error
+	got := false
+	for _, prmURL := range mcpResourceMetadataCandidates(ctx, serverURL) {
+		if err := mcpGetJSON(ctx, prmURL, &prm); err != nil {
+			prmErr = err
+			continue
+		}
+		got = true
+		break
+	}
+	if !got {
+		if prmErr == nil {
+			prmErr = fmt.Errorf("no protected-resource metadata at any well-known location")
+		}
+		return cfg, fmt.Errorf("protected-resource metadata: %w", prmErr)
 	}
 	if len(prm.AuthorizationServers) == 0 {
 		return cfg, fmt.Errorf("resource metadata lists no authorization_servers")
@@ -102,29 +137,61 @@ func mcpDiscover(ctx context.Context, serverURL string) (mcpOAuthConfig, error) 
 	return cfg, nil
 }
 
-// mcpProbeResourceMetadataURL returns the protected-resource-metadata URL
-// for a server: the value the server points to via WWW-Authenticate on a
-// 401, or the well-known default at the server's origin.
-func mcpProbeResourceMetadataURL(ctx context.Context, serverURL string) string {
-	def := mcpWellKnownPRM(serverURL)
+// mcpResourceMetadataCandidates lists protected-resource-metadata URLs to try,
+// in priority order: the pointer the server advertises via WWW-Authenticate on a
+// 401 (RFC 9728), then the path-aware well-known (well-known segment inserted
+// before the resource path), then the bare-origin well-known (servers that host
+// it at the root). Deduplicated, empties dropped.
+func mcpResourceMetadataCandidates(ctx context.Context, serverURL string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(u string) {
+		if u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	add(mcpProbeWWWAuthPRM(ctx, serverURL))
+	add(mcpWellKnownPRM(serverURL))     // path-aware (RFC 9728)
+	add(mcpWellKnownPRMRoot(serverURL)) // origin
+	return out
+}
+
+// mcpProbeWWWAuthPRM makes an unauthenticated request to the server and returns
+// the resource_metadata URL it advertises via WWW-Authenticate on a 401 (RFC
+// 9728). "" when the server doesn't 401 or doesn't advertise a pointer.
+func mcpProbeWWWAuthPRM(ctx context.Context, serverURL string) string {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL, nil)
 	if err != nil {
-		return def
+		return ""
 	}
 	resp, err := mcpOAuthHTTP.Do(req)
 	if err != nil {
-		return def
+		return ""
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-	if u := parseResourceMetadata(resp.Header.Get("WWW-Authenticate")); u != "" {
-		return u
+	if resp.StatusCode != http.StatusUnauthorized {
+		return ""
 	}
-	return def
+	return parseResourceMetadata(resp.Header.Get("WWW-Authenticate"))
 }
 
-// mcpWellKnownPRM builds <origin>/.well-known/oauth-protected-resource.
+// mcpWellKnownPRM builds the RFC 9728 path-aware protected-resource-metadata URL:
+// the well-known segment is inserted BETWEEN the host and the resource's path
+// (https://h/v1/mcp -> https://h/.well-known/oauth-protected-resource/v1/mcp).
 func mcpWellKnownPRM(serverURL string) string {
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.TrimRight(serverURL, "/") + "/.well-known/oauth-protected-resource"
+	}
+	path := strings.TrimRight(u.Path, "/")
+	return u.Scheme + "://" + u.Host + "/.well-known/oauth-protected-resource" + path
+}
+
+// mcpWellKnownPRMRoot builds <origin>/.well-known/oauth-protected-resource — the
+// fallback for servers that host the metadata at the root regardless of path.
+func mcpWellKnownPRMRoot(serverURL string) string {
 	u, err := url.Parse(serverURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
 		return strings.TrimRight(serverURL, "/") + "/.well-known/oauth-protected-resource"
@@ -248,7 +315,7 @@ func mcpAuthorizeURL(cfg mcpOAuthConfig, redirectURI, state, challenge string) s
 	q.Set("state", state)
 	q.Set("code_challenge", challenge)
 	q.Set("code_challenge_method", "S256")
-	q.Set("resource", cfg.Resource)
+	mcpApplyResourceParam(q, cfg)
 	sep := "?"
 	if strings.Contains(cfg.AuthEndpoint, "?") {
 		sep = "&"
@@ -267,7 +334,7 @@ func mcpExchangeCode(ctx context.Context, cfg mcpOAuthConfig, code, verifier, re
 	if cfg.ClientSecret != "" {
 		form.Set("client_secret", cfg.ClientSecret)
 	}
-	form.Set("resource", cfg.Resource)
+	mcpApplyResourceParam(form, cfg)
 	return mcpTokenRequest(ctx, cfg.TokenEndpoint, form, mcpOAuthToken{})
 }
 
@@ -284,7 +351,7 @@ func mcpRefreshAccess(ctx context.Context, cfg mcpOAuthConfig, prev mcpOAuthToke
 	if cfg.ClientSecret != "" {
 		form.Set("client_secret", cfg.ClientSecret)
 	}
-	form.Set("resource", cfg.Resource)
+	mcpApplyResourceParam(form, cfg)
 	return mcpTokenRequest(ctx, cfg.TokenEndpoint, form, prev)
 }
 

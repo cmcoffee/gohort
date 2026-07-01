@@ -243,6 +243,7 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "oauth_authorize_url", Label: "Authorize URL (only if no discovery)", Placeholder: "https://provider/oauth/authorize", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Set only for a provider that doesn't publish .well-known OAuth metadata."},
 		{Field: "oauth_token_url", Label: "Token URL (only if no discovery)", Placeholder: "https://provider/oauth/token", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Pair with Authorize URL."},
 		{Field: "oauth_scopes", Label: "Scopes (optional)", Placeholder: "files.read folders.read", ShowWhen: "auth_mode:oauth", Help: "Space-separated OAuth scopes. Leave blank to use what discovery advertises."},
+		{Field: "oauth_audience", Label: "Audience (Auth0/Okta providers)", Placeholder: "api.atlassian.com", ShowWhen: "auth_mode:oauth", Help: "For Auth0/Okta-style servers (e.g. Atlassian needs api.atlassian.com). When set it is sent instead of the RFC 8707 resource indicator, which those providers ignore. Leave blank for normal MCP servers."},
 
 		{Field: "expose_hdr", Type: "header", Label: "Exposure"},
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
@@ -1073,6 +1074,29 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								SubmitLabel: "Add server",
 								Fields:      mcpServerFormFields(),
 							},
+						},
+					},
+				},
+			},
+			{
+				Title:    "MCP Tools (exposed to external clients)",
+				Subtitle: "App-contributed tools on gohort's OWN inbound MCP endpoint (/mcp/) — what an external MCP client (e.g. Claude Desktop, authenticated with a bridge key) can call to drive your apps. Each tool is OFF by default; expose only the ones you want reachable from outside. The built-in ask_agent / recent_results tools are always available.",
+				Body: ui.Stack{
+					Children: []ui.Component{
+						ui.Table{
+							Source: "api/mcp-tools",
+							RowKey: "name",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								{Field: "description", Mute: true, Flex: 2},
+							},
+							RowActions: []ui.RowAction{
+								// One On/Off switch per tool: checked = exposed. Flips
+								// the exposure via a {exposed:bool} POST.
+								{Type: "toggle", Field: "exposed", Label: "Exposed",
+									PostTo: "api/mcp-tools?name={name}", Method: "POST"},
+							},
+							EmptyText: "No app MCP tools registered. Apps register them via core.RegisterMCPTool (see apps/guides).",
 						},
 					},
 				},

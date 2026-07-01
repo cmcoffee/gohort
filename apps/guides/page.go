@@ -113,6 +113,17 @@ const guideDocCSS = `<style>
 }
 .guide-section-body table { border-collapse: collapse; margin: 0.8rem 0; }
 .guide-section-body th, .guide-section-body td { border: 1px solid var(--border); padding: 0.4rem 0.7rem; text-align: left; }
+@media (max-width: 700px) {
+  .guide-doc-head h1 { font-size: 1.55rem; }
+  .guide-doc-sub { font-size: 0.95rem; }
+  .guide-toc { padding: 0.7rem 0.85rem; margin-bottom: 1.4rem; }
+  .guide-section { margin-bottom: 1.6rem; }
+  .guide-section > h2 { font-size: 1.18rem; }
+  .guide-section-body { font-size: 0.92rem; }
+  .guide-section-body pre { font-size: 0.8rem; padding: 0.7rem 0.8rem; }
+  /* Let wide tables scroll instead of forcing the page wider than the viewport. */
+  .guide-section-body table { display: block; overflow-x: auto; max-width: 100%; }
+}
 </style>`
 
 // guideSectionCtrlCSS styles the inline per-section controls (hover-revealed),
@@ -147,6 +158,16 @@ const guideSectionCtrlCSS = `<style>
 }
 .guide-edit-field textarea { min-height: 16rem; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
 .guide-edit-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+/* Touch devices have no hover, so the hover-revealed section controls would be
+   unreachable — keep them visible there, and drop them out of the heading overlap
+   onto their own right-aligned row on narrow screens. */
+@media (hover: none) {
+  .guide-sec-ctrls { opacity: 1; }
+}
+@media (max-width: 700px) {
+  .guide-sec-ctrls { position: static; opacity: 1; justify-content: flex-end; margin-bottom: 0.5rem; }
+  .guide-add-btn { padding: 0.6rem 1rem; }
+}
 </style>`
 
 // guideSectionJS wires the inline section controls (rendered server-side in
@@ -212,8 +233,10 @@ const guideSectionJS = `<script>
         openEditor('Edit section', s.title || '', s.markdown || '', function(t, m){ return jpost('section?' + gp + sp, {title:t, markdown:m}); });
       });
     } else if (act === 'delete'){
-      if (!window.confirm('Delete this section? You can restore it from History.')) return;
-      fetch('section?' + gp + sp, {method:'DELETE', credentials:'same-origin'}).then(refresh);
+      window.uiConfirm('Delete this section? You can restore it from History.').then(function(ok){
+        if (!ok) return;
+        fetch('section?' + gp + sp, {method:'DELETE', credentials:'same-origin'}).then(refresh);
+      });
     } else if (act === 'up' || act === 'down'){
       jpost('section/move?' + gp + sp + '&dir=' + act).then(refresh);
     }

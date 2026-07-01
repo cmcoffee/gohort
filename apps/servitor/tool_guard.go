@@ -31,6 +31,7 @@ var servitorWorkerToolAllowList = map[string]bool{
 	"record_technique":    true, // local: kvlite write
 	"record_discovery":    true, // local: kvlite write
 	"store_fact":          true, // local: kvlite write
+	"link_entities":       true, // local: scoped graph write
 	"store_rule":          true, // local: kvlite write
 	"search_facts":        true, // local: kvlite read
 	"watch_condition":     true, // local: watcher setup against the same appliance
@@ -49,6 +50,7 @@ var servitorOrchestratorToolAllowList = map[string]bool{
 	"read_doc":               true, // local: doc state read
 	"update_doc":             true, // local: doc state write
 	"store_fact":             true, // local: kvlite write
+	"link_entities":          true, // local: scoped graph write
 	"record_discovery":       true, // local: kvlite write
 	"record_technique":       true, // local: kvlite write
 	"note_lesson":            true, // local: kvlite write

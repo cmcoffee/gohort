@@ -2008,7 +2008,7 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if action == "facts" {
-		T.handleAgentFacts(w, r, id)
+		T.handleAgentFacts(w, r, user, id)
 		return
 	}
 	if action == "inferred" {

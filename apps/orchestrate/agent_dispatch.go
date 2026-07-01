@@ -416,6 +416,10 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		if runtimeDB == nil {
 			return "", fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
 		}
+		// Layered rules (enabler #2): a scoped INSTANCE adds its own rules over the
+		// template's base. Modifying the local target copy means the standard prompt
+		// assembler (prependAgentContext) renders base+overlay with no changes.
+		target.Rules = mergeScopeRules(target.Rules, listScopeRules(runtimeDB, target.ID))
 	}
 	subSessID := "external-dispatch:" + runtimeUser + ":" + target.ID
 	subSess := &ToolSession{
@@ -654,6 +658,37 @@ type AgentSyncRun struct {
 	// that its reply goes straight back there — preventing it from confabulating
 	// a destination or offering to "send it to" the channel it's already on.
 	SurfaceContext string
+	// AppTools are extra, caller-built tools injected into THIS run's catalog —
+	// the same mechanism the web path uses (chatTurn.appTools) but for a dispatched
+	// / scoped run. An app instantiating a template (see RunScopedAgent) passes
+	// per-instance closure tools here, e.g. servitor handing its worker the SSH
+	// command tools bound to one appliance's connection. Empty for ordinary runs.
+	AppTools []AgentToolDef
+	// Loop, when set, supplies rich agent-loop knobs (pacing callbacks, chat
+	// options, round budget) a sophisticated instance needs that the default
+	// dispatch run doesn't — so e.g. servitor's investigator runs through the
+	// scoped path with FULL behavior parity (step pacing, stuck detection,
+	// plan-aware wrap-up) instead of a generic loop. nil ⇒ dispatch defaults.
+	Loop *AgentLoopOverrides
+	// SystemPromptOverride, when set, REPLACES the prompt the dispatch normally
+	// assembles from the template record (+ facts + available blocks). An app
+	// whose instance builds its own complete, per-run system prompt (servitor's
+	// investigator via buildLeadSystemPrompt) passes it here so the scoped run
+	// uses that prompt verbatim — gaining scoped sessions + recording-to-scope
+	// without changing the prompt content. Empty ⇒ the assembled prompt.
+	SystemPromptOverride string
+}
+
+// AgentLoopOverrides carries the subset of AgentLoopConfig a scoped/template run
+// may override. Zero fields inherit the dispatch defaults; set only what the
+// instance's loop needs. See AgentSyncRun.Loop.
+type AgentLoopOverrides struct {
+	MaxRounds     int              // >0 overrides the resolved default
+	SerialTools   bool             // run tool calls one-at-a-time
+	ChatOptions   []ChatOption     // APPENDED to the dispatch defaults (last wins per option)
+	OnRoundReset  func() bool      // per-step pacing reset
+	OnRoundStart  func() []Message // pre-round injection (stuck nudges, etc.)
+	PendingWorkFn func() int       // remaining-work count for the wrap-up nudge
 }
 
 // AgentSyncResult is the bound agent's output: reply text plus any attachments
@@ -661,6 +696,11 @@ type AgentSyncRun struct {
 type AgentSyncResult struct {
 	Text   string
 	Images []string
+	// HitRoundCap reports that the loop stopped because it exhausted its round
+	// budget (not a natural finish). A caller driving a multi-pass loop (e.g.
+	// servitor's investigator continuing while plan steps remain) re-runs with the
+	// same SubSessionID while this is true.
+	HitRoundCap bool
 }
 
 // RunAgentSyncContinuing is the text-only wrapper kept for existing callers
@@ -708,6 +748,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		if runtimeDB == nil {
 			return AgentSyncResult{}, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
 		}
+		// Layered rules (enabler #2): instance overlay over the template's base —
+		// see the matching block in runAgentSyncConfirm.
+		target.Rules = mergeScopeRules(target.Rules, listScopeRules(runtimeDB, target.ID))
 	}
 	if subSessionID == "" {
 		subSessionID = "external-dispatch:" + runtimeUser + ":" + target.ID
@@ -816,6 +859,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// RunAgentSync — see buildDispatchTurnExtras for rationale).
 	extraTools, availableBlock, customToolPrompt, subTurn := T.buildDispatchTurnExtrasWithOwner(ctx, target, runtimeUser, runtimeDB, subSess, agentOwner, ownerDB)
 	tools = append(tools, extraTools...)
+	// Caller-injected per-instance tools (e.g. an app's appliance-bound closures
+	// passed via AgentSyncRun.AppTools / RunScopedAgent). Mirror onto subTurn so
+	// custom-tool resolution (lazyToolFallback) sees them too.
+	if len(run.AppTools) > 0 {
+		tools = append(tools, run.AppTools...)
+		subTurn.appTools = append(subTurn.appTools, run.AppTools...)
+	}
 	// ForcePrivate enforcement — see applyForcePrivateToDispatch.
 	// No-op when target.ForcePrivate is false.
 	ctx, tools = applyForcePrivateToDispatch(ctx, subSess, tools, target)
@@ -824,6 +874,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
 	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB)
+	if s := strings.TrimSpace(run.SystemPromptOverride); s != "" {
+		sysPrompt = s // app supplies its own complete per-run prompt (e.g. servitor's investigator)
+	}
 	// freshSession wipes the prior session BEFORE the load — caller
 	// (phantom's dispatch_agent fresh_session=true) is signaling a
 	// new thread, so the deterministic-ID session record gets cleared
@@ -915,7 +968,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 
 	think := resolveDispatchThink(target)
-	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, AgentLoopConfig{
+	loopCfg := AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
@@ -933,7 +986,29 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),
 		},
-	})
+	}
+	// Caller loop overrides (enabler #3) — a template instance with a sophisticated
+	// loop (servitor's investigator: step pacing, stuck detection, plan-aware
+	// wrap-up) supplies these so the scoped run matches its bespoke RunAgentLoop.
+	if lc := run.Loop; lc != nil {
+		if lc.MaxRounds > 0 {
+			loopCfg.MaxRounds = lc.MaxRounds
+		}
+		if lc.SerialTools {
+			loopCfg.SerialTools = true
+		}
+		loopCfg.ChatOptions = append(loopCfg.ChatOptions, lc.ChatOptions...) // appended → last wins
+		if lc.OnRoundReset != nil {
+			loopCfg.OnRoundReset = lc.OnRoundReset
+		}
+		if lc.OnRoundStart != nil {
+			loopCfg.OnRoundStart = lc.OnRoundStart
+		}
+		if lc.PendingWorkFn != nil {
+			loopCfg.PendingWorkFn = lc.PendingWorkFn
+		}
+	}
+	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
 	if runErr != nil {
@@ -969,7 +1044,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
 		Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
 	}
-	return AgentSyncResult{Text: cleanReply, Images: subSess.Images}, nil
+	return AgentSyncResult{Text: cleanReply, Images: subSess.Images, HitRoundCap: resp.HitRoundCap}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

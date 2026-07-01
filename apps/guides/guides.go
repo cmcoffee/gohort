@@ -48,6 +48,7 @@ func init() {
 			"- ask_user(question, options?) / ask_user_form(steps): pause and ask the user when what they want is genuinely ambiguous — the audience, the scope, which system, the format. Pass options for bounded choices (click instead of type); use ask_user_form for several decisions at once. Ask rather than guess on anything that would change what you write; don't re-ask what they already told you.\n\n" +
 			"When the user asks for a section or a change, make it with the tool so it lands in the document and the viewer updates. In chat, keep your prose short — a sentence confirming what you added/changed — because the CONTENT belongs in the guide, not the chat. Never describe your own storage or write files; the app stores the guide. If the user just wants to discuss or plan, answer normally without calling a tool.",
 	})
+	registerGuidesMCPTools()
 }
 
 // Guides is the app. Most behavior is in web.go (endpoints + chat) and page.go

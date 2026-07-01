@@ -222,6 +222,16 @@ func (T *OrchestrateApp) Routes() {
 	// Channel wake-rule gatekeeper: the transport calls this before dispatching
 	// an inbound, so master (admin) + per-channel rules gate the agent run.
 	registerChannelGatekeeper(T)
+	// MCP agent gate: the inbound MCP server (ask_agent) calls this so only agents
+	// the owner marked "Reachable over MCP" can be dispatched from an external
+	// client. Reads the owner's own store; seeds resolve to their per-user shadow.
+	RegisterMCPAgentGate(func(owner, agentID string) bool {
+		// Agents live in the orchestrate app's per-user store (UserDB(T.DB, owner)),
+		// NOT RootDB — read the SAME store the editor saves to, or every lookup
+		// falls back to the in-code seed (MCPExposed=false) and nothing is reachable.
+		a, ok := loadAgent(UserDB(T.DB, owner), agentID)
+		return ok && a.MCPExposed
+	})
 
 	// Wire the event-monitor engine: webhook + poll triggers that WAKE a
 	// channel agent (inject into its home thread + run a turn) when something

@@ -84,6 +84,10 @@ type MCPServerConfig struct {
 	OAuthAuthorizeURL string `json:"oauth_authorize_url,omitempty"`
 	OAuthTokenURL     string `json:"oauth_token_url,omitempty"`
 	OAuthScopes       string `json:"oauth_scopes,omitempty"`
+	// OAuthAudience is the audience for Auth0/Okta-style providers (e.g. Atlassian
+	// requires audience=api.atlassian.com). When set it is sent instead of the RFC
+	// 8707 resource indicator. Blank ⇒ send resource (the MCP-spec default).
+	OAuthAudience string `json:"oauth_audience,omitempty"`
 }
 
 // mcpConn is a live connection to one server plus the tools it reported.
@@ -666,6 +670,9 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 		}
 		if s := strings.TrimSpace(cfg.OAuthScopes); s != "" {
 			disc.Scope = s
+		}
+		if a := strings.TrimSpace(cfg.OAuthAudience); a != "" {
+			disc.Audience = a
 		}
 		if disc.Resource == "" {
 			disc.Resource = mcpCanonicalResource(cfg.URL)

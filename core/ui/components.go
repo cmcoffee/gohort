@@ -171,6 +171,12 @@ type Col struct {
 	Mute   bool           `json:"mute,omitempty"`   // render with --text-mute color
 	Type   string         `json:"type,omitempty"`   // "" | "badge" | "dot"
 	Badges []BadgeMapping `json:"badges,omitempty"` // for type="badge" + type="dot" (Label ignored for "dot"; only Color used)
+	// Link names another field holding a URL; when set the cell renders as a
+	// clickable anchor (text = this column's Field value, href = the Link field's
+	// value, opened in a new tab). The framework builds the anchor safely — set
+	// this instead of embedding raw <a> HTML in a cell value (which is escaped and
+	// shows as literal markup). Only http(s)/relative hrefs render as links.
+	Link string `json:"link,omitempty"`
 }
 
 // BadgeMapping maps a value (typically a boolean) to a labeled badge

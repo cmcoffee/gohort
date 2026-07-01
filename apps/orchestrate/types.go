@@ -177,6 +177,13 @@ type AgentRecord struct {
 	// the agents package.
 	Exposed bool `json:"exposed,omitempty"`
 
+	// MCPExposed makes this agent reachable through gohort's INBOUND MCP server
+	// (apps/mcpserver, /mcp/) — an external MCP client (e.g. Claude Desktop) can
+	// dispatch to it via the ask_agent tool. Default off so a bridge key can't
+	// reach every agent; the owner opts each one in. Independent of Exposed (the
+	// public /agents/ web surface) — an agent can be on one, both, or neither.
+	MCPExposed bool `json:"mcp_exposed,omitempty"`
+
 	// PublicName overrides the display name + URL slug on the public
 	// /agents/ surface. Left blank, the public view uses Name; set
 	// this when the internal agent name doesn't read well as an

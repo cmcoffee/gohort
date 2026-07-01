@@ -24,11 +24,16 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 
 /* --- Page header (back link + visible title) --- */
+/* Full-width bar: lives OUTSIDE the centered #ui-root (see runtime), so the bar
+   + its border-bottom stretch edge-to-edge while page content stays in the
+   narrow column. Horizontal padding matches #ui-root so the back button lines up
+   with the content's left edge; safe-area top so the bar clears a notch. */
 .ui-page-header {
   display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.2rem 0 0.4rem;
+  padding: 0.45rem 0.95rem;
+  padding-top: calc(0.45rem + env(safe-area-inset-top, 0px));
   border-bottom: 1px solid var(--border);
-  margin-bottom: 0.5rem;
+  background: var(--bg-1);
 }
 .ui-back-link {
   display: inline-flex; align-items: center;
@@ -388,6 +393,8 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
 .ui-table-cell.mute { color: var(--text-mute); font-size: 0.78rem; }
+.ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
+.ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
 .ui-table-empty { color: var(--text-mute); font-size: 0.9rem; padding: 0.5rem 0; }
 
 /* Narrow viewport: row goes column, cells stack vertically (display:
@@ -4596,6 +4603,17 @@ const runtimeJS = `
         {detail: {sources: sources}}));
     } catch (_) {}
   };
+  // uiInvalidateSaved — fire invalidation after a FORM save: the form's declared
+  // invalidate sources PLUS the endpoint it just wrote to (post_url, else source).
+  // This makes a list reading the SAME endpoint refresh automatically — so "add a
+  // record → it appears in the table" works even when the author didn't set an
+  // explicit invalidate. The common form→list pattern stays live with no wiring.
+  window.uiInvalidateSaved = function(cfg) {
+    var inv = (cfg && Array.isArray(cfg.invalidate)) ? cfg.invalidate.slice() : [];
+    var target = cfg && (cfg.post_url || cfg.source);
+    if (target && inv.indexOf(target) < 0) inv.push(target);
+    if (inv.length) window.uiInvalidate(inv);
+  };
   // Message decorator registry — fires after a message is finalized
   // (markdown pass complete). Apps register a function that gets
   // {role, id, wrap, body, rawText} and can append affordances to
@@ -5030,7 +5048,18 @@ const runtimeJS = `
           }
           var cell = el('div', {class: 'ui-table-cell' + (col.mute ? ' mute' : '')});
           if (col.flex) cell.style.flex = col.flex;
-          cell.textContent = fmt(v, col.format);
+          // Link column: render a safe anchor (text + href set separately so
+          // nothing is HTML-injected) instead of embedding raw <a> markup, which
+          // a cell would escape and show as literal text. Guard the scheme so a
+          // javascript:/data: URL in the data can't become a clickable link.
+          var href = col.link ? lookup(rec, col.link) : null;
+          if (href != null && /^(https?:\/\/|\/)/.test(String(href))) {
+            var a = el('a', {href: String(href), target: '_blank', rel: 'noopener', class: 'ui-table-link'});
+            a.textContent = fmt(v, col.format);
+            cell.appendChild(a);
+          } else {
+            cell.textContent = fmt(v, col.format);
+          }
           cellsWrap.appendChild(cell);
         });
         row.appendChild(cellsWrap);
@@ -5618,7 +5647,7 @@ const runtimeJS = `
     return wrap;
   };
 
-  components.form_panel = function(cfg) {
+  components.form_panel = function(cfg, ctx) {
     var wrap = el('div', {class: 'ui-form'});
     var current = {};
     var debounceTimers = {}; // field -> setTimeout id
@@ -5663,7 +5692,7 @@ const runtimeJS = `
         body: JSON.stringify(body)
       }).then(function(){
         setTimeout(function(){ savingIndicator.classList.remove('show'); }, 300);
-        if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
+        window.uiInvalidateSaved(cfg);
       }).catch(function(err){
         savingIndicator.classList.remove('show');
         showToast('Save failed: ' + err.message);
@@ -6549,12 +6578,18 @@ const runtimeJS = `
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(current),
           }).then(function(resp) {
-            if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
+            window.uiInvalidateSaved(cfg);
             if (cfg.redirect_url) {
               var dest = substitute(cfg.redirect_url, resp || {});
               var target = cfg.redirect_target || '_self';
               if (target === '_self') window.location.href = dest;
               else window.open(dest, target);
+            } else if (ctx && typeof ctx.__closeModal === 'function') {
+              // A submit-mode form inside a ModalButton: the submit button IS the
+              // commit, so dismiss the dialog on success (the invalidate above has
+              // already refreshed the panels behind it). Without this the modal
+              // stays open and the save looks like it did nothing.
+              ctx.__closeModal();
             } else {
               submitBtn.textContent = cfg.submit_label;
               submitBtn.disabled = false;
@@ -6630,6 +6665,13 @@ const runtimeJS = `
         }
       }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
     }
+    // Refetch when an external action invalidates our source — same as Table.
+    // Without this, a display backed by source_script (e.g. a computed weather
+    // panel) never updated after a form save, only on a manual page reload.
+    window.addEventListener('ui-data-changed', function(ev) {
+      var sources = ev.detail && ev.detail.sources;
+      if (sources && cfg.source && sources.indexOf(cfg.source) >= 0) reload();
+    });
     reload();
     if (cfg.auto_refresh_ms && cfg.auto_refresh_ms > 0) setInterval(reload, cfg.auto_refresh_ms);
     return wrap;
@@ -7538,7 +7580,14 @@ const runtimeJS = `
       var body = el('div', {style: 'overflow-y:auto;flex:1 1 auto;min-height:0;padding-right:0.3rem'});
       dlg.appendChild(body);
       if (cfg.body) {
-        mountComponent(cfg.body, body, ctx);
+        // Hand the inner component a close hook (namespaced so it can't collide
+        // with parent-record fields ctx also carries). A submit-mode FormPanel
+        // calls it on a successful save so the dialog auto-dismisses instead of
+        // sitting open after the user clicks the submit button.
+        var childCtx = {};
+        for (var k in (ctx || {})) childCtx[k] = ctx[k];
+        childCtx.__closeModal = function() { try { dlg.close(); } catch (_) {} dlg.remove(); };
+        mountComponent(cfg.body, body, childCtx);
       }
 
       var actions = el('div', {style: 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)'});
@@ -17204,10 +17253,17 @@ const runtimeJS = `
     }
 
     // runViewerAction dispatches a viewer toolbar button against the open record.
+    // An optional a.confirm gates the action behind the themed uiConfirm modal.
     function runViewerAction(a, btn) {
       if (!selectedId) return;
+      if (a.confirm) {
+        window.uiConfirm(a.confirm).then(function(ok) { if (ok) doViewerAction(a, btn); });
+        return;
+      }
+      doViewerAction(a, btn);
+    }
+    function doViewerAction(a, btn) {
       var url = (a.url || '').replace('{id}', encodeURIComponent(selectedId));
-      if (a.confirm && !window.confirm(a.confirm)) return;
       if (a.kind === 'client') {
         // Browser-side action — dispatch by name (a.url carries the action
         // name) to a handler registered via window.uiRegisterClientAction.
@@ -17261,13 +17317,15 @@ const runtimeJS = `
                 ]));
                 var rb = el('button', {class: 'ui-wb-action-btn', text: 'Restore'});
                 rb.addEventListener('click', function() {
-                  if (!window.confirm('Restore this version? The current state is saved to history first, so this is undoable.')) return;
-                  var rurl = (a.restore_url || '').replace('{id}', encodeURIComponent(selectedId)).replace('{rev}', encodeURIComponent(it.id));
-                  rb.disabled = true; rb.textContent = 'Restoring…';
-                  fetch(rurl, {method: 'POST', credentials: 'same-origin'})
-                    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
-                    .then(function() { try { dlg.close(); dlg.remove(); } catch(e){} loadList(); loadViewer(selectedId); })
-                    .catch(function(err) { rb.disabled = false; rb.textContent = 'Restore'; alert('Restore failed: ' + (err && err.message || err)); });
+                  window.uiConfirm('Restore this version? The current state is saved to history first, so this is undoable.').then(function(ok) {
+                    if (!ok) return;
+                    var rurl = (a.restore_url || '').replace('{id}', encodeURIComponent(selectedId)).replace('{rev}', encodeURIComponent(it.id));
+                    rb.disabled = true; rb.textContent = 'Restoring…';
+                    fetch(rurl, {method: 'POST', credentials: 'same-origin'})
+                      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+                      .then(function() { try { dlg.close(); dlg.remove(); } catch(e){} loadList(); loadViewer(selectedId); })
+                      .catch(function(err) { rb.disabled = false; rb.textContent = 'Restore'; alert('Restore failed: ' + (err && err.message || err)); });
+                  });
                 });
                 row.appendChild(rb);
                 body.appendChild(row);
@@ -17328,12 +17386,14 @@ const runtimeJS = `
     var delURL = cfg.delete_url || cfg.record_url || '';
     function deleteItem(id, label) {
       if (!delURL) return;
-      if (!confirm('Delete "' + (label || 'this item') + '"?')) return;
-      var url = delURL.replace('{id}', encodeURIComponent(id));
-      fetch(url, {method: 'DELETE'}).then(function() {
-        if (selectedId === id) { selectedId = null; showEmpty(); }
-        loadList();
-      }).catch(function() {});
+      window.uiConfirm('Delete "' + (label || 'this item') + '"?').then(function(ok) {
+        if (!ok) return;
+        var url = delURL.replace('{id}', encodeURIComponent(id));
+        fetch(url, {method: 'DELETE'}).then(function() {
+          if (selectedId === id) { selectedId = null; showEmpty(); }
+          loadList();
+        }).catch(function() {});
+      });
     }
 
     function loadList() {
@@ -17578,7 +17638,12 @@ const runtimeJS = `
       setInterval(refreshLive, 10000);
       // Update the document title in case the rendered title differs.
       if (cfg.title) document.title = cfg.title;
-      root.appendChild(header);
+      // Insert the header OUTSIDE #ui-root (a sibling above it) so the bar spans
+      // the full viewport width while the content column below stays centered at
+      // cfg.max_width. (Appending into root would constrain the bar to the narrow
+      // column.)
+      if (root.parentNode) root.parentNode.insertBefore(header, root);
+      else root.appendChild(header);
     }
 
     if (cfg.sticky) mountComponent(cfg.sticky, root);
