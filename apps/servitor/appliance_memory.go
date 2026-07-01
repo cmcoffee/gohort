@@ -45,11 +45,11 @@ func init() {
 		Description: "Per-appliance investigator template. Memory (facts, graph, reference) is layered per appliance scope.",
 		Prompt:      investigatorTemplatePrompt(),
 		Hidden:      true,
-		// agent mode frames Explicit Memory as "Lessons learned" — exactly where
-		// note_lesson belongs (generalized gotchas that must stay always-in-prompt
-		// so a mistake isn't repeated). Specific reference material goes to
-		// Reference Memory; structured facts + topology go to the graph.
-		MemoryMode: "agent",
+		// Explicit Memory is the always-in-prompt SHORTCUTS layer: working
+		// access/operate commands (record_technique) + gotchas (note_lesson).
+		// Specific one-off findings go to Reference Memory; structured facts +
+		// topology go to the graph.
+		MemoryMode: "shortcuts",
 	})
 }
 
@@ -172,6 +172,22 @@ func scopedApplianceFacts(udb Database, a Appliance) map[string]string {
 	return e.Attrs
 }
 
+// scopedGraphBlock renders the appliance's scoped graph (all entities + attrs +
+// relationships) for prompt injection, so the investigator and worker actually
+// SEE the topology that link_entities builds — otherwise the graph would be
+// display-only. Empty when the graph has nothing yet.
+func scopedGraphBlock(a Appliance) string {
+	if a.ID == "" {
+		return ""
+	}
+	orch := servitorOrch()
+	if orch == nil {
+		return ""
+	}
+	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	return orch.ScopedGraphSummary(scope)
+}
+
 // scopedFactsBlock renders the appliance's scoped facts as sorted "- key: value"
 // lines for the system prompt (replacing the old formatFactsWithAge over
 // ssh_facts). Per-fact age is intentionally not carried — graph attrs have no
@@ -233,31 +249,14 @@ func recordScopedLink(a Appliance, subjectKind, subject string, subjectAttrs map
 	return orch.SeedScopedGraphLink(scope, subjectKind, subject, subjectAttrs, relation, objectKind, object, note, replace)
 }
 
-// refTitle derives a short, distinctive title from a recording's body — the
-// first line, trimmed and capped — so Reference Memory entries are labeled by
-// their content (the modal shows the section heading) instead of a generic,
-// repeated word like "Technique".
-func refTitle(text string) string {
-	t := strings.TrimSpace(text)
-	if i := strings.IndexByte(t, '\n'); i >= 0 {
-		t = strings.TrimSpace(t[:i])
-	}
-	if len(t) > 70 {
-		t = strings.TrimSpace(t[:70]) + "…"
-	}
-	if t == "" {
-		t = "Note"
-	}
-	return t
-}
 
-// recordScopedLesson records a generalized lesson (a gotcha, a dead end, a
-// wrong assumption) into the scope's EXPLICIT Memory — not Reference Memory —
-// because a lesson's value is preventing a repeat WITHOUT the agent having to
-// search for it, so it must stay always-in-prompt. In agent mode this surfaces
-// under the "Lessons learned" block. StoreMemoryFact dedups/supersedes so
-// re-recording the same lesson is idempotent.
-func recordScopedLesson(a Appliance, note string) {
+// recordScopedExplicit records a SHORTCUT (a working access/operate command) or
+// a LESSON (a gotcha) into the scope's EXPLICIT Memory — the always-in-prompt
+// layer — because both are operational knowledge the investigator wants in view
+// every time, without having to search for it. Specific one-off findings go to
+// Reference Memory instead. StoreMemoryFact dedups/supersedes, so re-recording
+// the same entry is idempotent. Surfaces under the "Shortcuts" block.
+func recordScopedExplicit(a Appliance, note string) {
 	if a.ID == "" || strings.TrimSpace(note) == "" {
 		return
 	}

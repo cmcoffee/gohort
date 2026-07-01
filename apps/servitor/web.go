@@ -1596,8 +1596,8 @@ func buildProbeWorkerPrompt(appliance Appliance) string {
 	))
 	b.WriteString("## Rules\n\n")
 	b.WriteString("- Run only the commands needed to complete the task — **maximum 10 tool calls**\n")
-	b.WriteString("- Call `store_fact` immediately after any command that returns a concrete value\n")
-	b.WriteString("- Call `link_entities` to record how parts of the system CONNECT — a service to its port, an app to its database, a process to its config file, a service to the host. This builds the system map as a real topology; `store_fact` is only for appliance-wide properties (os, hostname, kernel)\n")
+	b.WriteString("- Record a concrete value on the RIGHT node: `store_fact` ONLY for appliance-wide properties (os, hostname, kernel, arch). A value about a specific component — a service version/port, an app's config path, a database's auth — goes in `link_entities` as `subject_attrs` on that component's entity, NOT store_fact (which would pile everything onto the appliance)\n")
+	b.WriteString("- Call `link_entities` to record how parts of the system CONNECT — a service to its port, an app to its database, a process to its config file, a service to the host — with the component's details in `subject_attrs`. This builds the system map as a real topology instead of one overloaded node\n")
 	b.WriteString("- Call `record_technique` when you find a working auth method or non-obvious command\n")
 	b.WriteString("- Call `note_lesson` when you hit a dead end future workers should avoid\n")
 	b.WriteString("- Do NOT explore beyond the task — the investigator directs all follow-up\n")
@@ -1781,6 +1781,12 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 		b.WriteString("## Stored Facts (pre-verified values from prior sessions)\n\n")
 		b.WriteString("Use these as authoritative context when dispatching the worker — no need to re-discover them.\n\n")
 		b.WriteString(cachedFacts)
+		b.WriteString("\n")
+	}
+	if gb := scopedGraphBlock(appliance); gb != "" {
+		b.WriteString("## System Map (components and how they connect)\n\n")
+		b.WriteString("The topology recorded in prior sessions — services, databases, apps, and their relationships. Use it to target probes precisely; re-verify live state.\n\n")
+		b.WriteString(gb)
 		b.WriteString("\n")
 	}
 	if cachedNotes != "" {
@@ -2592,7 +2598,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			udb.Get(notesTable, appliance.ID, &existing)
 			entry := fmt.Sprintf("- %s (%s)\n", note, time.Now().Format("2006-01-02"))
 			udb.Set(notesTable, appliance.ID, existing+entry)
-			recordScopedLesson(appliance, note) // lessons -> Explicit Memory (always-in-prompt), not Reference Memory
+			recordScopedExplicit(appliance, note) // gotcha -> Explicit Memory (always-in-prompt Shortcuts layer)
 			emit(id, probeEvent{Kind: "status", Text: "Noted: " + note})
 			return "noted", nil
 		},
@@ -2654,7 +2660,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 			}
 			recordTechnique(udb, appliance.ID, technique)
-			recordScopedReference(ctx, appliance, "techniques", refTitle(technique), technique) // dual-write to the orchestrate scope (lead migration, slice 1)
+			recordScopedExplicit(appliance, technique) // working command -> Explicit Memory (always-in-prompt Shortcuts layer)
 			emit(id, probeEvent{Kind: "status", Text: "Technique saved: " + technique})
 			return "technique recorded", nil
 		},
@@ -2699,13 +2705,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		NeedsConfirm: false,
 	}
 
-	// store_fact — persist a discrete observation about this appliance.
+	// store_fact — persist an APPLIANCE-WIDE property (not a per-component fact).
 	store_fact_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "store_fact",
-			Description: "Save a fact you just discovered so future sessions can answer the same question without running SSH commands again. Call this immediately after any command returns a concrete value: a version, a port, a path, a config value, a service status, a username. Key should be short and descriptive (e.g. 'nginx_version', 'mysql_port', 'web_root'). Facts overwrite on the same key so re-mapping keeps them current. For database auth methods use standard keys: 'mysql_auth', 'postgres_auth', 'redis_auth', 'mongo_auth' — value should be the exact working command. Set ttl='short' for volatile facts (who is logged in, running services, open ports, disk usage); use the default 'long' for stable facts (versions, config paths, hardware).",
+			Description: "Save an APPLIANCE-WIDE property — a fact about the WHOLE system, not any particular service or component: os, hostname, kernel version, CPU architecture, timezone, primary role. Key should be short (e.g. 'os', 'hostname', 'kernel', 'arch'). Facts overwrite on the same key. IMPORTANT: for a fact about a SPECIFIC component — a service's version or port, an app's config path, a database's auth command — do NOT use store_fact (it would pile everything onto the appliance node). Use `link_entities` instead, putting the detail in `subject_attrs` on that component's own entity (e.g. subject='nginx', subject_attrs={'version':'1.24','port':'443'}) so it lands on the right node. Set ttl='short' for volatile appliance-wide state, default 'long' for stable properties.",
 			Parameters: map[string]ToolParam{
-				"key":   {Type: "string", Description: "Short descriptive key, e.g. 'mysql_version', 'admin_user', 'web_root'."},
+				"key":   {Type: "string", Description: "Short appliance-wide key, e.g. 'os', 'hostname', 'kernel', 'arch'. NOT a component-specific key like 'nginx_version' — that goes in link_entities subject_attrs."},
 				"value": {Type: "string", Description: "The fact value."},
 				"ttl":   {Type: "string", Description: "Freshness window: 'short' (re-verify after 30 min, for volatile state) or 'long' (trust for 24h, for stable config/versions). Default: 'long'."},
 				"tags": {
@@ -2950,6 +2956,9 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				"(running processes, logged-in users, open ports, current disk/memory usage) always re-probe; " +
 				"configuration, versions, hardware, and paths can be trusted.\n\n"
 			workerPrompt += cachedFacts
+		}
+		if gb := scopedGraphBlock(appliance); gb != "" {
+			workerPrompt += "\n\n## System Map (components and how they connect)\n\n" + gb + "\n"
 		}
 		var notes string
 		if udb.Get(notesTable, appliance.ID, &notes) && strings.TrimSpace(notes) != "" {
@@ -3564,6 +3573,11 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				if cachedFacts != "" {
 					invMsg.WriteString("## Prior Facts\n\n")
 					invMsg.WriteString(cachedFacts)
+					invMsg.WriteString("\n\n")
+				}
+				if gb := scopedGraphBlock(appliance); gb != "" {
+					invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
+					invMsg.WriteString(gb)
 					invMsg.WriteString("\n\n")
 				}
 				if cachedTechniques != "" {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -189,6 +190,56 @@ func (T *OrchestrateApp) ScopedGraphEntity(scope AgentScope, nameOrAlias string)
 		return GraphEntity{}, false
 	}
 	return FindGraphEntity(db, factsNamespace(scope.AgentID), nameOrAlias)
+}
+
+// ScopedGraphSummary renders the scope's ENTIRE graph — every entity with its
+// attrs and outgoing relationships — as a compact text block for injection into
+// a prompt. It's the read-back counterpart to link_entities: an agent with no
+// graph-traverse tool still sees the topology it recorded. Empty when the graph
+// is empty. Rendering is generic (no domain terms).
+func (T *OrchestrateApp) ScopedGraphSummary(scope AgentScope) string {
+	if scope.ScopeUser == "" || scope.AgentID == "" {
+		return ""
+	}
+	db := UserDB(T.DB, scope.ScopeUser)
+	if db == nil {
+		return ""
+	}
+	ns := factsNamespace(scope.AgentID)
+	ents := ListGraphEntities(db, ns)
+	if len(ents) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, e := range ents {
+		b.WriteString("- ")
+		b.WriteString(e.Name)
+		if e.Kind != "" && e.Kind != "thing" {
+			b.WriteString(" (" + e.Kind + ")")
+		}
+		if len(e.Attrs) > 0 {
+			keys := make([]string, 0, len(e.Attrs))
+			for k := range e.Attrs {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			parts := make([]string, 0, len(keys))
+			for _, k := range keys {
+				parts = append(parts, k+"="+e.Attrs[k])
+			}
+			b.WriteString(": " + strings.Join(parts, ", "))
+		}
+		b.WriteString("\n")
+		for _, ed := range GraphEdgesFrom(db, ns, e.ID) {
+			rel := strings.ReplaceAll(ed.Rel, "_", " ")
+			b.WriteString("    → " + rel + " " + graphEndName(db, ns, ed.To))
+			if ed.Note != "" {
+				b.WriteString(" (" + ed.Note + ")")
+			}
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // WipeScopedMemory clears EVERY layer of a scope's memory — Explicit facts,

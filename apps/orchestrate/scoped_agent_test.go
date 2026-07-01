@@ -129,6 +129,28 @@ func TestSeedScopedGraphLink(t *testing.T) {
 	}
 }
 
+// TestScopedGraphSummary proves the read-back: the rendered summary contains the
+// entities, their attrs, and the relationship between them.
+func TestScopedGraphSummary(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	app := &OrchestrateApp{AppCore: AppCore{DB: root}}
+	const agentID = "tmpl-agent"
+	scope := AgentScope{AgentID: agentID, ScopeUser: "app:test:a"}
+
+	_ = app.SeedScopedGraphLink(scope, "service", "nginx",
+		map[string]string{"port": "443"}, "proxies to", "app", "web-app", "", false)
+
+	s := app.ScopedGraphSummary(scope)
+	for _, want := range []string{"nginx", "port=443", "proxies to", "web-app"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("summary missing %q:\n%s", want, s)
+		}
+	}
+	if app.ScopedGraphSummary(AgentScope{AgentID: agentID, ScopeUser: "app:test:b"}) != "" {
+		t.Fatal("empty scope should render empty summary")
+	}
+}
+
 // TestWipeScopedMemory proves a full per-instance reset clears the in-DB layers
 // (Explicit facts + Graph entities) and leaves other scopes untouched.
 func TestWipeScopedMemory(t *testing.T) {

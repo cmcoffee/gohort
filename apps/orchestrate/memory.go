@@ -105,6 +105,12 @@ func memoryModeCopy(mode string) memoryModeText {
 			Intro:           "What you've kept in mind across sessions with this user — generalized lessons (design principles, recurring gotchas) PLUS personalization (their name, preferences, recurring details) PLUS conversation-coherence notes (\"the project we discussed last week\", \"the user is on the beta plan\"). Apply silently; don't list them back. Each entry is numbered so you can reference an index when one is no longer accurate.",
 			StoreToolSuffix: "This agent is in CHATBOT MODE — Explicit Memory is broad. Right for store_fact: generalized lessons (\"X always fails in dev environments\"), user personalization (\"prefers concise replies\", \"works at Acme on the platform team\"), memorable notes that keep conversations coherent (\"the project we've been discussing is named Atlas\"). API specifics, working approaches for a specific task, paragraph-length findings — those still belong in Reference Memory via memory_save (searchable by similarity, not always in prompt). The rule is the same: always-in-prompt vs. searchable; chatbot mode just widens what counts as worth always seeing.",
 		}
+	case "shortcuts":
+		return memoryModeText{
+			Header:          "## Shortcuts",
+			Intro:           "Working commands and quick references to keep in view — how to access and operate this system directly (auth methods, entry points, log locations, service controls), plus gotchas to avoid. Use these directly rather than re-discovering. Each entry is numbered so you can reference an index when one is no longer accurate.",
+			StoreToolSuffix: "This agent is in SHORTCUTS MODE — Explicit Memory holds the operational commands and gotchas you want ALWAYS in view (working auth, entry points, log locations, \"do X not Y\" rules). Specific one-off findings you only occasionally need go in Reference Memory (searchable), not here.",
+		}
 	default: // "" or "agent"
 		return memoryModeText{
 			Header:          "## Lessons learned",
