@@ -102,7 +102,7 @@ type LogEntry struct {
 // Appliance is a saved remote host with connection params and cached system knowledge.
 type Appliance struct {
 	ID   string `json:"id"`
-	Type string `json:"type"` // "ssh" (default) | "command"
+	Type string `json:"type"` // "ssh" (default) | "command" | "repo"
 	Name string `json:"name"`
 	// SSH fields
 	Host     string `json:"host"`
@@ -113,7 +113,23 @@ type Appliance struct {
 	Command string   `json:"command"`  // local command name or path
 	WorkDir string   `json:"work_dir"` // optional working directory
 	EnvVars []string `json:"env_vars"` // optional KEY=VALUE env overrides
-	// Shared
+	// Repo fields (Type == "repo") — the code is cloned into tmpfs and ingested
+	// into the encrypted RepoFilesDB; nothing but derived, encrypted content
+	// persists. RepoFiles/RepoCloned track ingest status.
+	RepoURL    string `json:"repo_url"`              // git remote (https://github.com/owner/repo)
+	RepoBranch string `json:"repo_branch,omitempty"` // branch to clone; "" = remote default
+	RepoToken  string `json:"repo_token,omitempty"`  // access token for private repos; blanked on list
+	RepoFiles  int    `json:"repo_files,omitempty"`  // ingested file count
+	RepoCloned string `json:"repo_cloned,omitempty"` // RFC3339 of last successful ingest
+	// Sharing — an appliance/repo is owned by the user who created it and lives
+	// in that user's store. When Shared is set, every authenticated user can
+	// discover and operate it (in the OWNER's context: same creds, same repo
+	// clone, same accumulated knowledge/scoped memory) — but each user keeps
+	// their OWN chat sessions. Owner is stamped on create; the shared index in
+	// T.DB (see sharing.go) lets non-owners resolve it.
+	Owner  string `json:"owner,omitempty"`  // username that created + owns this record
+	Shared bool   `json:"shared,omitempty"` // visible to + usable by all authenticated users
+	// Shared config below (persona/instructions/profile/etc.)
 	Instructions  string     `json:"instructions"`   // freeform notes injected into every session
 	PersonaName   string     `json:"persona_name"`   // short label shown in the UI (e.g. "Support", "QA")
 	PersonaPrompt string     `json:"persona_prompt"` // shapes how the agent approaches this appliance
@@ -386,6 +402,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/facts", T.handleFacts)
 	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
 	sub.HandleFunc("/api/memory/clear", T.handleMemoryClear)
+	sub.HandleFunc("/api/repo/refresh", T.handleRepoRefresh)
 	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
 	sub.HandleFunc("/api/save_destinations", T.handleSaveDestinations)
 	sub.HandleFunc("/api/save_article", T.handleSaveArticle)
@@ -423,18 +440,40 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		if udb != nil {
 			cleanDanglingRecords(udb)
 		}
-		var items []Appliance
+		items := []Appliance{}
+		seen := map[string]bool{}
+		// The user's OWN appliances.
 		if udb != nil {
 			for _, key := range udb.Keys(applianceTable) {
 				var a Appliance
 				if udb.Get(applianceTable, key, &a) {
+					if a.Owner == "" {
+						a.Owner = userID // legacy record: the holder owns it
+					}
 					a.Password = ""
+					a.RepoToken = ""
 					items = append(items, a)
+					seen[a.ID] = true
 				}
 			}
 		}
-		if items == nil {
-			items = []Appliance{}
+		// Shared appliances owned by OTHERS — discoverable + usable by everyone,
+		// but managed only by their owner (see canManageAppliance).
+		for id, owner := range T.listSharedAppliances() {
+			if seen[id] || owner == userID {
+				continue
+			}
+			if ownerUDB := UserDB(T.DB, owner); ownerUDB != nil {
+				var a Appliance
+				if ownerUDB.Get(applianceTable, id, &a) {
+					a.Owner = owner
+					a.Shared = true
+					a.Password = ""
+					a.RepoToken = ""
+					items = append(items, a)
+					seen[id] = true
+				}
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(items)
@@ -452,12 +491,22 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		if req.Type == "" {
 			req.Type = "ssh"
 		}
-		if req.Type == "command" {
+		switch req.Type {
+		case "command":
 			if req.Name == "" || req.Command == "" {
 				http.Error(w, "name and command required", http.StatusBadRequest)
 				return
 			}
-		} else {
+		case "repo":
+			req.RepoURL = strings.TrimSpace(req.RepoURL)
+			if req.RepoURL == "" {
+				http.Error(w, "repo url required", http.StatusBadRequest)
+				return
+			}
+			if req.Name == "" {
+				req.Name = repoNameFromURL(req.RepoURL)
+			}
+		default:
 			req.Type = "ssh"
 			if req.Name == "" || req.Host == "" {
 				http.Error(w, "name and host required", http.StatusBadRequest)
@@ -470,25 +519,56 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				req.User = "root"
 			}
 		}
+		isNew := req.ID == ""
+		// The store the record lives in, and its owner. A new record is owned by
+		// its creator and saved to their store; an update lands in the OWNER's
+		// store (which may not be the requester's, for a shared record edited by
+		// an admin).
+		targetUDB := udb
+		owner := userID
 		// Preserve sensitive/derived fields when updating without re-supplying them.
-		if req.ID != "" {
-			var existing Appliance
-			if udb.Get(applianceTable, req.ID, &existing) {
-				if req.Type == "ssh" && req.Password == "" {
-					req.Password = existing.Password
-				}
-				req.Profile = existing.Profile
-				req.LogMap = existing.LogMap
-				req.Scanned = existing.Scanned
+		if !isNew {
+			existing, exOwner, exUDB, found := T.resolveAppliance(userID, udb, req.ID)
+			if !found {
+				http.Error(w, "appliance not found", http.StatusNotFound)
+				return
 			}
+			// Only the owner or an admin may edit / re-share a record. A non-owner
+			// can USE a shared appliance but not change it.
+			if !canManageAppliance(userID, existing, servitorIsAdmin(r)) {
+				http.Error(w, "not allowed to edit this appliance", http.StatusForbidden)
+				return
+			}
+			targetUDB = exUDB
+			owner = exOwner
+			if req.Type == "ssh" && req.Password == "" {
+				req.Password = existing.Password
+			}
+			if req.Type == "repo" && req.RepoToken == "" {
+				req.RepoToken = existing.RepoToken
+			}
+			req.Profile = existing.Profile
+			req.LogMap = existing.LogMap
+			req.Scanned = existing.Scanned
+			req.RepoFiles = existing.RepoFiles
+			req.RepoCloned = existing.RepoCloned
 		}
+		req.Owner = owner
 		if req.ID == "" {
 			req.ID = UUIDv4()
 		}
-		udb.Set(applianceTable, req.ID, req)
-		dropConn(userID, req.ID) // force reconnect with new credentials
+		targetUDB.Set(applianceTable, req.ID, req)
+		// Keep the global shared index in sync with the record's Shared flag.
+		T.setApplianceShared(req.ID, owner, req.Shared)
+		dropConn(owner, req.ID) // force reconnect with new credentials
+		// Repo appliances: clone + ingest under the OWNER (one shared clone) on
+		// create or when the store is empty.
+		if req.Type == "repo" && (isNew || req.RepoFiles == 0) {
+			go T.cloneAndIngestRepo(owner, targetUDB, req.ID)
+		}
 		resp := req
 		resp.Password = ""
+		resp.RepoToken = ""
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(resp)
 
@@ -509,16 +589,31 @@ func (T *Servitor) handleAppliance(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		var a Appliance
-		if !udb.Get(applianceTable, id, &a) {
+		// Resolve own OR shared so a non-owner can load a shared appliance's
+		// record (read-only; the UI gates edit/delete on can_manage).
+		a, owner, _, found := T.resolveAppliance(userID, udb, id)
+		if !found {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		a.Owner = owner
 		a.Password = ""
+		a.RepoToken = "" // never send the stored token back to the edit form
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(a)
 	case http.MethodDelete:
-		purgeAppliance(userID, udb, id)
+		a, owner, ownerUDB, found := T.resolveAppliance(userID, udb, id)
+		if !found {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		// Only the owner or an admin may delete.
+		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
+			http.Error(w, "not allowed to delete this appliance", http.StatusForbidden)
+			return
+		}
+		T.setApplianceShared(id, owner, false) // drop from the shared index first
+		purgeAppliance(owner, ownerUDB, id)
 		w.WriteHeader(http.StatusOK)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -646,12 +741,13 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "appliance_id required", http.StatusBadRequest)
 		return
 	}
-	var appliance Appliance
-	if !udb.Get(applianceTable, req.ApplianceID, &appliance) {
+	// Resolve own OR shared. Sessions stay in the requester's udb; a shared
+	// repo's clone/store is read under ownerUser inside runSession.
+	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
 		return
 	}
-
 
 	label := appliance.Name + ": " + req.Message
 	if len(label) > 80 {
@@ -705,7 +801,7 @@ func (T *Servitor) handleChat(w http.ResponseWriter, r *http.Request) {
 	// no per-queue cross-check — so the registration leaves Owner empty.
 	RegisterInjectionQueue(sid, "", "")
 
-	go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, false)
+	go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, false)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
@@ -839,8 +935,8 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
-	var appliance Appliance
-	if !udb.Get(applianceTable, req.ApplianceID, &appliance) {
+	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
 		return
 	}
@@ -867,13 +963,19 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 			"Perform a complete reconnaissance and profile of the Linux appliance at %s (connected as %s). Be systematic and thorough. Discover all services, configurations, and log file locations.",
 			appliance.Host, appliance.User,
 		)
+		if appliance.Type == "repo" {
+			mapMsg = fmt.Sprintf(
+				"Map the codebase in the repository %s. Be systematic and thorough: identify the language and framework, trace the architecture and major subsystems, find the data model and entry points, and record how the parts connect as a code map.",
+				repoDisplayTarget(appliance),
+			)
+		}
 		hist := []Message{{Role: "user", Content: mapMsg}}
 		// Persist the map as a session so it shows in the left rail and its
 		// reconnaissance summary stays reviewable, not just streamed live.
 		// The run id IS the session id; runSession appends the transcript on
 		// done. Each Map System run is its own rail entry (timestamped).
 		saveSession(udb, appliance.ID, chatSession{ID: sid, Name: "Map: " + appliance.Name})
-		go T.runSession(ctx, sid, userID, appliance, ch, hist, udb, true)
+		go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -901,8 +1003,8 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
-	var appliance Appliance
-	if !udb.Get(applianceTable, req.ApplianceID, &appliance) {
+	appliance, _, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
 		return
 	}
@@ -978,7 +1080,7 @@ func (T *Servitor) handleMemoryClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	_, udb, ok := RequireUser(w, r, T.DB)
+	userID, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -993,8 +1095,69 @@ func (T *Servitor) handleMemoryClear(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
-	clearApplianceMemory(udb, req.ApplianceID)
+	// Clearing shared memory affects every user of a shared appliance, so it's
+	// an owner/admin-only management action, operating on the owner's store.
+	rec, ownerUser, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	if !found {
+		http.Error(w, "appliance not found", http.StatusNotFound)
+		return
+	}
+	if !canManageAppliance(userID, rec, servitorIsAdmin(r)) {
+		http.Error(w, "not allowed to clear this appliance's memory", http.StatusForbidden)
+		return
+	}
+	clearApplianceMemory(ownerUDB, req.ApplianceID)
+	// Repo appliances: also drop the ingested code files. Reset the clone
+	// bookkeeping so the record reflects "needs re-clone". Connection settings
+	// (URL/branch/token) are kept, mirroring how SSH settings survive a clear.
+	if rec.Type == "repo" {
+		wipeRepoFiles(ownerUser, req.ApplianceID)
+		rec.RepoFiles = 0
+		rec.RepoCloned = ""
+		ownerUDB.Set(applianceTable, req.ApplianceID, rec)
+	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleRepoRefresh re-clones a repo appliance and re-ingests its files,
+// picking up new commits (or restoring files after a memory clear). The clone
+// runs in the background; the client polls the appliance list for RepoFiles.
+func (T *Servitor) handleRepoRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	userID, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	var req struct {
+		ApplianceID string `json:"appliance_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ApplianceID == "" {
+		http.Error(w, "appliance_id required", http.StatusBadRequest)
+		return
+	}
+	if udb == nil {
+		http.Error(w, "no database", http.StatusInternalServerError)
+		return
+	}
+	rec, ownerUser, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	if !found {
+		http.Error(w, "appliance not found", http.StatusNotFound)
+		return
+	}
+	if rec.Type != "repo" {
+		http.Error(w, "not a repository appliance", http.StatusBadRequest)
+		return
+	}
+	// Re-cloning replaces the shared code for everyone, so gate it to owner+admin.
+	if !canManageAppliance(userID, rec, servitorIsAdmin(r)) {
+		http.Error(w, "not allowed to refresh this repository", http.StatusForbidden)
+		return
+	}
+	go T.cloneAndIngestRepo(ownerUser, ownerUDB, req.ApplianceID)
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // --- SSH connection pool ---
@@ -1092,8 +1255,8 @@ func (T *Servitor) handleTerminal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	var appliance Appliance
-	if !udb.Get(applianceTable, id, &appliance) {
+	appliance, _, _, found := T.resolveAppliance(userID, udb, id)
+	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
 		return
 	}
@@ -1543,6 +1706,9 @@ func runQuickSnapshot(ctx context.Context, execFn func(string) (string, error)) 
 // The investigator orchestrates targeted probes, records discoveries, and develops a complete
 // operational picture — thinking like a security researcher, not a checklist executor.
 func buildInvestigatorSystemPrompt(appliance Appliance) string {
+	if appliance.Type == "repo" {
+		return buildRepoInvestigatorPrompt(appliance)
+	}
 	var b strings.Builder
 	writePersona(&b, appliance)
 	b.WriteString(fmt.Sprintf(
@@ -1587,6 +1753,9 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 // buildProbeWorkerPrompt is the system prompt for a focused worker dispatched by the investigator.
 // The worker executes a specific task with a limited command budget and reports findings clearly.
 func buildProbeWorkerPrompt(appliance Appliance) string {
+	if appliance.Type == "repo" {
+		return buildRepoProbeWorkerPrompt(appliance)
+	}
 	var b strings.Builder
 	writePersona(&b, appliance)
 	b.WriteString(fmt.Sprintf(
@@ -1725,6 +1894,9 @@ func leadStaticGuidance(b *strings.Builder) {
 }
 
 func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool) string {
+	if appliance.Type == "repo" {
+		return buildRepoLeadPrompt(appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
+	}
 	var b strings.Builder
 	writePersona(&b, appliance)
 	b.WriteString(fmt.Sprintf("Current time: %s\n\n", time.Now().Format("2006-01-02 15:04 MST")))
@@ -1821,6 +1993,9 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 // buildConsolidationPrompt returns the system prompt for the background knowledge
 // consolidation agent that runs after each chat turn to catch missed facts/techniques.
 func buildConsolidationPrompt(appliance Appliance) string {
+	if appliance.Type == "repo" {
+		return buildRepoConsolidationPrompt(appliance)
+	}
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf(
 		"You are a knowledge persistence agent for %s (%s).\n\n"+
@@ -1834,10 +2009,11 @@ func buildConsolidationPrompt(appliance Appliance) string {
 	b.WriteString("3. Call `store_fact` for APPLIANCE-WIDE values — properties of the box as a whole: os, hostname, kernel, architecture.\n")
 	b.WriteString("4. Call `link_entities` for the SYSTEM TOPOLOGY — how named components connect: a service to its port, an app to its database, a process to its config file, a service to the host. Each service/database/app is its OWN entity; record its version/path/port as subject_attrs. This is the main way you build knowledge here — do it for every relationship in the findings so the map becomes a real graph, not flat facts on one node.\n")
 	b.WriteString("5. Call `record_technique` for every confirmed working approach: exact command syntax, successful auth method, non-standard binary path.\n")
-	b.WriteString("6. Call `note_lesson` for any dead end or wrong assumption the exchange revealed — a path that turned out empty, a config that wasn't where expected, an approach that failed — so future sessions don't repeat it.\n")
-	b.WriteString("7. Do not duplicate — check `read_doc` content before updating a doc; graph entities auto-merge by name.\n")
-	b.WriteString("8. If nothing new was found beyond what is already stored, call no tools.\n")
-	b.WriteString("9. Do NOT produce any text response. Your output must be tool calls only.\n")
+	b.WriteString("6. Call `record_discovery` for a narrative insight worth reusing that isn't a single relationship — a working database access method, an operational procedure, a security-posture finding.\n")
+	b.WriteString("7. Call `note_lesson` for any dead end or wrong assumption the exchange revealed — a path that turned out empty, a config that wasn't where expected, an approach that failed — so future sessions don't repeat it.\n")
+	b.WriteString("8. Do not duplicate — check `read_doc` content before updating a doc; graph entities auto-merge by name.\n")
+	b.WriteString("9. If nothing new was found beyond what is already stored, call no tools.\n")
+	b.WriteString("10. Do NOT produce any text response. Your output must be tool calls only.\n")
 	return b.String()
 }
 
@@ -2087,7 +2263,13 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appl
 // runSession acquires a pooled SSH connection, runs the agent loop, and streams events.
 // The connection is NOT closed on return — it stays pooled for the next request.
 // saveProfile=true writes the final LLM reply and extracted log map back to the appliance record.
-func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
+// runSession runs an investigation. userID/udb are the REQUESTING user's
+// (connection, terminal, chat sessions, per-user notes) while ownerUser is the
+// appliance's owner — used for the shared repo clone/store so a shared repo is
+// read from ONE place regardless of who opened it. For a non-shared appliance
+// ownerUser == userID, so behavior is unchanged. Scoped memory is keyed by the
+// appliance ID (global), so it's shared with no extra plumbing.
+func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
 	defer func() {
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
@@ -2097,11 +2279,45 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		probeSessions.ScheduleCleanup(id)
 	}()
 
+	if ownerUser == "" {
+		ownerUser = userID
+	}
+	ownerUDB := udb
+	if ownerUser != userID {
+		ownerUDB = UserDB(T.DB, ownerUser) // shared repo: clone/store live under the owner
+	}
+
 	a := &Servitor{}
 	a.AppCore = T.AppCore
 
 	if appliance.Type == "command" {
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
+	} else if appliance.Type == "repo" {
+		// No connection to acquire — probes search/read the encrypted store.
+		// A Map run (saveProfile) is the repo analogue of SSH reconnaissance:
+		// it re-clones synchronously first so the map reflects CURRENT code and
+		// self-heals an empty store (e.g. right after Clear Memory). Q&A runs
+		// use whatever is already ingested.
+		if saveProfile {
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Cloning %s…", repoDisplayTarget(appliance))})
+			withHeartbeat(ctx, id, "Cloning repository", func() {
+				T.cloneAndIngestRepo(ownerUser, ownerUDB, appliance.ID)
+			})
+			if ctx.Err() != nil {
+				probeSessions.ScheduleCleanup(id)
+				return
+			}
+		}
+		if repoFileCount(ownerUser, appliance.ID) == 0 {
+			msg := "Repository not ingested yet — run Map System to clone and map it."
+			if saveProfile {
+				msg = "Clone failed — check the Git URL, branch, and access token, then try again. (Is git installed on the host?)"
+			}
+			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: msg}, true)
+			probeSessions.ScheduleCleanup(id)
+			return
+		}
+		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading repository %s", repoDisplayTarget(appliance))})
 	} else {
 		client, err := acquireConn(userID, appliance)
 		if err != nil {
@@ -2803,10 +3019,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			if strings.TrimSpace(rule) == "" {
 				return "", fmt.Errorf("rule is required")
 			}
-			if udb == nil {
+			if ownerUDB == nil {
 				return "", fmt.Errorf("no database")
 			}
-			storeRule(udb, appliance.ID, rule)
+			// Rules live on the owner's store so they're shared across everyone
+			// using the appliance (see the rules read above).
+			storeRule(ownerUDB, appliance.ID, rule)
 			preview := rule
 			if len(preview) > 80 {
 				preview = preview[:80] + "…"
@@ -2931,6 +3149,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		if appliance.Type == "command" {
 			return buildCommandChatSystemPrompt(appliance, udb)
 		}
+		if appliance.Type == "repo" {
+			// Single-worker update pass (existing profile) reuses the repo
+			// investigator discipline; the probe-worker split uses its own
+			// prompt at the dispatch site.
+			return buildRepoInvestigatorPrompt(appliance)
+		}
 		if saveProfile {
 			return buildMapSystemPrompt(T.SystemPrompt(), appliance)
 		}
@@ -2969,7 +3193,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			cachedTechniques = t
 			workerPrompt += "\n\n## Known Techniques (use directly — do not re-discover)\n\n" + cachedTechniques + "\n"
 		}
-		if rules := rulesForAppliance(udb, appliance.ID); len(rules) > 0 {
+		if rules := rulesForAppliance(ownerUDB, appliance.ID); len(rules) > 0 {
+			// Rules are the owner's operator directives for THIS appliance — read
+			// from the owner's store so a shared appliance applies the same
+			// standing instructions for everyone, not just the owner.
 			cachedRules = formatRules(rules)
 			workerPrompt += "\n\n## Standing Instructions (set by the user — always follow these)\n\n" + cachedRules + "\n"
 		}
@@ -3108,7 +3335,15 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 	// workerTools holds a placeholder run_command entry. Every call site must use
 	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
 	var workerTools []AgentToolDef
-	if appliance.Type == "command" {
+	if appliance.Type == "repo" {
+		// Repo workers search/read the encrypted code store instead of
+		// executing commands; the recording/plan/map tools are shared and
+		// scope-based, so they carry over unchanged.
+		workerTools = append(repoCodeTools(ownerUser, appliance.ID),
+			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
+			save_to_codewriter_tool, save_to_techwriter_tool,
+		)
+	} else if appliance.Type == "command" {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool,
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
@@ -3135,8 +3370,14 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 			// === New investigator-driven mapping ===
 			//
 			// Phase 1: Quick snapshot (no LLM) — gives the investigator a starting point.
-			emit(id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
-			snapshot := runQuickSnapshot(ctx, sshExec)
+			var snapshot string
+			if appliance.Type == "repo" {
+				emit(id, probeEvent{Kind: "status", Text: "Reading repository layout…"})
+				snapshot = runRepoSnapshot(ownerUser, appliance.ID)
+			} else {
+				emit(id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
+				snapshot = runQuickSnapshot(ctx, sshExec)
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -4143,7 +4384,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 				}
 				a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, AgentLoopConfig{
 					SystemPrompt:    buildConsolidationPrompt(appliance),
-					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, link_entities_tool, record_technique_tool, note_lesson_tool},
+					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, link_entities_tool, record_discovery_tool, record_technique_tool, note_lesson_tool},
 					MaxRounds:       10,
 					RouteKey:        "app.servitor",
 					MaskDebugOutput: true,
@@ -4219,23 +4460,48 @@ func (T *Servitor) runSession(ctx context.Context, id, userID string, appliance 
 		go consolidateFn()
 	}
 
-	if saveProfile && udb != nil {
+	if saveProfile && ownerUDB != nil {
+		// The profile is shared appliance knowledge — persist to the OWNER's
+		// store so a shared appliance has one profile regardless of who mapped it.
 		var existing Appliance
-		if udb.Get(applianceTable, appliance.ID, &existing) {
-			existing.Profile = reply
-			existing.Scanned = time.Now().Format(time.RFC3339)
-			if fresh := extractLogMap(reply); len(fresh) > 0 {
-				existing.LogMap = mergeLogMap(existing.LogMap, fresh)
+		if ownerUDB.Get(applianceTable, appliance.ID, &existing) {
+			// Don't let a Map run that hit issues clobber a good profile. Only
+			// REPLACE the profile when this run actually completed and synthesized
+			// a substantive mapping — a cancelled run, or a near-empty / stub
+			// reply (a failed synthesis, an error note), or one that collapsed to
+			// a fraction of the prior profile, keeps the previous one instead. A
+			// stale-but-real profile beats an almost-empty one.
+			newProfile := strings.TrimSpace(reply)
+			prior := strings.TrimSpace(existing.Profile)
+			tooThin := len(newProfile) < minMapProfileChars ||
+				(prior != "" && len(newProfile) < len(prior)/3)
+			if ctx.Err() != nil || tooThin {
+				emit(id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile — keeping the previous one."})
+				Log("[servitor.map] kept prior profile for %q (new=%d chars, prior=%d chars, cancelled=%v)",
+					appliance.Name, len(newProfile), len(prior), ctx.Err() != nil)
+			} else {
+				existing.Profile = reply
+				existing.Scanned = time.Now().Format(time.RFC3339)
+				if fresh := extractLogMap(reply); len(fresh) > 0 {
+					existing.LogMap = mergeLogMap(existing.LogMap, fresh)
+				}
+				ownerUDB.Set(applianceTable, appliance.ID, existing)
+				extractDocsFromProfile(ownerUDB, appliance.ID, reply)
 			}
-			udb.Set(applianceTable, appliance.ID, existing)
-			extractDocsFromProfile(udb, appliance.ID, reply)
 		}
 	}
 }
 
+// minMapProfileChars is the floor below which a Map run's synthesized profile is
+// treated as "didn't complete" — a real reconnaissance profile is a structured,
+// multi-section markdown doc well above this; a failed/partial run yields a short
+// stub or error note. Below it (or a big collapse vs. the prior profile), the
+// existing profile is preserved rather than overwritten.
+const minMapProfileChars = 250
+
 // handleRules handles GET (list) and POST (create) for appliance rules.
 func (T *Servitor) handleRules(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
+	userID, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -4246,7 +4512,13 @@ func (T *Servitor) handleRules(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "appliance_id required", http.StatusBadRequest)
 			return
 		}
-		rules := rulesForAppliance(udb, applianceID)
+		// Rules are the owner's directives — read from the owner's store so a
+		// non-owner viewing a shared appliance sees the same rules (read-only).
+		src := udb
+		if _, _, ownerUDB, found := T.resolveAppliance(userID, udb, applianceID); found {
+			src = ownerUDB
+		}
+		rules := rulesForAppliance(src, applianceID)
 		if rules == nil {
 			rules = []ApplianceRule{}
 		}
@@ -4261,7 +4533,18 @@ func (T *Servitor) handleRules(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "appliance_id and rule required", http.StatusBadRequest)
 			return
 		}
-		id := storeRule(udb, req.ApplianceID, req.Rule)
+		a, _, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+		if !found {
+			http.Error(w, "appliance not found", http.StatusNotFound)
+			return
+		}
+		// Only the owner or an admin sets rules — a shared appliance's rules are
+		// the owner's, applied to everyone; a non-owner can't change them.
+		if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
+			http.Error(w, "only the owner or an admin can set rules on a shared appliance", http.StatusForbidden)
+			return
+		}
+		id := storeRule(ownerUDB, req.ApplianceID, req.Rule)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"id": id})
 	default:
@@ -4271,7 +4554,7 @@ func (T *Servitor) handleRules(w http.ResponseWriter, r *http.Request) {
 
 // handleRuleDelete handles DELETE /api/rules/<id>.
 func (T *Servitor) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
+	userID, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -4284,7 +4567,23 @@ func (T *Servitor) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "id required", http.StatusBadRequest)
 		return
 	}
-	deleteRule(udb, id)
+	// The rule id is "<applianceID>:<uuid>", so resolve the owning appliance
+	// from it — a shared appliance's rules live in the owner's store, and only
+	// the owner or an admin may delete them.
+	applianceID := id
+	if i := strings.Index(id, ":"); i >= 0 {
+		applianceID = id[:i]
+	}
+	a, _, ownerUDB, found := T.resolveAppliance(userID, udb, applianceID)
+	if !found {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !canManageAppliance(userID, a, servitorIsAdmin(r)) {
+		http.Error(w, "only the owner or an admin can delete rules on a shared appliance", http.StatusForbidden)
+		return
+	}
+	deleteRule(ownerUDB, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

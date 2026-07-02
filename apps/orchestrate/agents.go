@@ -577,14 +577,20 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	if isBuilderAgent(a.ID) {
 		a.Hidden = true
 	}
-	// Reachability invariant: a Hidden agent (not in the fleet's
-	// "Available agents" block + not dispatchable via agents(run)) is
-	// orphaned if it's ALSO not exposed as a public app — the owner
-	// has no surface to reach it. Default Exposed=true on Hidden saves
-	// so users who flip the Hide toggle get a usable chat entry by
-	// default. They can still manually turn Exposed off after if they
-	// genuinely want a fully-private agent reachable only by URL.
-	if a.Hidden && !a.Exposed {
+	// Template seeds (Builder clones them; never run/published directly) must
+	// never become Exposed. This ALSO repairs a stale shadow that the
+	// auto-expose rule below wrongly flipped true in the past — checked first so
+	// that rule can't re-expose it.
+	if isCloneOnlySeed(a.ID) {
+		a.Exposed = false
+	} else if a.Hidden && !a.Exposed {
+		// Reachability invariant: a Hidden agent (not in the fleet's
+		// "Available agents" block + not dispatchable via agents(run)) is
+		// orphaned if it's ALSO not exposed as a public app — the owner
+		// has no surface to reach it. Default Exposed=true on Hidden saves
+		// so users who flip the Hide toggle get a usable chat entry by
+		// default. They can still manually turn Exposed off after if they
+		// genuinely want a fully-private agent reachable only by URL.
 		a.Exposed = true
 	}
 	// Drop the retired "orchestrator" mode marker on save. The record now
@@ -1465,7 +1471,7 @@ Example shell-mode tool: fetch a meme, convert JPG to PNG, save to workspace.
 
 The LLM then attaches via workspace(action="attach", path=out_name, cleanup=true).
 
-Shell-mode tools CAN also emit attachments inline via the <<<ATTACH:mime/type>>>...<<<END>>> marker convention if you genuinely want fire-and-forget delivery (no inspection / workspace step). The marker is a fast-path for one-shot shell processing; for typical workflows, write-to-workspace + workspace(attach) is the cleaner pattern.
+Shell-mode tools CAN also emit attachments inline by writing a marker block to stdout — a line "<<<ATTACH:mime/type", then the base64 (it may span multiple lines), then a closing "ATTACH_END>>>" line — if you genuinely want fire-and-forget delivery (no inspection / workspace step). Use that EXACT close token (ATTACH_END>>>). The marker is a fast-path for one-shot shell processing; for typical workflows, write-to-workspace + workspace(attach) is the cleaner pattern.
 
 ## Sandbox environment — what tools you author can assume
 

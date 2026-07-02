@@ -115,7 +115,7 @@ func (T *OrchestrateApp) handleAgentGraphAttrDelete(w http.ResponseWriter, r *ht
 
 // handleAgentGraphAliasDelete removes one alias from an entity.
 //
-//	DELETE /api/agents/{id}/graph/entity/{entity_id}/alias?value=Rory → 204
+//	DELETE /api/agents/{id}/graph/entity/{entity_id}/alias?value=Robin → 204
 func (T *OrchestrateApp) handleAgentGraphAliasDelete(w http.ResponseWriter, r *http.Request, user, agentID, entityID string) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

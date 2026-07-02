@@ -41,6 +41,7 @@ func (T *Account) WebHidden() bool { return true }
 
 func (T *Account) Routes() {
 	T.HandleFunc("/api/prefs", T.handlePrefs)
+	T.HandleFunc("/api/password", T.handlePassword)
 	T.HandleFunc("/api/connections", T.handleConnections)
 	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
@@ -204,44 +205,93 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handlePassword lets a logged-in user change their OWN password: POST
+// {current, new}. The CURRENT password is verified (so a borrowed/hijacked
+// session can't silently reset it), and only the hash is updated — admin flag,
+// apps, and preferences are preserved. 204 on success; 400 on weak input; 403
+// when the current password is wrong.
+func (T *Account) handlePassword(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Current string `json:"current"`
+		New     string `json:"new"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	// Match the signup/reset policy (6–128 chars).
+	if len(req.New) < 6 {
+		http.Error(w, "New password must be at least 6 characters.", http.StatusBadRequest)
+		return
+	}
+	if len(req.New) > 128 {
+		http.Error(w, "New password is too long.", http.StatusBadRequest)
+		return
+	}
+	if !AuthChangePassword(AuthDB(), user, req.Current, req.New) {
+		http.Error(w, "Current password is incorrect.", http.StatusForbidden)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- page --------------------------------------------------------------------
 
 func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
 	}
+	sections := []ui.Section{
+		{
+			Title:    "Preferences",
+			Subtitle: "Personal defaults, applied across your agents. Saved as you toggle.",
+			Body: ui.FormPanel{
+				Source: "api/prefs",
+				Fields: []ui.FormField{
+					{Field: "notify", Label: "Email notifications", Type: "toggle",
+						Help: "Receive email when an agent finishes work for you."},
+					{Field: "private_mode", Label: "Private mode by default", Type: "toggle",
+						Help: "Mask network-capable tools (web search, fetch, …) by default — keeps turns local. Per-agent overrides still apply."},
+					{Field: "inferred_disabled", Label: "Clean mode by default", Type: "toggle",
+						Help: "Suppress the Reference Memory layer by default — agents answer fresh from your question + knowledge, without prior derived findings. Per-agent overrides still apply."},
+				},
+			},
+		},
+	}
+	// Change-password only makes sense when password auth is actually in use.
+	if db := AuthDB(); db != nil && AuthHasUsers(db) {
+		sections = append(sections, ui.Section{
+			Title:    "Password",
+			Subtitle: "Change the password you sign in with. You'll need your current one.",
+			Body:     ui.Card{HTML: passwordHTML},
+		})
+	}
+	sections = append(sections,
+		ui.Section{
+			Title:    "Connected accounts",
+			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
+			Body:     ui.Card{HTML: connectionsHTML},
+		},
+		ui.Section{
+			Title:    "API keys (personal access)",
+			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Put the token in the client's X-API-Key header. Shown once at creation; revoke any time.",
+			Body:     ui.Card{HTML: tokensHTML},
+		},
+	)
 	ui.Page{
 		Title:     "Account",
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "640px",
-		Sections: []ui.Section{
-			{
-				Title:    "Preferences",
-				Subtitle: "Personal defaults, applied across your agents. Saved as you toggle.",
-				Body: ui.FormPanel{
-					Source: "api/prefs",
-					Fields: []ui.FormField{
-						{Field: "notify", Label: "Email notifications", Type: "toggle",
-							Help: "Receive email when an agent finishes work for you."},
-						{Field: "private_mode", Label: "Private mode by default", Type: "toggle",
-							Help: "Mask network-capable tools (web search, fetch, …) by default — keeps turns local. Per-agent overrides still apply."},
-						{Field: "inferred_disabled", Label: "Clean mode by default", Type: "toggle",
-							Help: "Suppress the Reference Memory layer by default — agents answer fresh from your question + knowledge, without prior derived findings. Per-agent overrides still apply."},
-					},
-				},
-			},
-			{
-				Title:    "Connected accounts",
-				Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
-				Body:     ui.Card{HTML: connectionsHTML},
-			},
-			{
-				Title:    "API keys (personal access)",
-				Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Put the token in the client's X-API-Key header. Shown once at creation; revoke any time.",
-				Body:     ui.Card{HTML: tokensHTML},
-			},
-		},
+		Sections:  sections,
 	}.ServeHTTP(w, r)
 }
 
@@ -278,6 +328,52 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// passwordHTML is the change-password panel: current + new + confirm fields with
+// client-side validation, posting to api/password. App-specific, so it rides in
+// a Card (the Card renderer re-executes this <script>), same pattern as the
+// connections + tokens panels.
+const passwordHTML = `<div class="acct-pw">
+  <input type="password" id="acct-pw-cur" class="acct-pw-input" placeholder="Current password" autocomplete="current-password">
+  <input type="password" id="acct-pw-new" class="acct-pw-input" placeholder="New password (6+ characters)" autocomplete="new-password">
+  <input type="password" id="acct-pw-cf" class="acct-pw-input" placeholder="Confirm new password" autocomplete="new-password">
+  <div class="acct-pw-row">
+    <button class="ui-row-btn primary" id="acct-pw-save">Change password</button>
+    <span id="acct-pw-msg" class="acct-pw-msg"></span>
+  </div>
+</div>
+<style>
+.acct-pw { display:flex; flex-direction:column; gap:0.5rem; max-width:22rem; }
+.acct-pw-input { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.9rem; }
+.acct-pw-row { display:flex; align-items:center; gap:0.6rem; }
+.acct-pw-msg { font-size:0.82rem; }
+.acct-pw-msg.ok { color:var(--success); }
+.acct-pw-msg.err { color:var(--danger); }
+</style>
+<script>
+(function(){
+  var cur=document.getElementById('acct-pw-cur'), nw=document.getElementById('acct-pw-new'),
+      cf=document.getElementById('acct-pw-cf'), btn=document.getElementById('acct-pw-save'),
+      msg=document.getElementById('acct-pw-msg');
+  if(!btn) return;
+  function setMsg(t, ok){ msg.textContent=t||''; msg.className='acct-pw-msg '+(ok?'ok':'err'); }
+  btn.addEventListener('click', function(){
+    setMsg('', true);
+    if(!cur.value){ setMsg('Enter your current password.', false); cur.focus(); return; }
+    if(nw.value.length < 6){ setMsg('New password must be at least 6 characters.', false); nw.focus(); return; }
+    if(nw.value !== cf.value){ setMsg('New passwords do not match.', false); cf.focus(); return; }
+    btn.disabled=true; var orig=btn.textContent; btn.textContent='Changing…';
+    fetch('api/password', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({current: cur.value, new: nw.value})})
+      .then(function(r){
+        btn.disabled=false; btn.textContent=orig;
+        if(r.status===204){ cur.value=nw.value=cf.value=''; setMsg('Password changed.', true); return; }
+        return r.text().then(function(t){ setMsg(t || ('Error '+r.status), false); });
+      })
+      .catch(function(e){ btn.disabled=false; btn.textContent=orig; setMsg('Failed: '+(e&&e.message||e), false); });
+  });
+})();
+</script>`
 
 // connectionsHTML is the Connected-accounts panel: a container the inline script
 // fills by fetching api/connections, rendering each per_user integration with a

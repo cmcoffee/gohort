@@ -38,7 +38,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		"seed-chat":     0,
 		"seed-builder":  1,
 		"seed-research": 2,
-		"seed-kb":       3,
+		// seed-kb is intentionally absent: it's a clone-only TEMPLATE (Builder
+		// clones it into real KB agents), skipped from the picker below so it's
+		// never selectable/runnable directly.
 	}
 	// cortexAgents maps each channel agent's id (a.Cortex) to its home-thread
 	// session id, so the client both knows which agents get the channel nav AND
@@ -75,6 +77,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 				"id":   a.ID,
 				"name": a.Name,
 			})
+			continue
+		}
+		// Clone-only template seeds (e.g. seed-kb) are Builder's raw material,
+		// not something a user runs directly — keep them out of the picker
+		// entirely (all groups). Builder still clones them by ID.
+		if isCloneOnlySeed(a.ID) {
 			continue
 		}
 		// Hidden=true used to filter the agent out of THIS picker too —

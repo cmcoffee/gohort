@@ -263,6 +263,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 			Handle:           handle,
 			SenderName:       sender,
 			ConversationName: firstNonEmpty(req.ConversationName, sender),
+			Roster:           T.rosterNames(activeChatID),
 			Text:             text,
 			Images:           images,
 			Videos:           videos,

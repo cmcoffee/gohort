@@ -237,6 +237,7 @@ type AuthUser struct {
 	Admin         bool     `json:"admin"`
 	Pending       bool     `json:"pending,omitempty"`  // true if awaiting admin approval
 	Apps          []string `json:"apps,omitempty"`     // allowed app paths; empty = use defaults
+	Groups        []string `json:"groups,omitempty"`   // assigned app-group IDs; each expands to its apps (see AuthResolveUserApps)
 	NotifyDefault bool     `json:"notify_default,omitempty"` // persistent notify preference
 	PrivateMode   bool     `json:"private_mode,omitempty"`   // persistent chat private-mode preference — DEPRECATED global fallback; per-agent override lives in PrivateModePerAgent
 	APIExplorerMode bool   `json:"api_explorer_mode,omitempty"` // persistent chat api-explorer preference
@@ -532,6 +533,7 @@ func AuthSetUser(db Database, username, password string, admin bool) {
 		Admin:    admin,
 		Pending:  existing.Pending,
 		Apps:     existing.Apps,
+		Groups:   existing.Groups,
 	}
 	if password != "" {
 		user.PassHash = hashPassword(password)
@@ -549,6 +551,43 @@ func AuthSetUserApps(db Database, username string, apps []string) {
 	}
 	user.Apps = apps
 	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthSetUserGroups updates the app-group IDs assigned to a user. Each group
+// expands to its member apps at access-check time (see AuthResolveUserApps), so
+// editing a group re-provisions every user assigned to it.
+func AuthSetUserGroups(db Database, username string, groups []string) {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	user.Groups = groups
+	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthResolveUserApps returns the effective set of app paths a user may access:
+// their own explicit Apps plus every app expanded from their assigned Groups.
+// When the user has NEITHER explicit apps nor groups, the deployment default
+// apps apply (preserving the "new user gets defaults" behavior). Any explicit
+// grant — apps or groups — opts the user out of defaults, so their access is
+// exactly what's assigned. Admins are handled by the caller (they bypass this).
+func AuthResolveUserApps(db Database, user AuthUser) []string {
+	if len(user.Apps) == 0 && len(user.Groups) == 0 {
+		return AuthGetDefaultApps(db)
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(paths []string) {
+		for _, p := range paths {
+			if p != "" && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	add(user.Apps)
+	add(ExpandAppGroups(db, user.Groups))
+	return out
 }
 
 // AuthGetDefaultApps returns the default app paths assigned to new users.
@@ -642,14 +681,21 @@ func UserHasAppAccess(r *http.Request, app_path string) bool {
 	if user.Admin {
 		return true
 	}
-	// Determine the user's allowed apps.
-	allowed := user.Apps
-	if len(allowed) == 0 {
-		allowed = AuthGetDefaultApps(db)
-	}
+	// Determine the user's allowed apps: explicit grants + group expansions,
+	// falling back to deployment defaults only when the user has neither.
+	allowed := AuthResolveUserApps(db, user)
 	// Empty allowed list means no apps (unless admin).
 	for _, p := range allowed {
-		if p == app_path {
+		// Exact grant, OR a grant nested UNDER this path. The nested case
+		// matters for multi-app hosts like /agents, where each published/custom
+		// app is granted as "/agents/<slug>" but the middleware gate only sees
+		// the first path segment ("/agents"). Without this, a user granted a
+		// specific "/agents/<slug>" app fails the coarse "/agents" gate and never
+		// reaches the per-slug handler that would admit them — the app renders as
+		// "access denied". The trailing "/" keeps "/foo" from matching "/foobar".
+		// This only widens the COARSE gate: the per-slug handler still enforces
+		// exactly which slug, so a grant to one agent doesn't unlock the others.
+		if p == app_path || strings.HasPrefix(p, app_path+"/") {
 			return true
 		}
 	}
@@ -694,6 +740,84 @@ func AuthCheckPassword(db Database, username, password string) bool {
 		return false
 	}
 	return user.PassHash == hashPassword(password)
+}
+
+// AuthChangePassword verifies the user's CURRENT password and, on success,
+// updates ONLY the password hash — every other field (admin flag, apps, per-user
+// preferences) is preserved, unlike AuthSetUser which rebuilds the record. Used
+// by the self-service "change password" flow on the account page. Returns false
+// if the user doesn't exist, the current password is wrong, or the new password
+// is empty.
+func AuthChangePassword(db Database, username, currentPassword, newPassword string) bool {
+	if db == nil || strings.TrimSpace(newPassword) == "" {
+		return false
+	}
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return false
+	}
+	if user.PassHash != hashPassword(currentPassword) {
+		return false
+	}
+	user.PassHash = hashPassword(newPassword)
+	db.Set(AuthTable, "user:"+username, user)
+	return true
+}
+
+// AuthAdminSetPassword sets a user's password directly — no current-password
+// check (admin authority) — and preserves every other field (admin flag, apps,
+// per-user preferences), unlike AuthSetUser which rebuilds the record. Returns
+// false if the user doesn't exist or the new password is empty.
+func AuthAdminSetPassword(db Database, username, newPassword string) bool {
+	if db == nil || strings.TrimSpace(newPassword) == "" {
+		return false
+	}
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return false
+	}
+	user.PassHash = hashPassword(newPassword)
+	db.Set(AuthTable, "user:"+username, user)
+	return true
+}
+
+// AuthIssueResetLink mints a one-time password-reset token for an EXISTING user
+// and returns the absolute /reset link. It does NOT send email — the caller
+// decides whether to email it and/or show it for manual copy. ("", false) when
+// the user doesn't exist.
+func AuthIssueResetLink(db Database, username string) (string, bool) {
+	if _, ok := AuthGetUser(db, username); !ok {
+		return "", false
+	}
+	token := createResetToken(db, username)
+	return DashboardURL() + "/reset?token=" + token, true
+}
+
+// AuthCreateInvite creates a NEW pre-approved user with no usable password and
+// returns a one-time /reset link they use to set their own password. Fails if
+// the user already exists. Until they set a password via the link they cannot
+// log in (an empty hash never matches). Admin-authorized — the caller gates.
+func AuthCreateInvite(db Database, username string, admin bool) (string, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return "", fmt.Errorf("email is required")
+	}
+	if _, exists := AuthGetUser(db, username); exists {
+		return "", fmt.Errorf("user already exists")
+	}
+	// Pre-approved (not pending) with an empty password hash — unusable until
+	// the invitee sets one through the reset link.
+	db.Set(AuthTable, "user:"+username, AuthUser{Username: username, Admin: admin})
+	token := createResetToken(db, username)
+	return DashboardURL() + "/reset?token=" + token, nil
+}
+
+// EmailConfigured reports whether outbound mail is set up (an SMTP server or a
+// from-address). When false, invite / reset links can't be emailed and must be
+// copied to the user by hand.
+func EmailConfigured() bool {
+	cfg := LoadMailConfig()
+	return strings.TrimSpace(cfg.Server) != "" || strings.TrimSpace(cfg.From) != ""
 }
 
 // AuthHasUsers reports whether any user accounts exist.
@@ -867,7 +991,14 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// (first path segment, e.g. "/research" from "/research/api/...").
 		// Skip for root, login, logout, signup, and top-level API routes.
 		path := r.URL.Path
-		if path != "/" && !strings.HasPrefix(path, "/api/") &&
+		// "/_"-prefixed paths are framework-internal shared assets (e.g.
+		// /_ui/ui.js, /_ui/ui.css) that EVERY app page loads — they are not apps
+		// and must never be per-app gated, or a locked-down (non-admin) user gets
+		// a 403 on the runtime and every page they DO have access to renders
+		// blank. They still sit behind the session check above; only the per-app
+		// grant is skipped. (Admins bypass UserHasAppAccess entirely, which is why
+		// this only bit restricted users.)
+		if path != "/" && !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/_") &&
 			path != "/login" && path != "/logout" && path != "/signup" &&
 				path != "/forgot" && path != "/reset" {
 			app_path := "/" + strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
@@ -1253,12 +1384,12 @@ func ResetHandler(db Database) http.HandlerFunc {
 				serveResetPage(w, new_token, "Passwords do not match.")
 				return
 			}
-			user, exists := AuthGetUser(db, username)
-			if !exists {
+			if _, exists := AuthGetUser(db, username); !exists {
 				serveResetPage(w, "", "Account not found.")
 				return
 			}
-			AuthSetUser(db, username, password, user.Admin)
+			// Preserve every field (admin, apps, preferences) — set only the hash.
+			AuthAdminSetPassword(db, username, password)
 			Log("[auth] password reset completed for %q from %s", username, clientIP(r))
 			serveLoginPage(w, "Password has been reset. You can now log in.")
 

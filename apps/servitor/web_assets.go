@@ -33,6 +33,13 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
   .ui-agent-activity-expand { display: none !important; }
   .ui-agent-convo { flex: 1 1 100% !important; }
 }
+/* Repo appliances have no terminal, so the right column is activity-only and
+   code Q&A doesn't need the default 40%. Halve it to 20% and give the freed
+   width to the conversation. Both panes keep growing (basis sums to 100%, same
+   math as the default 60/40), so there's no dead gap. servitor-repo-mode is
+   toggled in JS from the appliance picker's type. */
+.ui-agent.servitor-repo-mode .ui-agent-convo { flex: 1 1 74%; }
+.ui-agent.servitor-repo-mode .ui-agent-right { flex: 1 1 26%; }
 .ui-servitor-intent {
   background: var(--bg-2);
   border-left: 3px solid var(--accent);
@@ -665,12 +672,14 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var nameIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'e.g. web-prod-01', value: rec.name || ''});
 
-      // Type tabs — SSH vs Local Command.
+      // Type tabs — SSH vs Local Command vs Git Repository.
       var typeSsh = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('ssh'); }}, ['SSH']);
       var typeCmd = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('command'); }}, ['Local Command']);
-      var typeRow = el('div', {class: 'ui-servitor-app-tabs'}, [typeSsh, typeCmd]);
+      var typeRepo = el('button', {class: 'ui-row-btn',
+        onclick: function(){ setType('repo'); }}, ['Git Repository']);
+      var typeRow = el('div', {class: 'ui-servitor-app-tabs'}, [typeSsh, typeCmd, typeRepo]);
 
       // SSH section
       var hostIn = el('input', {type: 'text', class: 'ui-form-input',
@@ -709,12 +718,31 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         el('label', {}, ['Environment Variables']), envIn,
       ]);
 
+      // Repository section — cloned + encrypted at rest; ask it questions
+      // like any other appliance.
+      var repoUrlIn = el('input', {type: 'text', class: 'ui-form-input',
+        placeholder: 'https://github.com/owner/repo', value: rec.repo_url || ''});
+      var repoBranchIn = el('input', {type: 'text', class: 'ui-form-input',
+        placeholder: 'default branch if blank', value: rec.repo_branch || ''});
+      var repoTokenIn = el('input', {type: 'password', class: 'ui-form-input',
+        placeholder: isEdit ? '(unchanged — type to replace)' : 'for private repos (optional)',
+        value: ''});
+      var repoSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Git URL *']), repoUrlIn,
+        el('label', {}, ['Branch']), repoBranchIn,
+        el('label', {}, ['Access Token']), repoTokenIn,
+        el('div', {class: 'ui-form-hint'},
+          ['The repository is cloned, its text files ingested into an encrypted store, and the plaintext clone discarded. Token is stored encrypted, used only for private clones.']),
+      ]);
+
       function setType(t) {
         rec.type = t;
         typeSsh.classList.toggle('primary', t === 'ssh');
         typeCmd.classList.toggle('primary', t === 'command');
+        typeRepo.classList.toggle('primary', t === 'repo');
         sshSection.style.display = t === 'ssh' ? '' : 'none';
         cmdSection.style.display = t === 'command' ? '' : 'none';
+        repoSection.style.display = t === 'repo' ? '' : 'none';
       }
       setType(rec.type || 'ssh');
 
@@ -729,12 +757,24 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         placeholder: 'Describe how the AI should approach this appliance…'});
       personaPromptIn.value = rec.persona_prompt || '';
 
+      // Shared toggle — when on, every user can discover and use this
+      // appliance/repo (owner's creds, one repo clone, shared accumulated
+      // knowledge) while keeping their own chat sessions.
+      var sharedIn = el('input', {type: 'checkbox'});
+      sharedIn.checked = !!rec.shared;
+      var sharedRow = el('label', {class: 'ui-servitor-shared-row',
+        style: 'display:flex; align-items:center; gap:0.5rem; margin-top:0.4rem; font-weight:600;'},
+        [sharedIn, 'Shared with all users']);
+      var sharedHint = el('div', {class: 'ui-form-hint'},
+        ['Everyone can open and use it (with the stored credentials); chat sessions stay per-user. Only you or an admin can change or delete it.']);
+
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
-        typeRow, sshSection, cmdSection,
+        typeRow, sshSection, cmdSection, repoSection,
         el('label', {}, ['Custom Instructions']), instrIn,
         el('label', {}, ['Persona']),
         personaNameIn, personaPromptIn,
+        sharedRow, sharedHint,
       ]);
 
       var m = openModal(isEdit ? 'Edit Appliance' : 'New Appliance', body);
@@ -752,13 +792,19 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             command:        cmdIn.value.trim(),
             work_dir:       workIn.value.trim(),
             env_vars:       envIn.value.split('\n').map(function(s){return s.trim();}).filter(Boolean),
+            repo_url:       repoUrlIn.value.trim(),
+            repo_branch:    repoBranchIn.value.trim(),
+            repo_token:     repoTokenIn.value,
             instructions:   instrIn.value,
             persona_name:   personaNameIn.value.trim(),
             persona_prompt: personaPromptIn.value,
+            shared:         sharedIn.checked,
           };
-          if (!payload.name) { window.uiAlert('Name is required'); return; }
+          // Name is optional for repos — the server derives owner/repo from the URL.
+          if (!payload.name && payload.type !== 'repo') { window.uiAlert('Name is required'); return; }
           if (payload.type === 'ssh' && !payload.host) { window.uiAlert('Host is required'); return; }
           if (payload.type === 'command' && !payload.command) { window.uiAlert('Command is required'); return; }
+          if (payload.type === 'repo' && !payload.repo_url) { window.uiAlert('Git URL is required'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -878,23 +924,40 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       }
     });
 
-    window.uiRegisterClientAction('servitor_clear', function(ctx) {
-      // Mirrors legacy's clearChat + clearActivity. Saved sessions
-      // are untouched — this just wipes the on-screen panes.
-      ctx.clearConvo();
-      ctx.clearActivity();
+    window.uiRegisterClientAction('servitor_refresh_repo', async function(ctx) {
+      var aid = getApplianceID();
+      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      if (!isRepoAppliance(aid)) { window.uiAlert('Refresh re-clones a repository — it only applies to Git repository appliances.'); return; }
+      if (!(await window.uiConfirm('Re-clone this repository to pick up new code? The current ingested copy is replaced.'))) return;
+      fetch('api/repo/refresh', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({appliance_id: aid}),
+      }).then(function(r) {
+        if (r.ok || r.status === 202) {
+          window.uiAlert('Re-cloning the repository — this may take a moment. Ask again once it finishes.');
+        } else {
+          return r.text().then(function(t){ window.uiAlert('Refresh failed: ' + t); });
+        }
+      }).catch(function(err) {
+        window.uiAlert('Refresh failed: ' + (err && err.message || err));
+      });
     });
 
     window.uiRegisterClientAction('servitor_clear_memory', async function(ctx) {
       var aid = getApplianceID();
       if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+      var isRepo = isRepoAppliance(aid);
       var msg = 'Clear all memory for this appliance?\n\n' +
         'This removes:\n' +
         '• System profile (map data)\n' +
         '• Knowledge docs\n' +
         '• Stored facts\n' +
-        '• Notes and techniques\n\n' +
-        'The appliance connection settings are kept. Run "Map System" to rebuild.\n\n' +
+        '• Notes and techniques\n' +
+        (isRepo ? '• Ingested code files (the repository will need re-cloning)\n' : '') +
+        '\n' +
+        'The appliance connection settings are kept. Run "' +
+        (isRepo ? 'Refresh" to re-clone, then "Map System' : 'Map System') +
+        '" to rebuild.\n\n' +
         'This cannot be undone.';
       if (!(await window.uiConfirm(msg))) return;
       fetch('api/memory/clear', {
@@ -1035,11 +1098,62 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       return proto + '//' + a.host + a.pathname + (a.search || '');
     }
 
+    // Repo appliances have nothing to attach a shell to — hide the whole
+    // terminal pane (and its resize divider) so the activity column fills
+    // the space. show=false collapses it; show=true restores it.
+    function setTerminalPaneVisible(show) {
+      var pane = document.querySelector('.ui-agent-terminal');
+      if (pane) pane.style.display = show ? '' : 'none';
+      var hdiv = document.querySelector('.ui-agent-hdivider');
+      if (hdiv) hdiv.style.display = show ? '' : 'none';
+    }
+    function isRepoAppliance(aid) {
+      var types = window.servitorApplianceTypes || {};
+      return !!aid && types[aid] === 'repo';
+    }
+    // Current appliance type ('' when nothing is selected).
+    function currentApplianceType() {
+      var aid = getApplianceID();
+      if (!aid) return '';
+      var types = window.servitorApplianceTypes || {};
+      return types[aid] || 'ssh';
+    }
+    // Show/hide a toolbar action (flat button OR overflow-menu item) by label.
+    function setActionVisible(label, show) {
+      var nodes = document.querySelectorAll('[data-action-label="' + label + '"]');
+      for (var i = 0; i < nodes.length; i++) {
+        nodes[i].style.display = show ? '' : 'none';
+      }
+    }
+    // Gate type-specific toolbar actions to the appliance types they apply to:
+    // Map App enumerates a CLI command (command-type only); Refresh Repo re-clones
+    // (repo-type only). Everything else stays visible for all types.
+    function applyToolbarForType() {
+      var t = currentApplianceType();
+      setActionVisible('Map App', t === 'command');
+      setActionVisible('Refresh Repo', t === 'repo');
+    }
+    // Repo appliances have no terminal, so halve the activity column's default
+    // width (via the servitor-repo-mode CSS class) and give the conversation the
+    // freed space. Both panes keep growing, so no dead gap.
+    function applyRepoLayout() {
+      var wrap = document.querySelector('.ui-agent');
+      if (wrap) wrap.classList.toggle('servitor-repo-mode', currentApplianceType() === 'repo');
+    }
+
     function openTerminal() {
       if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') return;
       var cont = document.querySelector('.ui-agent-terminal-body');
       if (!cont) return;
       var aid = getApplianceID();
+      if (isRepoAppliance(aid)) {
+        // No shell for a repository — tear down any open socket and hide the pane.
+        closeTerminalSocket();
+        termLastID = '';
+        setTerminalPaneVisible(false);
+        return;
+      }
+      setTerminalPaneVisible(true);
       if (!aid) {
         closeTerminalSocket();
         cont.innerHTML = '';
@@ -1146,6 +1260,17 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
     }
     bootTerminal(0);
 
+    // Gate type-specific toolbar actions once the actions bar has rendered.
+    function bootToolbarGate(tries) {
+      if (!document.querySelector('[data-action-label]')) {
+        if (tries < 30) setTimeout(function(){ bootToolbarGate(tries + 1); }, 100);
+        return;
+      }
+      applyToolbarForType();
+      applyRepoLayout();
+    }
+    bootToolbarGate(0);
+
     // On reconnect, the bridge enriches the session event with the
     // session's appliance_id. Set the picker so the terminal + the
     // session list scope to the right context automatically.
@@ -1160,13 +1285,44 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       sel.dispatchEvent(new Event('change'));
     });
 
-    // Hook the appliance picker so swaps re-open the terminal.
+    // Hook the appliance picker so swaps re-open the terminal, re-gate the
+    // type-specific toolbar actions, and remember the selection across reloads.
     document.addEventListener('change', function(ev) {
       if (ev.target && ev.target.matches &&
           ev.target.matches('.ui-agent-extras select')) {
+        try { localStorage.setItem('servitor_last_appliance', ev.target.value || ''); } catch (_) {}
         openTerminal();
+        applyToolbarForType();
+        applyRepoLayout();
       }
     });
+
+    // Restore the last-selected appliance on load. Without this the picker
+    // resets to the placeholder on every reload, which (a) loses the user's
+    // selection and (b) makes a deep-linked session (?session=<id>) load with
+    // an empty appliance_id — the server returns 404 and the activity pane
+    // shows "Error: 404 page not found". Setting the value early (and firing
+    // change) gives the framework's deep-link resume a valid appliance_id
+    // before its retry-anyway fallback fires.
+    function bootAppliancePicker(tries) {
+      var sel = document.querySelector('.ui-agent-extras select');
+      if (!sel) {
+        if (tries < 30) setTimeout(function(){ bootAppliancePicker(tries + 1); }, 100);
+        return;
+      }
+      if (sel.value) return; // already set (deep-link / session event) — don't override
+      var saved = '';
+      try { saved = localStorage.getItem('servitor_last_appliance') || ''; } catch (_) {}
+      if (!saved) return;
+      var exists = false;
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === saved) { exists = true; break; }
+      }
+      if (!exists) return; // stale id (deleted appliance / different user) — leave placeholder
+      sel.value = saved;
+      sel.dispatchEvent(new Event('change'));
+    }
+    bootAppliancePicker(0);
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', register);

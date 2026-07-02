@@ -18,8 +18,12 @@ var (
 	// is attached) and stripped by the surface that handles them; this is the
 	// safety net for ones that leak unconsumed into user-facing text — the
 	// motivating case ([ATTACH: funny-meme.png] showing up verbatim).
-	leakedAttachRe      = regexp.MustCompile(`\[ATTACH:\s*[^\]]*\]`)
-	leakedShellAttachRe = regexp.MustCompile(`(?is)<<<ATTACH:[^>]*>>>.*?<<<END>>>`)
+	leakedAttachRe = regexp.MustCompile(`\[ATTACH:\s*[^\]]*\]`)
+	// The canonical shell marker (see tools/temptool: <<<ATTACH:mime … ATTACH_END>>>)
+	// closes with ATTACH_END>>>. Match that AND the older <<<END>>> form some
+	// prompts/tools used, lazily to the first close, so a leaked marker in either
+	// shape never dumps raw base64 into the user-facing text.
+	leakedShellAttachRe = regexp.MustCompile(`(?is)<<<ATTACH:.*?(?:ATTACH_END>>>|<<<END>>>)`)
 
 	// Tidy up the blank space a removed marker leaves behind: collapse 3+
 	// newlines to 2, and trim trailing spaces on a line.

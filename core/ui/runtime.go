@@ -2207,6 +2207,23 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 @keyframes ui-pl-spin { to { transform: rotate(360deg); } }
 
+/* Indicator INSIDE the in-flight Cancel button — a persistent "still working"
+ * signal anchored to a control that stays put (it can't scroll away like the
+ * activity trail). A breathing (scale + fade) dot in currentColor, so it
+ * auto-matches the button's text and contrasts on any button variant. */
+.ui-agent-cancel { display: inline-flex; align-items: center; gap: 0.4rem; }
+.ui-agent-cancel-spinner {
+  display: inline-block; width: 0.5rem; height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ui-agent-cancel-pulse 1.2s ease-in-out infinite;
+  flex: none;
+}
+@keyframes ui-agent-cancel-pulse {
+  0%, 100% { opacity: 1;    transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.6); }
+}
+
 /* Generic expandable card — collapsible "show details" panel. */
 .ui-pl-expandable {
   margin-top: 0.6rem; padding: 0.5rem 0.75rem;
@@ -5174,6 +5191,18 @@ const runtimeJS = `
         if (act.variant) classes += ' ' + act.variant;
         var btn = el('button', {class: classes, onclick: async function() {
           if (act.confirm && !(await window.uiConfirm(act.confirm))) return;
+          // Method="client" — hand off to an app-registered browser handler
+          // (window.uiRegisterClientAction), passing the row record + a reload
+          // callback. Lets a row button run custom UI (e.g. a modal that shows a
+          // server-returned link) instead of the fixed POST-then-reload flow.
+          // post_to carries the handler NAME (no URL substitution).
+          if ((act.method || '').toLowerCase() === 'client') {
+            var fn = window.UIClientActions && window.UIClientActions[act.post_to];
+            if (typeof fn === 'function') {
+              fn({ record: rec, button: btn, reload: function(){ reload(true); } });
+            }
+            return;
+          }
           var url = substitute(act.post_to, rec);
           // Method=GET means "pure navigation button" — skip the
           // fetch+JSON-parse dance and just navigate. Used by "Open",
@@ -9851,7 +9880,7 @@ const runtimeJS = `
         }
         groupMap[gname].forEach(function(action) {
           var item = el('button', {type: 'button', class: (action.variant ? action.variant : ''),
-            title: action.title || ''}, [action.label || '(action)']);
+            title: action.title || '', 'data-action-label': action.label || ''}, [action.label || '(action)']);
           item.addEventListener('click', function() { closeMenu(); runToolbarAction(action, item); });
           menu.appendChild(item);
         });
@@ -10490,9 +10519,15 @@ const runtimeJS = `
 
     var sendBtn = el('button', {class: 'ui-row-btn primary',
       onclick: function(){ sendMessage(); }}, [cfg.submit_label || 'Send']);
+    // The cancel button carries a spinner and only shows while a run is
+    // in-flight — so it doubles as a persistent "still working" signal that
+    // (unlike the activity trail or a status line) can't scroll out of view
+    // during a long investigation.
+    var cancelLabel = el('span', {}, ['Cancel']);
     var cancelBtn = el('button', {class: 'ui-row-btn ui-agent-cancel',
       style: 'display:none',
-      onclick: function(){ cancelMessage(); }}, ['Cancel']);
+      onclick: function(){ cancelMessage(); }},
+      [el('span', {class: 'ui-agent-cancel-spinner', 'aria-hidden': 'true'}), cancelLabel]);
     // statusPill is created earlier in this function (right after
     // actionsBar) and appended into the top bar then. The input row
     // only carries Send / Cancel now.
@@ -12003,6 +12038,8 @@ const runtimeJS = `
       sendBtn.disabled = true;
       sendBtn.style.display = 'none';
       cancelBtn.style.display = '';
+      cancelBtn.disabled = false;      // fresh run — cancel is clickable again
+      cancelLabel.textContent = 'Cancel';
       if (statusPill) statusPill.style.display = '';
       // Drop the empty-state placeholder as soon as any work
       // starts (chat send, Map subscribe, reconnect) so the user
@@ -12017,6 +12054,8 @@ const runtimeJS = `
       sendBtn.disabled = false;
       sendBtn.style.display = '';
       cancelBtn.style.display = 'none';
+      cancelBtn.disabled = false;
+      cancelLabel.textContent = 'Cancel'; // reset from any "Cancelling…" state
       if (statusPill) statusPill.style.display = 'none';
       clearThinking();
       if (activeStream) { try { activeStream.abort(); } catch(_) {} activeStream = null; }
@@ -12303,6 +12342,12 @@ const runtimeJS = `
     }
 
     function cancelMessage() {
+      // Show a tearing-down state on the button — keep it visible + spinning,
+      // relabeled and disabled — until the cancel POST resolves, so the user
+      // gets feedback that the stop is in progress rather than the button just
+      // vanishing while the run winds down server-side.
+      cancelBtn.disabled = true;
+      cancelLabel.textContent = 'Cancelling…';
       if (activeStream) {
         try { activeStream.abort(); } catch(_) {}
         activeStream = null;
@@ -12313,9 +12358,10 @@ const runtimeJS = `
       }
       if (activeSessionId && cfg.cancel_url) {
         fetchJSON(cfg.cancel_url + '?id=' + encodeURIComponent(activeSessionId),
-          {method: 'POST'}).catch(function(){});
+          {method: 'POST'}).then(enableInput, enableInput);
+      } else {
+        enableInput();
       }
-      enableInput();
     }
 
     // detachActiveStream drops THIS client's view of an in-flight run WITHOUT

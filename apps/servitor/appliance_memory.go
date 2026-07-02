@@ -349,7 +349,7 @@ func seedApplianceMemoryFromFacts(udb Database, a Appliance) {
 // session gate on top. The suffix routing mirrors apps/agents exactly so the
 // shared modal hits the same endpoints either way.
 func (T *Servitor) handleApplianceMemory(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
+	userID, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -359,12 +359,15 @@ func (T *Servitor) handleApplianceMemory(w http.ResponseWriter, r *http.Request)
 		http.NotFound(w, r)
 		return
 	}
-	// Ownership: the appliance must be one this user owns.
-	var a Appliance
-	if udb == nil || !udb.Get(applianceTable, applianceID, &a) {
+	// Resolve own OR shared — a shared appliance's memory (keyed by appliance ID,
+	// global) is visible to every user. Seeding/reads use the OWNER's store so
+	// there's one source of truth.
+	a, _, ownerUDB, found := T.resolveAppliance(userID, udb, applianceID)
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
+	udb = ownerUDB
 	orch := servitorOrch()
 	if orch == nil {
 		http.Error(w, "orchestrate unavailable", http.StatusInternalServerError)

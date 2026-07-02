@@ -345,10 +345,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := ui.Page{
-		Title:     "Administrator",
-		ShowTitle: true,
-		BackURL:   "/",
-		MaxWidth:  "1200px", // desktop admin: wide enough for full-width tables in a single column
+		Title:         "Administrator",
+		ShowTitle:     true,
+		BackURL:       "/",
+		ExtraHeadHTML: adminUsersScript, // registers the per-row "Reset password" modal client action
+		MaxWidth:      "1200px",         // desktop admin: wide enough for full-width tables in a single column
 		Grid:      false,     // single column: sections stack vertically within each tab (Wide flags become no-ops)
 		Tabbed:    true,      // category tab bar across the top (the multiple menus); sections grouped below
 		Sections: []ui.Section{
@@ -415,6 +416,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Add account",
+				Subtitle: "Invite a new user by email (they click a link and set their own password), or set a password directly. To reset an existing user's password, use the Reset password button on their row below.",
+				Body:     ui.Card{HTML: userAdminHTML},
+			},
+			{
 				Title:    "Users",
 				Subtitle: "Approve pending signups, grant or revoke admin, manage app access, or delete accounts. Pending users see a placeholder page until approved.",
 				Body: ui.Table{
@@ -436,6 +442,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							PostTo: "api/users/{username}",
 							Method: "PUT",
 						},
+						// Reset password — per-row modal (set a new one, or send a
+						// reset link). "client" so the modal can show the returned
+						// link for manual copy when mail isn't configured.
+						{Type: "button", Label: "Reset password", Method: "client",
+							PostTo: "admin_reset_password", Compact: true, HideIf: "pending"},
 						// Approve / reject — visible only while the user is pending.
 						{Type: "button", Label: "Approve", PostTo: "api/users/{username}/approve",
 							Method: "POST", OnlyIf: "pending"},
@@ -452,6 +463,23 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								PostTo:        "api/users/{username}/apps",
 								Method:        "PUT",
 								NameField:     "path", // value stored in user.apps[]
+								LabelField:    "name", // friendly label rendered on the chip
+							})
+							a.Compact = true
+							return a
+						}(),
+						// App groups — assign whole bundles of apps at once.
+						// Value stored is the group ID; access resolves the group
+						// to its apps at check time. Sits alongside Apps: a user's
+						// access is the union of both.
+						func() ui.RowAction {
+							a := ui.Expand("Groups", ui.ChipPicker{
+								OptionsSource: "api/app-groups",
+								RecordSource:  "api/users/{username}",
+								Field:         "groups",
+								PostTo:        "api/users/{username}/groups",
+								Method:        "PUT",
+								NameField:     "id",   // value stored in user.groups[]
 								LabelField:    "name", // friendly label rendered on the chip
 							})
 							a.Compact = true
@@ -477,6 +505,67 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Method:        "PUT",
 					NameField:     "path",
 					LabelField:    "name",
+				},
+			},
+			{
+				Title:    "App Groups",
+				Subtitle: "Bundle apps under one name (e.g. \"Writers\", \"Ops\"), then assign a whole group to a user from the Groups picker above — access resolves the group to its apps, so editing a group instantly re-provisions everyone assigned to it.",
+				Body: ui.Stack{
+					Children: []ui.Component{
+						// Create a new group (name + optional description). The
+						// per-row editor below fills in its apps.
+						ui.FormPanel{
+							PostURL:     "api/app-groups",
+							Method:      "POST",
+							SubmitLabel: "Create group",
+							Fields: []ui.FormField{
+								{Field: "name", Type: "text", Label: "Name", Placeholder: "e.g. Writers"},
+								{Field: "description", Type: "text", Label: "Description", Placeholder: "Optional note"},
+							},
+							Invalidate: []string{"api/app-groups"},
+						},
+						// Existing groups: per-row editor (name/description + the
+						// apps chip picker) and delete.
+						ui.Table{
+							Source: "api/app-groups",
+							RowKey: "id",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								{Field: "description", Flex: 2, Mute: true},
+							},
+							RowActions: []ui.RowAction{
+								ui.Expand("Edit", ui.Stack{
+									Children: []ui.Component{
+										ui.FormPanel{
+											Source:  "api/app-groups/{id}",
+											PostURL: "api/app-groups",
+											Method:  "POST",
+											Fields: []ui.FormField{
+												{Field: "name", Type: "text", Label: "Name"},
+												{Field: "description", Type: "text", Label: "Description"},
+											},
+										},
+										// Which apps this group grants.
+										ui.ChipPicker{
+											OptionsSource: "api/apps",
+											RecordSource:  "api/app-groups/{id}",
+											Field:         "apps",
+											PostTo:        "api/app-groups",
+											Method:        "POST",
+											NameField:     "path",
+											LabelField:    "name",
+										},
+									},
+								}),
+								{Type: "button", Label: "Delete",
+									PostTo:  "api/app-groups?id={id}",
+									Method:  "DELETE",
+									Confirm: "Delete this app group? Users assigned to it lose the apps it granted (unless they also have them via another grant).",
+									Variant: "danger"},
+							},
+							EmptyText: "No app groups yet. Create one above, then add its apps and assign it to users.",
+						},
+					},
 				},
 			},
 			{
@@ -1222,7 +1311,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Persistent Tools (Active)",
-				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Delete to revoke immediately.",
+				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Share publishes a tool to ALL users (it loads for everyone's agents, on top of their own pool); Unshare pulls it back to its owner. Delete to revoke immediately.",
 				Body: ui.Table{
 					Source:       "api/persistent-tools",
 					RecordsField: "active",
@@ -1230,6 +1319,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					Columns: []ui.Col{
 						{Field: "tool.name", Flex: 1},
 						{Field: "owner", Flex: 0, Mute: true},
+						{Field: "shared", Flex: 0, Label: "Shared", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Shared", Color: "success"},
+						}},
 						{Field: "tool.description", Flex: 2, Mute: true},
 						{Field: "last_used_at", Format: "reltime", Mute: true},
 					},
@@ -1254,6 +1346,19 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Label: "Last used", Field: "last_used_at", Format: "reltime"},
 							},
 						}),
+						// Share to all users / pull back. Mirror approve/reject: the
+						// visible button is the action NOT yet taken (Share when
+						// private, Unshare when shared).
+						{Type: "button", Label: "Share",
+							PostTo:     "api/persistent-tools?action=share&name={tool.name}&owner={owner}",
+							Method:     "POST",
+							HideIf:     "shared",
+							Optimistic: true},
+						{Type: "button", Label: "Unshare",
+							PostTo:     "api/persistent-tools?action=unshare&name={tool.name}&owner={owner}",
+							Method:     "POST",
+							OnlyIf:     "shared",
+							Optimistic: true},
 						{Type: "button", Label: "Delete",
 							PostTo:     "api/persistent-tools?name={tool.name}&owner={owner}",
 							Method:     "DELETE",
@@ -1623,7 +1728,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// Sections slice, so the order of these groups is set by section order.
 	sectionGroup := map[string]string{
 		"System Status": "System", "Site Settings": "System",
-		"Users": "System", "Default Apps": "System",
+		"Users": "System", "Add account": "System", "Default Apps": "System",
+		"App Groups": "System",
 
 		"Cost History (Last 30 Days)": "Costs", "Cost by source": "Costs", "Prices": "Costs",
 
@@ -1652,7 +1758,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
-		"Tool Groups": true, "Skills": true, "Pipelines": true,
+		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities — Outward & Spending": true,
 	}
@@ -1680,3 +1786,148 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	})
 	page.ServeHTTP(w, r)
 }
+
+
+// userAdminHTML is the Add-account panel (top of the Users section). It must
+// surface the invite LINK for manual copy when mail isn't configured — which
+// the declarative FormPanel can't do — so it rides in a Card. Posts to
+// api/users. Reset lives on each user's row (see admin_reset_password).
+const userAdminHTML = `<div class="uadm">
+  <input id="uadm-add-email" class="uadm-in" type="email" placeholder="email@example.com" autocomplete="off">
+  <label class="uadm-chk"><input type="checkbox" id="uadm-add-admin"> Administrator</label>
+  <div class="uadm-methods">
+    <label><input type="radio" name="uadm-add-method" value="invite" checked> Send registration link</label>
+    <label><input type="radio" name="uadm-add-method" value="password"> Set password now</label>
+  </div>
+  <input id="uadm-add-pw" class="uadm-in" type="password" placeholder="New password (6+ characters)" style="display:none" autocomplete="new-password">
+  <div class="uadm-row"><button class="ui-row-btn primary" id="uadm-add-btn">Add account</button><span id="uadm-add-msg" class="uadm-msg"></span></div>
+  <div id="uadm-add-link" class="uadm-link" style="display:none"></div>
+</div>
+<style>
+.uadm { display:flex; flex-direction:column; gap:0.5rem; max-width:26rem; }
+.uadm-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.9rem; }
+.uadm-chk { display:flex; align-items:center; gap:0.4rem; font-size:0.85rem; color:var(--text); }
+.uadm-methods { display:flex; flex-direction:column; gap:0.25rem; font-size:0.85rem; color:var(--text-mute); }
+.uadm-methods label { display:flex; align-items:center; gap:0.4rem; }
+.uadm-row { display:flex; align-items:center; gap:0.6rem; margin-top:0.2rem; }
+.uadm-msg { font-size:0.82rem; }
+.uadm-msg.ok { color:var(--success); }
+.uadm-msg.err { color:var(--danger); }
+.uadm-link { border:1px solid var(--accent); border-radius:8px; padding:0.55rem 0.7rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.35rem; }
+.uadm-link-lbl { font-size:0.78rem; color:var(--text-mute); }
+.uadm-link code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:0.78rem; color:var(--text); word-break:break-all; }
+.uadm-link button { align-self:flex-start; }
+</style>
+<script>
+(function(){
+  var root = document.querySelector('.uadm');
+  if(!root) return;
+  function $(id){ return document.getElementById(id); }
+  function setMsg(el, t, ok){ el.textContent=t||''; el.className='uadm-msg '+(ok?'ok':'err'); }
+  function showLink(box, link, emailed){
+    box.innerHTML=''; box.style.display='';
+    var lbl=document.createElement('div'); lbl.className='uadm-link-lbl';
+    lbl.textContent = emailed ? 'Emailed to the user. Link (copy if needed):' : 'Mail is not configured — copy this link and send it to the user:';
+    var code=document.createElement('code'); code.textContent=link;
+    var copy=document.createElement('button'); copy.className='ui-row-btn'; copy.textContent='Copy';
+    copy.addEventListener('click', function(){ if(navigator.clipboard) navigator.clipboard.writeText(link); copy.textContent='Copied'; setTimeout(function(){ copy.textContent='Copy'; }, 1200); });
+    box.appendChild(lbl); box.appendChild(code); box.appendChild(copy);
+  }
+  var rbs=document.querySelectorAll('input[name="uadm-add-method"]');
+  for(var i=0;i<rbs.length;i++){ rbs[i].addEventListener('change', function(){ var s=document.querySelector('input[name="uadm-add-method"]:checked'); $('uadm-add-pw').style.display=(s&&s.value==='password')?'':'none'; }); }
+  $('uadm-add-btn').addEventListener('click', function(){
+    var email=$('uadm-add-email').value.trim(), msg=$('uadm-add-msg'), linkbox=$('uadm-add-link');
+    linkbox.style.display='none'; setMsg(msg,'',true);
+    if(!email){ setMsg(msg,'Enter an email.',false); return; }
+    var method=(document.querySelector('input[name="uadm-add-method"]:checked')||{}).value;
+    var body={username:email, admin:$('uadm-add-admin').checked, invite: method==='invite'};
+    if(method==='password'){ var pw=$('uadm-add-pw').value; if(pw.length<6){ setMsg(msg,'Password must be at least 6 characters.',false); return; } body.password=pw; }
+    var btn=$('uadm-add-btn'); btn.disabled=true; var orig=btn.textContent; btn.textContent='Working…';
+    fetch('api/users',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+      .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
+      .then(function(d){
+        btn.disabled=false; btn.textContent=orig; $('uadm-add-email').value=''; $('uadm-add-pw').value='';
+        if(window.uiInvalidate) window.uiInvalidate('api/users');
+        if(d.status==='invited'){ setMsg(msg,'Invite created for '+email+'.',true); showLink(linkbox,d.link,d.emailed); }
+        else { setMsg(msg,'Account created for '+email+'.',true); }
+      })
+      .catch(function(e){ btn.disabled=false; btn.textContent=orig; setMsg(msg,'Failed: '+(e&&e.message||e),false); });
+  });
+})();
+</script>`
+
+// adminUsersScript registers the per-row "Reset password" client action (a modal
+// that sets a new password or issues a reset link, showing the link for manual
+// copy). Injected via the admin page's ExtraHeadHTML; the row button dispatches
+// to it by name (see the Users table RowActions).
+const adminUsersScript = `<style>
+.admu-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; z-index:1000; }
+.admu-card { background:var(--bg-1); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; width:min(30rem,92vw); display:flex; flex-direction:column; gap:0.55rem; }
+.admu-title { font-weight:600; color:var(--text-hi); }
+.admu-opt { display:flex; align-items:center; gap:0.4rem; font-size:0.9rem; color:var(--text); }
+.admu-in { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; }
+.admu-row { display:flex; gap:0.5rem; margin-top:0.3rem; }
+.admu-msg { font-size:0.82rem; }
+.admu-msg.ok { color:var(--success); }
+.admu-msg.err { color:var(--danger); }
+.admu-link { border:1px solid var(--accent); border-radius:8px; padding:0.5rem 0.65rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.35rem; }
+.admu-link code { font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; color:var(--text); word-break:break-all; }
+.admu-link button { align-self:flex-start; }
+</style>
+<script>
+(function(){
+  function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else if(k==='class') n.className=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
+  function openModal(user, ctx){
+    var overlay = el('div', {class:'admu-overlay'});
+    var pw = el('input', {type:'password', class:'admu-in', placeholder:'New password (6+ characters)', autocomplete:'new-password'});
+    pw.style.display='none';
+    var rLink = el('input', {type:'radio', name:'admu-mode', value:'link'}); rLink.checked=true;
+    var rSet = el('input', {type:'radio', name:'admu-mode', value:'set'});
+    function sync(){ pw.style.display = rSet.checked ? '' : 'none'; }
+    rLink.addEventListener('change', sync); rSet.addEventListener('change', sync);
+    var msg = el('div', {class:'admu-msg'});
+    var linkBox = el('div', {class:'admu-link'}); linkBox.style.display='none';
+    var doBtn = el('button', {class:'ui-row-btn primary'}, ['Reset']);
+    var cancel = el('button', {class:'ui-row-btn'}, ['Close']);
+    cancel.addEventListener('click', function(){ overlay.remove(); });
+    doBtn.addEventListener('click', function(){
+      var mode = rSet.checked ? 'set' : 'link';
+      var body = {mode:mode};
+      msg.textContent=''; msg.className='admu-msg';
+      if(mode==='set'){ if(pw.value.length<6){ msg.textContent='Password must be at least 6 characters.'; msg.className='admu-msg err'; return; } body.password=pw.value; }
+      doBtn.disabled=true; var o=doBtn.textContent; doBtn.textContent='Working…';
+      fetch('api/users/'+encodeURIComponent(user)+'/reset-password', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})
+        .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
+        .then(function(d){
+          doBtn.disabled=false; doBtn.textContent=o;
+          if(d.status==='password_set'){ overlay.remove(); if(ctx&&ctx.reload) ctx.reload(); (window.uiAlert||window.alert)('Password updated for '+user+'.'); return; }
+          msg.textContent = d.emailed ? ('Reset link emailed to '+user+'.') : 'Mail not configured — copy this link:'; msg.className='admu-msg ok';
+          linkBox.innerHTML=''; linkBox.style.display='';
+          var code=el('code',{text:d.link}); var cp=el('button',{class:'ui-row-btn'},['Copy']);
+          cp.addEventListener('click', function(){ if(navigator.clipboard) navigator.clipboard.writeText(d.link); cp.textContent='Copied'; setTimeout(function(){ cp.textContent='Copy'; },1200); });
+          linkBox.appendChild(code); linkBox.appendChild(cp);
+        })
+        .catch(function(e){ doBtn.disabled=false; doBtn.textContent=o; msg.textContent='Failed: '+(e&&e.message||e); msg.className='admu-msg err'; });
+    });
+    var card = el('div', {class:'admu-card'}, [
+      el('div', {class:'admu-title'}, ['Reset password — '+user]),
+      el('label', {class:'admu-opt'}, [rLink, ' Send reset link']),
+      el('label', {class:'admu-opt'}, [rSet, ' Set new password']),
+      pw,
+      el('div', {class:'admu-row'}, [doBtn, cancel]),
+      msg, linkBox
+    ]);
+    overlay.appendChild(card);
+    overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  }
+  function reg(){
+    if(!window.uiRegisterClientAction){ setTimeout(reg, 50); return; }
+    window.uiRegisterClientAction('admin_reset_password', function(ctx){
+      var u = ctx && ctx.record && (ctx.record.username || ctx.record.id);
+      if(u) openModal(u, ctx);
+    });
+  }
+  reg();
+})();
+</script>`

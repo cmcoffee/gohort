@@ -260,6 +260,7 @@ type ChannelInbound struct {
 	Handle           string
 	SenderName       string // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
 	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
+	Roster           []string // known participant display names for a GROUP conversation, so the agent is handed who-is-here up front instead of having to call list_members. Empty for 1:1 chats or unknown rosters.
 	Text             string   // the inbound message text
 	Images           []string // base64 inbound attachments (a contact's photo) — delivered to the agent as multimodal content it can see this turn
 	Videos           []string // base64 inbound video clips (e.g. an mp4 in a text) — the runner samples frames into the multimodal stream so the vision model can analyze them (it can't ingest raw mp4)

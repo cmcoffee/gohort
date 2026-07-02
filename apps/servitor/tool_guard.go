@@ -23,6 +23,9 @@ import (
 var servitorWorkerToolAllowList = map[string]bool{
 	"run_command":         true, // SSH exec on the user's appliance
 	"run_pty":             true, // SSH pty on the user's appliance
+	"search_code":         true, // local: substring search over the encrypted repo store
+	"read_file":           true, // local: read a file from the encrypted repo store
+	"list_dir":            true, // local: list a directory in the encrypted repo store
 	"read_log":            true, // local: read log file from local fs / kvlite
 	"search_logs":         true, // local: grep over stored logs
 	"count_lines":         true, // local: bounded line count via SSH or local

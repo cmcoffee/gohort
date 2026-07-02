@@ -1488,7 +1488,9 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 		}
 		b.WriteString("\n")
 		fmt.Fprintf(&b, "   mem_id: %s\n   ", h.ID)
-		b.WriteString(strings.ReplaceAll(strings.TrimSpace(h.Text), "\n", "\n   "))
+		// Excerpt (not the full chunk) — mirrors knowledge_search so recall doesn't
+		// dump whole documents into the context window every time it fires.
+		b.WriteString(strings.ReplaceAll(knowledgeSearchExcerpt(h.Text), "\n", "\n   "))
 	}
 	return b.String(), nil
 }
@@ -1540,7 +1542,10 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 			return fmt.Sprintf("mem_id=%q points at curated content (uploaded doc / shared KB / collection), not a memory entry. memory(action=\"forget\") only deletes derived chunks. Curated content is admin-managed.", explicitID), nil
 		}
 		topic := strings.TrimSpace(strings.TrimPrefix(c.Section, "## "))
-		DeleteChunksByIDs(t.app.DB, []string{explicitID})
+		// Chunks live in VectorDB (a separate, possibly relocated store), NOT
+		// t.app.DB — deleting against the main DB is a silent no-op that leaves
+		// the chunk searchable. Delete where the chunk actually lives.
+		DeleteChunksByIDs(VectorDB, []string{explicitID})
 		Log("[orchestrate.memory.forget] user=%q agent=%q deleted by id=%s topic=%q",
 			t.user, t.agent.ID, explicitID, topic)
 		return fmt.Sprintf("Deleted 1 memory entry — mem_id=%s, topic=%q.", explicitID, topic), nil
@@ -1558,8 +1563,20 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
 	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	// Apply the same relevance floor memory_search / knowledge_search use, so a
+	// loose forget query can't delete tangentially-related chunks it wouldn't
+	// even surface. Filtering here (not just checking len==0) keeps forget's
+	// precision aligned with search.
+	kept := hits[:0]
+	for _, h := range hits {
+		if h.Score < manualSearchMinScore {
+			continue
+		}
+		kept = append(kept, h)
+	}
+	hits = kept
 	if len(hits) == 0 {
-		return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query under this agent.", nil
+		return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query (above the relevance floor) under this agent.", nil
 	}
 	ids := make([]string, 0, len(hits))
 	var b strings.Builder
@@ -1578,7 +1595,8 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		Log("[orchestrate.memory.forget] user=%q agent=%q deleted chunk id=%s topic=%q score=%.3f",
 			t.user, t.agent.ID, h.ID, h.Section, h.Score)
 	}
-	DeleteChunksByIDs(t.app.DB, ids)
+	// Chunks live in VectorDB, not t.app.DB (see id-mode note above).
+	DeleteChunksByIDs(VectorDB, ids)
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 

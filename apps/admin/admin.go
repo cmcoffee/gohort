@@ -210,6 +210,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				} else {
 					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				}
+			case "groups":
+				if r.Method == http.MethodPut {
+					a.handleUpdateUserGroups(w, r, username)
+				} else {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				}
 			case "approve":
 				if r.Method == http.MethodPost {
 					a.handleApproveUser(w, r, username)
@@ -219,6 +225,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			case "reject":
 				if r.Method == http.MethodPost {
 					a.handleRejectUser(w, r, username)
+				} else {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				}
+			case "reset-password":
+				if r.Method == http.MethodPost {
+					a.handleResetPassword(w, r, username)
 				} else {
 					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				}
@@ -258,12 +270,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			if apps == nil {
 				apps = []string{}
 			}
+			groups := user.Groups
+			if groups == nil {
+				groups = []string{}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
 				"username": user.Username,
 				"admin":    user.Admin,
 				"pending":  user.Pending,
 				"apps":     apps,
+				"groups":   groups,
 			})
 		case http.MethodPut:
 			a.handleUpdateUser(w, r, username)
@@ -1771,8 +1788,12 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				err = ApprovePendingTempTool(a.db, owner, name)
 			case "reject":
 				err = RejectPendingTempTool(a.db, owner, name)
+			case "share":
+				err = SetPersistentTempToolShared(a.db, owner, name, true)
+			case "unshare":
+				err = SetPersistentTempToolShared(a.db, owner, name, false)
 			default:
-				http.Error(w, "action must be approve|reject", http.StatusBadRequest)
+				http.Error(w, "action must be approve|reject|share|unshare", http.StatusBadRequest)
 				return
 			}
 			if err != nil {
@@ -2136,6 +2157,64 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+	// App groups: bundle apps (by web path) so an admin can grant a whole
+	// set to a user in one assignment. List (GET) / upsert (POST) / delete
+	// (DELETE ?id=). Mirrors the tool-groups endpoint shape.
+	sub.HandleFunc("/api/app-groups", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(LoadAppGroups(a.db))
+		case http.MethodPost:
+			var req AppGroup
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			saved, err := SaveAppGroup(a.db, req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(saved)
+		case http.MethodDelete:
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			if err := DeleteAppGroup(a.db, id); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	// Single-record GET for the per-row editor (ChipPicker.RecordSource /
+	// FormPanel.Source fetch one group by id).
+	sub.HandleFunc("/api/app-groups/", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/app-groups/")
+		g, ok := LoadAppGroup(a.db, id)
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(g)
 	})
 	// Single-record GET for the per-row editor: returns the full
 	// ToolGroup JSON for the given id. POST/PUT/DELETE on individual
@@ -2538,28 +2617,100 @@ func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 		Admin    bool   `json:"admin"`
+		Invite   bool   `json:"invite"` // send a registration link instead of setting a password
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
-	if req.Username == "" || req.Password == "" {
-		http.Error(w, "email and password required", http.StatusBadRequest)
+	if req.Username == "" {
+		http.Error(w, "email required", http.StatusBadRequest)
 		return
 	}
 	if _, exists := AuthGetUser(a.db, req.Username); exists {
 		http.Error(w, "user already exists", http.StatusConflict)
 		return
 	}
-	AuthSetUser(a.db, req.Username, req.Password, req.Admin)
-
-	// Prevent the current admin from being locked out.
 	current := AuthCurrentUser(r)
-	Log("[admin] user %q created user %q (admin=%v)", current, req.Username, req.Admin)
 
+	// Invite: create the account with no password and hand back a one-time link
+	// the user clicks to set their own. Emailed when mail is configured; always
+	// returned so the admin can copy it manually.
+	if req.Invite {
+		link, err := AuthCreateInvite(a.db, req.Username, req.Admin)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		emailed := false
+		if EmailConfigured() {
+			body := fmt.Sprintf("You've been invited to %s. Click the link below to set your password and activate your account:\n\n%s\n", ServiceName(), link)
+			if SendNotification(req.Username, "["+ServiceName()+"] You've been invited", body) == nil {
+				emailed = true
+			}
+		}
+		Log("[admin] user %q invited %q (admin=%v, emailed=%v)", current, req.Username, req.Admin, emailed)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": "invited", "link": link, "emailed": emailed})
+		return
+	}
+
+	// Direct: set a password now.
+	if req.Password == "" {
+		http.Error(w, "password required (or choose to send an invite link)", http.StatusBadRequest)
+		return
+	}
+	AuthSetUser(a.db, req.Username, req.Password, req.Admin)
+	Log("[admin] user %q created user %q (admin=%v)", current, req.Username, req.Admin)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "created"})
+	json.NewEncoder(w).Encode(map[string]any{"status": "created"})
+}
+
+// handleResetPassword resets a user's password: mode "set" (admin types a new
+// one) or "link" (default — email/return a one-time reset link). Owner-of-the-
+// deployment authority (admin-gated by the router).
+func (a *AdminApp) handleResetPassword(w http.ResponseWriter, r *http.Request, username string) {
+	var req struct {
+		Mode     string `json:"mode"`
+		Password string `json:"password"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // empty body → default to link
+	if _, ok := AuthGetUser(a.db, username); !ok {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	current := AuthCurrentUser(r)
+	if req.Mode == "set" {
+		if len(req.Password) < 6 || len(req.Password) > 128 {
+			http.Error(w, "Password must be 6–128 characters.", http.StatusBadRequest)
+			return
+		}
+		if !AuthAdminSetPassword(a.db, username, req.Password) {
+			http.Error(w, "could not set password", http.StatusInternalServerError)
+			return
+		}
+		Log("[admin] user %q set password for %q", current, username)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": "password_set"})
+		return
+	}
+	// Link mode.
+	link, ok := AuthIssueResetLink(a.db, username)
+	if !ok {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	emailed := false
+	if EmailConfigured() {
+		body := fmt.Sprintf("A password reset was requested for your %s account. Click the link below to set a new password:\n\n%s\n\nIf you didn't expect this, contact an administrator.", ServiceName(), link)
+		if SendNotification(username, "["+ServiceName()+"] Password reset", body) == nil {
+			emailed = true
+		}
+	}
+	Log("[admin] user %q issued reset link for %q (emailed=%v)", current, username, emailed)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"status": "link_sent", "link": link, "emailed": emailed})
 }
 
 func (a *AdminApp) handleUpdateUser(w http.ResponseWriter, r *http.Request, username string) {
@@ -3405,6 +3556,27 @@ func (a *AdminApp) handleUpdateUserApps(w http.ResponseWriter, r *http.Request, 
 	AuthSetUserApps(a.db, username, req.Apps)
 	current := AuthCurrentUser(r)
 	Log("[admin] user %q set apps for %q: %v", current, username, req.Apps)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// handleUpdateUserGroups sets the assigned app-group IDs for a specific user.
+// Each group expands to its member apps at access-check time.
+func (a *AdminApp) handleUpdateUserGroups(w http.ResponseWriter, r *http.Request, username string) {
+	var req struct {
+		Groups []string `json:"groups"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if _, ok := AuthGetUser(a.db, username); !ok {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	AuthSetUserGroups(a.db, username, req.Groups)
+	current := AuthCurrentUser(r)
+	Log("[admin] user %q set groups for %q: %v", current, username, req.Groups)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }

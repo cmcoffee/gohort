@@ -46,8 +46,10 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
+			{Label: "Share", Kind: "client", URL: "guides_share"},
 			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…"},
+			{Label: "Update from sources", Kind: "client", URL: "guides_update"},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a
 		// chat round finishes.
@@ -70,7 +72,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		BackURL:       "/",
 		MaxWidth:      "100%",
 		Sections:      []ui.Section{{NoChrome: true, Body: wb}},
-		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS + guideKnowledgeJS + guideSourcesJS,
+		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS + guideKnowledgeJS + guideSourcesJS + guideShareJS + guideUpdateJS,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -377,3 +379,114 @@ const guideSourcesJS = `<script>
 .guide-src-group { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); font-weight: 700; margin: 0.5rem 0 0.1rem; }
 .guide-src-group:first-child { margin-top: 0; }
 </style>`
+
+// guideShareJS registers the 'guides_share' client action behind the Share toolbar
+// button: a modal that publishes the open guide read-only to every signed-in user
+// (owner/admin only). Non-owners see the sharing state read-only. Shared guides
+// show up in other users' guide lists; there they can view and export but not edit.
+// App-specific, injected via ExtraHeadHTML to keep it out of core/ui.
+const guideShareJS = `<script>
+(function(){
+  function el(tag, attrs, kids){
+    var n = document.createElement(tag);
+    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function register(){
+    if (!window.uiRegisterClientAction) return;
+    window.uiRegisterClientAction('guides_share', function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'id=' + encodeURIComponent(gid);
+      fetch('share?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+        var shared = !!(d && d.shared);
+        var mode = (d && d.mode) === 'edit' ? 'edit' : 'view';
+        var canManage = !!(d && d.can_manage);
+        window.uiOpenSimpleModal({title:'Share guide', width:'520px', mount: function(body, dlg){
+          if (!canManage){
+            var msg = 'This guide is private to its owner.';
+            if (shared){
+              msg = 'This guide was shared with you' + (d.owner ? ' by ' + d.owner : '') + '. ' +
+                (mode === 'edit' ? 'You can view, export, and edit it.' : 'You can view and export it, but only its owner can edit it.');
+            }
+            body.appendChild(el('p', {class:'guide-kn-intro', text: msg}));
+            return;
+          }
+          body.appendChild(el('p', {class:'guide-kn-intro', text:'Sharing publishes this guide to everyone signed in — it appears in their Guides list. Choose whether they can just read it or also edit it. Only you (and admins) can change sharing or delete the guide.'}));
+          var cb = el('input', {type:'checkbox'}); if (shared) cb.checked = true;
+          var row = el('label', {class:'guide-share-row'}, [cb, el('span', {text:'Share this guide with everyone'})]);
+          body.appendChild(row);
+          // Access-level radios, shown only while sharing is on.
+          var rView = el('input', {type:'radio', name:'guide-share-mode', value:'view'});
+          var rEdit = el('input', {type:'radio', name:'guide-share-mode', value:'edit'});
+          if (mode === 'edit') rEdit.checked = true; else rView.checked = true;
+          var modeWrap = el('div', {class:'guide-share-modes'}, [
+            el('label', {class:'guide-share-mode'}, [rView, el('span', {text:'View only — read & export'})]),
+            el('label', {class:'guide-share-mode'}, [rEdit, el('span', {text:'Can edit — edit sections & co-author'})]),
+          ]);
+          body.appendChild(modeWrap);
+          function syncModes(){ modeWrap.style.display = cb.checked ? 'flex' : 'none'; }
+          cb.addEventListener('change', syncModes); syncModes();
+          var save = el('button', {class:'ui-row-btn primary', text:'Save'});
+          body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
+          save.addEventListener('click', function(){
+            save.disabled = true; save.textContent = 'Saving…';
+            var m = rEdit.checked ? 'edit' : 'view';
+            fetch('share?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({shared: cb.checked, mode: m})})
+              .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
+              .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} if (window.uiInvalidate) window.uiInvalidate('guides'); })
+              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
+          });
+        }});
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
+})();
+</script>
+<style>
+.guide-share-row { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; padding: 0.5rem 0; font-size: 0.92rem; color: var(--text-hi); }
+.guide-share-modes { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.2rem 0 0.3rem 1.6rem; }
+.guide-share-mode { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: var(--text); }
+</style>`
+
+// guideUpdateJS registers the 'guides_update' client action behind the "Update
+// from sources" toolbar button: it runs the Guide Author over the open guide to
+// revise sections against their current linked sources (each edit a revision),
+// then refreshes the viewer and shows a summary of what changed. Owner/editor
+// only (the server enforces edit access). App-specific, injected via
+// ExtraHeadHTML to keep it out of core/ui.
+const guideUpdateJS = `<script>
+(function(){
+  function register(){
+    if (!window.uiRegisterClientAction) return;
+    window.uiRegisterClientAction('guides_update', function(ctx){
+      var gid = ctx.recordId;
+      if (!gid) return;
+      var btn = ctx.button, orig = btn ? btn.textContent : '';
+      window.uiConfirm('Update this guide from its linked sources? Revised sections are saved as revisions you can roll back from History.').then(function(ok){
+        if (!ok) return;
+        if (btn){ btn.disabled = true; btn.textContent = 'Updating…'; }
+        fetch('update-sources?id=' + encodeURIComponent(gid), {method:'POST', credentials:'same-origin'})
+          .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP '+r.status)); }); })
+          .then(function(d){
+            if (btn){ btn.disabled = false; btn.textContent = orig; }
+            if (ctx.refresh) ctx.refresh();           // reload the viewer to show edits
+            if (window.uiInvalidate) window.uiInvalidate('guides');
+            window.uiOpenSimpleModal({title:'Update from sources', width:'720px', mount: function(body){
+              var md = document.createElement('div'); md.className = 'ui-wb-md'; body.appendChild(md);
+              var text = (d && d.report) || '_(no changes)_';
+              if (window.uiRenderMarkdown) window.uiRenderMarkdown(md, text); else md.textContent = text;
+            }});
+          })
+          .catch(function(err){
+            if (btn){ btn.disabled = false; btn.textContent = orig; }
+            alert('Update failed: ' + (err && err.message || err));
+          });
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
+})();
+</script>`

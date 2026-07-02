@@ -1,4 +1,9 @@
-package enginseer
+// repo_backend.go — the Type=="repo" backend: clone a git repository into
+// tmpfs, ingest its text files into the dedicated, hardware-locked-encrypted
+// RepoFilesDB, and discard the plaintext clone. Nothing but encrypted, derived
+// content persists at rest. Search/read decrypt in memory. This is the repo
+// target-type's equivalent of the SSH connection + exec path.
+package servitor
 
 import (
 	"bytes"
@@ -14,22 +19,31 @@ import (
 )
 
 const (
-	repoFilesTable    = "f"
+	repoFilesTable    = "repo_files"
 	maxIngestFileSize = 1 << 20 // 1 MiB — skip larger (data/generated/minified)
 	binarySniff       = 8000    // bytes checked for NUL to detect binary
 )
 
-// repoFileStore returns the per-(user, repo) encrypted file store — a sub of
-// RepoFilesDB, whose whole file is hardware-locked encrypted at rest.
-func repoFileStore(user, repoID string) Database {
+// repoFileStore returns the per-(user, appliance) encrypted code store.
+func repoFileStore(user, applianceID string) Database {
 	if RepoFilesDB == nil {
 		return nil
 	}
-	return RepoFilesDB.Sub("user:" + user).Sub("repo:" + repoID)
+	return RepoFilesDB.Sub("user:" + user).Sub("repo:" + applianceID)
 }
 
-func wipeRepoFiles(user, repoID string) {
-	store := repoFileStore(user, repoID)
+// repoFileCount reports how many files are ingested in the store — used to gate
+// a session on "the clone has finished" without reading any file content.
+func repoFileCount(user, applianceID string) int {
+	store := repoFileStore(user, applianceID)
+	if store == nil {
+		return 0
+	}
+	return len(store.Keys(repoFilesTable))
+}
+
+func wipeRepoFiles(user, applianceID string) {
+	store := repoFileStore(user, applianceID)
 	if store == nil {
 		return
 	}
@@ -38,56 +52,53 @@ func wipeRepoFiles(user, repoID string) {
 	}
 }
 
-// cloneAndIngest clones the repo into tmpfs, ingests its text files into the
-// encrypted store, then discards the plaintext clone — so nothing but encrypted,
-// derived content persists at rest. Best-effort; updates the record on success.
-func (T *Enginseer) cloneAndIngest(user string, udb Database, repoID string) {
-	rec, ok := loadRepo(udb, repoID)
-	if !ok {
+// cloneAndIngestRepo clones the repo appliance into tmpfs, ingests its text
+// files into the encrypted store, then discards the plaintext clone. Best-effort;
+// updates the appliance record's RepoFiles/RepoCloned on success.
+func (T *Servitor) cloneAndIngestRepo(user string, udb Database, applianceID string) {
+	var rec Appliance
+	if !udb.Get(applianceTable, applianceID, &rec) || rec.Type != "repo" {
 		return
 	}
-	store := repoFileStore(user, repoID)
+	store := repoFileStore(user, applianceID)
 	if store == nil {
-		Log("[enginseer] RepoFilesDB not initialized; cannot ingest %s", rec.URL)
+		Log("[servitor.repo] RepoFilesDB not initialized; cannot ingest %s", rec.RepoURL)
 		return
 	}
-
-	// Clone into tmpfs so the plaintext working tree lives only in RAM.
 	base := "/dev/shm"
 	if _, err := os.Stat(base); err != nil {
 		base = os.TempDir()
 	}
-	dir, err := os.MkdirTemp(base, "enginseer-")
+	dir, err := os.MkdirTemp(base, "servitor-repo-")
 	if err != nil {
-		Log("[enginseer] tmp dir: %v", err)
+		Log("[servitor.repo] tmp dir: %v", err)
 		return
 	}
 	defer os.RemoveAll(dir)
 
 	args := []string{"clone", "--depth", "1", "--single-branch"}
-	if b := strings.TrimSpace(rec.Branch); b != "" {
+	if b := strings.TrimSpace(rec.RepoBranch); b != "" {
 		args = append(args, "--branch", b)
 	}
-	args = append(args, cloneURL(rec), dir)
+	args = append(args, repoCloneURL(rec), dir)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0") // never block on a cred prompt
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if _, err := cmd.CombinedOutput(); err != nil {
-		Log("[enginseer] clone failed for %s: %v", rec.Name, err)
+		Log("[servitor.repo] clone failed for %s: %v", rec.Name, err)
 		return
 	}
 
-	// Fresh ingest — replace any prior snapshot.
-	wipeRepoFiles(user, repoID)
+	wipeRepoFiles(user, applianceID)
 	count := 0
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if d.IsDir() {
-			if skipDir(d.Name()) {
+			if skipRepoDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -109,27 +120,27 @@ func (T *Enginseer) cloneAndIngest(user string, udb Database, repoID string) {
 		return nil
 	})
 
-	rec.Cloned = time.Now().Format(time.RFC3339)
-	rec.Files = count
-	udb.Set(repoTable, repoID, rec)
-	Log("[enginseer] ingested %d files from %s", count, rec.Name)
+	rec.RepoCloned = time.Now().Format(time.RFC3339)
+	rec.RepoFiles = count
+	udb.Set(applianceTable, applianceID, rec)
+	Log("[servitor.repo] ingested %d files from %s", count, rec.Name)
 }
 
-// cloneURL injects the access token (if any) for private-repo HTTPS clone.
-func cloneURL(rec Repo) string {
-	url := strings.TrimSpace(rec.URL)
-	tok := strings.TrimSpace(rec.Token)
+// repoCloneURL injects the access token (if any) for private-repo HTTPS clone.
+func repoCloneURL(rec Appliance) string {
+	url := strings.TrimSpace(rec.RepoURL)
+	tok := strings.TrimSpace(rec.RepoToken)
 	if tok == "" || !strings.HasPrefix(url, "https://") {
 		return url
 	}
 	rest := strings.TrimPrefix(url, "https://")
-	if rec.Provider == "gitlab" {
+	if strings.Contains(url, "gitlab.") {
 		return "https://oauth2:" + tok + "@" + rest
 	}
 	return "https://" + tok + "@" + rest // github + generic
 }
 
-func skipDir(name string) bool {
+func skipRepoDir(name string) bool {
 	switch name {
 	case ".git", "node_modules", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache":
 		return true
@@ -137,7 +148,6 @@ func skipDir(name string) bool {
 	return false
 }
 
-// isBinary treats content with a NUL byte in its first chunk as binary.
 func isBinary(b []byte) bool {
 	n := len(b)
 	if n > binarySniff {
@@ -146,28 +156,39 @@ func isBinary(b []byte) bool {
 	return bytes.IndexByte(b[:n], 0) >= 0
 }
 
+func repoNameFromURL(url string) string {
+	s := strings.TrimSuffix(strings.TrimSpace(url), ".git")
+	s = strings.TrimSuffix(s, "/")
+	parts := strings.Split(s, "/")
+	if len(parts) >= 2 {
+		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+	}
+	if len(parts) >= 1 {
+		return parts[len(parts)-1]
+	}
+	return url
+}
+
 // --- read / list / search over the encrypted store (decrypt in memory) ---
 
-// readRepoFile returns a stored file's content.
-func readRepoFile(user, repoID, path string) (string, bool) {
-	store := repoFileStore(user, repoID)
+func readRepoFile(user, applianceID, path string) (string, bool) {
+	store := repoFileStore(user, applianceID)
 	if store == nil {
 		return "", false
 	}
 	var content string
-	if !store.Get(repoFilesTable, normPath(path), &content) {
+	if !store.Get(repoFilesTable, normRepoPath(path), &content) {
 		return "", false
 	}
 	return content, true
 }
 
-// listRepoDir returns the immediate entries (files + "subdir/") under a prefix.
-func listRepoDir(user, repoID, prefix string) []string {
-	store := repoFileStore(user, repoID)
+func listRepoDir(user, applianceID, prefix string) []string {
+	store := repoFileStore(user, applianceID)
 	if store == nil {
 		return nil
 	}
-	prefix = normPath(prefix)
+	prefix = normRepoPath(prefix)
 	if prefix != "" {
 		prefix += "/"
 	}
@@ -183,7 +204,7 @@ func listRepoDir(user, repoID, prefix string) []string {
 		}
 		name := rest
 		if i := strings.IndexByte(rest, '/'); i >= 0 {
-			name = rest[:i] + "/" // a subdirectory
+			name = rest[:i] + "/"
 		}
 		if !seen[name] {
 			seen[name] = true
@@ -194,21 +215,19 @@ func listRepoDir(user, repoID, prefix string) []string {
 	return out
 }
 
-type searchHit struct {
+type repoSearchHit struct {
 	Path string
 	Line int
 	Text string
 }
 
-// searchRepo greps every stored file (case-insensitive substring) — the
-// decrypt-in-memory replacement for ripgrep-on-disk.
-func searchRepo(user, repoID, query string, maxHits int) []searchHit {
-	store := repoFileStore(user, repoID)
+func searchRepo(user, applianceID, query string, maxHits int) []repoSearchHit {
+	store := repoFileStore(user, applianceID)
 	if store == nil || strings.TrimSpace(query) == "" {
 		return nil
 	}
 	q := strings.ToLower(query)
-	var hits []searchHit
+	var hits []repoSearchHit
 	paths := store.Keys(repoFilesTable)
 	sort.Strings(paths)
 	for _, path := range paths {
@@ -225,7 +244,7 @@ func searchRepo(user, repoID, query string, maxHits int) []searchHit {
 				if len(t) > 240 {
 					t = t[:240] + "…"
 				}
-				hits = append(hits, searchHit{Path: path, Line: i + 1, Text: t})
+				hits = append(hits, repoSearchHit{Path: path, Line: i + 1, Text: t})
 				if len(hits) >= maxHits {
 					return hits
 				}
@@ -235,6 +254,6 @@ func searchRepo(user, repoID, query string, maxHits int) []searchHit {
 	return hits
 }
 
-func normPath(p string) string {
+func normRepoPath(p string) string {
 	return strings.Trim(filepath.ToSlash(strings.TrimSpace(p)), "/")
 }

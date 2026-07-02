@@ -28,27 +28,35 @@ func applianceFields() []ui.FormField {
 			Options: []ui.SelectOption{
 				{Value: "ssh", Label: "SSH host"},
 				{Value: "command", Label: "Local command"},
+				{Value: "repo", Label: "Git repository"},
 			}},
-		// SSH-only fields. ShowWhen gates rendering on type==ssh so
-		// command-type rows don't show host/port/user/password.
+		// SSH-only fields. ShowWhen value-matches type==ssh so only SSH
+		// rows show host/port/user/password.
 		{Field: "host", Label: "Host", Type: "text",
-			Placeholder: "hostname or IP", ShowWhen: "type"},
+			Placeholder: "hostname or IP", ShowWhen: "type:ssh"},
 		{Field: "port", Label: "Port", Type: "number",
-			Placeholder: "22", ShowWhen: "type", Min: 1, Max: 65535},
+			Placeholder: "22", ShowWhen: "type:ssh", Min: 1, Max: 65535},
 		{Field: "user", Label: "SSH user", Type: "text",
-			Placeholder: "root", ShowWhen: "type"},
+			Placeholder: "root", ShowWhen: "type:ssh"},
 		{Field: "password", Label: "Password (leave blank to keep current)", Type: "password",
 			Help:     "Stored encrypted. Editing an existing appliance with this blank keeps the previously-saved password.",
-			ShowWhen: "type"},
-		// Command-only fields. The ShowWhen gate is on the same `type`
-		// field but inverted at runtime — the framework only supports
-		// truthy ShowWhen today, so command rows show always (they're
-		// no-ops on SSH rows since SSH appliances never set command).
+			ShowWhen: "type:ssh"},
+		// Command-only fields.
 		{Field: "command", Label: "Command (local mode)", Type: "text",
 			Placeholder: "kubectl, gh, etc.",
-			Help:        "Only used when Type=Local command."},
+			Help:        "Only used when Type=Local command.", ShowWhen: "type:command"},
 		{Field: "work_dir", Label: "Working directory (optional)", Type: "text",
-			Placeholder: "/path/to/wd"},
+			Placeholder: "/path/to/wd", ShowWhen: "type:command"},
+		// Repo-only fields. The repository is cloned into tmpfs and its text
+		// files ingested into a hardware-locked encrypted store; the plaintext
+		// clone is discarded. Ask it questions like an SSH appliance.
+		{Field: "repo_url", Label: "Git URL", Type: "text",
+			Placeholder: "https://github.com/owner/repo", ShowWhen: "type:repo"},
+		{Field: "repo_branch", Label: "Branch (optional)", Type: "text",
+			Placeholder: "default branch if blank", ShowWhen: "type:repo"},
+		{Field: "repo_token", Label: "Access token (optional)", Type: "password",
+			Help:     "For private repositories. Stored encrypted.",
+			ShowWhen: "type:repo"},
 		// Shared persona + instruction fields.
 		{Field: "persona_name", Label: "Persona name", Type: "text",
 			Placeholder: "Support, QA, …",
@@ -57,6 +65,8 @@ func applianceFields() []ui.FormField {
 			Placeholder: "How the agent should approach this appliance."},
 		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 3,
 			Placeholder: "Freeform notes injected into every chat session for this appliance."},
+		{Field: "shared", Label: "Shared with all users", Type: "toggle",
+			Help: "Everyone can open and use it (with the stored credentials); chat sessions stay per-user. Only you or an admin can change or delete it."},
 	}
 }
 

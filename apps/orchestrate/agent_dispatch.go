@@ -1044,7 +1044,15 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
 		Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
 	}
-	return AgentSyncResult{Text: cleanReply, Images: subSess.Images, HitRoundCap: resp.HitRoundCap}, nil
+	// Attachments: the agent may deliver an image either by calling
+	// workspace(action="attach") — which folds into subSess.Images — OR by the
+	// fire-and-forget [ATTACH: file] reply-text marker. The channel auto-reply
+	// path (and any other AgentSync caller) forwards ONLY these Images and then
+	// scrubs the marker text downstream, so resolving the marker HERE is what
+	// keeps a marker-delivered image from silently vanishing. Same helper the
+	// phantom messaging tools use, so channel replies reach parity with them.
+	// cleanReply still carries the marker at this point (StripMetaTags runs later).
+	return AgentSyncResult{Text: cleanReply, Images: collectMessageAttachments(subSess, cleanReply), HitRoundCap: resp.HitRoundCap}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

@@ -141,6 +141,14 @@ type ExposedAgentEntry struct {
 // the publish. Cortex agents publish too (each visitor gets their own
 // per-(user, agent) home thread).
 func publiclyExposable(a AgentRecord) bool {
+	// Template seeds are never published directly (Builder clones them), so
+	// exclude them regardless of a stale Exposed flag a past save may have set.
+	// This is the read-side guard that hides seed-kb from /agents/, the
+	// dashboard cards, and the grantable-apps picker without waiting for a
+	// re-save to repair the record.
+	if isCloneOnlySeed(a.ID) {
+		return false
+	}
 	return a.Exposed
 }
 

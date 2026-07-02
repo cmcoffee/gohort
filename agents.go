@@ -21,7 +21,10 @@ import (
 	// proactive / scheduled-callbacks / goal-conversations were dropped (an agent
 	// on a channel covers them). No longer linked into the binary; the package
 	// stays in-tree until its files are deleted. See the phantom-retirement audit.
-	_ "github.com/cmcoffee/gohort/apps/enginseer"
+	// apps/enginseer folded into apps/servitor as the Type=="repo" target-type:
+	// a repo is now just another appliance you Map and ask questions about, sharing
+	// servitor's full investigation shell (streaming plan-driven Map, probe/worker
+	// split, scoped memory, toolbar). No longer linked into the binary.
 	_ "github.com/cmcoffee/gohort/apps/servitor"
 	_ "github.com/cmcoffee/gohort/apps/techwriter"
 )

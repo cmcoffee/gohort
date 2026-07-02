@@ -42,6 +42,12 @@ type MemoryFact struct {
 	ID        string    `json:"id"`
 	Note      string    `json:"note"`
 	Created   time.Time `json:"created"`
+	// Vector is the note's embedding, computed once at save time and reused for
+	// dedup/supersession/search — so a namespace of N facts costs O(1) embed
+	// calls per save/search instead of O(N) re-embedding every existing note.
+	// Empty on facts saved before this field existed; factVector backfills
+	// those lazily on first use. Mirrors EmbeddedChunk.Vector in vector_store.go.
+	Vector []float32 `json:"vector,omitempty"`
 	// SupersededAt is non-zero once a later fact replaced this one
 	// (the user changed an attribute: moved cities, switched jobs).
 	// Superseded facts stay in the table for history but are filtered
@@ -114,13 +120,15 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 	// band [factSupersedeBandFloor, factDedupSimThreshold) — at no extra
 	// embedding cost, for the contradiction check below.
 	var supersedeCandidates []MemoryFact
-	if cfg := GetEmbeddingConfig(); cfg.Enabled && len(existing) > 0 {
+	var newVec []float32
+	if cfg := GetEmbeddingConfig(); cfg.Enabled {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if newVec, err := Embed(ctx, note); err == nil && len(newVec) > 0 {
+		if v, err := Embed(ctx, note); err == nil && len(v) > 0 {
+			newVec = v // cached on the new fact below
 			for _, f := range existing {
-				existVec, err := Embed(ctx, f.Note)
-				if err != nil || len(existVec) != len(newVec) {
+				existVec := factVector(ctx, db, f) // cached, backfilled if legacy
+				if len(existVec) != len(newVec) {
 					continue
 				}
 				sim := Cosine(newVec, existVec)
@@ -139,6 +147,7 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 		ID:        UUIDv4(),
 		Note:      note,
 		Created:   time.Now(),
+		Vector:    newVec,
 	}
 
 	// Supersession: only fires when a chat func was passed AND the embedding
@@ -158,6 +167,24 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 
 	db.Set(MemoryFactsTable, factDBKey(namespace, f.ID), f)
 	return f, true, superseded
+}
+
+// factVector returns a fact's cached embedding, computing and lazily persisting
+// it when absent — the one-time backfill for facts saved before MemoryFact.Vector
+// existed. After the first touch every fact carries its own vector, so
+// dedup/search never re-embed the whole namespace. Returns nil if embedding fails
+// (caller skips the fact rather than crashing). ctx carries the shared timeout.
+func factVector(ctx context.Context, db Database, f MemoryFact) []float32 {
+	if len(f.Vector) > 0 {
+		return f.Vector
+	}
+	vec, err := Embed(ctx, f.Note)
+	if err != nil || len(vec) == 0 {
+		return nil
+	}
+	f.Vector = vec
+	db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f) // backfill so this cost is paid once
+	return vec
 }
 
 // factSupersedeBandFloor is the cosine floor for a fact to count as a
@@ -291,9 +318,10 @@ const factSearchTopK = 8
 // finds nothing above the floor (which still catches exact-token matches a low
 // cosine can miss). Empty query returns all (oldest-first).
 //
-// Facts are short and a namespace holds few of them, so embedding them on the
-// fly per search is cheap (local server) — the same on-the-fly pattern
-// StoreMemoryFact already uses for dedup, with no stored-vector schema.
+// Facts carry their embedding (MemoryFact.Vector), computed once at save time,
+// so a search embeds only the QUERY and scores against the cached fact vectors —
+// O(1) embed calls, not one per fact. Legacy facts without a vector are
+// backfilled on first touch by factVector.
 func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
 	all := ListMemoryFacts(db, namespace)
 	q := strings.TrimSpace(query)
@@ -310,8 +338,8 @@ func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
 			}
 			var ranked []scored
 			for _, f := range all {
-				fVec, err := Embed(ctx, f.Note)
-				if err != nil || len(fVec) != len(qVec) {
+				fVec := factVector(ctx, db, f) // cached, backfilled if legacy
+				if len(fVec) != len(qVec) {
 					continue
 				}
 				if s := Cosine(qVec, fVec); s >= factSearchMinScore {

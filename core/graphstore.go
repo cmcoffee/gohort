@@ -44,8 +44,8 @@ const (
 )
 
 // GraphEntity is one node: a thing the agent knows about. Identity is the
-// slug ID ("person:rory-bartle"); Aliases are the case-insensitive merge
-// keys, so "Rory", "@rory", and "Rory Bartle" resolve to one node. Attrs
+// slug ID ("person:robin-vale"); Aliases are the case-insensitive merge
+// keys, so "Robin", "@robin", and "Robin Vale" resolve to one node. Attrs
 // holds non-relational facts (email, title) that don't warrant their own node.
 type GraphEntity struct {
 	Namespace string            `json:"namespace"`
@@ -154,6 +154,15 @@ func getGraphEntity(db Database, namespace, id string) (GraphEntity, bool) {
 		return e, true
 	}
 	return GraphEntity{}, false
+}
+
+// GetGraphEntity fetches one entity by its exact ID — an O(1) key lookup, unlike
+// FindGraphEntity which resolves by name/alias with a full-namespace scan. Use
+// this when you already hold the ID (e.g. resolving an edge endpoint to its name):
+// passing an ID to FindGraphEntity is both slower AND wrong, since it matches
+// names/aliases, not IDs.
+func GetGraphEntity(db Database, namespace, id string) (GraphEntity, bool) {
+	return getGraphEntity(db, namespace, id)
 }
 
 // ListGraphEntities returns every entity in a namespace (prefix scan),

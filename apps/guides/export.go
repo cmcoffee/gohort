@@ -16,11 +16,11 @@ import (
 //   - pdf:  attachment download (core MarkdownToPDFBytes).
 //   - html: inline (a preview that opens in the browser) — a self-contained doc.
 //   - md:   attachment download of the assembled markdown.
-func (T *Guides) handleExport(w http.ResponseWriter, r *http.Request, udb Database) {
+func (T *Guides) handleExport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
-	g, ok := loadGuide(udb, id)
-	if !ok {
+	g, _, _, _, found := T.resolve(r, udb, user, id)
+	if !found {
 		http.NotFound(w, r)
 		return
 	}

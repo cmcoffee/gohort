@@ -1119,6 +1119,21 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 			Debug("[orchestrate.tools] Builder catalog: skipped loading %d user-authored persistent tool(s) — Builder authors fresh, doesn't reuse", n)
 		}
 		loaded = nil
+	} else {
+		// Deployment-shared persistent tools load for EVERY user, on top of their
+		// own pool. Deduped by name with the user's own pool winning, so a user's
+		// own copy of a name takes precedence over a shared one. The same per-agent
+		// gates below (private-mode, disabled list, user-crafted allow-list) apply
+		// uniformly to shared tools.
+		own := make(map[string]bool, len(loaded))
+		for _, p := range loaded {
+			own[p.Tool.Name] = true
+		}
+		for _, p := range LoadSharedPersistentTempTools(poolDB) {
+			if !own[p.Tool.Name] {
+				loaded = append(loaded, p)
+			}
+		}
 	}
 	for _, p := range loaded {
 		if noTools {
@@ -4018,7 +4033,7 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	}
 	if !t.explicitOff() {
 		// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
-		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef())
+		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID)...) // file_deliverable + note_to_cortex; nil for non-cortex
 	// (send_to_builder removed — agents reach Builder by DIRECT dispatch
@@ -5546,7 +5561,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	}
 	if !t.explicitOff() {
 		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(),
-			t.linkEntitiesToolDef(), t.recallAboutToolDef())
+			t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.

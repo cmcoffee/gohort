@@ -72,11 +72,16 @@ type PendingTempTool struct {
 
 // PersistentTempTool is an approved tool that loads into every new
 // session for its owning user. ApprovedAt records when the human
-// admin approved it; LastUsedAt is updated on each invocation.
+// admin approved it; LastUsedAt is updated on each invocation. When
+// Shared is set, the tool is published to the DEPLOYMENT-WIDE shared
+// pool: it loads for every user's turn (in addition to their own
+// pool), subject to the same per-agent gating. See
+// LoadSharedPersistentTempTools.
 type PersistentTempTool struct {
 	Tool        TempTool  `json:"tool"`
 	ApprovedAt  time.Time `json:"approved_at"`
 	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
+	Shared      bool      `json:"shared,omitempty"`
 }
 
 // LoadPendingTempTools returns the pending-approval queue for a user,
@@ -111,6 +116,56 @@ func LoadPersistentTempTools(db Database, username string) []PersistentTempTool 
 		return nil
 	}
 	return out
+}
+
+// LoadSharedPersistentTempTools returns the deployment-wide shared pool:
+// every persistent tool any user has marked Shared, deduped by tool name
+// (first owner seen wins). These load for ALL users' turns, so an admin can
+// publish a tool once and have it available everywhere — without copying it
+// into each user's pool. Walks every user's persistent pool; cheap at the
+// scale we expect (the admin persistent-tools page already does this walk).
+func LoadSharedPersistentTempTools(db Database) []PersistentTempTool {
+	db = tempToolStore(db)
+	if db == nil {
+		return nil
+	}
+	var out []PersistentTempTool
+	seen := map[string]bool{}
+	for _, u := range db.Keys(persistentTempToolsTable) {
+		for _, p := range LoadPersistentTempTools(db, u) {
+			if p.Shared && !seen[p.Tool.Name] {
+				seen[p.Tool.Name] = true
+				out = append(out, p)
+			}
+		}
+	}
+	return out
+}
+
+// SetPersistentTempToolShared flips the deployment-wide Shared flag on a tool
+// in a user's persistent pool. Returns an error when the named tool isn't in
+// that user's pool. Admin-driven (from the persistent-tools page).
+func SetPersistentTempToolShared(db Database, username, name string, shared bool) error {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return errString("admin action requires authenticated user")
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	approved := LoadPersistentTempTools(db, username)
+	found := false
+	for i := range approved {
+		if approved[i].Tool.Name == name {
+			approved[i].Shared = shared
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errString("no persistent tool named " + name)
+	}
+	db.Set(persistentTempToolsTable, username, approved)
+	return nil
 }
 
 // QueuePendingTempTool adds a tool to the approval queue. Returns an

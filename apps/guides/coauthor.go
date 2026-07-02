@@ -16,14 +16,29 @@ import (
 	"github.com/cmcoffee/gohort/apps/orchestrate"
 )
 
-func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, user string) []AgentToolDef {
-	// openGuide resolves the active guide for this turn, fresh each call.
-	openGuide := func() (Guide, bool) {
+// coauthorTools builds the Guide Author's tool kit for one chat turn. canEdit
+// distinguishes the two roles that reach these tools:
+//   - editor (owner/admin, or a guide shared for edit): the full kit, scoped to
+//     the CALLER — they build the guide from their own research + sources.
+//   - reader (view-only shared guide): handleChatSend hands them only the
+//     read-only subset (see readOnlyGuideTools). For those tools, canEdit=false
+//     switches reference access to the guide's OWNER, restricted to the sources
+//     the owner LINKED to this guide — so a reader can ask questions answered
+//     from the guide's own sources without being able to reach them directly or
+//     browse the owner's wider registry.
+func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, user string, canEdit bool) []AgentToolDef {
+	// openGuide resolves the active guide for this turn, fresh each call. The active
+	// marker is per-user (udb), but a SHARED guide lives in its owner's store — so
+	// resolve returns the owner's UserDB + owner username, and every content op runs
+	// there. That's what lets a collaborator on an edit-shared guide write into the
+	// one canonical document (and grow its owner-scoped research collection).
+	openGuide := func() (Guide, Database, string, bool) {
 		id := activeGuideID(udb)
 		if id == "" {
-			return Guide{}, false
+			return Guide{}, nil, "", false
 		}
-		return loadGuide(udb, id)
+		g, owner, oudb, ok := resolveGuide(T.DB, udb, user, id)
+		return g, oudb, owner, ok
 	}
 	// findIdx locates a section by case-insensitive title, returning its index in
 	// the guide's slice (-1 if absent).
@@ -61,12 +76,12 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			if md == "" {
 				return "", fmt.Errorf("markdown is required — pass the section body")
 			}
-			g, ok := openGuide()
+			g, ownerUDB, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
 			g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: md, Order: g.nextOrder()})
-			saveGuideRev(udb, g, "Added section: "+title)
+			saveGuideRev(ownerUDB, g, "Added section: "+title)
 			return fmt.Sprintf("Added the %q section to %q (now %d section%s).", title, g.Title, len(g.Sections), plural(len(g.Sections))), nil
 		},
 	}
@@ -85,7 +100,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		Handler: func(args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
-			g, ok := openGuide()
+			g, ownerUDB, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
@@ -94,7 +109,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
 			}
 			g.Sections[idx].Markdown = md
-			saveGuideRev(udb, g, "Edited section: "+title)
+			saveGuideRev(ownerUDB, g, "Edited section: "+title)
 			return fmt.Sprintf("Updated the %q section in %q.", title, g.Title), nil
 		},
 	}
@@ -105,7 +120,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			Description: "List the sections of the OPEN guide, in order, with their titles. Call this to see the guide's current structure before renaming, deleting, moving, or editing a section — so you use the exact existing titles and correct positions. No arguments.",
 		},
 		Handler: func(args map[string]any) (string, error) {
-			g, ok := openGuide()
+			g, _, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
@@ -134,7 +149,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		SingleFirePerBatch: true,
 		Handler: func(args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
-			g, ok := openGuide()
+			g, ownerUDB, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
@@ -145,7 +160,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			removed := g.Sections[idx].Title
 			g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
 			normalizeOrder(&g)
-			saveGuideRev(udb, g, "Removed section: "+removed)
+			saveGuideRev(ownerUDB, g, "Removed section: "+removed)
 			return fmt.Sprintf("Removed the %q section from %q (%d left).", removed, g.Title, len(g.Sections)), nil
 		},
 	}
@@ -167,7 +182,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			if newTitle == "" {
 				return "", fmt.Errorf("new_title is required")
 			}
-			g, ok := openGuide()
+			g, ownerUDB, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
@@ -176,7 +191,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
 			}
 			g.Sections[idx].Title = newTitle
-			saveGuideRev(udb, g, "Renamed section: "+title+" → "+newTitle)
+			saveGuideRev(ownerUDB, g, "Renamed section: "+title+" → "+newTitle)
 			return fmt.Sprintf("Renamed %q to %q.", title, newTitle), nil
 		},
 	}
@@ -195,7 +210,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		Handler: func(args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			pos := coerceIntArg(args["position"])
-			g, ok := openGuide()
+			g, ownerUDB, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
@@ -212,7 +227,7 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			}
 			reordered, target := reorderSections(secs, idx, pos-1)
 			g.Sections = reordered
-			saveGuideRev(udb, g, "Moved section: "+title)
+			saveGuideRev(ownerUDB, g, "Moved section: "+title)
 			return fmt.Sprintf("Moved %q to position %d in %q.", title, target+1, g.Title), nil
 		},
 	}
@@ -248,8 +263,8 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			// search_knowledge tool can recall later (across sessions). Best-effort:
 			// the findings are still returned for immediate drafting even if there's
 			// no open guide or the ingest is skipped.
-			if g, ok := openGuide(); ok && strings.TrimSpace(out) != "" {
-				collID, _ := ensureGuideCollection(udb, user, g)
+			if g, ownerUDB, ownerUser, ok := openGuide(); ok && strings.TrimSpace(out) != "" {
+				collID, _ := ensureGuideCollection(ownerUDB, ownerUser, g)
 				reportID := fmt.Sprintf("guide-research-%s-%d", collID, time.Now().UnixNano())
 				IngestReportTitled(context.Background(), VectorDB, CollectionSource(collID), reportID, topic, out, "research")
 				out += "\n\n_(Saved to this guide's research collection — you can recall it later with search_knowledge.)_"
@@ -277,14 +292,17 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			if query == "" {
 				return "", fmt.Errorf("query is required")
 			}
-			g, ok := openGuide()
+			g, _, ownerUser, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
 			}
 			if len(g.Collections) == 0 {
 				return "No knowledge collections are attached to this guide. Ask the user to attach one with the Knowledge button on the guide toolbar, or use the `research` tool for public topics.", nil
 			}
-			hits := SearchCollections(context.Background(), CollectionsDB(), user, g.Collections, query, 6)
+			// Collections are owned by the guide's owner (user-scoped in their store),
+			// so search as the owner — this is what lets a collaborator's search hit
+			// the guide's own research collection.
+			hits := SearchCollections(context.Background(), CollectionsDB(), ownerUser, g.Collections, query, 6)
 			if len(hits) == 0 {
 				return fmt.Sprintf("No matches for %q in the attached collections.", query), nil
 			}
@@ -314,13 +332,23 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services — e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
 		},
 		Handler: func(args map[string]any) (string, error) {
+			// Reader of a shared guide: only the sources the OWNER linked to this
+			// guide, resolved under the owner's identity. The reader never sees the
+			// wider registry — just the guide's own sources.
+			if !canEdit {
+				g, _, ownerUser, ok := openGuide()
+				if !ok || len(g.References) == 0 {
+					return "This guide has no linked reference sources.", nil
+				}
+				return describeAttachedReferences(ownerUser, g.References), nil
+			}
 			groups := ReferenceGroups(user)
 			if len(groups) == 0 {
 				return "No internal reference sources are available right now. (Systems appear once the user has appliances in the servitor app; document sources like Confluence appear once they're connected as a reference source.) Use the `research` tool for public/web topics instead.", nil
 			}
 			// Which items did the user attach to THIS guide via the Sources picker?
 			attached := map[string]bool{}
-			if g, ok := openGuide(); ok {
+			if g, _, _, ok := openGuide(); ok {
 				for _, s := range g.References {
 					attached[s.Kind+"\x00"+s.ItemID] = true
 				}
@@ -370,7 +398,19 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			if q, ok := args["query"]; ok {
 				query = strings.TrimSpace(fmt.Sprint(q))
 			}
-			txt := FetchReference(context.Background(), user, kind, itemID, query)
+			// Editors pull from their own registry; readers pull ONLY the guide's
+			// linked sources, resolved with the OWNER's identity — so the answer is
+			// grounded in the guide's own sources, but the reader can't pull any
+			// source the owner didn't link to this guide.
+			fetchUser := user
+			if !canEdit {
+				g, _, ownerUser, ok := openGuide()
+				if !ok || !referenceAttached(g, kind, itemID) {
+					return "That source isn't linked to this guide — you can only pull the sources the guide's owner attached to it.", nil
+				}
+				fetchUser = ownerUser
+			}
+			txt := FetchReference(context.Background(), fetchUser, kind, itemID, query)
 			if strings.TrimSpace(txt) == "" {
 				return fmt.Sprintf("No content available for %s item %q — it may be empty, or the id is wrong; re-check with list_reference_sources.", kind, itemID), nil
 			}
@@ -443,4 +483,144 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// gatherLinkedSourceSnapshot pulls a bounded, owner-scoped snapshot of the
+// guide's CURRENT linked knowledge — passages from its attached collections
+// (searched per section) plus the content of each attached reference source. The
+// audit feeds this to the research agent so it can compare the written guide
+// against what its sources now say (contradictions, newly-added material the
+// guide is missing). Returns "" when the guide has no linked sources, so the
+// audit falls back to a plain web-currency check. Bounded so a large corpus /
+// reference can't blow up the audit prompt.
+func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) string {
+	const maxCollectionHits = 15
+	const maxRefChars = 2000
+	var b strings.Builder
+
+	if len(g.Collections) > 0 {
+		seen := map[string]bool{}
+		var hits []string
+		for _, s := range g.sorted() {
+			q := strings.TrimSpace(s.Title)
+			if q == "" {
+				continue
+			}
+			for _, h := range SearchCollections(ctx, CollectionsDB(), ownerUser, g.Collections, q, 2) {
+				txt := strings.TrimSpace(h.Text)
+				if txt == "" || seen[txt] {
+					continue
+				}
+				seen[txt] = true
+				label := strings.TrimSpace(h.Section)
+				if label == "" {
+					label = h.Source
+				}
+				hits = append(hits, "--- "+label+" ---\n"+txt)
+				if len(hits) >= maxCollectionHits {
+					break
+				}
+			}
+			if len(hits) >= maxCollectionHits {
+				break
+			}
+		}
+		if len(hits) > 0 {
+			b.WriteString("#### Knowledge-collection material\n\n")
+			b.WriteString(strings.Join(hits, "\n\n"))
+			b.WriteString("\n\n")
+		}
+	}
+
+	for _, ref := range g.References {
+		txt := strings.TrimSpace(FetchReference(ctx, ownerUser, ref.Kind, ref.ItemID, g.Title))
+		if txt == "" {
+			continue
+		}
+		if len(txt) > maxRefChars {
+			txt = txt[:maxRefChars] + "\n…(truncated)"
+		}
+		fmt.Fprintf(&b, "#### Reference source [%s:%s]\n\n%s\n\n", ref.Kind, ref.ItemID, txt)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// runUpdateFromSources dispatches the Guide Author — with the full co-author kit
+// — to revise the guide's sections against its CURRENT linked sources, then
+// returns a short summary of what changed. It's the button-driven equivalent of
+// asking the chat to "update from sources": same tools, same owner-scoped source
+// resolution (search_knowledge / pull_reference), and every edit lands through
+// edit_section/add_section as a revision (roll back via History). Runs in a
+// dedicated hidden sub-session so the automated pass doesn't clutter the user's
+// visible guide chat. Synchronous (an agent loop; tens of seconds).
+func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID string) (string, error) {
+	// Point the co-author tools at this guide (they resolve the active guide, then
+	// its owner's store) for the duration of the run.
+	udb.Set(activeTable, "current", guideID)
+	const prompt = "Update this guide so its sections reflect its LINKED SOURCES — the attached knowledge collections and reference sources — as they stand right now.\n\n" +
+		"1. Call list_sections to see the current structure.\n" +
+		"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
+		"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it — grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
+		"4. Leave sections that already match their sources unchanged — don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
+		"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."
+	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+		AgentOwner:   user,
+		RuntimeUser:  user,
+		AgentKey:     guideAgentID,
+		SubSessionID: "guide-update:" + guideID,
+		FreshSession: true,
+		Message:      prompt,
+		AppTools:     T.coauthorTools(udb, orch, user, true),
+	})
+	if err != nil {
+		return "", err
+	}
+	return res.Text, nil
+}
+
+// referenceAttached reports whether a (kind, item_id) is among the guide's
+// linked reference sources — the gate that keeps a reader's pull_reference to
+// the owner's guide-attached sources only.
+func referenceAttached(g Guide, kind, itemID string) bool {
+	for _, s := range g.References {
+		if s.Kind == kind && s.ItemID == itemID {
+			return true
+		}
+	}
+	return false
+}
+
+// describeAttachedReferences renders just the guide's linked reference sources
+// for a reader, resolving names/descriptions from the OWNER's registry (the
+// sources belong to the owner). Only attached items are listed; the reader never
+// sees the owner's wider registry.
+func describeAttachedReferences(ownerUser string, refs []ReferenceSelection) string {
+	attached := map[string]bool{}
+	for _, s := range refs {
+		attached[s.Kind+"\x00"+s.ItemID] = true
+	}
+	var b strings.Builder
+	b.WriteString("This guide's linked reference sources (pull any with pull_reference):\n")
+	any := false
+	for _, g := range ReferenceGroups(ownerUser) {
+		var lines []string
+		for _, it := range g.Items {
+			if !attached[g.Kind+"\x00"+it.ID] {
+				continue
+			}
+			any = true
+			if strings.TrimSpace(it.Desc) != "" {
+				lines = append(lines, fmt.Sprintf("- %s — %s [kind: %s, id: %s]", it.Name, it.Desc, g.Kind, it.ID))
+			} else {
+				lines = append(lines, fmt.Sprintf("- %s [kind: %s, id: %s]", it.Name, g.Kind, it.ID))
+			}
+		}
+		if len(lines) > 0 {
+			fmt.Fprintf(&b, "\n%s:\n%s\n", g.Label, strings.Join(lines, "\n"))
+		}
+	}
+	if !any {
+		return "This guide has linked reference sources, but they can't be resolved right now (the owner's access to them may have changed)."
+	}
+	return strings.TrimRight(b.String(), "\n")
 }

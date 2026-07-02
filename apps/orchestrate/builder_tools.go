@@ -281,6 +281,18 @@ func isBuilderAgent(agentID string) bool {
 	return agentID == "seed-builder"
 }
 
+// isCloneOnlySeed reports whether an agent ID is a TEMPLATE seed: one Builder
+// clones to produce real, usable agents, but that is never meant to be run or
+// published DIRECTLY. Such a seed stays out of the Agency picker and can never
+// become publicly exposed — a user gets its capability by cloning it, not by
+// selecting the empty template. seed-kb (the Knowledge Base template) is the
+// case today: you get a KB by cloning it with your own corpus, not by chatting
+// with the corpus-less seed. Centralized like isBuilderAgent so the identity
+// check lives in one place.
+func isCloneOnlySeed(agentID string) bool {
+	return agentID == "seed-kb"
+}
+
 // orchestratorRouteKey picks the lead-routing stage for the main reasoning +
 // synthesis calls. Builder gets its own stage (default lead, admin-flippable)
 // so its agent-design reasoning runs on the stronger model. Every other agent

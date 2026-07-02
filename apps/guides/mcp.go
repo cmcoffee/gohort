@@ -121,7 +121,7 @@ func guidesMCPCreate(_ context.Context, owner string, args map[string]any) (stri
 	if title == "" {
 		return "", fmt.Errorf("title is required")
 	}
-	g := saveGuide(udb, Guide{ID: newID(), Title: title, Subtitle: strings.TrimSpace(mcpStr(args, "subtitle"))})
+	g := saveGuide(udb, Guide{ID: newID(), Title: title, Subtitle: strings.TrimSpace(mcpStr(args, "subtitle")), Owner: owner})
 	return fmt.Sprintf("Created guide %q (id %s). Add content with guides_add_section.", g.Title, g.ID), nil
 }
 

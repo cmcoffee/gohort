@@ -32,7 +32,7 @@ func channelSurfaceContext(in ChannelInbound) string {
 	// conflate them (it was calling the SERVICE the channel name):
 	//   - channel:      the user's label for THIS binding (e.g. "iPhone")
 	//   - service:      the transport it rides (e.g. iMessage)
-	//   - conversation: the room/contact (e.g. "Craig Coffee")
+	//   - conversation: the room/contact (e.g. "Alex Rivera")
 	channel := strings.TrimSpace(ch.Name)
 	service := ServiceDisplayName(ch.Service)
 	convo := chFirst(in.ConversationName, in.SenderName, "this conversation")
@@ -47,12 +47,19 @@ func channelSurfaceContext(in ChannelInbound) string {
 	default:
 		origin = "a connected channel"
 	}
+	// Group roster, when known: hand the agent who's in the conversation up
+	// front so it doesn't misattribute messages or have to call list_members
+	// just to know who's present. Empty for 1:1 chats.
+	roster := ""
+	if len(in.Roster) > 0 {
+		roster = fmt.Sprintf(" Participants in this conversation: %s.", strings.Join(in.Roster, ", "))
+	}
 	// A receive-only channel doesn't reply on this surface; bidirectional (the
 	// default) does. Ground the agent on which it is.
 	if ch.Direction == DirectionInbound {
-		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo)
+		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo, roster)
 	}
-	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q. Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo)
+	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo, roster)
 }
 
 // channelObsFrom labels a channel inbound for its cortex report card: the
@@ -257,7 +264,12 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			StatusCallback: in.StatusCallback,
 		})
 		if err != nil {
-			return ChannelReply{}, err
+			// A messaging surface must not go silent — the contact texted and
+			// expects a reply. Deliver a brief, friendly note instead of nothing;
+			// the underlying error is logged (here + in the sync runner) for
+			// diagnosis. Returning nil error so the transport actually sends it.
+			Log("[channel] agent run failed for owner=%s agent=%s: %v", in.Owner, in.AgentID, err)
+			return ChannelReply{Text: "Sorry — I ran into a problem working on that and couldn't finish. Please try again in a moment."}, nil
 		}
 		// Strip framework-internal markers at the channel boundary — the same
 		// safety net phantom applies on its outbox (phantom.go) and the web loop
@@ -266,6 +278,14 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// Attachments for channels travel via res.Images (workspace attach), so
 		// stripping the textual marker here doesn't drop a real attachment.
 		replyText := StripMetaTags(res.Text)
+		// Never deliver silence: if the run produced no text AND no attachment
+		// (the model ended a turn with empty content, or its whole output was a
+		// stripped marker), send a graceful fallback so the contact gets SOMETHING
+		// back instead of the agent appearing to give up.
+		if strings.TrimSpace(replyText) == "" && len(res.Images) == 0 {
+			Log("[channel] empty agent reply for owner=%s agent=%s — sending fallback", in.Owner, in.AgentID)
+			replyText = "I wasn't able to put together a response to that. Could you rephrase it, or give me a little more detail?"
+		}
 		// Cortex feed (received → cortex): mirror this inbound into the bound
 		// agent's cortex as a non-triggering observation, so the standing thread
 		// stays aware of everything coming in over its channels. No-op when the

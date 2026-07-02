@@ -252,7 +252,11 @@ func upsertMember(members []ConvMember, handle, name string) []ConvMember {
 	}
 	for i := range members {
 		if members[i].Handle == handle || contains(members[i].Aliases, handle) {
-			if name != "" && name != handle {
+			// Fill the name only when we don't have one yet — first real name
+			// wins. Never overwrite a learned or dashboard-edited name with a
+			// later, possibly-inconsistent inbound display name (that clobbered
+			// user corrections and made one person read as two).
+			if members[i].Name == "" && name != "" && name != handle {
 				members[i].Name = name
 			}
 			return members
@@ -527,17 +531,24 @@ func (T *Bridges) seenMessage(chatID, msgID string) bool {
 // Members, and the user can override them in the member editor — so group
 // transcripts read by person, not by phone number.
 func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
-	if fresh = strings.TrimSpace(fresh); fresh != "" {
-		return fresh
-	}
+	fresh = strings.TrimSpace(fresh)
 	if handle = strings.TrimSpace(handle); handle == "" {
 		// Empty handle = the owner's own message (the daemon clears it for
-		// is_from_me). Label it with the configured self name when set.
+		// is_from_me). Prefer the configured self name, then a per-message
+		// name, then a clear "Owner" label — never the anonymous "Someone",
+		// which lost the owner's identity in a group transcript.
 		if n := strings.TrimSpace(T.config().SelfName); n != "" {
 			return n
 		}
-		return "Someone"
+		if fresh != "" {
+			return fresh
+		}
+		return "Owner"
 	}
+	// Prefer the remembered (learned or dashboard-edited) roster name over the
+	// per-message display name, so one handle reads as ONE name across messages
+	// even when the connector sends inconsistent display names. The fresh name
+	// and raw handle are fallbacks only.
 	if c, ok := T.getConvo(chatID); ok {
 		for _, m := range c.Members {
 			if (m.Handle == handle || contains(m.Aliases, handle)) && m.Name != "" {
@@ -545,7 +556,38 @@ func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
 			}
 		}
 	}
+	if fresh != "" {
+		return fresh
+	}
 	return handle
+}
+
+// rosterNames returns the display names of a GROUP conversation's known
+// participants, to hand the agent as the up-front roster (see ChannelInbound.
+// Roster). Names fall back to the handle; duplicates are dropped. Returns nil for
+// 1:1 chats (the single other party is already the sender) or an unknown convo.
+func (T *Bridges) rosterNames(chatID string) []string {
+	if !isGroupChat(chatID) {
+		return nil
+	}
+	c, ok := T.getConvo(chatID)
+	if !ok {
+		return nil
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, m := range c.Members {
+		n := strings.TrimSpace(m.Name)
+		if n == "" {
+			n = strings.TrimSpace(m.Handle)
+		}
+		if n == "" || seen[strings.ToLower(n)] {
+			continue
+		}
+		seen[strings.ToLower(n)] = true
+		names = append(names, n)
+	}
+	return names
 }
 
 // bridgeOwner returns the single owner Bridges operates for — the deployment

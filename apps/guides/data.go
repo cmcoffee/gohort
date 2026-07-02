@@ -44,8 +44,55 @@ type Guide struct {
 	// (pull_reference) to build the guide from internal knowledge; list_reference_
 	// sources flags which are attached so it knows the user's chosen scope.
 	References []ReferenceSelection `json:"references,omitempty"`
-	Created    string               `json:"created"`
-	Updated    string               `json:"updated"`
+	// Owner is the username that created + owns this guide (stamped on create).
+	// Shared publishes it to every authenticated user; ShareMode sets what they may
+	// do: "view" (default — read + export only) or "edit" (any signed-in user may
+	// also edit sections / co-author). Either way, only the owner (or an admin) can
+	// change sharing, delete the guide, or manage its knowledge/sources. When Shared
+	// is set the guide is ALSO listed in the app-wide sharedGuidesIndex so any
+	// request can resolve it in the owner's store. See resolveGuide.
+	Owner     string `json:"owner,omitempty"`
+	Shared    bool   `json:"shared,omitempty"`
+	ShareMode string `json:"share_mode,omitempty"` // "" | "view" | "edit"
+	Created   string `json:"created"`
+	Updated   string `json:"updated"`
+}
+
+// ShareModeEdit is the ShareMode value that lets any authenticated user edit a
+// shared guide (vs the default view-only share).
+const ShareModeEdit = "edit"
+
+// sharedForEdit reports whether this guide is shared with EDIT permission — any
+// authenticated user may change its content, not just view it.
+func (g Guide) sharedForEdit() bool { return g.Shared && g.ShareMode == ShareModeEdit }
+
+// sharedGuidesIndex lives in the app-wide store (T.DB, NOT a per-user UserDB) and
+// maps a shared guide ID -> its owner username. Presence IS the shared flag.
+const sharedGuidesIndex = "shared_guides"
+
+// resolveGuide finds a guide for a request: the requester's OWN store first, else
+// via the shared index (the owner's store). Returns the guide, its owner, the
+// OWNER'S UserDB (use for every content op — sections, revisions, the research
+// collection — so a shared guide lives in ONE place regardless of who opened it),
+// and whether it was found. For a guide the user owns, owner == reqUser and
+// ownerUDB == reqUDB, so non-shared flows are unchanged. appDB is the app store
+// (T.DB); reqUDB is the requesting user's UserDB.
+func resolveGuide(appDB, reqUDB Database, reqUser, id string) (Guide, string, Database, bool) {
+	if g, ok := loadGuide(reqUDB, id); ok {
+		owner := g.Owner
+		if owner == "" {
+			owner = reqUser // legacy guide without an owner stamp: the holder owns it
+		}
+		return g, owner, reqUDB, true
+	}
+	if owner, ok := LookupSharedOwner(appDB, sharedGuidesIndex, id); ok {
+		if oudb := UserDB(appDB, owner); oudb != nil {
+			if g, ok := loadGuide(oudb, id); ok {
+				return g, owner, oudb, true
+			}
+		}
+	}
+	return Guide{}, "", nil, false
 }
 
 func newID() string {

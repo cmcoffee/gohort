@@ -8,23 +8,23 @@ func TestUpsertGraphEntityMerge(t *testing.T) {
 	db := memDB(t)
 	ns := "agent:1"
 
-	e1, new1 := UpsertGraphEntity(db, ns, "person", "Rory", nil, map[string]string{"title": "VP"})
+	e1, new1 := UpsertGraphEntity(db, ns, "person", "Robin", nil, map[string]string{"title": "VP"})
 	if !new1 || e1.ID == "" {
 		t.Fatalf("first upsert should create: new=%v id=%q", new1, e1.ID)
 	}
 	// Same person, different surface form + an alias + a new attr.
-	e2, new2 := UpsertGraphEntity(db, ns, "person", "Rory", []string{"Rory Bartle"}, map[string]string{"email": "rory@acme.com"})
+	e2, new2 := UpsertGraphEntity(db, ns, "person", "Robin", []string{"Robin Vale"}, map[string]string{"email": "robin@acme.com"})
 	if new2 {
 		t.Fatalf("second upsert should merge, not create new")
 	}
 	if e2.ID != e1.ID {
 		t.Fatalf("merge landed on a different node: %q vs %q", e2.ID, e1.ID)
 	}
-	if e2.Attrs["title"] != "VP" || e2.Attrs["email"] != "rory@acme.com" {
+	if e2.Attrs["title"] != "VP" || e2.Attrs["email"] != "robin@acme.com" {
 		t.Fatalf("attrs not merged: %+v", e2.Attrs)
 	}
 	// Now look up by the alias — must resolve to the same node.
-	got, ok := FindGraphEntity(db, ns, "rory bartle")
+	got, ok := FindGraphEntity(db, ns, "robin vale")
 	if !ok || got.ID != e1.ID {
 		t.Fatalf("alias lookup failed: ok=%v id=%q", ok, got.ID)
 	}
@@ -38,25 +38,25 @@ func TestUpsertGraphEntityMerge(t *testing.T) {
 func TestLinkGraphEdgeReplace(t *testing.T) {
 	db := memDB(t)
 	ns := "agent:1"
-	rory, _ := UpsertGraphEntity(db, ns, "person", "Rory", nil, nil)
+	robin, _ := UpsertGraphEntity(db, ns, "person", "Robin", nil, nil)
 	acme, _ := UpsertGraphEntity(db, ns, "org", "Acme", nil, nil)
 	globex, _ := UpsertGraphEntity(db, ns, "org", "Globex", nil, nil)
 
-	LinkGraphEdge(db, ns, rory.ID, "works at", acme.ID, "", false)
+	LinkGraphEdge(db, ns, robin.ID, "works at", acme.ID, "", false)
 	// Single-valued correction — Acme should be gone.
-	LinkGraphEdge(db, ns, rory.ID, "works at", globex.ID, "", true)
-	out := GraphEdgesFrom(db, ns, rory.ID)
+	LinkGraphEdge(db, ns, robin.ID, "works at", globex.ID, "", true)
+	out := GraphEdgesFrom(db, ns, robin.ID)
 	if len(out) != 1 || out[0].To != globex.ID {
 		t.Fatalf("replace should leave only Globex, got %+v", out)
 	}
 
 	// Multi-valued — two "knows" coexist.
-	dana, _ := UpsertGraphEntity(db, ns, "person", "Dana", nil, nil)
-	sam, _ := UpsertGraphEntity(db, ns, "person", "Sam", nil, nil)
-	LinkGraphEdge(db, ns, rory.ID, "knows", dana.ID, "", false)
-	LinkGraphEdge(db, ns, rory.ID, "knows", sam.ID, "", false)
+	morgan, _ := UpsertGraphEntity(db, ns, "person", "Morgan", nil, nil)
+	casey, _ := UpsertGraphEntity(db, ns, "person", "Casey", nil, nil)
+	LinkGraphEdge(db, ns, robin.ID, "knows", morgan.ID, "", false)
+	LinkGraphEdge(db, ns, robin.ID, "knows", casey.ID, "", false)
 	knows := 0
-	for _, e := range GraphEdgesFrom(db, ns, rory.ID) {
+	for _, e := range GraphEdgesFrom(db, ns, robin.ID) {
 		if e.Rel == "knows" {
 			knows++
 		}
@@ -65,9 +65,9 @@ func TestLinkGraphEdgeReplace(t *testing.T) {
 		t.Fatalf("multi-valued knows should coexist, got %d", knows)
 	}
 
-	// Inbound lookup from Globex's side resolves back to Rory.
+	// Inbound lookup from Globex's side resolves back to Robin.
 	in := GraphEdgesTo(db, ns, globex.ID)
-	if len(in) != 1 || in[0].From != rory.ID {
+	if len(in) != 1 || in[0].From != robin.ID {
 		t.Fatalf("inbound edge lookup failed: %+v", in)
 	}
 }
@@ -76,8 +76,8 @@ func TestLinkGraphEdgeReplace(t *testing.T) {
 // invisible to another's.
 func TestGraphNamespaceIsolation(t *testing.T) {
 	db := memDB(t)
-	UpsertGraphEntity(db, "agent:1", "person", "Rory", nil, nil)
-	if _, ok := FindGraphEntity(db, "agent:2", "Rory"); ok {
+	UpsertGraphEntity(db, "agent:1", "person", "Robin", nil, nil)
+	if _, ok := FindGraphEntity(db, "agent:2", "Robin"); ok {
 		t.Fatalf("entity leaked across namespaces")
 	}
 	if ents, _ := GraphCounts(db, "agent:2"); ents != 0 {
