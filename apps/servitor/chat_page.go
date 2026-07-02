@@ -186,6 +186,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "copy_session", Group: "More"},
 						{Label: "Export knowledge", Title: "Download this system's accumulated knowledge (profile, facts, techniques, logs) as a markdown file — credentials excluded — for handing to Claude to help build or improve a support tool.",
 							Method: "client", URL: "servitor_export_knowledge", Group: "More"},
+						{Label: "Push to guide", Title: "Add this session's answer to one of your Guides as a new section — look something up, then keep it in a living doc.",
+							Method: "client", URL: "servitor_push_to_guide", Group: "More"},
 						{Label: "Clear Memory", Title: "Wipe stored profile, facts, knowledge, and notes for this appliance",
 							Method: "client", URL: "servitor_clear_memory", Variant: "danger", Group: "More"},
 					},

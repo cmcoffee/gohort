@@ -72,7 +72,12 @@ func (T *Guides) WebPath() string { return "/guides" }
 func (T *Guides) WebName() string { return "Guides" }
 func (T *Guides) WebDesc() string { return "Craft living guide documents with an AI co-author." }
 
-func (T *Guides) Routes() { T.HandleFunc("/", T.route) }
+func (T *Guides) Routes() {
+	// Register Guides as a write target so other apps (servitor) can push a
+	// section into a user's guide. Done here (not init) because T.DB is live.
+	RegisterDocumentTarget(&guideTarget{app: T})
+	T.HandleFunc("/", T.route)
+}
 
 // findOrchestrate resolves the registered OrchestrateApp so the chat routes can
 // dispatch to its PublicHandle* methods. Cached after first hit.

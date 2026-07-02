@@ -395,6 +395,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// Persisted chat sessions back the left rail (see sessions.go).
 	sub.HandleFunc("/api/sessions", T.handleServitorSessionList)
 	sub.HandleFunc("/api/sessions/", T.handleServitorSessionOne)
+	sub.HandleFunc("/api/push-to-guide", T.handlePushToGuide)
 	sub.HandleFunc("/api/inject", T.handleInject)
 	sub.HandleFunc("/api/map", T.handleMap)
 	sub.HandleFunc("/api/mapapp", T.handleMapApp)
@@ -1402,7 +1403,7 @@ func buildCommandChatSystemPrompt(appliance Appliance, udb Database) string {
 	b.WriteString("5. Call `record_technique` when you figure out the correct non-obvious way to do something (working auth, right flag combination, correct resource name format).\n")
 	b.WriteString("6. Call `note_lesson` when a command fails due to a non-obvious quirk specific to this environment.\n")
 	b.WriteString("7. **Temporary file cleanup** — delete any scripts or temporary files you create (e.g. `/tmp/check.sh`, helper scripts) with `rm` before producing your final response. Do not leave artifacts behind.\n")
-	b.WriteString("8. **Saving work** — when the user asks to save a query or script for later, call `save_to_codewriter`. When the user asks to document findings, save a report, or create a runbook, call `save_to_techwriter`. You can save AND run in the same response.\n\n")
+	b.WriteString("8. **Saving work** — when the user asks to save a query or script for later, call `save_to_codewriter`. When the user asks to document findings, save a report, or create a runbook, call `save_to_techwriter`. When the user asks to add a finding into one of their guides (living multi-section docs), call `push_to_guide` — use `list_guides` first if unsure of the exact guide name. You can save AND run in the same response.\n\n")
 	b.WriteString("## Execution Protocol\n\n")
 	b.WriteString("Treat every command like an expect script: know what you're looking for, run it, read the output, branch on what you got.\n\n")
 	b.WriteString("- **Relevant output** → extract facts, call `store_fact`, proceed.\n")
@@ -1462,7 +1463,7 @@ func buildChatSystemPrompt(appliance Appliance) string {
 	b.WriteString("   - When output is truncated, the message includes the exact `sed -n` command for the next page — use it.\n")
 	b.WriteString("   - For user/group lists: `getent passwd | wc -l` first, then `awk -F: '$3>=1000'` to narrow.\n")
 	b.WriteString("12. **Temporary file cleanup** — delete any scripts or temporary files you created (e.g. `/tmp/check.sh`, `/tmp/probe.py`) with `rm` before producing your final response. Do not leave artifacts on the system.\n")
-	b.WriteString("13. **Saving work** — when the user asks to save a query or script for later reuse, call `save_to_codewriter`. When the user asks to document findings, save a report, or write a runbook, call `save_to_techwriter`. You can save AND run in the same response.\n\n")
+	b.WriteString("13. **Saving work** — when the user asks to save a query or script for later reuse, call `save_to_codewriter`. When the user asks to document findings, save a report, or write a runbook, call `save_to_techwriter`. When the user asks to add a finding into one of their guides (living multi-section docs), call `push_to_guide` — use `list_guides` first if unsure of the exact guide name. You can save AND run in the same response.\n\n")
 	b.WriteString("## Execution Protocol\n\n")
 	b.WriteString("Treat every command like an expect script: know what you're looking for, run it, read the output, branch on what you got.\n\n")
 	b.WriteString("**After each command output, ask: did I get what I needed?**\n\n")
@@ -3332,6 +3333,75 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
+	// list_guides / push_to_guide — the user asked to "add what I look up to a
+	// guide". These write into the user's Guides via the generic core
+	// DocumentTarget seam (guides registers itself; servitor never imports it),
+	// same local-write posture as save_to_techwriter. Content lands as a new
+	// section the user can polish in the Guides app; it's a revision like any edit.
+	list_guides_tool := AgentToolDef{
+		Tool: Tool{
+			Name:        "list_guides",
+			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read — do NOT look for guides on the remote system. No arguments.",
+		},
+		Handler: func(args map[string]any) (string, error) {
+			ds := ListDocuments(userID, "guide")
+			if len(ds) == 0 {
+				return "The user has no guides yet. push_to_guide with a new guide name will create one.", nil
+			}
+			var b strings.Builder
+			b.WriteString("The user's guides (push into one by its name, or a new name to create one):\n")
+			for _, d := range ds {
+				fmt.Fprintf(&b, "- %s\n", d.Title)
+			}
+			return strings.TrimRight(b.String(), "\n"), nil
+		},
+		NeedsConfirm: false,
+	}
+
+	push_to_guide_tool := AgentToolDef{
+		Tool: Tool{
+			Name:        "push_to_guide",
+			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action — do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
+			Parameters: map[string]ToolParam{
+				"guide":         {Type: "string", Description: "The target guide's name (e.g. 'Ops', 'DB Runbook'). If none matches an existing guide, a new guide with this name is created."},
+				"section_title": {Type: "string", Description: "Title for the new section (e.g. 'Cron jobs', 'Disk layout')."},
+				"content":       {Type: "string", Description: "The section body in markdown — the finding, written up cleanly. No top-level heading; the title is separate."},
+			},
+			Required: []string{"guide", "section_title", "content"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			guide, _ := args["guide"].(string)
+			title, _ := args["section_title"].(string)
+			content, _ := args["content"].(string)
+			guide = strings.TrimSpace(guide)
+			content = strings.TrimSpace(content)
+			if content == "" {
+				return "", fmt.Errorf("content is required")
+			}
+			// Resolve the guide by name; create a new one when nothing matches.
+			docID, newTitle := "", ""
+			if guide != "" {
+				for _, d := range ListDocuments(userID, "guide") {
+					if strings.EqualFold(strings.TrimSpace(d.Title), guide) {
+						docID = d.ID
+						break
+					}
+				}
+				if docID == "" {
+					newTitle = guide
+				}
+			}
+			if _, err := AppendToDocument(ctx, userID, "guide", docID, newTitle, title, content); err != nil {
+				return "", fmt.Errorf("push to guide failed: %w", err)
+			}
+			if newTitle != "" {
+				return fmt.Sprintf("Created guide %q and added the %q section.", newTitle, strings.TrimSpace(title)), nil
+			}
+			return fmt.Sprintf("Added the %q section to the %q guide.", strings.TrimSpace(title), guide), nil
+		},
+		NeedsConfirm: false,
+	}
+
 	// workerTools holds a placeholder run_command entry. Every call site must use
 	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
 	var workerTools []AgentToolDef
@@ -3341,20 +3411,20 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		// scope-based, so they carry over unchanged.
 		workerTools = append(repoCodeTools(ownerUser, appliance.ID),
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			save_to_codewriter_tool, save_to_techwriter_tool,
+			save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
 		)
 	} else if appliance.Type == "command" {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool,
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			count_lines_tool, read_range_tool, save_to_codewriter_tool, save_to_techwriter_tool,
+			count_lines_tool, read_range_tool, save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
 		}
 	} else {
 		workerTools = []AgentToolDef{
 			newRunTool(), read_log_tool, search_logs_tool, newRunPtyTool(),
 			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
 			count_lines_tool, read_range_tool,
-			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool,
+			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
 		}
 	}
 	// Enforced sanity check — servitor handles sensitive system data and

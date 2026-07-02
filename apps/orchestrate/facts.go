@@ -204,7 +204,10 @@ func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request
 			if n == "" {
 				continue
 			}
-			StoreMemoryFact(udb, ns, n)
+			// Pass the worker chat so the admin path resolves contradictions the
+			// same way the LLM's store_fact does — a corrected note supersedes the
+			// stale one it replaces instead of coexisting as a contradiction.
+			StoreMemoryFact(udb, ns, n, T.WorkerChat)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:

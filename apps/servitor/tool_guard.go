@@ -41,6 +41,8 @@ var servitorWorkerToolAllowList = map[string]bool{
 	"list_watches":        true, // local: watcher state
 	"save_to_codewriter":  true, // local: gohort CodeWriter DB write
 	"save_to_techwriter":  true, // local: gohort TechWriter DB write
+	"push_to_guide":       true, // local: gohort Guides DB write (via core DocumentTarget)
+	"list_guides":         true, // local: gohort Guides read
 }
 
 // servitorOrchestratorToolAllowList is the corresponding set for the

@@ -42,6 +42,13 @@ type MemoryFact struct {
 	ID        string    `json:"id"`
 	Note      string    `json:"note"`
 	Created   time.Time `json:"created"`
+	// Updated tracks the last time this fact's meaning changed — set to Created
+	// on save, and bumped when the fact is superseded (its status changes). It is
+	// NOT bumped by the transparent vector backfill (a cache fill, not a content
+	// change). Enables auditability and recency/staleness-aware pruning (a soft
+	// fact cap can evict least-recently-updated first). Zero on facts saved before
+	// this field existed.
+	Updated time.Time `json:"updated,omitempty"`
 	// Vector is the note's embedding, computed once at save time and reused for
 	// dedup/supersession/search — so a namespace of N facts costs O(1) embed
 	// calls per save/search instead of O(N) re-embedding every existing note.
@@ -85,8 +92,8 @@ func factDBKey(namespace, id string) string {
 //   1. Normalized text match (lowercase + collapsed whitespace +
 //      stripped edge punctuation). Cheap; catches rephrasing.
 //   2. Semantic similarity via embeddings (cosine ≥ 0.90). Catches
-//      different wordings of the same fact ("user's name is Craig"
-//      vs "Craig is the user's name"). Skipped when embeddings are
+//      different wordings of the same fact ("user's name is Robin"
+//      vs "Robin is the user's name"). Skipped when embeddings are
 //      disabled or the namespace is empty.
 //
 // First-write-wins on duplicate — the existing fact stays, the new
@@ -142,11 +149,13 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 		}
 	}
 
+	now := time.Now()
 	f := MemoryFact{
 		Namespace: namespace,
 		ID:        UUIDv4(),
 		Note:      note,
-		Created:   time.Now(),
+		Created:   now,
+		Updated:   now,
 		Vector:    newVec,
 	}
 
@@ -155,10 +164,10 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 	// pays nothing. The LLM decides which candidates the new note replaces.
 	var superseded []MemoryFact
 	if len(chat) > 0 && chat[0] != nil && len(supersedeCandidates) > 0 {
-		now := time.Now()
 		for _, old := range judgeSupersedes(chat[0], note, supersedeCandidates) {
 			old.SupersededAt = now
 			old.SupersededBy = f.ID
+			old.Updated = now // status change — bump Updated
 			db.Set(MemoryFactsTable, factDBKey(old.Namespace, old.ID), old)
 			Debug("[factstore] superseded %q -> %q (ns=%s)", old.Note, note, namespace)
 			superseded = append(superseded, old)

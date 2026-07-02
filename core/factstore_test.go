@@ -111,3 +111,23 @@ func TestStoreMemoryFactNoChatStillDedups(t *testing.T) {
 		t.Fatalf("expected 1 fact after dedup, got %d", len(got))
 	}
 }
+
+func TestStoreMemoryFactStampsUpdated(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	f, isNew, _ := StoreMemoryFact(db, ns, "Time zone is America/Los_Angeles")
+	if !isNew {
+		t.Fatal("first store should report new")
+	}
+	if f.Updated.IsZero() {
+		t.Error("Updated should be stamped on a fresh fact")
+	}
+	if !f.Updated.Equal(f.Created) {
+		t.Errorf("on a fresh fact Updated should equal Created: created=%v updated=%v", f.Created, f.Updated)
+	}
+	// The stamp round-trips through storage.
+	got := ListMemoryFacts(db, ns)
+	if len(got) != 1 || got[0].Updated.IsZero() {
+		t.Fatalf("stored fact should carry Updated: %+v", got)
+	}
+}
