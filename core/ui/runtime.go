@@ -648,6 +648,8 @@ body { min-height: 100vh; min-height: 100dvh; }
   vertical-align: middle; margin-right: 0.4rem;
 }
 @keyframes ui-spin { to { transform: rotate(360deg); } }
+.ui-wb-working { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: 0.95rem; padding: 0.2rem 0 0.9rem; }
+.ui-wb-working-actions { text-align: right; }
 
 /* --- Footer --- */
 .ui-footer { margin-top: 1rem; text-align: center; }
@@ -17330,10 +17332,32 @@ const runtimeJS = `
       if (a.kind === 'report') {
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = a.spinner || 'Working…';
-        fetch(url, {method: 'POST', credentials: 'same-origin'})
+        // Cancellable: the working modal's Cancel aborts the request, which
+        // cancels the server-side run (the handler drives its agent loop off the
+        // request context).
+        var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+        var cancelled = false, workDlg = null;
+        function closeWork() { if (workDlg) { try { workDlg.close(); workDlg.remove(); } catch(e){} workDlg = null; } }
+        function restore() { btn.disabled = false; btn.textContent = orig; }
+        window.uiOpenSimpleModal({title: a.label, width: '420px', mount: function(body, dlg) {
+          workDlg = dlg;
+          body.appendChild(el('div', {class: 'ui-wb-working'}, [
+            el('span', {class: 'ui-spinner'}), el('span', {text: a.spinner || 'Working…'}),
+          ]));
+          var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel', onclick: function() {
+            cancelled = true;
+            if (controller) { try { controller.abort(); } catch(e){} }
+            closeWork(); restore();
+          }});
+          body.appendChild(el('div', {class: 'ui-wb-working-actions'}, [cancel]));
+        }});
+        var fopts = {method: 'POST', credentials: 'same-origin'};
+        if (controller) fopts.signal = controller.signal;
+        fetch(url, fopts)
           .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
           .then(function(d) {
-            btn.disabled = false; btn.textContent = orig;
+            restore(); closeWork();
+            if (a.invalidate && a.invalidate.length && window.uiInvalidate) window.uiInvalidate(a.invalidate);
             window.uiOpenSimpleModal({title: a.label, width: '720px', mount: function(body) {
               var md = el('div', {class: 'ui-wb-md'});
               body.appendChild(md);
@@ -17341,7 +17365,8 @@ const runtimeJS = `
             }});
           })
           .catch(function(err) {
-            btn.disabled = false; btn.textContent = orig;
+            restore(); closeWork();
+            if (cancelled || (err && err.name === 'AbortError')) return; // user cancelled — silent
             alert((a.label || 'Action') + ' failed: ' + (err && err.message || err));
           });
         return;

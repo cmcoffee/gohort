@@ -4667,6 +4667,7 @@ func (T *Servitor) handleSaveDestinations(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]bool{
 		"techwriter": SaveArticleFunc != nil,
 		"codewriter": SaveSnippetFunc != nil,
+		"guide":      HasDocumentTarget("guide"),
 	})
 }
 

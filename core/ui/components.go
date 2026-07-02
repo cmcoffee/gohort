@@ -2072,6 +2072,10 @@ type WorkbenchAction struct {
 	RestoreURL string `json:"restore_url,omitempty"`
 	Confirm    string `json:"confirm,omitempty"`
 	Spinner    string `json:"spinner,omitempty"` // busy label for "report" (default "Working…")
+	// Invalidate — for a "report" action that CHANGES the open record (e.g. an
+	// LLM pass that rewrites sections), the sources to uiInvalidate after it
+	// finishes so the viewer/list refresh. Empty = show the report only.
+	Invalidate []string `json:"invalidate,omitempty"`
 }
 
 func (WorkbenchPanel) componentType() string { return "workbench_panel" }

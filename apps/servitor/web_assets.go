@@ -912,6 +912,49 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           });
           row.appendChild(cwBtn);
         }
+        // Push this reply into a Guide — but only guides that already list THIS
+        // appliance/repo as a source (fetched on click). One match pushes
+        // directly; several show a picker.
+        if (saveDestinations.guide) {
+          var gBtn = makeBtn('↗ Guide', function() {
+            var aid = getApplianceID();
+            if (!aid) { window.uiAlert('Pick an appliance first'); return; }
+            function pushTo(gid) {
+              gBtn.disabled = true; gBtn.textContent = 'Incorporating…';
+              fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid), {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({appliance_id: aid, guide_id: gid, text: m.rawText}),
+              }).then(function(r) {
+                gBtn.disabled = false;
+                gBtn.textContent = r.ok ? 'Saved ✓' : 'Failed';
+                if (r.ok) gBtn.classList.add('saved');
+              });
+            }
+            gBtn.disabled = true; gBtn.textContent = 'Loading…';
+            fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid))
+              .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
+              .then(function(d) {
+                gBtn.disabled = false; gBtn.textContent = '↗ Guide';
+                var guides = (d && d.guides) || [];
+                if (!guides.length) {
+                  window.uiAlert("No guide lists this system as a source yet. Add it via a guide's Sources picker, then push here.");
+                  return;
+                }
+                if (guides.length === 1 || !window.uiOpenSimpleModal) { pushTo(guides[0].id); return; }
+                window.uiOpenSimpleModal({title: 'Add to which guide?', width: '420px', mount: function(body, dlg) {
+                  guides.forEach(function(g) {
+                    var b = document.createElement('button');
+                    b.className = 'ui-row-btn'; b.textContent = g.title;
+                    b.style.display = 'block'; b.style.width = '100%'; b.style.margin = '0.25rem 0'; b.style.textAlign = 'left';
+                    b.onclick = function() { try { dlg.close(); dlg.remove(); } catch(e){} pushTo(g.id); };
+                    body.appendChild(b);
+                  });
+                }});
+              })
+              .catch(function(err) { gBtn.disabled = false; gBtn.textContent = '↗ Guide'; window.uiAlert('Failed: ' + (err && err.message || err)); });
+          });
+          row.appendChild(gBtn);
+        }
 
         m.wrap.appendChild(row);
       }
@@ -1073,62 +1116,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           setTimeout(function() { URL.revokeObjectURL(url); a.remove(); }, 0);
         })
         .catch(function(err) { window.uiAlert('Export failed: ' + (err && err.message || err)); });
-    });
-
-    // Push this session's answer (what you just looked up) into one of the
-    // user's Guides as a new section — the manual counterpart to the
-    // push_to_guide agent tool. Server grabs the latest session's last answer.
-    window.uiRegisterClientAction('servitor_push_to_guide', function() {
-      var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
-      fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid))
-        .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
-        .then(function(d) {
-          if (!d || !d.has_answer) { window.uiAlert('Nothing to push yet — ask the system something first.'); return; }
-          if (!window.uiOpenSimpleModal) { window.uiAlert('UI not ready'); return; }
-          window.uiOpenSimpleModal({title: 'Push to guide', width: '520px', mount: function(body, dlg) {
-            var intro = document.createElement('p');
-            intro.textContent = "Add this session's answer to a guide as a new section. Type an existing guide name to append, or a new name to create one.";
-            intro.style.color = 'var(--text-mute)'; intro.style.fontSize = '0.88rem'; intro.style.margin = '0 0 0.7rem';
-            body.appendChild(intro);
-            var dl = document.createElement('datalist'); dl.id = 'stg-guide-list';
-            (d.guides || []).forEach(function(g) { var o = document.createElement('option'); o.value = g.title; dl.appendChild(o); });
-            body.appendChild(dl);
-            function field(labelText, val, listId) {
-              var wrap = document.createElement('div'); wrap.style.margin = '0.5rem 0';
-              var lab = document.createElement('label'); lab.textContent = labelText;
-              lab.style.display = 'block'; lab.style.fontSize = '0.78rem'; lab.style.color = 'var(--text-mute)'; lab.style.marginBottom = '0.2rem';
-              var inp = document.createElement('input'); inp.type = 'text'; inp.value = val || '';
-              inp.style.width = '100%'; inp.style.padding = '0.45rem 0.6rem'; inp.style.background = 'var(--bg-0)';
-              inp.style.color = 'var(--text)'; inp.style.border = '1px solid var(--border)'; inp.style.borderRadius = '6px';
-              if (listId) inp.setAttribute('list', listId);
-              wrap.appendChild(lab); wrap.appendChild(inp); body.appendChild(wrap);
-              return inp;
-            }
-            var firstGuide = (d.guides && d.guides[0] && d.guides[0].title) || '';
-            var gInp = field('Guide', firstGuide, 'stg-guide-list');
-            var tInp = field('Section title', d.default_title || 'Finding', null);
-            var btn = document.createElement('button'); btn.className = 'ui-row-btn primary'; btn.textContent = 'Push';
-            var actions = document.createElement('div'); actions.style.textAlign = 'right'; actions.style.marginTop = '0.6rem';
-            actions.appendChild(btn); body.appendChild(actions);
-            btn.addEventListener('click', function() {
-              var guide = (gInp.value || '').trim();
-              if (!guide) { window.uiAlert('Enter a guide name'); return; }
-              btn.disabled = true; btn.textContent = 'Pushing…';
-              fetch('api/push-to-guide?appliance_id=' + encodeURIComponent(aid), {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({appliance_id: aid, guide: guide, section_title: (tInp.value || '').trim()}),
-              })
-                .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); })
-                .then(function(res) {
-                  try { dlg.close(); dlg.remove(); } catch(e) {}
-                  window.uiAlert((res && res.created ? 'Created guide ' : 'Added a section to ') + '"' + guide + '".');
-                })
-                .catch(function(err) { btn.disabled = false; btn.textContent = 'Push'; window.uiAlert('Push failed: ' + (err && err.message || err)); });
-            });
-          }});
-        })
-        .catch(function(err) { window.uiAlert('Failed: ' + (err && err.message || err)); });
     });
 
     // --- xterm.js terminal wiring -------------------------------------

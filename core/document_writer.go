@@ -95,3 +95,37 @@ func AppendToDocument(ctx context.Context, user, kind, docID, newDocTitle, secti
 	}
 	return t.Append(ctx, user, docID, newDocTitle, sectionTitle, markdown)
 }
+
+// ReferencingDocumentTarget is an optional DocumentTarget capability: filter the
+// user's documents to those that reference a given source (a reference-source
+// kind + item id). Lets a producer offer "push into a doc that's already ABOUT
+// this thing" — e.g. servitor pushing a finding only into guides that have this
+// System attached as a source. Targets that don't implement it fall back to List.
+type ReferencingDocumentTarget interface {
+	DocumentTarget
+	ListReferencing(user, srcKind, srcItemID string) []DocItem
+}
+
+// ListDocumentsReferencing returns the user's documents of the given target kind
+// that reference (srcKind, srcItemID). Falls back to the full list when the
+// target isn't reference-aware.
+func ListDocumentsReferencing(user, kind, srcKind, srcItemID string) []DocItem {
+	docTargetsMu.RLock()
+	t := docTargets[kind]
+	docTargetsMu.RUnlock()
+	if t == nil {
+		return nil
+	}
+	if rt, ok := t.(ReferencingDocumentTarget); ok {
+		return rt.ListReferencing(user, srcKind, srcItemID)
+	}
+	return t.List(user)
+}
+
+// HasDocumentTarget reports whether a writer target is registered for kind.
+func HasDocumentTarget(kind string) bool {
+	docTargetsMu.RLock()
+	_, ok := docTargets[kind]
+	docTargetsMu.RUnlock()
+	return ok
+}

@@ -553,7 +553,7 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 // edit_section/add_section as a revision (roll back via History). Runs in a
 // dedicated hidden sub-session so the automated pass doesn't clutter the user's
 // visible guide chat. Synchronous (an agent loop; tens of seconds).
-func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID string) (string, error) {
+func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID string, private bool) (string, error) {
 	// Point the co-author tools at this guide (they resolve the active guide, then
 	// its owner's store) for the duration of the run.
 	udb.Set(activeTable, "current", guideID)
@@ -563,6 +563,14 @@ func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *o
 		"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it — grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
 		"4. Leave sections that already match their sources unchanged — don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
 		"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."
+	tools := T.coauthorTools(udb, orch, user, true)
+	// A Private guide's update must not touch the internet: block network on the
+	// run's context (the dispatch drops network-capable tools when the ctx says so)
+	// and withhold the web-research tool. The prompt already says source-only.
+	if private {
+		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+		tools = withoutTools(tools, "research")
+	}
 	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
 		AgentOwner:   user,
 		RuntimeUser:  user,
@@ -570,7 +578,44 @@ func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *o
 		SubSessionID: "guide-update:" + guideID,
 		FreshSession: true,
 		Message:      prompt,
-		AppTools:     T.coauthorTools(udb, orch, user, true),
+		AppTools:     tools,
+	})
+	if err != nil {
+		return "", err
+	}
+	return res.Text, nil
+}
+
+// runIncorporate dispatches the Guide Author to weave a PUSHED finding INTO the
+// guide — merging it into the right existing section or adding a new one, in the
+// guide's voice — rather than blind-appending a raw block. Used by the
+// document-target push path (servitor's ↗ Guide button + push_to_guide tool) so
+// pushed content lands coherently. Honors the guide's Private (no-internet) flag.
+func (T *Guides) runIncorporate(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, suggestedTitle, content string, private bool) (string, error) {
+	udb.Set(activeTable, "current", guideID)
+	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document — do NOT just paste it in as a raw block.\n\n" +
+		"1. Call list_sections to see the current structure.\n" +
+		"2. If the finding extends, updates, or overlaps an EXISTING section, use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow — don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
+	if strings.TrimSpace(suggestedTitle) != "" {
+		prompt += " (a reasonable title: \"" + strings.TrimSpace(suggestedTitle) + "\")"
+	}
+	prompt += ".\n" +
+		"3. Keep the guide's voice and structure, don't duplicate anything already covered, and preserve any values/citations the finding carries.\n\n" +
+		"THE FINDING TO INCORPORATE:\n\n" + content + "\n\n" +
+		"When done, reply with a one-line summary of what you changed."
+	tools := T.coauthorTools(udb, orch, user, true)
+	if private {
+		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+		tools = withoutTools(tools, "research")
+	}
+	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+		AgentOwner:   user,
+		RuntimeUser:  user,
+		AgentKey:     guideAgentID,
+		SubSessionID: "guide-incorporate:" + guideID,
+		FreshSession: true,
+		Message:      prompt,
+		AppTools:     tools,
 	})
 	if err != nil {
 		return "", err

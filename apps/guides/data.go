@@ -54,8 +54,13 @@ type Guide struct {
 	Owner     string `json:"owner,omitempty"`
 	Shared    bool   `json:"shared,omitempty"`
 	ShareMode string `json:"share_mode,omitempty"` // "" | "view" | "edit"
-	Created   string `json:"created"`
-	Updated   string `json:"updated"`
+	// Private locks the Guide Author to NO internet access on this guide: its
+	// turns run ForcePrivate (network tools stripped, worker-tier routing) and the
+	// web-research tool is withheld, so answers/edits are grounded only in the
+	// guide's own attached knowledge — nothing reaches the open web.
+	Private bool   `json:"private,omitempty"`
+	Created string `json:"created"`
+	Updated string `json:"updated"`
 }
 
 // ShareModeEdit is the ShareMode value that lets any authenticated user edit a

@@ -46,6 +46,39 @@ func TestReadOnlyGuideTools(t *testing.T) {
 	}
 }
 
+// TestPrivateGuideToolStripping covers the helpers a Private (no-internet) guide
+// uses to drop the web tools from a turn.
+func TestPrivateGuideToolStripping(t *testing.T) {
+	// withoutTools drops the web-research co-author tool, keeps the rest.
+	full := []AgentToolDef{
+		{Tool: Tool{Name: "add_section"}},
+		{Tool: Tool{Name: "search_knowledge"}},
+		{Tool: Tool{Name: "research"}},
+		{Tool: Tool{Name: "pull_reference"}},
+	}
+	got := map[string]bool{}
+	for _, tl := range withoutTools(full, "research") {
+		got[tl.Tool.Name] = true
+	}
+	if got["research"] {
+		t.Error("research must be stripped for a private guide")
+	}
+	if !got["add_section"] || !got["search_knowledge"] || !got["pull_reference"] {
+		t.Errorf("non-web tools must survive: %v", got)
+	}
+
+	// withoutToolNames strips the agent's built-in web tools.
+	names := withoutToolNames([]string{"web_search", "fetch_url", "ask_user", "ask_user_form"}, "web_search", "fetch_url")
+	for _, n := range names {
+		if n == "web_search" || n == "fetch_url" {
+			t.Errorf("%q must be stripped for a private guide", n)
+		}
+	}
+	if len(names) != 2 {
+		t.Errorf("ask_user / ask_user_form must survive, got %v", names)
+	}
+}
+
 // TestReferenceAttached checks the gate that keeps a reader's pull_reference to
 // the guide's own linked sources.
 func TestReferenceAttached(t *testing.T) {

@@ -35,8 +35,8 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleGuide(w, r, udb, user)
 	case path == "new":
 		T.handleNew(w, r, udb, user)
-	case path == "share":
-		T.handleShare(w, r, udb, user)
+	case path == "settings":
+		T.handleSettings(w, r, udb, user)
 	case path == "revisions":
 		T.handleRevisions(w, r, udb, user)
 	case path == "restore":
@@ -172,47 +172,6 @@ func (T *Guides) handleNew(w http.ResponseWriter, r *http.Request, udb Database,
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
-// handleShare drives the per-guide Share control. GET ?id=<id> returns
-// {shared, can_manage, owner} — the current sharing state plus whether this user
-// may change it. POST ?id=<id> with {shared:bool} publishes/unpublishes the guide
-// read-only to all authenticated users (owner/admin only). Sharing keeps the guide
-// in the owner's store; it just adds/removes the app-wide index entry.
-func (T *Guides) handleShare(w http.ResponseWriter, r *http.Request, udb Database, user string) {
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, id)
-	if !found {
-		http.NotFound(w, r)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		writeJSON(w, map[string]any{"shared": g.Shared, "mode": shareModeOf(g), "can_manage": canManage, "owner": g.Owner})
-	case http.MethodPost:
-		if !canManage {
-			http.Error(w, "only the owner can change sharing for this guide", http.StatusForbidden)
-			return
-		}
-		var body struct {
-			Shared bool   `json:"shared"`
-			Mode   string `json:"mode"` // "view" | "edit" (defaults to view)
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		g.Shared = body.Shared
-		g.ShareMode = normalizeShareMode(body.Mode)
-		saveGuide(ownerUDB, g) // sharing flag is not a content change — no revision snapshot
-		owner := g.Owner
-		if owner == "" {
-			owner = user
-		}
-		SetSharedOwner(T.DB, sharedGuidesIndex, id, owner, body.Shared)
-		writeJSON(w, map[string]any{"ok": true, "shared": body.Shared, "mode": normalizeShareMode(body.Mode)})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
 
 // normalizeShareMode maps an arbitrary mode string to a stored ShareMode: "edit"
 // stays "edit", anything else is view-only ("").
@@ -229,6 +188,60 @@ func shareModeOf(g Guide) string {
 		return ShareModeEdit
 	}
 	return "view"
+}
+
+// handleSettings drives the guide Edit modal — the single place to change a
+// guide's name/subtitle, the Private (no-internet) flag, AND its sharing (shared
+// on/off + view/edit mode). GET ?id=<id> returns current values + can_manage.
+// POST ?id=<id> with {title, subtitle, private, shared, mode} updates them
+// (owner/admin only). Metadata, so it saves without a content revision; sharing
+// changes also sync the app-wide shared index.
+func (T *Guides) handleSettings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]any{
+			"title": g.Title, "subtitle": g.Subtitle, "private": g.Private,
+			"shared": g.Shared, "mode": shareModeOf(g), "owner": g.Owner,
+			"can_manage": canManage,
+		})
+	case http.MethodPost:
+		if !canManage {
+			http.Error(w, "only the owner can change this guide's settings", http.StatusForbidden)
+			return
+		}
+		var body struct {
+			Title    string `json:"title"`
+			Subtitle string `json:"subtitle"`
+			Private  bool   `json:"private"`
+			Shared   bool   `json:"shared"`
+			Mode     string `json:"mode"` // "view" | "edit"
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide")
+		g.Subtitle = strings.TrimSpace(body.Subtitle)
+		g.Private = body.Private
+		g.Shared = body.Shared
+		g.ShareMode = normalizeShareMode(body.Mode)
+		saveGuide(ownerUDB, g) // metadata, not a content change — no revision snapshot
+		// Keep the app-wide shared index in sync (drives other users' discovery).
+		owner := g.Owner
+		if owner == "" {
+			owner = user
+		}
+		SetSharedOwner(T.DB, sharedGuidesIndex, id, owner, body.Shared)
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 // handleRevisions lists a guide's revision history (newest first): {id, at, note}.
@@ -321,8 +334,24 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	// A bounded snapshot of the guide's CURRENT linked sources (owner-scoped), so
 	// the audit can flag where the written guide has fallen behind its sources.
 	snapshot := gatherLinkedSourceSnapshot(r.Context(), owner, g)
+	auditCtx := r.Context()
 	var prompt string
-	if snapshot != "" {
+	switch {
+	case g.Private:
+		// Private guide: NO internet. Block network on the run's context so the
+		// audit agent's web tools are stripped, and compare ONLY against the
+		// linked sources — no web-currency check.
+		auditCtx = WithNetworkConnector(auditCtx, NewNetworkConnector(true))
+		if snapshot == "" {
+			writeJSON(w, map[string]string{"report": "_This is a private guide with no linked sources — nothing to audit against (web research is disabled)._"})
+			return
+		}
+		prompt = "This is a PRIVATE guide — you have NO internet access; do NOT attempt web research. Audit it ONLY against its linked sources (a current snapshot is below). Report:\n" +
+			"1. **Contradicted / outdated by the sources** — sections whose claims the linked sources now contradict or supersede. Name the section + the exact change, quoting the source.\n" +
+			"2. **Missing from the guide** — material present in the linked sources that the guide should cover but doesn't. Name the section it belongs in.\n\n" +
+			"Be specific: name the SECTION and the exact edit needed. If a section still matches its sources, say so briefly. End with a short prioritized list of recommended edits. If the guide fully reflects its sources, say that plainly.\n\n" +
+			"=== CURRENT LINKED SOURCES ===\n\n" + snapshot + "\n\n=== GUIDE ===\n\n" + renderGuideMarkdownPlain(g)
+	case snapshot != "":
 		prompt = "Audit the following guide for accuracy and CURRENCY as of today. It has LINKED SOURCES — the user's own knowledge collections and connected reference sources — and a current snapshot of that material is included below. Your MOST IMPORTANT job is to compare the written guide against these linked sources. Report:\n" +
 			"1. **Contradicted / outdated by the sources** — sections whose claims the linked sources now contradict or supersede. Name the section + the exact change, quoting the source.\n" +
 			"2. **Missing from the guide** — material present in the linked sources that the guide should cover but doesn't. Name the section it belongs in (or that a new section is needed).\n" +
@@ -330,7 +359,7 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 			"4. **Gaps** — other important things the guide should cover.\n\n" +
 			"Be specific: name the SECTION and the exact edit needed. If a section still matches its sources and is current, say so briefly. End with a short prioritized list of recommended edits. If the guide fully reflects its sources and is current, say that plainly.\n\n" +
 			"=== CURRENT LINKED SOURCES ===\n\n" + snapshot + "\n\n=== GUIDE ===\n\n" + renderGuideMarkdownPlain(g)
-	} else {
+	default:
 		prompt = "Audit the following guide for accuracy and CURRENCY as of today. Research the current state of what it covers and report:\n" +
 			"1. **Outdated or now-incorrect** content — anything that has changed (renamed commands/flags, deprecated APIs, changed defaults, superseded versions).\n" +
 			"2. **Notable changes / new developments** since it was written that a reader should know.\n" +
@@ -338,7 +367,7 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 			"Be specific: name the SECTION and the exact change needed, and cite sources for any claim that something changed. If a section is still accurate, say so briefly. End with a short prioritized list of recommended edits. If everything is current, say that plainly.\n\n" +
 			"GUIDE:\n\n" + renderGuideMarkdownPlain(g)
 	}
-	report, err := orch.RunAgentSync(r.Context(), user, user, "seed-research", prompt)
+	report, err := orch.RunAgentSync(auditCtx, user, user, "seed-research", prompt)
 	if err != nil {
 		http.Error(w, "audit failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -379,7 +408,7 @@ func (T *Guides) handleUpdateFromSources(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
 		return
 	}
-	report, err := T.runUpdateFromSources(r.Context(), udb, orch, user, id)
+	report, err := T.runUpdateFromSources(r.Context(), udb, orch, user, id, g.Private)
 	if err != nil {
 		http.Error(w, "update failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -656,12 +685,22 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// Both cases share one tool builder (the closures resolve the open guide to
 	// its owner's store); we just hand the reader a filtered slice.
 	var tools []AgentToolDef
-	if _, _, _, canEdit, found := T.resolve(r, udb, user, activeGuideID(udb)); found {
+	if g, _, _, canEdit, found := T.resolve(r, udb, user, activeGuideID(udb)); found {
 		all := T.coauthorTools(udb, orch, user, canEdit)
 		if canEdit {
 			tools = all
 		} else {
 			tools = readOnlyGuideTools(all)
+		}
+		// A Private guide gets NO internet access this turn: run the agent
+		// ForcePrivate (framework strips network tools + locks worker-tier
+		// routing), strip its web tools from the per-turn copy defensively, and
+		// drop the web-research co-author tool. Answers/edits stay grounded in the
+		// guide's own attached knowledge. Applies to readers too.
+		if g.Private {
+			agent.ForcePrivate = true
+			agent.AllowedTools = withoutToolNames(agent.AllowedTools, "web_search", "fetch_url")
+			tools = withoutTools(tools, "research")
 		}
 	}
 	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
@@ -691,6 +730,38 @@ func readOnlyGuideTools(all []AgentToolDef) []AgentToolDef {
 	for _, t := range all {
 		if readOnlyGuideToolNames[t.Tool.Name] {
 			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// withoutTools returns defs minus any tool whose name is in drop — used to strip
+// the web-research tool from a Private guide's turn.
+func withoutTools(defs []AgentToolDef, drop ...string) []AgentToolDef {
+	skip := map[string]bool{}
+	for _, d := range drop {
+		skip[d] = true
+	}
+	out := make([]AgentToolDef, 0, len(defs))
+	for _, t := range defs {
+		if !skip[t.Tool.Name] {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// withoutToolNames returns names minus any in drop — used to strip web_search /
+// fetch_url from a Private guide's per-turn agent copy.
+func withoutToolNames(names []string, drop ...string) []string {
+	skip := map[string]bool{}
+	for _, d := range drop {
+		skip[d] = true
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if !skip[n] {
+			out = append(out, n)
 		}
 	}
 	return out
