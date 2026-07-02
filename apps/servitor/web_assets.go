@@ -1169,11 +1169,13 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       }
     }
     // Gate type-specific toolbar actions to the appliance types they apply to:
-    // Map App enumerates a CLI command (command-type only); Refresh Repo re-clones
-    // (repo-type only). Everything else stays visible for all types.
+    // Map App lets you pick WHICH CLI command to enumerate, so it only makes sense
+    // on SSH hosts (many commands). A command-type appliance IS a single command —
+    // the only mappable thing — so it doesn't need it; repos have no commands.
+    // Refresh Repo re-clones (repo-type only). Everything else stays visible.
     function applyToolbarForType() {
       var t = currentApplianceType();
-      setActionVisible('Map App', t === 'command');
+      setActionVisible('Map App', t === 'ssh');
       setActionVisible('Refresh Repo', t === 'repo');
     }
     // Repo appliances have no terminal, so halve the activity column's default
