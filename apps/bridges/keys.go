@@ -88,7 +88,10 @@ func (T *Bridges) handleKeyOne(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Enabled bool `json:"enabled"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
 		k.Enabled = req.Enabled
 		T.saveBridgeKey(k)
 		Log("[bridges] bridge %q enabled=%v", k.Name, k.Enabled)

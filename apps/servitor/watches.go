@@ -119,11 +119,15 @@ func (T *Servitor) processWatches() {
 				continue
 			}
 		}
-		// Run the check in a separate goroutine so slow SSH doesn't block the loop.
-		go T.checkWatch(w)
-		// Advance next run regardless of check outcome.
+		// Advance next run and persist BEFORE launching the check, so the loop is
+		// the FIRST writer and the check goroutine (which may set Done=true) is the
+		// LAST. Previously the goroutine's Done=true could be clobbered back to
+		// false by this Set landing after it, re-firing a completed watch. The
+		// goroutine gets the copy carrying the new NextRunAt, so its own Set keeps
+		// it. Run in a goroutine so slow SSH doesn't block the loop.
 		w.NextRunAt = now.Add(60 * time.Second).Format(time.RFC3339)
 		T.DB.Set(watchTable, w.ID, w)
+		go T.checkWatch(w)
 	}
 }
 

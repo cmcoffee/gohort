@@ -358,6 +358,7 @@ func StartEventMonitorScheduler() {
 	// replaces via SchedulerID, so a monitor whose task is still live just gets an
 	// equivalent fresh one (no duplicate timers), and nextPoll spreads first
 	// checks across each monitor's own cadence (no boot stampede).
+	rearmed := 0
 	for _, k := range RootDB.Keys(eventMonitorsTable) {
 		var m EventMonitor
 		if !RootDB.Get(eventMonitorsTable, k, &m) {
@@ -368,7 +369,12 @@ func StartEventMonitorScheduler() {
 		}
 		if err := ScheduleEventMonitor(RootDB, m); err != nil {
 			Log("[event] boot re-arm failed for %s/%s: %v", m.Owner, m.Name, err)
+			continue
 		}
+		rearmed++
+	}
+	if rearmed > 0 {
+		Log("[event] startup self-heal: re-armed %d active scheduled monitor(s)", rearmed)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -215,9 +216,13 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 				if cand.Service == svc && cand.Address != "" && memberHandle[cand.Address] {
 					cand.Address = activeChatID
 					SaveChannel(RootDB, cand)
-					ch, found = cand, true
+					// Keep the FIRST match as the active channel for this message,
+					// but don't stop — a group can have several channels stale-bound
+					// to different member handles; re-stamp them all so they route.
+					if !found {
+						ch, found = cand, true
+					}
 					Log("[bridges] self-healed group binding: channel %q re-stamped from member handle to chat id %s", cand.Name, activeChatID)
-					break
 				}
 			}
 		}
@@ -244,20 +249,27 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	Log("[bridges] channel %q (svc=%s agent=%s dir=%s) handling inbound from %s",
 		ch.Name, svc, ch.AgentID, ChannelDirection(ch), handle)
 	go func() {
+		// Bound the whole dispatch so a hung LLM/tool call can't leak this
+		// goroutine (and its worker call) forever. Generous on purpose: agent
+		// turns with tool work legitimately run tens of seconds to minutes (a
+		// video download+transcribe took ~70s), so this only reaps a genuinely
+		// stuck run, not a normal-but-slow one.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
 		// Wake-rule gatekeeper: master (admin) + per-channel rules decide whether
 		// this inbound wakes the agent. It was already recorded above for history;
 		// on a block we simply don't run or reply. Fails open when no rules are set
 		// or no evaluator is registered (see core.ChannelGatekeeperAllow). Runs in
 		// the goroutine so the connector's POST returns 202 without waiting on the
 		// gatekeeper's worker-LLM call.
-		if !ChannelGatekeeperAllow(context.Background(), ChannelInbound{
+		if !ChannelGatekeeperAllow(ctx, ChannelInbound{
 			Owner: ch.Owner, AgentID: ch.AgentID, SessionID: sessionID,
 			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images, Videos: videos, Audios: audios,
 		}) {
 			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
 			return
 		}
-		reply, err := RunChannelAgent(context.Background(), ChannelInbound{
+		reply, err := RunChannelAgent(ctx, ChannelInbound{
 			Owner:            ch.Owner,
 			AgentID:          ch.AgentID,
 			SessionID:        sessionID,
@@ -325,7 +337,12 @@ func (T *Bridges) handlePanic(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	T.setConfig(bridgesConfig{Enabled: false})
+	// Toggle only Enabled — a whole-struct replace here wiped SelfName/SelfHandle,
+	// so after re-enable the owner attributed as "Owner" instead of the configured
+	// name (and "me" recipient resolution broke).
+	c := T.config()
+	c.Enabled = false
+	T.setConfig(c)
 	Log("[bridges] PANIC — transport disabled; no inbound routes, no outbound delivers")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "message": "Bridges disabled. Re-enable from Master switches."})

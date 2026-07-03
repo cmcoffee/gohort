@@ -95,6 +95,10 @@ func (T *Servitor) cloneAndIngestRepo(user string, udb Database, applianceID str
 	count := 0
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			// Don't abort the whole walk on one bad entry, but log it — a silent
+			// skip (e.g. a permission-denied file) otherwise undercounts the repo
+			// with no trace.
+			Log("[servitor.repo] skip %q: %v", path, err)
 			return nil
 		}
 		if d.IsDir() {

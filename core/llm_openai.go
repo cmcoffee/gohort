@@ -1702,7 +1702,9 @@ func estimateReasoningTokens(total int, reasoning, content string, toolCalls []T
 	if denom == 0 {
 		return 0
 	}
-	return total * rChars / denom
+	// int64 for the product: total*rChars can exceed 2^31 (e.g. 32k tokens *
+	// 100k chars) and overflow a 32-bit int before the divide.
+	return int(int64(total) * int64(rChars) / int64(denom))
 }
 
 // ChatStream sends a streaming request.

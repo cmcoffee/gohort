@@ -1428,7 +1428,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       sel.value = aid;
       // Fire change so existing listeners (terminal + session
       // list refresh + facts badge) re-run for the new appliance.
-      sel.dispatchEvent(new Event('change'));
+      sel.dispatchEvent(new Event('change', {bubbles: true}));
     });
 
     // Hook the appliance picker so swaps re-open the terminal, re-gate the
@@ -1466,7 +1466,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       }
       if (!exists) return; // stale id (deleted appliance / different user) — leave placeholder
       sel.value = saved;
-      sel.dispatchEvent(new Event('change'));
+      sel.dispatchEvent(new Event('change', {bubbles: true}));
     }
     bootAppliancePicker(0);
   }

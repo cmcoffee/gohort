@@ -252,7 +252,10 @@ func upsertMember(members []ConvMember, handle, name string) []ConvMember {
 		return members
 	}
 	for i := range members {
-		if members[i].Handle == handle || contains(members[i].Aliases, handle) {
+		// Case-insensitive match, symmetric with resolveSender's fold lookup —
+		// otherwise "Rory" arriving for a stored "rory" appends a DUPLICATE member
+		// instead of updating the existing one.
+		if strings.EqualFold(members[i].Handle, handle) || containsFold(members[i].Aliases, handle) {
 			// Fill the name only when we don't have one yet — first real name
 			// wins. Never overwrite a learned or dashboard-edited name with a
 			// later, possibly-inconsistent inbound display name (that clobbered

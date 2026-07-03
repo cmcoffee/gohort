@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // chunkAgeHalflifeDays is the soft half-life for temporal-decay
@@ -224,17 +225,15 @@ func SplitReportIntoChunks(report string) []struct{ Section, Text string } {
 		// Sub-split if this section is too big for one embedding call.
 		// splitOnParagraphsCap returns the original text as a single-
 		// element slice when it fits, so the cheap path stays cheap.
-		for i, part := range splitOnParagraphsCap(text, cc) {
+		parts := splitOnParagraphsCap(text, cc)
+		multi := len(parts) > 1 // single-chunk sections stay un-suffixed
+		for i, part := range parts {
 			name := section
 			if len(part) > 0 && i > 0 {
 				name = section + fmt.Sprintf(" (part %d)", i+1)
 			}
-			if i == 0 && len(part) > 0 {
-				// Mark the first part too only when there's more than one
-				// — single-chunk sections stay un-suffixed.
-				if len(splitOnParagraphsCap(text, cc)) > 1 {
-					name = section + " (part 1)"
-				}
+			if i == 0 && len(part) > 0 && multi {
+				name = section + " (part 1)"
 			}
 			chunks = append(chunks, struct{ Section, Text string }{name, part})
 		}
@@ -282,8 +281,19 @@ func splitOnParagraphsCap(text string, cap int) []string {
 				cur.Reset()
 			}
 			for len(p) > cap {
-				out = append(out, p[:cap])
-				p = p[cap:]
+				// Back the cut off any multi-byte rune it lands inside, so a
+				// chunk never ends mid-character. cap is large (chunk-chars), so
+				// the fallback to a raw byte cut only trips for a pathological
+				// cap smaller than a single rune.
+				cut := cap
+				for cut > 0 && !utf8.RuneStart(p[cut]) {
+					cut--
+				}
+				if cut == 0 {
+					cut = cap
+				}
+				out = append(out, p[:cut])
+				p = p[cut:]
 			}
 			if p != "" {
 				cur.WriteString(p)
@@ -889,6 +899,7 @@ func VectorStats(db Database) VectorIndexStats {
 // private package at init time. The admin UI can trigger any registered
 // function by key. Returns the number of records modified.
 type MaintenanceFunc struct {
+	Key   string
 	Label string
 	Desc  string
 	Run   func(ctx context.Context) int
@@ -899,23 +910,23 @@ var maintenanceFuncs []MaintenanceFunc
 // RegisterMaintenanceFunc registers a named maintenance function for the
 // admin panel. Called from package init() functions.
 func RegisterMaintenanceFunc(key, label, desc string, fn func(ctx context.Context) int) {
-	maintenanceFuncs = append(maintenanceFuncs, MaintenanceFunc{Label: label, Desc: desc, Run: fn})
+	maintenanceFuncs = append(maintenanceFuncs, MaintenanceFunc{Key: key, Label: label, Desc: desc, Run: fn})
 }
 
 // ListMaintenanceFuncs returns metadata for all registered maintenance funcs.
 func ListMaintenanceFuncs() []struct{ Key, Label, Desc string } {
 	out := make([]struct{ Key, Label, Desc string }, len(maintenanceFuncs))
 	for i, m := range maintenanceFuncs {
-		out[i] = struct{ Key, Label, Desc string }{Key: m.Label, Label: m.Label, Desc: m.Desc}
+		out[i] = struct{ Key, Label, Desc string }{Key: m.Key, Label: m.Label, Desc: m.Desc}
 	}
 	return out
 }
 
-// RunMaintenanceFunc runs the maintenance function matching key (by Label).
-// Returns -1 if not found.
+// RunMaintenanceFunc runs the maintenance function matching key. Returns -1 if
+// not found.
 func RunMaintenanceFunc(ctx context.Context, key string) int {
 	for _, m := range maintenanceFuncs {
-		if m.Label == key {
+		if m.Key == key {
 			return m.Run(ctx)
 		}
 	}
@@ -1425,7 +1436,7 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 	var out []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
-		if !strings.Contains(strings.ToLower(c.Section+" "+c.Text), q) {
+		if !strings.Contains(strings.ToLower(c.Section+"\n"+c.Text), q) {
 			continue
 		}
 		out = append(out, SearchHit{
@@ -1435,7 +1446,8 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 			Title:    c.Title,
 			Section:  c.Section,
 			Text:     c.Text,
-			Score:    1,
+			Kind:     c.Kind,
+			Score:    0,
 			Locator:  c.Locator,
 			Date:     c.Date,
 		})
