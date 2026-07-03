@@ -261,10 +261,16 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-chat   { flex: 0 0 380px; }
 /* Mobile-only ✕ in the list header (closes the drawer). */
 .ui-wb-close { display: none; }
-/* Tablet: soften the fixed side-column widths so the viewer keeps room. */
+/* Tablet: soften the fixed side-column widths so the viewer keeps room.
+ * Also neutralize the agent panel's standalone-page mobile rules here —
+ * they pin its grid to a full viewport (100dvh) and unclamp its root,
+ * which inside a workbench chat pane makes the chat swallow the screen.
+ * Two-class specificity keeps these wins regardless of file order. */
 @media (max-width: 900px) {
   .ui-wb-list { flex: 0 0 200px; }
   .ui-wb-chat { flex: 0 0 300px; }
+  .ui-wb-chat .ui-agent { height: 100%; min-height: 0; }
+  .ui-wb-chat .ui-agent-grid { height: 100%; }
 }
 /* Phone: single column. The item list becomes a full-screen slide-in
  * drawer (same pattern as the chat/pipeline sidebars — opened from the
@@ -379,13 +385,9 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-chat > .ui-chat,
 .ui-wb-chat > .ui-agent { height: 100%; border: 0; border-radius: 0; min-height: 0; }
 .ui-wb-chat > .ui-chat.ui-chat-single { height: 100%; }
-@media (max-width: 900px) {
-  /* Stack on mobile; let the page scroll rather than three tiny panes. */
-  .ui-wb { flex-direction: column; height: auto; }
-  .ui-wb-list, .ui-wb-viewer, .ui-wb-chat { flex: 1 1 auto; }
-  .ui-wb-list-body { max-height: 220px; }
-  .ui-wb-chat { height: 70vh; }
-}
+/* (The old stack-with-page-scroll mobile block that lived here is gone —
+ * the drawer + stacked layout in the .ui-wb media rules above replaces it.
+ * It would otherwise win the cascade and blow the chat up to 70vh.) */
 
 /* --- iOS-style switch --- */
 .ui-switch {
