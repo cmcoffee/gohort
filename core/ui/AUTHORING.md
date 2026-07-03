@@ -164,7 +164,7 @@ Stable, ordered most → least stable:
 
 | Want to build… | Use |
 |---|---|
-| A list of records with row actions (edit / delete / view) | `ui.Table` + `RowAction` (often with `ui.Expand` for inline edit) |
+| A list of records with row actions (edit / delete / view) | `ui.Table` + `RowAction` (`ui.ModalAction` for an edit dialog, `ui.Expand` for inline detail) |
 | A settings form auto-saving on blur | `ui.FormPanel` |
 | A labeled key-value display (read-only) | `ui.DisplayPanel` |
 | A chat with sessions sidebar | `ui.ChatPanel` |
@@ -199,10 +199,16 @@ ui.Page{
                 Source: "api/records", RowKey: "id",
                 Columns: []ui.Col{...},
                 RowActions: []ui.RowAction{
-                    ui.Expand("Edit", ui.FormPanel{
-                        Source:  "api/records/{id}",
-                        PostURL: "api/records",
-                        Fields:  recordFields(),
+                    // ModalAction opens the form in a dialog prefilled from the
+                    // record ({id} substitutes from the row); a submit-mode form
+                    // (SubmitLabel set) closes the dialog on save. ui.Expand with
+                    // the same body renders it inline below the row instead.
+                    ui.ModalAction("Edit", ui.FormPanel{
+                        Source:      "api/records/{id}",
+                        PostURL:     "api/records",
+                        SubmitLabel: "Save",
+                        Fields:      recordFields(),
+                        Invalidate:  []string{"api/records"},
                     }),
                     {Type: "button", Label: "Delete",
                         PostTo: "api/records/{id}", Method: "DELETE",

@@ -719,6 +719,22 @@ func (T *Servitor) exec_command_ctx(ctx context.Context, cmd string) (string, er
 		timedOut  bool
 		cancelled bool
 	)
+	// reap collects the runner's result after a kill attempt, waiting only a
+	// short grace period. The kill is best-effort: many SSH servers ignore the
+	// signal message entirely (OpenSSH honors it only on newer releases), and a
+	// remote command that keeps the channel open leaves CombinedOutput blocked
+	// past session.Close() — an UNBOUNDED <-done here once hung a probe session
+	// forever (the agent loop never got the tool result; the UI sat on
+	// "waiting"). Abandoning the goroutine leaks it plus its session, which is
+	// the acceptable cost of keeping the agent loop alive.
+	reap := func() ([]byte, error) {
+		select {
+		case r := <-done:
+			return r.out, r.err
+		case <-time.After(10 * time.Second):
+			return nil, nil
+		}
+	}
 	select {
 	case r := <-done:
 		out, runErr = r.out, r.err
@@ -726,14 +742,12 @@ func (T *Servitor) exec_command_ctx(ctx context.Context, cmd string) (string, er
 		timedOut = true
 		_ = session.Signal(ssh.SIGKILL)
 		_ = session.Close()
-		r := <-done
-		out, runErr = r.out, r.err
+		out, runErr = reap()
 	case <-ctx.Done():
 		cancelled = true
 		_ = session.Signal(ssh.SIGKILL)
 		_ = session.Close()
-		r := <-done
-		out, runErr = r.out, r.err
+		out, runErr = reap()
 	}
 
 	result := strings.TrimSpace(string(out))
@@ -796,6 +810,16 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 		c.Dir = workDir
 	}
 	c.Env = append(os.Environ(), envVars...)
+	// Timeout kills must reap the WHOLE process tree, not just sh: a grandchild
+	// (e.g. a hung binary the probe shell invoked) otherwise survives as an
+	// orphan and keeps the inherited output pipes open, blocking CombinedOutput
+	// forever. set_process_group gives the tree its own pgid and kills the
+	// group on cancel (unix; no-op elsewhere).
+	set_process_group(c)
+	// WaitDelay bounds the wait AFTER the kill as the second line of defense —
+	// if anything still holds the pipes (kill raced, non-unix platform), Wait
+	// returns after this grace instead of hanging the probe session.
+	c.WaitDelay = 10 * time.Second
 	out, err := c.CombinedOutput()
 	result := strings.TrimSpace(string(out))
 	if len(result) > max_output {

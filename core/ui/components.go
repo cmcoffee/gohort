@@ -201,9 +201,20 @@ type BadgeMapping struct {
 //     blur or change POSTs {Field: newValue}.
 //   - "button" — labeled button. On click, POSTs (or GETs if Method
 //     set) to PostTo. Optional Confirm shows a dialog first.
+//     Method "client" instead dispatches to a browser handler
+//     registered via window.uiRegisterClientAction — PostTo names
+//     the handler, which receives {record, button, reload}.
 //   - "expand" — toggleable expansion below the row. Render contains
 //     the component shown when expanded; the {row_key} placeholder is
 //     substituted into any Source URLs inside.
+//   - "modal"  — opens Render in a dialog. Same nested-component +
+//     {row_key} substitution as "expand"; the mounted component
+//     also receives the row record as ctx plus a __closeModal
+//     hook, so a submit-mode FormPanel (Source: per-record GET,
+//     PostURL: list upsert endpoint) becomes a prefilled "edit
+//     this row" dialog that closes itself on save. Label is the
+//     button text and dialog title; Width overrides the dialog
+//     max-width (default 520px). Use the ModalAction helper.
 type RowAction struct {
 	Type    string          `json:"type"`
 	Field   string          `json:"field,omitempty"`   // toggle: field on record
@@ -246,7 +257,8 @@ type RowAction struct {
 	FilterOptionsIf string `json:"filter_options_if,omitempty"`
 	FilterOptions   string `json:"filter_options,omitempty"`
 	// Width sets the inline control's width (CSS string like "9rem").
-	// Use to right-size select/number inputs in dense tables.
+	// Use to right-size select/number inputs in dense tables. For
+	// modal-type actions it is the dialog max-width (default 520px).
 	Width string `json:"width,omitempty"`
 	// DefaultField (select-type only) names a field on the record
 	// that holds the "default" value for that row. The runtime
@@ -291,6 +303,20 @@ func ExpandIf(label, onlyIf, hideIf string, c Component) RowAction {
 	a := Expand(label, c)
 	a.OnlyIf, a.HideIf = onlyIf, hideIf
 	return a
+}
+
+// ModalAction wraps a nested Component for modal-type RowActions: a per-row
+// button that opens c in a dialog, with the same {row_key} URL substitution
+// as Expand. Pair with a submit-mode FormPanel (Source: per-record GET,
+// PostURL: list upsert endpoint) for a prefilled "edit this row" dialog —
+// the form closes the dialog on a successful save and its Invalidate list
+// refreshes the table behind it.
+func ModalAction(label string, c Component) RowAction {
+	return RowAction{
+		Type:   "modal",
+		Label:  label,
+		Render: marshalComponent(c),
+	}
 }
 
 // HistoryPanel renders a scrollable list of messages fetched from

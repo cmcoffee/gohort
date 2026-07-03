@@ -992,8 +992,9 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 	confirmChans.Store(sid, ch)
 
 	if appliance.Type == "command" {
-		// Command-type appliances: map the command's CLI structure.
-		go T.runMapAppSession(ctx, sid, userID, appliance, appliance.Command, ch, udb)
+		// Command-type appliances: map the command's CLI structure. The
+		// resulting reference doubles as the appliance profile (saveProfile).
+		go T.runMapAppSession(ctx, sid, userID, ownerUser, appliance, appliance.Command, ch, udb, true)
 	} else {
 		// Every Map System press does a FULL re-mapping — fresh
 		// reconnaissance regardless of whether a profile already
@@ -1059,7 +1060,9 @@ func (T *Servitor) handleMapApp(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, ch)
 
-	go T.runMapAppSession(ctx, sid, userID, appliance, req.Command, ch, udb)
+	// saveProfile=false: an SSH appliance's profile is the system
+	// reconnaissance — a single CLI's reference must not replace it.
+	go T.runMapAppSession(ctx, sid, userID, "", appliance, req.Command, ch, udb, false)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
@@ -2161,7 +2164,13 @@ func withHeartbeat(ctx context.Context, id, label string, fn func()) {
 // runMapAppSession connects to the appliance and runs a focused CLI exploration pass.
 // The agent enumerates the given command's subcommands and flags, then the reply is
 // persisted as a knowledge doc under "cli:<command>" for injection into future sessions.
-func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appliance Appliance, command string, confirm chan bool, udb Database) {
+// saveProfile additionally writes the reference into appliance.Profile — set by the
+// command-appliance Map path, where the CLI reference IS the profile (the Profile
+// panel otherwise stays empty after a successful map). Map App runs on SSH appliances
+// pass false: their profile is the system reconnaissance, not one CLI's reference.
+// ownerUser routes the profile write to the appliance owner's store (shared appliances
+// keep one profile regardless of who mapped); only used when saveProfile is set.
+func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, command string, confirm chan bool, udb Database, saveProfile bool) {
 	defer func() {
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
@@ -2334,6 +2343,11 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appl
 		reply = strings.TrimSpace(resp.Content)
 	}
 	if reply == "" {
+		// Previously a silent return: the user watched the exploration in the
+		// chat feed and then nothing saved, with no explanation. Say so.
+		if ctx.Err() == nil {
+			emit(id, probeEvent{Kind: "error", Text: "Mapping ended without a final reference document — nothing was saved. Re-run Map."})
+		}
 		return
 	}
 
@@ -2342,6 +2356,36 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID string, appl
 	if udb != nil {
 		writeDoc(udb, appliance.ID, "cli:"+command, reply)
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("CLI map saved: %s", command)})
+	}
+
+	// Command-appliance profile write. Same owner-store routing + thin-reply
+	// guards as runSession's saveProfile block: never clobber a real profile
+	// with a stub, and don't save from a cancelled run.
+	if saveProfile && ctx.Err() == nil {
+		ownerUDB := udb
+		if ownerUser != "" && ownerUser != userID {
+			if o := UserDB(T.DB, ownerUser); o != nil {
+				ownerUDB = o
+			}
+		}
+		if ownerUDB != nil {
+			var existing Appliance
+			if ownerUDB.Get(applianceTable, appliance.ID, &existing) {
+				prior := strings.TrimSpace(existing.Profile)
+				tooThin := len(reply) < minMapProfileChars ||
+					(prior != "" && len(reply) < len(prior)/3)
+				if tooThin {
+					emit(id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile — keeping the previous one."})
+					Log("[servitor.map] kept prior profile for %q (new=%d chars, prior=%d chars)",
+						appliance.Name, len(reply), len(prior))
+				} else {
+					existing.Profile = reply
+					existing.Scanned = time.Now().Format(time.RFC3339)
+					ownerUDB.Set(applianceTable, appliance.ID, existing)
+					emit(id, probeEvent{Kind: "status", Text: "Profile updated."})
+				}
+			}
+		}
 	}
 }
 

@@ -5301,6 +5301,34 @@ const runtimeJS = `
             });
         }}, [act.label || '…']);
         parent.appendChild(btn);
+      } else if (act.type === 'modal') {
+        // Modal row action — same nested-component + {row_key} substitution
+        // as 'expand', but the component opens in a dialog instead of inline
+        // below the row. The mounted component receives the row record as ctx
+        // plus a __closeModal hook, so a submit-mode FormPanel whose Source is
+        // a per-record GET becomes a prefilled "edit this row" dialog that
+        // dismisses itself on a successful save (its Invalidate list refreshes
+        // the table behind it — no explicit reload needed here).
+        var mclasses = 'ui-row-btn';
+        if (act.compact) mclasses += ' compact';
+        if (act.variant) mclasses += ' ' + act.variant;
+        var mbtn = el('button', {class: mclasses, onclick: function() {
+          var renderCfg = JSON.parse(JSON.stringify(act.render));
+          substituteRefs(renderCfg, rec);
+          var handle = window.uiOpenSimpleModal({
+            title: act.label || 'Edit',
+            width: act.width || '520px',
+            mount: function(body) {
+              var childCtx = {};
+              for (var k in rec) childCtx[k] = rec[k];
+              // Deferred through the closure: handle is assigned when
+              // uiOpenSimpleModal returns, before any save can fire.
+              childCtx.__closeModal = function() { if (handle) handle.close(); };
+              mountComponent(renderCfg, body, childCtx);
+            }
+          });
+        }}, [act.label || 'Edit']);
+        parent.appendChild(mbtn);
       } else if (act.type === 'expand') {
         var btn2 = el('button', {class: 'ui-row-btn' + (act.compact ? ' compact' : ''), onclick: function() {
           // Pass the actual table row (rowEl), not parent — the expand

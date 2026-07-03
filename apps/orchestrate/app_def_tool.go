@@ -40,7 +40,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "app_def",
-			Description: "Author and manage data-driven gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) composed from ui primitives and served at /custom/<slug>/. This is how you build a gohort app: describe it declaratively as a list of sections, and the framework renders it + gives it a generic per-app record store (a form section saves records, a table section lists them) with no hand-written HTML/CSS/JS.\n\nUse this when the user asks for \"an app\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent multi-panel surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
+			Description: "Author and manage data-driven gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) composed from ui primitives and served at /custom/<slug>/. This is how you build a gohort app: describe it declaratively as a list of sections, and the framework renders it + gives it a generic per-app record store (a form section saves records, a table section lists them) with no hand-written HTML/CSS/JS.\n\nUse this when the user asks for \"an app\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent multi-panel surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
 			Parameters: map[string]ToolParam{
 				"action":      {Type: "string", Description: "One of: create | update | test | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors before telling the user the app is ready. Pass sample=[{...}] to test the full form→data-source→output chain with example form data even before any records exist."},
 				"sample": {
@@ -71,7 +71,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute, link}; set `link` to the name of another field holding a URL to render THIS cell as a clickable link — e.g. a story row {title, url} uses column {field:\"title\", link:\"url\"}. NEVER put raw <a>…</a> HTML in a cell value; cells are escaped and it shows as literal markup — use the link field instead), `empty_text` (shown when there are no records — ALWAYS set this), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute, link}; set `link` to the name of another field holding a URL to render THIS cell as a clickable link — e.g. a story row {title, url} uses column {field:\"title\", link:\"url\"}. NEVER put raw <a>…</a> HTML in a cell value; cells are escaped and it shows as literal markup — use the link field instead), `empty_text` (shown when there are no records — ALWAYS set this), `editable` (boolean — adds an Edit button per row that opens the record in a PREFILLED dialog; the user fixes a typo or updates a value and saves in place. Fields default to the create form's fields (same types/labels/selects), or pass `edit_fields` (same shape as form fields) to edit a different subset. Set this on any record-store table paired with a create form — records the user typed are records the user will want to fix. NOT for source_script tables: computed rows aren't stored records), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -107,9 +107,9 @@ const appDefHelpText = `app_def actions:
 - test {id(slug), sample?:[{...}], params?:{...}} — RUN every data_source + action script and report each one's output/errors (catches broken scripts before the user opens the app). Run this after authoring any app with scripts. Pass sample=[{field:value,...}] (example form submissions, keyed by the form's field names) to exercise the full form→record→data-source→output chain even before any real records exist — e.g. test that adding {"city":"Santa Cruz, CA"} actually yields a forecast.
 - delete {id(slug)}.
 
-Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id).
+Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id).
 
-Minimal good app = a form + a table over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
+Minimal good app = a form (modal=true) + a table (editable, deletable) over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
 
 For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that reads the app's records with 'records = json.loads(os.environ.get("records", "[]"))' (the records env var is a JSON STRING; never json.loads("records")) + query params, and PRINTS JSON; reach external data with 'from gohort import fetch_url; r = fetch_url(url)' (granted by default; r is {status,headers,body}; it RAISES on transport failure so wrap it in try/except and still print JSON). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Run app_def action=test to execute the scripts and see their output/errors before telling the user it's ready. Owner-only.
 
@@ -280,12 +280,24 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 		BackURL:   "/custom/",
 		MaxWidth:  maxWidth,
 	}
+	// The first form section's fields are the natural default for an editable
+	// table's edit dialog — same labels/types/selects the record was created
+	// with. Scanned up front so section order doesn't matter.
+	var createFields []ui.FormField
+	for _, item := range arr {
+		if m, ok := item.(map[string]any); ok && strings.EqualFold(strings.TrimSpace(mapStr(m, "kind")), "form") {
+			if fields := appFormFields(m["fields"]); len(fields) > 0 {
+				createFields = fields
+				break
+			}
+		}
+	}
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
 			return ui.Page{}, fmt.Errorf("section %d must be an object", i+1)
 		}
-		sec, err := buildAppSection(spec, m)
+		sec, err := buildAppSection(spec, m, createFields)
 		if err != nil {
 			return ui.Page{}, fmt.Errorf("section %d: %w", i+1, err)
 		}
@@ -294,7 +306,7 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 	return page, nil
 }
 
-func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
+func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField) (ui.Section, error) {
 	kind := strings.ToLower(strings.TrimSpace(mapStr(m, "kind")))
 	sec := ui.Section{Title: mapStr(m, "title"), Subtitle: mapStr(m, "subtitle")}
 	switch kind {
@@ -340,11 +352,44 @@ func buildAppSection(spec AppSpec, m map[string]any) (ui.Section, error) {
 		if len(tbl.Columns) == 0 {
 			return ui.Section{}, errors.New("a table section needs at least one column")
 		}
+		// editable: an Edit button per row opens the record in a prefilled
+		// dialog (FormPanel: Source GETs the row, submit upserts it back to
+		// the records store, invalidations refresh the table + any computed
+		// panels). Field precedence: explicit edit_fields → the create form's
+		// fields → a plain text input per column. Record-store tables only —
+		// a source_script table's rows are computed, not stored records.
+		if boolArg(m, "editable") {
+			fields := appFormFields(m["edit_fields"])
+			if len(fields) == 0 {
+				fields = createFields
+			}
+			if len(fields) == 0 {
+				for _, c := range tbl.Columns {
+					if c.Field == spec.RecordKey || c.Field == "created" {
+						continue
+					}
+					fields = append(fields, ui.FormField{
+						Field: c.Field,
+						Label: firstNonEmptyStr(c.Label, c.Field),
+						Type:  "text",
+					})
+				}
+			}
+			if len(fields) > 0 {
+				tbl.RowActions = append(tbl.RowActions, ui.ModalAction("Edit", ui.FormPanel{
+					Source:      "record?id={" + spec.RecordKey + "}",
+					PostURL:     "records",
+					SubmitLabel: "Save",
+					Fields:      fields,
+					Invalidate:  appRecordWriteInvalidations(spec),
+				}))
+			}
+		}
 		if boolArg(m, "deletable") {
-			tbl.RowActions = []ui.RowAction{{
+			tbl.RowActions = append(tbl.RowActions, ui.RowAction{
 				Type: "button", Label: "Delete", Method: "DELETE",
 				PostTo: "record?id={" + spec.RecordKey + "}", Confirm: "Delete this item?",
-			}}
+			})
 		}
 		sec.Body = tbl
 	case "display":
