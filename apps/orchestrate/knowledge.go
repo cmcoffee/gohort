@@ -872,6 +872,28 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, baseUser, agen
 	// scope the results by provenance (curated vs derived) for the
 	// Knowledge / Memory split.
 	agentPrefix := knowledgeSource(user, agentID, "")
+	// Topic scoping: when the caller names a SPECIFIC topic (not the general /
+	// agent-wide fallback), narrow the agent's OWN corpus to that topic's bucket
+	// for precision — but ALWAYS keep uploaded documents (the :attachments bucket)
+	// in scope, since uploads are cross-topic reference material the user added on
+	// purpose (see the ingest path at knowledgeSource(..., "attachments")). A
+	// general or empty topic keeps the original agent-wide prefix span. The
+	// template/base layer and attached collections below are left wide — they are
+	// not partitioned by this turn's topic.
+	topicScoped := topic != "" && topic != generalTopic
+	agentTopicSource, attachmentsSource := "", ""
+	if topicScoped {
+		agentTopicSource = knowledgeSource(user, agentID, topic)
+		attachmentsSource = knowledgeSource(user, agentID, "attachments")
+	}
+	matchesAgentCorpus := func(src string) bool {
+		if topicScoped {
+			return src == agentTopicSource || strings.HasPrefix(src, agentTopicSource+":") ||
+				src == attachmentsSource || strings.HasPrefix(src, attachmentsSource+":") ||
+				src == agentPrefix
+		}
+		return src == agentPrefix || strings.HasPrefix(src, agentPrefix+":")
+	}
 	// Template/base layer (enabler #1 of agent-as-template): a SCOPED instance
 	// (runtimeUser != the agent's owner) also searches the template owner's corpus,
 	// so a per-appliance instance inherits the template's base knowledge on top of
@@ -926,7 +948,7 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, baseUser, agen
 	allow := func(c EmbeddedChunk) bool {
 		// Source allow-list (prefix for agent corpus, exact for the rest).
 		inAllowed := false
-		if c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") {
+		if matchesAgentCorpus(c.Source) {
 			inAllowed = true
 		} else if basePrefix != "" && (c.Source == basePrefix || strings.HasPrefix(c.Source, basePrefix+":")) {
 			inAllowed = true // template/base layer for a scoped instance
@@ -1047,6 +1069,15 @@ func knowledgeSearchExcerpt(text string) string {
 // into a downstream question to a tech-guru agent.
 const manualSearchMinScore = 0.35
 
+// memorySaveDedupThreshold is the cosine floor above which a memory_save is
+// treated as a near-duplicate of an existing derived finding and skipped. Every
+// save mints a fresh reportID (chunks never overwrite), so without this gate a
+// re-saved finding proliferates near-identical chunks that then crowd each other
+// in memory_search. Mirrors the fact layer's semantic dedup (factDedupSimThreshold
+// = 0.90); set conservatively so only clear duplicates are dropped, not merely
+// related material worth keeping separately.
+const memorySaveDedupThreshold = 0.90
+
 // --- Tools the LLM can call directly --------------------------------------
 
 // memoryToolDef builds the grouped tool for Reference Memory.
@@ -1138,6 +1169,30 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
+	// Save-time dedup: skip when a near-identical finding is already in this
+	// agent's derived memory, so re-saving the same material doesn't proliferate
+	// chunks that later crowd each other in memory_search. Mirrors the fact
+	// layer's semantic dedup. Best-effort — any embed/search failure falls
+	// through to a normal save rather than dropping the content. Scoped to the
+	// agent's OWN derived chunks (orch-know-*), across all topics, so a
+	// duplicate saved under a different topic slug is still caught.
+	if VectorDB != nil {
+		if cfg := GetEmbeddingConfig(); cfg.Enabled {
+			if vec, err := Embed(ctx, content); err == nil && len(vec) > 0 {
+				agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+				allow := func(c EmbeddedChunk) bool {
+					if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
+						return false
+					}
+					return strings.HasPrefix(c.ReportID, "orch-know-") // derived (memory_save) only
+				}
+				if hits := SearchChunksByPredicate(VectorDB, allow, vec, 1); len(hits) > 0 && float64(hits[0].Score) >= memorySaveDedupThreshold {
+					return fmt.Sprintf("Already saved (deduped): a near-identical finding is already in Memory (%.0f%% match). Skipping to avoid duplicate chunks — retrieve the existing one via memory(action=\"search\").",
+						hits[0].Score*100), nil
+				}
+			}
+		}
+	}
 	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
 	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory(action=\"search\").",
 		len(content), topic), nil

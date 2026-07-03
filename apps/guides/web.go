@@ -45,6 +45,8 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleExport(w, r, udb, user)
 	case path == "audit":
 		T.handleAudit(w, r, udb, user)
+	case path == "reorganize":
+		T.handleReorganize(w, r, udb, user)
 	case path == "update-sources":
 		T.handleUpdateFromSources(w, r, udb, user)
 	case path == "section":
@@ -313,7 +315,7 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	g, owner, _, ok := resolveGuide(T.DB, udb, user, id)
+	g, owner, ownerUDB, ok := resolveGuide(T.DB, udb, user, id)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -325,6 +327,24 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	if len(g.Sections) == 0 {
 		writeJSON(w, map[string]string{"report": "_This guide has no sections yet — nothing to audit._"})
 		return
+	}
+	// Housekeeping cleanup: strip stray LLM artifacts (reasoning delimiters,
+	// tool-call / attach markup) that leaked into section bodies during drafting.
+	// Unlike the source audit below — which only REPORTS content edits for the
+	// author to apply — this markup was never part of the guide, so removing it is
+	// safe and DOES mutate, saving a recoverable revision. Runs first so the audit
+	// evaluates clean text. Reported at the top of the audit output.
+	var cleaned []string
+	for i := range g.Sections {
+		if c, changed := sanitizeGuideArtifacts(g.Sections[i].Markdown); changed {
+			g.Sections[i].Markdown = c
+			cleaned = append(cleaned, g.Sections[i].Title)
+		}
+	}
+	cleanupNote := ""
+	if len(cleaned) > 0 {
+		g = saveGuideRev(ownerUDB, g, "Audit: removed stray markup")
+		cleanupNote = fmt.Sprintf("**Cleanup:** removed stray non-content markup (reasoning / tool-call / attach artifacts) from %d section(s): %s. A revision was saved — restore from History if any real content was affected.\n\n---\n\n", len(cleaned), strings.Join(cleaned, ", "))
 	}
 	orch := findOrchestrate()
 	if orch == nil {
@@ -343,7 +363,7 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		// linked sources — no web-currency check.
 		auditCtx = WithNetworkConnector(auditCtx, NewNetworkConnector(true))
 		if snapshot == "" {
-			writeJSON(w, map[string]string{"report": "_This is a private guide with no linked sources — nothing to audit against (web research is disabled)._"})
+			writeJSON(w, map[string]string{"report": cleanupNote + "_This is a private guide with no linked sources — nothing to audit against (web research is disabled)._"})
 			return
 		}
 		prompt = "This is a PRIVATE guide — you have NO internet access; do NOT attempt web research. Audit it ONLY against its linked sources (a current snapshot is below). Report:\n" +
@@ -367,12 +387,120 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 			"Be specific: name the SECTION and the exact change needed, and cite sources for any claim that something changed. If a section is still accurate, say so briefly. End with a short prioritized list of recommended edits. If everything is current, say that plainly.\n\n" +
 			"GUIDE:\n\n" + renderGuideMarkdownPlain(g)
 	}
+	// Structure & ordering assessment (all branches). Report-only, in keeping with
+	// the review-and-apply design: recommend a reordering rather than performing
+	// one, so the author stays in control of deliberate sequencing.
+	prompt += "\n\n**Also assess STRUCTURE & ORDERING.** Read the sections in their current order and judge whether the guide would flow better in a different one (prerequisites before steps, overview before details, reference/troubleshooting/FAQ last). If so, add a **Structure** section to your report recommending the specific new order — list the section titles in the order they should appear — and note any section that should be split or merged for flow. Do NOT rewrite section content for this; recommend the structural change only. If the current order already reads well, say so in one line."
 	report, err := orch.RunAgentSync(auditCtx, user, user, "seed-research", prompt)
 	if err != nil {
 		http.Error(w, "audit failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"report": report})
+	writeJSON(w, map[string]string{"report": cleanupNote + report})
+}
+
+// reorgSysPrompt steers the worker LLM to return ONLY a JSON ordering.
+const reorgSysPrompt = `You reorganize a document's sections into the clearest reading order. You are given a numbered list of the current sections (number, title, short excerpt). Return ONLY a JSON object:
+{"order": [<section numbers in the new order>], "rationale": "one or two sentences"}
+Rules: "order" MUST be a permutation of the given numbers — every number exactly once, no extras. Order for a reader new to the topic: overview/introduction and prerequisites first, then setup/steps in logical sequence, then advanced/reference material, with troubleshooting/FAQ/appendix last. Do NOT rewrite content; only decide the order. If the current order is already ideal, return it unchanged.`
+
+// handleReorganize reorders the guide's sections into a clearer reading sequence.
+// Unlike audit (which only REPORTS content findings), reordering is a discrete,
+// reversible structural change the user opts into via the Reorganize button — so
+// it DOES mutate, saving a recoverable revision, and returns a summary. A cheap
+// JSON-mode worker call decides the order (no web research needed). Owner/editor
+// only. No-op (no revision) when there are <2 sections or the order is unchanged.
+func (T *Guides) handleReorganize(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, owner, ownerUDB, ok := resolveGuide(T.DB, udb, user, id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if !(CanManageShared(user, owner, RequestIsAdmin(r)) || g.sharedForEdit()) {
+		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
+		return
+	}
+	secs := g.sorted()
+	if len(secs) < 2 {
+		writeJSON(w, map[string]string{"report": "_This guide has fewer than two sections — nothing to reorganize._"})
+		return
+	}
+	orch := findOrchestrate()
+	if orch == nil || orch.LLM == nil {
+		http.Error(w, "reorganize unavailable (LLM not ready)", http.StatusServiceUnavailable)
+		return
+	}
+	// Present the sections as a numbered list (1..N) with a short excerpt so the
+	// model can judge flow without the full body.
+	var b strings.Builder
+	for i, s := range secs {
+		fmt.Fprintf(&b, "%d. %s\n%s\n\n", i+1, s.Title, guideExcerpt(s.Markdown, 240))
+	}
+	resp, err := orch.LLM.Chat(r.Context(), []Message{{Role: "user", Content: "Current sections:\n\n" + b.String()}},
+		WithSystemPrompt(reorgSysPrompt), WithJSONMode(),
+		WithRouteKey("app.orchestrate.worker"), WithThink(false))
+	if err != nil {
+		http.Error(w, "reorganize failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var parsed struct {
+		Order     []int  `json:"order"`
+		Rationale string `json:"rationale"`
+	}
+	if derr := DecodeJSON(resp.Content, &parsed); derr != nil || len(parsed.Order) == 0 {
+		writeJSON(w, map[string]string{"report": "_Couldn't determine a new order (the model didn't return a usable ordering). No change made._"})
+		return
+	}
+	// Rebuild the section order from the model's 1-based indices (defensive against
+	// bad/duplicate/omitted indices — see applySectionOrder).
+	newOrder := applySectionOrder(secs, parsed.Order)
+	// Unchanged? Report without saving a revision.
+	same := true
+	for i := range newOrder {
+		if newOrder[i].ID != secs[i].ID {
+			same = false
+			break
+		}
+	}
+	if same {
+		writeJSON(w, map[string]string{"report": "**Already well-organized.** The current section order reads well; no change made." + rationaleLine(parsed.Rationale)})
+		return
+	}
+	g.Sections = newOrder
+	g = saveGuideRev(ownerUDB, g, "Reorganized sections")
+	var rb strings.Builder
+	rb.WriteString("**Reorganized into this order:**\n\n")
+	for i, s := range newOrder {
+		fmt.Fprintf(&rb, "%d. %s\n", i+1, s.Title)
+	}
+	rb.WriteString(rationaleLine(parsed.Rationale))
+	rb.WriteString("\n\nA revision was saved — restore from History to undo.")
+	writeJSON(w, map[string]string{"report": rb.String()})
+}
+
+// rationaleLine formats an optional model rationale as its own paragraph.
+func rationaleLine(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	return "\n\n_" + s + "_"
+}
+
+// guideExcerpt returns the first n runes of markdown on one line (whitespace
+// collapsed), for compact section previews in prompts.
+func guideExcerpt(md string, n int) string {
+	md = strings.Join(strings.Fields(md), " ")
+	r := []rune(md)
+	if len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return string(r)
 }
 
 // handleUpdateFromSources runs the Guide Author over the guide to revise its

@@ -19,3 +19,24 @@ func TestStripMetaTags(t *testing.T) {
 		}
 	}
 }
+
+func TestStripToolCallTags(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`before <tool_call>{"name":"x"}</tool_call> after`, "before  after"},
+		{"a\n<tool_call>\ncall\n</tool_call>\nb", "a\n\nb"},
+		{"text <function=foo>{}</function> end", "text  end"},
+		{"run <tool_code>print(1)</tool_code> now", "run  now"},
+		{"keep <tool_call> only", "keep  only"},   // orphan opener
+		{"answer </tool_call>", "answer"},         // stray closer
+		{"no tool markup here", "no tool markup here"},
+		{"", ""},
+		// \b boundary must NOT eat legit words/prose that merely start with the
+		// tag name, or ordinary angle brackets.
+		{"see <functionality> and a < b > c", "see <functionality> and a < b > c"},
+	}
+	for _, c := range cases {
+		if got := StripToolCallTags(c.in); got != c.want {
+			t.Errorf("StripToolCallTags(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

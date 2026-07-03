@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -468,9 +469,19 @@ type OutboxItem struct {
 	Service string   `json:"service"`
 	Text    string   `json:"text,omitempty"`
 	Images  []string `json:"images,omitempty"` // base64
+	Videos  []string `json:"videos,omitempty"` // base64 video attachments — connector delivers as video, not image
 	Type    string   `json:"type,omitempty"`   // "reply" | "status"
 	Created string   `json:"created"`
+	// Seq is a per-process monotonic enqueue counter used ONLY to break ties when
+	// drainOutbox sorts: Created is second-resolution, so two items enqueued in
+	// the same second would otherwise have unspecified relative order. Not stable
+	// across process restarts, but Created separates different seconds, so a
+	// same-second collision across a restart is the only (astronomically rare) gap.
+	Seq int64 `json:"seq,omitempty"`
 }
+
+// outboxSeq is the monotonic enqueue counter feeding OutboxItem.Seq.
+var outboxSeq int64
 
 func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	if it.ID == "" {
@@ -478,6 +489,9 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	}
 	if it.Created == "" {
 		it.Created = now()
+	}
+	if it.Seq == 0 {
+		it.Seq = atomic.AddInt64(&outboxSeq, 1)
 	}
 	// De-markdown at the single outbound chokepoint. A plain-text transport
 	// (iMessage, SMS) renders literal **bold**, `code`, # headers and [text](url)
@@ -489,6 +503,20 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 		it.Text = MarkdownToPlain(it.Text)
 	}
 	T.DB.Set(outboxTable, it.ID, it)
+	// Delivery-leg visibility: the outbound path (enqueue → connector /api/poll →
+	// drainOutbox) was previously unlogged, so a dropped reply was invisible.
+	// Log image byte totals too — an oversized attachment payload is the prime
+	// suspect for a reply that generates fine but never reaches the chat.
+	imgBytes := 0
+	for _, im := range it.Images {
+		imgBytes += len(im)
+	}
+	vidBytes := 0
+	for _, v := range it.Videos {
+		vidBytes += len(v)
+	}
+	Log("[bridges.outbox] enqueued id=%s chat=%s svc=%q type=%s text=%dch images=%d (%d img bytes) videos=%d (%d vid bytes)",
+		it.ID, it.ChatID, it.Service, it.Type, len(it.Text), len(it.Images), imgBytes, len(it.Videos), vidBytes)
 }
 
 // drainOutbox returns and removes every pending item for one service, oldest
@@ -502,7 +530,31 @@ func (T *Bridges) drainOutbox(service string) []OutboxItem {
 			T.DB.Unset(outboxTable, id)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Created < out[j].Created })
+	// Oldest first. Created is second-resolution, so tie-break on the monotonic
+	// enqueue Seq to keep same-second items in enqueue order (a total order, so a
+	// plain non-stable sort is fine).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Created != out[j].Created {
+			return out[i].Created < out[j].Created
+		}
+		return out[i].Seq < out[j].Seq
+	})
+	// Only log a non-empty drain (poll fires constantly and mostly drains nothing).
+	// The total byte size is the tell for an oversized /api/poll payload the
+	// connector may fail to fetch.
+	if len(out) > 0 {
+		total := 0
+		for _, it := range out {
+			total += len(it.Text)
+			for _, im := range it.Images {
+				total += len(im)
+			}
+			for _, v := range it.Videos {
+				total += len(v)
+			}
+		}
+		Log("[bridges.outbox] drained %d item(s) for svc=%q (%d bytes total) — handed to connector", len(out), service, total)
+	}
 	return out
 }
 
@@ -551,7 +603,11 @@ func (T *Bridges) resolveSender(chatID, handle, fresh string) string {
 	// and raw handle are fallbacks only.
 	if c, ok := T.getConvo(chatID); ok {
 		for _, m := range c.Members {
-			if (m.Handle == handle || contains(m.Aliases, handle)) && m.Name != "" {
+			// Case-insensitive match, symmetric with the recipient side
+			// (ResolveRecipient/chatIDForHandle use containsFold/EqualFold): an
+			// alias stored "rory" arriving as "Rory" must attribute to the same
+			// member, not fall through to the raw handle.
+			if (strings.EqualFold(m.Handle, handle) || containsFold(m.Aliases, handle)) && m.Name != "" {
 				return m.Name
 			}
 		}

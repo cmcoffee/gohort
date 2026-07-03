@@ -3701,7 +3701,6 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 			ToolCalls: finalCalls,
 		})
 		_, _ = saveChatSession(udb, sess)
-		turn.consolidate(req.Message, nil, directReply)
 		turn.titleAfterFirstTurn()
 		sse.Send(map[string]any{"kind": "done"})
 		return
@@ -3900,11 +3899,6 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		})
 	}
 
-	// Memory consolidation runs in the background so it doesn't
-	// extend the user's perceived latency. Failures inside are
-	// logged but never bubbled; memory is an optimization, not part
-	// of the reply contract.
-	turn.consolidate(req.Message, steps, reply)
 	turn.titleAfterFirstTurn()
 
 	sse.Send(map[string]any{"kind": "done"})
@@ -4033,7 +4027,7 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	}
 	if !t.explicitOff() {
 		// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
-		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID)...) // file_deliverable + note_to_cortex; nil for non-cortex
 	// (send_to_builder removed — agents reach Builder by DIRECT dispatch
@@ -5560,7 +5554,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		toolNames = append(toolNames, "memory")
 	}
 	if !t.explicitOff() {
-		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(),
+		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(),
 			t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	// create_pipeline_tool intentionally NOT added — add_tool with

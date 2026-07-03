@@ -124,6 +124,29 @@ func buildRepoProbeWorkerPrompt(appliance Appliance) string {
 	return b.String()
 }
 
+// repoOverviewStale reports whether the repo's synthesized knowledge base was
+// generated BEFORE the most recent clone/refresh — i.e. the code has been
+// re-pulled since the overview was written, so the docs may describe code that
+// has since changed (or bugs since fixed). It compares the last Map run
+// (Scanned, when extractDocsFromProfile writes the docs) against the last
+// successful clone (RepoCloned, bumped by every refresh). Returns false unless
+// both timestamps parse and the clone is strictly newer — so an un-mapped or
+// never-refreshed repo never trips it. This is the commit-relative counterpart
+// to the time-based docStaleAfter check: refresh pulls new code but does not
+// re-synthesize the docs, so without this signal the overview silently drifts.
+func repoOverviewStale(a Appliance) bool {
+	scanned, err1 := time.Parse(time.RFC3339, strings.TrimSpace(a.Scanned))
+	cloned, err2 := time.Parse(time.RFC3339, strings.TrimSpace(a.RepoCloned))
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return cloned.After(scanned)
+}
+
+// repoStaleDocBanner is the warning prepended to stale repo knowledge so the LLM
+// treats the docs as a starting point and re-verifies against current files.
+const repoStaleDocBanner = "> **STALE — code refreshed since this was generated.** The repository was re-cloned AFTER these documents were written, so they may describe code that has since changed. Treat them as a starting point, not ground truth: dispatch the worker to re-verify anything load-bearing against the current files, and run Map to regenerate the knowledge base.\n\n"
+
 // buildRepoLeadPrompt is the repo analogue of buildLeadSystemPrompt: the Q&A lead
 // that answers the user's question about the codebase, dispatching probe workers
 // for anything not already in its docs / scoped memory. Reuses leadStaticGuidance
@@ -152,9 +175,13 @@ func buildRepoLeadPrompt(appliance Appliance, docs map[string]string, cachedFact
 	b.WriteString("Use `update_doc` to persist new findings after any investigation.\n\n")
 
 	leadStaticGuidance(&b)
+	b.WriteString(linkedKnowledgeNote(appliance))
 
 	if len(docs) > 0 {
 		b.WriteString("## Current Knowledge Base\n\n")
+		if repoOverviewStale(appliance) {
+			b.WriteString(repoStaleDocBanner)
+		}
 		for _, name := range knowledgeDocNames {
 			if content, ok := docs[name]; ok {
 				b.WriteString(fmt.Sprintf("### %s\n\n%s\n\n", name, content))
@@ -245,21 +272,71 @@ func runRepoSnapshot(user, applianceID string) string {
 	}
 	sort.Strings(paths)
 
-	// Top-level entries (files + first-level dirs).
+	// Top-level entries (files + first-level dirs) plus content-derived stats.
+	// One pass reads each file from the encrypted store (in memory) so we can
+	// report scale — total lines, per-language breakdown, and the largest files —
+	// giving the investigator a sense of the codebase before it starts probing.
+	type extStat struct {
+		files int
+		lines int
+	}
 	topDirs := map[string]int{}
 	var topFiles []string
+	extStats := map[string]*extStat{}
+	type fileSize struct {
+		path  string
+		lines int
+	}
+	var bySize []fileSize
+	totalLines := 0
 	for _, p := range paths {
 		if i := strings.IndexByte(p, '/'); i >= 0 {
 			topDirs[p[:i]]++
 		} else {
 			topFiles = append(topFiles, p)
 		}
+		var content string
+		if !store.Get(repoFilesTable, p, &content) {
+			continue
+		}
+		lines := strings.Count(content, "\n") + 1
+		totalLines += lines
+		ext := repoFileLang(p)
+		st := extStats[ext]
+		if st == nil {
+			st = &extStat{}
+			extStats[ext] = st
+		}
+		st.files++
+		st.lines += lines
+		bySize = append(bySize, fileSize{path: p, lines: lines})
 	}
 	dirNames := make([]string, 0, len(topDirs))
 	for d := range topDirs {
 		dirNames = append(dirNames, d)
 	}
 	sort.Strings(dirNames)
+
+	// Language breakdown, ordered by line count (largest first).
+	extNames := make([]string, 0, len(extStats))
+	for e := range extStats {
+		extNames = append(extNames, e)
+	}
+	sort.Slice(extNames, func(i, j int) bool {
+		a, b := extStats[extNames[i]], extStats[extNames[j]]
+		if a.lines != b.lines {
+			return a.lines > b.lines
+		}
+		return extNames[i] < extNames[j]
+	})
+
+	// Largest files by line count (ties broken by path for determinism).
+	sort.Slice(bySize, func(i, j int) bool {
+		if bySize[i].lines != bySize[j].lines {
+			return bySize[i].lines > bySize[j].lines
+		}
+		return bySize[i].path < bySize[j].path
+	})
 
 	// Manifest / entry files worth surfacing up front.
 	manifests := []string{
@@ -273,7 +350,7 @@ func runRepoSnapshot(user, applianceID string) string {
 	}
 
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf("### Repository (%d text files ingested)\n\n", len(paths)))
+	fmt.Fprintf(&out, "### Repository (%d text files, %s lines ingested)\n\n", len(paths), humanCount(totalLines))
 
 	out.WriteString("### Top-level layout\n```\n")
 	for _, d := range dirNames {
@@ -283,6 +360,32 @@ func runRepoSnapshot(user, applianceID string) string {
 		fmt.Fprintf(&out, "%s\n", f)
 	}
 	out.WriteString("```\n\n")
+
+	if len(extNames) > 0 && totalLines > 0 {
+		out.WriteString("### Language breakdown\n```\n")
+		shown := extNames
+		if len(shown) > 12 {
+			shown = shown[:12]
+		}
+		for _, e := range shown {
+			st := extStats[e]
+			pct := st.lines * 100 / totalLines
+			fmt.Fprintf(&out, "%-14s %5d files  %8s lines  (%d%%)\n", e, st.files, humanCount(st.lines), pct)
+		}
+		out.WriteString("```\n\n")
+	}
+
+	if len(bySize) > 0 {
+		out.WriteString("### Largest files\n```\n")
+		n := len(bySize)
+		if n > 10 {
+			n = 10
+		}
+		for _, fs := range bySize[:n] {
+			fmt.Fprintf(&out, "%6s lines  %s\n", humanCount(fs.lines), fs.path)
+		}
+		out.WriteString("```\n\n")
+	}
 
 	var found []string
 	for _, m := range manifests {
@@ -296,4 +399,47 @@ func runRepoSnapshot(user, applianceID string) string {
 		out.WriteString("\n```\n\n")
 	}
 	return out.String()
+}
+
+// repoFileLang classifies a path into a coarse language/type bucket for the
+// snapshot breakdown, keyed off the file extension (or the basename for
+// extensionless well-known files like Makefile/Dockerfile).
+func repoFileLang(path string) string {
+	base := path
+	if i := strings.LastIndexByte(path, '/'); i >= 0 {
+		base = path[i+1:]
+	}
+	dot := strings.LastIndexByte(base, '.')
+	if dot <= 0 { // no extension, or dotfile like ".gitignore"
+		switch base {
+		case "Makefile", "makefile", "Dockerfile", "Gemfile", "Rakefile", "Procfile":
+			return base
+		}
+		return "(none)"
+	}
+	return strings.ToLower(base[dot:]) // includes the leading dot, e.g. ".go"
+}
+
+// humanCount formats an integer with thousands separators (e.g. 12345 -> "12,345").
+func humanCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	neg := ""
+	if strings.HasPrefix(s, "-") {
+		neg, s = "-", s[1:]
+	}
+	if len(s) <= 3 {
+		return neg + s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	if pre > 0 {
+		b.WriteString(s[:pre])
+	}
+	for i := pre; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return neg + b.String()
 }

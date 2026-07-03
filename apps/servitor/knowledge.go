@@ -2,6 +2,7 @@ package servitor
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -9,6 +10,12 @@ import (
 )
 
 const knowledgeTable = "ssh_knowledge"
+
+// docStaleAfter is how long a knowledge document is trusted before the lead is
+// warned to re-verify it. Systems and repos drift; a doc older than this is
+// flagged "STALE, re-verify" wherever its age is surfaced so the LLM does not
+// act on a months-old service inventory or code map as if it were current.
+const docStaleAfter = 14 * 24 * time.Hour
 
 // knowledgeDocNames are the structured documents the lead maintains per appliance.
 // Each doc is a focused markdown file the lead reads from and writes to.
@@ -64,6 +71,110 @@ var sectionToDoc = map[string]string{
 	"Recent Errors":                        "filesystem",
 }
 
+// sortedSectionKeys returns the sectionToDoc headings in a stable order so fuzzy
+// matching is deterministic when two known headings tie on score.
+func sortedSectionKeys() []string {
+	keys := make([]string, 0, len(sectionToDoc))
+	for k := range sectionToDoc {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// normalizeHeading strips case and non-alphanumerics so "System Identity & Purpose"
+// and "System Identity" compare closer.
+func normalizeHeading(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// headingTokens returns the set of significant (len >= 3) words in a heading,
+// used for token-overlap matching. Short filler words ("and", "of") are dropped.
+func headingTokens(s string) map[string]bool {
+	out := make(map[string]bool)
+	for _, f := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	}) {
+		if len(f) >= 3 {
+			out[f] = true
+		}
+	}
+	return out
+}
+
+// matchSectionDoc maps a profile heading to a knowledge doc, tolerant of wording
+// drift from the synthesizing LLM. It tries, in order: exact match, normalized
+// (punctuation/case-insensitive) match, then token-overlap — so a heading like
+// "System Identity & Purpose" still routes to "overview" instead of being
+// silently dropped. Returns ("", false) when nothing matches with confidence.
+func matchSectionDoc(heading string) (string, bool) {
+	if doc, ok := sectionToDoc[heading]; ok {
+		return doc, true
+	}
+	nh := normalizeHeading(heading)
+	keys := sortedSectionKeys()
+	for _, k := range keys {
+		if normalizeHeading(k) == nh {
+			return sectionToDoc[k], true
+		}
+	}
+	ht := headingTokens(heading)
+	if len(ht) == 0 {
+		return "", false
+	}
+	bestDoc := ""
+	bestScore := 0.0
+	for _, k := range keys {
+		kt := headingTokens(k)
+		if len(kt) == 0 {
+			continue
+		}
+		shared := 0
+		for t := range ht {
+			if kt[t] {
+				shared++
+			}
+		}
+		if shared == 0 {
+			continue
+		}
+		// Score over the smaller token set so a subset heading (fewer words) still
+		// scores high against its fuller canonical form.
+		denom := len(kt)
+		if len(ht) < denom {
+			denom = len(ht)
+		}
+		if score := float64(shared) / float64(denom); score > bestScore {
+			bestScore = score
+			bestDoc = sectionToDoc[k]
+		}
+	}
+	if bestScore >= 0.5 {
+		return bestDoc, true
+	}
+	return "", false
+}
+
+// docIsStale reports whether a doc's last-updated timestamp is older than
+// docStaleAfter. A zero now, empty timestamp, or parse failure is treated as
+// not stale (no false alarms on legacy plain-string docs).
+func docIsStale(updated string, now time.Time) bool {
+	if now.IsZero() || updated == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, updated)
+	if err != nil {
+		return false
+	}
+	return now.Sub(t) > docStaleAfter
+}
+
 // KnowledgeDocEntry is the stored form of a knowledge document, including a
 // last-updated timestamp so stale docs can be surfaced to the lead LLM.
 type KnowledgeDocEntry struct {
@@ -107,7 +218,15 @@ func readDocWithAge(udb Database, applianceID, doc string, now time.Time) (conte
 	}
 	var entry KnowledgeDocEntry
 	if udb.Get(knowledgeTable, applianceID+":"+doc, &entry) && entry.Content != "" {
-		return strings.TrimSpace(entry.Content), factAgeStr(entry.Updated, now)
+		age = factAgeStr(entry.Updated, now)
+		if docIsStale(entry.Updated, now) {
+			if age != "" {
+				age += " — STALE, re-verify"
+			} else {
+				age = "STALE, re-verify"
+			}
+		}
+		return strings.TrimSpace(entry.Content), age
 	}
 	var s string
 	udb.Get(knowledgeTable, applianceID+":"+doc, &s)
@@ -175,7 +294,7 @@ func extractDocsFromProfile(udb Database, applianceID, profile string) {
 		if content == "" {
 			continue
 		}
-		doc, ok := sectionToDoc[heading]
+		doc, ok := matchSectionDoc(heading)
 		if !ok {
 			continue
 		}

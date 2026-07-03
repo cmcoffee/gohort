@@ -111,6 +111,7 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 				"relation":     {Type: "string", Description: "The relationship verb. e.g. \"works at\", \"reports to\", \"knows\", \"owns\", \"located in\"."},
 				"object":       {Type: "string", Description: "The object entity's name. e.g. \"Acme\"."},
 				"object_kind":  {Type: "string", Description: "Object type: person, org, project, place, or thing. Defaults to thing."},
+				"object_attrs":  {Type: "object", Description: "Optional non-relational facts about the object, as key/value strings. e.g. {\"industry\": \"fintech\", \"hq\": \"Berlin\"}."},
 				"subject_attrs": {Type: "object", Description: "Optional non-relational facts about the subject, as key/value strings. e.g. {\"email\": \"robin@acme.com\", \"title\": \"VP Eng\"}."},
 				"note":          {Type: "string", Description: "Optional short qualifier on the relationship. e.g. \"since 2024\"."},
 				"replace":       {Type: "boolean", Description: "True if this corrects a SINGLE-VALUED relation (removes the prior value for this subject+relation). Omit for multi-valued relations."},
@@ -127,7 +128,7 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 			}
 			ns := factsNamespace(t.agent.ID)
 			subj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "subject_kind"), subject, nil, attrsArg(args, "subject_attrs"))
-			obj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "object_kind"), object, nil, nil)
+			obj, _ := UpsertGraphEntity(t.udb, ns, stringArg(args, "object_kind"), object, nil, attrsArg(args, "object_attrs"))
 			if subj.ID == "" || obj.ID == "" {
 				return "", errors.New("failed to record entities")
 			}

@@ -916,7 +916,33 @@ func ServeDashboard(addr string) error {
 	if AuthDB != nil {
 		handler = AuthMiddleware(AuthDB(), handler)
 	}
+	// Outermost: baseline security headers on every response (incl. auth
+	// redirects and error pages).
+	handler = securityHeadersMiddleware(handler)
 	return ListenAndServeTLS(addr, handler)
+}
+
+// securityHeadersMiddleware sets baseline security response headers on every
+// response: MIME-sniffing protection, clickjacking protection (the dashboard is
+// never meant to be framed by another origin), referrer minimization, and — under
+// TLS — HSTS. It deliberately does NOT set a Content-Security-Policy: the UI
+// inlines scripts and styles, so a correct CSP needs per-response nonces (a
+// larger, separate change). These headers are the high-ROI baseline that needs
+// no page changes. SAMEORIGIN (not DENY) so any legitimate same-origin embed
+// still works while cross-origin framing — the clickjacking vector — is blocked.
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		if TLSEnabled() {
+			// One year; no includeSubDomains/preload so a multi-subdomain
+			// deployment isn't forced to HTTPS on siblings that may not serve it.
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // accessLogMiddleware logs every HTTP request with client IP, method,
@@ -1000,7 +1026,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	auth_html := ""
 	if username != "" {
 		auth_html = fmt.Sprintf(
-			`<div class="auth-bar"><span class="auth-user">%s</span><a class="auth-link" href="/account">Account</a><a class="auth-link" href="/logout">Logout</a></div>`,
+			`<div class="auth-bar"><span class="auth-user">%s</span><a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`,
 			username)
 	}
 
@@ -1094,8 +1120,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     padding: 0.3rem 0.7rem; border: 1px solid #30363d; border-radius: 6px;
     background: #161b22; transition: border-color 0.2s, color 0.2s;
     white-space: nowrap;
+    /* Match a <button class="auth-link"> (POST-logout) to the <a> siblings. */
+    cursor: pointer; font: inherit; line-height: normal;
   }
   .auth-link:hover { border-color: #58a6ff; color: #f0f6fc; }
+  .auth-logout { display: inline; margin: 0; padding: 0; }
   @media (max-width: 640px) {
     body { padding: 60px 12px 20px; }
     .auth-bar { top: 8px; right: 8px; gap: 0.4rem; }

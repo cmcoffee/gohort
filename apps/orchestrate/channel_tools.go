@@ -61,7 +61,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 				return t.ChatID, t.Handle, true
 			}
 		}
-		if len(wholeService) > 0 && looksLikeHandle(to) {
+		if len(wholeService) > 0 && LooksLikeHandle(to) {
 			return "", to, true
 		}
 		return "", "", false
@@ -257,19 +257,10 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 	}
 }
 
-// looksLikeHandle reports whether a string looks like a phone/email handle, so a
-// whole-service channel can address a brand-new recipient not yet in a thread.
-func looksLikeHandle(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	if strings.Contains(s, "@") {
-		return true
-	}
-	c := s[0]
-	return c == '+' || (c >= '0' && c <= '9')
-}
+// looksLikeHandle moved to core.LooksLikeHandle — the canonical, shared handle
+// test (orchestrate + bridges) so both sides agree on what counts as a handle.
+// The prior local copy was laxer (first-char check) and disagreed with the
+// transport side; the shared version requires an email or a ≥5-digit phone.
 
 // channelForChat finds the channel (any of the owner's) bound to a chat — by a
 // per-contact/group binding whose Address is the chat id or the contact handle.

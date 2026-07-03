@@ -51,6 +51,47 @@ func collectMessageAttachments(sess *ToolSession, text string) []string {
 	return out
 }
 
+// collectMessageMedia is the type-AWARE version used by the channel-reply path:
+// it splits a turn's outbound attachments into images and videos so a video
+// rides out as a video, not a mislabeled (and undeliverable) oversized image.
+// Sources: session Images/Videos (video tools accumulate into sess.Videos via
+// AppendVideo) plus [ATTACH: file] markers, routed by file extension. Restores
+// the outbound video channel the phantom outbox had before the bridges migration.
+func collectMessageMedia(sess *ToolSession, text string) (images, videos []string) {
+	if sess == nil {
+		return nil, nil
+	}
+	images = append(images, sess.Images...)
+	videos = append(videos, sess.Videos...)
+	if strings.TrimSpace(sess.WorkspaceDir) == "" {
+		return images, videos
+	}
+	for _, m := range operatorAttachMarkerRe.FindAllStringSubmatch(text, -1) {
+		name := strings.TrimSpace(m[1])
+		b64 := resolveWorkspaceImages(sess, []string{name})
+		if len(b64) == 0 {
+			continue
+		}
+		if isVideoAttachment(name) {
+			videos = append(videos, b64...)
+		} else {
+			images = append(images, b64...)
+		}
+	}
+	return images, videos
+}
+
+// isVideoAttachment classifies a workspace file path as a video by extension, so
+// a [ATTACH: clip.mp4] marker routes to the video channel instead of the image
+// channel.
+func isVideoAttachment(name string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
+	case ".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v":
+		return true
+	}
+	return false
+}
+
 // resolveWorkspaceImages reads each workspace-relative path and returns its
 // base64 bytes, skipping anything empty, escaping the workspace, or unreadable.
 // Lets a channel agent deliver a file straight to its channel via send_message's
@@ -400,7 +441,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "list_runs",
-				Description: "List recent runs across the fleet (status-level). Each line shows the run id for use with get_run.",
+				Description: "List recent background/fleet runs (delegated tasks and standing-agent executions), status-level. These are NOT your own chat turns. Each line shows the run id for use with get_run.",
 				Parameters: map[string]ToolParam{
 					"agent": {Type: "string", Description: "Optional: restrict to one standing agent's name."},
 					"limit": {Type: "number", Description: "Optional: max rows (default 15, max 50)."},
@@ -430,7 +471,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "get_run",
-				Description: "Get one run's full detail, including its output. Use a run id from list_runs.",
+				Description: "Get the full detail and output of a DELEGATED or standing-agent RUN, identified by a run id from list_runs. A \"run\" is a background or fleet execution. This is NOT how you review your own chat replies, and NOT a way to check what you just said or sent in this conversation. Only call it with an id that came from list_runs; never construct one.",
 				Parameters:  map[string]ToolParam{"id": {Type: "string", Description: "The run id."}},
 				Required:    []string{"id"},
 			},

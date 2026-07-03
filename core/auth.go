@@ -3,15 +3,19 @@ package core
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/ui"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -233,7 +237,7 @@ func consumeResetToken(db Database, token string) (string, bool) {
 // AuthUser represents a stored user account.
 type AuthUser struct {
 	Username      string   `json:"username"`
-	PassHash      string   `json:"pass_hash"` // SHA-256 hex
+	PassHash      string   `json:"pass_hash"` // bcrypt hash ($2…); legacy SHA-256 hex auto-upgrades on next login
 	Admin         bool     `json:"admin"`
 	Pending       bool     `json:"pending,omitempty"`  // true if awaiting admin approval
 	Apps          []string `json:"apps,omitempty"`     // allowed app paths; empty = use defaults
@@ -490,12 +494,52 @@ func isValidEmail(email string) bool {
 
 // --- Password Hashing ---
 
-// hashPassword returns the SHA-256 hex hash of a password with a fixed
-// application salt. This is intentionally simple; the database itself
-// is already hardware-encrypted via kvlite.
+// passwordDigest returns a fixed-length, NUL-free representation of a password
+// (hex SHA-256, 64 ASCII bytes) to feed into bcrypt. This sidesteps bcrypt's
+// 72-byte input cap and its NUL-byte truncation — gohort allows passwords up to
+// 128 chars, which would otherwise be silently truncated or rejected. Pre-
+// hashing before bcrypt is a standard, safe pattern (no length-extension concern
+// because the output is then bcrypt'd with a per-user salt).
+func passwordDigest(password string) []byte {
+	h := sha256.Sum256([]byte(password))
+	return []byte(hex.EncodeToString(h[:]))
+}
+
+// hashPassword returns a bcrypt hash of the password (per-user salt, adaptive
+// cost). This replaces the legacy fixed-salt SHA-256 scheme; existing SHA-256
+// hashes still verify via verifyPassword and are upgraded to bcrypt on the
+// user's next successful login (see AuthCheckPassword). Returns "" only on the
+// (practically impossible, since the input is a fixed 64-byte digest) bcrypt
+// error; callers treat "" as "do not overwrite / fail".
 func hashPassword(password string) string {
+	b, err := bcrypt.GenerateFromPassword(passwordDigest(password), bcrypt.DefaultCost)
+	if err != nil {
+		Log("[auth] bcrypt hashing failed: %v", err)
+		return ""
+	}
+	return string(b)
+}
+
+// legacyPasswordHash is the OLD fixed-salt SHA-256 scheme, kept ONLY to verify
+// pre-migration hashes. Never used to create new hashes.
+func legacyPasswordHash(password string) string {
 	h := sha256.Sum256([]byte("gohort:" + password))
 	return hex.EncodeToString(h[:])
+}
+
+// verifyPassword checks a password against a stored hash, transparently handling
+// both bcrypt (new) and legacy SHA-256 (old) formats — bcrypt hashes are
+// self-identifying by their "$2" prefix. legacy is true when the stored hash used
+// the old scheme and should be upgraded to bcrypt on this successful login.
+func verifyPassword(stored, password string) (ok, legacy bool) {
+	if stored == "" {
+		return false, false
+	}
+	if strings.HasPrefix(stored, "$2") { // bcrypt ($2a$/$2b$/$2y$)
+		return bcrypt.CompareHashAndPassword([]byte(stored), passwordDigest(password)) == nil, false
+	}
+	// Legacy fixed-salt SHA-256 — constant-time compare, upgrade on success.
+	return subtle.ConstantTimeCompare([]byte(stored), []byte(legacyPasswordHash(password))) == 1, true
 }
 
 // --- User Management (called from setup and admin app) ---
@@ -535,10 +579,11 @@ func AuthSetUser(db Database, username, password string, admin bool) {
 		Apps:     existing.Apps,
 		Groups:   existing.Groups,
 	}
+	user.PassHash = existing.PassHash // default: keep existing (empty password = no change)
 	if password != "" {
-		user.PassHash = hashPassword(password)
-	} else {
-		user.PassHash = existing.PassHash
+		if h := hashPassword(password); h != "" {
+			user.PassHash = h
+		}
 	}
 	db.Set(AuthTable, "user:"+username, user)
 }
@@ -733,13 +778,26 @@ func AuthDeleteUser(db Database, username string) {
 	db.Unset(AuthTable, "user:"+username)
 }
 
-// AuthCheckPassword verifies a username/password combination.
+// AuthCheckPassword verifies a username/password combination. On a successful
+// login against a legacy SHA-256 hash it transparently upgrades the stored hash
+// to bcrypt (rehash-on-login migration), so no separate migration pass is needed.
 func AuthCheckPassword(db Database, username, password string) bool {
 	user, ok := AuthGetUser(db, username)
 	if !ok {
 		return false
 	}
-	return user.PassHash == hashPassword(password)
+	valid, legacy := verifyPassword(user.PassHash, password)
+	if !valid {
+		return false
+	}
+	if legacy {
+		if nh := hashPassword(password); nh != "" {
+			user.PassHash = nh
+			db.Set(AuthTable, "user:"+username, user)
+			Log("[auth] upgraded password hash to bcrypt for %q", username)
+		}
+	}
+	return true
 }
 
 // AuthChangePassword verifies the user's CURRENT password and, on success,
@@ -756,10 +814,14 @@ func AuthChangePassword(db Database, username, currentPassword, newPassword stri
 	if !db.Get(AuthTable, "user:"+username, &user) {
 		return false
 	}
-	if user.PassHash != hashPassword(currentPassword) {
+	if valid, _ := verifyPassword(user.PassHash, currentPassword); !valid {
 		return false
 	}
-	user.PassHash = hashPassword(newPassword)
+	nh := hashPassword(newPassword)
+	if nh == "" {
+		return false
+	}
+	user.PassHash = nh
 	db.Set(AuthTable, "user:"+username, user)
 	return true
 }
@@ -776,7 +838,11 @@ func AuthAdminSetPassword(db Database, username, newPassword string) bool {
 	if !db.Get(AuthTable, "user:"+username, &user) {
 		return false
 	}
-	user.PassHash = hashPassword(newPassword)
+	nh := hashPassword(newPassword)
+	if nh == "" {
+		return false
+	}
+	user.PassHash = nh
 	db.Set(AuthTable, "user:"+username, user)
 	return true
 }
@@ -940,6 +1006,71 @@ func AuthCurrentUser(r *http.Request) string {
 // AuthMiddleware wraps an http.Handler and redirects unauthenticated
 // requests to the login page. When auth is not configured (no users),
 // all requests pass through.
+// IsStateChangingMethod reports whether an HTTP method mutates server state and
+// therefore warrants the CSRF Origin check. GET/HEAD/OPTIONS are safe/idempotent
+// and are exempt — which is exactly why a handler that MUTATES must reject GET
+// (a cross-site top-level GET carries the cookie under SameSite=Lax and bypasses
+// the Origin check). Exported so handlers can enforce "unsafe method required".
+func IsStateChangingMethod(m string) bool {
+	switch m {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	}
+	return false
+}
+
+// SameOriginRequest reports whether a request's Origin (or, failing that,
+// Referer) is same-origin with the request host. Returns true when NEITHER
+// header is present — a verify-if-present posture: browsers always send Origin on
+// state-changing methods and on WebSocket handshakes, so a cross-origin attempt
+// is caught, while the absent case is left to SameSite=Lax / the session-cookie
+// gate rather than hard-blocking odd same-origin clients. Compares host:port
+// exactly (an origin is scheme+host+port; a port mismatch is a different origin).
+// Exported so browser-facing WebSocket upgraders can reuse the same check.
+func SameOriginRequest(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		if ref := r.Header.Get("Referer"); ref != "" {
+			if u, err := url.Parse(ref); err == nil && u.Host != "" {
+				origin = u.Scheme + "://" + u.Host
+			}
+		}
+	}
+	if origin == "" {
+		return true // neither header present — SameSite=Lax is the control here
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	// gohort-desktop: the desktop app serves its UI from a LOOPBACK origin
+	// (http://127.0.0.1:<port>, or wails.localhost on Windows WebView2) and makes
+	// cookie-authenticated requests to the remote server, so its Origin never
+	// matches the server host. A loopback origin cannot be forged by a remote
+	// website — the browser stamps Origin from the actual page's origin, and a
+	// remote page is never served from the victim's own loopback — so treat it as
+	// same-origin. The residual case (a page served from the user's OWN localhost)
+	// is inside the trust boundary a desktop webview already assumes.
+	return isLoopbackHost(u.Hostname())
+}
+
+// isLoopbackHost reports whether a host is a loopback name/address: localhost,
+// any *.localhost name (RFC 6761 — includes Wails' wails.localhost), or a
+// loopback IP (127.0.0.0/8, ::1).
+func isLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
 func AuthMiddleware(db Database, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Login/logout/signup/forgot/reset endpoints are always accessible.
@@ -984,6 +1115,22 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		_, ok := AuthValidateSession(db, cookie.Value)
 		if !ok {
 			redirectToLogin(w, r)
+			return
+		}
+
+		// CSRF defense for cookie-authenticated, state-changing requests. Reaching
+		// here means the request carried a valid SESSION COOKIE (the machine-to-
+		// machine paths — loopback, ?key=, public/bridge-key routes — already
+		// returned above), so it is browser-driven and CSRF-relevant. SameSite=Lax
+		// on the session cookie is the primary control (it withholds the cookie
+		// from cross-site POST/PUT/PATCH/DELETE); this Origin/Referer check is
+		// defense-in-depth for the residual Lax gaps and any browser without
+		// SameSite. Verify-if-present: a mismatched Origin/Referer is rejected (a
+		// CSRF attacker's browser always sends its own Origin on these methods);
+		// when neither header is present we do NOT block, since Lax already covered
+		// that case and some legitimate same-origin clients omit both.
+		if IsStateChangingMethod(r.Method) && !SameOriginRequest(r) {
+			http.Error(w, "cross-origin state-changing request rejected", http.StatusForbidden)
 			return
 		}
 
@@ -1112,6 +1259,16 @@ func LoginHandler(db Database) http.HandlerFunc {
 // LogoutHandler destroys the session and redirects to login.
 func LogoutHandler(db Database) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// POST-only: destroying the session on GET is CSRF (an attacker
+		// force-logs-out the victim via a link/redirect/img — SameSite=Lax still
+		// sends the cookie on a cross-site top-level GET). A GET here is treated as
+		// a harmless navigation to the login page, NOT a logout; the UI logs out
+		// via a POST form. Cross-site POST is a no-op anyway (Lax withholds the
+		// cookie), so no session gets destroyed.
+		if r.Method != http.MethodPost {
+			http.Redirect(w, r, "/login", http.StatusFound)
+			return
+		}
 		if cookie, err := r.Cookie(auth_cookie_name); err == nil {
 			username, _ := AuthValidateSession(db, cookie.Value)
 			AuthDestroySession(db, cookie.Value)

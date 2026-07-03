@@ -6,24 +6,15 @@
 // compounded drift on retrieval and polluted future turns when the
 // derived chunks auto-injected.
 //
-// The consolidate() helper stays as a no-op so callers in runner.go
-// don't have to be touched in lockstep. stripBulletPrefix is kept
-// because gapcheck.go still uses it as a general string helper.
+// The consolidate() no-op shim and its runner.go call sites have been
+// removed. stripBulletPrefix is kept because gapcheck.go still uses it
+// as a general string helper.
 
 package orchestrate
 
 import (
 	"strings"
 )
-
-// consolidate is now a no-op. Kept so existing runner.go call sites
-// don't need to be touched. The auto-ingest of synthesis findings
-// has been retired in favor of explicit memory_save + memory_search.
-func (t *chatTurn) consolidate(userMsg string, steps []PlanStep, synthesis string) {
-	_ = userMsg
-	_ = steps
-	_ = synthesis
-}
 
 // stripBulletPrefix removes "-", "*", "•", or "1. "/"1) " style
 // leaders. Idempotent on already-clean lines. Kept here because

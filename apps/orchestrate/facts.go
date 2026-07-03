@@ -106,22 +106,29 @@ func (t *chatTurn) forgetFactToolDef() AgentToolDef {
 	}
 }
 
-// listFactsToolDef enumerates stored notes. Rarely needed — the
-// "Saved facts" block in the system prompt already shows
-// them — but useful when the LLM is about to dedup-decide or wants
-// to confirm an index before forget_fact.
-func (t *chatTurn) listFactsToolDef() AgentToolDef {
+// searchFactsToolDef finds stored notes by semantic relevance to a query,
+// falling back to substring, and lists all notes when the query is empty. It
+// subsumes the old list_facts (empty query == full list) and adds the semantic
+// search that RenderMemoryFactsBlock's always-in-prompt view can't offer once
+// the note count grows past a screenful.
+func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        "list_facts",
-			Description: "List every note you've stored about the user / conversation. Returns numbered notes (1-based) in the same order as the \"Saved facts\" block in your system prompt. Use sparingly — that block is already in every turn's prompt; mostly call this right before forget_fact to confirm the index.",
-			Parameters:  map[string]ToolParam{},
-			Caps:        []Capability{CapRead},
+			Name:        "search_facts",
+			Description: "Search your stored Explicit Memory notes by meaning (\"what's the deploy header?\" finds \"production API needs JWT in X-Auth header\"), or omit the query to list every note. Returns numbered notes (1-based) matching the \"Saved facts\" block order for the full-list case. The always-in-prompt \"Saved facts\" block already shows recent notes; reach for this when that block has grown large and you want to pinpoint a specific note (e.g. before forget_fact) rather than re-reading the whole block.",
+			Parameters: map[string]ToolParam{
+				"query": {Type: "string", Description: "What to look for, in natural language. Omit or leave empty to list all stored notes."},
+			},
+			Caps: []Capability{CapRead},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			facts := ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+			query := strings.TrimSpace(stringArg(args, "query"))
+			facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
 			if len(facts) == 0 {
-				return "(no facts stored yet)", nil
+				if query == "" {
+					return "(no facts stored yet)", nil
+				}
+				return fmt.Sprintf("(no stored facts match %q)", query), nil
 			}
 			var b strings.Builder
 			for i, f := range facts {

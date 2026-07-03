@@ -55,16 +55,27 @@ func (app *OrchestrateApp) channelGatekeeperAllow(ctx context.Context, in Channe
 	sessionID := app.effectiveChannelSession(in.Owner, in.AgentID, in.SessionID)
 
 	// Turn-taking bypass: when the agent was the LAST speaker in this channel's
-	// session, treat the inbound as a follow-up and skip the rules. The gate is
-	// for unsolicited contact and group noise, not ordinary reply-by-reply
-	// turn-taking (a lone "ok" / "5" would fail every rule on its own). Scoped
-	// to external senders — owner messages (empty handle) always run the rules,
-	// since the operator wrote them and may want them applied to themselves.
+	// session AND this inbound is from the SAME person the agent was just replying
+	// to, treat it as a follow-up and skip the rules. The gate is for unsolicited
+	// contact and group noise, not ordinary reply-by-reply turn-taking (a lone
+	// "ok" / "5" would fail every rule on its own). Scoped to external senders —
+	// owner messages (empty handle) always run the rules, since the operator wrote
+	// them and may want them applied to themselves.
+	//
+	// The sender check matters in GROUP rooms: after the agent answers Alice it is
+	// still "last speaker", but a first-time message from Bob must NOT ride the
+	// bypass — it still has to face the wake rules. In a 1:1 the sender always
+	// matches, so this is a no-op there. Compare on the resolved sender name
+	// (ChatMessage.Sender is set from the same in.SenderName resolution),
+	// case-insensitively; an empty/unknown sender falls through to the rules.
 	if in.Handle != "" && sessionID != "" {
 		if sess, ok := loadChatSession(udb, in.AgentID, sessionID); ok {
 			if n := len(sess.Messages); n > 0 && sess.Messages[n-1].Role == "assistant" {
-				Log("[gatekeeper] bypass — agent was last speaker, treating inbound as follow-up (chat=%s)", in.ChatID)
-				return true
+				if prev, ok := lastUserSender(sess.Messages); ok &&
+					in.SenderName != "" && strings.EqualFold(strings.TrimSpace(prev), strings.TrimSpace(in.SenderName)) {
+					Log("[gatekeeper] bypass — follow-up from %s, who the agent last replied to (chat=%s)", chFirst(in.SenderName, in.Handle), in.ChatID)
+					return true
+				}
 			}
 		}
 	}
@@ -161,6 +172,19 @@ func mergeWakeRules(master, perChannel string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// lastUserSender returns the Sender of the most recent user turn in the thread
+// (skipping trailing assistant replies), plus whether one was found. The
+// turn-taking bypass uses it to confirm a new inbound is a follow-up from the
+// SAME person the agent was conversing with, not a fresh sender in a group room.
+func lastUserSender(msgs []ChatMessage) (string, bool) {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Sender, true
+		}
+	}
+	return "", false
 }
 
 // recentExchangeBlock renders the last few session turns for follow-up

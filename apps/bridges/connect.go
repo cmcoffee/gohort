@@ -228,6 +228,12 @@ func (T *Bridges) handleAgentChannels(w http.ResponseWriter, r *http.Request) {
 //
 //	PATCH /bridges/api/set-autoreply?id=<channel_id>  {auto_reply}
 func (T *Bridges) handleSetAutoReply(w http.ResponseWriter, r *http.Request) {
+	// Must not be GET-reachable: the body decode is best-effort, so a bodyless
+	// cross-site GET would flip auto_reply to false. The UI calls this via POST.
+	if !IsStateChangingMethod(r.Method) {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return

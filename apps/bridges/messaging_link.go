@@ -129,7 +129,7 @@ func (p messagingLinkImpl) ResolveRecipient(owner, to string) (MessagingChatSumm
 			return p.convoSummary(c), true
 		}
 	}
-	if looksLikeHandle(to) {
+	if LooksLikeHandle(to) {
 		return MessagingChatSummary{Handle: to, DisplayName: to}, true
 	}
 	return MessagingChatSummary{}, false
@@ -160,25 +160,5 @@ func containsFold(ss []string, s string) bool {
 	return false
 }
 
-// looksLikeHandle reports whether a string is phone/email-shaped, so a recipient
-// not yet in a conversation can still be addressed directly (a fresh 1:1).
-func looksLikeHandle(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	if strings.Contains(s, "@") {
-		return true // email
-	}
-	digits := 0
-	for _, r := range s {
-		switch {
-		case r >= '0' && r <= '9':
-			digits++
-		case r == '+' || r == '-' || r == '(' || r == ')' || r == ' ':
-		default:
-			return false
-		}
-	}
-	return digits >= 5
-}
+// looksLikeHandle moved to core.LooksLikeHandle — the canonical, shared handle
+// test (bridges + orchestrate) so both sides agree on what counts as a handle.

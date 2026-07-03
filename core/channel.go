@@ -94,25 +94,71 @@ var bridgeServices = map[string]BridgeService{
 	"email":    {"Email", false},
 }
 
+// warnedUnknownServices dedupes the unknown-transport warning so a misspelled or
+// not-yet-registered service id is surfaced once, not on every message.
+var warnedUnknownServices sync.Map
+
+// lookupBridgeService resolves a transport id to its registry entry. On an
+// unknown (non-empty) id it warns ONCE — so a typo or an omission from
+// bridgeServices is visible in the log instead of silently degrading to raw-id
+// display and plain-text delivery.
+func lookupBridgeService(service string) (BridgeService, bool) {
+	id := strings.ToLower(strings.TrimSpace(service))
+	if svc, ok := bridgeServices[id]; ok {
+		return svc, true
+	}
+	if id != "" {
+		if _, seen := warnedUnknownServices.LoadOrStore(id, true); !seen {
+			Warn("[channel] unknown transport service %q — falling back to raw-id display + plain-text delivery; add it to bridgeServices if it should render markdown", id)
+		}
+	}
+	return BridgeService{}, false
+}
+
 // ServiceDisplayName returns the brand-correct display label for a transport id
 // (e.g. "imessage" → "iMessage"), falling back to the id unchanged for unknown
 // services. Use anywhere a service is shown to a user.
 func ServiceDisplayName(service string) string {
-	s := strings.TrimSpace(service)
-	if svc, ok := bridgeServices[strings.ToLower(s)]; ok {
+	if svc, ok := lookupBridgeService(service); ok {
 		return svc.DisplayName
 	}
-	return s
+	return strings.TrimSpace(service)
 }
 
 // ServiceRendersMarkdown reports whether a transport renders markdown formatting,
 // so the outbound chokepoint keeps it instead of flattening to plain text.
-// Conservative: unknown services get plain text.
+// Conservative: unknown services get plain text (and a one-time warning).
 func ServiceRendersMarkdown(service string) bool {
-	if svc, ok := bridgeServices[strings.ToLower(strings.TrimSpace(service))]; ok {
-		return svc.RendersMarkdown
+	svc, _ := lookupBridgeService(service)
+	return svc.RendersMarkdown
+}
+
+// LooksLikeHandle reports whether a string is phone/email-shaped: an email
+// (contains "@") or a phone-like token (only + - ( ) space and digits, with at
+// least 5 digits). Used so a whole-service channel can address a brand-new
+// recipient not yet in any thread. This is the CANONICAL handle test shared by
+// the transport (bridges) and the agent tools (orchestrate) — keeping one
+// definition here so both sides agree on what counts as a handle (two divergent
+// copies previously disagreed, e.g. on "3 apples").
+func LooksLikeHandle(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
 	}
-	return false
+	if strings.Contains(s, "@") {
+		return true // email
+	}
+	digits := 0
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == '+' || r == '-' || r == '(' || r == ')' || r == ' ':
+		default:
+			return false
+		}
+	}
+	return digits >= 5
 }
 
 // ChannelDirection returns a channel's flow direction, defaulting to
@@ -275,7 +321,8 @@ type ChannelInbound struct {
 // back out the channel.
 type ChannelReply struct {
 	Text   string
-	Images []string // base64 attachments the agent produced this turn
+	Images []string // base64 image attachments the agent produced this turn
+	Videos []string // base64 video attachments (kept separate so the transport delivers them as video, not mislabeled images)
 }
 
 // ChannelAgentRunnerFunc runs a channel's bound agent on one inbound message

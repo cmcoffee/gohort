@@ -450,6 +450,10 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleSave(w http.ResponseWriter, r *http.Request) {
+	if !IsStateChangingMethod(r.Method) {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	_, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -552,6 +556,13 @@ func (T *TechWriterAgent) handleLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleDelete(w http.ResponseWriter, r *http.Request) {
+	// Deletes must not be GET-reachable: a cross-site top-level GET carries the
+	// session cookie under SameSite=Lax and would bypass the Origin check (which
+	// only covers non-safe methods). The workbench calls this via DELETE.
+	if !IsStateChangingMethod(r.Method) {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	_, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -586,6 +597,10 @@ func (T *TechWriterAgent) handleExport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (T *TechWriterAgent) handleImport(w http.ResponseWriter, r *http.Request) {
+	if !IsStateChangingMethod(r.Method) {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	_, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return

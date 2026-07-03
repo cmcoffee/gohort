@@ -362,6 +362,24 @@ func (T *OrchestrateApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// adminGatedWrite is adminGated for STATE-CHANGING console actions: it adds a
+// method guard that rejects safe methods (GET/HEAD/OPTIONS). Console action
+// endpoints are query-param driven, so without this a cross-site top-level GET
+// could trigger them — SameSite=Lax still sends the session cookie on such GETs,
+// and the core AuthMiddleware Origin check only covers non-safe methods. The UI
+// already calls these with POST/DELETE (see page_chat.go action buttons), so the
+// guard is invisible to legitimate use; cross-site POST/DELETE is separately
+// blocked by the Origin check. Use for every console route that mutates.
+func (T *OrchestrateApp) adminGatedWrite(h http.HandlerFunc) http.HandlerFunc {
+	return T.adminGated(func(w http.ResponseWriter, r *http.Request) {
+		if !IsStateChangingMethod(r.Method) {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h(w, r)
+	})
+}
+
 // handleRoot routes the bare prefix (e.g. "/orchestrate/") to the
 // chat page and 404s anything else under "/" that fell through to
 // the catch-all.

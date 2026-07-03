@@ -223,6 +223,20 @@ type guideRevisions struct {
 // saveGuideRev saves the guide AND records a revision snapshot of the resulting
 // state with a note. The revision timeline is the undo history for the destructive
 // co-author tools. Capped at maxRevisions (oldest dropped).
+// sanitizeGuideArtifacts strips stray LLM output that leaked into a section body
+// during drafting/co-authoring but is NOT part of the guide: reasoning
+// delimiters (<think>…</think>), framework markers (<gohort-meta>, [ATTACH:…]),
+// and tool-call markup (<tool_call>, <function=…>, <tool_code>). Returns the
+// cleaned markdown and whether anything changed. Composes the core strippers so
+// the definition of "artifact" stays in one place across the app.
+func sanitizeGuideArtifacts(md string) (string, bool) {
+	cleaned, _ := StripThinkTags(md)
+	cleaned = StripMetaTags(cleaned)
+	cleaned = StripToolCallTags(cleaned)
+	cleaned = strings.TrimSpace(cleaned)
+	return cleaned, cleaned != strings.TrimSpace(md)
+}
+
 func saveGuideRev(udb Database, g Guide, note string) Guide {
 	saved := saveGuide(udb, g)
 	var rl guideRevisions

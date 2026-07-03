@@ -445,6 +445,34 @@ func reorderSections(secs []Section, idx, target int) ([]Section, int) {
 	return out, target
 }
 
+// applySectionOrder rebuilds secs into the sequence named by order — a list of
+// 1-based positions into secs (as returned by the Reorganize LLM). It is
+// defensive against a sloppy model: out-of-range and duplicate positions are
+// skipped, and any section the order OMITS is appended at the end in its original
+// relative position, so a section can never be dropped. Order values are
+// reassigned 1..N. secs is not mutated (each element is copied by value).
+func applySectionOrder(secs []Section, order []int) []Section {
+	out := make([]Section, 0, len(secs))
+	used := make([]bool, len(secs))
+	for _, n := range order {
+		idx := n - 1
+		if idx < 0 || idx >= len(secs) || used[idx] {
+			continue
+		}
+		used[idx] = true
+		out = append(out, secs[idx])
+	}
+	for i, s := range secs {
+		if !used[i] {
+			out = append(out, s)
+		}
+	}
+	for i := range out {
+		out[i].Order = i + 1
+	}
+	return out
+}
+
 // normalizeOrder reassigns 1..N Order values in current sorted order, closing any
 // gaps left by a deletion.
 func normalizeOrder(g *Guide) {

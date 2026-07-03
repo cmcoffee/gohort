@@ -102,7 +102,7 @@ type LogEntry struct {
 // Appliance is a saved remote host with connection params and cached system knowledge.
 type Appliance struct {
 	ID   string `json:"id"`
-	Type string `json:"type"` // "ssh" (default) | "command" | "repo"
+	Type string `json:"type"` // "ssh" (default) | "command" | "repo" | "workspace"
 	Name string `json:"name"`
 	// SSH fields
 	Host     string `json:"host"`
@@ -121,6 +121,20 @@ type Appliance struct {
 	RepoToken  string `json:"repo_token,omitempty"`  // access token for private repos; blanked on list
 	RepoFiles  int    `json:"repo_files,omitempty"`  // ingested file count
 	RepoCloned string `json:"repo_cloned,omitempty"` // RFC3339 of last successful ingest
+	// RepoSkipDirs are extra directory names (basename match) to exclude from
+	// ingest, on top of the built-in defaults (VCS/venv/build artifacts). Lets a
+	// project drop its own generated trees (e.g. "dist", "target", "coverage").
+	RepoSkipDirs []string `json:"repo_skip_dirs,omitempty"`
+	// Workspace fields (Type == "workspace") — a master appliance that references
+	// other appliances (repos and/or SSH boxes) and investigates them together.
+	// It owns no store/creds of its own; each member is resolved and run in its
+	// own owner's context. See docs/servitor-workspace-mvp.md.
+	Members []string `json:"members,omitempty"` // member appliance IDs
+	// Collections are knowledge-collection IDs linked to this appliance so the
+	// investigator can draw on curated external knowledge (runbooks, vendor docs,
+	// a guide) when answering — via the search_knowledge tool — alongside what it
+	// gathered from the system itself. Applies to every appliance type.
+	Collections []string `json:"collections,omitempty"`
 	// Sharing — an appliance/repo is owned by the user who created it and lives
 	// in that user's store. When Shared is set, every authenticated user can
 	// discover and operate it (in the OWNER's context: same creds, same repo
@@ -136,6 +150,22 @@ type Appliance struct {
 	Profile       string     `json:"profile"`        // full system profile / CLI map markdown
 	LogMap       []LogEntry `json:"log_map"`      // structured list of discovered log files
 	Scanned      string     `json:"scanned"`      // RFC3339 timestamp of last map run
+}
+
+// dedupeStrings trims, drops empties, and removes duplicates while preserving
+// first-seen order. Used to normalize workspace member ID lists.
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // probeEvent is one event emitted by a running session goroutine.
@@ -404,6 +434,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/knowledge/export", T.handleKnowledgeExport)
 	sub.HandleFunc("/api/memory/clear", T.handleMemoryClear)
 	sub.HandleFunc("/api/repo/refresh", T.handleRepoRefresh)
+	sub.HandleFunc("/api/collections", T.handleCollectionsList)
 	sub.HandleFunc("/api/cancel", probeSessions.HandleCancel("servitor"))
 	sub.HandleFunc("/api/save_destinations", T.handleSaveDestinations)
 	sub.HandleFunc("/api/save_article", T.handleSaveArticle)
@@ -506,6 +537,17 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 			}
 			if req.Name == "" {
 				req.Name = repoNameFromURL(req.RepoURL)
+			}
+		case "workspace":
+			// A workspace references other appliances; it owns no creds/store.
+			req.Members = dedupeStrings(req.Members)
+			if req.Name == "" {
+				http.Error(w, "name required", http.StatusBadRequest)
+				return
+			}
+			if len(req.Members) == 0 {
+				http.Error(w, "select at least one member appliance", http.StatusBadRequest)
+				return
 			}
 		default:
 			req.Type = "ssh"
@@ -1161,6 +1203,28 @@ func (T *Servitor) handleRepoRefresh(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// handleCollectionsList returns the caller's knowledge collections (their own +
+// deployment-scoped) as [{id,name,description}], so the appliance edit form can
+// render the "Linked Knowledge" picker. Read-only; the selection itself is saved
+// on the appliance record via the normal appliance POST (Collections field).
+func (T *Servitor) handleCollectionsList(w http.ResponseWriter, r *http.Request) {
+	userID, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	type item struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description,omitempty"`
+	}
+	out := []item{}
+	for _, c := range ListCollections(UserDB(CollectionsDB(), userID), userID) {
+		out = append(out, item{ID: c.ID, Name: c.Name, Description: c.Description})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
+
 // --- SSH connection pool ---
 // Connections are keyed by (userID, applianceID) and reused across chat/map/terminal
 // calls. A connection is only closed on explicit disconnect or when it is found dead.
@@ -1239,7 +1303,14 @@ var wsUpgrader = websocket.Upgrader{
 	HandshakeTimeout: 10 * time.Second,
 	ReadBufferSize:   4096,
 	WriteBufferSize:  4096,
-	CheckOrigin:      func(r *http.Request) bool { return true },
+	// Same-origin only. This terminal WS is cookie-authenticated (behind
+	// AuthMiddleware) and streams a live shell, so a permissive CheckOrigin would
+	// allow cross-site WebSocket hijacking — a malicious page opening the socket
+	// with the victim's session cookie. It's a browser-only surface with no
+	// legitimate cross-origin client, so require the handshake Origin to match the
+	// host (SameOriginRequest returns true when Origin is absent, i.e. a
+	// non-browser client, which still needs a valid session cookie to get here).
+	CheckOrigin: SameOriginRequest,
 }
 
 // handleTerminal upgrades to a WebSocket and registers it as the passive agent
@@ -1894,6 +1965,18 @@ func leadStaticGuidance(b *strings.Builder) {
 	b.WriteString(asciiDiagramRule)
 }
 
+// linkedKnowledgeNote tells the lead that curated knowledge collections are
+// linked to this appliance, so it dispatches search_knowledge lookups and
+// grounds answers in that reference material alongside live findings. Empty when
+// nothing is linked. Shared by the SSH/command and repo lead prompts.
+func linkedKnowledgeNote(a Appliance) string {
+	if len(a.Collections) == 0 {
+		return ""
+	}
+	return "## Linked reference knowledge\n\n" +
+		"The owner has attached curated knowledge (runbooks, vendor docs, guides) to this appliance. When a question could be answered or corroborated by that material, dispatch a worker to call `search_knowledge` — it searches the linked collections and does NOT touch the live system — and fold what it returns into your answer. Prefer verified system evidence; use linked knowledge to fill gaps and cross-check.\n\n"
+}
+
 func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string, hasFreshImage bool) string {
 	if appliance.Type == "repo" {
 		return buildRepoLeadPrompt(appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries)
@@ -1931,6 +2014,7 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	}
 
 	leadStaticGuidance(&b)
+	b.WriteString(linkedKnowledgeNote(appliance))
 
 	if len(docs) > 0 {
 		b.WriteString("## Current Knowledge Base\n\n")
@@ -2291,6 +2375,16 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	a := &Servitor{}
 	a.AppCore = T.AppCore
 
+	if appliance.Type == "workspace" {
+		// Slice 1: the record + member picker exist, but the cross-appliance
+		// coordinator (scout-then-drill) is not built yet. Fail clearly instead
+		// of falling through to the SSH path and dialing an empty host.
+		// See docs/servitor-workspace-mvp.md.
+		probeSessions.AppendEvent(id, probeEvent{Kind: "error",
+			Text: fmt.Sprintf("Workspace %q has %d member(s), but cross-appliance investigation isn't available yet. For now, open a member appliance directly.", appliance.Name, len(appliance.Members))}, true)
+		probeSessions.ScheduleCleanup(id)
+		return
+	}
 	if appliance.Type == "command" {
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
 	} else if appliance.Type == "repo" {
@@ -3145,6 +3239,54 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
+	// search_knowledge searches the curated knowledge collections the owner LINKED
+	// to this appliance (runbooks, vendor docs, guides) — authoritative reference
+	// material to ground answers ALONGSIDE what the worker finds on the system
+	// itself. Local-only: a vector search over the owner's collections (query
+	// embedded via the local llama.cpp server); it never touches the live system
+	// or any third party. Only attached to the worker when the appliance has
+	// linked collections.
+	search_knowledge_tool := AgentToolDef{
+		Tool: Tool{
+			Name:        "search_knowledge",
+			Description: "Search the curated KNOWLEDGE linked to this appliance (runbooks, vendor docs, guides the owner attached) for material relevant to the task. Returns the top matching passages with their source. Use it to ground your answer in authoritative reference material — it does NOT touch the live system, so pair it with the system-probing tools rather than replacing them.",
+			Parameters: map[string]ToolParam{
+				"query": {Type: "string", Description: "What to look up, in natural language."},
+				"k":     {Type: "number", Description: "Max passages to return (default 5, max 12)."},
+			},
+			Required: []string{"query"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			query, _ := args["query"].(string)
+			query = strings.TrimSpace(query)
+			if query == "" {
+				return "", fmt.Errorf("query is required")
+			}
+			k := 5
+			if v, ok := args["k"].(float64); ok && int(v) > 0 {
+				k = int(v)
+				if k > 12 {
+					k = 12
+				}
+			}
+			hits := SearchCollections(ctx, CollectionsDB(), ownerUser, appliance.Collections, query, k)
+			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_knowledge %q: %d passage(s)", query, len(hits))})
+			if len(hits) == 0 {
+				return "No matching passages in the linked knowledge.", nil
+			}
+			var b strings.Builder
+			for i, h := range hits {
+				label := strings.TrimSpace(h.Title)
+				if label == "" {
+					label = h.Source
+				}
+				fmt.Fprintf(&b, "%d. [%s] %s\n\n", i+1, label, strings.TrimSpace(h.Text))
+			}
+			return strings.TrimSpace(b.String()), nil
+		},
+		NeedsConfirm: false,
+	}
+
 	// Build the worker base prompt and inject what the worker needs directly.
 	workerPrompt := func() string {
 		if appliance.Type == "command" {
@@ -3426,6 +3568,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			count_lines_tool, read_range_tool,
 			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, push_to_guide_tool, list_guides_tool,
 		}
+	}
+	// Curated linked knowledge (owner-attached collections) is searchable by the
+	// worker via search_knowledge — added for every appliance type, but only when
+	// the appliance actually has collections linked, so agents without any don't
+	// see a dead tool.
+	if len(appliance.Collections) > 0 {
+		workerTools = append(workerTools, search_knowledge_tool)
 	}
 	// Enforced sanity check — servitor handles sensitive system data and
 	// must never call out to third-party services. assertOnlyAllowedTools
@@ -4176,10 +4325,17 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					}
 					return fmt.Sprintf("No %s document found. Probe the system to build it.", doc), nil
 				}
-				if age != "" {
-					return fmt.Sprintf("[Last updated: %s]\n\n%s", age, content), nil
+				// Repo docs go stale when the code is refreshed (re-cloned) after the
+				// last Map run — the files update but the synthesized docs don't. Warn
+				// so the investigator re-verifies against current files.
+				staleNote := ""
+				if appliance.Type == "repo" && repoOverviewStale(appliance) {
+					staleNote = repoStaleDocBanner
 				}
-				return content, nil
+				if age != "" {
+					return fmt.Sprintf("%s[Last updated: %s]\n\n%s", staleNote, age, content), nil
+				}
+				return staleNote + content, nil
 			},
 			NeedsConfirm: false,
 		}

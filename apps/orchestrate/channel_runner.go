@@ -54,12 +54,25 @@ func channelSurfaceContext(in ChannelInbound) string {
 	if len(in.Roster) > 0 {
 		roster = fmt.Sprintf(" Participants in this conversation: %s.", strings.Join(in.Roster, ", "))
 	}
+	// Binding scope: a whole-service binding (empty Address) sees EVERY chat on
+	// this transport; a scoped binding sees only this contact/group. Surface which
+	// so the agent reasons correctly about how much it can see and act on.
+	scope := ""
+	if strings.TrimSpace(ch.Address) == "" {
+		svcLabel := service
+		if svcLabel == "" {
+			svcLabel = "this"
+		}
+		scope = fmt.Sprintf(" This channel is bound to the whole %s service, so you see and can act across ALL conversations on it, not only this one.", svcLabel)
+	} else {
+		scope = " This channel is scoped to just this conversation on the transport, not the whole service."
+	}
 	// A receive-only channel doesn't reply on this surface; bidirectional (the
 	// default) does. Ground the agent on which it is.
 	if ch.Direction == DirectionInbound {
-		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo, roster)
+		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s%s Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo, roster, scope)
 	}
-	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo, roster)
+	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s%s Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat — don't say you don't have a contact you can resolve from the conversation's roster.]", origin, convo, roster, scope)
 }
 
 // channelObsFrom labels a channel inbound for its cortex report card: the
@@ -282,7 +295,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// (the model ended a turn with empty content, or its whole output was a
 		// stripped marker), send a graceful fallback so the contact gets SOMETHING
 		// back instead of the agent appearing to give up.
-		if strings.TrimSpace(replyText) == "" && len(res.Images) == 0 {
+		if strings.TrimSpace(replyText) == "" && len(res.Images) == 0 && len(res.Videos) == 0 {
 			Log("[channel] empty agent reply for owner=%s agent=%s — sending fallback", in.Owner, in.AgentID)
 			replyText = "I wasn't able to put together a response to that. Could you rephrase it, or give me a little more detail?"
 		}
@@ -296,7 +309,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
 		app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
-		return ChannelReply{Text: replyText, Images: res.Images}, nil
+		return ChannelReply{Text: replyText, Images: res.Images, Videos: res.Videos}, nil
 	})
 }
 

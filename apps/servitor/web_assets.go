@@ -679,7 +679,9 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         onclick: function(){ setType('command'); }}, ['Local Command']);
       var typeRepo = el('button', {class: 'ui-row-btn',
         onclick: function(){ setType('repo'); }}, ['Git Repository']);
-      var typeRow = el('div', {class: 'ui-servitor-app-tabs'}, [typeSsh, typeCmd, typeRepo]);
+      var typeWorkspace = el('button', {class: 'ui-row-btn',
+        onclick: function(){ setType('workspace'); }}, ['Workspace']);
+      var typeRow = el('div', {class: 'ui-servitor-app-tabs'}, [typeSsh, typeCmd, typeRepo, typeWorkspace]);
 
       // SSH section
       var hostIn = el('input', {type: 'text', class: 'ui-form-input',
@@ -727,12 +729,64 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var repoTokenIn = el('input', {type: 'password', class: 'ui-form-input',
         placeholder: isEdit ? '(unchanged — type to replace)' : 'for private repos (optional)',
         value: ''});
+      var repoSkipIn = el('input', {type: 'text', class: 'ui-form-input',
+        placeholder: 'e.g. testdata, generated, docs/build',
+        value: (rec.repo_skip_dirs || []).join(', ')});
       var repoSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Git URL *']), repoUrlIn,
         el('label', {}, ['Branch']), repoBranchIn,
         el('label', {}, ['Access Token']), repoTokenIn,
+        el('label', {}, ['Skip Directories']), repoSkipIn,
         el('div', {class: 'ui-form-hint'},
-          ['The repository is cloned, its text files ingested into an encrypted store, and the plaintext clone discarded. Token is stored encrypted, used only for private clones.']),
+          ['The repository is cloned, its text files ingested into an encrypted store, and the plaintext clone discarded. Token is stored encrypted, used only for private clones. Skip Directories (comma-separated) are excluded from ingest on top of the built-in defaults (.git, node_modules, dist, build, target, vendor, …).']),
+      ]);
+
+      // Workspace section — a master appliance that investigates several existing
+      // appliances (repos and/or SSH boxes) together. The member list is fetched
+      // lazily the first time the Workspace tab is opened.
+      var wsSelected = (rec.members || []).slice();
+      var wsMembersBox = el('div', {}, ['Loading appliances…']);
+      var wsLoaded = false;
+      function loadWorkspaceMembers() {
+        if (wsLoaded) return;
+        wsLoaded = true;
+        fetch('api/appliances')
+          .then(function(r){ return r.ok ? r.json() : []; })
+          .then(function(list) {
+            list = (list || []).filter(function(a) {
+              // Members are concrete appliances; a workspace can't nest a
+              // workspace, and can't include itself.
+              return a.type !== 'workspace' && a.id !== (rec.id || '');
+            });
+            wsMembersBox.innerHTML = '';
+            if (!list.length) {
+              wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'},
+                ['No repos or SSH appliances yet — create some first, then add them here.']));
+              return;
+            }
+            list.forEach(function(a) {
+              var cb = el('input', {type: 'checkbox'});
+              cb.checked = wsSelected.indexOf(a.id) >= 0;
+              cb.onchange = function() {
+                var i = wsSelected.indexOf(a.id);
+                if (cb.checked && i < 0) wsSelected.push(a.id);
+                else if (!cb.checked && i >= 0) wsSelected.splice(i, 1);
+              };
+              var typeTag = a.type === 'repo' ? 'repo' : (a.type === 'command' ? 'cmd' : 'ssh');
+              wsMembersBox.appendChild(el('label', {
+                style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0;'},
+                [cb, el('span', {style:'opacity:0.6; font-size:0.85em; min-width:2.6em;'}, [typeTag]), (a.name || a.id)]));
+            });
+          })
+          .catch(function() {
+            wsMembersBox.innerHTML = '';
+            wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load appliances.']));
+          });
+      }
+      var workspaceSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Member Appliances *']), wsMembersBox,
+        el('div', {class: 'ui-form-hint'},
+          ['Pick the repos and SSH boxes this workspace investigates together. A question fans out to the relevant members and the answers are combined — e.g. trace a log line seen on a box back to the repo that emits it.']),
       ]);
 
       function setType(t) {
@@ -740,9 +794,12 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         typeSsh.classList.toggle('primary', t === 'ssh');
         typeCmd.classList.toggle('primary', t === 'command');
         typeRepo.classList.toggle('primary', t === 'repo');
+        typeWorkspace.classList.toggle('primary', t === 'workspace');
         sshSection.style.display = t === 'ssh' ? '' : 'none';
         cmdSection.style.display = t === 'command' ? '' : 'none';
         repoSection.style.display = t === 'repo' ? '' : 'none';
+        workspaceSection.style.display = t === 'workspace' ? '' : 'none';
+        if (t === 'workspace') loadWorkspaceMembers();
       }
       setType(rec.type || 'ssh');
 
@@ -757,6 +814,40 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         placeholder: 'Describe how the AI should approach this appliance…'});
       personaPromptIn.value = rec.persona_prompt || '';
 
+      // Linked Knowledge — collections the investigator can search (via
+      // search_knowledge) to ground answers in curated reference material.
+      // Applies to every appliance type, so it loads as soon as the form opens.
+      var kbSelected = (rec.collections || []).slice();
+      var kbBox = el('div', {}, ['Loading collections…']);
+      fetch('api/collections')
+        .then(function(r){ return r.ok ? r.json() : []; })
+        .then(function(list) {
+          kbBox.innerHTML = '';
+          list = list || [];
+          if (!list.length) {
+            kbBox.appendChild(el('div', {class: 'ui-form-hint'},
+              ['No knowledge collections yet — create some in the Knowledge app, then link them here.']));
+            return;
+          }
+          list.forEach(function(c) {
+            var cb = el('input', {type: 'checkbox'});
+            cb.checked = kbSelected.indexOf(c.id) >= 0;
+            cb.onchange = function() {
+              var i = kbSelected.indexOf(c.id);
+              if (cb.checked && i < 0) kbSelected.push(c.id);
+              else if (!cb.checked && i >= 0) kbSelected.splice(i, 1);
+            };
+            kbBox.appendChild(el('label', {style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0;'},
+              [cb, (c.name || c.id)]));
+          });
+        })
+        .catch(function(){ kbBox.innerHTML = ''; kbBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load collections.'])); });
+      var knowledgeSection = el('div', {class: 'ui-servitor-app-section'}, [
+        el('label', {}, ['Linked Knowledge']), kbBox,
+        el('div', {class: 'ui-form-hint'},
+          ['Curated collections the investigator can search (via search_knowledge) to ground answers in reference material — runbooks, vendor docs, a guide — alongside what it finds on the system itself.']),
+      ]);
+
       // Shared toggle — when on, every user can discover and use this
       // appliance/repo (owner's creds, one repo clone, shared accumulated
       // knowledge) while keeping their own chat sessions.
@@ -770,10 +861,11 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
 
       var body = el('div', {class: 'ui-pl-modal-body'}, [
         el('label', {}, ['Name *']), nameIn,
-        typeRow, sshSection, cmdSection, repoSection,
+        typeRow, sshSection, cmdSection, repoSection, workspaceSection,
         el('label', {}, ['Custom Instructions']), instrIn,
         el('label', {}, ['Persona']),
         personaNameIn, personaPromptIn,
+        knowledgeSection,
         sharedRow, sharedHint,
       ]);
 
@@ -795,16 +887,20 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
             repo_url:       repoUrlIn.value.trim(),
             repo_branch:    repoBranchIn.value.trim(),
             repo_token:     repoTokenIn.value,
+            repo_skip_dirs: repoSkipIn.value.split(',').map(function(s){return s.trim();}).filter(Boolean),
             instructions:   instrIn.value,
             persona_name:   personaNameIn.value.trim(),
             persona_prompt: personaPromptIn.value,
             shared:         sharedIn.checked,
+            members:        wsSelected.slice(),
+            collections:    kbSelected.slice(),
           };
           // Name is optional for repos — the server derives owner/repo from the URL.
           if (!payload.name && payload.type !== 'repo') { window.uiAlert('Name is required'); return; }
           if (payload.type === 'ssh' && !payload.host) { window.uiAlert('Host is required'); return; }
           if (payload.type === 'command' && !payload.command) { window.uiAlert('Command is required'); return; }
           if (payload.type === 'repo' && !payload.repo_url) { window.uiAlert('Git URL is required'); return; }
+          if (payload.type === 'workspace' && !payload.members.length) { window.uiAlert('Select at least one member appliance'); return; }
           saveBtn.disabled = true;
           fetch('api/appliances', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1154,6 +1250,11 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var types = window.servitorApplianceTypes || {};
       return !!aid && types[aid] === 'repo';
     }
+    // Repos and workspaces have nothing to attach a shell to.
+    function isShelllessAppliance(aid) {
+      var t = (window.servitorApplianceTypes || {})[aid] || 'ssh';
+      return t === 'repo' || t === 'workspace';
+    }
     // Current appliance type ('' when nothing is selected).
     function currentApplianceType() {
       var aid = getApplianceID();
@@ -1183,7 +1284,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
     // freed space. Both panes keep growing, so no dead gap.
     function applyRepoLayout() {
       var wrap = document.querySelector('.ui-agent');
-      if (wrap) wrap.classList.toggle('servitor-repo-mode', currentApplianceType() === 'repo');
+      if (wrap) wrap.classList.toggle('servitor-repo-mode', isShelllessAppliance(getApplianceID()));
     }
 
     function openTerminal() {
@@ -1191,8 +1292,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       var cont = document.querySelector('.ui-agent-terminal-body');
       if (!cont) return;
       var aid = getApplianceID();
-      if (isRepoAppliance(aid)) {
-        // No shell for a repository — tear down any open socket and hide the pane.
+      if (isShelllessAppliance(aid)) {
+        // No shell for a repository or workspace — tear down any open socket and hide the pane.
         closeTerminalSocket();
         termLastID = '';
         setTerminalPaneVisible(false);

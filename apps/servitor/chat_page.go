@@ -38,7 +38,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	// Bucket by type so the picker renders separated <optgroup> sections in a
 	// stable order (SSH Hosts → Local Commands → Repositories), rather than one
 	// flat mixed list.
-	var sshOpts, cmdOpts, repoOpts []ui.SelectOption
+	var sshOpts, cmdOpts, repoOpts, workspaceOpts []ui.SelectOption
 	seen := map[string]bool{}
 	add := func(a Appliance, sharedByOther bool) {
 		if a.ID == "" || seen[a.ID] {
@@ -62,6 +62,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 			cmdOpts = append(cmdOpts, ui.SelectOption{Value: a.ID, Label: name, Group: "Local Commands"})
 		case "repo":
 			repoOpts = append(repoOpts, ui.SelectOption{Value: a.ID, Label: name, Group: "Repositories"})
+		case "workspace":
+			workspaceOpts = append(workspaceOpts, ui.SelectOption{Value: a.ID, Label: name, Group: "Workspaces"})
 		default:
 			sshOpts = append(sshOpts, ui.SelectOption{Value: a.ID, Label: name, Group: "SSH Hosts"})
 		}
@@ -90,6 +92,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	applianceOpts = append(applianceOpts, sshOpts...)
 	applianceOpts = append(applianceOpts, cmdOpts...)
 	applianceOpts = append(applianceOpts, repoOpts...)
+	applianceOpts = append(applianceOpts, workspaceOpts...)
 	typeMapJSON, _ := json.Marshal(applianceTypes)
 	applianceTypesScript := "<script>window.servitorApplianceTypes = " + string(typeMapJSON) + ";</script>"
 

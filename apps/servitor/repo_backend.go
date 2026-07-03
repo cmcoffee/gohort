@@ -98,7 +98,7 @@ func (T *Servitor) cloneAndIngestRepo(user string, udb Database, applianceID str
 			return nil
 		}
 		if d.IsDir() {
-			if skipRepoDir(d.Name()) {
+			if skipRepoDir(d.Name(), rec.RepoSkipDirs) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -140,10 +140,25 @@ func repoCloneURL(rec Appliance) string {
 	return "https://" + tok + "@" + rest // github + generic
 }
 
-func skipRepoDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", ".venv", "__pycache__", ".mypy_cache", ".pytest_cache":
+// defaultSkipDirs are directory basenames never worth ingesting: VCS metadata,
+// dependency caches, virtualenvs, and common build/output trees. Extended per
+// appliance via Appliance.RepoSkipDirs.
+var defaultSkipDirs = map[string]bool{
+	".git": true, "node_modules": true, ".venv": true, "venv": true,
+	"__pycache__": true, ".mypy_cache": true, ".pytest_cache": true,
+	".idea": true, ".vscode": true, ".gradle": true,
+	"dist": true, "build": true, "target": true, "out": true,
+	".next": true, ".nuxt": true, "vendor": true, "coverage": true,
+}
+
+func skipRepoDir(name string, extra []string) bool {
+	if defaultSkipDirs[name] {
 		return true
+	}
+	for _, e := range extra {
+		if name == strings.TrimSpace(e) {
+			return true
+		}
 	}
 	return false
 }

@@ -156,9 +156,14 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 	// Record the conversation (identity + participant) and keep the message for
 	// the thread view.
 	T.upsertConvo(svc, activeChatID, req.Handle, req.DisplayName, req.ConversationName)
+	// Attribute the message to a person (learns + resolves handle→name so group
+	// chats read by who-said-it, not by phone number). Computed once here and
+	// reused for the agent dispatch below — nothing between mutates the convo's
+	// members, so a second resolve would return the same value.
+	sender := T.resolveSender(activeChatID, req.Handle, req.DisplayName)
 	T.storeMessage(StoredMessage{
 		ID: firstNonEmpty(req.MsgID, newToken()[:12]), ChatID: activeChatID, Role: "user",
-		Handle: req.Handle, DisplayName: T.resolveSender(activeChatID, req.Handle, req.DisplayName),
+		Handle: req.Handle, DisplayName: sender,
 		Text: req.Text,
 	})
 
@@ -232,9 +237,6 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Attribute the message to a person (learns + resolves handle→name so group
-	// chats read by who-said-it, not by phone number).
-	sender := T.resolveSender(activeChatID, req.Handle, req.DisplayName)
 	sessionID := ChannelSessionKey(ch, activeChatID)
 	replyHere := ChannelDirection(ch) != DirectionInbound
 	chatID, handle, text, images, videos, audios := activeChatID, req.Handle, req.Text, req.Images, req.Videos, req.Audios
@@ -285,10 +287,10 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 			Log("[bridges] inbound-only channel %q — processed, reply not delivered here", ch.Name)
 			return
 		}
-		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 {
+		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 {
 			return
 		}
-		T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Type: "reply"})
+		T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Type: "reply"})
 		T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: reply.Text})
 	}()
 	w.WriteHeader(http.StatusAccepted)

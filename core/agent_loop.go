@@ -505,6 +505,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// work. Written without em-dashes so it doesn't model the tic.
 		systemPrompt += "\n\n[Capability-first: when a tool or an agent can do the job, or get fresher information than you hold (current events, news, prices, status, anything that may have changed since your training, or anything the user expects to be up to date), use it instead of answering from training or memory. Match the capability to the job: a direct tool when one lookup or action answers it; an agent when the job needs multiple steps, decomposition, or specialized work a single tool cannot cover. Do not substitute a quick tool for an agent the job needs, nor spin up an agent for what one tool answers. Treat prior knowledge as a fallback for gaps no tool or agent can fill, never as a substitute for a capability that exists for the job. If you fall back to prior knowledge, say so and offer to verify. Questions about your OWN tools or capabilities ('do you have an X tool', 'what can you do') follow the same rule: to say what tools you have or can use, read your live catalog and any 'custom tools (load before use)' section in this prompt, never recite your tool inventory from memory, and never claim you already built or 'previously set up' a tool without checking the catalog first.]"
 		systemPrompt += "\n\n[Grounding: state a precise specific — a number, a name, a citation or reference (statute, case, version, ID), a date, a figure, a dosage, a direct quote — ONLY when it appears in a tool result or in material the user gave you THIS turn. Never from memory, even when you're confident: a plausible-looking specific you can't point to is worse than not having one. This holds in CASUAL conversation as much as in formal answers — you may state the general shape of the answer, but do NOT attach a specific identifier you can't source right now; if you can't verify the exact one, say you're not certain rather than guessing. If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing — never quietly supply it from memory. And if the user CORRECTS a specific you gave, do NOT swap in another from memory or invent a rationale for the mistake — admit you're not certain and offer to look it up. A confident wrong specific, then a confident second wrong one, is the failure to avoid.]"
+		// Action grounding — the sibling of Grounding aimed at ACTIONS rather than
+		// facts. The failure mode (observed live: an agent in a group chat said "I
+		// sent a meme" with zero tool calls): the model narrates a completed action
+		// it never performed, because its reply text feels like doing the thing.
+		// Written without em-dashes (house style).
+		systemPrompt += "\n\n[Actions: never claim you have DONE something (sent a message, meme, image, or file; posted; scheduled; created; saved; delivered; ran a command) unless you actually called the tool that does it THIS turn and its result confirms success. Your reply text is NOT an action: writing 'I sent the meme', 'I've attached it', 'posted to the group', or 'done' does not send, attach, post, or do anything by itself. If doing the thing needs a tool, call the tool and report what its result says; if you did not call it, do not say you did. If you cannot do it or chose not to, say so plainly instead of narrating a success that did not happen. When an action or delivery tool errors, times out, or returns empty, treat the action as NOT done and tell the user, rather than claiming it worked.]"
 		// Contradiction discipline — the sibling of Grounding aimed the OPPOSITE
 		// direction: not the model's own volunteered specifics, but the model
 		// DISPUTING a fact the user stated or assumed. The failure mode is a
@@ -636,6 +642,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		graceRounds = 0
 	}
 	hardStop := -1
+
+	// Wedge break-out. The loop-guard above blocks a repeated failing call, but a
+	// small model may keep RE-EMITTING that identical blocked call every round
+	// (often as a TEXT/reasoning tool call), ignoring the STOP directive and
+	// making zero progress. Counting rounds that were nothing-but-a-blocked-call,
+	// once past this small limit we stop looping and force a clean final answer
+	// rather than grinding to the round cap. forceFinal drives the post-loop rescue.
+	guardBlockedStreak := 0
+	const guardBlockedBreakLimit = 2
+	forceFinal := false
 
 	for round := 1; round <= maxRounds+graceRounds; round++ {
 		// Bail immediately on cancellation so the loop doesn't burn another
@@ -1246,6 +1262,31 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				continue
 			}
 
+			// No-arg-tool-mention correction: the model named a KNOWN
+			// zero-argument tool in its reply (e.g. "let me get_joke") but
+			// emitted no structured call. parseNaturalToolCall can't rescue a
+			// no-arg tool from prose (there are no args to extract), so the tool
+			// silently never runs and the model may narrate a result it never
+			// got. Nudge once to either issue the real call or answer plainly.
+			// FAR narrower than the disabled actionPromiseCorrection above: it
+			// fires ONLY on an exact, token-bounded, snake_case tool NAME (those
+			// don't occur in ordinary prose), only when NO tool fired this turn,
+			// is capped by promiseCorrectionsTotal, and the nudge gives an
+			// explicit "if you didn't mean to, answer directly" out. Flip the
+			// const to disable if it ever proves noisy.
+			const noArgToolMentionCorrection = true
+			if noArgToolMentionCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn {
+				if name := mentionedNoArgTool(resp.Content, handlers, toolDefs); name != "" {
+					Debug("[agent_loop] no-arg tool %q named in prose without a call, re-prompting: correction %d/%d", name, promiseCorrectionsTotal+1, maxPromiseCorrections)
+					history = append(history, Message{
+						Role:    "user",
+						Content: fmt.Sprintf("Your previous response referred to the %q tool but did not actually call it (it takes no arguments, so there was nothing to run). If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name),
+					})
+					promiseCorrectionsTotal++
+					continue
+				}
+			}
+
 			// Reasoning-collapse correction: Qwen-style models with
 			// thinking enabled sometimes burn the entire budget on
 			// reasoning and emit ~no visible content, while reporting
@@ -1344,6 +1385,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// checked serially first to avoid concurrent prompts.
 		results := make([]ToolResult, len(resp.ToolCalls))
 		toolErrors := 0
+		guardBlockedThisRound := false // set when the loop-guard blocks a repeat this round
 
 		// stay_silent normalization. Two failure modes from real models
 		// (Qwen 3 in particular):
@@ -1445,6 +1487,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			sig := tc.Name + "\x00" + formatArgs(tc.Args)
 			if repeatFail[sig] >= repeatFailLimit {
 				Debug("[agent_loop] loop-guard: %s blocked (%d prior identical failures this turn)", tc.Name, repeatFail[sig])
+				guardBlockedThisRound = true
 				results[i] = ToolResult{
 					ID:      tc.ID,
 					Content: fmt.Sprintf("STOP — you have already called '%s' with these exact arguments %d times this turn and it failed the same way each time. Calling it again will NOT change the result. Do something different: try another approach or different arguments, or tell the user plainly that this isn't working and what you tried. Do not repeat this call.", tc.Name, repeatFail[sig]),
@@ -1677,6 +1720,23 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			failureStreakWarned = false
 		}
 
+		// Wedge break-out: a round whose only tool activity was a loop-guard-BLOCKED
+		// call (blocked this round AND every result errored) is pure spinning — the
+		// model is re-issuing the dead call and ignoring the STOP directive. After a
+		// couple of these in a row, stop looping and force a clean final answer
+		// instead of burning the rest of the budget. (Any successful tool call resets
+		// the streak via the else branch.)
+		if guardBlockedThisRound && allFailed {
+			guardBlockedStreak++
+			if guardBlockedStreak >= guardBlockedBreakLimit {
+				Debug("[agent_loop] loop-guard wedge: %d blocked-with-no-progress rounds — forcing final answer", guardBlockedStreak)
+				forceFinal = true
+				break
+			}
+		} else {
+			guardBlockedStreak = 0
+		}
+
 		if cfg.OnStep != nil {
 			cfg.OnStep(StepInfo{
 				Round:      round,
@@ -1762,12 +1822,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// "stuck in tool-call thrashing, hit MaxRounds with nothing to
 	// show the user" failure that the lookback rescue can't help
 	// with (when there's no clean assistant content anywhere recent).
-	if lastResp != nil && strings.TrimSpace(lastResp.Content) == "" && T.LLM != nil {
-		Debug("[agent_loop] empty after lookback rescue — issuing a forced-final-answer call with no tools")
+	if lastResp != nil && (forceFinal || strings.TrimSpace(lastResp.Content) == "") && T.LLM != nil {
+		if forceFinal {
+			Debug("[agent_loop] wedge break — issuing a forced-final-answer call with no tools")
+		} else {
+			Debug("[agent_loop] empty after lookback rescue — issuing a forced-final-answer call with no tools")
+		}
 		wrapHistory := append([]Message{}, history...)
 		wrapHistory = append(wrapHistory, Message{
 			Role:    "user",
-			Content: "Your previous response had no content for the user. Stop calling tools. Produce a final answer NOW from whatever you've gathered so far — even if incomplete, summarize what you found and what you tried. The user is waiting and seeing nothing. Just text, no tool calls.",
+			Content: "Stop calling tools now and produce your final answer for the user from whatever you've gathered so far — even if incomplete, summarize what you found and what you tried, and if something didn't work, say so plainly. Just text, no tool calls.",
 		})
 		// No-tools, no-think final call so the model has nothing to
 		// chase — must produce text. Inherit RouteKey for telemetry.
@@ -2652,6 +2716,60 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 		Name: bestName,
 		Args: args,
 	}
+}
+
+// mentionedNoArgTool returns the name of a known ZERO-required-argument tool
+// that appears as a standalone token in content, or "" if none. It's the
+// re-prompt trigger for no-arg tools that parseNaturalToolCall can't rescue: a
+// model that names such a tool in prose without emitting a structured call would
+// otherwise have it silently dropped. Deliberately conservative to avoid the
+// false positives that got actionPromiseCorrection disabled:
+//   - only tools with NO required args (a bare mention could be a valid call),
+//   - only snake_case names (an underscore) — single common words like a
+//     hypothetical "help" tool would false-match ordinary prose,
+//   - token-bounded match so "image" doesn't fire inside "images".
+func mentionedNoArgTool(content string, handlers map[string]ToolHandlerFunc, toolDefs []Tool) string {
+	lower := strings.ToLower(content)
+	best := ""
+	for _, td := range toolDefs {
+		if td.Name == "" || len(td.Required) != 0 || !strings.Contains(td.Name, "_") {
+			continue
+		}
+		if _, ok := handlers[td.Name]; !ok {
+			continue
+		}
+		if mentionsToken(lower, strings.ToLower(td.Name)) && len(td.Name) > len(best) {
+			best = td.Name
+		}
+	}
+	return best
+}
+
+// mentionsToken reports whether needle occurs in haystack bounded by
+// non-identifier characters (so a tool name matches only as a standalone token,
+// not inside a longer word). Both arguments must already be lowercase.
+func mentionsToken(haystack, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	for from := 0; ; {
+		i := strings.Index(haystack[from:], needle)
+		if i < 0 {
+			return false
+		}
+		i += from
+		end := i + len(needle)
+		beforeOK := i == 0 || !isIdentByte(haystack[i-1])
+		afterOK := end >= len(haystack) || !isIdentByte(haystack[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+func isIdentByte(b byte) bool {
+	return b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z')
 }
 
 // BuildToolPrompt generates a text description of available tools for

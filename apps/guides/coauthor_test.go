@@ -51,6 +51,36 @@ func TestReorderSections(t *testing.T) {
 	}
 }
 
+func TestApplySectionOrder(t *testing.T) {
+	cases := []struct {
+		name  string
+		in    []Section
+		order []int
+		want  string
+	}{
+		{"full reorder", secs("A", "B", "C"), []int{3, 1, 2}, "C,A,B"},
+		{"identity", secs("A", "B", "C"), []int{1, 2, 3}, "A,B,C"},
+		{"omitted appended in place", secs("A", "B", "C", "D"), []int{4, 2}, "D,B,A,C"},
+		{"duplicates ignored", secs("A", "B", "C"), []int{1, 1, 2}, "A,B,C"},
+		{"out-of-range skipped", secs("A", "B", "C"), []int{9, 2, 0, 3, 1}, "B,C,A"},
+		{"empty order keeps original", secs("A", "B", "C"), nil, "A,B,C"},
+	}
+	for _, c := range cases {
+		got := applySectionOrder(c.in, c.order)
+		if order(got) != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, order(got), c.want)
+		}
+		if len(got) != len(c.in) {
+			t.Errorf("%s: dropped sections — got %d, want %d", c.name, len(got), len(c.in))
+		}
+		for i := range got {
+			if got[i].Order != i+1 {
+				t.Errorf("%s: Order[%d] = %d, want %d", c.name, i, got[i].Order, i+1)
+			}
+		}
+	}
+}
+
 func TestNormalizeOrder(t *testing.T) {
 	g := Guide{Sections: []Section{{Title: "A", Order: 5}, {Title: "B", Order: 1}, {Title: "C", Order: 9}}}
 	normalizeOrder(&g)

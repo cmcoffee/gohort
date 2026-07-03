@@ -37,6 +37,7 @@ var servitorWorkerToolAllowList = map[string]bool{
 	"link_entities":       true, // local: scoped graph write
 	"store_rule":          true, // local: kvlite write
 	"search_facts":        true, // local: kvlite read
+	"search_knowledge":    true, // local: vector search over owner's linked collections (embeds via local llama.cpp)
 	"watch_condition":     true, // local: watcher setup against the same appliance
 	"list_watches":        true, // local: watcher state
 	"save_to_codewriter":  true, // local: gohort CodeWriter DB write

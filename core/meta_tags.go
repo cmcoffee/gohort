@@ -29,6 +29,16 @@ var (
 	// newlines to 2, and trim trailing spaces on a line.
 	metaExtraBlankRe = regexp.MustCompile(`\n{3,}`)
 	metaTrailingWSRe = regexp.MustCompile(`[ \t]+\n`)
+
+	// Leaked tool-call / tool-code markup — the XML-ish shapes models emit when
+	// invoking tools (<tool_call>…</tool_call>, <tool_code>…</tool_code>,
+	// <function=name>…</function>). Normally parsed and consumed by the agent
+	// loop; this strips any that leak verbatim into saved content. Balanced blocks
+	// first, then a sweep for orphan/self-closing openers and stray closers.
+	toolCallBlockRe = regexp.MustCompile(`(?is)<tool_call>.*?</tool_call>`)
+	toolCodeBlockRe = regexp.MustCompile(`(?is)<tool_code>.*?</tool_code>`)
+	functionBlockRe = regexp.MustCompile(`(?is)<function[= ][^>]*>.*?</function>`)
+	strayToolTagRe  = regexp.MustCompile(`(?is)</?(?:tool_call|tool_code|function)\b[^>]*>`)
 )
 
 // StripMetaTags removes framework-internal markers from a final, user-facing
@@ -49,6 +59,30 @@ func StripMetaTags(s string) string {
 	s = metaTagRe.ReplaceAllString(s, "")
 	s = leakedAttachRe.ReplaceAllString(s, "")
 	s = leakedShellAttachRe.ReplaceAllString(s, "")
+	s = metaTrailingWSRe.ReplaceAllString(s, "\n")
+	s = metaExtraBlankRe.ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
+}
+
+// StripToolCallTags removes leaked tool-call / tool-code / function-call markup
+// from a content string — the XML-ish tags a model emits to invoke a tool that
+// should have been parsed and consumed by the agent loop, not saved as prose.
+// Handles balanced blocks plus orphan/self-closing openers and stray closers.
+// Fast no-op when none are present. Complements StripThinkTags (reasoning
+// delimiters) and StripMetaTags (framework markers).
+func StripToolCallTags(s string) string {
+	if s == "" {
+		return s
+	}
+	if !strings.Contains(s, "<tool_call") && !strings.Contains(s, "</tool_call") &&
+		!strings.Contains(s, "<tool_code") && !strings.Contains(s, "</tool_code") &&
+		!strings.Contains(s, "<function") && !strings.Contains(s, "</function") {
+		return s
+	}
+	s = toolCallBlockRe.ReplaceAllString(s, "")
+	s = toolCodeBlockRe.ReplaceAllString(s, "")
+	s = functionBlockRe.ReplaceAllString(s, "")
+	s = strayToolTagRe.ReplaceAllString(s, "")
 	s = metaTrailingWSRe.ReplaceAllString(s, "\n")
 	s = metaExtraBlankRe.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)

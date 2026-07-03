@@ -262,6 +262,7 @@ body { min-height: 100vh; min-height: 100dvh; }
   padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); flex: 0 0 auto;
 }
 .ui-wb-head-t { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); }
+.ui-wb-head-actions { display: flex; align-items: center; gap: 0.4rem; }
 .ui-wb-new .ui-modal-button-row { margin: 0; }
 .ui-wb-list-body { flex: 1 1 0; overflow-y: auto; padding: 0.4rem; display: flex; flex-direction: column; gap: 0.2rem; }
 .ui-wb-item {
@@ -298,6 +299,23 @@ body { min-height: 100vh; min-height: 100dvh; }
 }
 .ui-wb-action-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
 .ui-wb-action-btn:disabled { opacity: 0.45; cursor: default; }
+/* Grouped-action dropdown (Kind:"menu") — a button that opens a small popover
+ * of sub-actions (e.g. Export → HTML / PDF / Markdown) so related toolbar
+ * buttons collapse into one. Generic: any WorkbenchAction with children uses it. */
+.ui-wb-action-wrap { position: relative; display: inline-flex; }
+.ui-wb-menu {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  min-width: 160px; z-index: 50;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  padding: 0.25rem; display: flex; flex-direction: column;
+}
+.ui-wb-menu-item {
+  background: transparent; border: none; color: var(--text);
+  text-align: left; padding: 0.45rem 0.7rem; border-radius: 6px;
+  font-family: inherit; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+}
+.ui-wb-menu-item:hover { background: var(--bg-2); color: var(--text-hi); }
 .ui-wb-hist-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
 .ui-wb-hist-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
 .ui-wb-hist-note { font-size: 0.85rem; color: var(--text); }
@@ -10809,12 +10827,12 @@ const runtimeJS = `
       renderUserActions(bubble);
     }
 
-    // attachAssistantActions adds Retry / Copy + a hover-only
-    // timestamp to an assistant bubble. Retry on assistant re-fires
-    // the user message that preceded it; Copy uses the bubble's
-    // rendered text content.
+    // attachAssistantActions adds Copy (always) + Retry (when the app
+    // supports truncate-and-replay) + a hover-only timestamp to an
+    // assistant bubble. Copy is client-only — it needs no server
+    // endpoint — so it renders for every app, including ones without a
+    // truncate_url (e.g. read-only or replay-immutable conversations).
     function attachAssistantActions(bubble) {
-      if (!cfg.truncate_url) return;
       var existing = bubble.querySelector(':scope > .ui-agent-msg-actions');
       if (existing) existing.remove();
       renderAssistantActions(bubble);
@@ -10855,11 +10873,15 @@ const runtimeJS = `
         [ts && ts.created ? formatTimestamp(ts.created) : '']);
       bar.appendChild(tsEl);
       // Retry / Copy pack LEFT right after the timestamp — no spacer.
-      bar.appendChild(el('button', {
-        class: 'ui-agent-msg-act',
-        title: 'Regenerate this response (re-runs the previous user message)',
-        onclick: function(){ retryAssistantMessage(bubble); },
-      }, ['Retry']));
+      // Retry needs truncate-and-replay, so it's gated on truncate_url;
+      // Copy is client-only and always available.
+      if (cfg.truncate_url) {
+        bar.appendChild(el('button', {
+          class: 'ui-agent-msg-act',
+          title: 'Regenerate this response (re-runs the previous user message)',
+          onclick: function(){ retryAssistantMessage(bubble); },
+        }, ['Retry']));
+      }
       var copyBtn = el('button', {
         class: 'ui-agent-msg-act',
         title: 'Copy this message to the clipboard',
@@ -17227,11 +17249,25 @@ const runtimeJS = `
     // --- LEFT: list -------------------------------------------------------
     var left = el('div', {class: 'ui-wb-col ui-wb-list'});
     var head = el('div', {class: 'ui-wb-head'}, [el('span', {class: 'ui-wb-head-t', text: cfg.list_title || 'Items'})]);
+    var headActions = el('div', {class: 'ui-wb-head-actions'});
+    // Record-scoped header actions (e.g. Edit) sit to the LEFT of the New button,
+    // grouped on the right of the header. Enabled only when a record is selected,
+    // dispatched through the same runViewerAction path as the viewer toolbar.
+    if (cfg.list_actions && cfg.list_actions.length) {
+      cfg.list_actions.forEach(function(a) {
+        if (a.kind === 'menu') { headActions.appendChild(buildActionMenu(a)); return; }
+        var b = el('button', {class: 'ui-wb-action-btn', text: a.label});
+        b.disabled = true;
+        b.addEventListener('click', function() { runViewerAction(a, b); });
+        headActions.appendChild(b);
+      });
+    }
     if (cfg.new_button) {
       var nbWrap = el('div', {class: 'ui-wb-new'});
       mountComponent(cfg.new_button, nbWrap);
-      head.appendChild(nbWrap);
+      headActions.appendChild(nbWrap);
     }
+    head.appendChild(headActions);
     left.appendChild(head);
     var listBody = el('div', {class: 'ui-wb-list-body'});
     left.appendChild(listBody);
@@ -17244,6 +17280,10 @@ const runtimeJS = `
     if (cfg.viewer_actions && cfg.viewer_actions.length) {
       actionBar = el('div', {class: 'ui-wb-actions'});
       cfg.viewer_actions.forEach(function(a) {
+        if (a.kind === 'menu') {
+          actionBar.appendChild(buildActionMenu(a));
+          return;
+        }
         var b = el('button', {class: 'ui-wb-action-btn', text: a.label});
         b.disabled = true;
         b.addEventListener('click', function() { runViewerAction(a, b); });
@@ -17295,9 +17335,49 @@ const runtimeJS = `
     }
 
     function setActionsEnabled(on) {
-      if (!actionBar) return;
-      var btns = actionBar.querySelectorAll('.ui-wb-action-btn');
-      for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+      // Record-scoped buttons live in BOTH the viewer toolbar and the list header
+      // (e.g. Edit next to New) — toggle both so they enable/disable together.
+      var scopes = [actionBar, headActions];
+      for (var s = 0; s < scopes.length; s++) {
+        if (!scopes[s]) continue;
+        var btns = scopes[s].querySelectorAll('.ui-wb-action-btn');
+        for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+      }
+    }
+
+    // buildActionMenu renders a Kind:"menu" toolbar action as a dropdown button
+    // whose children dispatch through the normal runViewerAction path. Generic —
+    // any app can collapse related actions into one button (e.g. Export → HTML /
+    // PDF / Markdown). The trigger keeps the .ui-wb-action-btn class so it enables
+    // and disables with the rest of the bar when a record is (de)selected.
+    function buildActionMenu(a) {
+      var wrap = el('div', {class: 'ui-wb-action-wrap'});
+      var trigger = el('button', {class: 'ui-wb-action-btn', text: (a.label || 'More') + ' ▾'});
+      trigger.disabled = true;
+      var menu = el('div', {class: 'ui-wb-menu'});
+      menu.style.display = 'none';
+      function closeMenu() {
+        menu.style.display = 'none';
+        document.removeEventListener('click', onDocClick, true);
+      }
+      function onDocClick(ev) { if (!wrap.contains(ev.target)) closeMenu(); }
+      (a.children || []).forEach(function(child) {
+        var item = el('button', {class: 'ui-wb-menu-item', text: child.label});
+        item.addEventListener('click', function() { closeMenu(); runViewerAction(child, trigger); });
+        menu.appendChild(item);
+      });
+      trigger.addEventListener('click', function(ev) {
+        ev.stopPropagation();
+        if (menu.style.display === 'none') {
+          menu.style.display = 'flex';
+          document.addEventListener('click', onDocClick, true);
+        } else {
+          closeMenu();
+        }
+      });
+      wrap.appendChild(trigger);
+      wrap.appendChild(menu);
+      return wrap;
     }
 
     // runViewerAction dispatches a viewer toolbar button against the open record.

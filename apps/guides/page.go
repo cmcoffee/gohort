@@ -32,6 +32,10 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 				Invalidate: []string{"guides"},
 			},
 		},
+		// Edit the selected guide's settings — sits in the list header, left of New.
+		ListActions: []ui.WorkbenchAction{
+			{Label: "Edit", Kind: "client", URL: "guides_settings"},
+		},
 		// Center — the rendered document (server HTML: title + ToC + sections).
 		RecordURL:  "guide?id={id}",
 		BodyField:  "html",
@@ -41,14 +45,16 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 		EmptyHint:  "Pick a guide on the left, or create one. Then ask the assistant to draft sections.",
 		// Per-document toolbar: preview/export, revision history, freshness audit.
 		ViewerActions: []ui.WorkbenchAction{
-			{Label: "Preview", Kind: "download", URL: "export?id={id}&format=html"},
-			{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
-			{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+			{Label: "Export", Kind: "menu", Children: []ui.WorkbenchAction{
+				{Label: "Preview (HTML)", Kind: "download", URL: "export?id={id}&format=html"},
+				{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
+				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
+			}},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
-			{Label: "Edit", Kind: "client", URL: "guides_settings"},
 			{Label: "History", Kind: "history", URL: "revisions?id={id}", RestoreURL: "restore?id={id}&rev={rev}"},
-			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…"},
+			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
+			{Label: "Reorganize", Kind: "report", URL: "reorganize?id={id}", Spinner: "Reorganizing…", Invalidate: []string{"guides"}},
 			{Label: "Update from sources", Kind: "report", URL: "update-sources?id={id}", Spinner: "Updating…", Invalidate: []string{"guides"}},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a

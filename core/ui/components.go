@@ -2031,6 +2031,11 @@ type WorkbenchPanel struct {
 	// SELECTED record (export, history, audit, …). Generic: any workbench can add
 	// per-document actions without core knowing what they do.
 	ViewerActions []WorkbenchAction `json:"viewer_actions,omitempty"`
+	// ListActions render in the LIST header, to the left of the New button — for
+	// record-scoped actions that belong with the list rather than the document
+	// toolbar (e.g. Edit the selected record's settings). Same WorkbenchAction
+	// dispatch as ViewerActions; enabled only when a record is selected.
+	ListActions []WorkbenchAction `json:"list_actions,omitempty"`
 	// RefreshOn — when uiInvalidate fires with a source in this list, the open
 	// record re-fetches (so a co-author write shows up without a manual reload).
 	RefreshOn []string `json:"refresh_on,omitempty"`
@@ -2076,6 +2081,12 @@ type WorkbenchAction struct {
 	// LLM pass that rewrites sections), the sources to uiInvalidate after it
 	// finishes so the viewer/list refresh. Empty = show the report only.
 	Invalidate []string `json:"invalidate,omitempty"`
+	// Children, when Kind == "menu", are the sub-actions shown in a dropdown when
+	// the button is clicked — e.g. an "Export" button grouping HTML / PDF /
+	// Markdown downloads so related actions don't crowd the toolbar. Each child is
+	// a normal WorkbenchAction dispatched by its own Kind (download / client /
+	// report / …). Ignored for non-menu kinds.
+	Children []WorkbenchAction `json:"children,omitempty"`
 }
 
 func (WorkbenchPanel) componentType() string { return "workbench_panel" }

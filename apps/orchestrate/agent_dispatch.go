@@ -696,6 +696,11 @@ type AgentLoopOverrides struct {
 type AgentSyncResult struct {
 	Text   string
 	Images []string
+	// Videos are base64 video attachments the turn produced (video tools via
+	// sess.Videos, or a [ATTACH: file.mp4] marker). Kept SEPARATE from Images so
+	// they ride out as videos, not mislabeled images — restoring the outbound
+	// video channel phantom had before the bridges migration dropped it.
+	Videos []string
 	// HitRoundCap reports that the loop stopped because it exhausted its round
 	// budget (not a natural finish). A caller driving a multi-pass loop (e.g.
 	// servitor's investigator continuing while plan steps remain) re-runs with the
@@ -1052,7 +1057,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// keeps a marker-delivered image from silently vanishing. Same helper the
 	// phantom messaging tools use, so channel replies reach parity with them.
 	// cleanReply still carries the marker at this point (StripMetaTags runs later).
-	return AgentSyncResult{Text: cleanReply, Images: collectMessageAttachments(subSess, cleanReply), HitRoundCap: resp.HitRoundCap}, nil
+	imgs, vids := collectMessageMedia(subSess, cleanReply)
+	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-
