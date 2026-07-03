@@ -315,6 +315,24 @@ func StartEventMonitorScheduler() {
 		if !ok || !isScheduledKind(m.Kind) {
 			return
 		}
+		// ALWAYS re-arm the next tick — even if this check panics or errors. The
+		// recurring run is a self-rescheduling chain: each tick schedules the next.
+		// Before this, a single panicking tick (e.g. an external tool call blowing
+		// up) died BEFORE the reschedule and left the monitor "active" but dead
+		// forever, needing a manual pause/resume to revive. Deferred so it runs no
+		// matter how the check exits; recover() stops one bad tick from taking down
+		// the scheduler goroutine; the re-read honors a pause/edit/delete that
+		// happened during the check.
+		defer func() {
+			if r := recover(); r != nil {
+				Log("[event] monitor %s/%s check PANICKED: %v — re-arming next tick anyway", p.Owner, p.Name, r)
+			}
+			if cur, ok := GetEventMonitor(RootDB, p.Owner, p.Name); ok && !cur.Paused && isScheduledKind(cur.Kind) {
+				if err := ScheduleEventMonitor(RootDB, cur); err != nil {
+					Log("[event] reschedule failed for %s/%s: %v", p.Owner, p.Name, err)
+				}
+			}
+		}()
 		if !m.Paused {
 			// Record liveness every poll (even when nothing changes) so a
 			// healthy-but-quiet monitor is visibly alive in the console. Saved
@@ -330,14 +348,28 @@ func StartEventMonitorScheduler() {
 				executeWatchPoll(ctx, RootDB, m)
 			}
 		}
-		// Reschedule the recurring cadence (re-read in case it was paused or
-		// edited during the check).
-		if cur, ok := GetEventMonitor(RootDB, p.Owner, p.Name); ok && !cur.Paused && isScheduledKind(cur.Kind) {
-			if err := ScheduleEventMonitor(RootDB, cur); err != nil {
-				Log("[event] reschedule failed for %s/%s: %v", p.Owner, p.Name, err)
-			}
-		}
 	})
+
+	// Boot self-heal: re-arm every active scheduled monitor across all owners.
+	// Scheduler tasks persist across restarts, so a HEALTHY chain resumes on its
+	// own after a restart — but a chain that a prior panicking tick left broken
+	// has no next task and would stay dead. Re-arming here revives those (it's
+	// what a manual pause/resume did by hand). ScheduleEventMonitor cancels-and-
+	// replaces via SchedulerID, so a monitor whose task is still live just gets an
+	// equivalent fresh one (no duplicate timers), and nextPoll spreads first
+	// checks across each monitor's own cadence (no boot stampede).
+	for _, k := range RootDB.Keys(eventMonitorsTable) {
+		var m EventMonitor
+		if !RootDB.Get(eventMonitorsTable, k, &m) {
+			continue
+		}
+		if m.Paused || !isScheduledKind(m.Kind) {
+			continue
+		}
+		if err := ScheduleEventMonitor(RootDB, m); err != nil {
+			Log("[event] boot re-arm failed for %s/%s: %v", m.Owner, m.Name, err)
+		}
+	}
 }
 
 // executeEventPoll runs the checker agent and, when its answer matches and
