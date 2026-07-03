@@ -246,7 +246,9 @@ body { min-height: 100vh; min-height: 100dvh; }
 /* --- WorkbenchPanel: list | viewer | chat, full-height columns --- */
 .ui-wb {
   display: flex; gap: 0.8rem; align-items: stretch;
-  /* Fill the viewport below the page header. Columns scroll internally. */
+  /* Fill the viewport below the page header. Columns scroll internally.
+   * position:relative anchors the mobile list drawer + backdrop. */
+  position: relative;
   height: calc(100vh - 90px); min-height: 420px;
 }
 .ui-wb-col {
@@ -257,6 +259,46 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-wb-list   { flex: 0 0 240px; }
 .ui-wb-viewer { flex: 1 1 0; }
 .ui-wb-chat   { flex: 0 0 380px; }
+/* Mobile-only ✕ in the list header (closes the drawer). */
+.ui-wb-close { display: none; }
+/* Tablet: soften the fixed side-column widths so the viewer keeps room. */
+@media (max-width: 900px) {
+  .ui-wb-list { flex: 0 0 200px; }
+  .ui-wb-chat { flex: 0 0 300px; }
+}
+/* Phone: single column. The item list becomes a full-screen slide-in
+ * drawer (same pattern as the chat/pipeline sidebars — opened from the
+ * shared ui-chat-mobile-hdr hamburger the workbench renderer mounts);
+ * the viewer takes the main area with the chat stacked below it. */
+@media (max-width: 700px) {
+  .ui-wb {
+    flex-direction: column; gap: 0.5rem;
+    height: calc(100vh - 90px);
+    height: calc(100dvh - 90px);
+    min-height: 0;
+  }
+  .ui-wb-list {
+    position: absolute; inset: 0; z-index: 30;
+    flex: none; width: 100%; max-width: none;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    border-radius: 0;
+  }
+  .ui-wb-list.open { transform: translateX(0); }
+  .ui-wb-viewer { flex: 1 1 0; min-height: 0; }
+  .ui-wb-chat   { flex: 0 0 42%; min-height: 0; }
+  .ui-wb-viewer-body { padding: 0.9rem 1rem; }
+  .ui-wb-close {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--text-mute);
+    border: 1px solid var(--border); border-radius: 8px;
+    min-width: 36px; min-height: 36px; padding: 0;
+    font-size: 0.95rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Touch has no hover — keep per-item delete reachable. */
+  .ui-wb-item-del { opacity: 0.7; }
+}
 .ui-wb-head {
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
   padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); flex: 0 0 auto;
@@ -17341,9 +17383,24 @@ const runtimeJS = `
       placeholder:   chatCfg.placeholder || 'Ask the assistant…',
     }, right);
 
+    // Mobile: the list column becomes a slide-in drawer, reusing the same
+    // makeDrawer machinery (hamburger header + backdrop) as the chat/
+    // pipeline/article sidebars. The header only renders <=700px via the
+    // shared ui-chat-mobile-hdr rules; on desktop nothing changes. A ✕ in
+    // the list header closes the drawer, and so does selecting an item —
+    // the phone flow is hamburger → pick → read.
+    var drawer = makeDrawer(left, {
+      title: cfg.list_title || 'Items',
+      hamburgerTitle: 'Show ' + (cfg.list_title || 'items'),
+    });
+    var wbClose = el('button', {class: 'ui-wb-close', title: 'Close', onclick: drawer.closeDrawer}, ['✕']);
+    head.insertBefore(wbClose, head.firstChild);
+
+    root.appendChild(drawer.mobileHdr);
     root.appendChild(left);
     root.appendChild(center);
     root.appendChild(right);
+    root.appendChild(drawer.backdrop);
 
     function showEmpty() {
       setActionsEnabled(false);
@@ -17587,7 +17644,11 @@ const runtimeJS = `
           var label = it[itemLabel] || '(untitled)';
           var row = el('div', {class: 'ui-wb-item', 'data-id': id});
           row.appendChild(el('span', {class: 'ui-wb-item-label', text: label}));
-          row.addEventListener('click', function() { loadViewer(id); });
+          row.addEventListener('click', function() {
+            loadViewer(id);
+            drawer.mobileTitle.textContent = label;
+            drawer.closeDrawer();
+          });
           if (delURL) {
             var del = el('button', {class: 'ui-wb-item-del', title: 'Delete', text: '×'});
             del.addEventListener('click', function(ev) { ev.stopPropagation(); deleteItem(id, label); });
