@@ -167,7 +167,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		}
 		Log("[imagefetch/find_image] query=%q delivered %q (title: %q, source: %s)", query, name, meta.Title, meta.Source)
 		return fmt.Sprintf(
-			"Stored at %q (title: %q, source: %s). If the user asked you to SEND / SHARE the image, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info about it (describe, identify, summarize), skip the attach — answer from context. When you do attach, cleanup=true keeps the workspace tidy (find results are typically one-shot).",
+			"NOT sent yet — this only SAVED the image to your workspace as %q (title: %q, source: %s). It is NOT delivered, and your reply text alone will NOT include it. To actually send it you MUST call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about it (describe / identify / summarize), not the image itself.",
 			name, meta.Title, meta.Source, name,
 		), nil
 	}
@@ -649,7 +649,7 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("save image: %w", err)
 	}
 	Log("[imagefetch/fetch_image] fetched %d bytes from %s → %s", len(data), rawURL, name)
-	return fmt.Sprintf("Stored at %q (%s, %d bytes). If the user asked you to SEND / SHARE the image, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info about what's in it, skip the attach — answer from context. cleanup=true keeps the workspace tidy when you do attach.",
+	return fmt.Sprintf("NOT sent yet — this only SAVED the image to your workspace as %q (%s, %d bytes). It is NOT delivered, and your reply text alone will NOT include it. To actually send it, call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about what's in it.",
 		name, ct, len(data), name), nil
 }
 
