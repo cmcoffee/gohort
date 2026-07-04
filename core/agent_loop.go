@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2680,6 +2681,124 @@ func parseJSONToolCall(content string, handlers map[string]ToolHandlerFunc) *Too
 	}
 }
 
+// parseCallArgs parses a narrated call's parenthesized argument list — the
+// name(key="value", key2=…) or name({…json…}) that follows a tool name when a
+// model writes a call as prose instead of emitting a structured tool call. It
+// returns nil when `after` has no parenthesized list. Quoted values may contain
+// commas (they don't split); bare true/false/number values are coerced.
+func parseCallArgs(after string) map[string]any {
+	after = strings.TrimSpace(after)
+	if !strings.HasPrefix(after, "(") {
+		return nil
+	}
+	// Find the matching close paren, respecting quoted strings.
+	depth := 0
+	var quote rune
+	end := -1
+	for i, r := range after {
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch r {
+		case '"', '\'':
+			quote = r
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				end = i
+			}
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		return nil
+	}
+	inner := strings.TrimSpace(after[1:end])
+	// JSON-object arg form: name({"to": "...", "text": "..."}).
+	if strings.HasPrefix(inner, "{") {
+		var m map[string]any
+		if json.Unmarshal([]byte(inner), &m) == nil && len(m) > 0 {
+			return m
+		}
+	}
+	// key=value list, splitting on top-level commas only.
+	args := make(map[string]any)
+	for _, pair := range splitTopLevel(inner, ',') {
+		eq := strings.Index(pair, "=")
+		if eq < 0 {
+			continue
+		}
+		key := strings.TrimSpace(pair[:eq])
+		if key == "" {
+			continue
+		}
+		args[key] = coerceArgValue(pair[eq+1:])
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	return args
+}
+
+// splitTopLevel splits s on sep, ignoring separators inside single/double
+// quotes (so a quoted value containing a comma stays intact).
+func splitTopLevel(s string, sep rune) []string {
+	var out []string
+	var cur strings.Builder
+	var quote rune
+	for _, r := range s {
+		if quote != 0 {
+			cur.WriteRune(r)
+			if r == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch {
+		case r == '"' || r == '\'':
+			quote = r
+			cur.WriteRune(r)
+		case r == sep:
+			out = append(out, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if strings.TrimSpace(cur.String()) != "" {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// coerceArgValue strips matching quotes from a narrated arg value and coerces
+// bare true/false/number literals; everything else stays a string.
+func coerceArgValue(v string) any {
+	v = strings.TrimSpace(v)
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			return v[1 : len(v)-1]
+		}
+	}
+	switch strings.ToLower(v) {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	if n, err := strconv.ParseFloat(v, 64); err == nil {
+		return n
+	}
+	return v
+}
+
 // parseNaturalToolCall scans text for a known tool name and extracts any
 // arguments that follow it. This handles thinking models that reason about
 // which tool to call but stop before emitting a structured call.
@@ -2704,6 +2823,17 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	// Try to extract args after the tool name mention.
 	args := make(map[string]any)
 	after := strings.TrimSpace(content[bestPos+len(bestName):])
+
+	// Function-call narration: name(key="value", ...) or name({...json...}).
+	// This is the most common shape when a model WRITES a call as text instead
+	// of emitting a structured tool call (the observed message_contact failure).
+	// Extracting the named args rescues it into a real call — which still runs
+	// through the normal confirm/approval gate, so a consequential one (texting a
+	// person) isn't silently auto-executed. A well-formed name(args) is a strong
+	// intent signal, unlike a bare mention, so the false-positive risk is low.
+	if callArgs := parseCallArgs(after); len(callArgs) > 0 {
+		return &ToolCall{ID: fmt.Sprintf("text_%s", UUIDv4()), Name: bestName, Args: callArgs}
+	}
 
 	// Look for --flag patterns (e.g. "--to user@example.com").
 	var flag_args []string
