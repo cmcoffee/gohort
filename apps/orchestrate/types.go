@@ -497,6 +497,15 @@ type AgentRecord struct {
 	// hollow. Best for research-flavored agents; leave off for chat.
 	GapCheck bool `json:"gap_check,omitempty"`
 
+	// PreMortem makes the agent plan-FIRST on real goals: before executing a
+	// multi-step task it lays out the plan, critiques it (missing info, approval
+	// gates, failure points, and steps whose result arrives LATER), and for each
+	// deferred step provisions an await (await_result) and yields instead of
+	// blocking or faking completion. Off by default — best for orchestrator-style
+	// agents that accomplish goals, not chat agents that answer questions. Drives
+	// the preMortemPlanningBlock system-prompt section.
+	PreMortem bool `json:"pre_mortem,omitempty"`
+
 	// KnowledgeModel is a Phase 3 placeholder.
 	KnowledgeModel string `json:"knowledge_model,omitempty"`
 

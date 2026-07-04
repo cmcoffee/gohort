@@ -86,6 +86,12 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// for a different stance.
 			shadow.Cortex = seed.Cortex
 			shadow.Fleet = seed.Fleet
+			// PreMortem is a framework-owned behavior flag (no user toggle; a
+			// code-owned default for orchestrator seeds), so it refreshes from the
+			// seed too — otherwise an existing shadow (created by a tool-approval
+			// before this flag existed) never picks it up and the plan-first
+			// behavior silently doesn't land after redeploy.
+			shadow.PreMortem = seed.PreMortem
 			shadow = selfHealAllowedTools(db, shadow)
 			return enforceSubAgentPosture(applyLegacyMode(shadow)), true
 		}
@@ -1007,6 +1013,12 @@ You can reach the user on their phone through the phantom (iMessage) bridge: not
 			// event-monitor toolset. Independent of each other; both on here.
 			Cortex: true,
 			Fleet:  true,
+			// Chat is the orchestrator (the Operator folded in), so it plans and
+			// executes real goals — turn on plan-first + pre-mortem discipline so it
+			// lays out a plan, flags the risks, and awaits deferred-feedback steps
+			// (a reply, a call, a job) instead of blocking or faking them. Self-
+			// scopes to goals, so ordinary chat is unaffected.
+			PreMortem: true,
 			// AllowedTools left empty on purpose — the runner reads
 			// empty as "use the default pool" (every non-blocked
 			// chat tool with Read or Network cap plus the unannotated

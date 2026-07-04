@@ -4300,6 +4300,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// even when the agent's own corpus has the answer. The stub
 	// reorders that default: knowledge first, web only as fallback.
 	sys = t.appendSearchOrderGuidance(sys)
+	// Plan-first + pre-mortem discipline for orchestrator-style agents: lay out a
+	// plan, critique it before acting, and await deferred-feedback steps rather
+	// than block/fake them. Opt-in per agent (off for chat-style agents that just
+	// answer). The block self-scopes to GOALS, so a PreMortem agent still handles
+	// ordinary questions directly.
+	if t.agent.PreMortem {
+		sys += "\n\n" + preMortemPlanningBlock
+	}
 	// (Authoring-in-progress banner removed. It referenced legacy
 	// tool names (create_pipeline_tool / create_temp_tool /
 	// create_api_tool) replaced by tool_def + add_tool, and the
