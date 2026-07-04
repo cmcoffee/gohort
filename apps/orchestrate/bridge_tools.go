@@ -202,7 +202,29 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	return fmt.Sprintf(
 		"Bridge %q created: every %d min I call %s (via credential %q) and wake agent %q only when the response changes. Next check: %s.%s%s",
 		name, mins, url, cred, wakeAgent,
-		got.NextCheck.Local().Format("Mon Jan 2 3:04 PM"), credWarn, probeNote), nil
+		got.NextCheck.Local().Format("Mon Jan 2 3:04 PM"), credWarn, probeNote) + dupMonitorWarning(m), nil
+}
+
+// dupMonitorWarning returns a soft heads-up suffix when other monitors already
+// watch the same source AND deliver to the same place as m — the "two agents,
+// one feed, one chat → doubled alerts" case that name-only dedup can't see. It
+// WARNS, never blocks: a same-source monitor with a different intent is valid.
+// Empty string when there's no overlap (so callers append it unconditionally).
+func dupMonitorWarning(m EventMonitor) string {
+	dups := FindDuplicateMonitors(RootDB, m)
+	if len(dups) == 0 {
+		return ""
+	}
+	quoted := make([]string, len(dups))
+	for i, n := range dups {
+		quoted[i] = fmt.Sprintf("%q", n)
+	}
+	subj := "another monitor is"
+	if len(dups) > 1 {
+		subj = "other monitors are"
+	}
+	return fmt.Sprintf(" ⚠️ Possible duplicate: %s already watching this same source with the same delivery target (%s) — the user may get doubled alerts. Remove one if that's unintended.",
+		subj, strings.Join(quoted, ", "))
 }
 
 func bridgeList(args map[string]any, sess *ToolSession) (string, error) {

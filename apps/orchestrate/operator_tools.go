@@ -602,7 +602,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					got, _ := GetEventMonitor(RootDB, owner, name)
 					return fmt.Sprintf("HTTP monitor %q created: every %ds I fetch %s, read %s, and wake you when the value %s %s. Fires once on the crossing (and re-arms after it recovers). Next check: %s.",
 						name, got.IntervalSeconds, m.URL, extractDesc, m.CompareOp, m.Threshold,
-						got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
+						got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				if kind == EventKindWatch {
 					m.ToolName = strings.TrimSpace(oArgStr(args, "tool_name"))
@@ -630,10 +630,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					got, _ := GetEventMonitor(RootDB, owner, name)
 					if m.DeliverChatID != "" {
 						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s — no LLM, it does NOT come back to this thread. Next check: %s.",
-							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
+							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 					}
 					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes — no LLM runs in between. Next check: %s.",
-						name, got.IntervalSeconds, m.ToolName, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
+						name, got.IntervalSeconds, m.ToolName, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				wantAgent := strings.TrimSpace(oArgStr(args, "check_agent"))
 				m.Check = strings.TrimSpace(oArgStr(args, "check"))
@@ -658,7 +658,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				got, _ := GetEventMonitor(RootDB, owner, name)
 				return fmt.Sprintf("Poll monitor %q created: every %ds, agent %q is asked %q; I wake when the answer contains %q. Next check: %s.",
-					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")), nil
+					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 			},
 		},
 		// The phantom-named read tools were removed — superseded by the

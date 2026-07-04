@@ -157,6 +157,66 @@ func RegisterEventPoller(fn PollCheckFunc) {
 	eventMu.Unlock()
 }
 
+// --- duplicate detection (soft warning at creation) --------------------------
+
+// monitorSignature returns a (source, delivery) pair identifying WHAT a monitor
+// watches and WHERE its alert lands. Two monitors with the same pair fire on the
+// same event and deliver to the same place, so a second one just doubles the
+// notification (the cross-agent case: two agents each watching the same feed
+// into the same chat). Deliberately keyed on the WATCHED thing + the RESOLVED
+// destination, NOT the agent — for notify=direct/text the agent is irrelevant to
+// where the message goes. Webhook monitors have no pollable source (an external
+// POST drives them), so they never match. ok=false means "not comparable".
+func monitorSignature(m EventMonitor) (source, delivery string, ok bool) {
+	switch m.Kind {
+	case EventKindWatch:
+		args, _ := json.Marshal(m.ToolArgs) // encoding/json sorts map keys → stable
+		source = "watch:" + m.ToolName + ":" + string(args)
+	case EventKindHTTP:
+		source = "http:" + m.URL + "|" + m.JSONPath + "|" + m.Regex + "|" + m.CompareOp + "|" + m.Threshold
+	case EventKindPoll:
+		source = "poll:" + m.CheckAgent + ":" + strings.TrimSpace(m.Check)
+	default: // webhook / unknown — no comparable polling source
+		return "", "", false
+	}
+	switch m.Notify {
+	case EventNotifyText:
+		delivery = "text" // the owner's phone — same target regardless of agent
+	case EventNotifyDirect:
+		delivery = "direct:" + m.DeliverChatID
+	default: // channel (and the empty default): wakes an agent in a thread
+		delivery = "channel:" + m.WakeAgent + ":" + m.WakeSession
+	}
+	return source, delivery, true
+}
+
+// FindDuplicateMonitors returns the names of the owner's EXISTING monitors that
+// watch the same source AND deliver to the same place as candidate m (m itself
+// excluded by name). Empty when none. This powers a soft WARNING at creation —
+// never a block: a monitor watching the same source with a different intent is
+// legitimate, so the caller informs and proceeds.
+func FindDuplicateMonitors(db Database, m EventMonitor) []string {
+	src, del, ok := monitorSignature(m)
+	if !ok || db == nil {
+		return nil
+	}
+	var dups []string
+	for _, k := range db.Keys(eventMonitorsTable) {
+		var e EventMonitor
+		if !db.Get(eventMonitorsTable, k, &e) {
+			continue
+		}
+		if e.Owner != m.Owner || e.Name == m.Name {
+			continue
+		}
+		if esrc, edel, eok := monitorSignature(e); eok && esrc == src && edel == del {
+			dups = append(dups, e.Name)
+		}
+	}
+	sort.Strings(dups)
+	return dups
+}
+
 // --- store -------------------------------------------------------------------
 
 func eventKey(owner, name string) string { return owner + ":" + name }
