@@ -71,7 +71,11 @@ var ErrWatchToolNotHandled = errors.New("watch tool not handled by invoker")
 // global chat-tool registry (e.g. read_phantom_chat, which needs the owner to
 // reach the right bridge). The app registers one at startup; it returns
 // ErrWatchToolNotHandled for tools it doesn't own so the global path can try.
-type WatchToolInvoker func(owner, toolName string, toolArgs map[string]any) (string, error)
+// agentID scopes tools that only exist per-agent — the channel tools (read_chat
+// etc.) are built from a specific agent's bound channels, so a watch on one
+// (e.g. an await_result on read_chat) can't be resolved from owner alone. It's
+// the monitor's WakeAgent; "" when the watch isn't agent-scoped.
+type WatchToolInvoker func(owner, agentID, toolName string, toolArgs map[string]any) (string, error)
 
 var watchToolInvoker WatchToolInvoker
 
@@ -80,12 +84,14 @@ var watchToolInvoker WatchToolInvoker
 // registered tools + call_<cred> secure APIs.
 func RegisterWatchToolInvoker(fn WatchToolInvoker) { watchToolInvoker = fn }
 
-// InvokeWatchTool resolves a watch monitor's captured tool WITH owner context:
-// the registered owner-aware invoker first (session-scoped tools), then the
-// global InvokeWatcherTool (registered chat tools + call_<cred> secure APIs).
-func InvokeWatchTool(owner, toolName string, toolArgs map[string]any) (string, error) {
+// InvokeWatchTool resolves a watch monitor's captured tool WITH owner + agent
+// context: the registered owner-aware invoker first (session/agent-scoped tools
+// like read_chat), then the global InvokeWatcherTool (registered chat tools +
+// call_<cred> secure APIs). agentID is the monitor's WakeAgent, needed to build
+// per-agent channel tools; pass "" when not agent-scoped.
+func InvokeWatchTool(owner, agentID, toolName string, toolArgs map[string]any) (string, error) {
 	if watchToolInvoker != nil {
-		out, err := watchToolInvoker(owner, toolName, toolArgs)
+		out, err := watchToolInvoker(owner, agentID, toolName, toolArgs)
 		if !errors.Is(err, ErrWatchToolNotHandled) {
 			return out, err
 		}

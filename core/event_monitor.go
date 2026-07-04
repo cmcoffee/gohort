@@ -557,7 +557,7 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 // watch on an already-populated source doesn't spuriously fire. Reuses the
 // watcher engine's InvokeWatcherTool + sha256Sum (same core package).
 func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
-	body, err := InvokeWatchTool(m.Owner, m.ToolName, m.ToolArgs)
+	body, err := InvokeWatchTool(m.Owner, m.WakeAgent, m.ToolName, m.ToolArgs)
 	if err != nil {
 		Log("[event] watch %s/%s tool %q failed: %v", m.Owner, m.Name, m.ToolName, err)
 		return

@@ -376,7 +376,7 @@ func StartTriggerScheduler() {
 func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bool, summary string) {
 	switch t.Gate {
 	case GateChange:
-		body, err := InvokeWatchTool(t.Owner, t.ToolName, t.ToolArgs)
+		body, err := InvokeWatchTool(t.Owner, "", t.ToolName, t.ToolArgs)
 		if err != nil {
 			Log("[trigger] change %s/%s tool %q failed: %v", t.Owner, t.Name, t.ToolName, err)
 			return false, ""

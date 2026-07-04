@@ -140,12 +140,24 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// etc.) — InvokeWatcherTool can only reach globally-registered + secure-API
 	// tools. We rebuild the management toolset for the monitor's owner and
 	// dispatch the named tool; anything not found falls back to the global path.
-	RegisterWatchToolInvoker(func(owner, toolName string, toolArgs map[string]any) (string, error) {
+	RegisterWatchToolInvoker(func(owner, agentID, toolName string, toolArgs map[string]any) (string, error) {
 		sess := &ToolSession{Username: owner, DB: AuthDB()}
 		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
 		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
 			if td.Tool.Name == toolName {
 				return td.Handler(toolArgs)
+			}
+		}
+		// (2) channel-scoped tools (read_chat, list_chats, list_members): built
+		// from a specific agent's bound channels, so they need the monitor's agent
+		// id (now threaded through the watch path). This is what an await_result on
+		// read_chat polls — without it the watch fails "read_chat is not registered"
+		// every tick and never catches the reply it's waiting for.
+		if agentID != "" {
+			for _, td := range channelChatTools(sess, owner, agentID) {
+				if td.Tool.Name == toolName {
+					return td.Handler(toolArgs)
+				}
 			}
 		}
 		// (2) the owner's persistent temp tools — admin-promoted "global" tools

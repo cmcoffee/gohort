@@ -187,7 +187,7 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	// the probe fails (credential not enabled yet, URL outside the allow-list),
 	// save anyway — the first successful poll seeds the baseline.
 	probeNote := ""
-	if probe, perr := InvokeWatchTool(owner, m.ToolName, m.ToolArgs); perr == nil {
+	if probe, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs); perr == nil {
 		m.LastHash = HashWatcherBody(probe)
 		probeNote = " Verified: the API responded and the change-baseline is seeded."
 	} else {

@@ -620,7 +620,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// Seed the change baseline now from a known-good probe, so the
 					// first poll detects a REAL change instead of firing on the
 					// initial content.
-					if body, perr := InvokeWatchTool(owner, m.ToolName, m.ToolArgs); perr == nil {
+					if body, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs); perr == nil {
 						m.LastHash = HashWatcherBody(body)
 					}
 					SaveEventMonitor(RootDB, m)
@@ -710,7 +710,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// Seed the change-baseline from a probe NOW, so only a change AFTER
 				// this call wakes you — not the current content. Best-effort: if the
 				// probe fails, the first successful poll seeds it instead.
-				if body, perr := InvokeWatchTool(owner, toolName, toolArgs); perr == nil {
+				if body, perr := InvokeWatchTool(owner, agentID, toolName, toolArgs); perr == nil {
 					m.LastHash = HashWatcherBody(body)
 				}
 				SaveEventMonitor(RootDB, m)
@@ -820,6 +820,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// (channel session + cortex) so it can field follow-ups.
 					recordChannelPost(sess.DB, owner, rec.ChatID, rec.Handle, text)
 					return fmt.Sprintf("Sent to %s (you've pre-authorized this recipient).", label), nil
+				}
+				// Don't queue a DUPLICATE. message_contact returns "queued for
+				// approval" (not "sent"), which a model reads as "it didn't go
+				// through" and re-sends a round later — stacking two identical
+				// pending approvals that both fire on approval (the observed
+				// double-text). If an identical send to this recipient is already
+				// pending, point at it instead of re-queuing.
+				for _, ex := range ListAuthorizations(RootDB, owner) {
+					if ex.Action == "send_message" && ex.ChatID == rec.ChatID && ex.Handle == rec.Handle && ex.Text == text {
+						return fmt.Sprintf("Already queued this exact message to %s for approval (id %s) — it's awaiting the user, NOT re-sent. Don't queue it again; wait for the reply.", label, ex.ID), nil
+					}
 				}
 				a := SaveAuthorization(RootDB, Authorization{
 					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images,
