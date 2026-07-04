@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,27 @@ import (
 
 // ToolHandlerFunc is a function that executes a tool call and returns its output.
 type ToolHandlerFunc func(args map[string]any) (string, error)
+
+// safeInvoke runs a tool handler, converting a panic into an ordinary error.
+// A tool handler is arbitrary app code; without this a panic (a) crashes the
+// whole process in the parallel-tool branch, where the handler runs in a bare
+// goroutine and an unrecovered panic is fatal, and (b) drops the turn with
+// nothing the model can react to. Recovering turns the panic into a normal tool
+// error the loop surfaces as an IsError result, so the model sees "tool
+// panicked: …" and can adjust. The full stack goes to the debug log, never into
+// the model's context (stacks are large and not useful to the LLM).
+func safeInvoke(name string, handler ToolHandlerFunc, args map[string]any) (output string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 8192)
+			buf = buf[:runtime.Stack(buf, false)]
+			Debug("[agent_loop] tool %q PANICKED: %v\n%s", name, r, buf)
+			output = ""
+			err = fmt.Errorf("tool panicked: %v", r)
+		}
+	}()
+	return handler(args)
+}
 
 // ErrToolDenied is returned when the user denies a tool call.
 var ErrToolDenied = fmt.Errorf("tool call denied by user")
@@ -1080,7 +1102,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			}
 
 			// Execute the tool.
-			output, toolErr := handlers[tc.Name](tc.Args)
+			output, toolErr := safeInvoke(tc.Name, handlers[tc.Name], tc.Args)
 			toolFiredThisTurn = true
 			toolErrors := 0
 			var resultText string
@@ -1632,7 +1654,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if len(work) == 1 {
 			// Single call — no goroutine overhead.
 			w := work[0]
-			output, err := w.handler(w.tc.Args)
+			output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
 			if err != nil {
 				debugToolErr(w.tc.Name, err)
 				results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
@@ -1648,7 +1670,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				wg.Add(1)
 				go func(w toolWork) {
 					defer wg.Done()
-					output, err := w.handler(w.tc.Args)
+					output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
 					if err != nil {
 						debugToolErr(w.tc.Name, err)
 						results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
