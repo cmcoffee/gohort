@@ -23,6 +23,40 @@ type ScheduledTask struct {
 // payload is the raw JSON that was passed to ScheduleTask.
 type ScheduleHandlerFunc func(ctx context.Context, payload json.RawMessage)
 
+// TaskDescriber turns a task's opaque payload into a short human label for
+// admin + log surfaces (e.g. "ts3-join-leave-chat (agent: Chat)"). Registered
+// per kind by the domain that OWNS the payload, so the generic scheduler never
+// learns any kind's shape — it just asks whoever registered. Return "" when the
+// task can't be described (unknown kind, stale/deleted target, malformed payload).
+type TaskDescriber func(payload json.RawMessage) string
+
+// RegisterTaskDescriber installs a human-label producer for a task kind. Call
+// from an app's RegisterRoutes/init. Optional: kinds without one just show no
+// label (the id + kind still render), so this never gates functionality.
+func RegisterTaskDescriber(kind string, fn TaskDescriber) {
+	taskDescribersMu.Lock()
+	taskDescribers[kind] = fn
+	taskDescribersMu.Unlock()
+}
+
+// DescribeTask returns the registered describer's label for t, or "" when no
+// describer is registered for its kind (or the describer panics on a bad row —
+// one malformed task must not take down an admin list or a log pass).
+func DescribeTask(t ScheduledTask) (label string) {
+	taskDescribersMu.RLock()
+	fn := taskDescribers[t.Kind]
+	taskDescribersMu.RUnlock()
+	if fn == nil {
+		return ""
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			label = ""
+		}
+	}()
+	return fn(t.Payload)
+}
+
 var (
 	schedHandlers   = map[string]ScheduleHandlerFunc{}
 	schedHandlersMu sync.RWMutex
@@ -43,6 +77,11 @@ var (
 	// tasks are actually scheduled. Run every 30 minutes.
 	reconcilers = map[string]func(context.Context) error{}
 	reconcilersMu sync.Mutex
+
+	// taskDescribers turn a task kind's opaque payload into a human label for
+	// admin/log surfaces. Keyed by kind, registered by the owning domain.
+	taskDescribers   = map[string]TaskDescriber{}
+	taskDescribersMu sync.RWMutex
 )
 
 // RegisterScheduleHandler registers a handler for the given task kind.
@@ -241,7 +280,11 @@ func StartGlobalScheduler(ctx context.Context) {
 				handler = "registered"
 			}
 			schedHandlersMu.RUnlock()
-			Log("[scheduler]   %s  kind=%s  handler=%s  run_at=%s", t.ID, t.Kind, handler, t.RunAt)
+			if label := DescribeTask(t); label != "" {
+				Log("[scheduler]   %s  kind=%s  %s  handler=%s  run_at=%s", t.ID, t.Kind, label, handler, t.RunAt)
+			} else {
+				Log("[scheduler]   %s  kind=%s  handler=%s  run_at=%s", t.ID, t.Kind, handler, t.RunAt)
+			}
 		}
 	}
 }
@@ -336,7 +379,11 @@ func fireDueTasks(ctx context.Context, db Database) {
 			Log("[scheduler] no handler for kind %q — dropping task %s", task.Kind, task.ID)
 			continue
 		}
-		Log("[scheduler] firing %s (kind=%s, due=%s)", task.ID, task.Kind, task.RunAt)
+		if label := DescribeTask(task); label != "" {
+			Log("[scheduler] firing %s (kind=%s, %s, due=%s)", task.ID, task.Kind, label, task.RunAt)
+		} else {
+			Log("[scheduler] firing %s (kind=%s, due=%s)", task.ID, task.Kind, task.RunAt)
+		}
 		go fn(ctx, task.Payload)
 	}
 }

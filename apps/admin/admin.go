@@ -1047,7 +1047,20 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(ListScheduledTasks(""))
+			// Enrich each row with a human label (monitor name + agent, etc.)
+			// via the task-describer registry, so the table can show WHAT a task
+			// is rather than a bare kind + uuid. Kinds without a describer get an
+			// empty detail (the id + kind still render).
+			type schedTaskRow struct {
+				ScheduledTask
+				Detail string `json:"detail"`
+			}
+			tasks := ListScheduledTasks("")
+			rows := make([]schedTaskRow, 0, len(tasks))
+			for _, t := range tasks {
+				rows = append(rows, schedTaskRow{ScheduledTask: t, Detail: DescribeTask(t)})
+			}
+			json.NewEncoder(w).Encode(rows)
 			return
 		}
 		if r.Method != http.MethodDelete {

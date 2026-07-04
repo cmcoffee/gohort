@@ -177,6 +177,25 @@ func registerOperatorWake(app *OrchestrateApp) {
 		return out, err
 	})
 
+	// Label event.poll tasks in the admin scheduler view + scheduler logs with
+	// the monitor name and the agent it wakes, instead of a bare "event.poll" +
+	// uuid. Registered here (not in core) because resolving the wake-agent id to
+	// a friendly name needs the orchestrate agent store; core stays generic.
+	RegisterTaskDescriber(EventPollKind, func(payload json.RawMessage) string {
+		m, ok := EventMonitorForTaskPayload(payload)
+		if !ok {
+			return ""
+		}
+		agent := "default channel agent"
+		if id := strings.TrimSpace(m.WakeAgent); id != "" {
+			agent = id
+			if a, ok := loadAgent(UserDB(app.DB, m.Owner), id); ok && strings.TrimSpace(a.Name) != "" {
+				agent = a.Name
+			}
+		}
+		return fmt.Sprintf("%s (agent: %s)", m.Name, agent)
+	})
+
 	StartEventMonitorScheduler()
 }
 

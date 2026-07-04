@@ -33,9 +33,14 @@ import (
 	"time"
 )
 
+// EventPollKind is the scheduler task kind for interval poll monitors. Exported
+// so a task-describer (admin scheduler view / scheduler logs) can key on it
+// without duplicating the literal.
+const EventPollKind = "event.poll"
+
 const (
 	eventMonitorsTable = "event_monitors" // <owner>:<name> -> EventMonitor
-	eventPollKind      = "event.poll"
+	eventPollKind      = EventPollKind
 
 	// The monitor kinds, cheapest-first:
 	//   webhook   = external POST wakes it (push, no polling).
@@ -261,6 +266,18 @@ func nextPoll(m EventMonitor, from time.Time) time.Time {
 type eventPollPayload struct {
 	Owner string `json:"owner"`
 	Name  string `json:"name"`
+}
+
+// EventMonitorForTaskPayload decodes an event.poll scheduler payload and returns
+// the monitor it points at, so a task-describer can label the task by monitor
+// name + wake agent without knowing the payload shape. ok=false for a malformed
+// payload or a monitor that no longer exists (a stale task about to no-op).
+func EventMonitorForTaskPayload(payload json.RawMessage) (EventMonitor, bool) {
+	var p eventPollPayload
+	if json.Unmarshal(payload, &p) != nil || p.Name == "" {
+		return EventMonitor{}, false
+	}
+	return GetEventMonitor(RootDB, p.Owner, p.Name)
 }
 
 // ScheduleEventMonitor (re)schedules a poll monitor's next check (cancel-and-

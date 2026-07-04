@@ -943,6 +943,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					RowKey: "id",
 					Columns: []ui.Col{
 						{Field: "kind", Flex: 1},
+						// What the task actually is (e.g. an event monitor's name +
+						// the agent it wakes), from the task-describer registry.
+						// Blank for kinds without a describer.
+						{Field: "detail", Flex: 2},
 						// Future-aware relative time: "in 5m" while pending,
 						// flips to "5m ago" if the worker missed firing it.
 						{Field: "run_at", Format: "fromnow", Mute: true},
@@ -957,6 +961,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Pairs: []ui.DisplayPair{
 										{Label: "ID", Field: "id", Mono: true},
 										{Label: "Kind", Field: "kind"},
+										{Label: "Detail", Field: "detail"},
 										{Label: "Fires", Field: "run_at", Format: "fromnow"},
 										{Label: "Run at (UTC)", Field: "run_at", Mono: true},
 										{Label: "Created", Field: "created", Format: "reltime"},
