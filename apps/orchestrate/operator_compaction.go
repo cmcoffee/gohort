@@ -21,6 +21,25 @@ import (
 
 const operatorCompactStateTable = "operator_compact_state"
 
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_compaction_fold_trigger_pct",
+		Category: "Limits",
+		Label:    "Compaction fold trigger (% of context depth)",
+		Help:     "How far a persistent thread's unsummarized tail may grow, as a percent of the agent's Context Depth, before the rolling summary folds it back down to the depth. 150 = fold at 1.5x depth, so the prompt floats between depth and 1.5x depth (e.g. depth 100 → prompt stays 100-150). Higher folds less often (looser prompt, fewer summary LLM calls); lower keeps the prompt tighter at the cost of more frequent folds. Was effectively 300 (3x) before this was configurable.",
+		Kind:     KindInt,
+		Default:  150,
+		Min:      110,
+		Max:      300,
+	})
+}
+
+// foldTriggerPct is the unsummarized-tail size (as a percent of the agent's
+// context depth) at which the rolling summary folds. Replaces the old hardcoded
+// 3x (300%) core default so "context depth N" keeps the prompt near N instead of
+// drifting to 3N before the first fold.
+func foldTriggerPct() int { return TuneInt("tune_compaction_fold_trigger_pct") }
+
 func compactStateKey(agentID, sessID string) string { return agentID + ":" + sessID }
 
 func loadCompactState(db Database, agentID, sessID string) CompactState {
@@ -96,8 +115,18 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		st.SummarizedThrough = 0
 		saveCompactState(udb, agent.ID, sessID, st)
 	}
+	// Trigger = fold when the unsummarized tail reaches foldTriggerPct% of the
+	// verbatim depth. Set explicitly so core's withDefaults doesn't fall back to
+	// its 3x default (which let a depth-100 thread grow to ~300 before folding —
+	// the "why is the prompt 186 when depth is 100" surprise). Compute off the
+	// EFFECTIVE depth (12 when ContextDepth is unset) so it scales with either.
+	effectiveKeep := keepRecent
+	if effectiveKeep <= 0 {
+		effectiveKeep = 12
+	}
 	cfg := CompactionConfig{
 		KeepRecent: keepRecent, // 0 → withDefaults applies 12
+		Trigger:    effectiveKeep * foldTriggerPct() / 100,
 		// Archive each folded span into a searchable history index so aged
 		// content stays recoverable via recall_history / expand_history,
 		// instead of surviving only as the lossy running summary.
