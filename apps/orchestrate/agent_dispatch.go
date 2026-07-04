@@ -1058,6 +1058,25 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// phantom messaging tools use, so channel replies reach parity with them.
 	// cleanReply still carries the marker at this point (StripMetaTags runs later).
 	imgs, vids := collectMessageMedia(subSess, cleanReply)
+	// Phantom-delivery backstop: the model produced a file (find/generate/fetch)
+	// but never called workspace(attach), then wrote a reply CLAIMING it sent it
+	// ("here are the pics") — so collectMessageMedia found nothing and the reply
+	// would go out with no attachment. Recover the staged file the claim refers
+	// to and attach it, turning the phantom delivery into a real one. Scoped to a
+	// delivery claim (the model's own vetting signal), so it only ships what the
+	// model said it's sending. Does NOT depend on the model doing anything.
+	if len(imgs) == 0 && len(vids) == 0 {
+		if staged := recoverStagedDeliverable(subSess, cleanReply); staged != "" {
+			if b64 := resolveWorkspaceImages(subSess, []string{staged}); len(b64) > 0 {
+				Log("[orchestrate.dispatch] reply claimed a delivery but attached nothing — backstop attaching staged %q", staged)
+				if isVideoAttachment(staged) {
+					vids = append(vids, b64...)
+				} else {
+					imgs = append(imgs, b64...)
+				}
+			}
+		}
+	}
 	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap}, nil
 }
 

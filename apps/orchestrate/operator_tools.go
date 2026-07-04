@@ -81,6 +81,82 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 	return images, videos
 }
 
+// recoverStagedDeliverable is the phantom-delivery BACKSTOP: when a reply CLAIMS
+// it delivered an image/file ("here are the pics") but nothing was actually
+// attached, it returns the newest deliverable file staged in the session
+// workspace this turn — the file the model produced and then forgot to attach.
+// Returns "" when the reply makes no delivery claim, the workspace holds no
+// recent deliverable, or the newest one is stale (never re-ship an old
+// artifact). The delivery CLAIM is the gate on purpose: the model only says
+// "here it is" for a file it MEANS to send, so recovering the staged file ships
+// what it intended — not a random or rejected workspace file (that's why this is
+// safe even for find_image, whose result could be wrong: a wrong image the model
+// noticed wouldn't get a "here it is").
+func recoverStagedDeliverable(sess *ToolSession, reply string) string {
+	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" || !replyClaimsAttachment(reply) {
+		return ""
+	}
+	entries, err := os.ReadDir(sess.WorkspaceDir)
+	if err != nil {
+		return ""
+	}
+	var newest string
+	var newestMod time.Time
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), "_") || !isDeliverableFile(e.Name()) {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil {
+			continue
+		}
+		if newest == "" || info.ModTime().After(newestMod) {
+			newest, newestMod = e.Name(), info.ModTime()
+		}
+	}
+	// Only recover a file staged THIS turn — guard against re-shipping an
+	// artifact left in the workspace by a prior turn. Generous window for a slow
+	// find/generate + vision chain.
+	if newest == "" || time.Since(newestMod) > 10*time.Minute {
+		return ""
+	}
+	return newest
+}
+
+// replyClaimsAttachment reports whether the reply asserts it delivered an
+// image/file — the signal that the model THINKS it attached something. Requires
+// a delivery cue AND an attachment noun so the backstop stays scoped to phantom
+// deliveries instead of firing on any staged file or any casual "here's".
+func replyClaimsAttachment(reply string) bool {
+	r := strings.ToLower(reply)
+	hasCue := false
+	for _, cue := range []string{"here's ", "here are ", "here is ", "here you go", "attached", "i've attached", "sending you", "sent you", "take a look", "check out", "sharing "} {
+		if strings.Contains(r, cue) {
+			hasCue = true
+			break
+		}
+	}
+	if !hasCue {
+		return false
+	}
+	for _, noun := range []string{"photo", "picture", " pic", "image", "shot", "meme", "gif", "screenshot", "attachment", "file", "pdf", "doc", "video", "clip"} {
+		if strings.Contains(r, noun) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeliverableFile reports whether a workspace filename looks like something
+// meant to be SENT (image / doc / video), not a scratch or source file.
+func isDeliverableFile(name string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(name))) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".pdf", ".docx", ".mp4", ".mov", ".webm", ".m4v":
+		return true
+	}
+	return false
+}
+
 // isVideoAttachment classifies a workspace file path as a video by extension, so
 // a [ATTACH: clip.mp4] marker routes to the video channel instead of the image
 // channel.
