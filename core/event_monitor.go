@@ -117,6 +117,12 @@ type EventMonitor struct {
 	// diff summary.
 	FormatScript string `json:"format_script,omitempty"`
 
+	// OneShot monitors fire exactly ONCE and then remove themselves (see
+	// fireWake). This is the substrate for "await a deferred result": the caller
+	// asked to be woken WHEN a result arrives (a reply, a call outcome, a job
+	// finishing), not on every subsequent change, so after the first wake the
+	// monitor is done. Standing monitors leave this false and keep watching.
+	OneShot      bool      `json:"one_shot,omitempty"`
 	Paused       bool      `json:"paused"`
 	Created      time.Time `json:"created"`
 	NextCheck    time.Time `json:"next_check,omitempty"`
@@ -875,6 +881,16 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	rec.Summary = "Woke the Operator: " + truncateEvent(summary, 200)
 	rec.Ended = time.Now()
 	RecordRun(db, rec)
+
+	// One-shot await: this monitor asked to be woken WHEN its result arrived, so
+	// after firing once it's finished. Remove it (DeleteEventMonitor also cancels
+	// any pending scheduler task). The poll handler's defer reschedule re-reads
+	// the monitor and skips it when gone, so deleting here ends the chain cleanly
+	// without an orphaned timer.
+	if m, ok := GetEventMonitor(db, owner, name); ok && m.OneShot {
+		DeleteEventMonitor(db, owner, name)
+		Debug("[event] one-shot await %s/%s fired once — removed", owner, name)
+	}
 }
 
 func truncateEvent(s string, max int) string {

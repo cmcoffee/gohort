@@ -661,6 +661,66 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 			},
 		},
+		{
+			Tool: Tool{
+				Name:        "await_result",
+				Description: "Wait for a DEFERRED result without blocking or hand-polling. Use this whenever a step's result arrives LATER — a contact's reply, a phone call's outcome, an external job you kicked off — instead of looping on the tool yourself round after round. It runs `tool_name` in the background every interval and WAKES you here exactly once, the moment that tool's output CHANGES from now, then removes itself. END your turn right after calling it; you'll be re-woken with the result and continue the plan from there. This is the right move whenever you set something in motion whose answer comes back on someone else's schedule. Examples: after message_contact(\"Rory\", \"...questions...\"), call await_result(tool_name=\"read_chat\", tool_args={\"chat_id\":\"<Rory's chat>\"}, note=\"Rory's answers — then draft the spec and email it to the owner\") to resume when he replies; after placing a call, await_result on the call-status tool to resume when the call reports back.",
+				Parameters: map[string]ToolParam{
+					"tool_name":        {Type: "string", Description: "The tool polled each interval to detect the result — e.g. \"read_chat\" for a reply, a call-status tool for a call's outcome. Its output is hashed; you're woken when it changes. Must be a tool you can already call."},
+					"tool_args":        {Type: "object", Description: "Arguments passed to tool_name every check, e.g. {\"chat_id\":\"any;+;chat123\"}. Use the same args you'd pass calling it directly."},
+					"note":             {Type: "string", Description: "What you're waiting for AND what to do once it arrives — this is handed back to you on wake to continue the plan. E.g. \"Rory's answers to the spec questions; then write the spec and email it to the owner.\""},
+					"interval_seconds": {Type: "number", Description: "How often to check, in seconds (minimum 30; default 60). A human reply can be slow — 60-300 is usually right; don't poll faster than the result could plausibly arrive."},
+				},
+				Required: []string{"tool_name"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				toolName := strings.TrimSpace(oArgStr(args, "tool_name"))
+				if toolName == "" {
+					return "", fmt.Errorf("tool_name is required — the tool whose output signals the result (e.g. read_chat for a reply)")
+				}
+				var toolArgs map[string]any
+				if ta, ok := args["tool_args"].(map[string]any); ok {
+					toolArgs = ta
+				}
+				interval := oArgInt(args, "interval_seconds")
+				if interval < 30 {
+					interval = 60
+				}
+				note := strings.TrimSpace(oArgStr(args, "note"))
+				// Transient, collision-proof name — an await is short-lived and
+				// removes itself on fire, so it must not clash with a user's real
+				// monitor names.
+				name := "await_" + slugify(toolName) + "_" + UUIDv4()[:8]
+				m := EventMonitor{
+					Name:            name,
+					Owner:           owner,
+					Kind:            EventKindWatch,
+					Notify:          EventNotifyChannel,
+					OneShot:         true,
+					ToolName:        toolName,
+					ToolArgs:        toolArgs,
+					WakeAgent:       agentID,
+					WakeBrief:       note,
+					IntervalSeconds: interval,
+					Created:         time.Now(),
+				}
+				if sess != nil {
+					m.WakeSession = sess.ChatSessionID // resume in THIS conversation
+				}
+				// Seed the change-baseline from a probe NOW, so only a change AFTER
+				// this call wakes you — not the current content. Best-effort: if the
+				// probe fails, the first successful poll seeds it instead.
+				if body, perr := InvokeWatchTool(owner, toolName, toolArgs); perr == nil {
+					m.LastHash = HashWatcherBody(body)
+				}
+				SaveEventMonitor(RootDB, m)
+				if err := ScheduleEventMonitor(RootDB, m); err != nil {
+					DeleteEventMonitor(RootDB, owner, name)
+					return "", fmt.Errorf("couldn't schedule the await: %w", err)
+				}
+				return fmt.Sprintf("Awaiting a result from %s — checking every %ds; I'll wake here once its output changes, then continue. END this turn now; I'll resume when the result arrives.", toolName, interval), nil
+			},
+		},
 		// The phantom-named read tools were removed — superseded by the
 		// channel-scoped chat tools (channel_tools.go) which read the live
 		// Bridges threads. A Fleet agent reaches them by holding a whole-service
