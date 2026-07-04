@@ -70,14 +70,48 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 // Cortex agent answering OUTSIDE its own cortex thread — its recent cortex feed.
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
-func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database) string {
+func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
 	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
 	if target.Cortex && sessID != cortexSessionID(target.ID) {
 		sysPrompt += cortexContextBlock(runtimeDB, target.ID)
 	}
+	// Same per-agent capability guidance the web turn gets, so a capability
+	// follows the AGENT to the channel/dispatch surface instead of silently
+	// thinning out. Without this, an agent reached over a channel (e.g. an
+	// iMessage bridge) ran on a materially thinner prompt than in web chat —
+	// the "works in the web UI but not over a channel" drift.
+	sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user)
 	return sysPrompt
+}
+
+// appendAgentCapabilityBlocks appends the per-agent capability guidance that
+// must follow an agent to ANY surface — the web runPlan turn AND the channel/
+// dispatch turn — so behavior doesn't diverge by which code path built the
+// prompt. This is THE single place these blocks live; both paths call it, so a
+// new capability block added here reaches every surface at once (the tool
+// catalog was unified this way via frameworkConversationalTools; this does the
+// same for the prompt). Every block self-gates on agent config, so a worker or
+// plain chat agent that lacks a capability gets nothing extra. Message-dependent
+// content (triggered-skill instructions, per-turn trigger hints) is deliberately
+// NOT here — it rides the user message for prompt-cache stability.
+func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string) string {
+	if g := strings.TrimSpace(agent.PlanGuidance); g != "" {
+		sys += "\n\n## Plan guidance\n" + g
+	}
+	sys += availableSkillsBlock(agent, udb, user)
+	sys += searchOrderGuidanceBlock(agent)
+	// Plan-first + pre-mortem discipline. On for an explicit PreMortem opt-in AND
+	// by default for any Cortex agent: a persistent channel/home-thread presence
+	// IS an orchestrator that accomplishes goals over a channel, which is exactly
+	// the case this discipline is for (the Wiwee/iMessage case). The block self-
+	// scopes to GOALS, so a Cortex agent still handles casual chat directly — the
+	// default costs nothing on ordinary messages.
+	if agent.PreMortem || agent.Cortex {
+		sys += "\n\n" + preMortemPlanningBlock
+	}
+	return sys
 }
 
 // resolveDispatchThink decides whether a dispatched agent thinks, the SAME way
@@ -586,15 +620,25 @@ func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
 // draws on via read_skill / skill_knowledge_search / skill_knowledge_fetch_doc.
 // Empty when DisableSkills, no allowlist, or no allowed skill.
 func (t *chatTurn) renderAvailableSkillsBlock() string {
-	if t == nil || t.agent.DisableSkills || len(t.agent.AllowedSkills) == 0 {
+	if t == nil {
 		return ""
 	}
-	allowed := make(map[string]bool, len(t.agent.AllowedSkills))
-	for _, id := range t.agent.AllowedSkills {
+	return availableSkillsBlock(t.agent, t.udb, t.user)
+}
+
+// availableSkillsBlock is the chatTurn-free form so the shared capability
+// assembler (used by BOTH the web and channel/dispatch paths) can render it
+// without a chatTurn. See appendAgentCapabilityBlocks.
+func availableSkillsBlock(agent AgentRecord, udb Database, user string) string {
+	if agent.DisableSkills || len(agent.AllowedSkills) == 0 {
+		return ""
+	}
+	allowed := make(map[string]bool, len(agent.AllowedSkills))
+	for _, id := range agent.AllowedSkills {
 		allowed[id] = true
 	}
 	var avail []SkillRecord
-	for _, s := range LoadSkills(t.udb, t.user) {
+	for _, s := range LoadSkills(udb, user) {
 		if s.Disabled || !allowed[s.ID] {
 			continue
 		}
@@ -2783,16 +2827,23 @@ func (t *chatTurn) agentHasRetrievableContent() bool {
 //   - the agent has no web tools in its catalog (no choice to reorder)
 //   - the agent is Builder (its persona has its own search rhythm)
 func (t *chatTurn) appendSearchOrderGuidance(sys string) string {
-	if isBuilderAgent(t.agent.ID) {
-		return sys
+	return sys + searchOrderGuidanceBlock(t.agent)
+}
+
+// searchOrderGuidanceBlock is the chatTurn-free form so the shared capability
+// assembler can render it for the channel/dispatch path too. Returns "" when
+// the agent has no web tools (nothing to reorder) or is Builder.
+func searchOrderGuidanceBlock(agent AgentRecord) string {
+	if isBuilderAgent(agent.ID) {
+		return ""
 	}
 	// Only fire when web tools are actually in the agent's effective
 	// catalog — otherwise there's nothing to deprioritize. AllowedTools
 	// empty = default pool (web tools likely present); otherwise check
 	// the explicit list.
-	hasWeb := len(t.agent.AllowedTools) == 0
+	hasWeb := len(agent.AllowedTools) == 0
 	if !hasWeb {
-		for _, name := range t.agent.AllowedTools {
+		for _, name := range agent.AllowedTools {
 			if name == "web_search" || name == "fetch_url" || name == "browse_page" {
 				hasWeb = true
 				break
@@ -2800,9 +2851,9 @@ func (t *chatTurn) appendSearchOrderGuidance(sys string) string {
 		}
 	}
 	if !hasWeb {
-		return sys
+		return ""
 	}
-	return sys + `
+	return `
 
 ## Search order — knowledge first
 
@@ -4209,9 +4260,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			sys += cortexContextBlock(t.udb, t.agent.ID)
 		}
 	}
-	if g := strings.TrimSpace(t.agent.PlanGuidance); g != "" {
-		sys += "\n\n## Plan guidance\n" + g
-	}
 	// Credential-first authoring guidance — capability-tied. Every non-Builder
 	// agent is granted tool_def + the credential-draft tools later in this
 	// function (same condition), so it gets the matching guidance here. Builder
@@ -4247,10 +4295,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// next to the user message (highest salience) per their own design intent.
 	turnContext := t.renderTriggeredSkills()             // full instructions for skills already consulted
 	turnContext += t.renderSkillTriggerHints(triggerMsg) // soft nudge for skills whose triggers matched
-	// "Available skills" block — lists the skills the agent can reach. The
-	// LLM draws on one via read_skill / skill_knowledge_search.
-	// No-op when DisableSkills is set or AllowedSkills is empty.
-	sys += t.renderAvailableSkillsBlock()
+	// ("Available skills" block moved into appendAgentCapabilityBlocks below, so
+	// the channel/dispatch path renders the same set — do NOT re-append here or
+	// it doubles.)
 	// "Available agents" block — lists the user's OTHER agents so
 	// the host LLM knows what specialists exist and can dispatch to
 	// them via agents(action="run", agent=..., message=...). Without
@@ -4299,15 +4346,12 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// default to web_search for any question they're unsure about,
 	// even when the agent's own corpus has the answer. The stub
 	// reorders that default: knowledge first, web only as fallback.
-	sys = t.appendSearchOrderGuidance(sys)
-	// Plan-first + pre-mortem discipline for orchestrator-style agents: lay out a
-	// plan, critique it before acting, and await deferred-feedback steps rather
-	// than block/fake them. Opt-in per agent (off for chat-style agents that just
-	// answer). The block self-scopes to GOALS, so a PreMortem agent still handles
-	// ordinary questions directly.
-	if t.agent.PreMortem {
-		sys += "\n\n" + preMortemPlanningBlock
-	}
+	// Per-agent capability guidance (plan guidance, available-skills, search-order,
+	// pre-mortem) — routed through the SHARED assembler so the exact same set
+	// reaches the channel/dispatch path too (see appendAgentCapabilityBlocks).
+	// Each block self-gates on agent config; kept here (after the other blocks)
+	// so it's the single source both surfaces share.
+	sys = appendAgentCapabilityBlocks(sys, t.agent, t.udb, t.user)
 	// (Authoring-in-progress banner removed. It referenced legacy
 	// tool names (create_pipeline_tool / create_temp_tool /
 	// create_api_tool) replaced by tool_def + add_tool, and the

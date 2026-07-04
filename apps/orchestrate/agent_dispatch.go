@@ -535,7 +535,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB)
+	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -878,7 +878,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB)
+	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
 	if s := strings.TrimSpace(run.SystemPromptOverride); s != "" {
 		sysPrompt = s // app supplies its own complete per-run prompt (e.g. servitor's investigator)
 	}
