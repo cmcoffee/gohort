@@ -61,7 +61,7 @@ func stubTools(tools []AgentToolDef, scripted map[string]string) []AgentToolDef 
 	return out
 }
 
-func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int, stub bool) []EvalResult {
+func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int, stub, allowConsequential bool) []EvalResult {
 	if runs < 1 {
 		runs = 1
 	}
@@ -100,7 +100,7 @@ func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user s
 			if err := ctx.Err(); err != nil {
 				break
 			}
-			perRun = append(perRun, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c, stub))
+			perRun = append(perRun, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c, stub, allowConsequential))
 		}
 		results = append(results, aggregateEvalRuns(c.Name, perRun))
 	}
@@ -146,7 +146,7 @@ func aggregateEvalRuns(name string, runs []EvalResult) EvalResult {
 	return agg
 }
 
-func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, sysPrompt string, tools []AgentToolDef, c EvalCase, stub bool) EvalResult {
+func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, sysPrompt string, tools []AgentToolDef, c EvalCase, stub, allowConsequential bool) EvalResult {
 	res := EvalResult{Name: c.Name}
 	caseCtx, cancel := context.WithTimeout(ctx, evalsRunTimeout)
 	defer cancel()
@@ -155,6 +155,17 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 	// so the model's tool choices are unaffected.
 	if stub {
 		tools = stubTools(tools, c.StubResults)
+	}
+	// Consequential tools (NeedsConfirm) normally require human approval. In a
+	// LIVE eval we refuse to auto-approve them unless the caller explicitly opted
+	// in (?live=all), so a live run can exercise real read/search tools without
+	// firing messages, spend, or state changes by accident. (In stub mode the
+	// handlers are inert, so this never gates anything.)
+	needsConfirm := map[string]bool{}
+	for _, td := range tools {
+		if td.NeedsConfirm {
+			needsConfirm[td.Tool.Name] = true
+		}
 	}
 	f := false
 	// Capture which tools the model actually CALLED (not just narrated), so a
@@ -167,7 +178,15 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(agent),
 		ThinkBudget:  agent.ThinkBudget, // per-agent override; 0 = inherit route/global
-		Confirm:      func(name, args string) bool { return true },
+		Confirm: func(name, args string) bool {
+			// Stub mode: handlers are side-effect-free, so approving is safe and
+			// lets the scripted stub result reach the model. Live mode: approve
+			// non-consequential tools; consequential ones need ?live=all.
+			if stub || allowConsequential {
+				return true
+			}
+			return !needsConfirm[name]
+		},
 		OnStep: func(step StepInfo) {
 			calledMu.Lock()
 			for _, tc := range step.ToolCalls {
@@ -348,14 +367,28 @@ func (T *OrchestrateApp) handleAgentEval(w http.ResponseWriter, r *http.Request)
 	if runs > 100 {
 		runs = 100
 	}
-	// ?stub=1 → eval stub mode: tools run as side-effect-free stubs (no real
-	// message queued / monitor created / network). Use for tool-USE cases so
-	// they're safe to run; leave off (default) for cases that need real results.
-	stub := false
-	if v := strings.TrimSpace(r.URL.Query().Get("stub")); v == "1" || strings.EqualFold(v, "true") {
-		stub = true
+	// SAFETY: eval defaults to STUB mode — every tool is swapped for a
+	// side-effect-free stub, so a run can never send a message, create a monitor,
+	// spend, or hit the network by accident. Running against REAL tools is an
+	// explicit opt-in, graduated so consequential actions need the strongest signal:
+	//   (default)   stub    — nothing real runs; scripted stub results feed the model
+	//   ?live=1     live    — real NON-consequential tools run; NeedsConfirm tools stay denied
+	//   ?live=all   live+   — real tools run INCLUDING consequential (NeedsConfirm) ones
+	// ?stub=0 is accepted as an alias for ?live=1 (back-compat). A bare ?stub=1
+	// is now a no-op since stub is already the default.
+	stub := true
+	allowConsequential := false
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("live"))) {
+	case "1", "true", "yes":
+		stub = false
+	case "all", "consequential":
+		stub = false
+		allowConsequential = true
 	}
-	results := T.RunAgentEvals(r.Context(), udb, user, agent, runs, stub)
+	if v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("stub"))); v == "0" || v == "false" {
+		stub = false
+	}
+	results := T.RunAgentEvals(r.Context(), udb, user, agent, runs, stub, allowConsequential)
 	pass, fail := 0, 0
 	for _, r := range results {
 		if r.Passed && r.ErrText == "" {
@@ -366,13 +399,15 @@ func (T *OrchestrateApp) handleAgentEval(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"agent_id": agent.ID,
-		"agent":    agent.Name,
-		"runs":     runs,
-		"stub":     stub,
-		"pass":     pass, // cases that passed ALL runs
-		"fail":     fail,
-		"total":    len(results),
-		"results":  results, // each row carries passes/runs for the rate
+		"agent_id":           agent.ID,
+		"agent":              agent.Name,
+		"runs":               runs,
+		"stub":               stub,
+		"live":               !stub,              // real tools ran
+		"live_consequential": allowConsequential, // NeedsConfirm tools were allowed to fire
+		"pass":               pass,               // cases that passed ALL runs
+		"fail":               fail,
+		"total":              len(results),
+		"results":            results, // each row carries passes/runs for the rate
 	})
 }
