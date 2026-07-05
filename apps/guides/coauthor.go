@@ -380,11 +380,11 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 	pullReference := AgentToolDef{
 		Tool: Tool{
 			Name:        "pull_reference",
-			Description: "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it — e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and optionally a query describing what you're writing about (document sources use it to return the most relevant material; system sources return their full picture regardless). Then write the section with add_section using only details the reference actually contains — do not invent specifics it doesn't include.",
+			Description: "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it — e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains — do not invent specifics it doesn't include.",
 			Parameters: map[string]ToolParam{
 				"kind":    {Type: "string", Description: "The source kind from list_reference_sources, e.g. \"system\" or \"mcp:confluence\"."},
 				"item_id": {Type: "string", Description: "The item id from list_reference_sources."},
-				"query":   {Type: "string", Description: "Optional: what you're writing about, to focus document-source results. System sources ignore it."},
+				"query":   {Type: "string", Description: "What you're writing about, to focus the results. Any source (including a system/servitor source) uses it to return the most relevant knowledge; omit it only to pull the source's full picture."},
 			},
 			Required: []string{"kind", "item_id"},
 		},
