@@ -871,9 +871,13 @@ type EvalCase struct {
 
 // EvalResult is one row from a harness run.
 type EvalResult struct {
-	Name    string   `json:"name"`
-	Passed  bool     `json:"passed"`
-	Output      string   `json:"output"`                 // the agent's reply (truncated for display)
+	Name string `json:"name"`
+	// Passed is strict — every run passed. Runs/Passes carry the pass RATE, which
+	// is the real signal for a non-deterministic model ("awaited 27/30").
+	Passed      bool     `json:"passed"`
+	Runs        int      `json:"runs,omitempty"`   // how many times the case was run
+	Passes      int      `json:"passes,omitempty"` // how many of those passed
+	Output      string   `json:"output"`           // the agent's reply (truncated for display)
 	Reasons     []string `json:"reasons,omitempty"`      // why a case failed (or "ok" entries on pass)
 	ToolsCalled []string `json:"tools_called,omitempty"` // distinct tools the model called this run
 	ErrText     string   `json:"error,omitempty"`        // populated when the agent itself errored mid-run

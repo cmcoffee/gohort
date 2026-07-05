@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,10 @@ const evalsRunTimeout = 5 * time.Minute
 // RunAgentEvals executes every case on the agent and returns a result
 // row per case. Stops early only on context cancellation; individual
 // case errors land on that case's ErrText without aborting the rest.
-func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord) []EvalResult {
+func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int) []EvalResult {
+	if runs < 1 {
+		runs = 1
+	}
 	results := make([]EvalResult, 0, len(agent.Evals))
 	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
 
@@ -65,9 +69,58 @@ func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user s
 		if err := ctx.Err(); err != nil {
 			return results
 		}
-		results = append(results, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c))
+		// Run each case `runs` times and report the pass RATE — a single run of a
+		// non-deterministic model is noise; the rate is the signal (and cheap on
+		// a local GPU). Same prefix every run, so the host prompt cache stays warm.
+		perRun := make([]EvalResult, 0, runs)
+		for i := 0; i < runs; i++ {
+			if err := ctx.Err(); err != nil {
+				break
+			}
+			perRun = append(perRun, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c))
+		}
+		results = append(results, aggregateEvalRuns(c.Name, perRun))
 	}
 	return results
+}
+
+// aggregateEvalRuns collapses the N runs of one case into a single row: the pass
+// RATE (Passes/Runs), a representative sample (the first FAILING run if any, else
+// the last), the union of tools called across runs, and any run error. Passed is
+// strict (all runs passed); the rate is what you actually read.
+func aggregateEvalRuns(name string, runs []EvalResult) EvalResult {
+	agg := EvalResult{Name: name, Runs: len(runs)}
+	if len(runs) == 0 {
+		agg.ErrText = "no runs completed (cancelled)"
+		return agg
+	}
+	toolSet := map[string]bool{}
+	sampleIdx := -1
+	for i := range runs {
+		r := runs[i]
+		if r.ErrText != "" {
+			agg.ErrText = r.ErrText
+		}
+		if r.Passed && r.ErrText == "" {
+			agg.Passes++
+		} else if sampleIdx < 0 {
+			sampleIdx = i // first failing run — the informative sample
+		}
+		for _, t := range r.ToolsCalled {
+			toolSet[t] = true
+		}
+	}
+	if sampleIdx < 0 {
+		sampleIdx = len(runs) - 1 // all passed → show the last run
+	}
+	for t := range toolSet {
+		agg.ToolsCalled = append(agg.ToolsCalled, t)
+	}
+	sort.Strings(agg.ToolsCalled)
+	agg.Passed = agg.Passes == agg.Runs
+	agg.Output = runs[sampleIdx].Output
+	agg.Reasons = append([]string{fmt.Sprintf("passed %d/%d runs", agg.Passes, agg.Runs)}, runs[sampleIdx].Reasons...)
+	return agg
 }
 
 func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, sysPrompt string, tools []AgentToolDef, c EvalCase) EvalResult {
@@ -255,7 +308,18 @@ func (T *OrchestrateApp) handleAgentEval(w http.ResponseWriter, r *http.Request)
 		_ = json.NewEncoder(w).Encode(map[string]any{"results": []EvalResult{}, "message": "no eval cases configured on this agent"})
 		return
 	}
-	results := T.RunAgentEvals(r.Context(), udb, user, agent)
+	// ?runs=N repeats each case N times for a pass rate (default 1, capped so a
+	// stray value can't pin the GPU). Free locally, so high N is fine.
+	runs := 1
+	if v := strings.TrimSpace(r.URL.Query().Get("runs")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			runs = n
+		}
+	}
+	if runs > 100 {
+		runs = 100
+	}
+	results := T.RunAgentEvals(r.Context(), udb, user, agent, runs)
 	pass, fail := 0, 0
 	for _, r := range results {
 		if r.Passed && r.ErrText == "" {
@@ -268,9 +332,10 @@ func (T *OrchestrateApp) handleAgentEval(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"agent_id": agent.ID,
 		"agent":    agent.Name,
-		"pass":     pass,
+		"runs":     runs,
+		"pass":     pass, // cases that passed ALL runs
 		"fail":     fail,
 		"total":    len(results),
-		"results":  results,
+		"results":  results, // each row carries passes/runs for the rate
 	})
 }
