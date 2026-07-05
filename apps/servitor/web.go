@@ -607,7 +607,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// Repo appliances: clone + ingest under the OWNER (one shared clone) on
 		// create or when the store is empty.
 		if req.Type == "repo" && (isNew || req.RepoFiles == 0) {
-			go T.cloneAndIngestRepo(owner, targetUDB, req.ID)
+			go T.cloneAndIngestRepo(AppContext(), owner, targetUDB, req.ID)
 		}
 		resp := req
 		resp.Password = ""
@@ -1202,8 +1202,34 @@ func (T *Servitor) handleRepoRefresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not allowed to refresh this repository", http.StatusForbidden)
 		return
 	}
-	go T.cloneAndIngestRepo(ownerUser, ownerUDB, req.ApplianceID)
-	w.WriteHeader(http.StatusAccepted)
+	// Run the re-clone as a live, cancelable session (mirrors handleMap) so the
+	// UI shows a spinner + live status and offers Cancel, instead of a silent
+	// 202. The AgentLoopPanel subscribes to the same event stream.
+	sid := UUIDv4()
+	ctx, cancel := context.WithCancel(AppContext())
+	probeSessions.Register(sid, "Refreshing "+rec.Name, cancel)
+	sessionAppliances.Store(sid, rec.ID)
+	go func() {
+		defer cancel()
+		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Re-cloning %s…", repoDisplayTarget(rec))})
+		T.cloneAndIngestRepo(ctx, ownerUser, ownerUDB, rec.ID)
+		if ctx.Err() != nil {
+			probeSessions.AppendEvent(sid, probeEvent{Kind: "error", Text: "Refresh cancelled."}, true)
+			probeSessions.ScheduleCleanup(sid)
+			return
+		}
+		files := 0
+		var updated Appliance
+		if ownerUDB.Get(applianceTable, rec.ID, &updated) {
+			files = updated.RepoFiles
+		}
+		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Ingested %d files.", files)})
+		probeSessions.AppendEvent(sid, probeEvent{Kind: "reply", Text: fmt.Sprintf("Repository re-cloned: %d files ingested. The code map may now be stale; run Map System to regenerate it.", files)}, false)
+		probeSessions.AppendEvent(sid, probeEvent{Kind: "done"}, true)
+		probeSessions.ScheduleCleanup(sid)
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"session_id": sid})
 }
 
 // handleCollectionsList returns the caller's knowledge collections (their own +
@@ -2440,7 +2466,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		if saveProfile {
 			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Cloning %s…", repoDisplayTarget(appliance))})
 			withHeartbeat(ctx, id, "Cloning repository", func() {
-				T.cloneAndIngestRepo(ownerUser, ownerUDB, appliance.ID)
+				T.cloneAndIngestRepo(ctx, ownerUser, ownerUDB, appliance.ID)
 			})
 			if ctx.Err() != nil {
 				probeSessions.ScheduleCleanup(id)

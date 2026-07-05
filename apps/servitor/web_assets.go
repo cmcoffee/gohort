@@ -1072,11 +1072,16 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({appliance_id: aid}),
       }).then(function(r) {
-        if (r.ok || r.status === 202) {
-          window.uiAlert('Re-cloning the repository — this may take a moment. Ask again once it finishes.');
-        } else {
+        if (!r.ok) {
           return r.text().then(function(t){ window.uiAlert('Refresh failed: ' + t); });
         }
+        return r.json().then(function(d) {
+          if (d && d.session_id) {
+            // Subscribe to the same event stream Map uses: the AgentLoopPanel
+            // renders the spinner, live status lines, and a Cancel button.
+            ctx.subscribe('api/chat/v2/events?id=' + encodeURIComponent(d.session_id));
+          }
+        });
       }).catch(function(err) {
         window.uiAlert('Refresh failed: ' + (err && err.message || err));
       });

@@ -55,7 +55,7 @@ func wipeRepoFiles(user, applianceID string) {
 // cloneAndIngestRepo clones the repo appliance into tmpfs, ingests its text
 // files into the encrypted store, then discards the plaintext clone. Best-effort;
 // updates the appliance record's RepoFiles/RepoCloned on success.
-func (T *Servitor) cloneAndIngestRepo(user string, udb Database, applianceID string) {
+func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Database, applianceID string) {
 	var rec Appliance
 	if !udb.Get(applianceTable, applianceID, &rec) || rec.Type != "repo" {
 		return
@@ -82,7 +82,9 @@ func (T *Servitor) cloneAndIngestRepo(user string, udb Database, applianceID str
 	}
 	args = append(args, repoCloneURL(rec), dir)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Derive the timeout from the caller's ctx so a session Cancel aborts the
+	// clone mid-flight, not just the surrounding work.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
