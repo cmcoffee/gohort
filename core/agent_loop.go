@@ -91,6 +91,15 @@ type AgentLoopConfig struct {
 	// OnStep is called after each LLM round for logging/observability. Optional.
 	OnStep StepCallback
 
+	// DrainViewImages, when set, is called after each tool-execution round to
+	// pull any frames a tool queued for the model to look at (e.g. view_video's
+	// sampled video frames, held on sess.PendingViewImages). Returned images are
+	// injected as a vision user-message before the next LLM call, so the model
+	// actually SEES them. Wire it to sess.DrainViewImages. Optional; nil means
+	// the loop never injects view images (the pre-fix behavior, where queued
+	// frames were silently dropped and the model "described" a video it never saw).
+	DrainViewImages func() [][]byte
+
 	// Stream enables streaming mode. When set, LLM responses are streamed
 	// through this handler as they arrive. Optional.
 	Stream StreamHandler
@@ -1710,6 +1719,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			Role:        "user",
 			ToolResults: results,
 		})
+		// If a tool queued frames for the model to look at (view_video samples a
+		// clip into sess.PendingViewImages), inject them as a vision message NOW
+		// so the next round actually sees them. Without this the frames were
+		// extracted and dropped, and the model hallucinated a description of a
+		// video it never saw. Goes right after the tool results so the order is
+		// assistant-tool_calls -> tool_results -> the frames it asked to see.
+		if cfg.DrainViewImages != nil {
+			if imgs := cfg.DrainViewImages(); len(imgs) > 0 {
+				history = append(history, Message{
+					Role:    "user",
+					Content: fmt.Sprintf("Here are %d frames sampled in time order from the video you asked to view. Describe only what is actually visible in them; do not guess beyond what the frames show.", len(imgs)),
+					Images:  imgs,
+				})
+			}
+		}
 		prevHadToolCalls = true
 
 		// Failure-streak bookkeeping. A round counts as a "failure"

@@ -5208,6 +5208,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		Stream:               streamHandler,
 		OnStep:               onStepHandler,
 		OnRoundStart:         onRoundStartHandler,
+		// Feed view_video's sampled frames to the model on the next round so it
+		// actually sees the clip instead of describing it blind.
+		DrainViewImages: sess.DrainViewImages,
 		// Drain mid-flight user injections EACH ROUND so the orchestrator
 		// incorporates them during inline work — not just at plan-step
 		// boundaries / synthesis. Without this, a note injected while the

@@ -563,6 +563,9 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		// surfaces tools the LLM loaded via load_tool this turn.
 		ToolFallbackResolver: subTurn.lazyToolFallback,
 		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
+		// Feed view_video's sampled frames to the model on the next round so a
+		// channel agent (phantom) actually sees a reel it was asked to watch.
+		DrainViewImages: subSess.DrainViewImages,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(think),
@@ -1013,6 +1016,8 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			loopCfg.PendingWorkFn = lc.PendingWorkFn
 		}
 	}
+	// Feed view_video's sampled frames to the model on the next round.
+	loopCfg.DrainViewImages = subSess.DrainViewImages
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)
