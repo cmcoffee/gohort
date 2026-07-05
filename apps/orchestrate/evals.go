@@ -24,7 +24,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -73,12 +75,24 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 	caseCtx, cancel := context.WithTimeout(ctx, evalsRunTimeout)
 	defer cancel()
 	f := false
+	// Capture which tools the model actually CALLED (not just narrated), so a
+	// case can grade on tool-use — the "is the model effective at using our
+	// tools" question. OnStep fires per round with that round's tool calls.
+	var calledMu sync.Mutex
+	called := map[string]bool{}
 	resp, _, err := T.RunAgentLoop(caseCtx, []Message{{Role: "user", Content: c.Prompt}}, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(agent),
 		ThinkBudget:  agent.ThinkBudget, // per-agent override; 0 = inherit route/global
 		Confirm:      func(name, args string) bool { return true },
+		OnStep: func(step StepInfo) {
+			calledMu.Lock()
+			for _, tc := range step.ToolCalls {
+				called[tc.Name] = true
+			}
+			calledMu.Unlock()
+		},
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(f),
@@ -115,6 +129,26 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 		}
 		if strings.Contains(lower, strings.ToLower(bad)) {
 			res.Reasons = append(res.Reasons, fmt.Sprintf("found forbidden substring: %q", bad))
+			allPass = false
+		}
+	}
+
+	// Tool-use grading — did the model actually CALL the tools the scenario
+	// expects (or avoid the ones it shouldn't)? This is the part that catches a
+	// model that describes an action in prose but never emits the tool call.
+	for name := range called {
+		res.ToolsCalled = append(res.ToolsCalled, name)
+	}
+	sort.Strings(res.ToolsCalled)
+	for _, want := range c.MustCallTools {
+		if want = strings.TrimSpace(want); want != "" && !called[want] {
+			res.Reasons = append(res.Reasons, fmt.Sprintf("did NOT call required tool: %q (called: %v)", want, res.ToolsCalled))
+			allPass = false
+		}
+	}
+	for _, bad := range c.MustNotCallTools {
+		if bad = strings.TrimSpace(bad); bad != "" && called[bad] {
+			res.Reasons = append(res.Reasons, fmt.Sprintf("called forbidden tool: %q", bad))
 			allPass = false
 		}
 	}

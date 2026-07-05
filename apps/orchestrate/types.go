@@ -858,7 +858,14 @@ type EvalCase struct {
 	Prompt         string   `json:"prompt"`                     // user message to send the agent
 	MustInclude    []string `json:"must_include,omitempty"`     // case-insensitive substrings expected in the reply
 	MustNotInclude []string `json:"must_not_include,omitempty"` // case-insensitive substrings that must NOT appear
-	JudgePrompt    string   `json:"judge_prompt,omitempty"`     // optional. When set, an LLM judge grades the reply against this criterion (yes/no)
+	// Tool-USE grading — is the model effective at using the tools we built?
+	// MustCallTools: tool names the model must call at least once this run
+	// (e.g. ["await_result"] for a deferred-reply scenario). MustNotCallTools:
+	// tools it must NOT call. Graded from the actual tool-call trace, not the
+	// reply text, so it catches "narrated it but never called the tool".
+	MustCallTools    []string `json:"must_call_tools,omitempty"`
+	MustNotCallTools []string `json:"must_not_call_tools,omitempty"`
+	JudgePrompt      string   `json:"judge_prompt,omitempty"` // optional. When set, an LLM judge grades the reply against this criterion (yes/no)
 	Notes          string   `json:"notes,omitempty"`            // admin notes, not used by the grader
 }
 
@@ -866,7 +873,8 @@ type EvalCase struct {
 type EvalResult struct {
 	Name    string   `json:"name"`
 	Passed  bool     `json:"passed"`
-	Output  string   `json:"output"`            // the agent's reply (truncated for display)
-	Reasons []string `json:"reasons,omitempty"` // why a case failed (or "ok" entries on pass)
-	ErrText string   `json:"error,omitempty"`   // populated when the agent itself errored mid-run
+	Output      string   `json:"output"`                 // the agent's reply (truncated for display)
+	Reasons     []string `json:"reasons,omitempty"`      // why a case failed (or "ok" entries on pass)
+	ToolsCalled []string `json:"tools_called,omitempty"` // distinct tools the model called this run
+	ErrText     string   `json:"error,omitempty"`        // populated when the agent itself errored mid-run
 }
