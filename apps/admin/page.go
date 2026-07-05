@@ -823,7 +823,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "System Dependencies",
-				Subtitle: "External tools gohort shells out to for media + document handling. A missing one disables the feature it gates (e.g. no ffmpeg → inbound voice memos can't be transcribed). Install on the gohort host and restart; this list refreshes on reload.",
+				Subtitle: "External tools gohort shells out to for media + document handling. A missing one disables the feature it gates (e.g. no ffmpeg → inbound voice memos can't be transcribed). Date-versioned tools like yt-dlp are flagged when they go stale (its extractors rot fast, so a stale yt-dlp silently breaks video downloads). Install or update on the gohort host and restart; this list refreshes on reload.",
 				Body: ui.Table{
 					Source: "api/dependencies",
 					RowKey: "name",
@@ -832,6 +832,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Field: "present", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Installed", Color: "success"},
 							{Value: false, Label: "Missing", Color: "danger"},
+						}},
+						{Field: "version", Label: "Version", Flex: 1, Mute: true},
+						{Field: "stale", Label: "Freshness", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Stale, update", Color: "warning"},
 						}},
 						{Field: "enables", Label: "Enables", Flex: 3, Mute: true},
 						{Field: "install", Label: "Install", Flex: 2, Mute: true},

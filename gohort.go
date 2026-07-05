@@ -293,6 +293,7 @@ func main() {
 			enable_trace()
 		}
 		Log("### %s v%s ###", APPNAME, VERSION)
+		go LogDependencyHealth() // probe external tools; warn on any missing or stale (e.g. an out-of-date yt-dlp)
 		init_database()
 		RootDB = global.db
 		// Legacy chunk homes to fold into the dedicated VectorDB on the

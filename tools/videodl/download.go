@@ -55,7 +55,7 @@ func firstLine(s string) string {
 // Hard caps: 120s wall clock, 200 MB output.
 func downloadViaYtDlp(url string) ([]byte, error) {
 	if _, err := exec.LookPath("yt-dlp"); err != nil {
-		return nil, fmt.Errorf("yt-dlp is not installed on this server. Install via `pip install yt-dlp` or download the static binary from https://github.com/yt-dlp/yt-dlp/releases")
+		return nil, fmt.Errorf("yt-dlp is not installed on this server. Install the self-contained binary (recommended, it self-updates via `sudo yt-dlp -U`): download the latest from https://github.com/yt-dlp/yt-dlp/releases, put it on PATH (e.g. /usr/local/bin/yt-dlp), and chmod +x. Avoid `pip install` unless you know the Python it targets will stay put.")
 	}
 	dir, err := os.MkdirTemp("", "videodl-*")
 	if err != nil {
