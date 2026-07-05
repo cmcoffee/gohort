@@ -233,6 +233,23 @@ func recordScopedApplianceFact(a Appliance, key, value, ttl string) {
 	_ = orch.SeedScopedGraphEntity(scope, "appliance", name, []string{a.ID}, map[string]string{key: value})
 }
 
+// RemoveScopedApplianceFact retires one discrete fact (a key on the appliance's
+// scoped graph entity) — the counterpart to recordScopedApplianceFact, used when
+// a re-scan finds the fact no longer true. Resolves the entity by a.ID, the same
+// key scopedApplianceFacts reads with, so it targets the same node. Returns true
+// when the fact existed and was removed. Best-effort.
+func RemoveScopedApplianceFact(a Appliance, key string) bool {
+	if a.ID == "" || strings.TrimSpace(key) == "" {
+		return false
+	}
+	orch := servitorOrch()
+	if orch == nil {
+		return false
+	}
+	scope := orchestrate.AgentScope{AgentID: servitorInvestigatorAgentID, ScopeUser: applianceMemScope(a.ID)}
+	return orch.RemoveScopedGraphEntityAttr(scope, a.ID, key)
+}
+
 // recordScopedLink records a relationship (subject→relation→object, with
 // optional subject attrs) in the appliance's scoped graph, so the worker builds
 // a real multi-entity system map instead of piling every fact onto the single

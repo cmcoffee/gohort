@@ -14,12 +14,11 @@ import (
 // runs after a repo re-clone: verify servitor's stored knowledge docs against
 // the freshly-pulled code and correct only what the code now contradicts.
 func buildRepoAuditPrompt(a Appliance) string {
-	return "You are auditing servitor's stored knowledge about the code repository " + repoDisplayTarget(a) + ", which was JUST re-pulled and may have changed. Your only job is to keep the stored knowledge docs TRUE to the current code.\n\n" +
-		"For each stored doc you are given:\n" +
-		"1. Verify its claims against the CURRENT code using search_code, read_file, and list_dir.\n" +
-		"2. If the code now contradicts the doc (renamed/removed/added subsystems, changed data model, moved entry points, new or dropped services), rewrite the corrected version with update_doc(doc, content). Provide the FULL corrected markdown for that doc, not a diff.\n" +
-		"3. If a doc still matches the code, leave it untouched — do NOT call update_doc for it.\n\n" +
-		"Correct, do not re-derive. Preserve everything still accurate and change only what the code contradicts; do not reword for style, expand scope, or invent new docs. If nothing has changed, make no update_doc calls. When finished, give a one-paragraph summary of what you corrected and what you verified as still current."
+	return "You are auditing servitor's stored knowledge about the code repository " + repoDisplayTarget(a) + ", which was JUST re-pulled and may have changed. Your only job is to keep the stored knowledge TRUE to the current code, both the knowledge docs and the discrete facts.\n\n" +
+		"Verify every claim against the CURRENT code using search_code, read_file, and list_dir, then:\n" +
+		"1. DOCS: if the code now contradicts a doc (renamed/removed/added subsystems, changed data model, moved entry points, new or dropped services), rewrite the corrected version with update_doc(doc, content) — the FULL corrected markdown, not a diff. If a doc still matches, leave it.\n" +
+		"2. FACTS: if a stored fact's value is now different, correct it with store_fact(key, value). If a fact's subject no longer exists in the code (a removed service, dropped table, deleted route), retire it with retire_fact(key). Only retire a fact you have VERIFIED is gone from the code; if unsure, leave it.\n\n" +
+		"Correct, do not re-derive. Preserve everything still accurate and change only what the code contradicts; do not reword for style, expand scope, or invent new docs or facts. If nothing has changed, make no changes. When finished, give a one-paragraph summary of what you corrected or retired and what you verified as still current."
 }
 
 // runRepoMemoryAudit verifies the appliance's stored knowledge docs against the
@@ -28,12 +27,14 @@ func buildRepoAuditPrompt(a Appliance) string {
 // sid. Docs already corrected before a cancel are kept — each update_doc write is
 // a self-contained, verified rewrite, so a partial run leaves valid state.
 //
-// v1 scope is knowledge docs only. Discrete-fact reconciliation is deferred: the
-// fact store recently split, and the live path (graph-scoped entity attrs) has no
-// correction/retire primitive yet, so auto-correcting facts is its own task.
+// It reconciles both the knowledge docs (rewritten via update_doc) and the
+// discrete scoped facts (a changed value corrected via store_fact, an obsolete
+// fact dropped via retire_fact, backed by RemoveScopedApplianceFact — the
+// graph-attr delete added for this pass).
 func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb Database, appliance Appliance) {
 	docs := allDocs(udb, appliance.ID)
-	if len(docs) == 0 {
+	factsBlock := strings.TrimSpace(scopedFactsBlock(udb, appliance))
+	if len(docs) == 0 && factsBlock == "" {
 		emit(sid, probeEvent{Kind: "status", Text: "No stored knowledge to validate yet — run Map System to build it."})
 		return
 	}
@@ -43,6 +44,9 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 		if c := strings.TrimSpace(docs[name]); c != "" {
 			fmt.Fprintf(&claims, "## Stored doc: %s\n%s\n\n", name, c)
 		}
+	}
+	if factsBlock != "" {
+		fmt.Fprintf(&claims, "## Stored facts (key: value)\n%s\n\n", factsBlock)
 	}
 
 	corrected := map[string]bool{}
@@ -81,10 +85,58 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 		},
 	}
 
-	tools := append(repoCodeTools(user, appliance.ID), updateDoc)
+	factCorrected := map[string]bool{}
+	storeFact := AgentToolDef{
+		Tool: Tool{
+			Name:        "store_fact",
+			Description: "Correct (or add) a discrete fact — a short key: value about this system — when the current code shows the stored value is now different. Overwrites the existing value for that key. Keep it specific: a version, port, path, table, or framework name.",
+			Parameters: map[string]ToolParam{
+				"key":   {Type: "string", Description: "The fact key, e.g. \"http_port\" or \"orm\"."},
+				"value": {Type: "string", Description: "The corrected value, verified against the current code."},
+			},
+			Required: []string{"key", "value"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			key := strings.TrimSpace(fmt.Sprint(args["key"]))
+			value := strings.TrimSpace(fmt.Sprint(args["value"]))
+			if key == "" || value == "" {
+				return "", fmt.Errorf("key and value are required")
+			}
+			recordScopedApplianceFact(appliance, key, value, "long")
+			factCorrected[key] = true
+			emit(sid, probeEvent{Kind: "status", Text: "Corrected fact: " + key})
+			return "Stored " + key + ".", nil
+		},
+	}
+
+	factRetired := map[string]bool{}
+	retireFact := AgentToolDef{
+		Tool: Tool{
+			Name:        "retire_fact",
+			Description: "Retire a stored fact whose subject no longer exists in the current code — a removed service, dropped table, deleted route. Only retire a fact you have VERIFIED is gone from the code; if unsure, leave it. Use the exact key from the stored facts list.",
+			Parameters: map[string]ToolParam{
+				"key": {Type: "string", Description: "The exact fact key to retire, from the stored facts list."},
+			},
+			Required: []string{"key"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			key := strings.TrimSpace(fmt.Sprint(args["key"]))
+			if key == "" {
+				return "", fmt.Errorf("key is required")
+			}
+			if RemoveScopedApplianceFact(appliance, key) {
+				factRetired[key] = true
+				emit(sid, probeEvent{Kind: "status", Text: "Retired obsolete fact: " + key})
+				return "Retired " + key + ".", nil
+			}
+			return "No stored fact with key " + key + " (already gone, or wrong key — check the stored facts list).", nil
+		},
+	}
+
+	tools := append(repoCodeTools(user, appliance.ID), updateDoc, storeFact, retireFact)
 
 	emit(sid, probeEvent{Kind: "status", Text: "Validating stored knowledge against the new code…"})
-	userMsg := "Here is servitor's currently stored knowledge about this repository. The code was just re-pulled. Verify each doc against the CURRENT code and correct any that are now wrong or stale with update_doc; leave accurate docs untouched.\n\n" + claims.String()
+	userMsg := "Here is servitor's currently stored knowledge about this repository (docs and discrete facts). The code was just re-pulled. Verify each item against the CURRENT code: correct a stale doc with update_doc, correct a changed fact value with store_fact, and retire_fact any fact whose subject no longer exists. Leave accurate items untouched.\n\n" + claims.String()
 
 	resp, _, err := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: userMsg}}, AgentLoopConfig{
 		SystemPrompt:    buildRepoAuditPrompt(appliance),
@@ -122,9 +174,13 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 		sort.Strings(names)
 		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Corrected %d doc(s): %s", len(names), strings.Join(names, ", "))})
 	}
+	if len(factCorrected) > 0 || len(factRetired) > 0 {
+		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Facts: %d corrected, %d retired.", len(factCorrected), len(factRetired))})
+	}
 
+	changed := len(corrected) > 0 || len(factCorrected) > 0 || len(factRetired) > 0
 	summary := "Validated the stored knowledge against the new code; nothing needed correcting."
-	if len(corrected) > 0 {
+	if changed {
 		summary = "Validated and reconciled the stored knowledge against the new code."
 	}
 	if resp != nil {

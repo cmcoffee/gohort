@@ -192,6 +192,28 @@ func (T *OrchestrateApp) ScopedGraphEntity(scope AgentScope, nameOrAlias string)
 	return FindGraphEntity(db, factsNamespace(scope.AgentID), nameOrAlias)
 }
 
+// RemoveScopedGraphEntityAttr deletes a single attribute (one fact) from a
+// scoped graph entity, resolved by name or alias. Returns true when the attr
+// existed and was removed. The counterpart to SeedScopedGraphEntity's attr
+// merge: how a caller RETIRES a fact a re-scan found no longer true, without
+// wiping the whole entity (WipeScopedMemory is the only other removal, and it
+// nukes everything).
+func (T *OrchestrateApp) RemoveScopedGraphEntityAttr(scope AgentScope, nameOrAlias, key string) bool {
+	if scope.ScopeUser == "" || scope.AgentID == "" {
+		return false
+	}
+	db := UserDB(T.DB, scope.ScopeUser)
+	if db == nil {
+		return false
+	}
+	ns := factsNamespace(scope.AgentID)
+	e, ok := FindGraphEntity(db, ns, nameOrAlias)
+	if !ok {
+		return false
+	}
+	return DeleteGraphEntityAttr(db, ns, e.ID, key)
+}
+
 // ScopedGraphSummary renders the scope's ENTIRE graph — every entity with its
 // attrs and outgoing relationships — as a compact text block for injection into
 // a prompt. It's the read-back counterpart to link_entities: an agent with no
