@@ -10,6 +10,43 @@ import (
 	"strings"
 )
 
+// ytDlpAuthArgs returns yt-dlp cookie flags when the operator has configured a
+// session, so login-gated sites can be fetched. Instagram now returns an empty
+// media response to logged-out requests, so reels need this. Set
+// GOHORT_YTDLP_COOKIES to a Netscape cookies.txt exported from a logged-in
+// browser session, or GOHORT_YTDLP_COOKIES_FROM_BROWSER to a local browser name
+// (e.g. "firefox") on desktop hosts. Empty when neither is set.
+func ytDlpAuthArgs() []string {
+	if path := strings.TrimSpace(os.Getenv("GOHORT_YTDLP_COOKIES")); path != "" {
+		if _, err := os.Stat(path); err == nil {
+			return []string{"--cookies", path}
+		}
+	}
+	if b := strings.TrimSpace(os.Getenv("GOHORT_YTDLP_COOKIES_FROM_BROWSER")); b != "" {
+		return []string{"--cookies-from-browser", b}
+	}
+	return nil
+}
+
+// needsAuth reports whether a yt-dlp stderr indicates the site refused an
+// anonymous request and wants a logged-in session.
+func needsAuth(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "empty media response") ||
+		strings.Contains(s, "use --cookies") ||
+		strings.Contains(s, "log in") ||
+		strings.Contains(s, "login required") ||
+		strings.Contains(s, "rate-limit") ||
+		strings.Contains(s, "requested content is not available")
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
 // downloadViaYtDlp fetches the video at url using yt-dlp into a temp file
 // and returns the bytes. Caller is responsible for using the bytes
 // (delivery vs. analysis) — this helper just handles the download dance
@@ -30,7 +67,7 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "yt-dlp",
+	args := []string{
 		// Format cascade:
 		//   b[ext=mp4]  — a single pre-merged mp4 file when the site has
 		//                 one (YouTube, Twitter, Vimeo direct hosts).
@@ -55,8 +92,13 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 		"--no-warnings",
 		"--no-progress",
 		"--max-filesize", fmt.Sprintf("%d", downloadMaxBytes),
-		url,
-	)
+	}
+	// Login-gated sites (Instagram now returns an empty media response to
+	// logged-out requests) need a session; append cookies when the operator
+	// has configured one. yt-dlp reads them right before the URL.
+	args = append(args, ytDlpAuthArgs()...)
+	args = append(args, url)
+	cmd := exec.CommandContext(ctx, "yt-dlp", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -66,6 +108,12 @@ func downloadViaYtDlp(url string) ([]byte, error) {
 		}
 		if ctx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("download timed out after %s", downloadTimeout)
+		}
+		// The site refused an anonymous request and wants a login. Return an
+		// actionable error (not the raw yt-dlp wall of text) so the agent can
+		// tell the user the truth instead of guessing at the video's content.
+		if needsAuth(msg) && len(ytDlpAuthArgs()) == 0 {
+			return nil, fmt.Errorf("this video requires a logged-in session to download; the site (e.g. Instagram) blocks anonymous access. Set GOHORT_YTDLP_COOKIES to a cookies.txt exported from a logged-in browser session, then retry. Underlying error: %s", firstLine(msg))
 		}
 		return nil, fmt.Errorf("yt-dlp failed: %s", msg)
 	}
