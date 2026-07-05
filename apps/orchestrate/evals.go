@@ -38,7 +38,30 @@ const evalsRunTimeout = 5 * time.Minute
 // RunAgentEvals executes every case on the agent and returns a result
 // row per case. Stops early only on context cancellation; individual
 // case errors land on that case's ErrText without aborting the rest.
-func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int) []EvalResult {
+// stubTools returns copies of the tool defs with side-effect-free handlers for
+// eval STUB mode: the schema (name / description / params) is IDENTICAL, so the
+// model sees the same catalog and decides the same way, but no real handler runs
+// — nothing is texted, no monitor is created, no network is hit. Tool-USE grading
+// (via OnStep) is unaffected since the call still happens; only its EFFECT is
+// removed. A tool with a scripted result returns it (so a multi-step case reads
+// realistically); otherwise a generic notice.
+func stubTools(tools []AgentToolDef, scripted map[string]string) []AgentToolDef {
+	out := make([]AgentToolDef, len(tools))
+	for i, td := range tools {
+		name := td.Tool.Name
+		canned := strings.TrimSpace(scripted[name])
+		out[i] = td // copies schema + flags; only the handler is replaced below
+		out[i].Handler = func(args map[string]any) (string, error) {
+			if canned != "" {
+				return canned, nil
+			}
+			return fmt.Sprintf("[eval-stub] %s called — no real effect (eval stub mode).", name), nil
+		}
+	}
+	return out
+}
+
+func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user string, agent AgentRecord, runs int, stub bool) []EvalResult {
 	if runs < 1 {
 		runs = 1
 	}
@@ -77,7 +100,7 @@ func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user s
 			if err := ctx.Err(); err != nil {
 				break
 			}
-			perRun = append(perRun, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c))
+			perRun = append(perRun, T.runOneEvalCase(ctx, agent, sysPrompt, tools, c, stub))
 		}
 		results = append(results, aggregateEvalRuns(c.Name, perRun))
 	}
@@ -123,10 +146,16 @@ func aggregateEvalRuns(name string, runs []EvalResult) EvalResult {
 	return agg
 }
 
-func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, sysPrompt string, tools []AgentToolDef, c EvalCase) EvalResult {
+func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, sysPrompt string, tools []AgentToolDef, c EvalCase, stub bool) EvalResult {
 	res := EvalResult{Name: c.Name}
 	caseCtx, cancel := context.WithTimeout(ctx, evalsRunTimeout)
 	defer cancel()
+	// Eval stub mode: swap tool handlers for side-effect-free stubs so a tool-use
+	// case doesn't queue real messages or create real monitors. Schema unchanged,
+	// so the model's tool choices are unaffected.
+	if stub {
+		tools = stubTools(tools, c.StubResults)
+	}
 	f := false
 	// Capture which tools the model actually CALLED (not just narrated), so a
 	// case can grade on tool-use — the "is the model effective at using our
@@ -319,7 +348,14 @@ func (T *OrchestrateApp) handleAgentEval(w http.ResponseWriter, r *http.Request)
 	if runs > 100 {
 		runs = 100
 	}
-	results := T.RunAgentEvals(r.Context(), udb, user, agent, runs)
+	// ?stub=1 → eval stub mode: tools run as side-effect-free stubs (no real
+	// message queued / monitor created / network). Use for tool-USE cases so
+	// they're safe to run; leave off (default) for cases that need real results.
+	stub := false
+	if v := strings.TrimSpace(r.URL.Query().Get("stub")); v == "1" || strings.EqualFold(v, "true") {
+		stub = true
+	}
+	results := T.RunAgentEvals(r.Context(), udb, user, agent, runs, stub)
 	pass, fail := 0, 0
 	for _, r := range results {
 		if r.Passed && r.ErrText == "" {
@@ -333,6 +369,7 @@ func (T *OrchestrateApp) handleAgentEval(w http.ResponseWriter, r *http.Request)
 		"agent_id": agent.ID,
 		"agent":    agent.Name,
 		"runs":     runs,
+		"stub":     stub,
 		"pass":     pass, // cases that passed ALL runs
 		"fail":     fail,
 		"total":    len(results),

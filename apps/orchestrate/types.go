@@ -865,7 +865,13 @@ type EvalCase struct {
 	// reply text, so it catches "narrated it but never called the tool".
 	MustCallTools    []string `json:"must_call_tools,omitempty"`
 	MustNotCallTools []string `json:"must_not_call_tools,omitempty"`
-	JudgePrompt      string   `json:"judge_prompt,omitempty"` // optional. When set, an LLM judge grades the reply against this criterion (yes/no)
+	// StubResults (eval STUB mode only) scripts what each tool RETURNS instead of
+	// running for real — keyed by tool name. Lets a scenario hand the model a
+	// realistic result ("Queued a message…", "Stored at find-x.jpg…") so a
+	// multi-step case behaves like production, without the side effect. A tool
+	// with no entry returns a generic stub notice. Ignored unless stub mode is on.
+	StubResults map[string]string `json:"stub_results,omitempty"`
+	JudgePrompt string            `json:"judge_prompt,omitempty"` // optional. When set, an LLM judge grades the reply against this criterion (yes/no)
 	Notes          string   `json:"notes,omitempty"`            // admin notes, not used by the grader
 }
 
