@@ -117,6 +117,15 @@ type EventMonitor struct {
 	// diff summary.
 	FormatScript string `json:"format_script,omitempty"`
 
+	// MatchNew (watch kind, optional) scopes the fire: when set, a change only
+	// wakes if the NEWLY-added output contains this substring (case-insensitive);
+	// otherwise the baseline advances silently. For an await on a chat this is the
+	// sender's name, so a busy group only wakes on THAT person's reply, not on
+	// every message (including the agent's own outbound). Empty = fire on any
+	// change. Generic: any watched tool whose output labels the thing you care
+	// about can be scoped this way.
+	MatchNew string `json:"match_new,omitempty"`
+
 	// OneShot monitors fire exactly ONCE and then remove themselves (see
 	// fireWake). This is the substrate for "await a deferred result": the caller
 	// asked to be woken WHEN a result arrives (a reply, a call outcome, a job
@@ -581,6 +590,16 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		SaveEventMonitor(db, cur)
 		return
 	}
+	// Sender/content scope: fire only when the NEW lines contain the target
+	// substring (e.g. the awaited person's name). The baseline was already
+	// advanced above, so an unrelated change (another participant, the agent's
+	// own outbound) is absorbed silently and the NEXT change is still watched —
+	// exactly the "wake only on Rory's reply, not on every group message" case.
+	if strings.TrimSpace(cur.MatchNew) != "" && !addedLinesContain(prior, body, cur.MatchNew) {
+		Debug("[event] watch %s/%s: change detected but no new line matched %q — baseline advanced, no wake", m.Owner, m.Name, cur.MatchNew)
+		SaveEventMonitor(db, cur)
+		return
+	}
 	// Build the alert text. A format_script (sandboxed python) shapes the
 	// notification; empty stdout is its "skip this change" signal (suppress),
 	// while a script error / no script falls back to the built-in diff.
@@ -605,6 +624,33 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 // (the script's intentional "skip this change" signal, suppress=true); a script
 // error or no script falls back to the built-in diff + current-output summary so
 // a real change still fires.
+// addedLinesContain reports whether any line present in current but NOT in prior
+// contains needle (case-insensitive). Used to scope a watch fire to newly-added
+// content — e.g. a chat whose stable roster/header repeats every poll, so only
+// the genuinely new message lines are considered. A shifting fixed-size window
+// (new message in, oldest out) is handled by the set difference: the new line is
+// "added", the scrolled-off one is "removed" and ignored.
+func addedLinesContain(prior, current, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	if needle == "" {
+		return true
+	}
+	priorLines := make(map[string]bool)
+	for _, ln := range strings.Split(prior, "\n") {
+		priorLines[strings.TrimSpace(ln)] = true
+	}
+	for _, ln := range strings.Split(current, "\n") {
+		t := strings.TrimSpace(ln)
+		if t == "" || priorLines[t] {
+			continue
+		}
+		if strings.Contains(strings.ToLower(t), needle) {
+			return true
+		}
+	}
+	return false
+}
+
 func buildWatchSummary(ctx context.Context, m EventMonitor, prior, current string) (summary string, suppress bool) {
 	return formatWatchAlert(ctx, m.Owner, m.Name, m.FormatScript, prior, current)
 }

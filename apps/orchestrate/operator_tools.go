@@ -745,6 +745,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"tool_name":        {Type: "string", Description: "The tool polled each interval to detect the result — e.g. \"read_chat\" for a reply, a call-status tool for a call's outcome. Its output is hashed; you're woken when it changes. Must be a tool you can already call."},
 					"tool_args":        {Type: "object", Description: "Arguments passed to tool_name every check, e.g. {\"chat_id\":\"any;+;chat123\"}. Use the same args you'd pass calling it directly."},
 					"note":             {Type: "string", Description: "What you're waiting for AND what to do once it arrives — this is handed back to you on wake to continue the plan. E.g. \"Rory's answers to the spec questions; then write the spec and email it to the owner.\""},
+					"from_sender":      {Type: "string", Description: "Optional but STRONGLY recommended when awaiting a reply in a GROUP chat: the name of the person you're waiting on (e.g. \"Rory Bartle\", as shown in read_chat). The wake then fires ONLY when a new message from THAT person arrives — not on every message in the chat (other participants, or your own outbound). Without it, a busy group wakes you on any change and you'll have to re-await. Omit for a one-on-one chat or a non-chat result (a call/job status) where any change IS the result."},
 					"interval_seconds": {Type: "number", Description: "How often to check, in seconds (minimum 30; default 60). A human reply can be slow — 60-300 is usually right; don't poll faster than the result could plausibly arrive."},
 				},
 				Required: []string{"tool_name"},
@@ -763,6 +764,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					interval = 60
 				}
 				note := strings.TrimSpace(oArgStr(args, "note"))
+				fromSender := strings.TrimSpace(oArgStr(args, "from_sender"))
 				// Transient, collision-proof name — an await is short-lived and
 				// removes itself on fire, so it must not clash with a user's real
 				// monitor names.
@@ -775,6 +777,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					OneShot:         true,
 					ToolName:        toolName,
 					ToolArgs:        toolArgs,
+					MatchNew:        fromSender, // fire only on a new line from this sender (group-chat scope)
 					WakeAgent:       agentID,
 					WakeBrief:       note,
 					IntervalSeconds: interval,
