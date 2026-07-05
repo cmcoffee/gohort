@@ -1224,7 +1224,9 @@ func (T *Servitor) handleRepoRefresh(w http.ResponseWriter, r *http.Request) {
 			files = updated.RepoFiles
 		}
 		emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Ingested %d files.", files)})
-		probeSessions.AppendEvent(sid, probeEvent{Kind: "reply", Text: fmt.Sprintf("Repository re-cloned: %d files ingested. The code map may now be stale; run Map System to regenerate it.", files)}, false)
+		// Validate the stored knowledge against the freshly-pulled code and
+		// auto-correct stale docs. Runs under ctx, so Cancel stops it too.
+		T.runRepoMemoryAudit(ctx, sid, ownerUser, ownerUDB, rec)
 		probeSessions.AppendEvent(sid, probeEvent{Kind: "done"}, true)
 		probeSessions.ScheduleCleanup(sid)
 	}()
