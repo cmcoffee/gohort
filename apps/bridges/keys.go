@@ -3,6 +3,7 @@ package bridges
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -40,7 +41,13 @@ func (T *Bridges) handleKeys(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
 		var req struct{ Name, Service string }
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		// An empty body (io.EOF) is fine — it mints a generic "api" key below.
+		// A non-empty but malformed body is a client bug: reject it instead of
+		// silently creating an unnamed generic key the caller never asked for.
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
 		svc := strings.TrimSpace(req.Service)
 		if svc == "" {
 			// A MANUALLY minted key is for the MCP server or a server-side

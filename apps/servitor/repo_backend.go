@@ -8,6 +8,8 @@ package servitor
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,9 +22,17 @@ import (
 
 const (
 	repoFilesTable    = "repo_files"
-	maxIngestFileSize = 1 << 20 // 1 MiB — skip larger (data/generated/minified)
-	binarySniff       = 8000    // bytes checked for NUL to detect binary
+	repoHashTable     = "repo_hashes" // path → content hash; drives diff-based re-ingest
+	maxIngestFileSize = 1 << 20       // 1 MiB — skip larger (data/generated/minified)
+	binarySniff       = 8000          // bytes checked for NUL to detect binary
 )
+
+// hashContent is the change key for a file's ingested content. It only has to
+// distinguish "same as last ingest" from "different", so any stable digest works.
+func hashContent(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
 
 // repoFileStore returns the per-(user, appliance) encrypted code store.
 func repoFileStore(user, applianceID string) Database {
@@ -49,6 +59,9 @@ func wipeRepoFiles(user, applianceID string) {
 	}
 	for _, k := range store.Keys(repoFilesTable) {
 		store.Unset(repoFilesTable, k)
+	}
+	for _, k := range store.Keys(repoHashTable) {
+		store.Unset(repoHashTable, k)
 	}
 }
 
@@ -93,8 +106,23 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 		return
 	}
 
-	wipeRepoFiles(user, applianceID)
-	count := 0
+	// Diff-based re-ingest: keep the encrypted store in sync with the fresh clone
+	// by writing ONLY new/changed files and dropping ones that vanished, instead
+	// of wiping and re-encrypting the whole tree every refresh. A repo where most
+	// files are unchanged then costs a handful of DB writes rather than one per
+	// file — which matters when RepoFilesDB lives on slow (NFS) storage. The clone
+	// itself is still full; persisting a plaintext tree to `git pull` against would
+	// break this backend's "nothing plaintext persists" model.
+	prev := make(map[string]string, len(store.Keys(repoHashTable)))
+	for _, p := range store.Keys(repoHashTable) {
+		var h string
+		if store.Get(repoHashTable, p, &h) {
+			prev[p] = h
+		}
+	}
+
+	seen := map[string]bool{}
+	var count, added, changed int
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// Don't abort the whole walk on one bad entry, but log it — a silent
@@ -121,15 +149,38 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 		if err != nil {
 			return nil
 		}
-		store.Set(repoFilesTable, filepath.ToSlash(rel), string(content))
+		key := filepath.ToSlash(rel)
+		seen[key] = true
 		count++
+		h := hashContent(content)
+		if old, ok := prev[key]; ok && old == h {
+			return nil // unchanged — skip the encrypt + write
+		}
+		store.Set(repoFilesTable, key, string(content))
+		store.Set(repoHashTable, key, h)
+		if _, existed := prev[key]; existed {
+			changed++
+		} else {
+			added++
+		}
 		return nil
 	})
+
+	// Drop files that disappeared from the repo since the last ingest.
+	removed := 0
+	for p := range prev {
+		if !seen[p] {
+			store.Unset(repoFilesTable, p)
+			store.Unset(repoHashTable, p)
+			removed++
+		}
+	}
 
 	rec.RepoCloned = time.Now().Format(time.RFC3339)
 	rec.RepoFiles = count
 	udb.Set(applianceTable, applianceID, rec)
-	Log("[servitor.repo] ingested %d files from %s", count, rec.Name)
+	Log("[servitor.repo] ingested %s: %d files (%d new, %d changed, %d removed)",
+		rec.Name, count, added, changed, removed)
 }
 
 // repoCloneURL injects the access token (if any) for private-repo HTTPS clone.
