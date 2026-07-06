@@ -113,7 +113,11 @@ func (T *Forge) requireAdmin(w http.ResponseWriter, r *http.Request) (string, bo
 	if !ok {
 		return "", false
 	}
-	if !AuthIsAdmin(T.DB, r) {
+	// Admin status lives in AuthDB() (the user/session store), which is a
+	// distinct handle from T.DB (the root DB menu.go wires in). Passing
+	// T.DB here would miss the user record and read as "not admin" — the
+	// admin app uses AuthDB() for the same reason.
+	if AuthDB == nil || !AuthIsAdmin(AuthDB(), r) {
 		http.Error(w, "admin only", http.StatusForbidden)
 		return "", false
 	}
