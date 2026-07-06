@@ -86,6 +86,19 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 		Log("[orchestrate/scheduled] payload unmarshal failed: %v", err)
 		return
 	}
+	// A fire that panics must NOT silently kill the recurring chain: the
+	// scheduler already removed this task from the queue before calling us, so
+	// without this the schedule would be gone forever. Recover and re-arm the
+	// next tick (mirrors the event monitor's always-reschedule guard). Only
+	// fires on panic — the normal error/empty/success paths reschedule
+	// explicitly, and the intentional "drop" returns (agent/session gone) must
+	// stay stopped.
+	defer func() {
+		if r := recover(); r != nil {
+			Log("[orchestrate/scheduled] fire panicked for session %s: %v — rescheduling", p.SessionID, r)
+			reschedule(p)
+		}
+	}()
 	orchRefMu.Lock()
 	app := orchRef
 	orchRefMu.Unlock()

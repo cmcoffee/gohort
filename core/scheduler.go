@@ -384,6 +384,21 @@ func fireDueTasks(ctx context.Context, db Database) {
 		} else {
 			Log("[scheduler] firing %s (kind=%s, due=%s)", task.ID, task.Kind, task.RunAt)
 		}
-		go fn(ctx, task.Payload)
+		// Recover around every handler: the task was already removed from the
+		// queue above, and this runs in its own goroutine, so an unrecovered
+		// panic here would take down the whole process. recover() contains it
+		// to a log line. (Re-arming the recurring chain is the handler's job —
+		// each kind that recurs reschedules on its own, e.g. event monitors and
+		// orchestrate scheduled updates.)
+		handler := fn
+		t := task
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Log("[scheduler] handler for kind %q (task %s) panicked, recovered: %v", t.Kind, t.ID, r)
+				}
+			}()
+			handler(ctx, t.Payload)
+		}()
 	}
 }
