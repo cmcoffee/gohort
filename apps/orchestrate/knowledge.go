@@ -1547,7 +1547,20 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 		// dump whole documents into the context window every time it fires.
 		b.WriteString(strings.ReplaceAll(knowledgeSearchExcerpt(h.Text), "\n", "\n   "))
 	}
-	return b.String(), nil
+	out := b.String()
+	// Reference → graph bridge: fold in the structured relationships for any known
+	// entity these passages name, mirroring the graph → Reference bridge recall_about
+	// runs in the other direction — so one recall returns unstructured + structured
+	// together. Scan the full hit text (not just the rendered excerpt) for coverage.
+	var scan strings.Builder
+	for _, h := range hits {
+		scan.WriteString(h.Text)
+		scan.WriteByte('\n')
+	}
+	if g := t.passageRelatedGraph(scan.String()); g != "" {
+		out += "\n\n" + g
+	}
+	return out, nil
 }
 
 // memoryForget is the forget-action implementation. Two modes:

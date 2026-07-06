@@ -59,31 +59,14 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 // entityRelatedPassages; facts share the entity's namespace. Returns "" when
 // nothing matches. Short aliases (<3 chars) are skipped to avoid over-matching.
 func (t *chatTurn) entityRelatedFacts(e GraphEntity) string {
-	terms := make([]string, 0, len(e.Aliases)+1)
-	add := func(s string) {
-		if s = strings.TrimSpace(strings.ToLower(s)); len(s) >= 3 {
-			terms = append(terms, s)
-		}
-	}
-	add(e.Name)
-	for _, a := range e.Aliases {
-		add(a)
-	}
-	if len(terms) == 0 {
-		return ""
-	}
 	facts := ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
 	var matched []string
 	for _, f := range facts {
-		low := strings.ToLower(f.Note)
-		for _, term := range terms {
-			if strings.Contains(low, term) {
-				matched = append(matched, f.Note)
+		if GraphEntityMentionedIn(e, f.Note) {
+			matched = append(matched, f.Note)
+			if len(matched) >= 8 {
 				break
 			}
-		}
-		if len(matched) >= 8 {
-			break
 		}
 	}
 	if len(matched) == 0 {
@@ -94,6 +77,29 @@ func (t *chatTurn) entityRelatedFacts(e GraphEntity) string {
 	b.WriteString("Explicit-memory facts that name this entity.\n")
 	for _, m := range matched {
 		b.WriteString("- " + m + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// passageRelatedGraph bridges Reference → graph: given recalled passage text, it
+// finds the graph entities those passages name and renders their relationships,
+// so a memory_search returns the unstructured recollection AND the structured
+// graph about the same things. The exact mirror of entityRelatedPassages (which
+// runs graph → Reference). Name-as-join-key like the other bridges; no stored
+// cross-link. Capped at a few entities to bound the appended tokens. Returns ""
+// when the passages name no known entity.
+func (t *chatTurn) passageRelatedGraph(text string) string {
+	ns := factsNamespace(t.agent.ID)
+	ents := GraphEntitiesMentionedIn(t.udb, ns, text, 3)
+	if len(ents) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("## Related graph relationships\n")
+	b.WriteString("Structured relationships you've recorded about entities named in these passages.\n")
+	for _, e := range ents {
+		b.WriteString(renderGraphRecall(t.udb, ns, e, 1))
+		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

@@ -85,6 +85,58 @@ func TestGraphNamespaceIsolation(t *testing.T) {
 	}
 }
 
+// TestGraphEntityMentionedIn: the cross-layer join predicate matches on name and
+// alias, case-insensitively, and skips terms under the min length to avoid
+// over-matching.
+func TestGraphEntityMentionedIn(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:1"
+	robin, _ := UpsertGraphEntity(db, ns, "person", "Robin Vale", []string{"RV", "the boss"}, nil)
+
+	cases := []struct {
+		text string
+		want bool
+	}{
+		{"met with robin vale about the deploy", true}, // canonical name, lowercased
+		{"ROBIN VALE approved it", true},               // haystack upper, term lower
+		{"escalate to the boss first", true},           // multi-word alias
+		{"rv rv rv", false},                            // "RV" is under the 3-char floor → skipped
+		{"nothing relevant here", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := GraphEntityMentionedIn(robin, c.text); got != c.want {
+			t.Errorf("GraphEntityMentionedIn(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}
+
+// TestGraphEntitiesMentionedIn: the dual scan returns which entities a blob names,
+// respects the limit, and stays inside the namespace.
+func TestGraphEntitiesMentionedIn(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:1"
+	UpsertGraphEntity(db, ns, "person", "Robin", nil, nil)
+	UpsertGraphEntity(db, ns, "org", "Acme", nil, nil)
+	UpsertGraphEntity(db, ns, "org", "Globex", nil, nil)
+	// A different namespace must not leak into the scan.
+	UpsertGraphEntity(db, "agent:2", "person", "Robin", nil, nil)
+
+	text := "Robin works at Acme, not Globex."
+	got := GraphEntitiesMentionedIn(db, ns, text, 0)
+	if len(got) != 3 {
+		t.Fatalf("expected all 3 named entities, got %d: %+v", len(got), got)
+	}
+	// Limit caps the result.
+	if capped := GraphEntitiesMentionedIn(db, ns, text, 2); len(capped) != 2 {
+		t.Fatalf("limit=2 should cap at 2, got %d", len(capped))
+	}
+	// Text naming nothing returns empty.
+	if none := GraphEntitiesMentionedIn(db, ns, "unrelated text", 0); len(none) != 0 {
+		t.Fatalf("expected no matches, got %d", len(none))
+	}
+}
+
 // TestGraphRelSlug: relation verbs are slugged so the pipe-delimited key
 // stays unambiguous and re-stating the same triple updates rather than dups.
 func TestGraphRelSlug(t *testing.T) {

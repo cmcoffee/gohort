@@ -189,6 +189,60 @@ func ListGraphEntities(db Database, namespace string) []GraphEntity {
 	return out
 }
 
+// graphMinMentionLen is the shortest entity name/alias eligible for substring
+// mention-matching. Terms shorter than this ("Ed", "Al", "@x") over-match common
+// letter runs, so the cross-layer bridges skip them — the same floor the fact and
+// passage bridges have always used inline.
+const graphMinMentionLen = 3
+
+// GraphEntityMentionedIn reports whether the entity's canonical name or any alias
+// (each at least graphMinMentionLen chars) appears as a case-insensitive substring
+// of text. It is the shared predicate behind the cross-layer memory bridges: "is
+// this blob of text — a fact note, a recalled passage — about this entity?"
+// Name-as-join-key, no stored cross-link to maintain.
+func GraphEntityMentionedIn(e GraphEntity, text string) bool {
+	return graphEntityMentionedInLower(e, strings.ToLower(text))
+}
+
+// graphEntityMentionedInLower is the hot-path variant taking already-lowercased
+// text, so a scan over many entities lowercases the (possibly large) haystack once.
+func graphEntityMentionedInLower(e GraphEntity, low string) bool {
+	if strings.TrimSpace(low) == "" {
+		return false
+	}
+	if term := strings.ToLower(strings.TrimSpace(e.Name)); len(term) >= graphMinMentionLen && strings.Contains(low, term) {
+		return true
+	}
+	for _, a := range e.Aliases {
+		if term := strings.ToLower(strings.TrimSpace(a)); len(term) >= graphMinMentionLen && strings.Contains(low, term) {
+			return true
+		}
+	}
+	return false
+}
+
+// GraphEntitiesMentionedIn returns the namespace's entities that text names (per
+// GraphEntityMentionedIn), in ListGraphEntities order, capped at limit (limit <= 0
+// means no cap). The dual of GraphEntityMentionedIn: given text from another memory
+// layer, which graph entities is it about — the join the Reference → graph and
+// Explicit → graph bridges walk. Name-as-join-key; no stored cross-link.
+func GraphEntitiesMentionedIn(db Database, namespace, text string, limit int) []GraphEntity {
+	if db == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	low := strings.ToLower(text)
+	var out []GraphEntity
+	for _, e := range ListGraphEntities(db, namespace) {
+		if graphEntityMentionedInLower(e, low) {
+			out = append(out, e)
+			if limit > 0 && len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out
+}
+
 // UpsertGraphEntity creates or MERGES an entity by name/alias within a
 // namespace. If an existing node matches the name or any supplied alias
 // (case-insensitive), the new aliases + attrs are folded into it and Updated
