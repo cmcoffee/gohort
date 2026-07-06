@@ -874,7 +874,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {
-					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact/group name, handle, or chat_id exactly as shown by list_chats", to)
+					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact/group name, handle, or chat_id exactly as shown by list_chats. If you have the person's NAME but not a number, resolve it with contacts.search first (it reads the local address book), then call message_contact with the number it returns.", to)
 				}
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
