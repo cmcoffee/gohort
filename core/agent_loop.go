@@ -135,6 +135,17 @@ type AgentLoopConfig struct {
 	// that have poor or no native tool support (e.g. Gemma via Ollama).
 	PromptTools bool
 
+	// DisableToolMentionCorrection turns off the no-arg-tool-mention nudge
+	// (the loop otherwise re-prompts when the model names a known no-arg tool
+	// in prose but emits no call). Set this when the model is EXPECTED to name
+	// its own tools legitimately — chiefly a code-analysis session whose
+	// SUBJECT is a codebase that defines those same tools (e.g. servitor
+	// pointed at an agent framework), where "the code defines store_fact" is
+	// description, not an intended call. Leaving it on there makes the model
+	// waste a round explaining "I didn't mean to call any tool", and that
+	// meta-explanation leaks into the answer. Optional; default false (on).
+	DisableToolMentionCorrection bool
+
 	// Tier selects which LLM tier runs the loop. Defaults to WORKER.
 	// Set to LEAD to route all rounds through the lead LLM.
 	// Ignored when RouteKey is set.
@@ -1307,7 +1318,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// explicit "if you didn't mean to, answer directly" out. Flip the
 			// const to disable if it ever proves noisy.
 			const noArgToolMentionCorrection = true
-			if noArgToolMentionCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn {
+			if noArgToolMentionCorrection && !cfg.DisableToolMentionCorrection && promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds && !toolFiredThisTurn {
 				if name := mentionedNoArgTool(resp.Content, handlers, toolDefs); name != "" {
 					Debug("[agent_loop] no-arg tool %q named in prose without a call, re-prompting: correction %d/%d", name, promiseCorrectionsTotal+1, maxPromiseCorrections)
 					history = append(history, Message{

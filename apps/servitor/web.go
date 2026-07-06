@@ -1851,6 +1851,10 @@ func buildInvestigatorSystemPrompt(appliance Appliance) string {
 	b.WriteString("**Running low on rounds is NOT a reason to block a step.** The investigation automatically receives additional rounds to finish any step still pending or in progress, so leaving a step unfinished is ALWAYS better than closing it out under time pressure. Never call `mark_step_blocked` with a reason like \"no time remaining\", \"ran out of rounds\", or \"out of time\" — that is invalid; just leave the step unfinished and keep working, and you'll be given the rounds to complete it. Reserve `mark_step_blocked` for GENUINE dead-ends only: no access, a required tool is missing, the target is unreachable, or every reasonable angle has been exhausted.\n\n")
 	b.WriteString("## Acronyms\n\n")
 	b.WriteString("Internal acronyms have org-specific meanings that rarely match training-data priors. Treat any acronym as an opaque label until you have verified its meaning from the system itself — a README, comment, config-file annotation, log message, or explicit statement in documentation. If you only know the letters, use the letters. Writing 'GMS (Game Management System)' when nothing on this system explained what GMS stands for is fabrication, even when the expansion 'sounds plausible'. Probe to find the meaning, or leave it unexpanded.\n\n")
+	if appliance.Type == "repo" {
+		b.WriteString("## Tool names in the code are NOT your tools\n\n")
+		b.WriteString("This repository may define, register, or document its own LLM tools, functions, API endpoints, and CLI commands (e.g. names like `store_fact`, `forget_graph`, `set_plan`). Those are part of the SUBJECT codebase you are analyzing — describe them freely and accurately, but NEVER claim to call, invoke, or use them, and never narrate as if you did. Your only tools are the ones in your own tool catalog. When a code symbol happens to share a name with one of your tools, you are quoting the code, not calling anything — do not apologize for or explain a call you didn't make.\n\n")
+	}
 	b.WriteString("## Completion\n\n")
 	b.WriteString("When done, write a concise narrative of your key findings. The structured profile is built from your stored discoveries and facts — focus on recording those.\n")
 	return b.String()
@@ -4261,6 +4265,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				OnRoundReset:    stepResetCb,
 				OnRoundStart:    stuckMsgFn,
 				PendingWorkFn:   pendingPlanWork,
+				// Analyzing a repo that may define LLM tools: the investigator
+				// legitimately names tools like store_fact when describing the
+				// code, so don't nudge it as if it meant to call them.
+				DisableToolMentionCorrection: appliance.Type == "repo",
 			}
 			withHeartbeat(ctx, id, "Investigator", func() {
 				invResp, invHistory, invErr = a.RunAgentLoop(ctx,
@@ -4499,6 +4507,9 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 							MaskDebugOutput: true,
 							ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
 							SerialTools:     true,
+							// Repo workers read code that names their own tools; don't
+							// misread a description as an intended call.
+							DisableToolMentionCorrection: appliance.Type == "repo",
 						},
 					)
 				})
