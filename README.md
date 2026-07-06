@@ -12,7 +12,7 @@
 
 Gohort is a Go-based framework + apps for building LLM-powered agents and multi-stage pipelines. The chat IS the authoring surface — describe what you want and a Builder agent assembles it from primitives (new agent? plug a pipeline? attach a skill?). No code, no visual flow editor, no separate IDE.
 
-The framework runs **local-first**: the worker tier is your own GPU (Ollama / llama.cpp) and handles the bulk of the work; an optional precision tier escalates to a frontier model only for stages that earn it. Privacy is structural — apps inherit constraints like `ForcePrivate` and `Private:true` route stages, so sensitive data (SSH credentials, internal docs, system facts) never accidentally leaves the box.
+The framework is **local-first by design, not local-only**: by default the worker tier is your own GPU (Ollama / llama.cpp) and handles the bulk of the work, with an optional precision tier that escalates to a frontier model only for stages that earn it. That posture is a default, not a restriction. Any tier can instead point at a hosted provider (Anthropic or OpenAI-compatible), so you can run fully local, fully hosted, or any mix. Privacy is structural: apps inherit constraints like `ForcePrivate` and `Private:true` route stages, so sensitive data (SSH credentials, internal docs, system facts) never accidentally leaves the box.
 
 Apps register themselves via `init()` and compose framework primitives (`FormPanel`, `Table`, `ChatPanel`, `PipelinePanel`, `ChipPicker`, …) so adding a new app rarely requires writing HTML / CSS / DOM JavaScript. Each shipped app either uses existing primitives or proves a new one needs to exist — the toolkit compounds rather than bloating with app-specific exceptions.
 
