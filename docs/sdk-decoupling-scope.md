@@ -44,6 +44,20 @@ globals even though it takes a `base` param).
 - **Effort:** ~3-5 days for the SDK-relevant data subset; ~2 weeks for the whole
   DB family.
 
+**Pattern (established, option #1).** For each subsystem: extract a
+`xxxWith(env, ...)` internal that takes the injectable state; keep the package
+`Xxx(...)` as a thin wrapper passing the *globals* (so server behavior is
+unchanged); add an `AppCore` method passing the *instance* fields, falling back
+to the globals for anything unset. Proven on `SearchCollections` (0.5.59):
+`collectionsEnv` + `globalCollectionsEnv` + `AppCore.collEnv()` +
+`AppCore.SearchCollections` + `searchCollectionsWith`, plus `EmbedWith(ctx, cfg,
+text)` and the `AppCore.VectorDB` / `AppCore.EmbedCfg` fields.
+
+**Remaining subsystems (replicate the pattern):** `FetchCollectionDoc` (same
+file, same globals), the memory-fact embedding/dedup path (`StoreMemoryFact` ->
+`EmbedWith`), chunk ingest (writes to the `VectorDB` global), and the graph
+store. Each is a mechanical application of the same three-part split.
+
 ### Phase 2 — Stable API surface + docs. ~3-5 days.
 Draw the line across the ~1305 exported core symbols: what's SDK vs internal
 (move internals behind `internal/`, or document the surface), version it, write

@@ -190,14 +190,61 @@ func IsDeploymentScope(c Collection) bool {
 // backend. Collections are curated by definition, so there is no
 // curated/derived provenance gate here.
 func SearchCollections(ctx context.Context, base Database, user string, collectionIDs []string, query string, k int) []SearchHit {
-	if base == nil || strings.TrimSpace(query) == "" || k <= 0 || len(collectionIDs) == 0 {
+	return searchCollectionsWith(ctx, globalCollectionsEnv(base), user, collectionIDs, query, k)
+}
+
+// collectionsEnv bundles the storage + embedding state the retrieval primitives
+// read, so they run against injected state (an SDK consumer's AppCore) or the
+// process globals (the server) through one seam. SDK Phase 1 — see
+// docs/sdk-decoupling-scope.md.
+type collectionsEnv struct {
+	Base       Database        // user-scoped collections home
+	VectorDB   Database        // dedicated vector store (all shared chunk I/O)
+	Deployment Database        // legacy deployment-scoped chunk store (RootDB)
+	Embed      EmbeddingConfig // embedding backend for query vectors
+}
+
+// globalCollectionsEnv wires retrieval to the process globals — the server's
+// default. `base` is the collections home (pass CollectionsDB()).
+func globalCollectionsEnv(base Database) collectionsEnv {
+	return collectionsEnv{Base: base, VectorDB: VectorDB, Deployment: RootDB, Embed: GetEmbeddingConfig()}
+}
+
+// collEnv resolves an AppCore's injected retrieval state, falling back to the
+// process globals for any field the caller left unset — so an SDK consumer
+// overrides only what it needs and the server-embedded AppCore behaves exactly
+// as before.
+func (T *AppCore) collEnv() collectionsEnv {
+	env := collectionsEnv{Base: T.DB, VectorDB: T.VectorDB, Deployment: RootDB, Embed: T.EmbedCfg}
+	if env.Base == nil {
+		env.Base = CollectionsDB()
+	}
+	if env.VectorDB == nil {
+		env.VectorDB = VectorDB
+	}
+	if !env.Embed.Enabled && strings.TrimSpace(env.Embed.Endpoint) == "" {
+		env.Embed = GetEmbeddingConfig()
+	}
+	return env
+}
+
+// SearchCollections is the instance-scoped RAG search: same as the package
+// SearchCollections but over this agent's injected retrieval backend (VectorDB /
+// EmbedCfg / DB), falling back to the globals for anything unset. The SDK entry
+// point for retrieval.
+func (T *AppCore) SearchCollections(ctx context.Context, user string, collectionIDs []string, query string, k int) []SearchHit {
+	return searchCollectionsWith(ctx, T.collEnv(), user, collectionIDs, query, k)
+}
+
+func searchCollectionsWith(ctx context.Context, env collectionsEnv, user string, collectionIDs []string, query string, k int) []SearchHit {
+	if env.Base == nil || strings.TrimSpace(query) == "" || k <= 0 || len(collectionIDs) == 0 {
 		return nil
 	}
-	metaDB := UserDB(base, user) // nil when user=="" → LoadCollection reads deployment only
+	metaDB := UserDB(env.Base, user) // nil when user=="" → LoadCollection reads deployment only
 	// Resolve each ID to its chunk-source tag, routed to the store its
 	// chunks actually live in. Unknown / not-visible IDs are skipped.
 	baseSources := make(map[string]bool, len(collectionIDs)) // user-scoped → base root
-	rootSources := make(map[string]bool, len(collectionIDs)) // deployment → RootDB
+	rootSources := make(map[string]bool, len(collectionIDs)) // deployment → Deployment store
 	for _, cid := range collectionIDs {
 		cid = strings.TrimSpace(cid)
 		if cid == "" {
@@ -219,8 +266,8 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 	}
 
 	var vec []float32
-	if GetEmbeddingConfig().Enabled {
-		if v, err := Embed(ctx, query); err == nil && len(v) > 0 {
+	if env.Embed.Enabled {
+		if v, err := EmbedWith(ctx, env.Embed, query); err == nil && len(v) > 0 {
 			vec = v
 		}
 	}
@@ -237,9 +284,9 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 	// dedicated VectorDB — all shared chunk I/O routes there, and new ingests
 	// (autofill, research) write ONLY there. Search it for the union of every
 	// resolved source. Fall back to the legacy split stores (base root for
-	// user-scoped, RootDB for deployment) only when VectorDB is unset (early
+	// user-scoped, Deployment for deployment) only when VectorDB is unset (early
 	// init); the one-shot migration left those legacy rows in place.
-	if VectorDB != nil {
+	if env.VectorDB != nil {
 		allSources := make(map[string]bool, len(baseSources)+len(rootSources))
 		for s := range baseSources {
 			allSources[s] = true
@@ -247,11 +294,11 @@ func SearchCollections(ctx context.Context, base Database, user string, collecti
 		for s := range rootSources {
 			allSources[s] = true
 		}
-		return search(VectorDB, allSources)
+		return search(env.VectorDB, allSources)
 	}
-	hits := search(base, baseSources)
-	if len(rootSources) > 0 && RootDB != nil {
-		hits = MergeHitsByScore(hits, search(RootDB, rootSources), k)
+	hits := search(env.Base, baseSources)
+	if len(rootSources) > 0 && env.Deployment != nil {
+		hits = MergeHitsByScore(hits, search(env.Deployment, rootSources), k)
 	}
 	return hits
 }

@@ -44,9 +44,15 @@ type FlagSet struct {
 
 // AppCore encapsulates the components required to execute an agent.
 type AppCore struct {
-	Flags        FlagSet
-	DB           Database
-	Cache        Database
+	Flags FlagSet
+	DB    Database
+	Cache Database
+	// VectorDB + EmbedCfg let an SDK consumer inject the retrieval backend
+	// (semantic collections / RAG) instead of relying on the process globals.
+	// Unset falls back to the globals, so the running server is unaffected.
+	// SDK Phase 1 — see docs/sdk-decoupling-scope.md.
+	VectorDB     Database
+	EmbedCfg     EmbeddingConfig
 	Report       *TaskReport
 	Limiter      LimitGroup
 	LLM          LLM  // Primary (worker) LLM — used for most calls.

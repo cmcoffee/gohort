@@ -80,8 +80,15 @@ func SaveEmbeddingConfigToDB(db Database, cfg EmbeddingConfig) error {
 // Returns an error when embeddings are disabled or the endpoint is
 // unreachable — caller should treat this as a skip condition, not a
 // fatal error.
+// Embed embeds text using the globally-configured embedding backend.
 func Embed(ctx context.Context, text string) ([]float32, error) {
-	cfg := GetEmbeddingConfig()
+	return EmbedWith(ctx, GetEmbeddingConfig(), text)
+}
+
+// EmbedWith embeds text using an explicitly-provided embedding config, so a
+// caller (an SDK consumer, an injected AppCore) can supply its own backend
+// without touching the process-global config. SDK Phase 1.
+func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("embeddings disabled")
 	}
