@@ -83,6 +83,7 @@ func (t *ViewVideoTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		sb.WriteString(meta)
 		sb.WriteString("\n")
 	}
+	sb.WriteString(transcribeVideoAudio(data, target))
 	Debug("[videodl] view_video %s → %d bytes, %d frames", target, len(data), len(frames))
 	return sb.String(), nil
 }

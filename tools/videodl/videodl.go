@@ -220,7 +220,7 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 	meta := ExtractVideoMetadata(data)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Stored at %q (%s). To deliver the file to the user, call workspace(action=\"attach\", path=%q, cleanup=true) — most URL pastes imply the user wants the file back. If you're only analyzing the video (user asked \"what's in this\", not \"send this\"), skip the attach. For TRANSCRIPT / what was said, call video(action=\"transcribe\", path=%q) — only when the user explicitly asked.\n", name, humanSize(int64(len(data))), name, name)
+	fmt.Fprintf(&sb, "Stored at %q (%s). To deliver the file to the user, call workspace(action=\"attach\", path=%q, cleanup=true) — most URL pastes imply the user wants the file back. If you're only analyzing the video (user asked \"what's in this\", not \"send this\"), skip the attach.\n", name, humanSize(int64(len(data))), name)
 	if len(frames) > 0 {
 		fmt.Fprintf(&sb, "Sampled %d frames for visual analysis — they will be available to you on the next round so you can describe what you're sending.\n", len(frames))
 	}
@@ -229,6 +229,9 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 		sb.WriteString(meta)
 		sb.WriteString("\n")
 	}
+	// Spoken audio: transcribe so the agent knows what was SAID before it posts,
+	// not just what the frames show. Automatic now (was a separate opt-in tool).
+	sb.WriteString(transcribeVideoAudio(data, name))
 	Debug("[videodl] %s → %s (%d bytes, %d frames)", target, name, len(data), len(frames))
 	return sb.String(), nil
 }
