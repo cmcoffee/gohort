@@ -35,7 +35,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	docs := allDocs(udb, appliance.ID)
 	factsBlock := strings.TrimSpace(scopedFactsBlock(udb, appliance))
 	if len(docs) == 0 && factsBlock == "" {
-		emit(sid, probeEvent{Kind: "status", Text: "No stored knowledge to validate yet — run Map System to build it."})
+		emit(sid, probeEvent{Kind: "status", Text: "No stored knowledge to validate yet — run Refresh to build it."})
 		return
 	}
 

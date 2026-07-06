@@ -18,7 +18,7 @@ const repoMaxSearchHits = 60
 // available" (stop and report) rather than "no such code exists" (fabricate).
 // The disambiguation only runs on the empty-result path, so it costs nothing
 // when the store is populated.
-const errRepoNotLoaded = "REPOSITORY NOT LOADED: this repository's files are not currently ingested, so search and read cannot run. This is NOT evidence the code is absent. Stop here and tell the user to run Map System (which re-clones) or Refresh Repo. Do not guess file names, paths, or structure from prior knowledge."
+const errRepoNotLoaded = "REPOSITORY NOT LOADED: this repository's files are not currently ingested, so search and read cannot run. This is NOT evidence the code is absent. Stop here and tell the user to run Refresh (which re-clones and re-maps). Do not guess file names, paths, or structure from prior knowledge."
 
 // repoCodeTools builds the search/read tools bound to one (user, repo appliance),
 // decrypting the store in memory (no plaintext leaves it).

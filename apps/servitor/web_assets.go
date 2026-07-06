@@ -644,7 +644,7 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
           body.innerHTML = '';
           if (!d.profile) {
             body.appendChild(el('div', {class: 'ui-pl-empty'},
-              ['No profile yet. Run "Map System" to scan this appliance.']));
+              ['No profile yet. Run "Refresh" to scan this appliance.']));
             return;
           }
           var hdr = el('div', {class: 'ui-servitor-profile-h'},
@@ -1063,30 +1063,6 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
       }
     });
 
-    window.uiRegisterClientAction('servitor_refresh_repo', async function(ctx) {
-      var aid = getApplianceID();
-      if (!aid) { window.uiAlert('Pick an appliance first'); return; }
-      if (!isRepoAppliance(aid)) { window.uiAlert('Refresh re-clones a repository — it only applies to Git repository appliances.'); return; }
-      if (!(await window.uiConfirm('Re-clone this repository to pick up new code? The current ingested copy is replaced.'))) return;
-      fetch('api/repo/refresh', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({appliance_id: aid}),
-      }).then(function(r) {
-        if (!r.ok) {
-          return r.text().then(function(t){ window.uiAlert('Refresh failed: ' + t); });
-        }
-        return r.json().then(function(d) {
-          if (d && d.session_id) {
-            // Subscribe to the same event stream Map uses: the AgentLoopPanel
-            // renders the spinner, live status lines, and a Cancel button.
-            ctx.subscribe('api/chat/v2/events?id=' + encodeURIComponent(d.session_id));
-          }
-        });
-      }).catch(function(err) {
-        window.uiAlert('Refresh failed: ' + (err && err.message || err));
-      });
-    });
-
     window.uiRegisterClientAction('servitor_clear_memory', async function(ctx) {
       var aid = getApplianceID();
       if (!aid) { window.uiAlert('Pick an appliance first'); return; }
@@ -1099,9 +1075,8 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
         '• Notes and techniques\n' +
         (isRepo ? '• Ingested code files (the repository will need re-cloning)\n' : '') +
         '\n' +
-        'The appliance connection settings are kept. Run "' +
-        (isRepo ? 'Refresh" to re-clone, then "Map System' : 'Map System') +
-        '" to rebuild.\n\n' +
+        'The appliance connection settings are kept. Run "Refresh" to rebuild' +
+        (isRepo ? ' (it re-clones, then re-maps).' : '.') + '\n\n' +
         'This cannot be undone.';
       if (!(await window.uiConfirm(msg))) return;
       fetch('api/memory/clear', {
@@ -1282,7 +1257,12 @@ const servitorWebAssets = `<link rel="stylesheet" href="https://cdn.jsdelivr.net
     function applyToolbarForType() {
       var t = currentApplianceType();
       setActionVisible('Map App', t === 'ssh');
-      setActionVisible('Refresh Repo', t === 'repo');
+      // One "Refresh" action; its label follows the appliance type. Repo
+      // refresh also pulls new code server-side (see handleMap); ssh/command
+      // just re-map / re-test. data-action-label stays "Refresh" for targeting.
+      var lbl = t === 'repo' ? 'Refresh Repo' : (t === 'command' ? 'Refresh Command' : 'Refresh System');
+      var nodes = document.querySelectorAll('[data-action-label="Refresh"]');
+      for (var i = 0; i < nodes.length; i++) nodes[i].textContent = lbl;
     }
     // Repo appliances have no terminal, so halve the activity column's default
     // width (via the servitor-repo-mode CSS class) and give the conversation the

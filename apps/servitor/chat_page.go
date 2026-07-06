@@ -177,10 +177,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "servitor_open_rules"},
 						{Label: "Memory", Title: "Manage this appliance's agent memory — Saved facts, Reference Memory, and Graph Memory",
 							Method: "client", URL: "servitor_appliance_memory"},
-						{Label: "✨ Map System", Title: "Discover the system layout",
+						{Label: "Refresh", Title: "Re-map the selected appliance. Repositories also pull the latest code first.",
 							Method: "client", URL: "servitor_run_map", Variant: "primary"},
-						{Label: "Refresh Repo", Title: "Re-clone the selected repository to pick up new code (repository appliances only)",
-							Method: "client", URL: "servitor_refresh_repo"},
 						// Rarely-used actions collapse into a single "More ▾"
 						// overflow menu so the toolbar stays lean.
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",

@@ -978,7 +978,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
-	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	appliance, ownerUser, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
 		return
@@ -986,7 +986,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 
 	sid := UUIDv4()
 	ctx, cancel := context.WithCancel(AppContext())
-	probeSessions.Register(sid, "Mapping "+appliance.Name, cancel)
+	probeSessions.Register(sid, "Refreshing "+appliance.Name, cancel)
 	sessionAppliances.Store(sid, appliance.ID)
 	ch := make(chan bool, 1)
 	confirmChans.Store(sid, ch)
@@ -1018,8 +1018,29 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		// reconnaissance summary stays reviewable, not just streamed live.
 		// The run id IS the session id; runSession appends the transcript on
 		// done. Each Map System run is its own rail entry (timestamped).
-		saveSession(udb, appliance.ID, chatSession{ID: sid, Name: "Map: " + appliance.Name})
-		go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
+		saveSession(udb, appliance.ID, chatSession{ID: sid, Name: "Refresh: " + appliance.Name})
+		if appliance.Type == "repo" {
+			// Repo Refresh pulls the latest code FIRST (re-clone + re-ingest),
+			// then maps the fresh tree — so one press picks up new commits and
+			// re-derives the code map. This folds the old "Refresh Repo" clone
+			// step into Refresh; only repos fetch new data.
+			go func() {
+				emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Pulling latest code for %s…", repoDisplayTarget(appliance))})
+				T.cloneAndIngestRepo(ctx, ownerUser, ownerUDB, appliance.ID)
+				if ctx.Err() != nil {
+					probeSessions.AppendEvent(sid, probeEvent{Kind: "error", Text: "Refresh cancelled."}, true)
+					probeSessions.ScheduleCleanup(sid)
+					return
+				}
+				var updated Appliance
+				if ownerUDB.Get(applianceTable, appliance.ID, &updated) {
+					emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Ingested %d files — mapping the codebase…", updated.RepoFiles)})
+				}
+				T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
+			}()
+		} else {
+			go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1538,7 +1559,7 @@ func buildChatSystemPrompt(appliance Appliance) string {
 		))
 	} else {
 		b.WriteString(fmt.Sprintf(
-			"You are a Linux systems assistant with SSH access to %s (%s). No profile has been built yet — you can run SSH commands to investigate specific questions. For a complete system overview, suggest the user clicks 'Map System'.",
+			"You are a Linux systems assistant with SSH access to %s (%s). No profile has been built yet — you can run SSH commands to investigate specific questions. For a complete system overview, suggest the user clicks 'Refresh'.",
 			appliance.Name, appliance.Host,
 		))
 	}
@@ -2476,7 +2497,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			}
 		}
 		if repoFileCount(ownerUser, appliance.ID) == 0 {
-			msg := "Repository not ingested yet — run Map System to clone and map it."
+			msg := "Repository not ingested yet — run Refresh to clone and map it."
 			if saveProfile {
 				msg = "Clone failed — check the Git URL, branch, and access token, then try again. (Is git installed on the host?)"
 			}
