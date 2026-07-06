@@ -13,7 +13,6 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
 	_ "github.com/cmcoffee/gohort/apps/account"
 	_ "github.com/cmcoffee/gohort/apps/customapps"
-	_ "github.com/cmcoffee/gohort/apps/forge"
 	_ "github.com/cmcoffee/gohort/apps/guides"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/mcpserver"
