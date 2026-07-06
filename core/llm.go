@@ -469,6 +469,13 @@ type ChatConfig struct {
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
 	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
 	MaskDebug    bool   // Suppress request/response content from debug logs (use for sessions with sensitive data).
+	// SuppressAutoDate skips the "Today's date is …" system-prompt prepend
+	// (see applyOpts). Set by callers that stamp the date onto the latest
+	// user turn instead — the cache-safe placement, since a system-prompt
+	// date sits before the conversation and re-prefills it on every rollover.
+	// The multi-turn agent loop uses this; one-shot callers leave it off and
+	// keep the (cache-irrelevant, single-turn) system-prompt date.
+	SuppressAutoDate bool
 	// ReasoningHandler, when non-nil, receives reasoning-channel
 	// chunks as the model emits them — separate from the main
 	// content StreamHandler. UI surfaces (chat web) use this to
@@ -509,6 +516,23 @@ func WithTemperature(t float64) ChatOption {
 // WithSystemPrompt sets the system prompt for this call.
 func WithSystemPrompt(prompt string) ChatOption {
 	return func(c *ChatConfig) { c.SystemPrompt = prompt }
+}
+
+// WithoutAutoDate suppresses applyOpts's system-prompt date prepend, for
+// callers that stamp the date onto the latest user turn instead (the cache-safe
+// spot). See ChatConfig.SuppressAutoDate.
+func WithoutAutoDate() ChatOption {
+	return func(c *ChatConfig) { c.SuppressAutoDate = true }
+}
+
+// CurrentContextStamp is the bracketed date+time marker prefixed onto the latest
+// user turn so the model always has the current wall-clock. Placed on the newest
+// user message — the volatile tail that is never a cache hit anyway — it costs no
+// cache invalidation, unlike a system-prompt date which sits before the whole
+// conversation and re-prefills it on the daily (or per-request, with time)
+// rollover. Local time, no em-dash (an AI tell we scrub from product output).
+func CurrentContextStamp() string {
+	return "[Current date & time: " + time.Now().Local().Format("Mon, January 2, 2006 at 3:04 PM MST") + "]"
 }
 
 // WithTools provides tool definitions for the LLM to use.
@@ -572,7 +596,13 @@ func applyOpts(defaultModel string, defaultMaxTokens int, opts []ChatOption) Cha
 	for _, opt := range opts {
 		opt(&cfg)
 	}
-	if cfg.SystemPrompt != "" {
+	// Prepend today's date so a caller that sets a system prompt gets date
+	// awareness for free. SUPPRESSED for the multi-turn agent loop, which stamps
+	// the date+time onto the latest user turn instead (cache-safe): a date at the
+	// front of the system prompt sits before the whole conversation and re-prefills
+	// it on the daily rollover. Single-turn callers leave it on — placement is
+	// cache-irrelevant when there's no conversation history to preserve.
+	if cfg.SystemPrompt != "" && !cfg.SuppressAutoDate {
 		cfg.SystemPrompt = "Today's date is " + time.Now().Format("January 2, 2006") + ". " + cfg.SystemPrompt
 	}
 	return cfg

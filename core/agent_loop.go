@@ -500,6 +500,20 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	history := make([]Message, len(messages))
 	copy(history, messages)
 
+	// Stamp the current date+time onto the latest user turn (the human message
+	// that opened this turn — tool-result user messages get appended below, so at
+	// this point the last message IS the human turn). This is the cache-safe home
+	// for the wall-clock: the newest user message is the volatile tail that never
+	// hits cache anyway, so the stamp costs nothing, while the system prompt stays
+	// date-free and cacheable across days. The stamp freezes here and rides into
+	// the returned history, so on later turns it stays put (a stable, cached prefix
+	// element) while only the next new turn re-stamps. Paired with WithoutAutoDate()
+	// on the LLM calls below so the date isn't ALSO injected into the system prompt.
+	if n := len(history); n > 0 && history[n-1].Role == "user" &&
+		!strings.HasPrefix(history[n-1].Content, "[Current date & time:") {
+		history[n-1].Content = CurrentContextStamp() + "\n\n" + history[n-1].Content
+	}
+
 	// In PromptTools mode, inject tool descriptions into the system
 	// prompt instead of using native function calling. Everything stays
 	// as plain text — tool calls are parsed from <tool_call> tags and
@@ -935,6 +949,9 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if systemPrompt != "" {
 			opts = append(opts, WithSystemPrompt(systemPrompt))
 		}
+		// Date lives on the latest user turn (stamped above), not the system
+		// prompt — keep applyOpts from re-injecting it and poisoning the cache.
+		opts = append(opts, WithoutAutoDate())
 		if cfg.MaskDebugOutput {
 			opts = append(opts, WithMaskDebug())
 		}
@@ -1895,6 +1912,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// chase — must produce text. Inherit RouteKey for telemetry.
 		var wrapOpts []ChatOption
 		wrapOpts = append(wrapOpts, WithSystemPrompt(systemPrompt))
+		wrapOpts = append(wrapOpts, WithoutAutoDate()) // date is on the user turn, not the system prompt
 		f := false
 		wrapOpts = append(wrapOpts, WithThink(f))
 		if cfg.RouteKey != "" {
