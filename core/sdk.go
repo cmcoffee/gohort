@@ -49,3 +49,27 @@ func (T *AppCore) RunOnce(ctx context.Context, message string, tools []AgentTool
 	}
 	return resp.Content, nil
 }
+
+// Remember saves a fact to explicit ("always-in-prompt") memory under a
+// namespace you pick, using the agent's DB. Returns true when the fact was newly
+// stored (false if a near-duplicate already existed). Set AppCore.DB to your own
+// kvlite/Database instance first. Works with no server boot; semantic dedup is
+// off unless you configure embeddings (a Phase 1 SDK item, see
+// docs/sdk-decoupling-scope.md). Recall the facts and put them in your system
+// prompt to give the model persistent memory across turns.
+func (T *AppCore) Remember(namespace, fact string) (bool, error) {
+	if T == nil || T.DB == nil {
+		return false, fmt.Errorf("no store configured (set AppCore.DB before Remember)")
+	}
+	_, saved, _ := StoreMemoryFact(T.DB, namespace, fact)
+	return saved, nil
+}
+
+// Recall returns the facts stored under a namespace, for injection into a system
+// prompt or your own use. Set AppCore.DB first.
+func (T *AppCore) Recall(namespace string) []MemoryFact {
+	if T == nil || T.DB == nil {
+		return nil
+	}
+	return ListMemoryFacts(T.DB, namespace)
+}
