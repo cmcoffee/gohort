@@ -514,6 +514,12 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 			who = rec.Name
 		}
 		detail = "activate sub-agent: " + a.Brief
+	case "bind_thread":
+		who = operatorApprovalRecipient(user, a)
+		detail = "bind 1:1 thread so the agent can read replies"
+		if a.Brief != "" {
+			detail = "bind 1:1 thread (" + a.Brief + ")"
+		}
 	}
 	return who, detail
 }
@@ -693,6 +699,49 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// Approved post: if the target is a bound channel, make its agent see it
 		// (channel session + cortex) so it can field follow-ups.
 		recordChannelPost(UserDB(T.DB, a.Owner), a.Owner, a.ChatID, a.Handle, a.Text)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// bind_thread: the agent asked to bind a person's 1:1 thread so it can read
+	// their replies. Approval creates a persistent, agent-bound channel scoped to
+	// that handle, with a gatekeeper rule that keeps it to replies-to-its-own
+	// messages. Idempotent; "Always allow" has no separate meaning here.
+	if a.Action == "bind_thread" {
+		addr := a.ChatID
+		if addr == "" {
+			addr = a.Handle
+		}
+		if addr != "" {
+			exists := false
+			for _, ch := range ListChannelsForAgent(RootDB, a.Owner, a.Agent) {
+				if ch.Service == "imessage" && (ch.Address == addr || ch.Address == a.Handle || ch.Address == a.ChatID) {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				name := a.Brief
+				if name == "" {
+					name = addr
+				}
+				wake := a.Text != "nowake"
+				gk := threadBindingGatekeeperRule
+				if !wake {
+					gk = "" // no-wake = record-only; the gatekeeper is skipped anyway
+				}
+				SaveChannel(RootDB, Channel{
+					ID:         UUIDv4(),
+					Owner:      a.Owner,
+					AgentID:    a.Agent,
+					Name:       "DM: " + name,
+					Service:    "imessage",
+					Address:    addr,
+					AutoReply:  wake,
+					Gatekeeper: gk,
+					AgentBound: true,
+				})
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

@@ -304,6 +304,45 @@ func operatorDeliverMessage(owner, chatID, handle, text string, images []string)
 	return text, nil
 }
 
+// threadBindingGatekeeperRule is the per-channel wake rule set on an
+// agent-requested 1:1 thread binding: engage only on replies to the agent's own
+// messages, stay silent (recorded only) on unrelated traffic in that thread.
+const threadBindingGatekeeperRule = "This is a 1:1 thread the bound agent asked to watch so it could hear back on a message it sent. WAKE only when the incoming message is a direct reply to a message the agent sent, or clearly continues a conversation the agent started in this thread. Do NOT wake for unrelated topics, or for an exchange between other people the agent isn't part of — stay silent (recorded only) on those."
+
+// argBool reads a boolean tool arg (accepts a real bool, or a "true"/"false"
+// string which some tool bridges send), falling back to def.
+func argBool(args map[string]any, key string, def bool) bool {
+	switch v := args[key].(type) {
+	case bool:
+		return v
+	case string:
+		return strings.EqualFold(strings.TrimSpace(v), "true")
+	}
+	return def
+}
+
+// findAgentBoundChannel locates an agent's own AgentBound 1:1 channel matching
+// `to` (a handle/chat_id directly, or a resolvable recipient), so set_thread_wake
+// and release_thread_binding can only ever touch bindings the agent created.
+func findAgentBoundChannel(owner, agentID, to string) (Channel, bool) {
+	to = strings.TrimSpace(to)
+	for _, ch := range ListChannelsForAgent(RootDB, owner, agentID) {
+		if ch.AgentBound && ch.Address == to {
+			return ch, true
+		}
+	}
+	if link, ok := ActiveMessagingLink(); ok {
+		if rec, ok := link.ResolveRecipient(owner, to); ok {
+			for _, ch := range ListChannelsForAgent(RootDB, owner, agentID) {
+				if ch.AgentBound && (ch.Address == rec.Handle || ch.Address == rec.ChatID) {
+					return ch, true
+				}
+			}
+		}
+	}
+	return Channel{}, false
+}
+
 func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 	owner := ""
 	if sess != nil {
@@ -915,6 +954,106 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					Owner: owner, Action: "send_message", ChatID: rec.ChatID, Handle: rec.Handle, Text: text, Images: images,
 				})
 				return fmt.Sprintf("Queued a message to %s for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "request_thread_binding",
+				Description: "Ask to bind a person's DIRECT 1:1 message thread so you can READ their replies. Use this when you message someone (message_contact) and need to see their answer: a 1:1 thread you aren't bound to is invisible to you. Give the person's handle/phone number (from the group's participant list via read_chat), NOT their display name. It queues for the user's approval; once approved the thread is a persistent channel bound to you, gatekept so you only engage on replies to your own messages. Set wake=false to bind it read-only (no auto-wake, gatekeeper off) and poll it yourself with await_result instead.",
+				Parameters: map[string]ToolParam{
+					"to":   {Type: "string", Description: "The person's handle/phone number (or a chat_id) for their 1:1 thread. A display name will not resolve; use the number from read_chat's participant list."},
+					"wake": {Type: "boolean", Description: "Optional, default true. true = the thread wakes you on replies (gatekept to your own conversation). false = read-only, no auto-wake; poll it with await_result."},
+				},
+				Required: []string{"to"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				to := strings.TrimSpace(oArgStr(args, "to"))
+				if to == "" {
+					return "", fmt.Errorf("to is required — the person's handle/number for their 1:1 thread")
+				}
+				link, ok := ActiveMessagingLink()
+				if !ok {
+					return "", fmt.Errorf("the messaging bridge is not available")
+				}
+				rec, ok := link.ResolveRecipient(owner, to)
+				if !ok {
+					return "", fmt.Errorf("couldn't resolve %q to a 1:1 thread — pass the person's phone number/handle (from read_chat's participant list), not their display name", to)
+				}
+				label := operatorRecipientLabel(rec)
+				for _, ch := range ListChannelsForAgent(RootDB, owner, controllerAgentID) {
+					if ch.AgentBound && ch.Service == "imessage" && (ch.Address == rec.Handle || ch.Address == rec.ChatID) {
+						return fmt.Sprintf("You're already bound to %s's thread.", label), nil
+					}
+				}
+				for _, ex := range ListAuthorizations(RootDB, owner) {
+					if ex.Action == "bind_thread" && ex.Agent == controllerAgentID && (ex.Handle == rec.Handle || ex.ChatID == rec.ChatID) {
+						return fmt.Sprintf("A binding request for %s is already awaiting the user's approval (id %s).", label, ex.ID), nil
+					}
+				}
+				wakePref := ""
+				if !argBool(args, "wake", true) {
+					wakePref = "nowake" // carried in Text; the approval reads it
+				}
+				a := SaveAuthorization(RootDB, Authorization{
+					Owner: owner, Action: "bind_thread", Agent: controllerAgentID,
+					ChatID: rec.ChatID, Handle: rec.Handle, Brief: label, Text: wakePref,
+				})
+				return fmt.Sprintf("Requested a binding to %s's 1:1 thread — queued for the user's approval (id %s). Once approved you can read their replies.", label, a.ID), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "set_thread_wake",
+				Description: "Turn wake on or off for a 1:1 thread you bound with request_thread_binding. wake=true means replies wake you (gatekept to your own conversation); wake=false makes it read-only (no auto-wake, gatekeeper off) so you poll it yourself with await_result. Only affects your own bound threads; no approval needed.",
+				Parameters: map[string]ToolParam{
+					"to":   {Type: "string", Description: "The bound person's handle/number or chat_id."},
+					"wake": {Type: "boolean", Description: "true = wake on replies; false = read-only / no-wake."},
+				},
+				Required: []string{"to", "wake"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				to := strings.TrimSpace(oArgStr(args, "to"))
+				if to == "" {
+					return "", fmt.Errorf("to is required")
+				}
+				wake := argBool(args, "wake", true)
+				ch, ok := findAgentBoundChannel(owner, controllerAgentID, to)
+				if !ok {
+					return "", fmt.Errorf("you have no bound thread matching %q — request one with request_thread_binding first", to)
+				}
+				ch.AutoReply = wake
+				if wake {
+					ch.Gatekeeper = threadBindingGatekeeperRule
+				} else {
+					ch.Gatekeeper = ""
+				}
+				SaveChannel(RootDB, ch)
+				if wake {
+					return fmt.Sprintf("%s will now wake you on replies.", ch.Name), nil
+				}
+				return fmt.Sprintf("%s is now read-only (no wake) — poll it with await_result.", ch.Name), nil
+			},
+		},
+		{
+			Tool: Tool{
+				Name:        "release_thread_binding",
+				Description: "Release a 1:1 thread binding you no longer need (e.g. once you have the answer you were waiting for). This only drops YOUR read access to that person's thread; it affects nobody else. No approval needed, and it only works on threads you bound yourself.",
+				Parameters: map[string]ToolParam{
+					"to": {Type: "string", Description: "The bound person's handle/number or chat_id."},
+				},
+				Required: []string{"to"},
+			},
+			Handler: func(args map[string]any) (string, error) {
+				to := strings.TrimSpace(oArgStr(args, "to"))
+				if to == "" {
+					return "", fmt.Errorf("to is required")
+				}
+				ch, ok := findAgentBoundChannel(owner, controllerAgentID, to)
+				if !ok {
+					return "", fmt.Errorf("you have no bound thread matching %q", to)
+				}
+				DeleteChannel(RootDB, owner, ch.ID)
+				return fmt.Sprintf("Released the binding to %s's thread.", ch.Name), nil
 			},
 		},
 		{

@@ -56,6 +56,12 @@ type Channel struct {
 	// transport evaluates it before spinning up the bound agent, and skips
 	// the run on a no. Empty = no per-channel rule (the overall still applies).
 	Gatekeeper string `json:"gatekeeper,omitempty"`
+	// AgentBound marks a channel the bound AGENT created via its own
+	// request_thread_binding (owner-approved), as opposed to an
+	// owner-configured channel. Only AgentBound channels may be toggled
+	// (set_thread_wake) or torn down (release_thread_binding) by the agent
+	// itself — it can never touch its foundational channels or another agent's.
+	AgentBound bool   `json:"agent_bound,omitempty"`
 	Created    string `json:"created,omitempty"`
 }
 
