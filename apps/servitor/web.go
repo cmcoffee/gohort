@@ -3660,7 +3660,11 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	var consolidateFn func() // set by chat mode, fired after reply is emitted
 
 	if saveProfile {
-		if appliance.Profile == "" {
+		// Both first-map and re-map (Refresh) run the full investigator + plan
+		// flow, so a Refresh shows the plan checklist too — the RE-MAPPING
+		// banner below activates when a profile already exists. (Option A: the
+		// old single-worker update pass had no plan and was opaque.)
+		{
 			// === New investigator-driven mapping ===
 			//
 			// Phase 1: Quick snapshot (no LLM) — gives the investigator a starting point.
@@ -4350,28 +4354,6 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			}
 			if reply == "" && invNarrative != "" {
 				reply = invNarrative
-			}
-		} else {
-			// Existing profile: single-worker update pass.
-			var resp *Response
-			var err error
-			withHeartbeat(ctx, id, "Updating profile", func() {
-				resp, _, err = a.RunAgentLoop(ctx, messages, AgentLoopConfig{
-					SystemPrompt:    workerPrompt,
-					Tools:           withFreshRunTool(workerTools),
-					MaxRounds:       100,
-							RouteKey:        "app.servitor",
-					MaskDebugOutput: true,
-					SerialTools:     true,
-					ChatOptions:     []ChatOption{WithThink(false)},
-				})
-			})
-			if err != nil && ctx.Err() == nil {
-				emit(id, probeEvent{Kind: "error", Text: err.Error()})
-				return
-			}
-			if resp != nil {
-				reply = strings.TrimSpace(resp.Content)
 			}
 		}
 	} else {
