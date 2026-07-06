@@ -182,6 +182,10 @@ func (T *Forge) handlePage(w http.ResponseWriter, r *http.Request) {
 			{
 				Title:    "Session",
 				Subtitle: "claude-code runs in a detached tmux session in gohort's source tree. This terminal attaches to it and survives a restart.",
+				// Read-only status. The action buttons (Rebuild + Restart,
+				// New session) live in the terminal bar — see web_assets.go —
+				// because they stream output into the xterm and DisplayPanel
+				// toolbar actions are server-fetch only (no client actions).
 				Body: ui.DisplayPanel{
 					Source:        "api/status",
 					AutoRefreshMS: 5000,
@@ -191,10 +195,6 @@ func (T *Forge) handlePage(w http.ResponseWriter, r *http.Request) {
 						{Label: "Launch", Field: "claude_cmd", Mono: true},
 						{Label: "Build gate", Field: "rebuild_cmd", Mono: true},
 						{Label: "Restart", Field: "restart_display", Mono: true},
-					},
-					Actions: []ui.ToolbarAction{
-						{Label: "Rebuild + Restart", Method: "client", URL: "forge_rebuild", Variant: "danger"},
-						{Label: "New claude session", Method: "client", URL: "forge_new_session"},
 					},
 				},
 			},
