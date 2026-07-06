@@ -131,7 +131,16 @@ func (T *MyApp) Init() error         { return T.Flags.Parse() }
 func (T *MyApp) Main() error         { return nil }
 ```
 
-Add `WebPath()`, `WebName()`, `WebDesc()`, and `Routes()` to get a web dashboard automatically. No separate registration needed.
+Add `WebPath()`, `WebName()`, `WebDesc()`, and `Routes()` to get a web dashboard automatically. No separate *web* registration needed — the framework discovers the dashboard from the type.
+
+Then add a blank import so the package is compiled in and its `init()` runs:
+
+```go
+// agents.go  (or private.go for the private tree)
+import _ "github.com/cmcoffee/gohort/apps/myapp"
+```
+
+That one line is the only wiring. Everything else (the CLI command, the web dashboard) is discovered from the type.
 
 ### Optional Interfaces
 
