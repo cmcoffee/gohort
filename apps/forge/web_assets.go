@@ -1,40 +1,56 @@
 package forge
 
-// forgeHeadHTML is injected into the page <head>. It pulls in xterm.js
-// (the same CDN + versions servitor uses), mounts an interactive
-// terminal wired to /forge/api/terminal, and puts the two operator
-// buttons (Rebuild + Restart, New session) in the terminal's own title
-// bar. The buttons call the app's endpoints directly and stream results
-// into the terminal — they do NOT go through DisplayPanel toolbar
-// actions, which are server-fetch only (a Method:"client" there would
-// 404 on the action name). Nothing here leaks into core/ui.
+// forgeHeadHTML is injected into the page <head>. The page is
+// terminal-first: this script mounts an interactive xterm wired to
+// /forge/api/terminal and fills the viewport with it. Live status
+// (session + working dir), the operator buttons (Rebuild + Restart, New
+// session), and a ⚙ that folds the settings form into a drawer all live
+// in the terminal's own title bar, so the visible page is mostly the
+// terminal. The buttons call the app's endpoints directly and stream
+// results into the terminal (DisplayPanel toolbar actions are
+// server-fetch only, so they can't do this). Nothing here leaks into
+// core/ui.
 const forgeHeadHTML = `
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
 <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
 <style>
   #forge-term-wrap {
-    margin-top: 16px;
+    margin-top: 12px;
     border: 1px solid var(--border, #30363d);
     border-radius: 8px;
     overflow: hidden;
     background: #0d1117;
   }
   #forge-term-bar {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 10px;
     padding: 6px 12px; font: 12px ui-monospace, Menlo, Consolas, monospace;
     color: #8b949e; background: #161b22; border-bottom: 1px solid #30363d;
   }
   #forge-term-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; flex: none; }
   #forge-term-bar.off .dot { background: #f85149; }
+  #forge-term-bar .lbl { flex: none; }
+  #forge-term-bar .status {
+    color: #6e7681; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  #forge-term-bar .spacer { margin-left: auto; flex: none; }
   #forge-term-bar .forge-btn {
     font: 11px ui-monospace, Menlo, Consolas, monospace; color: #c9d1d9;
     background: #21262d; border: 1px solid #30363d; border-radius: 5px;
-    padding: 3px 10px; cursor: pointer;
+    padding: 3px 10px; cursor: pointer; flex: none;
   }
   #forge-term-bar .forge-btn:hover { background: #30363d; }
   #forge-term-bar .forge-btn:disabled { opacity: 0.5; cursor: default; }
   #forge-term-bar .forge-btn.danger { color: #f85149; border-color: #5c2b29; }
+  #forge-term-bar .forge-gear { padding: 3px 8px; font-size: 13px; }
+  #forge-settings-drawer {
+    display: none; padding: 12px 14px; background: #0d1117;
+    border-bottom: 1px solid #30363d;
+  }
+  #forge-settings-drawer.open { display: block; }
+  /* Let the reparented settings section sit flush inside the drawer. */
+  #forge-settings-drawer .ui-section { margin: 0; border: 0; background: transparent; box-shadow: none; }
   #forge-term { height: 460px; padding: 6px 8px; }
 </style>
 <script>
@@ -46,7 +62,8 @@ const forgeHeadHTML = `
     return proto + '//' + l.host + base + path;
   }
 
-  var term, fit, ws, reconnectTimer, reconnectDelay = 1500, autoReconnect = true;
+  var term, fit, ws, host, reconnectTimer, reconnectDelay = 1500, autoReconnect = true;
+  var statusEl;
 
   function setStatus(connected) {
     var bar = document.getElementById('forge-term-bar');
@@ -54,6 +71,16 @@ const forgeHeadHTML = `
     bar.classList.toggle('off', !connected);
     var lbl = bar.querySelector('.lbl');
     if (lbl) lbl.textContent = connected ? 'attached' : 'disconnected';
+  }
+
+  function refreshStatus() {
+    fetch('api/status').then(function (r) { return r.json(); }).then(function (d) {
+      if (!statusEl || !d) return;
+      var parts = [];
+      if (d.session) parts.push(d.session);
+      if (d.work_dir) parts.push(d.work_dir);
+      statusEl.textContent = parts.join('  ·  ');
+    }).catch(function () {});
   }
 
   function connect() {
@@ -83,13 +110,12 @@ const forgeHeadHTML = `
     ws.onerror = function () { try { ws.close(); } catch (_) {} };
   }
 
-  // Reconnect after "New session".
   window.__forgeReconnect = function () {
     if (term) term.write('\r\n\x1b[36m[forge] restarting session…\x1b[0m\r\n');
     connect();
   };
 
-  // --- operator actions (called by the bar buttons) ------------------
+  // --- operator actions (bar buttons) --------------------------------
   function forgeRebuild(btn) {
     if (!window.confirm('Rebuild and restart the server?\n\nThe restart only runs if the build succeeds, and only if a restart command is configured.')) return;
     if (term) term.write('\r\n\x1b[36m[forge] building…\x1b[0m\r\n');
@@ -119,36 +145,62 @@ const forgeHeadHTML = `
       .then(function () { if (btn) btn.disabled = false; });
   }
 
+  function sizeTerm() {
+    if (!host) return;
+    var top = host.getBoundingClientRect().top;
+    var h = Math.max(240, window.innerHeight - top - 18);
+    host.style.height = h + 'px';
+    try { fit.fit(); } catch (_) {}
+  }
+
   function mount() {
     if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') {
       return setTimeout(mount, 100); // CDN still loading
     }
-    var anchor = document.querySelector('.ui-section');
-    var container = anchor ? anchor.parentElement : document.body;
+    // The single ui.Section is the settings form; fold it into a drawer.
+    var settings = document.querySelector('.ui-section');
+    var container = settings ? settings.parentElement : document.body;
 
     var wrap = document.createElement('div');
     wrap.id = 'forge-term-wrap';
 
+    // --- bar ---
     var bar = document.createElement('div');
     bar.id = 'forge-term-bar';
     var dot = document.createElement('span'); dot.className = 'dot';
     var lbl = document.createElement('span'); lbl.className = 'lbl'; lbl.textContent = 'connecting…';
-    var right = document.createElement('span');
-    right.style.cssText = 'margin-left:auto;display:flex;gap:8px;align-items:center';
-    var rebuildBtn = document.createElement('button');
-    rebuildBtn.className = 'forge-btn danger'; rebuildBtn.textContent = 'Rebuild + Restart';
-    rebuildBtn.onclick = function () { forgeRebuild(rebuildBtn); };
+    statusEl = document.createElement('span'); statusEl.className = 'status';
+    var spacer = document.createElement('span'); spacer.className = 'spacer';
+    var gearBtn = document.createElement('button');
+    gearBtn.className = 'forge-btn forge-gear'; gearBtn.title = 'Settings'; gearBtn.textContent = '⚙';
     var newBtn = document.createElement('button');
     newBtn.className = 'forge-btn'; newBtn.textContent = 'New session';
     newBtn.onclick = function () { forgeNewSession(newBtn); };
-    right.appendChild(rebuildBtn); right.appendChild(newBtn);
-    bar.appendChild(dot); bar.appendChild(lbl); bar.appendChild(right);
+    var rebuildBtn = document.createElement('button');
+    rebuildBtn.className = 'forge-btn danger'; rebuildBtn.textContent = 'Rebuild + Restart';
+    rebuildBtn.onclick = function () { forgeRebuild(rebuildBtn); };
+    bar.appendChild(dot); bar.appendChild(lbl); bar.appendChild(statusEl);
+    bar.appendChild(spacer);
+    bar.appendChild(gearBtn); bar.appendChild(newBtn); bar.appendChild(rebuildBtn);
 
-    var host = document.createElement('div');
+    // --- settings drawer (holds the reparented form) ---
+    var drawer = document.createElement('div');
+    drawer.id = 'forge-settings-drawer';
+    gearBtn.onclick = function () {
+      drawer.classList.toggle('open');
+      sizeTerm();
+    };
+
+    host = document.createElement('div');
     host.id = 'forge-term';
+
     wrap.appendChild(bar);
+    wrap.appendChild(drawer);
     wrap.appendChild(host);
     container.appendChild(wrap);
+
+    // Move the settings form into the drawer (keeps its save wiring intact).
+    if (settings) { drawer.appendChild(settings); }
 
     term = new Terminal({
       theme: { background: '#0d1117', foreground: '#e6edf3', cursor: '#58a6ff', selectionBackground: '#264f78' },
@@ -160,10 +212,12 @@ const forgeHeadHTML = `
     fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    try { fit.fit(); } catch (_) {}
     window.__forgeTerm = term;
 
     new ResizeObserver(function () { try { fit.fit(); } catch (_) {} }).observe(host);
+    window.addEventListener('resize', sizeTerm);
+    sizeTerm();
+
     term.onResize(function (sz) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'resize', cols: sz.cols, rows: sz.rows }));
@@ -174,6 +228,8 @@ const forgeHeadHTML = `
     });
 
     connect();
+    refreshStatus();
+    setInterval(refreshStatus, 5000);
     term.focus();
   }
 

@@ -60,7 +60,11 @@ func (c ForgeConfig) defaults() ForgeConfig {
 		c.ClaudeCmd = "claude"
 	}
 	if strings.TrimSpace(c.RebuildCmd) == "" {
-		c.RebuildCmd = "go build ./..."
+		// `go install .` (not `go build ./...`): in module mode it both
+		// compiles AND installs the server binary to GOBIN, so the restart
+		// command's copy moves a freshly-built binary. `go install gohort`
+		// fails in module mode — the bare path isn't a valid package.
+		c.RebuildCmd = "go install ."
 	}
 	if strings.TrimSpace(c.TmuxSession) == "" {
 		c.TmuxSession = "forge"
@@ -172,44 +176,29 @@ func (T *Forge) handlePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := T.loadConfig()
+	// The page is terminal-first: the only ui.Section is the settings form,
+	// which web_assets.go's script folds into a drawer behind the ⚙ button in
+	// the terminal bar. Live status (session + working dir) and the action
+	// buttons also live in that bar, so the visible page is mostly the
+	// terminal itself.
 	page := ui.Page{
 		Title:         "Forge",
 		ShowTitle:     true,
 		BackURL:       "/",
-		MaxWidth:      "1100px",
+		MaxWidth:      "100%",
 		ExtraHeadHTML: forgeHeadHTML,
 		Sections: []ui.Section{
 			{
-				Title:    "Session",
-				Subtitle: "claude-code runs in a detached tmux session in gohort's source tree. This terminal attaches to it and survives a restart.",
-				// Read-only status. The action buttons (Rebuild + Restart,
-				// New session) live in the terminal bar — see web_assets.go —
-				// because they stream output into the xterm and DisplayPanel
-				// toolbar actions are server-fetch only (no client actions).
-				Body: ui.DisplayPanel{
-					Source:        "api/status",
-					AutoRefreshMS: 5000,
-					Pairs: []ui.DisplayPair{
-						{Label: "Session", Field: "session"},
-						{Label: "Working dir", Field: "work_dir", Mono: true},
-						{Label: "Launch", Field: "claude_cmd", Mono: true},
-						{Label: "Build gate", Field: "rebuild_cmd", Mono: true},
-						{Label: "Restart", Field: "restart_display", Mono: true},
-					},
-				},
-			},
-			{
-				Title:     "Configuration",
-				Subtitle:  "Environment-specific knobs. The restart command is empty (disabled) until you set it.",
-				Collapsed: true,
+				Title:    "Settings",
+				Subtitle: "Environment-specific knobs. The restart command is empty (disabled) until you set it.",
 				Body: ui.FormPanel{
 					Source:  "api/config",
 					PostURL: "api/config",
 					Fields: []ui.FormField{
 						{Field: "work_dir", Label: "Working directory", Type: "text", Placeholder: cfg.resolvedWorkDir(), Help: "Where claude runs and the build happens. Blank = server working directory."},
 						{Field: "claude_cmd", Label: "Launch command", Type: "text", Placeholder: "claude", Help: "Command started in the tmux session. If it exits, the session drops to a shell so it stays alive."},
-						{Field: "rebuild_cmd", Label: "Build gate command", Type: "text", Placeholder: "go build ./...", Help: "Must exit 0 before a restart is allowed. Never bypassed."},
-						{Field: "restart_cmd", Label: "Restart command", Type: "text", Placeholder: "(disabled)", Help: "How to bounce the server, e.g. sudo systemctl restart gohort. Blank disables restart."},
+						{Field: "rebuild_cmd", Label: "Build gate command", Type: "text", Placeholder: "go install .", Help: "Must exit 0 before a restart is allowed. `go install .` compiles + installs the binary to GOBIN. Never bypassed."},
+						{Field: "restart_cmd", Label: "Restart command", Type: "text", Placeholder: "(disabled)", Help: "How to bounce the server, e.g. cp /opt/bin/gohort /opt/gohort/ && sudo systemctl restart gohort. Blank disables restart."},
 						{Field: "tmux_session", Label: "tmux session name", Type: "text", Placeholder: "forge"},
 					},
 				},
