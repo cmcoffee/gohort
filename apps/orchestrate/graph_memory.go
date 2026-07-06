@@ -104,6 +104,24 @@ func (t *chatTurn) passageRelatedGraph(text string) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// factEntityNudge bridges Explicit → graph the cheapest way there is: a pointer,
+// no extra retrieval. Given a fact note and a pre-listed set of graph entities, it
+// returns a " (recall_about \"X\" for its relationships)" suffix for the first
+// known entity the note names — so a search_facts result quietly reveals when a
+// flat fact has structured relationships behind it. Returns "" when the note names
+// no known entity. Callers pass the entity slice so a multi-fact render lists the
+// namespace once, not per row. Deliberately NOT applied to the always-in-prompt
+// fact block: that stays lean (and core-side, with no graph coupling); the nudge
+// belongs on the pull-only search path.
+func factEntityNudge(entities []GraphEntity, note string) string {
+	for _, e := range entities {
+		if GraphEntityMentionedIn(e, note) {
+			return fmt.Sprintf(" (recall_about %q for its relationships)", e.Name)
+		}
+	}
+	return ""
+}
+
 // linkEntitiesToolDef lets the model record a RELATIONSHIP between two named
 // things (subject -[relation]-> object), auto-creating/merging the entities.
 func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {

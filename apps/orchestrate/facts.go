@@ -131,8 +131,11 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 				return fmt.Sprintf("(no stored facts match %q)", query), nil
 			}
 			var b strings.Builder
+			// Explicit → graph nudge: list the graph once, then flag any fact that
+			// names a known entity with a recall_about pointer. Empty graph → no cost.
+			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
 			for i, f := range facts {
-				fmt.Fprintf(&b, "%d. %s\n", i+1, f.Note)
+				fmt.Fprintf(&b, "%d. %s%s\n", i+1, f.Note, factEntityNudge(ents, f.Note))
 			}
 			return b.String(), nil
 		},
