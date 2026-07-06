@@ -978,7 +978,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no database", http.StatusInternalServerError)
 		return
 	}
-	appliance, ownerUser, ownerUDB, found := T.resolveAppliance(userID, udb, req.ApplianceID)
+	appliance, ownerUser, _, found := T.resolveAppliance(userID, udb, req.ApplianceID)
 	if !found {
 		http.Error(w, "appliance not found", http.StatusNotFound)
 		return
@@ -1019,28 +1019,10 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 		// The run id IS the session id; runSession appends the transcript on
 		// done. Each Map System run is its own rail entry (timestamped).
 		saveSession(udb, appliance.ID, chatSession{ID: sid, Name: "Refresh: " + appliance.Name})
-		if appliance.Type == "repo" {
-			// Repo Refresh pulls the latest code FIRST (re-clone + re-ingest),
-			// then maps the fresh tree — so one press picks up new commits and
-			// re-derives the code map. This folds the old "Refresh Repo" clone
-			// step into Refresh; only repos fetch new data.
-			go func() {
-				emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Pulling latest code for %s…", repoDisplayTarget(appliance))})
-				T.cloneAndIngestRepo(ctx, ownerUser, ownerUDB, appliance.ID)
-				if ctx.Err() != nil {
-					probeSessions.AppendEvent(sid, probeEvent{Kind: "error", Text: "Refresh cancelled."}, true)
-					probeSessions.ScheduleCleanup(sid)
-					return
-				}
-				var updated Appliance
-				if ownerUDB.Get(applianceTable, appliance.ID, &updated) {
-					emit(sid, probeEvent{Kind: "status", Text: fmt.Sprintf("Ingested %d files — mapping the codebase…", updated.RepoFiles)})
-				}
-				T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
-			}()
-		} else {
-			go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
-		}
+		// runSession re-clones + re-ingests repos internally when
+		// saveProfile=true (the repo analogue of SSH reconnaissance), so a
+		// Refresh already picks up new code without a separate pull here.
+		go T.runSession(ctx, sid, userID, ownerUser, appliance, ch, hist, udb, true)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
