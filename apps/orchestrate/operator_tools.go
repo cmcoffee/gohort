@@ -605,21 +605,14 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				rec, ok := GetRun(RootDB, owner, id)
 				if !ok {
-					// The id wasn't found — commonly because it was fabricated
-					// (e.g. an attempt to "fetch" a cortex background note, which
-					// is not a run). Run ids are opaque and only come from list_runs,
-					// so point the model at the real ones instead of a bare error it
-					// will just retry against.
-					recent := ListRuns(RootDB, owner, RunFilter{Limit: 5})
-					if len(recent) == 0 {
-						return "", fmt.Errorf("no run with that id. Run ids come from list_runs (opaque, not constructed); there are no runs recorded yet")
-					}
-					var b strings.Builder
-					b.WriteString("no run with that id. Run ids are opaque and come ONLY from list_runs — do not construct one. Recent run ids:\n")
-					for _, rr := range recent {
-						fmt.Fprintf(&b, "- %s (%s, %s)\n", rr.ID, rr.Agent, rr.Status)
-					}
-					return "", fmt.Errorf("%s", strings.TrimSpace(b.String()))
+					// The id wasn't found — usually fabricated (a run-id-shaped string
+					// the model invented, or an attempt to "fetch" a cortex note, which
+					// is not a run). Do NOT enumerate real run ids here: a fixated small
+					// model treats the list as a menu, calls one, gets a valid-but-
+					// irrelevant run back (a SUCCESS, so the loop-guard error counter
+					// never trips) and polls it dozens of times making zero progress
+					// (observed live). Return a hard, id-less directive instead.
+					return "", fmt.Errorf("no run with that id — run ids are opaque and come ONLY from list_runs, never constructed. If you were trying to answer the user, this is the WRONG tool: call the tool that does what they asked. If you genuinely need a run, call list_runs first, then inspect_run with an id it returned.")
 				}
 				return fmt.Sprintf("Run %s\nagent: %s\nstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\noutput:\n%s",
 					rec.ID, rec.Agent, rec.Status, rec.Trigger, rec.Brief, rec.Summary, rec.Raw), nil

@@ -685,6 +685,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// a success resets the counter so legitimate polling isn't penalized.
 	repeatFail := map[string]int{}
 	const repeatFailLimit = 3
+	// Identical-repeat guard. repeatFail above only counts ERRORS (it resets
+	// on success), so a model that re-issues the same call and keeps getting a
+	// valid-but-useless SAME result never trips it (observed live: inspect_run
+	// polled on one run id ~30x in a single turn, every call succeeding, zero
+	// progress, until the round cap). repeatSame counts consecutive BYTE-
+	// IDENTICAL results per signature regardless of error status; a changed
+	// result (genuine polling) resets it, so real polling is never penalized.
+	repeatSame := map[string]int{}
+	lastToolContent := map[string]string{}
+	const repeatSameLimit = 4
 
 	// Wrap-up grace runway. Rather than hard-stopping at the cap (which
 	// strips tools and makes some models emit their intended tool call as
@@ -1557,6 +1567,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				continue
 			}
 
+			// Identical no-progress guard: this exact call keeps returning the
+			// SAME result. Unlike the error guard above this fires on SUCCESS too,
+			// catching a valid-but-pointless polling loop the error counter misses.
+			if repeatSame[sig] >= repeatSameLimit {
+				Debug("[agent_loop] loop-guard: %s blocked (%d identical no-progress repeats this turn)", tc.Name, repeatSame[sig])
+				guardBlockedThisRound = true
+				results[i] = ToolResult{
+					ID:      tc.ID,
+					Content: fmt.Sprintf("STOP — you have already called '%s' with these exact arguments %d times this turn and it returned the SAME result every time. It is giving you no new information and making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, repeatSame[sig]),
+					IsError: true,
+				}
+				toolErrors++
+				continue
+			}
+
 			work = append(work, toolWork{index: i, tc: tc, handler: handler, sig: sig})
 		}
 
@@ -1735,6 +1760,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			} else {
 				delete(repeatFail, w.sig)
 			}
+			// Identical-repeat tracking (see repeatSame decl). Count byte-identical
+			// results per signature on success OR error; a changed result resets.
+			if prev, seen := lastToolContent[w.sig]; seen && prev == results[w.index].Content {
+				repeatSame[w.sig]++
+			} else {
+				repeatSame[w.sig] = 0
+			}
+			lastToolContent[w.sig] = results[w.index].Content
 		}
 
 		// BREADCRUMB: tool dispatch complete. If we see this line but
