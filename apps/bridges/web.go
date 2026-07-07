@@ -248,49 +248,50 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 
 	Log("[bridges] channel %q (svc=%s agent=%s dir=%s) handling inbound from %s",
 		ch.Name, svc, ch.AgentID, ChannelDirection(ch), handle)
+	in := ChannelInbound{
+		Owner:            ch.Owner,
+		AgentID:          ch.AgentID,
+		SessionID:        sessionID,
+		ChatID:           chatID,
+		Handle:           handle,
+		SenderName:       sender,
+		ConversationName: firstNonEmpty(req.ConversationName, sender),
+		Roster:           T.rosterNames(activeChatID),
+		Text:             text,
+		Images:           images,
+		Videos:           videos,
+		Audios:           audios,
+		StatusCallback: func(s string) {
+			if !replyHere {
+				return
+			}
+			if s = strings.TrimSpace(s); s != "" {
+				T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: s, Type: "status"})
+			}
+		},
+	}
 	go func() {
-		// Bound the whole dispatch so a hung LLM/tool call can't leak this
-		// goroutine (and its worker call) forever. Generous on purpose: agent
-		// turns with tool work legitimately run tens of seconds to minutes (a
-		// video download+transcribe took ~70s), so this only reaps a genuinely
-		// stuck run, not a normal-but-slow one.
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
 		// Wake-rule gatekeeper: master (admin) + per-channel rules decide whether
 		// this inbound wakes the agent. It was already recorded above for history;
 		// on a block we simply don't run or reply. Fails open when no rules are set
 		// or no evaluator is registered (see core.ChannelGatekeeperAllow). Runs in
 		// the goroutine so the connector's POST returns 202 without waiting on the
-		// gatekeeper's worker-LLM call.
-		if !ChannelGatekeeperAllow(ctx, ChannelInbound{
-			Owner: ch.Owner, AgentID: ch.AgentID, SessionID: sessionID,
-			ChatID: chatID, Handle: handle, SenderName: sender, Text: text, Images: images, Videos: videos, Audios: audios,
-		}) {
+		// gatekeeper's worker-LLM call. Short bound — this is one quick worker call.
+		gctx, gcancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		allowed := ChannelGatekeeperAllow(gctx, in)
+		gcancel()
+		if !allowed {
 			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
 			return
 		}
-		reply, err := RunChannelAgent(ctx, ChannelInbound{
-			Owner:            ch.Owner,
-			AgentID:          ch.AgentID,
-			SessionID:        sessionID,
-			ChatID:           chatID,
-			Handle:           handle,
-			SenderName:       sender,
-			ConversationName: firstNonEmpty(req.ConversationName, sender),
-			Roster:           T.rosterNames(activeChatID),
-			Text:             text,
-			Images:           images,
-			Videos:           videos,
-			Audios:           audios,
-			StatusCallback: func(s string) {
-				if !replyHere {
-					return
-				}
-				if s = strings.TrimSpace(s); s != "" {
-					T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: s, Type: "status"})
-				}
-			},
-		})
+		// Coalesce rapid same-session messages (a question, then an image posted
+		// right after) into one turn instead of racing separate turns on the same
+		// session. The winning caller returns the merged reply; a message that got
+		// folded into another's batch returns an empty reply and sends nothing.
+		// The dispatch context (with its generous timeout) is owned inside the
+		// coalescer so a superseding message can cancel an in-flight turn. See
+		// core.CoalesceChannelDispatch.
+		reply, err := CoalesceChannelDispatch(sessionID, in, RunChannelAgent)
 		if err != nil {
 			Log("[bridges] channel agent run failed (chat=%s agent=%s): %v", chatID, ch.AgentID, err)
 			return

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -367,15 +368,66 @@ func formatArgs(args map[string]any) string {
 	if len(args) == 0 {
 		return ""
 	}
+	// Sort keys so the output is DETERMINISTIC. Go randomizes map
+	// iteration order, and formatArgs feeds the loop-guard signature
+	// (sig := name + formatArgs(args); repeatFail keys on it). With an
+	// unsorted order the SAME logical call hashes to different signatures
+	// depending on iteration order, so identical failing calls split
+	// across those variants and never reach repeatFailLimit — the guard
+	// silently never fires for any tool called with 2+ args. Sorting also
+	// stabilizes the confirm-dialog display, which shares this helper.
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 	var lines []string
-	for k, v := range args {
-		display := stringify(v)
+	for _, k := range keys {
+		display := stringify(args[k])
 		if len(display) > 200 {
 			display = display[:200] + "..."
 		}
 		lines = append(lines, fmt.Sprintf("%s: %s", k, display))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// repeatFailHistoryWindow bounds how far back seedRepeatFailFromHistory
+// replays: only the recent tail counts, so an ancient failure doesn't
+// ban a call forever (a fixation worth stopping shows up within a handful
+// of recent turns; a success anywhere in the window clears it).
+const repeatFailHistoryWindow = 40
+
+// seedRepeatFailFromHistory pre-arms the loop-guard from the conversation
+// tail so a fixation spanning separate turns is caught. It walks the
+// recent messages in order, mapping each tool call's ID to its signature,
+// then applies each tool result under the SAME rule the live loop uses:
+// bump the signature on an errored result, clear it on a successful one.
+// The result is repeatFail reflecting the current per-signature failure
+// streak as of the end of history — so a call that already failed
+// identically repeatFailLimit times is blocked on its next attempt.
+func seedRepeatFailFromHistory(messages []Message, repeatFail map[string]int) {
+	start := 0
+	if len(messages) > repeatFailHistoryWindow {
+		start = len(messages) - repeatFailHistoryWindow
+	}
+	idToSig := map[string]string{}
+	for _, m := range messages[start:] {
+		for _, tc := range m.ToolCalls {
+			idToSig[tc.ID] = tc.Name + "\x00" + formatArgs(tc.Args)
+		}
+		for _, tr := range m.ToolResults {
+			sig, ok := idToSig[tr.ID]
+			if !ok {
+				continue
+			}
+			if tr.IsError {
+				repeatFail[sig]++
+			} else {
+				delete(repeatFail, sig)
+			}
+		}
+	}
 }
 
 // Run is a convenience method that resolves tools from SetTools(), uses the
@@ -561,7 +613,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// this doesn't push the model away from delegating real multi-step
 		// work. Written without em-dashes so it doesn't model the tic.
 		systemPrompt += "\n\n[Capability-first: when a tool or an agent can do the job, or get fresher information than you hold (current events, news, prices, status, anything that may have changed since your training, or anything the user expects to be up to date), use it instead of answering from training or memory. Match the capability to the job: a direct tool when one lookup or action answers it; an agent when the job needs multiple steps, decomposition, or specialized work a single tool cannot cover. Do not substitute a quick tool for an agent the job needs, nor spin up an agent for what one tool answers. Treat prior knowledge as a fallback for gaps no tool or agent can fill, never as a substitute for a capability that exists for the job. If you fall back to prior knowledge, say so and offer to verify. Questions about your OWN tools or capabilities ('do you have an X tool', 'what can you do') follow the same rule: to say what tools you have or can use, read your live catalog and any 'custom tools (load before use)' section in this prompt, never recite your tool inventory from memory, and never claim you already built or 'previously set up' a tool without checking the catalog first.]"
-		systemPrompt += "\n\n[Grounding: state a precise specific — a number, a name, a citation or reference (statute, case, version, ID), a date, a figure, a dosage, a direct quote — ONLY when it appears in a tool result or in material the user gave you THIS turn. Never from memory, even when you're confident: a plausible-looking specific you can't point to is worse than not having one. This holds in CASUAL conversation as much as in formal answers — you may state the general shape of the answer, but do NOT attach a specific identifier you can't source right now; if you can't verify the exact one, say you're not certain rather than guessing. State a date or time plainly and do NOT dress it with a holiday, event, season, or \"long weekend\" association unless a tool or the user gave you that this turn: a holiday whose date follows a rule (\"the last Monday in May\") is exactly the kind of specific you must not assert from memory, and a warm reply never needs an invented one (a plain \"it's a regular Sunday, what's up?\" is friendlier than a confident wrong holiday). If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing — never quietly supply it from memory. This applies to MEDIA you were asked to look at: if you could not open, download, or view a linked image, video, or reel (the fetch failed, was blocked, or returned no frames), do NOT describe what it shows or claim you made a thumbnail of it. Say plainly that you couldn't access it, never infer its content from the URL, the caption, the sender, or nearby messages, and never reuse a description from one media item for a different one. And if the user CORRECTS a specific you gave, do NOT swap in another from memory or invent a rationale for the mistake — admit you're not certain and offer to look it up. A confident wrong specific, then a confident second wrong one, is the failure to avoid.]"
+		systemPrompt += "\n\n[Grounding: state a precise specific — a number, a name, a citation or reference (statute, case, version, ID), a date, a figure, a dosage, a direct quote — ONLY when it appears in a tool result or in material the user gave you THIS turn. Never from memory, even when you're confident: a plausible-looking specific you can't point to is worse than not having one. This holds in CASUAL conversation as much as in formal answers — you may state the general shape of the answer, but do NOT attach a specific identifier you can't source right now; if you can't verify the exact one, say you're not certain rather than guessing. The current local date and time ARE given to you this turn in the [Current date & time: …] stamp on the latest user message: read them off that stamp and state them plainly (the stamp is a this-turn source, not a memory guess, so no tool call is needed to tell the local time or date), but do NOT dress them with a holiday, event, season, or \"long weekend\" association unless a tool or the user gave you that this turn: a holiday whose date follows a rule (\"the last Monday in May\") is exactly the kind of specific you must not assert from memory, and a warm reply never needs an invented one (a plain \"it's a regular Sunday, what's up?\" is friendlier than a confident wrong holiday). If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing — never quietly supply it from memory. This applies to MEDIA you were asked to look at: if you could not open, download, or view a linked image, video, or reel (the fetch failed, was blocked, or returned no frames), do NOT describe what it shows or claim you made a thumbnail of it. Say plainly that you couldn't access it, never infer its content from the URL, the caption, the sender, or nearby messages, and never reuse a description from one media item for a different one. If a PAST turn's transcript shows an image was attached (a \"[N image(s) attached ...]\" note) but you can no longer see the pixels this turn, rely ONLY on the recorded depiction in that note: do not re-describe the image from scratch, and never invent its subject, sender, or type from the surrounding conversation. And if the user CORRECTS a specific you gave, do NOT swap in another from memory or invent a rationale for the mistake — admit you're not certain and offer to look it up. A confident wrong specific, then a confident second wrong one, is the failure to avoid.]"
 		// Action grounding — the sibling of Grounding aimed at ACTIONS rather than
 		// facts. The failure mode (observed live: an agent in a group chat said "I
 		// sent a meme" with zero tool calls): the model narrates a completed action
@@ -695,6 +747,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	repeatSame := map[string]int{}
 	lastToolContent := map[string]string{}
 	const repeatSameLimit = 4
+	// Seed the guard from prior-turn history so a fixation that spans
+	// SEPARATE user turns is caught. repeatFail is otherwise turn-local, so
+	// a model that re-issues the SAME wrong+erroring call every turn resets
+	// each turn and never trips (observed live: an agent called an unrelated
+	// tool with identical args, erroring, across five user turns). The
+	// incoming `messages` already carry prior tool calls + their error
+	// results (toLLMMessages reconstructs them across turns), so replaying
+	// that record through the SAME increment-on-error / reset-on-success
+	// rule pre-arms the guard.
+	seedRepeatFailFromHistory(messages, repeatFail)
 
 	// Wrap-up grace runway. Rather than hard-stopping at the cap (which
 	// strips tools and makes some models emit their intended tool call as

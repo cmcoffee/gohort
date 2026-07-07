@@ -711,6 +711,142 @@ type AgentSyncResult struct {
 	HitRoundCap bool
 }
 
+// buildInboundMediaManifest individuates the media that arrived on THIS turn,
+// giving the model a stable, referenceable handle per item (media#1, media#2, …)
+// with sender attribution instead of an anonymous count. It is the media analogue
+// of the source-provenance rule in the grounding block: a stable id per item lets
+// the model bind "the image Alice sent" to a specific object rather than guess
+// across indistinguishable items in a busy group thread, and the ids are the
+// handles the delivery tools resolve against, so the model never has to recall a
+// filename from memory. RUN-ONLY (the caller appends it to the live message, never
+// the persisted transcript): it describes bytes that ride only on this turn.
+// Returns "" when the turn carried no media. Written without em-dashes so it does
+// not model that tic to the worker (house style).
+func buildInboundMediaManifest(sender string, imageCount int) string {
+	if imageCount <= 0 {
+		return ""
+	}
+	who := strings.TrimSpace(sender)
+	var b strings.Builder
+	b.WriteString("\n[media on this turn. Each item below is shown to you directly as multimodal content you can see now; do NOT call any tool to fetch, download, or find it. Refer to a specific item by its id.]")
+	for i := 1; i <= imageCount; i++ {
+		fmt.Fprintf(&b, "\n  media#%d: image", i)
+		if who != "" {
+			b.WriteString(" from " + who)
+		}
+	}
+	b.WriteString("\n  To send one of these back out, reference it by its id: put [ATTACH: media#N] in your reply, or pass attachments:[\"media#N\"] to a messaging tool. Do NOT retype or invent a filename for it; the id is its only handle.")
+	return b.String()
+}
+
+// inboundCaptionPrompt asks the vision LLM for a single plain-fact depiction of
+// an inbound image. Kept deliberately terse and anti-embellishment: the model
+// tends to editorialize ("a funny meme about...") which is exactly the
+// confabulation we are trying to prevent from entering the durable record.
+const inboundCaptionPrompt = "Describe what is actually shown in this image in one plain factual sentence: the main subject and scene, plus any legible on-image text. Do not guess intent or humor, do not call it a meme unless it obviously is one, and add no commentary."
+
+// captionInboundImages produces a brief factual depiction of each inbound image
+// so the PERSISTED transcript keeps a durable, grounded record of what arrived.
+// The pixels ride only on the live turn (run.Images) and the individuated
+// manifest is run-only; both vanish next turn. Without a persisted depiction a
+// later reference to the image ("is this the worst of the Internet today?")
+// reaches a model with an empty slot where the content should be, and it
+// confabulates the subject/sender/type. Captioning once on arrival and
+// persisting the result is the durable half of the media manifest, the same way
+// SurfaceContext is the run-only half.
+//
+// Generated ONCE, on the arrival turn, and persisted by the caller — never
+// recomputed on replay (that would vary the stored history and break prompt-
+// cache determinism). Fails soft: an errored or empty item leaves that slot
+// blank and the record degrades to the bare count for it. Written without
+// em-dashes (house style; don't model the tic to the worker).
+func captionInboundImages(ctx context.Context, llm LLM, images [][]byte) []string {
+	if llm == nil || len(images) == 0 {
+		return nil
+	}
+	out := make([]string, len(images))
+	for i, img := range images {
+		if len(img) == 0 {
+			continue
+		}
+		resp, err := llm.Chat(ctx,
+			[]Message{{Role: "user", Content: inboundCaptionPrompt, Images: [][]byte{img}}},
+			WithCaller("orchestrate/inbound_caption"),
+			WithMaxRetries(0),
+			WithThink(false),
+		)
+		if err != nil || resp == nil {
+			continue
+		}
+		out[i] = strings.TrimSpace(resp.Content)
+	}
+	return out
+}
+
+// buildInboundImageRecord is the PERSISTED, past-tense record of images that
+// arrived on a turn. Unlike buildInboundMediaManifest (run-only, present-tense,
+// describing live pixels) this is written to the transcript and replayed on
+// every later turn, so it must NOT claim the images are still visible. It
+// records how many arrived, who sent them, and — the durable grounding fix — a
+// one-line depiction per image so a later reference has a real anchor instead of
+// an empty slot the model fills by guessing. captions may be short/empty (the
+// caption call failed or an item was blank); a missing entry degrades to a bare
+// note for that item, and if NONE captioned it falls back to the prior bare
+// count form. Deliberately does NOT use the run-scoped media#N ids: those are
+// re-minted per turn and would dangle here on replay. Em-dash-free (house
+// style). Returns "" for an empty turn.
+func buildInboundImageRecord(sender string, count int, captions []string) string {
+	if count <= 0 {
+		return ""
+	}
+	who := strings.TrimSpace(sender)
+	captionAt := func(i int) string {
+		if i < len(captions) {
+			return strings.TrimSpace(captions[i])
+		}
+		return ""
+	}
+	hasCaption := false
+	for i := 0; i < count; i++ {
+		if captionAt(i) != "" {
+			hasCaption = true
+			break
+		}
+	}
+	if !hasCaption {
+		if who != "" {
+			return fmt.Sprintf("\n[%d image(s) attached from %s]", count, who)
+		}
+		return fmt.Sprintf("\n[%d image(s) attached]", count)
+	}
+	var b strings.Builder
+	if count == 1 {
+		b.WriteString("\n[1 image attached")
+		if who != "" {
+			b.WriteString(" from " + who)
+		}
+		if c := captionAt(0); c != "" {
+			b.WriteString(". Depicts: " + c)
+		}
+		b.WriteString("]")
+		return b.String()
+	}
+	b.WriteString(fmt.Sprintf("\n[%d images attached", count))
+	if who != "" {
+		b.WriteString(" from " + who)
+	}
+	b.WriteString(".")
+	for i := 0; i < count; i++ {
+		if c := captionAt(i); c != "" {
+			fmt.Fprintf(&b, " image %d depicts: %s;", i+1, c)
+		} else {
+			fmt.Fprintf(&b, " image %d: (no description);", i+1)
+		}
+	}
+	b.WriteString("]")
+	return b.String()
+}
+
 // RunAgentSyncContinuing is the text-only wrapper kept for existing callers
 // (goal conversations, dispatch_agent, event-monitor wakes).
 func (T *OrchestrateApp) RunAgentSyncContinuing(ctx context.Context, agentOwner, runtimeUser, agentKey, subSessionID, injectionQueueID, message string, freshSession bool) (string, error) {
@@ -918,12 +1054,44 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if !run.Interactive && isBuilderAgent(target.ID) {
 		deliveredMessage = markAsDelegated(message)
 	}
-	// Inbound images (channel path): tag the text so the model treats the
-	// attached photo as already-in-context multimodal content rather than
-	// inferring it should fetch/download something, then carry the decoded
-	// bytes on the user message below. Mirrors phantom's own engine.
+	// Inbound images (channel path): the decoded bytes ride on the user message
+	// below as multimodal content the model sees THIS turn. Two representations,
+	// deliberately different (mirrors the SurfaceContext split just below):
+	//   - PERSISTED (deliveredMessage): a compact, PAST-TENSE record so a replayed
+	//     transcript states plainly that images WERE sent on that turn, WITHOUT the
+	//     present-tense "already provided inline, you can see them, don't fetch"
+	//     language. That language is a lie on replay: the bytes are attached only
+	//     to the live turn (run.Images below) and are never re-sent, so persisting
+	//     the present-tense banner made the model describe images it could no
+	//     longer see and confabulate media across turns.
+	//   - RUN-ONLY (llmMessage, further below): the individuated manifest with a
+	//     stable id + sender per item, appended alongside SurfaceContext so it is
+	//     NOT persisted.
 	if n := len(run.Images); n > 0 {
-		deliveredMessage += fmt.Sprintf("\n[CURRENT ATTACHMENT: %d image(s) — already provided inline as multimodal content you can see directly; do NOT call any tool to fetch, download, or find them]", n)
+		// Caption each inbound image ONCE, here on the arrival turn (worker is
+		// vision-capable), and persist the depiction into deliveredMessage so a
+		// later reference to the image has a durable anchor instead of an empty
+		// slot the model confabulates into (the Wiwee "meme from Henry about the
+		// Alamo" failure). Fails soft — a blank caption degrades to the bare count.
+		captions := captionInboundImages(ctx, subSess.LLM, run.Images)
+		deliveredMessage += buildInboundImageRecord(run.MessageSender, n, captions)
+		captioned := 0
+		for _, c := range captions {
+			if strings.TrimSpace(c) != "" {
+				captioned++
+			}
+		}
+		// Log arrival + caption yield. Absence of this line for a turn that was
+		// supposed to carry a photo is itself the signal that the bytes never
+		// arrived (e.g. an unfetched link), which is a separate delivery issue.
+		Log("[orchestrate.inbound_media] runtime=%s target=%s sub=%s images=%d captioned=%d",
+			runtimeUser, target.ID, subSessionID, n, captioned)
+		// Register each inbound image in the session's addressable media registry
+		// (media#1, media#2, …) so the model can post a SPECIFIC one back by id.
+		// Order matches the manifest enumeration appended to llmMessage below.
+		for _, img := range run.Images {
+			subSess.RegisterInboundMedia("image", img, run.MessageSender)
+		}
 	}
 	// Bound the run-view with the same rolling-summary compaction the Cortex
 	// thread uses, so a long-running channel / dispatch session doesn't load
@@ -943,6 +1111,17 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	llmMessage := deliveredMessage
 	if sc := strings.TrimSpace(run.SurfaceContext); sc != "" {
 		llmMessage += "\n" + sc
+	}
+	// Individuated media manifest — RUN-ONLY, same non-persisted treatment as
+	// SurfaceContext. Replaces the anonymous "N image(s)" count with a stable
+	// handle per inbound item (media#1, media#2, …) plus sender attribution, so
+	// the model can bind "the image Alice sent" to a specific object instead of
+	// guessing across indistinguishable items in a busy group thread. These are
+	// the ids the delivery tools resolve against (post-by-id), so the model never
+	// recalls a filename from memory. Not persisted: it describes bytes that are
+	// present only on this turn (see the deliveredMessage split above).
+	if m := buildInboundMediaManifest(run.MessageSender, len(run.Images)); m != "" {
+		llmMessage += m
 	}
 	// Attribute the live turn to its sender too (same rendering as history, so
 	// the prompt prefix stays cache-stable when this message replays next turn).
