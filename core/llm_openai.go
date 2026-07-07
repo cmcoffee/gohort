@@ -303,21 +303,37 @@ func (c *openAIClient) shouldApplyNoThinkDirective(cfg ChatConfig) bool {
 // --reasoning-budget flag must be UNSET (default -1) for the
 // per-request value to apply. See discussion #21445.
 func (c *openAIClient) llamacppChatTemplateKwargs(cfg ChatConfig) map[string]any {
-	if cfg.Think == nil {
-		return nil // let the server's launch default apply
-	}
-	// On no-think calls, send enable_thinking=false only if the operator
-	// has NoThinkUseKwarg enabled (default true — proven reliable on
-	// Qwen 3 unified + Gemma 4). Operators on models where the kwarg
-	// causes scaffold breakage can disable it and rely on the budget
-	// cap + optional /no_think prepends instead.
-	if !*cfg.Think {
-		if c.noThinkUseKwarg {
-			return map[string]any{"enable_thinking": false}
+	kw := map[string]any{}
+	// enable_thinking: cfg.Think nil => omit the key (the server's launch
+	// default applies). On no-think calls send enable_thinking=false only if
+	// NoThinkUseKwarg is enabled (default true — proven reliable on Qwen 3
+	// unified + Gemma 4); operators on models where the kwarg breaks the
+	// scaffold disable it and rely on the budget cap + optional /no_think
+	// prepends instead.
+	if cfg.Think != nil {
+		if *cfg.Think {
+			kw["enable_thinking"] = true
+		} else if c.noThinkUseKwarg {
+			kw["enable_thinking"] = false
 		}
+	}
+	// lazy_tool_names: tools flagged RenderLate are rendered at the BOTTOM of
+	// the prompt by the split chat template, so loading one mid-session doesn't
+	// invalidate the top-of-prompt KV cache. Harmless on the stock template,
+	// which ignores the kwarg and renders every tool at the top as usual.
+	var late []string
+	for i := range cfg.Tools {
+		if cfg.Tools[i].RenderLate {
+			late = append(late, cfg.Tools[i].Name)
+		}
+	}
+	if len(late) > 0 {
+		kw["lazy_tool_names"] = late
+	}
+	if len(kw) == 0 {
 		return nil
 	}
-	return map[string]any{"enable_thinking": true}
+	return kw
 }
 
 // Ping implements the Pinger interface. For Ollama it issues a bounded

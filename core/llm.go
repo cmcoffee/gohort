@@ -142,6 +142,15 @@ type Tool struct {
 	// admin/LLM-authored temp-tools that need usage rules baked in.
 	// Empty = no fragment appended (zero overhead).
 	Prompt string `json:"-"`
+
+	// RenderLate marks a lazy tool to be rendered at the BOTTOM of the
+	// prompt (via chat_template_kwargs.lazy_tool_names + the split chat
+	// template) instead of the top-of-prompt tools block. Used for lazy
+	// custom tools loaded mid-session: keeps them callable without
+	// invalidating the top-of-prompt KV cache (the load_tool cold-prefill).
+	// Not serialized — it drives the kwargs name list, and llama.cpp strips
+	// unknown fields off the tool object anyway.
+	RenderLate bool `json:"-"`
 }
 
 // RenderToolPromptFragments concatenates the Prompt fields of every

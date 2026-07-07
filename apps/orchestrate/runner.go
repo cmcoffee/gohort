@@ -1575,6 +1575,15 @@ func (t *chatTurn) dynamicNewTempTools(sess *ToolSession) func() []AgentToolDef 
 			if t.lazyCustomToolNames[td.Tool.Name] && !t.loadedCustomTools[td.Tool.Name] {
 				continue
 			}
+			// A lazy custom tool that HAS been loaded this session: surface it,
+			// but mark it render-late so the split chat template puts its schema
+			// at the BOTTOM of the prompt (via chat_template_kwargs.lazy_tool_names)
+			// instead of the top-of-prompt tools block. That keeps loading a tool
+			// from invalidating the cached prefix (the ~13s load_tool cold-prefill).
+			// Zero-arg static temp tools and the agent's own kit stay at the top.
+			if t.lazyCustomToolNames[td.Tool.Name] {
+				td.Tool.RenderLate = true
+			}
 			out = append(out, td)
 		}
 		// Source-hook dispatcher: ONE query_source tool over all exposed
