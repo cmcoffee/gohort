@@ -369,6 +369,14 @@ type chatTurn struct {
 	// kit — first-classed in the lazy split; pool-shared tools stay lazy.
 	agentOwnTools map[string]bool
 
+	// dispatchableFleet result, memoized for the turn. Computing it lists
+	// all agents from the DB; the three consumers (agents prompt block,
+	// trigger hints, active-thread block) each called it independently, so
+	// it re-listed + re-logged 3× per turn. fleetDone gates the memo (a nil
+	// catalog is a valid result, so use a flag rather than a nil check).
+	fleetCatalog []AgentRecord
+	fleetDone    bool
+
 	// activeWorkspaceID carries the session's active managed-workspace ID
 	// ACROSS the per-step / inline sessions of a single turn. Each call to
 	// newToolSession() mints a fresh ToolSession whose WorkspaceDir defaults
@@ -688,7 +696,23 @@ func (t *chatTurn) fleetView() (Database, string) {
 // no agents tool) or a restricted catalog without the `agents` tool, so
 // neither the block nor the consult tools tell an agent to do something
 // its catalog physically prevents.
+// dispatchableFleet returns this turn's dispatch catalog, computed once and
+// memoized on the chatTurn. Its three consumers (available-agents block,
+// trigger hints, active-dispatch-threads block) share the result instead of
+// each re-listing agents from the DB and re-logging the catalog.
 func (t *chatTurn) dispatchableFleet() []AgentRecord {
+	if t == nil {
+		return nil
+	}
+	if t.fleetDone {
+		return t.fleetCatalog
+	}
+	t.fleetCatalog = t.computeDispatchableFleet()
+	t.fleetDone = true
+	return t.fleetCatalog
+}
+
+func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	if t == nil {
 		return nil
 	}
