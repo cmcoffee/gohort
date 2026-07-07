@@ -677,7 +677,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 	// Repeated-failure loop-guard. Small models fixate: they re-issue the
 	// SAME tool call with the SAME args, get the SAME error, and never adapt
-	// (e.g. polling get_run with an approval id that has no run — 25× until the
+	// (e.g. polling inspect_run with an approval id that has no run — 25× until the
 	// round budget burns). repeatFail counts consecutive errors per call
 	// signature (tool name + args); once a signature crosses repeatFailLimit we
 	// stop executing it and feed back a hard STOP directive instead. Signature-

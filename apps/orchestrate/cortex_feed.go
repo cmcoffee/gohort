@@ -170,7 +170,7 @@ func cortexContextBlock(db Database, agentID string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors, shown complete as notes. These are NOT run records and have no run id: do not try to fetch one with get_run (you would have to invent an id, which fails). Use only if relevant to what the user asks; do not recite it. To inspect an actual scheduled run, call list_runs first for a real id.\n\n" + strings.Join(lines, "\n") + "\n"
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors, shown complete as notes. These are NOT run records and have no run id: do not try to fetch one with inspect_run (you would have to invent an id, which fails). Use only if relevant to what the user asks; do not recite it. To inspect an actual scheduled run, call list_runs first for a real id.\n\n" + strings.Join(lines, "\n") + "\n"
 }
 
 // truncateObs shortens an observation snippet to n runes, appending an ellipsis.

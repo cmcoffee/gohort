@@ -556,7 +556,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "list_runs",
-				Description: "List recent background/fleet runs (delegated tasks and standing-agent executions), status-level. These are NOT your own chat turns. Each line shows the run id for use with get_run.",
+				Description: "List recent background/fleet runs (delegated tasks and standing-agent executions), status-level. These are NOT your own chat turns. Each line shows the run id for use with inspect_run.",
 				Parameters: map[string]ToolParam{
 					"agent": {Type: "string", Description: "Optional: restrict to one standing agent's name."},
 					"limit": {Type: "number", Description: "Optional: max rows (default 15, max 50)."},
@@ -585,13 +585,25 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		},
 		{
 			Tool: Tool{
-				Name:        "get_run",
+				Name:        "inspect_run",
 				Description: "Get the full detail and output of a DELEGATED or standing-agent RUN, identified by a run id from list_runs. A \"run\" is a background or fleet execution. This is NOT how you review your own chat replies, and NOT a way to check what you just said or sent in this conversation. Only call it with an id that came from list_runs; never construct one.",
 				Parameters:  map[string]ToolParam{"id": {Type: "string", Description: "The run id."}},
 				Required:    []string{"id"},
 			},
 			Handler: func(args map[string]any) (string, error) {
-				rec, ok := GetRun(RootDB, owner, strings.TrimSpace(oArgStr(args, "id")))
+				id := strings.TrimSpace(oArgStr(args, "id"))
+				// Binding-slip guard. Small models sometimes reason correctly
+				// ("call get_joke directly") but emit THIS tool with the wanted
+				// tool's NAME shoved into id (observed live: get_run(id="get_joke")
+				// five rounds running). Renaming get_run->inspect_run broke the
+				// get_* adjacency that drove it, but does not eliminate the slip.
+				// If id names a loaded temp tool it is NOT a run id — redirect the
+				// model to call that tool directly instead of erroring on a run
+				// lookup it will just retry identically until the guard trips.
+				if id != "" && sess.HasTempTool(id) {
+					return "", fmt.Errorf("%q is not a run id — it is a tool you already have loaded and callable. Call %s directly with its own arguments now. inspect_run is ONLY for opaque run ids from list_runs, never a tool name.", id, id)
+				}
+				rec, ok := GetRun(RootDB, owner, id)
 				if !ok {
 					// The id wasn't found — commonly because it was fabricated
 					// (e.g. an attempt to "fetch" a cortex background note, which
