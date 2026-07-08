@@ -5,7 +5,8 @@
 // in context.
 //
 // Implementation: shell out to commonly-installed extractors
-// (poppler-utils' pdftotext for PDFs, pandoc for DOCX/DOC). No CGo,
+// (poppler-utils' pdftotext for PDFs, pandoc for DOCX, antiword for
+// legacy binary DOC — pandoc cannot read the old .doc format). No CGo,
 // no large new dependency — the tradeoff is the deployment needs
 // these binaries on PATH. They're standard on most Linux servers and
 // available via brew/apt/dnf.
@@ -66,7 +67,9 @@ func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error
 	case mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || ext == ".docx":
 		return extractWithPandoc(ctx, doc.Data, "docx")
 	case mime == "application/msword" || ext == ".doc":
-		return extractWithPandoc(ctx, doc.Data, "doc")
+		// Legacy binary Word (.doc) — pandoc has NO reader for this
+		// format (only .docx), so it routes to antiword instead.
+		return extractWithAntiword(ctx, doc.Data)
 	case strings.HasPrefix(mime, "text/html") || ext == ".html" || ext == ".htm":
 		// HTML needs parsing — returning the raw bytes as "text"
 		// dumps markup (typically 5-10× the actual readable text)
@@ -448,6 +451,39 @@ func extractWithPandoc(ctx context.Context, data []byte, inputFmt string) (strin
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("pandoc failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
+// extractWithAntiword runs `antiword` against a legacy binary Word
+// (.doc) file, outputting plain text. antiword reads a file path (not
+// stdin reliably), so we drop the bytes to a temp file mirroring
+// extractWithPandoc. `-w 0` disables line wrapping so paragraphs come
+// through as unbroken lines — better for embedding/search than
+// column-wrapped output. pandoc cannot read this format, which is why
+// .doc gets its own extractor.
+func extractWithAntiword(ctx context.Context, data []byte) (string, error) {
+	if _, err := exec.LookPath("antiword"); err != nil {
+		return "", fmt.Errorf("antiword not installed (needed for legacy .doc files; convert to .docx or install antiword): %w", err)
+	}
+	ctx, cancel := context.WithTimeout(ctx, DocumentExtractTimeout())
+	defer cancel()
+	tmp, err := os.CreateTemp("", "gohort-doc-*.doc")
+	if err != nil {
+		return "", fmt.Errorf("temp file: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := io.Copy(tmp, bytes.NewReader(data)); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write temp: %w", err)
+	}
+	tmp.Close()
+	cmd := exec.CommandContext(ctx, "antiword", "-w", "0", tmp.Name())
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("antiword failed: %w (stderr: %s)", err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.String(), nil
 }

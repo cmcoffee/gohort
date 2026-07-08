@@ -54,6 +54,7 @@ var knownDependencies = []struct {
 	{name: "ffprobe", enables: "Inbound-video metadata (duration / resolution); ships with ffmpeg", apt: "ffmpeg", brew: "ffmpeg", versionArgs: []string{"-version"}},
 	{name: "pdftotext", enables: "Text extraction from PDF attachments", apt: "poppler-utils", brew: "poppler", versionArgs: []string{"-v"}},
 	{name: "pandoc", enables: "Text extraction from docx / odt / rtf attachments", apt: "pandoc", brew: "pandoc", versionArgs: []string{"--version"}},
+	{name: "antiword", enables: "Text extraction from legacy binary .doc attachments (pandoc only reads .docx)", apt: "antiword", brew: "antiword", versionArgs: []string{"-h"}},
 	{name: "git", enables: "Cloning repository appliances (servitor repo mode)", apt: "git", brew: "git", versionArgs: []string{"--version"}},
 	{name: "bwrap", enables: "Sandbox isolation for run_local and skill shell tools (without it, shell falls back to unsandboxed sh -c)", apt: "bubblewrap", versionArgs: []string{"--version"}},
 	{name: "python3", enables: "Python interpreter for sandboxed scripts", apt: "python3", brew: "python3", versionArgs: []string{"--version"}},
