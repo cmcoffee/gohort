@@ -54,17 +54,24 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 			if note == "" {
 				return "", errors.New("note is required")
 			}
-			// Pass the worker chat so a changed fact ("moved to Austin")
-			// supersedes the stale one instead of being dropped as a near-dup
-			// or coexisting as a contradiction.
-			f, isNew, superseded := StoreMemoryFact(t.udb, factsNamespace(t.agent.ID), note, t.app.WorkerChat)
-			if !isNew {
-				return fmt.Sprintf("Already remembered (deduped): %q. Skipping.", f.Note), nil
+			// Pass the agent's memory mode + worker chat so: (a) a changed fact
+			// ("moved to Austin") supersedes the stale one instead of coexisting as
+			// a contradiction, and (b) in chatbot mode the relevance gate rejects
+			// ephemeral chatter before it bloats the always-in-prompt block.
+			res := StoreMemoryFactP(t.udb, factsNamespace(t.agent.ID), note, FactWritePolicy{
+				Mode: t.agent.MemoryMode,
+				Chat: t.app.WorkerChat,
+			})
+			switch res.Reason {
+			case FactDuplicate:
+				return fmt.Sprintf("Already remembered (deduped): %q. Skipping.", res.Fact.Note), nil
+			case FactRejected:
+				return "Not saved. That reads as a passing detail rather than a durable fact worth injecting into every future turn. If it's a lasting preference, identity fact, or standing instruction, rephrase it as one and try again.", nil
 			}
-			msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", f.Note)
-			if len(superseded) > 0 {
-				dropped := make([]string, len(superseded))
-				for i, s := range superseded {
+			msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", res.Fact.Note)
+			if len(res.Superseded) > 0 {
+				dropped := make([]string, len(res.Superseded))
+				for i, s := range res.Superseded {
 					dropped[i] = fmt.Sprintf("%q", s.Note)
 				}
 				msg += fmt.Sprintf(" Superseded %d now-stale fact(s): %s.", len(dropped), strings.Join(dropped, ", "))

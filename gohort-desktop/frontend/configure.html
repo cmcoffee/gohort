@@ -148,12 +148,18 @@ var status_box = document.getElementById('status');
 // The API key itself is never sent back to JS — we only learn whether
 // one is set, and show that as a placeholder so a blank field leaves
 // the stored key untouched.
-if (window.go && window.go.main && window.go.main.App && window.go.main.App.GetSettings) {
-  window.go.main.App.GetSettings().then(function(s) {
+//
+// NB: this page is served from the loopback origin (see main.go), where
+// Wails does NOT inject window.go — so we fetch the settings from the
+// proxy's /__desktop/getsettings endpoint instead of calling
+// App.GetSettings directly. Same reason the Save path POSTs below.
+fetch('/__desktop/getsettings')
+  .then(function(r) { return r.json(); })
+  .then(function(s) {
     if (s && s.server_url) input.value = s.server_url;
     if (s && s.api_key_set) key_input.placeholder = '•••••••• (already set — leave blank to keep)';
-  });
-}
+  })
+  .catch(function() { /* first run / not ready — leave fields blank */ });
 
 input.addEventListener('keydown', function(e) {
   if (e.key === 'Enter') save_url();
@@ -180,7 +186,15 @@ function save_url() {
   if (!v) { show_error('Enter a server URL.'); return; }
 
   set_busy(true);
-  window.go.main.App.SaveSettings(v, key_input.value.trim()).then(function(res) {
+  // POST to the proxy (window.go is absent on this loopback-origin
+  // page); the proxy runs App.SaveSettings in Go and returns {ok,error}.
+  fetch('/__desktop/savesettings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ server_url: v, api_key: key_input.value.trim() })
+  }).then(function(r) {
+    return r.json();
+  }).then(function(res) {
     set_busy(false);
     if (!res.ok) {
       show_error(res.error || 'Could not save settings.');

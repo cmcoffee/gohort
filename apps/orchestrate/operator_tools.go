@@ -38,15 +38,17 @@ var operatorAttachMarkerRe = regexp.MustCompile(`\[ATTACH:\s*([^\],]+?)(?:\s*,\s
 // instead of workspace(attach) would leak the marker as text and send nothing.
 func collectMessageAttachments(sess *ToolSession, text string) []string {
 	var out []string
-	if sess != nil {
-		out = append(out, sess.Images...)
-	}
-	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
+	if sess == nil {
 		return out
 	}
+	out = append(out, sess.Images...)
+	// No WorkspaceDir guard: a [ATTACH: media#N] marker resolves from the inbound
+	// registry (no file), and resolveAttachmentRef still guards the workspace for
+	// filename refs. Images-only collector, so a video ref is skipped here.
 	for _, m := range operatorAttachMarkerRe.FindAllStringSubmatch(text, -1) {
-		name := strings.TrimSpace(m[1])
-		out = append(out, resolveWorkspaceImages(sess, []string{name})...)
+		if b64, kind, ok := resolveAttachmentRef(sess, m[1], true); ok && kind != "video" {
+			out = append(out, b64)
+		}
 	}
 	return out
 }
@@ -63,19 +65,22 @@ func collectMessageMedia(sess *ToolSession, text string) (images, videos []strin
 	}
 	images = append(images, sess.Images...)
 	videos = append(videos, sess.Videos...)
-	if strings.TrimSpace(sess.WorkspaceDir) == "" {
-		return images, videos
-	}
+	// This is the channel AUTO-REPLY collector — its result goes straight back to
+	// the conversation the message arrived on. So it resolves ONLY produced media:
+	// sess.Images/Videos and workspace-file [ATTACH: file] markers. Inbound media#N
+	// is deliberately NOT resolved here (allowInbound=false), because re-attaching
+	// a photo someone just posted echoes it right back to the same group (the wiwee
+	// image-echo bug). Cross-recipient forwarding of an inbound item goes through
+	// the explicit messaging tools, not this reply path.
 	for _, m := range operatorAttachMarkerRe.FindAllStringSubmatch(text, -1) {
-		name := strings.TrimSpace(m[1])
-		b64 := resolveWorkspaceImages(sess, []string{name})
-		if len(b64) == 0 {
+		b64, kind, ok := resolveAttachmentRef(sess, m[1], false)
+		if !ok {
 			continue
 		}
-		if isVideoAttachment(name) {
-			videos = append(videos, b64...)
+		if kind == "video" {
+			videos = append(videos, b64)
 		} else {
-			images = append(images, b64...)
+			images = append(images, b64)
 		}
 	}
 	return images, videos
@@ -194,10 +199,49 @@ func resolveWorkspaceImages(sess *ToolSession, paths []string) []string {
 	return out
 }
 
+// resolveAttachmentRef resolves ONE attachment reference the model supplied (a
+// [ATTACH: …] marker name or an attachments[] entry) to its base64 bytes and
+// media kind ("image"/"video"). A media-id ref ("media#2") is looked up in the
+// session's inbound registry — post-by-id, the only handle inbound media has
+// since it owns no workspace file. Anything else is treated as a workspace-
+// relative filename and read from disk (the existing produced-media path). ok is
+// false when neither resolves, so callers skip it cleanly.
+//
+// allowInbound gates the inbound-registry lookup. It MUST be false on the channel
+// auto-reply path (collectMessageMedia): that reply always goes back to the room
+// the media arrived on, so resolving an inbound media#N there just echoes the
+// photo straight back to the group — the "wiwee re-posts the picture" bug. The
+// explicit cross-recipient tools (message_contact / notify_me / send_message)
+// pass true, because forwarding "the photo Henry sent" to a DIFFERENT recipient
+// is the feature the inbound registry exists for.
+func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64, kind string, ok bool) {
+	ref = strings.TrimSpace(ref)
+	if sess == nil || ref == "" {
+		return "", "", false
+	}
+	if allowInbound {
+		if b, k, found := sess.ResolveInboundMedia(ref); found {
+			if strings.TrimSpace(k) == "" {
+				k = "image"
+			}
+			return b, k, true
+		}
+	}
+	imgs := resolveWorkspaceImages(sess, []string{ref})
+	if len(imgs) == 0 {
+		return "", "", false
+	}
+	k := "image"
+	if isVideoAttachment(ref) {
+		k = "video"
+	}
+	return imgs[0], k, true
+}
+
 // attachmentsParamDesc is the shared description for the messaging tools' explicit
 // image/file param. One self-contained call ("send THIS image to X") instead of
 // the implicit, easily-skipped workspace(action="attach")-first convention.
-const attachmentsParamDesc = "Optional workspace file path(s) to send WITH this message — e.g. [\"find-djbk.jpg\"] from image(action=\"find\"/\"generate\"). The files ride out to the recipient. Prefer this over a separate workspace(action=\"attach\") step: pass the path here and it's delivered in one call."
+const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this message. Either a workspace file path from image(action=\"find\"/\"generate\") e.g. [\"find-djbk.jpg\"], or an inbound media id from the media manifest e.g. [\"media#1\"] to re-send a photo someone sent you. The items ride out to the recipient in one call. Prefer this over a separate workspace(action=\"attach\") step."
 
 // messageImages gathers every image to ride an outbound message: the explicit
 // `attachments` workspace paths (the steered, self-contained path) PLUS the
@@ -207,22 +251,23 @@ const attachmentsParamDesc = "Optional workspace file path(s) to send WITH this 
 // images were silently dropped.
 func messageImages(sess *ToolSession, args map[string]any, text string) []string {
 	images := collectMessageAttachments(sess, text)
-	var paths []string
-	if raw, ok := args["attachments"].([]any); ok {
-		for _, v := range raw {
-			if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
-				paths = append(paths, s)
-			}
-		}
-	}
 	seen := map[string]bool{}
 	for _, im := range images {
 		seen[im] = true
 	}
-	for _, im := range resolveWorkspaceImages(sess, paths) {
-		if !seen[im] {
-			seen[im] = true
-			images = append(images, im)
+	// Each attachments[] entry routes through resolveAttachmentRef so an inbound
+	// media id ("media#1") works here exactly like a workspace filename. Images-
+	// only surface, so a video ref is skipped (videos ride the channel reply path).
+	if raw, ok := args["attachments"].([]any); ok {
+		for _, v := range raw {
+			s, ok := v.(string)
+			if !ok || strings.TrimSpace(s) == "" {
+				continue
+			}
+			if b64, kind, ok := resolveAttachmentRef(sess, s, true); ok && kind != "video" && !seen[b64] {
+				seen[b64] = true
+				images = append(images, b64)
+			}
 		}
 	}
 	return images
@@ -304,10 +349,10 @@ func operatorDeliverMessage(owner, chatID, handle, text string, images []string)
 	return text, nil
 }
 
-// threadBindingGatekeeperRule is the per-channel wake rule set on an
-// agent-requested 1:1 thread binding: engage only on replies to the agent's own
-// messages, stay silent (recorded only) on unrelated traffic in that thread.
-const threadBindingGatekeeperRule = "This is a 1:1 thread the bound agent asked to watch so it could hear back on a message it sent. WAKE only when the incoming message is a direct reply to a message the agent sent, or clearly continues a conversation the agent started in this thread. Do NOT wake for unrelated topics, or for an exchange between other people the agent isn't part of — stay silent (recorded only) on those."
+// threadBindingGatekeeperRule is the wake rule stamped on an agent-requested 1:1
+// thread binding. It's the shared DM default (also seeded on inbound DM
+// connections in apps/bridges) — see core.DefaultDMGatekeeperRule for the rules.
+const threadBindingGatekeeperRule = DefaultDMGatekeeperRule
 
 // argBool reads a boolean tool arg (accepts a real bool, or a "true"/"false"
 // string which some tool bridges send), falling back to def.

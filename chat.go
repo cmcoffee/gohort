@@ -34,7 +34,7 @@ func agentFlagHelp(entry *menu_elem) string {
 	flags := &FlagSet{EFlagSet: NewFlagSet(entry.name, ReturnErrorOnly)}
 	flags.FlagArgs = []string{"--help"}
 	set_agent_flags(tmp_agent, *flags)
-	set_agent_db(tmp_agent, get_agentstore(strings.Split(entry.name, ":")[0]))
+	set_agent_db(tmp_agent, get_agentstore(strings.Split(entry.name, ":")[0], wantsPrivateDB(tmp_agent)))
 
 	// Call Init to register flags; ignore the expected help/parse error.
 	tmp_agent.Init()

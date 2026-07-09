@@ -27,12 +27,12 @@ func IsAdminAllowed(r *http.Request) bool {
 	if len(nets) == 0 {
 		return true
 	}
+	if IsGenuineLocalRequest(r) {
+		return true
+	}
 	ip := clientIP(r)
 	if ip == nil {
 		return false
-	}
-	if ip.IsLoopback() {
-		return true
 	}
 	for _, n := range nets {
 		if n.Contains(ip) {
@@ -42,14 +42,41 @@ func IsAdminAllowed(r *http.Request) bool {
 	return false
 }
 
-// IsLoopbackRequest reports whether a request originates from the
-// local machine (127.0.0.0/8, ::1). Internal inter-app HTTP calls
-// loop back to localhost, so gates that protect against external
-// abuse should whitelist loopback — otherwise the server blocks its
-// own RPCs. Uses the same clientIP extraction as IsAdminAllowed so
-// X-Forwarded-For + X-Real-IP are honored in proxied deployments.
+// IsLoopbackRequest reports whether a request genuinely originates from the
+// local machine (an internal inter-app RPC). Internal calls loop back to
+// localhost, so gates that protect against external abuse whitelist loopback —
+// otherwise the server blocks its own RPCs. This is a SECURITY decision, so it
+// uses IsGenuineLocalRequest (the real TCP peer), NOT clientIP: an external
+// client can set "X-Forwarded-For: 127.0.0.1" and clientIP would trust it.
 func IsLoopbackRequest(r *http.Request) bool {
-	ip := clientIP(r)
+	return IsGenuineLocalRequest(r)
+}
+
+// directPeerIP returns the IP of the actual TCP peer (r.RemoteAddr), ignoring
+// forwarding headers. This is the only trustworthy origin for a security
+// decision — X-Forwarded-For / X-Real-IP are client-supplied and spoofable.
+func directPeerIP(r *http.Request) net.IP {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	return net.ParseIP(host)
+}
+
+// IsGenuineLocalRequest reports whether a request truly originated on this
+// machine as an internal RPC — safe to use for an auth bypass. It requires BOTH
+// that the real TCP peer is loopback AND that no forwarding header is present:
+// an internal call connects directly over loopback and never sets X-Forwarded-
+// For / X-Real-IP / Forwarded, whereas anything arriving through a proxy (even
+// one co-located on localhost) carries one. This closes the spoof where an
+// external client sends "X-Forwarded-For: 127.0.0.1" to impersonate loopback.
+func IsGenuineLocalRequest(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" ||
+		r.Header.Get("X-Real-IP") != "" ||
+		r.Header.Get("Forwarded") != "" {
+		return false
+	}
+	ip := directPeerIP(r)
 	return ip != nil && ip.IsLoopback()
 }
 

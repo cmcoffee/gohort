@@ -16,6 +16,8 @@
 package core
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 )
@@ -42,6 +44,12 @@ type AppSpec struct {
 	// default centered ~900px column. The author opts in for data-heavy surfaces
 	// (wide tables, dashboards). A workbench app is always full-width regardless.
 	FullWidth bool `json:"full_width,omitempty"`
+	// PrivateDB opts this app into its OWN dedicated, hardware-locked kvlite
+	// database file (via OpenCustomAppDB) instead of the shared customapps store.
+	// Its records live in an isolated, independently disposable file — the right
+	// choice for a data-heavy app. Opt-in per app, no migration: existing apps
+	// (PrivateDB=false) keep using the shared store untouched.
+	PrivateDB bool `json:"private_db,omitempty"`
 	// DataSources are script-backed data endpoints (see AppDataSource), referenced
 	// by a table/display section's source_script. Served at /custom/<slug>/data/<name>.
 	// This is the "logic" seam: structure stays declarative, computation/integration
@@ -86,6 +94,23 @@ type AppAction struct {
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps
 	Confirm      string   `json:"confirm,omitempty"`      // optional confirm prompt before firing
+}
+
+// OpenCustomAppDB returns the dedicated private database for one custom app,
+// used when its AppSpec.PrivateDB is set. Keyed by slug plus a short hash of the
+// owner so two owners' same-slug apps never share a file. Returns nil when the
+// private-DB opener isn't wired (non-serve context) — callers fall back to the
+// shared customapps store.
+func OpenCustomAppDB(owner, slug string) Database {
+	return OpenAppDB(customAppDBName(owner, slug))
+}
+
+// customAppDBName derives the logical (and thus file) name for a custom app's
+// private DB. The slug stays readable; the owner is folded in as a short hash so
+// the name is filesystem-safe and unique per owner regardless of the raw uid.
+func customAppDBName(owner, slug string) string {
+	sum := sha256.Sum256([]byte(owner))
+	return "customapp_" + slug + "_" + hex.EncodeToString(sum[:6])
 }
 
 // appSpecStore returns the shared per-owner spec store (RootDB → user:<owner>),

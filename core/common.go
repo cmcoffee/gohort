@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -1256,6 +1257,7 @@ type ToolSession struct {
 	Images            []string // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
 	Videos            []string // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
 	PendingViewImages [][]byte // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
+	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
 	Silenced          bool     // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
 	LLM               LLM      // optional LLM made available to tools that need sub-calls
 	LeadLLM           LLM      // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
@@ -1946,6 +1948,88 @@ func (s *ToolSession) AppendVideo(b64 string) {
 	}
 	s.Videos = append(s.Videos, b64)
 	s.mu.Unlock()
+}
+
+// InboundMediaItem is one addressable piece of media that arrived on THIS turn
+// (a contact's photo or clip on a channel). It carries the bytes inline because,
+// unlike produced media, inbound media has no workspace file to read back at
+// delivery time. The ID (media#1, media#2, …) is the handle exposed to the model
+// via the media manifest so it can post a SPECIFIC inbound item back BY ID.
+type InboundMediaItem struct {
+	ID     string // "media#1" — the handle shown to the model
+	Kind   string // "image" | "video"
+	B64    string // base64-encoded bytes, ready to attach outbound
+	Sender string // display name of who sent it, for the manifest
+}
+
+// RegisterInboundMedia records an inbound attachment and returns its assigned id
+// (media#1, media#2, …). Order-stable so the id matches the position the media
+// manifest shows the model. Raw bytes in, base64 stored. The gap this closes:
+// produced media (image action=find/generate) is already postable by its
+// workspace filename, but inbound media had NO handle, so the model could only
+// describe a photo someone sent, never re-send it. Turn-scoped: dispatch mints a
+// fresh session per turn, so ids never point at stale bytes.
+func (s *ToolSession) RegisterInboundMedia(kind string, raw []byte, sender string) string {
+	if s == nil || len(raw) == 0 {
+		return ""
+	}
+	if strings.TrimSpace(kind) == "" {
+		kind = "image"
+	}
+	s.mu.Lock()
+	id := fmt.Sprintf("media#%d", len(s.InboundMedia)+1)
+	s.InboundMedia = append(s.InboundMedia, InboundMediaItem{
+		ID:     id,
+		Kind:   kind,
+		B64:    base64.StdEncoding.EncodeToString(raw),
+		Sender: strings.TrimSpace(sender),
+	})
+	s.mu.Unlock()
+	return id
+}
+
+// ResolveInboundMedia maps a media-id reference ("media#2") to its base64 bytes
+// and kind. Match is space- and case-tolerant (see normalizeMediaID). ok is
+// false when ref is not a known inbound id, so the outbound collector falls
+// through to workspace-filename resolution (the produced-media path).
+func (s *ToolSession) ResolveInboundMedia(ref string) (b64, kind string, ok bool) {
+	if s == nil {
+		return "", "", false
+	}
+	want := normalizeMediaID(ref)
+	if want == "" {
+		return "", "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range s.InboundMedia {
+		if normalizeMediaID(m.ID) == want {
+			return m.B64, m.Kind, true
+		}
+	}
+	return "", "", false
+}
+
+// normalizeMediaID canonicalizes a media-id reference so "media#2", "media #2",
+// and "MEDIA#2" all match the stored "media#2". Returns "" when ref is not a
+// media id at all (e.g. a workspace filename), which is the signal for callers
+// to fall through to file resolution. Strict on the tail: only digits follow the
+// hash, so a filename that merely starts with "media" never false-matches.
+func normalizeMediaID(ref string) string {
+	r := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(ref)), " ", "")
+	if !strings.HasPrefix(r, "media#") {
+		return ""
+	}
+	num := strings.TrimPrefix(r, "media#")
+	if num == "" {
+		return ""
+	}
+	for _, c := range num {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return "media#" + num
 }
 
 // AppendViewImage queues a raw image byte slice (typically a sampled video

@@ -73,6 +73,12 @@ type Response struct {
 	Model        string
 	InputTokens  int
 	OutputTokens int
+	// StopReason is the provider's terminal signal for the turn (Anthropic:
+	// end_turn / tool_use / max_tokens / refusal / pause_turn). Populated by
+	// the Anthropic client; other backends may leave it empty. Lets callers
+	// distinguish a clean finish from a truncation or a refusal instead of
+	// inferring "done" purely from an empty ToolCalls slice.
+	StopReason string
 	// ReasoningTokens is the portion of OutputTokens spent on the
 	// thinking channel, as reported by the model when supported (e.g.
 	// llama.cpp's usage.completion_tokens_details.reasoning_tokens
@@ -1020,7 +1026,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		}
 		model := cfg.Model
 		if model == "" {
-			model = "claude-sonnet-4-6-20250514"
+			model = "claude-sonnet-5"
 		}
 		inner = newAnthropicLLM(cfg.APIKey, model, api)
 	case "openai":

@@ -72,6 +72,19 @@ const (
 	DirectionOutbound      = "outbound"      // output only; agent sends here, inbound not processed
 )
 
+// DefaultDMGatekeeperRule is the default per-channel wake ruleset seeded onto a
+// new 1:1 DM channel — both an agent-initiated thread binding and an inbound DM
+// connection the owner attaches. Two rules ship right out of the gate, each on
+// its own line so the gatekeeper's rule enumerator numbers them as separate
+// OR-triggers: (1) the agent is addressed by name, and (2) the message is a
+// reply/continuation of something directed at the agent. The negative guardrail
+// is folded into rule 2's line so it is not itself numbered as a wake trigger.
+// (In a 1:1 every inbound is "directed at the agent", so rule 2 naturally admits
+// ordinary 1:1 traffic; in a group it correctly narrows to messages aimed at the
+// agent.)
+const DefaultDMGatekeeperRule = "WAKE when the incoming message mentions or addresses the agent by name — including common nicknames or obvious typos of that name.\n" +
+	"WAKE when the incoming message is a fragment, direct reply, or continuation of a message that was directed at the agent specifically — it answers or clearly follows up on something the agent said or was asked in this thread. Otherwise — unrelated topics, or an exchange between other people the agent isn't part of — stay silent (recorded only)."
+
 // BridgeService describes a known transport. Adding a new bridge is, on the
 // gohort side, ONE entry here: the routing id is the lowercase map key (stays
 // lowercase everywhere internally); DisplayName is the brand label shown to the
@@ -404,4 +417,39 @@ func ChannelGatekeeperAllow(ctx context.Context, in ChannelInbound) bool {
 		return true
 	}
 	return fn(ctx, in)
+}
+
+// ChannelSilentRecorderFunc mirrors an inbound that the gatekeeper BLOCKED
+// (recorded-only, no wake) into the bound agent's own conversation transcript,
+// so the message shows in the agent's chat and is in-context on its next wake —
+// the agent reads along even when it stays silent, instead of waking amnesiac.
+// The agent-aware package (orchestrate) owns it because the transcript lives in
+// the agent's per-user store; the transport (bridges) calls it via
+// RecordChannelSilent at the block point. Mirrors the ChannelGatekeeperFunc seam.
+type ChannelSilentRecorderFunc func(in ChannelInbound)
+
+var (
+	channelSilentRecorder   ChannelSilentRecorderFunc
+	channelSilentRecorderMu sync.RWMutex
+)
+
+// RegisterChannelSilentRecorder installs the recorded-only mirror. Call once at
+// startup from orchestrate.
+func RegisterChannelSilentRecorder(fn ChannelSilentRecorderFunc) {
+	channelSilentRecorderMu.Lock()
+	channelSilentRecorder = fn
+	channelSilentRecorderMu.Unlock()
+}
+
+// RecordChannelSilent mirrors a blocked inbound into the bound agent's
+// transcript. No-op when no recorder is registered (orchestrate not loaded), so
+// the transport can call it unconditionally at the block point.
+func RecordChannelSilent(in ChannelInbound) {
+	channelSilentRecorderMu.RLock()
+	fn := channelSilentRecorder
+	channelSilentRecorderMu.RUnlock()
+	if fn == nil {
+		return
+	}
+	fn(in)
 }

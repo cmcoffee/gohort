@@ -630,8 +630,8 @@ func setup_fuzz() {
 	costs := NewOptions(" [Cost Rates] ", "(selection or 'q' to return to previous)", 'q')
 	costs.StringVar(&cost_worker_in, "Worker Input $/1K tokens", cost_worker_in, "Dollar cost per 1,000 input tokens for the worker (primary) LLM. Example Gemini Flash 2.5: 0.075")
 	costs.StringVar(&cost_worker_out, "Worker Output $/1K tokens", cost_worker_out, "Dollar cost per 1,000 output tokens for the worker LLM. Example Gemini Flash 2.5: 0.30")
-	costs.StringVar(&cost_lead_in, "Lead Input $/1K tokens", cost_lead_in, "Dollar cost per 1,000 input tokens for the lead (precision) LLM. Example Claude Sonnet 4.6: 3.00")
-	costs.StringVar(&cost_lead_out, "Lead Output $/1K tokens", cost_lead_out, "Dollar cost per 1,000 output tokens for the lead LLM. Example Claude Sonnet 4.6: 15.00")
+	costs.StringVar(&cost_lead_in, "Lead Input $/1K tokens", cost_lead_in, "Dollar cost per 1,000 input tokens for the lead (precision) LLM. Example Claude Sonnet 5: 3.00")
+	costs.StringVar(&cost_lead_out, "Lead Output $/1K tokens", cost_lead_out, "Dollar cost per 1,000 output tokens for the lead LLM. Example Claude Sonnet 5: 15.00")
 	costs.StringVar(&cost_search, "Search $/call", cost_search, "Dollar cost per external search-API call. Example Serper: 0.0003")
 	costs.StringVar(&cost_image, "Image $/call", cost_image, "Dollar cost per image generation call. Example DALL-E 3 1792x1024 standard: 0.08; Gemini Imagen 16:9: 0.03")
 	setup.Options("Cost Rates (per-run telemetry)", costs, false)
@@ -1435,6 +1435,15 @@ func init_database() {
 	repo_filename := FormatPath(fmt.Sprintf("%s/%s_repos.db", repo_dir, APPNAME))
 	RepoFilesDB, err = SecureDatabase(repo_filename)
 	Critical(err)
+
+	// Per-app private databases (core.OpenAppDB): apps that opt in get their own
+	// dedicated, hardware-locked kvlite file — co-located in data_dir, same
+	// at-rest encryption as the main DB — instead of a bucket of global.db. main
+	// owns the padlock + data dir, so it injects the concrete open here; core
+	// caches the handle per name.
+	SetPrivateDBOpener(func(name string) (Database, error) {
+		return SecureDatabase(FormatPath(fmt.Sprintf("%s/%s_%s.db", data_dir, APPNAME, name)))
+	})
 
 	// Wire the persistent source hook cache to the global cache sub-database.
 	// This persists results from source hooks so repeated runs on the same

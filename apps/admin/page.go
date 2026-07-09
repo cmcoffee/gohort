@@ -348,8 +348,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		Title:         "Administrator",
 		ShowTitle:     true,
 		BackURL:       "/",
-		ExtraHeadHTML: adminUsersScript, // registers the per-row "Reset password" modal client action
-		MaxWidth:      "1200px",         // desktop admin: wide enough for full-width tables in a single column
+		// Head registers the per-row "Reset password" modal client action.
+		// Migrated off a hand-written <script> blob onto the typed ui.Head
+		// builder — the framework assembles the <script>, the register call,
+		// and the readiness guard.
+		Head: ui.NewHead().
+			CSS(adminUsersCSS).
+			JS(adminUsersModalJS).
+			ClientAction("admin_reset_password", adminResetPasswordAction),
+		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
 		Grid:      false,     // single column: sections stack vertically within each tab (Wide flags become no-ops)
 		Tabbed:    true,      // category tab bar across the top (the multiple menus); sections grouped below
 		Sections: []ui.Section{
@@ -618,7 +625,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							{Value: "gemini", Label: "Gemini"}, {Value: "ollama", Label: "Ollama"},
 							{Value: "llama.cpp", Label: "llama.cpp"}},
 							Help: "(use primary) routes lead stages to the worker model."},
-						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-4-6"},
+						{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5"},
 						{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
 							Help: "Stored encrypted. Blank reuses the primary provider's key where applicable."},
 						{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
@@ -1865,11 +1872,11 @@ const userAdminHTML = `<div class="uadm">
 })();
 </script>`
 
-// adminUsersScript registers the per-row "Reset password" client action (a modal
-// that sets a new password or issues a reset link, showing the link for manual
-// copy). Injected via the admin page's ExtraHeadHTML; the row button dispatches
-// to it by name (see the Users table RowActions).
-const adminUsersScript = `<style>
+// The per-row "Reset password" modal, split for the typed ui.Head builder:
+// adminUsersCSS (styles), adminUsersModalJS (el + openModal helpers), and
+// adminResetPasswordAction (the client-action handler the Users table row
+// button dispatches to by name). See serveNewAdminPage for the wire-up.
+const adminUsersCSS = `
 .admu-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:center; justify-content:center; z-index:1000; }
 .admu-card { background:var(--bg-1); border:1px solid var(--border); border-radius:10px; padding:1rem 1.1rem; width:min(30rem,92vw); display:flex; flex-direction:column; gap:0.55rem; }
 .admu-title { font-weight:600; color:var(--text-hi); }
@@ -1881,11 +1888,12 @@ const adminUsersScript = `<style>
 .admu-msg.err { color:var(--danger); }
 .admu-link { border:1px solid var(--accent); border-radius:8px; padding:0.5rem 0.65rem; background:var(--bg-2); display:flex; flex-direction:column; gap:0.35rem; }
 .admu-link code { font-family:ui-monospace,Menlo,monospace; font-size:0.78rem; color:var(--text); word-break:break-all; }
-.admu-link button { align-self:flex-start; }
-</style>
-<script>
-(function(){
-  function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else if(k==='class') n.className=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
+.admu-link button { align-self:flex-start; }`
+
+// adminUsersModalJS defines the shared helpers (el, openModal) for the reset-
+// password action. Emitted inside the ui.Head init block; function declarations
+// hoist, so adminResetPasswordAction can call openModal.
+const adminUsersModalJS = `function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else if(k==='class') n.className=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function openModal(user, ctx){
     var overlay = el('div', {class:'admu-overlay'});
     var pw = el('input', {type:'password', class:'admu-in', placeholder:'New password (6+ characters)', autocomplete:'new-password'});
@@ -1927,16 +1935,15 @@ const adminUsersScript = `<style>
       msg, linkBox
     ]);
     overlay.appendChild(card);
-    overlay.addEventListener('click', function(e){ if(e.target===overlay) overlay.remove(); });
+    // No backdrop-click-to-close (a drag-select copy ending on the backdrop
+    // would dismiss mid-copy); the Close button dismisses.
     document.body.appendChild(overlay);
-  }
-  function reg(){
-    if(!window.uiRegisterClientAction){ setTimeout(reg, 50); return; }
-    window.uiRegisterClientAction('admin_reset_password', function(ctx){
-      var u = ctx && ctx.record && (ctx.record.username || ctx.record.id);
-      if(u) openModal(u, ctx);
-    });
-  }
-  reg();
-})();
-</script>`
+  }`
+
+// adminResetPasswordAction is the client-action handler registered under
+// "admin_reset_password"; the Users table row button dispatches to it by name.
+// It calls openModal (defined in adminUsersModalJS).
+const adminResetPasswordAction = `function(ctx){
+  var u = ctx && ctx.record && (ctx.record.username || ctx.record.id);
+  if(u) openModal(u, ctx);
+}`

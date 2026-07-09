@@ -149,14 +149,28 @@ Static data → JSON over plain HTTP. Live pipelines → SSE (`/api/send`, frame
 ### Apps stay in their lane
 The shared runtime (`core/ui/`) knows nothing about debate, research, blogger, etc. Anything app-specific lives in the app's package — CSS, custom block renderers, markdown extensions. Apps inject them via `Page.ExtraHeadHTML`. This is enforced; new code in `core/ui/` that mentions an app name is a bug.
 
-### Backwards-compatibility tiers
-Stable, ordered most → least stable:
+### The public surface (what an app may depend on)
 
-1. **The `Agent` interface** + `RegisterApp` + `NewWebUI` — frozen.
-2. **`ui.Page` + the well-known components** (Table, FormPanel, ChatPanel, PipelinePanel, FormField types) — adds-only; field renames go through a deprecation pass.
-3. **The extension registries** (block renderer, markdown extension, client action) — frozen signatures; new registries are additive.
-4. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRenderMarkdown`, `uiRegister*`) — frozen names.
-5. **CSS class names** — generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
+An app should build only against the surface below. Everything else in `package
+core` is framework internals: it may change or move without notice, and it is
+being migrated under `core/internal/` package-by-package as it proves separable
+(Go bars apps from importing anything under `core/internal/` — the boundary is
+compiler-enforced, not a convention). If you find yourself reaching for a `core`
+symbol not listed here, that's a signal to either (a) request it be promoted to
+the public surface, or (b) solve it in your own package.
+
+The public surface, ordered most → least stable:
+
+1. **The `Agent` interface** + `RegisterApp` + the `WebApp`/`SimpleWebApp` interfaces + `AppCore` — frozen.
+2. **The logging/aliasing helpers** re-exported from `core` (`Log`, `Fatal`, `Notice`, `Err`, `RequireUser`, config/DB/`LimitGroup` type aliases) — frozen names.
+3. **`ui.Page` + the well-known components** (Table, FormPanel, ChatPanel, PipelinePanel, FormField types) + **`ui.Head`** — adds-only; field renames go through a deprecation pass.
+4. **The extension registries** (block renderer, markdown extension, client action) reached via **`ui.Head`** — frozen signatures; new registries are additive.
+5. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRenderMarkdown`, `uiOpenModal`, `uiRegister*`) — frozen names.
+6. **CSS class names** — generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
+
+Deprecations: a symbol slated for removal is marked `// Deprecated:` for at
+least one minor release before it goes. Changes are recorded in the repo-root
+`CHANGELOG.md`.
 
 ---
 
@@ -276,7 +290,27 @@ Tracking an in-flight pipeline that was kicked off elsewhere. Use `ui.PipelineWa
 
 ## Customizing the UI (extension registries)
 
-When a primitive doesn't fit and you need app-specific UI without changing core, use one of these. All are loaded via `Page.ExtraHeadHTML` — a Go string of HTML injected into the page `<head>`.
+When a primitive doesn't fit and you need app-specific UI without changing core, use one of these extension points: a **block renderer**, a **markdown extension**, a **client action**, or app **CSS**.
+
+### Prefer the typed `ui.Head` builder
+
+Compose extensions in Go with `ui.Head` and attach it to `Page.Head`. The framework assembles the `<script>`, the `window.uiRegister*` calls, the readiness-retry guard, the `<style>`/`<script>` wrapping, and `</script>` safety — so you never hand-write a head blob:
+
+```go
+page.Head = ui.NewHead().
+    CSS(`.ui-myapp-note{color:var(--text-mute)}`).
+    ClientAction("myapp_greet", myappGreetJS).      // JS function expression
+    BlockRenderer("myapp_plan", myappPlanJS).
+    MarkdownExtension(myappMdJS)
+```
+
+The JS you pass is a **function expression** (`"function(ctx){ … }"`) — inline for small handlers, or from an embedded `assets/` file (`//go:embed`) for anything sizeable, matching the runtime's own asset convention. See `apps/hello/hello.go` for a complete button → client action → `window.uiOpenModal` example, and `core/ui/extensions.go` for the API.
+
+Registration order is handled for you (the assembled block guards on the registries existing), so you do **not** need the manual `DOMContentLoaded` deferral the raw form below requires.
+
+### Raw `Page.ExtraHeadHTML` (escape hatch / underlying mechanism)
+
+`ui.Head` renders into the same `<head>` injection as `Page.ExtraHeadHTML` — a verbatim Go string of HTML. Reach for the raw string only for legacy blobs not yet ported to `ui.Head`, or head markup the builder doesn't model. The examples below show the raw shape each `ui.Head` method emits for you.
 
 ### Block renderer
 For a new block type emitted on the SSE stream. Register a renderer that takes the block's data and returns DOM.

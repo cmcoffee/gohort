@@ -46,27 +46,14 @@ const agentMemoryModalTemplate = `<script>
       // returns falsy (nothing selected, after alerting), abort opening.
       var MEMBASE = (__BASE_EXPR__);
       if (MEMBASE == null) { return; }
-      // Custom overlay (not native <dialog>) — <dialog>+showModal has
-      // unreliable rendering on iOS / older Android, leaving the modal
-      // blank or invisible. Plain fixed-overlay div works everywhere.
-      var overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:1rem;box-sizing:border-box';
-      var dlg = document.createElement('div');
-      dlg.style.cssText = 'box-sizing:border-box;background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:100%;max-width:640px;max-height:88vh;display:flex;flex-direction:column';
-      overlay.appendChild(dlg);
-      function closeDlg() { overlay.remove(); document.removeEventListener('keydown', _esc); }
-      function _esc(ev) { if (ev.key === 'Escape') closeDlg(); }
-      overlay.addEventListener('click', function(ev) { if (ev.target === overlay) closeDlg(); });
-      document.addEventListener('keydown', _esc);
-      // Shim so existing closures that call dlg.close()/.remove() keep working.
+      // Shared modal chrome via uiOpenModal (plain overlay, mobile-safe,
+      // Escape-to-close, no backdrop-close). It owns the overlay/card and
+      // teardown; we fill the body and footer below. dlg.close/.remove are
+      // wired to the full teardown so the existing call sites keep working.
+      var _m = window.uiOpenModal({ title: 'Memory', width: '640px', actions: [] });
+      var dlg = _m.dialog, body = _m.body;
+      function closeDlg() { _m.close(); }
       dlg.close = closeDlg; dlg.remove = closeDlg;
-      var hdr = document.createElement('h3');
-      hdr.textContent = 'Memory';
-      hdr.style.cssText = 'margin:0 0 0.6rem';
-      dlg.appendChild(hdr);
-      var body = document.createElement('div');
-      body.style.cssText = 'overflow-y:auto;flex:1;padding-right:0.3rem;-webkit-overflow-scrolling:touch';
-      dlg.appendChild(body);
 
       // Section visibility — set after the agent record loads.
       // Sections always build in the DOM; we just hide via display:none
@@ -373,7 +360,6 @@ const agentMemoryModalTemplate = `<script>
       actions.appendChild(cancel);
       actions.appendChild(save);
       dlg.appendChild(actions);
-      document.body.appendChild(overlay);
     });
   }
   register();

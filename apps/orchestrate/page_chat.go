@@ -226,6 +226,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					ChannelSaveURL:   "api/channels?agent_id={agent_id}",
 					ChannelDeleteURL: "api/channels?id={id}",
 					ChannelAgentsURL: "api/agents",
+					// Canonical default wake rule, so the channel editor can offer
+					// "Reset to default" on the gatekeeper rules (source of truth is Go).
+					DefaultGatekeeperRule: DefaultDMGatekeeperRule,
 					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
 					// Per-turn scrub (✕ on each bubble) — replaces the separate
 					// History view's row-delete; works on every thread, not just

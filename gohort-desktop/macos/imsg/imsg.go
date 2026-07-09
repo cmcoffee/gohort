@@ -899,8 +899,15 @@ func extractTextHeuristic(body []byte) string {
 	return strings.Join(parts, " ")
 }
 
+// maxInboundGifBytes caps the raw-GIF passthrough. Animated GIFs ship raw
+// (the server frame-samples them); anything larger is flattened to a single
+// still instead so an outsized GIF can't balloon the hook POST. iMessage GIFs
+// are almost always well under this.
+const maxInboundGifBytes = 25 * 1024 * 1024
+
 // readImageAttachments returns base64-encoded image data for images attached to messageID.
-// Converts HEIC to JPEG. Reads up to 3 images to keep payloads manageable.
+// Converts HEIC/PNG/WebP to JPEG; GIFs pass through raw for server-side frame
+// sampling. Reads up to 3 images to keep payloads manageable.
 func readImageAttachments(db *sql.DB, messageID int64) []string {
 	// No transfer_state filter: received images use state=5, sent use state=2, and
 	// the values vary by macOS version. File existence + size checks are the reliable gate.
@@ -953,12 +960,23 @@ func readImageAttachments(db *sql.DB, messageID int64) []string {
 			continue
 		}
 
-		// Convert all non-JPEG images to JPEG — many vision models (including
+		// Convert non-JPEG stills to JPEG — many vision models (including
 		// Ollama-hosted Gemma) only accept JPEG in their image projection layer.
+		// GIFs are the exception: ship them RAW so the server can frame-sample
+		// animated GIFs into a temporal still sequence (sips would flatten them
+		// to a single frame, losing the motion). Cap the raw passthrough so a
+		// pathological GIF can't balloon the hook POST; over-cap GIFs fall back
+		// to the flattened still.
 		isJPEG := mimeType == "image/jpeg" ||
-			strings.HasSuffix(strings.ToLower(filename), ".jpg") ||
-			strings.HasSuffix(strings.ToLower(filename), ".jpeg")
-		if !isJPEG {
+			strings.HasSuffix(lower, ".jpg") ||
+			strings.HasSuffix(lower, ".jpeg")
+		isGIF := mimeType == "image/gif" || strings.HasSuffix(lower, ".gif")
+		switch {
+		case isJPEG:
+			// already vision-ready — send raw
+		case isGIF && info.Size() <= maxInboundGifBytes:
+			nfo.Log("gif passthrough (raw, %d bytes): %s — server frame-samples", len(data), filepath.Base(path))
+		default:
 			converted := toJPEG(path)
 			if converted != nil {
 				data = converted

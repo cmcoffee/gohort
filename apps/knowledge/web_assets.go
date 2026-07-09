@@ -194,8 +194,7 @@ const documentsListAssets = `<style>
     });
     actions.appendChild(cancel); actions.appendChild(create);
     dlg.appendChild(actions);
-    // Click the scrim (outside the card) to dismiss.
-    overlay.addEventListener('click', function(e){ if (e.target === overlay) overlay.remove(); });
+    // No backdrop-click-to-close (drag-select copy would dismiss mid-copy); Cancel closes.
     document.body.appendChild(overlay);
     setTimeout(function(){ inpN.focus(); }, 0);
   });
@@ -591,13 +590,21 @@ const documentsDetailAssets = `<style>
         header.appendChild(allCb); header.appendChild(allLbl);
         box.appendChild(header);
         allCb.addEventListener('change', function() {
+          // Capture the target state ONCE. Each row's change handler
+          // rewrites allCb.checked (allCb.checked = !anyUnchecked), so
+          // reading it inside the loop would flip our target back to
+          // false after the first row and skip the rest.
+          var want = allCb.checked;
           var rows = box.querySelectorAll('.docs-row-select');
           rows.forEach(function(cb){
-            if (cb.checked !== allCb.checked) {
-              cb.checked = allCb.checked;
+            if (cb.checked !== want) {
+              cb.checked = want;
               cb.dispatchEvent(new Event('change'));
             }
           });
+          // Row handlers left allCb in an intermediate state mid-loop;
+          // restore it to what the user actually asked for.
+          allCb.checked = want;
         });
 
         sources.forEach(function(s) {

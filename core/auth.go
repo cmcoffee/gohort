@@ -1086,8 +1086,11 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 			return
 		}
 
-		// Allow loopback requests -- internal inter-app HTTP calls.
-		if ip := clientIP(r); ip != nil && ip.IsLoopback() {
+		// Allow genuine local requests -- internal inter-app HTTP calls loop
+		// back over localhost. Keys on the real TCP peer, NOT clientIP: an
+		// external client could otherwise send "X-Forwarded-For: 127.0.0.1" and
+		// bypass auth entirely (clientIP trusts that header).
+		if IsGenuineLocalRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}

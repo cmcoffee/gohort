@@ -183,12 +183,28 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// A non-image that looks like audio is transcribed; anything else gets a
 		// typed note so the agent knows something arrived but can't pretend to see it.
 		var images [][]byte
+		gifFrames := 0
 		for _, b64 := range in.Images {
 			data, derr := base64.StdEncoding.DecodeString(b64)
 			if derr != nil {
 				continue
 			}
 			ct := http.DetectContentType(data)
+			// Animated GIFs: a raw GIF is only ever "seen" as its first frame by
+			// the vision model, so sample frames into the multimodal stream the
+			// same way inbound videos are (ffmpeg composites GIF frames
+			// correctly). A static GIF samples to ~1 near-duplicate still.
+			if ct == "image/gif" {
+				if frames, ferr := ExtractVideoFrames(data, inboundVideoFrameCount); ferr == nil && len(frames) > 0 {
+					images = append(images, frames...)
+					gifFrames += len(frames)
+					continue
+				}
+				// No ffmpeg, or an undecodable GIF: keep the raw GIF as a single
+				// still so we degrade to today's behavior instead of dropping it.
+				images = append(images, data)
+				continue
+			}
 			if strings.HasPrefix(ct, "image/") {
 				images = append(images, data)
 				continue
@@ -247,6 +263,9 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		}
 		if vidFrames > 0 {
 			videoNote = fmt.Sprintf("\n[Inbound video: %d frame(s) sampled and attached above as images for you to analyze; the raw video itself can't be inspected.]%s", vidFrames, videoNote)
+		}
+		if gifFrames > 0 {
+			videoNote += fmt.Sprintf("\n[Inbound GIF: %d frame(s) sampled and attached above as images in time order — describe the motion/content from these stills, not a single frame.]", gifFrames)
 		}
 		// Channel = relay, Cortex = the thread. A DEDICATED cortex agent (a single
 		// channel) runs its inbound IN its cortex — the channel is just the pipe

@@ -16,6 +16,14 @@ import (
 const (
 	anthropicEndpoint   = "https://api.anthropic.com/v1"
 	anthropicAPIVersion = "2023-06-01"
+
+	// Default output budgets. The agent loop never sets WithMaxTokens, so
+	// these are what a lead final answer is capped at. 4096 (the old value)
+	// silently truncated long answers mid-thought because stop_reason was
+	// dropped; give real headroom. Streaming avoids the HTTP-timeout concern
+	// so it gets a larger default.
+	anthDefaultMaxTokens       = 8192
+	anthDefaultStreamMaxTokens = 16384
 )
 
 // anthropicClient implements the LLM interface for the Anthropic Messages API.
@@ -53,44 +61,67 @@ func newAnthropicLLM(apiKey string, model string, api *apiclient.APIClient) LLM 
 
 // Anthropic request/response types
 
+// cacheControl marks a prompt-cache breakpoint. Anthropic prompt caching is
+// opt-in per content block; without it every request is billed as a full
+// uncached prefill regardless of how stable the prefix is.
+type cacheControl struct {
+	Type string `json:"type"` // always "ephemeral"
+}
+
+func ephemeralCache() *cacheControl { return &cacheControl{Type: "ephemeral"} }
+
+// anthRequest carries no sampling params: temperature/top_p/top_k are rejected
+// with a 400 on current Claude models (Opus 4.7/4.8, Sonnet 5).
 type anthRequest struct {
-	Model       string        `json:"model"`
-	Messages    []anthMessage `json:"messages"`
-	MaxTokens   int           `json:"max_tokens"`
-	System      string        `json:"system,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
-	Tools       []anthTool    `json:"tools,omitempty"`
+	Model     string            `json:"model"`
+	Messages  []anthMessage     `json:"messages"`
+	MaxTokens int               `json:"max_tokens"`
+	System    []anthSystemBlock `json:"system,omitempty"`
+	Stream    bool              `json:"stream,omitempty"`
+	Tools     []anthTool        `json:"tools,omitempty"`
+}
+
+// anthSystemBlock is the block form of the system prompt so a cache_control
+// breakpoint can be attached (the plain-string form cannot be cached).
+type anthSystemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
 }
 
 type anthTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"input_schema"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"input_schema"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
 }
 
 type anthMessage struct {
-	Role    string            `json:"role"`
-	Content json.RawMessage   `json:"content"`
+	Role    string          `json:"role"`
+	Content json.RawMessage `json:"content"`
 }
 
 type anthContentBlock struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text,omitempty"`
-	ID    string          `json:"id,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
-	ToolUseID string      `json:"tool_use_id,omitempty"`
-	Content   string      `json:"content,omitempty"`
-	IsError   bool        `json:"is_error,omitempty"`
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	ID           string          `json:"id,omitempty"`
+	Name         string          `json:"name,omitempty"`
+	Input        json.RawMessage `json:"input,omitempty"`
+	ToolUseID    string          `json:"tool_use_id,omitempty"`
+	Content      string          `json:"content,omitempty"`
+	IsError      bool            `json:"is_error,omitempty"`
+	CacheControl *cacheControl   `json:"cache_control,omitempty"`
+	StopReason   string          `json:"stop_reason,omitempty"` // carried on the message_delta stream event
 }
 
 type anthResponse struct {
 	Content []anthContentBlock `json:"content"`
 	Model   string             `json:"model"`
 	Usage   struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 	} `json:"usage"`
 	StopReason string `json:"stop_reason"`
 }
@@ -229,9 +260,14 @@ func buildAnthMessages(messages []Message) ([]anthMessage, error) {
 	return msgs, nil
 }
 
-// buildAnthTools converts generic Tool definitions to Anthropic format.
+// buildAnthTools converts generic Tool definitions to Anthropic format and
+// caches the tools block. Tools render first in the prefix, so a breakpoint on
+// the last tool caches the entire (large, stable) tool schema block for reuse.
 func buildAnthTools(tools []Tool) []anthTool {
-	var out []anthTool
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]anthTool, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, anthTool{
 			Name:        t.Name,
@@ -239,7 +275,44 @@ func buildAnthTools(tools []Tool) []anthTool {
 			InputSchema: buildToolParamsSchema(t),
 		})
 	}
+	out[len(out)-1].CacheControl = ephemeralCache()
 	return out
+}
+
+// buildSystemBlocks renders the system prompt as a single cached text block.
+// System renders after tools, so this breakpoint caches tools+system together.
+func buildSystemBlocks(system string) []anthSystemBlock {
+	if system == "" {
+		return nil
+	}
+	return []anthSystemBlock{{Type: "text", Text: system, CacheControl: ephemeralCache()}}
+}
+
+// addCacheBreakpoint stamps an ephemeral breakpoint on the last content block
+// of the newest message so the whole prior-conversation prefix is written once
+// and read on subsequent turns. Best-effort: on any decode issue it leaves the
+// message untouched. A plain-string message is promoted to a single text block
+// so the marker has somewhere to live.
+func addCacheBreakpoint(msgs []anthMessage) {
+	if len(msgs) == 0 {
+		return
+	}
+	last := &msgs[len(msgs)-1]
+	var blocks []anthContentBlock
+	if err := json.Unmarshal(last.Content, &blocks); err == nil && len(blocks) > 0 {
+		blocks[len(blocks)-1].CacheControl = ephemeralCache()
+		if raw, err := json.Marshal(blocks); err == nil {
+			last.Content = raw
+		}
+		return
+	}
+	var text string
+	if err := json.Unmarshal(last.Content, &text); err == nil {
+		wrapped := []anthContentBlock{{Type: "text", Text: text, CacheControl: ephemeralCache()}}
+		if raw, err := json.Marshal(wrapped); err == nil {
+			last.Content = raw
+		}
+	}
 }
 
 // parseAnthResponse extracts text content and tool calls from an Anthropic response.
@@ -269,12 +342,26 @@ func parseAnthResponse(result anthResponse) *Response {
 		Model:        result.Model,
 		InputTokens:  result.Usage.InputTokens,
 		OutputTokens: result.Usage.OutputTokens,
+		StopReason:   result.StopReason,
+	}
+}
+
+// warnStopReason surfaces terminal stop reasons that would otherwise be
+// invisible. A refusal or a max_tokens truncation arrives as an assistant
+// message with no tool calls, so the agent loop finalizes it as a normal
+// answer; log it so the truncation/refusal isn't silent.
+func warnStopReason(stopReason string) {
+	switch stopReason {
+	case "max_tokens":
+		Warn("[anthropic]: response truncated (stop_reason=max_tokens) — raise max_tokens or the answer is cut off mid-thought")
+	case "refusal":
+		Warn("[anthropic]: model declined the request (stop_reason=refusal)")
 	}
 }
 
 // Chat sends a non-streaming request.
 func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	cfg := applyOpts(c.model, 4096, opts)
+	cfg := applyOpts(c.model, anthDefaultMaxTokens, opts)
 
 	systemPrompt := cfg.SystemPrompt
 	if cfg.JSONMode {
@@ -290,14 +377,14 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	if err != nil {
 		return nil, err
 	}
+	addCacheBreakpoint(msgs)
 
 	payload := anthRequest{
-		Model:       cfg.Model,
-		Messages:    msgs,
-		MaxTokens:   cfg.MaxTokens,
-		System:      systemPrompt,
-		Temperature: cfg.Temperature,
-		Tools:       buildAnthTools(cfg.Tools),
+		Model:     cfg.Model,
+		Messages:  msgs,
+		MaxTokens: cfg.MaxTokens,
+		System:    buildSystemBlocks(systemPrompt),
+		Tools:     buildAnthTools(cfg.Tools),
 	}
 
 	body, err := json.Marshal(payload)
@@ -333,13 +420,14 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 	}
 
 	r := parseAnthResponse(result)
-	Debug("[anthropic]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d", r.Model, r.InputTokens, r.OutputTokens, len(r.ToolCalls))
+	warnStopReason(r.StopReason)
+	Debug("[anthropic]: Response: model=%s input_tokens=%d output_tokens=%d cache_read=%d cache_write=%d tool_calls=%d stop=%s", r.Model, r.InputTokens, r.OutputTokens, result.Usage.CacheReadInputTokens, result.Usage.CacheCreationInputTokens, len(r.ToolCalls), r.StopReason)
 	return r, nil
 }
 
 // ChatStream sends a streaming request.
 func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
-	cfg := applyOpts(c.model, 4096, opts)
+	cfg := applyOpts(c.model, anthDefaultStreamMaxTokens, opts)
 
 	systemPrompt := cfg.SystemPrompt
 	if cfg.JSONMode {
@@ -355,15 +443,15 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	if err != nil {
 		return nil, err
 	}
+	addCacheBreakpoint(msgs)
 
 	payload := anthRequest{
-		Model:       cfg.Model,
-		Messages:    msgs,
-		MaxTokens:   cfg.MaxTokens,
-		System:      systemPrompt,
-		Temperature: cfg.Temperature,
-		Stream:      true,
-		Tools:       buildAnthTools(cfg.Tools),
+		Model:     cfg.Model,
+		Messages:  msgs,
+		MaxTokens: cfg.MaxTokens,
+		System:    buildSystemBlocks(systemPrompt),
+		Stream:    true,
+		Tools:     buildAnthTools(cfg.Tools),
 	}
 
 	body, err := json.Marshal(payload)
@@ -390,6 +478,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	var textContent strings.Builder
 	var model string
 	var inputTokens, outputTokens int
+	var stopReason string
 	var toolCalls []ToolCall
 
 	// Track current content block for tool_use assembly.
@@ -402,6 +491,9 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 	var currentBlocks []blockState
 
 	scanner := bufio.NewScanner(resp.Body)
+	// Default Scanner caps a line at 64KB; a single large SSE `data:` line
+	// (a big content block) would trip bufio.ErrTooLong and abort the stream.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -479,6 +571,12 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 			if event.Usage != nil {
 				outputTokens = event.Usage.OutputTokens
 			}
+			// Terminal stop reason is delivered here on the stream. Without
+			// capturing it, a refusal or a max_tokens truncation is invisible
+			// (it arrives as an assistant turn with no tool calls).
+			if event.Delta != nil && event.Delta.StopReason != "" {
+				stopReason = event.Delta.StopReason
+			}
 		}
 	}
 
@@ -496,11 +594,13 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		Trace("<-- TOOL CALL: id=%s name=%s args=%s", tc.ID, tc.Name, string(argsJSON))
 	}
 
+	warnStopReason(stopReason)
 	return &Response{
 		Content:      textContent.String(),
 		ToolCalls:    toolCalls,
 		Model:        model,
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
+		StopReason:   stopReason,
 	}, nil
 }

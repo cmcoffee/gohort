@@ -37,8 +37,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,15 +132,42 @@ type desktopRegistry struct {
 
 var desktopReg = &desktopRegistry{byUser: map[string][]*desktopClient{}}
 
-// upgrader — default config; same-origin only (the server's auth
-// middleware already gated the connection on cookie).
 var desktopUpgrader = websocket.Upgrader{
 	ReadBufferSize:  4096,
 	WriteBufferSize: 4096,
-	// Cross-origin allowed because gohort-desktop reaches the
-	// server over a non-localhost origin; the cookie auth already
-	// validated identity.
-	CheckOrigin: func(_ *http.Request) bool { return true },
+	CheckOrigin:     desktopCheckOrigin,
+}
+
+// desktopCheckOrigin gates the WebSocket handshake against cross-site
+// hijacking (CSWSH). This endpoint is cookie-authenticated, so an allow-all
+// origin check would let any page in the viewer's browser open an
+// authenticated socket. It rejects ONLY a genuine cross-site http(s) browser
+// origin; every other case is allowed so legitimate clients keep working:
+//   - no Origin header → native client (the headless bridge daemon, WS
+//     libraries); no ambient cookie, so no CSWSH risk.
+//   - "null" / file:// / custom-scheme origin → a local webview shell, not a
+//     cross-site web page.
+//   - loopback origin → local webview (e.g. Wails' wails.localhost).
+//   - same-origin (Origin host == the server's Host).
+// SameSite=Lax on the session cookie is the primary control; this is
+// defense-in-depth for the residual gaps.
+func desktopCheckOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Hostname() == "" {
+		return true
+	}
+	if isLoopbackHost(u.Hostname()) {
+		return true
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.EqualFold(u.Hostname(), host)
 }
 
 // --- API-key authentication hook ---

@@ -99,6 +99,16 @@ const SAVE_PATH = "/__desktop/save"
 // can't reach the Wails Go-bridge (window.runtime is absent there).
 const OPEN_PATH = "/__desktop/open"
 
+// SAVE_SETTINGS_PATH / GET_SETTINGS_PATH back the configure form. The
+// form is served from the loopback origin (see main.go), where Wails
+// does NOT inject window.go — so the page can't call
+// App.SaveSettings / App.GetSettings directly. It POSTs/GETs here
+// instead and the proxy invokes the same App methods in Go. Same
+// pattern as APIKEY_PATH; without it, clicking Connect threw a
+// ReferenceError and wedged the form on "Checking server…".
+const SAVE_SETTINGS_PATH = "/__desktop/savesettings"
+const GET_SETTINGS_PATH = "/__desktop/getsettings"
+
 // apikey_page_html is the standalone bridge-API-key editor. Kept inline
 // (not a proxied gohort page, not the configure form) so updating the
 // key is fully decoupled from the server-connection flow.
@@ -181,6 +191,17 @@ func (gp *gohort_proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// we open it from the Go side instead.
 	if r.URL.Path == OPEN_PATH {
 		gp.handle_open_post(w, r)
+		return
+	}
+	// Configure-form backends. The form lives on the loopback origin
+	// where window.go is absent, so it fetch()es these instead of
+	// calling the bound App methods directly.
+	if r.URL.Path == GET_SETTINGS_PATH {
+		gp.handle_getsettings(w, r)
+		return
+	}
+	if r.URL.Path == SAVE_SETTINGS_PATH {
+		gp.handle_savesettings_post(w, r)
 		return
 	}
 
@@ -350,6 +371,47 @@ func (gp *gohort_proxy) handle_apikey_post(w http.ResponseWriter, r *http.Reques
 	}
 	core.Log("[gohort-desktop] bridge API key updated (local POST)")
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// handle_getsettings returns the current visible settings (server URL +
+// whether a bridge key is set) as JSON, so the configure form can
+// prefill. Runs in Go because the loopback-origin page has no window.go
+// to call App.GetSettings directly.
+func (gp *gohort_proxy) handle_getsettings(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{})
+		return
+	}
+	json.NewEncoder(w).Encode(gp.app.GetSettings())
+}
+
+// handle_savesettings_post validates + persists the server URL (and
+// optional bridge key) by invoking the SAME App.SaveSettings the Wails
+// binding would — the form just can't reach it over window.go on the
+// loopback origin, so it POSTs here. Returns {ok, error} exactly like
+// the bound method, so the form's success/error handling is unchanged.
+func (gp *gohort_proxy) handle_savesettings_post(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "method not allowed"})
+		return
+	}
+	if gp.app == nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "desktop not ready"})
+		return
+	}
+	var req struct {
+		ServerURL string `json:"server_url"`
+		APIKey    string `json:"api_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "bad request: " + err.Error()})
+		return
+	}
+	res := gp.app.SaveSettings(req.ServerURL, req.APIKey)
+	json.NewEncoder(w).Encode(map[string]any{"ok": res.OK, "error": res.Error})
 }
 
 // handle_save_post pops a native save dialog and writes a file attachment the
@@ -621,13 +683,11 @@ const GOHORT_NOT_RUNNING_HTML = `<!DOCTYPE html>
   </div>
 <script>
 function change_server() {
-  // Bridge may not be bound yet if this page loaded outside Wails
-  // (devtools refresh edge case); fall back to a plain reload.
-  if (window.go && window.go.main && window.go.main.App && window.go.main.App.ResetSettings) {
-    window.go.main.App.ResetSettings().then(function() { location.reload(); });
-  } else {
-    location.reload();
-  }
+  // This page is served from the loopback origin, where window.go is
+  // absent — so we can't call App.ResetSettings here. Navigate to the
+  // escape-hatch path instead; the proxy clears the saved URL in Go and
+  // serves the configure form.
+  location.replace('/__desktop/configure');
 }
 </script>
 </body>

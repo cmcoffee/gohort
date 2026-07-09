@@ -238,6 +238,24 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 				Debug("[bridges]   channel %q addr=%q auto_reply=%v dir=%s", c.Name, c.Address, c.AutoReply, ChannelDirection(c))
 			}
 		}
+		// A channel that IS bound to an agent but set not to wake (auto_reply off)
+		// is a pure read-along: mirror the inbound into the agent's transcript so
+		// it shows in the agent's chat, same as a gatekeeper-blocked message. Skip
+		// when no channel matched (nothing to mirror to) or the channel is
+		// outbound-only (an inbound doesn't belong in that thread). No-op if
+		// orchestrate isn't loaded.
+		if found && !ch.AutoReply && ChannelDirection(ch) != DirectionOutbound {
+			RecordChannelSilent(ChannelInbound{
+				Owner:            ch.Owner,
+				AgentID:          ch.AgentID,
+				SessionID:        ChannelSessionKey(ch, activeChatID),
+				ChatID:           activeChatID,
+				Handle:           req.Handle,
+				SenderName:       sender,
+				ConversationName: firstNonEmpty(req.ConversationName, sender),
+				Text:             req.Text,
+			})
+		}
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
@@ -282,6 +300,11 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		gcancel()
 		if !allowed {
 			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
+			// Mirror the blocked message into the bound agent's own transcript so it
+			// shows in the agent's chat and is in-context on its next wake — the
+			// agent reads along even when it stays silent. No-op if orchestrate isn't
+			// loaded. Store A already has it (storeMessage above); this is Store B.
+			RecordChannelSilent(in)
 			return
 		}
 		// Coalesce rapid same-session messages (a question, then an image posted

@@ -1093,6 +1093,38 @@ type nativeOllamaChatResponse struct {
 	EvalCount       int  `json:"eval_count"`
 }
 
+// nativeOllamaToolCallsToFramework converts ollama's native tool calls into
+// the framework's ToolCall type, collapsing byte-identical duplicates.
+//
+// Ollama's native /api/chat has no per-call `index` to coalesce on the way
+// the OpenAI-compatible delta format does. When the backend repeats the same
+// tool call across streamed chunks — or emits an accumulating list on each
+// chunk — a blind append produces genuine duplicates that the agent loop then
+// runs twice in parallel. Collapse on a name+arguments signature: two calls
+// with identical name AND args carry no additional information, while calls
+// that differ in either survive (legitimate parallel fan-out is preserved).
+func nativeOllamaToolCallsToFramework(in []nativeOllamaToolCall) []ToolCall {
+	var out []ToolCall
+	seen := make(map[string]bool, len(in))
+	for _, tc := range in {
+		// json.Marshal sorts map keys, so the signature is stable
+		// regardless of the order the arguments arrived in.
+		argsJSON, _ := json.Marshal(tc.Function.Arguments)
+		sig := tc.Function.Name + "\x00" + string(argsJSON)
+		if seen[sig] {
+			Debug("[ollama]: dropping duplicate tool call name=%s", tc.Function.Name)
+			continue
+		}
+		seen[sig] = true
+		out = append(out, ToolCall{
+			ID:   fmt.Sprintf("call_%d", len(out)),
+			Name: tc.Function.Name,
+			Args: tc.Function.Arguments,
+		})
+	}
+	return out
+}
+
 // convertToNativeOllamaMessages translates OpenAI-shaped messages into
 // ollama's native /api/chat shape. The key difference is that tool_calls
 // arguments are sent as parsed objects, not as JSON-encoded strings.
@@ -1306,14 +1338,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	Debug("[ollama]: Response: model=%s input_tokens=%d output_tokens=%d tool_calls=%d", result.Model, result.PromptEvalCount, result.EvalCount, len(result.Message.ToolCalls))
 
 	// Convert ollama's structured tool calls into the framework's ToolCall type.
-	var toolCalls []ToolCall
-	for i, tc := range result.Message.ToolCalls {
-		toolCalls = append(toolCalls, ToolCall{
-			ID:   fmt.Sprintf("call_%d", i),
-			Name: tc.Function.Name,
-			Args: tc.Function.Arguments,
-		})
-	}
+	toolCalls := nativeOllamaToolCallsToFramework(result.Message.ToolCalls)
 
 	return &Response{
 		Content:      result.Message.Content,
@@ -1481,14 +1506,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	}
 
 	// Convert ollama's structured tool calls into the framework's ToolCall type.
-	var toolCalls []ToolCall
-	for i, tc := range streamedToolCalls {
-		toolCalls = append(toolCalls, ToolCall{
-			ID:   fmt.Sprintf("call_%d", i),
-			Name: tc.Function.Name,
-			Args: tc.Function.Arguments,
-		})
-	}
+	toolCalls := nativeOllamaToolCallsToFramework(streamedToolCalls)
 
 	Debug("[ollama]: Stream complete: model=%s input_tokens=%d output_tokens=%d tool_calls=%d", model, inputTokens, outputTokens, len(toolCalls))
 

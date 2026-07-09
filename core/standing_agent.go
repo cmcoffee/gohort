@@ -278,6 +278,29 @@ func StartStandingScheduler() {
 			Log("[standing] bad payload: %v", err)
 			return
 		}
+		// ALWAYS re-arm the recurring cadence — even if the run panics. The
+		// schedule is a self-rescheduling chain: each fire schedules the next.
+		// Before this, a panicking run (or its registered runner) died BEFORE
+		// the reschedule and left the standing agent "active" but dead forever,
+		// needing a manual pause/resume to revive — the exact failure that
+		// event monitors (event_monitor.go) and the trigger engine already
+		// guard against with a deferred re-arm. Only scheduled fires re-arm; a
+		// manual run-now is a one-off. Deferred so it runs no matter how the
+		// fire exits; recover() stops one bad run from taking down the
+		// scheduler goroutine; the re-read honors a pause/edit/delete that
+		// happened during the run.
+		if p.Trigger == "schedule" {
+			defer func() {
+				if r := recover(); r != nil {
+					Log("[standing] run %s/%s PANICKED: %v — re-arming next fire anyway", p.Owner, p.Name, r)
+				}
+				if cur, ok := GetStandingAgent(RootDB, p.Owner, p.Name); ok && !cur.Paused {
+					if err := ScheduleStandingAgent(RootDB, cur); err != nil {
+						Log("[standing] reschedule failed for %s/%s: %v", p.Owner, p.Name, err)
+					}
+				}
+			}()
+		}
 		sa, ok := GetStandingAgent(RootDB, p.Owner, p.Name)
 		if !ok {
 			Log("[standing] no such standing agent %s/%s — dropping task", p.Owner, p.Name)
@@ -288,16 +311,6 @@ func StartStandingScheduler() {
 			return
 		}
 		executeStandingRun(ctx, RootDB, sa, p.Trigger)
-
-		// Reschedule the recurring cadence only for scheduled fires; a
-		// manual run-now is a one-off and leaves the recurring task alone.
-		if p.Trigger == "schedule" {
-			if cur, ok := GetStandingAgent(RootDB, p.Owner, p.Name); ok && !cur.Paused {
-				if err := ScheduleStandingAgent(RootDB, cur); err != nil {
-					Log("[standing] reschedule failed for %s/%s: %v", p.Owner, p.Name, err)
-				}
-			}
-		}
 	})
 }
 

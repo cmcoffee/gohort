@@ -647,6 +647,58 @@ type DisplayPair struct {
 	Block bool `json:"block,omitempty"`
 }
 
+// ChartPanel renders a multi-series chart (bar / line / area / pie) as
+// inline SVG. Domain-agnostic: the app (or the Builder via app_def)
+// supplies data + a chart type, and the runtime owns the rendering —
+// pulling axis/text/grid colors from the active theme so the chart
+// follows light/dark automatically, and coloring series from a built-in
+// categorical palette. No app names it and no app-specific shape leaks
+// in, so it belongs in core/ui.
+//
+// Two data modes:
+//   - Static: set Labels + Series (+ ChartType) inline.
+//   - Dynamic: set Source to a JSON endpoint returning
+//     {labels, series[, chart_type, title, options]}. The endpoint's
+//     fields override the inline ones, so ChartType/Title act as
+//     defaults — this is how a source_script-backed custom app chart
+//     computes its data from records.
+type ChartPanel struct {
+	ChartType string        `json:"chart_type,omitempty"` // "bar" | "line" | "area" | "pie"; renderer defaults to bar
+	Title     string        `json:"title,omitempty"`
+	Labels    []string      `json:"labels,omitempty"`
+	Series    []ChartSeries `json:"series,omitempty"`
+	Options   *ChartOptions `json:"options,omitempty"`
+	Source    string        `json:"source,omitempty"` // JSON endpoint for dynamic data
+}
+
+// ChartSeries is one series in a ChartPanel. Points feeds bar/line/area
+// (one number per Labels entry); Value feeds a pie slice (one series
+// per slice). A pie can also be expressed as Labels + a single Points
+// series.
+type ChartSeries struct {
+	Name   string    `json:"name,omitempty"`
+	Points []float64 `json:"points,omitempty"`
+	Value  *float64  `json:"value,omitempty"`
+}
+
+// ChartOptions are optional chart tweaks. Legend defaults to on (nil);
+// Stacked applies to bar charts.
+type ChartOptions struct {
+	Width   int   `json:"width,omitempty"`
+	Height  int   `json:"height,omitempty"`
+	Stacked bool  `json:"stacked,omitempty"`
+	Legend  *bool `json:"legend,omitempty"`
+}
+
+func (ChartPanel) componentType() string { return "chart_panel" }
+func (c ChartPanel) MarshalJSON() ([]byte, error) {
+	type alias ChartPanel
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"chart_panel", alias(c)})
+}
+
 // ApiKeyPanel renders a single API-key value with Generate + Copy
 // affordances. Source returns the current key as JSON ({key: "..."}
 // by default; override with KeyField). GenerateURL is POSTed to
@@ -1367,7 +1419,7 @@ type PipelineAction struct {
 type PipelineField struct {
 	Name        string   `json:"name"`
 	Label       string   `json:"label,omitempty"`
-	Type        string   `json:"type"` // "text" | "textarea" | "number" | "select"
+	Type        string   `json:"type"` // "text" | "textarea" | "number" | "select" | "toggle" | "file"
 	Placeholder string   `json:"placeholder,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Options     []string `json:"options,omitempty"`
@@ -1375,6 +1427,24 @@ type PipelineField struct {
 	Max         int      `json:"max,omitempty"`
 	Required    bool     `json:"required,omitempty"`
 	Rows        int      `json:"rows,omitempty"` // for textarea
+	// File-field wiring (Type "file"). The picked file is multipart-
+	// POSTed to UploadURL, which extracts its text server-side and
+	// returns JSON {"text": "...", "title": "..."}; the runtime drops
+	// text into the field named by UploadTarget so the user reviews it
+	// before submitting, and title into a "title" field when present.
+	// Accept is the input's accept attribute (e.g. ".pdf,.docx,.txt").
+	// The file field itself is never part of the submit body — it only
+	// populates other fields. Generic: any pipeline app can attach a
+	// server-side extractor endpoint this way.
+	Accept       string `json:"accept,omitempty"`
+	UploadURL    string `json:"upload_url,omitempty"`
+	UploadTarget string `json:"upload_target,omitempty"`
+	// UploadSetField / UploadSetValue — on a successful upload, set the
+	// sibling field named by UploadSetField to the constant UploadSetValue
+	// (e.g. flip a "source" select to "upload"). Left untouched when
+	// UploadSetField is empty.
+	UploadSetField string `json:"upload_set_field,omitempty"`
+	UploadSetValue string `json:"upload_set_value,omitempty"`
 }
 
 func (PipelinePanel) componentType() string { return "pipeline_panel" }
@@ -1488,6 +1558,11 @@ type AgentLoopPanel struct {
 	// may be bound to, so the channel editor can re-point a channel at a
 	// different agent. Omit to hide the agent picker.
 	ChannelAgentsURL string `json:"channel_agents_url,omitempty"`
+	// DefaultGatekeeperRule — the app's canonical default wake rule, surfaced so
+	// the channel editor can offer a "Reset to default" control on the gatekeeper
+	// rules. The default itself lives in Go (single source of truth); this just
+	// carries its text to the client. Omit to hide the reset control.
+	DefaultGatekeeperRule string `json:"default_gatekeeper_rule,omitempty"`
 	// RenameURL — optional. When set, each rail row gets a ✎ button.
 	// Clicking prompts for a new name; the runtime POSTs {id, name}
 	// to RenameURL, then refreshes the list. Useful for workspaces /

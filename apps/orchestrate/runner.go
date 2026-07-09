@@ -437,6 +437,19 @@ type chatTurn struct {
 	// when propagated to a sub-turn.
 	dispatchChain []string
 
+	// agentDispatchCounts caps repeated agents(action="run") dispatches to the
+	// SAME target within one user turn (keyed by target agent ID). Distinct from
+	// dispatchCounts above (that one keys on (name,args) and only caps cacheable
+	// READ tools — agent dispatch is state-mutating, so it's exempt there). It's
+	// also distinct from dispatchDepth (a recursion guard that decrements as each
+	// sub-run returns, so it never sees a chat agent re-firing agents(run, X)
+	// round after round at the same level) and dispatchChain (cycles only). This
+	// accumulates across the whole turn and is the hard stop for the "answers and
+	// runs the app over and over" loop — which the signature-based agent_loop
+	// guard also misses because each sub-run returns different text. NOT
+	// propagated to sub-turns; resets per user message.
+	agentDispatchCounts map[string]int
+
 	// ownerDB / ownerUser are the FLEET view — set on phantom-
 	// dispatched (and other foreign-user) runs where the runtime
 	// identity (udb / user) is a synthetic per-chat user that owns
@@ -3377,6 +3390,15 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		// knowledge_search like any other ingested content.
 		if len(ingestQueue) > 0 {
 			go func(items []ingestPair, user, agentID string) {
+				// Recover — this runs off the reply path, so a panic in
+				// the embedding backend or vector-store write would
+				// otherwise crash the whole server. Match the title
+				// goroutine's guard above.
+				defer func() {
+					if r := recover(); r != nil {
+						Log("[orchestrate.attachments] ingest panicked for agent=%s: %v", agentID, r)
+					}
+				}()
 				for _, it := range items {
 					ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 					ingestAgentKnowledge(ctx, T.DB, user, agentID, "attachments", it.name, it.text)

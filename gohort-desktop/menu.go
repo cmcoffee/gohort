@@ -63,11 +63,13 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		if app.ctx == nil {
 			return
 		}
-		// ResetSettings clears the URL + cookie jar; navigating to
-		// the escape hatch path serves the configure form. Using
-		// location.replace so the bounce isn't a history entry.
-		wails_runtime.WindowExecJS(app.ctx,
-			`window.go.main.App.ResetSettings().then(function(){location.replace('/__desktop/configure');});`)
+		// Clear URL + cookie jar IN GO — proxy-served pages have no
+		// window.go, so the old `window.go.main.App.ResetSettings()`
+		// threw and the navigation never fired (Change Server did
+		// nothing). The callback is already Go; call the method
+		// directly, then bounce the webview to the configure form.
+		app.ResetSettings()
+		wails_runtime.WindowExecJS(app.ctx, `location.replace('/__desktop/configure');`)
 		core.Log("[gohort-desktop] menu: Change Server invoked")
 	})
 
@@ -75,12 +77,13 @@ func build_app_menu(app *App) *wails_menu.Menu {
 		if app.ctx == nil {
 			return
 		}
-		// Clear the local jar AND hit gohort's /logout so server-side
-		// session state is destroyed too. /logout returns a redirect
-		// to /login which the proxy's rewrite_redirect_as_js converts
-		// into an HTML+JS bounce — WKWebView follows that fine.
-		wails_runtime.WindowExecJS(app.ctx,
-			`window.go.main.App.LogOut().then(function(){location.replace('/logout');});`)
+		// Clear the local jar IN GO (no window.go on proxy-served
+		// pages), then hit gohort's /logout so server-side session
+		// state is destroyed too. /logout returns a redirect to /login
+		// which the proxy's rewrite_redirect_as_js converts into an
+		// HTML+JS bounce — WKWebView follows that fine.
+		app.LogOut()
+		wails_runtime.WindowExecJS(app.ctx, `location.replace('/logout');`)
 		core.Log("[gohort-desktop] menu: Log Out invoked")
 	})
 

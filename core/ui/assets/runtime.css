@@ -1,0 +1,4351 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg-0); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: contain;
+}
+body { min-height: 100vh; min-height: 100dvh; }
+
+#ui-root {
+  margin: 0 auto;
+  padding: 0.95rem;
+  padding-top: calc(0.95rem + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(1.8rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* --- Page header (back link + visible title) --- */
+/* Full-width bar: lives OUTSIDE the centered #ui-root (see runtime), so the bar
+   + its border-bottom stretch edge-to-edge while page content stays in the
+   narrow column. Horizontal padding matches #ui-root so the back button lines up
+   with the content's left edge; safe-area top so the bar clears a notch. */
+.ui-page-header {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.45rem 0.95rem;
+  padding-top: calc(0.45rem + env(safe-area-inset-top, 0px));
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.ui-back-link {
+  display: inline-flex; align-items: center;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.8rem; color: var(--text-mute); text-decoration: none;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-1);
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.1s ease, border-color 0.1s ease, transform 0.05s ease;
+}
+/* Mobile: keep a touch-friendly tap target. */
+@media (max-width: 700px) {
+  .ui-back-link { min-height: var(--tap); padding: 0.45rem 0.7rem; font-size: 0.9rem; }
+}
+.ui-back-link:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-back-link:active { transform: scale(0.97); }
+/* Top nav bar — a row of page links rendered below the header. Apps set
+ * Page.Nav to get a shared menu across a multi-page app instead of chained
+ * footer links. Spans full viewport width; scrolls horizontally on narrow
+ * screens rather than wrapping. The active page's link is underlined. */
+.ui-page-nav {
+  display: flex; align-items: center; gap: 0.15rem;
+  padding: 0 0.95rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+}
+.ui-page-nav::-webkit-scrollbar { height: 0; }
+.ui-page-nav-link {
+  display: inline-flex; align-items: center;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.85rem; color: var(--text-mute); text-decoration: none;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.1s ease, border-color 0.1s ease;
+}
+.ui-page-nav-link:hover { color: var(--text); }
+.ui-page-nav-link.active { color: var(--text); border-bottom-color: var(--accent, #4a9eff); }
+@media (max-width: 700px) {
+  .ui-page-nav-link { min-height: var(--tap); padding: 0.55rem 0.7rem; }
+}
+/* Live-sessions pill — pinned to the right of the page header.
+ * Hidden when no sessions are active so the header stays clean
+ * during normal use; pulses with a colored dot when something is
+ * running. Click → dropdown listing each session with click-through
+ * to its app page. */
+.ui-live-pill-wrap { position: relative; margin-left: auto; }
+.ui-live-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  padding: 0.32rem 0.7rem; border-radius: 999px;
+  background: var(--bg-1); color: var(--success);
+  border: 1px solid var(--success);
+  font-size: 0.72rem; font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  font-family: inherit;
+}
+.ui-live-pill.queued {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+.ui-live-pill:hover { filter: brightness(1.15); }
+.ui-live-text { font-weight: 700; }
+.ui-live-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--text-mute);
+}
+.ui-live-pill.running .ui-live-dot {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.85);
+  animation: ui-live-pulse 1.6s ease-in-out infinite;
+}
+.ui-live-pill.queued .ui-live-dot {
+  background: var(--warning);
+  box-shadow: 0 0 6px rgba(227, 179, 65, 0.7);
+}
+/* Pulse the glow ring outward — the inner shadow stays put while
+ * the outer ring expands and fades, so the dot reads as "alive"
+ * instead of just colored. Matches the legacy live-status pill
+ * the user remembered. */
+@keyframes ui-live-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 6px rgba(63, 185, 80, 0.85),
+      0 0 0 0 rgba(63, 185, 80, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 6px rgba(63, 185, 80, 0.85),
+      0 0 0 7px rgba(63, 185, 80, 0);
+  }
+}
+.ui-live-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
+  min-width: 320px; max-width: 480px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  padding: 0.3rem; max-height: 60vh; overflow-y: auto;
+}
+.ui-live-empty {
+  font-size: 0.82rem; color: var(--text-mute);
+  padding: 0.5rem 0.6rem; text-align: center;
+}
+.ui-live-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.6rem; border-radius: 6px;
+  text-decoration: none; color: var(--text);
+  font-size: 0.85rem;
+}
+.ui-live-item:hover { background: var(--bg-2); }
+.ui-live-app {
+  font-size: 0.7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-mute); flex-shrink: 0;
+}
+.ui-live-state {
+  font-size: 0.65rem; font-weight: 700;
+  padding: 0.1rem 0.4rem; border-radius: 999px;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+.ui-live-item.running .ui-live-state { background: rgba(63, 185, 80, 0.18); color: var(--success); }
+.ui-live-item.queued .ui-live-state  { background: rgba(227, 179, 65, 0.18); color: var(--warning); }
+.ui-live-label {
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ui-page-title {
+  margin: 0; flex: 1;
+  font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+  font-weight: 700; font-size: 1.1rem; letter-spacing: 0.05em; line-height: 1;
+  /* Metallic gradient — chrome-on-charcoal wordmark matching the
+     legacy app-title look so framework pages don't appear downgraded
+     vs. apps still serving hand-rolled chrome. */
+  background: linear-gradient(180deg, #f0f6fc 0%, #30363d 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  white-space: nowrap;
+}
+
+/* --- Section --- */
+.ui-section {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 12px;
+  padding: 1rem 1.15rem; margin-bottom: 1rem;
+}
+/* Page.Grid layout — sections flow into a responsive 2-column grid on
+ * desktop, one column on mobile; a Wide section spans the full width.
+ * Cards size to their own content (align-items:start) so a short form
+ * doesn't stretch to match a tall neighbor. gap replaces the per-card
+ * margin so spacing stays even. */
+.ui-section-grid {
+  display: grid; grid-template-columns: 1fr; gap: 1rem; align-items: start;
+  /* dense: backfill the empty cell a full-width (Wide) section would
+   * otherwise leave beside a lone narrow section, so narrow cards pack
+   * tight instead of leaving holes on the left/right. */
+  grid-auto-flow: row dense;
+}
+.ui-section-grid > .ui-section { margin-bottom: 0; min-width: 0; }
+.ui-section-grid > .ui-section-wide { grid-column: 1 / -1; }
+@media (min-width: 900px) {
+  .ui-section-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Masonry mode (class added by JS): a fine row track so per-card row spans can
+   * pack each card directly under the one above instead of aligning to the
+   * tallest card in its row (which left "missing puzzle piece" holes under the
+   * short ones). JS-gated via the class so that without JS the grid stays a
+   * normal, functional 2-col grid rather than clamping cards to a 2px track. */
+  .ui-section-grid.ui-masonry { grid-auto-rows: 2px; }
+}
+/* Page.Tabbed — a category button bar across the top; one group's
+ * sections show at a time. */
+.ui-tabbar {
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  margin: 0 0 1rem 0; padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.ui-tab {
+  padding: 0.4rem 0.9rem; border-radius: 8px; cursor: pointer;
+  font: inherit; font-size: 0.85rem;
+  border: 1px solid var(--border); background: var(--bg-1); color: var(--text-mute);
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ui-tab:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-tab.active {
+  background: var(--accent-soft, rgba(74,158,255,0.16));
+  border-color: var(--accent, #4a9eff); color: var(--text);
+}
+.ui-tab-hidden { display: none; }
+.ui-section-h {
+  font-size: 0.85rem; margin: 0 0 0.7rem 0;
+  color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  flex-wrap: wrap;
+  word-break: break-word;
+}
+.ui-section-h-r { font-size: 0.7rem; text-transform: none; letter-spacing: 0; font-weight: normal; }
+.ui-section-sub {
+  font-size: 0.8rem; color: var(--text-mute);
+  margin: -0.3rem 0 0.6rem 0;
+  line-height: 1.45;
+  /* Long subtitles wrap onto multiple lines; never truncate. */
+  white-space: normal; overflow-wrap: break-word;
+}
+
+/* --- PanicBar (sticky top) --- */
+.ui-panic-bar {
+  position: sticky; top: 0; z-index: 10;
+  margin: -0.6rem -0.6rem 0.8rem; padding: 0.6rem;
+  padding-top: calc(0.6rem + env(safe-area-inset-top, 0px));
+  background: var(--bg-0); /* solid fallback if color-mix unsupported */
+  background: color-mix(in srgb, var(--bg-0) 85%, transparent); /* themed + translucent */
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+.ui-panic-btn {
+  display: block; width: 100%; min-height: var(--tap);
+  background: linear-gradient(180deg, #8b2222, #6e1c1c); color: #fff;
+  border: 1px solid var(--danger); border-radius: 10px;
+  padding: 0.85rem; font-size: 1rem; font-weight: 600; letter-spacing: 0.02em;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform 0.05s ease, background 0.1s ease;
+}
+.ui-panic-btn:active { background: var(--danger); transform: scale(0.98); }
+.ui-panic-status { font-size: 0.8rem; color: var(--text-mute); text-align: center; display: block; margin-top: 0.3rem; min-height: 1em; }
+
+/* --- EmptyState (centered "nothing here yet" placeholder) --- */
+.ui-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 3rem 1rem; min-height: 200px; }
+.ui-empty-icon { font-size: 48px; line-height: 1; opacity: 0.3; margin-bottom: 1rem; }
+.ui-empty-title { font-size: 1.05rem; color: var(--text); margin-bottom: 0.35rem; }
+.ui-empty-hint { font-size: 0.85rem; color: var(--text-mute); opacity: 0.85; max-width: 360px; line-height: 1.5; }
+.ui-empty-action { margin-top: 1.25rem; min-height: var(--tap); background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 0.55rem 1.1rem; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.ui-empty-action:hover { filter: brightness(1.08); }
+
+/* --- WorkbenchPanel: list | viewer | chat, full-height columns --- */
+.ui-wb {
+  display: flex; gap: 0.8rem; align-items: stretch;
+  /* Fill the viewport below the page header. Columns scroll internally.
+   * position:relative anchors the mobile list drawer + backdrop. */
+  position: relative;
+  height: calc(100vh - 90px); min-height: 420px;
+}
+.ui-wb-col {
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+}
+.ui-wb-list   { flex: 0 0 240px; }
+.ui-wb-viewer { flex: 1 1 0; }
+.ui-wb-chat   { flex: 0 0 380px; }
+/* Mobile-only ✕ in the list header (closes the drawer). */
+.ui-wb-close { display: none; }
+/* Tablet: soften the fixed side-column widths so the viewer keeps room.
+ * Also neutralize the agent panel's standalone-page mobile rules here —
+ * they pin its grid to a full viewport (100dvh) and unclamp its root,
+ * which inside a workbench chat pane makes the chat swallow the screen.
+ * Two-class specificity keeps these wins regardless of file order. */
+@media (max-width: 900px) {
+  .ui-wb-list { flex: 0 0 200px; }
+  .ui-wb-chat { flex: 0 0 300px; }
+  .ui-wb-chat .ui-agent { height: 100%; min-height: 0; }
+  .ui-wb-chat .ui-agent-grid { height: 100%; }
+}
+/* Phone: single column. The item list becomes a full-screen slide-in
+ * drawer (same pattern as the chat/pipeline sidebars — opened from the
+ * shared ui-chat-mobile-hdr hamburger the workbench renderer mounts);
+ * the viewer takes the main area with the chat stacked below it. */
+@media (max-width: 700px) {
+  .ui-wb {
+    flex-direction: column; gap: 0.5rem;
+    height: calc(100vh - 90px);
+    height: calc(100dvh - 90px);
+    min-height: 0;
+  }
+  .ui-wb-list {
+    position: absolute; inset: 0; z-index: 30;
+    flex: none; width: 100%; max-width: none;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    border-radius: 0;
+  }
+  .ui-wb-list.open { transform: translateX(0); }
+  .ui-wb-viewer { flex: 1 1 0; min-height: 0; }
+  .ui-wb-chat   { flex: 0 0 42%; min-height: 0; }
+  .ui-wb-viewer-body { padding: 0.9rem 1rem; }
+  .ui-wb-close {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--text-mute);
+    border: 1px solid var(--border); border-radius: 8px;
+    min-width: 36px; min-height: 36px; padding: 0;
+    font-size: 0.95rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Touch has no hover — keep per-item delete reachable. */
+  .ui-wb-item-del { opacity: 0.7; }
+}
+.ui-wb-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--border); flex: 0 0 auto;
+}
+.ui-wb-head-t { font-size: 0.78rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-mute); }
+.ui-wb-head-actions { display: flex; align-items: center; gap: 0.4rem; }
+.ui-wb-new .ui-modal-button-row { margin: 0; }
+.ui-wb-list-body { flex: 1 1 0; overflow-y: auto; padding: 0.4rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.ui-wb-item {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer; font-size: 0.88rem;
+  color: var(--text);
+}
+.ui-wb-item-label { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ui-wb-item:hover { background: var(--bg-2); }
+.ui-wb-item.active { background: var(--accent); color: #fff; }
+.ui-wb-item-del {
+  flex: 0 0 auto; border: 0; background: transparent; cursor: pointer;
+  color: var(--text-mute); font-size: 1.1rem; line-height: 1; padding: 0 0.2rem;
+  opacity: 0; transition: opacity 0.12s;
+}
+.ui-wb-item:hover .ui-wb-item-del { opacity: 0.7; }
+.ui-wb-item-del:hover { opacity: 1; color: var(--danger); }
+.ui-wb-item.active .ui-wb-item-del { color: #fff; }
+.ui-wb-coauthor-btn {
+  margin-top: 0.5rem; min-height: var(--tap); cursor: pointer;
+  background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 0.3rem 0.7rem; font-size: 0.8rem; font-weight: 600;
+}
+.ui-wb-coauthor-btn:hover { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
+.ui-wb-coauthor-btn:disabled { opacity: 0.6; cursor: default; }
+.ui-wb-list-empty { padding: 0.8rem 0.6rem; color: var(--text-mute); font-size: 0.82rem; font-style: italic; }
+.ui-wb-actions {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; flex: 0 0 auto;
+  padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border);
+}
+.ui-wb-action-btn {
+  cursor: pointer; background: var(--bg-2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 0.28rem 0.7rem; font-size: 0.8rem; font-weight: 600;
+}
+.ui-wb-action-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-hi, var(--accent)); }
+.ui-wb-action-btn:disabled { opacity: 0.45; cursor: default; }
+/* Grouped-action dropdown (Kind:"menu") — a button that opens a small popover
+ * of sub-actions (e.g. Export → HTML / PDF / Markdown) so related toolbar
+ * buttons collapse into one. Generic: any WorkbenchAction with children uses it. */
+.ui-wb-action-wrap { position: relative; display: inline-flex; }
+.ui-wb-menu {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  min-width: 160px; z-index: 50;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  padding: 0.25rem; display: flex; flex-direction: column;
+}
+.ui-wb-menu-item {
+  background: transparent; border: none; color: var(--text);
+  text-align: left; padding: 0.45rem 0.7rem; border-radius: 6px;
+  font-family: inherit; font-size: 0.82rem; cursor: pointer; white-space: nowrap;
+}
+.ui-wb-menu-item:hover { background: var(--bg-2); color: var(--text-hi); }
+.ui-wb-hist-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+.ui-wb-hist-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+.ui-wb-hist-note { font-size: 0.85rem; color: var(--text); }
+.ui-wb-hist-at { font-size: 0.72rem; color: var(--text-mute); }
+.ui-wb-hist-empty { color: var(--text-mute); font-style: italic; padding: 0.6rem 0; }
+.ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
+.ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
+.ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
+.ui-wb-md h1, .ui-wb-md h2 { margin: 1.4rem 0 0.6rem; color: var(--text-hi); border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
+.ui-wb-md h3, .ui-wb-md h4 { margin: 1.1rem 0 0.4rem; color: var(--text-hi); }
+.ui-wb-md h1:first-child, .ui-wb-md h2:first-child { margin-top: 0; }
+.ui-wb-md-empty {
+  display: flex; flex-direction: column; gap: 0.5rem; align-items: center; justify-content: center;
+  text-align: center; height: 100%; min-height: 200px; color: var(--text-mute);
+  font-size: 0.9rem; line-height: 1.5; max-width: 440px; margin: 0 auto;
+}
+/* The embedded chat fills its column (its own internal layout takes over).
+ * Single-mode ChatPanel roots at .ui-chat; agent_loop_panel at .ui-agent. */
+.ui-wb-chat > .ui-chat,
+.ui-wb-chat > .ui-agent { height: 100%; border: 0; border-radius: 0; min-height: 0; }
+.ui-wb-chat > .ui-chat.ui-chat-single { height: 100%; }
+/* (The old stack-with-page-scroll mobile block that lived here is gone —
+ * the drawer + stacked layout in the .ui-wb media rules above replaces it.
+ * It would otherwise win the cascade and blow the chat up to 70vh.) */
+
+/* --- iOS-style switch --- */
+.ui-switch {
+  -webkit-appearance: none; appearance: none;
+  position: relative; flex-shrink: 0;
+  width: 52px; height: 32px; border-radius: 16px;
+  background: var(--border); border: none;
+  cursor: pointer; outline: none;
+  transition: background 0.15s ease;
+}
+.ui-switch::before {
+  content: ''; position: absolute; left: 2px; top: 2px;
+  width: 28px; height: 28px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform 0.15s ease;
+}
+.ui-switch:checked { background: var(--success); }
+.ui-switch:checked::before { transform: translateX(20px); }
+.ui-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- ToggleGroup row --- */
+/* Padding is 0 horizontal so label text shares its left edge with the
+ * section header above, and the switch sits flush with the section's
+ * right content edge. Eliminates the "wandering text" look where each
+ * row's label starts a few pixels right of where the header started. */
+.ui-toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.7rem; padding: 0.65rem 0; min-height: var(--tap);
+  line-height: 1.3;
+  border-bottom: 1px solid var(--border);
+  -webkit-tap-highlight-color: transparent; cursor: pointer; user-select: none;
+}
+.ui-toggle-row:last-child { border-bottom: none; }
+.ui-toggle-row:active { background: rgba(255,255,255,0.02); }
+.ui-toggle-row .ui-toggle-label { font-size: 0.95rem; color: var(--text); flex: 1; min-width: 0; padding-right: 0.5rem; }
+.ui-toggle-row .ui-toggle-help { display: block; font-size: 0.78rem; color: var(--text-mute); margin-top: 0.15rem; }
+
+/* --- Table --- */
+.ui-table-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-table-row {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+  display: flex; align-items: center; gap: 0.7rem;
+  /* Single-line layout on desktop — cells ellipsize when crowded.
+   * Wrapping caused inconsistent placement (long topics pushed
+   * action buttons to a second line, short topics didn't). The
+   * 800px media query below handles narrow viewports separately
+   * by stacking the row as a column. */
+  flex-wrap: nowrap;
+  min-height: var(--tap);
+}
+.ui-row-cells {
+  display: flex; align-items: center; gap: 0.7rem;
+  flex: 1 1 auto; min-width: 0;
+}
+.ui-row-actions {
+  display: flex; align-items: center; gap: 0.5rem;
+  flex-wrap: wrap; /* buttons wrap as a group, never one-per-line */
+  flex-shrink: 0;
+  /* Pin to the right edge of the row. The cells container takes
+   * remaining width via flex:1, so actions always end up flush right
+   * regardless of how much cell content there is. */
+  margin-left: auto;
+  justify-content: flex-end;
+}
+.ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
+.ui-table-cell.mute { color: var(--text-mute); font-size: 0.78rem; }
+.ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }
+.ui-table-cell a.ui-table-link:hover { text-decoration: underline; }
+.ui-table-empty { color: var(--text-mute); font-size: 0.9rem; padding: 0.5rem 0; }
+
+/* Narrow viewport: row goes column, cells stack vertically (display:
+ * block — more predictable than nested flex), actions stay a single
+ * horizontal wrapped strip. Avoids the empty-content collapse bug
+ * that hit on phone Chrome where width:100% on flex children inside
+ * a flex-column container rendered as 0-height. */
+@media (max-width: 800px) {
+  .ui-table-row {
+    flex-direction: column; align-items: stretch;
+    gap: 0.5rem;
+  }
+  .ui-row-cells {
+    display: block;
+    flex: none; min-width: 0;
+  }
+  .ui-row-cells > .ui-table-cell {
+    display: block;
+    width: auto;
+    margin: 0 0 0.25rem 0;
+    white-space: normal; word-break: break-word;
+    overflow: visible; /* keep ellipsis off when wrapping is on */
+    text-overflow: clip;
+  }
+  .ui-row-cells > .ui-table-cell:last-child { margin-bottom: 0; }
+  .ui-table-cell.mute { font-size: 0.8rem; }
+  .ui-row-actions {
+    display: flex; flex-wrap: wrap;
+    flex-direction: row;
+    margin-left: 0; justify-content: flex-start;
+    gap: 0.4rem;
+  }
+}
+
+.ui-row-btn {
+  flex-shrink: 0; min-width: var(--tap); min-height: var(--tap);
+  padding: 0.45rem 0.7rem; font-size: 0.8rem;
+  background: var(--bg-1); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: transform 0.05s ease, background 0.1s ease;
+}
+.ui-row-btn:active { background: var(--bg-0); transform: scale(0.96); }
+.ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
+.ui-row-toggle-label { font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
+.ui-row-select, .ui-row-number {
+  flex-shrink: 0;
+  padding: 0.35rem 0.45rem;
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 0.85rem; font-family: inherit; outline: none;
+  -webkit-appearance: none; appearance: none;
+}
+.ui-row-select:focus, .ui-row-number:focus { border-color: var(--accent); }
+.ui-row-select:disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-row-number { width: 6rem; text-align: right; }
+.ui-row-btn.danger  { color: var(--danger); border-color: var(--danger); }
+.ui-row-btn.warning { color: var(--warning); border-color: var(--warning); }
+.ui-row-btn.success { color: var(--success); border-color: var(--success); }
+/* Compact: trim padding so an emoji or 1-3 letter label sits in a
+ * ~36x36 box. Used for secondary row buttons on narrow screens where
+ * the standard 44px-min target would push the auto-reply switch and
+ * row name off the visible width. */
+.ui-row-btn.compact { min-width: 36px; min-height: 36px; padding: 0.3rem 0.4rem; font-size: 0.95rem; }
+/* Stack composes multiple components in one expand panel. */
+.ui-stack { display: flex; flex-direction: column; gap: 0.6rem; }
+/* Badge — colored pill for boolean/state indicators in table rows. */
+.ui-badge {
+  display: inline-block; padding: 0.1rem 0.55rem;
+  border-radius: 999px; font-size: 0.7rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border: 1px solid var(--border); background: var(--bg-0);
+}
+.ui-badge.success { color: var(--success); border-color: #2e5e3a; background: #122017; }
+.ui-badge.warning { color: var(--warning); border-color: #463b1f; background: #2a2218; }
+.ui-badge.danger  { color: var(--danger); border-color: #5a2929; background: #2a1b1b; }
+.ui-badge.mute    { color: var(--text-mute); border-color: var(--border); background: var(--bg-0); }
+.ui-badge.accent  { color: var(--accent-hi); border-color: #2a3f5f; background: #16203a; }
+/* Status dot — boolean status indicator without the pill chrome.
+ * Uses the same badge color tokens for consistency: success = green,
+ * warning = yellow, danger = red, mute = grey. Inline-flex so it
+ * vertically centers next to text in tight table cells. */
+.ui-dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; vertical-align: middle; }
+.ui-dot.success { background: var(--success); box-shadow: 0 0 0 1px #2e5e3a inset; }
+.ui-dot.warning { background: var(--warning); box-shadow: 0 0 0 1px #463b1f inset; }
+.ui-dot.danger  { background: var(--danger); box-shadow: 0 0 0 1px #5a2929 inset; }
+.ui-dot.mute    { background: var(--text-mute); box-shadow: 0 0 0 1px var(--border) inset; }
+
+/* --- Expand panel --- */
+.ui-expand {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.6rem 0.7rem; margin-top: 0.5rem;
+  animation: ui-slide 0.2s ease-out;
+}
+@keyframes ui-slide { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* --- HistoryPanel --- */
+.ui-history { display: flex; flex-direction: column; gap: 0.4rem; max-height: 60vh; overflow-y: auto; }
+.ui-history-h { font-size: 0.7rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+.ui-history-msg { padding: 0.4rem 0.5rem; border-radius: 8px; font-size: 0.88rem; line-height: 1.4; background: var(--bg-1); }
+.ui-history-msg.ai { border-left: 3px solid var(--accent); }
+.ui-history-who { font-size: 0.7rem; color: var(--text-mute); margin-bottom: 0.15rem; }
+.ui-history-body { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.ui-history-empty { color: var(--text-mute); font-size: 0.85rem; }
+
+/* --- KeyManager (API keys list + create-once-show-secret + delete) --- */
+.ui-keys { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-keys-actions { display: flex; justify-content: flex-end; }
+.ui-keys-new {
+  background: transparent; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 0.4rem 0.85rem; font-size: 0.8rem; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-keys-new:hover { background: var(--bg-2); }
+.ui-keys-form {
+  display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+}
+.ui-keys-form input {
+  flex: 1; min-width: 12rem;
+  padding: 0.45rem 0.6rem; border-radius: 6px;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); font-size: 0.85rem;
+}
+.ui-keys-form input:focus { outline: none; border-color: var(--accent); }
+.ui-keys-form button {
+  padding: 0.45rem 0.85rem; border-radius: 6px; font-size: 0.8rem; cursor: pointer;
+  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
+  border: 1px solid var(--accent); font-weight: 600;
+}
+.ui-keys-form button.secondary { background: transparent; color: var(--text-mute); border-color: var(--border); font-weight: normal; }
+.ui-keys-revealed {
+  background: rgba(212, 166, 87, 0.12);
+  border: 1px solid var(--accent);
+  border-radius: 8px; padding: 0.7rem 0.8rem;
+  display: flex; flex-direction: column; gap: 0.4rem;
+}
+.ui-keys-revealed-h { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
+.ui-keys-revealed-hint { font-size: 0.78rem; color: var(--text-mute); }
+.ui-keys-revealed-secret {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85rem; word-break: break-all; user-select: all;
+  background: var(--bg-0); border: 1px solid var(--border);
+  border-radius: 6px; padding: 0.5rem 0.6rem;
+}
+.ui-keys-revealed-row { display: flex; gap: 0.4rem; align-items: center; }
+.ui-keys-revealed-row button {
+  padding: 0.4rem 0.75rem; border-radius: 6px; font-size: 0.78rem; cursor: pointer;
+  background: var(--bg-1); color: var(--text); border: 1px solid var(--border);
+}
+.ui-keys-revealed-row button.copied { background: var(--success); color: #fff; border-color: var(--success); }
+.ui-keys-list {
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+}
+.ui-keys-row {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+.ui-keys-row:last-child { border-bottom: none; }
+.ui-keys-row-name { flex: 1; min-width: 0; color: var(--text); font-size: 0.9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-keys-row-meta { font-size: 0.75rem; color: var(--text-mute); white-space: nowrap; }
+.ui-keys-row-del {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer;
+  font-size: 1rem; line-height: 1;
+}
+.ui-keys-row-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
+.ui-keys-empty { color: var(--text-mute); font-size: 0.85rem; padding: 0.5rem 0.2rem; }
+
+/* --- MemberEditor (group-chat participants list) --- */
+.ui-mem { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-mem-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.4rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+@media (max-width: 700px) {
+  .ui-mem-row {
+    grid-template-columns: 1fr 1fr auto;
+  }
+  .ui-mem-row > .ui-mem-aliases { grid-column: 1 / 3; }
+}
+.ui-mem-row input {
+  padding: 0.35rem 0.5rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 0.82rem; min-width: 0;
+}
+.ui-mem-row input:focus { outline: none; border-color: var(--accent); }
+.ui-mem-row input::placeholder { color: var(--text-mute); }
+.ui-mem-del {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 4px;
+  width: 1.8rem; height: 1.8rem; padding: 0; cursor: pointer;
+  font-size: 0.95rem; line-height: 1;
+}
+.ui-mem-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
+.ui-mem-add {
+  align-self: flex-start;
+  background: transparent; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.78rem; cursor: pointer;
+}
+.ui-mem-add:hover { background: var(--bg-2); }
+.ui-mem-empty { color: var(--text-mute); font-size: 0.82rem; padding: 0.3rem 0.2rem; }
+.ui-mem-aliasrow {
+  display: flex; flex-direction: column; gap: 0.3rem;
+  margin-top: 0.4rem; padding: 0.5rem 0.6rem;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px;
+}
+.ui-mem-aliasrow label { font-size: 0.78rem; color: var(--text-mute); }
+.ui-mem-aliasrow input {
+  padding: 0.4rem 0.55rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 0.83rem; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.ui-mem-aliasrow input:focus { outline: none; border-color: var(--accent); }
+
+/* --- ChipPicker --- */
+.ui-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.ui-chip {
+  font-size: 0.8rem; padding: 0.45rem 0.7rem; border-radius: 18px;
+  background: var(--bg-1); color: var(--text-mute); border: 1px solid var(--border);
+  cursor: pointer; user-select: none; min-height: 32px;
+  -webkit-tap-highlight-color: transparent; transition: transform 0.05s ease;
+}
+.ui-chip:active { transform: scale(0.94); }
+.ui-chip.on { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
+
+/* --- Pull-to-refresh --- */
+.ui-ptr {
+  position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;
+  background: var(--bg-1); border-bottom: 1px solid var(--border);
+  text-align: center; padding: 0.5rem; font-size: 0.85rem; color: var(--text-mute);
+  transform: translateY(-100%); transition: transform 0.2s ease;
+  z-index: 20;
+}
+.ui-ptr.show { transform: translateY(0); }
+.ui-spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: ui-spin 0.7s linear infinite;
+  vertical-align: middle; margin-right: 0.4rem;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+.ui-wb-working { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: 0.95rem; padding: 0.2rem 0 0.9rem; }
+.ui-wb-working-actions { text-align: right; }
+
+/* --- Footer --- */
+.ui-footer { margin-top: 1rem; text-align: center; }
+.ui-footer-link { display: inline-block; min-height: var(--tap); padding: 0.7rem 1rem; font-size: 0.9rem; color: var(--text-mute); text-decoration: none; }
+.ui-footer-link:active { color: var(--text); }
+
+/* --- FormPanel --- */
+.ui-form-field { padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+.ui-form-field:last-child { border-bottom: none; }
+/* Toggle fields get extra top spacing so each option visually
+ * separates from its neighbours — matches the BR-above pattern
+ * used in other forms across the app layer, just expressed in CSS
+ * rather than markup. Without this, a column of toggles makes
+ * label+help text blend into the next row and you have to count
+ * widgets to know which help belongs to which switch. */
+.ui-form-field.ui-form-toggle-field { padding-top: 1rem; }
+.ui-form-submit {
+  display: inline-block; margin-top: 1rem; padding: 0.6rem 1.2rem;
+  background: var(--accent); color: var(--bg-0);
+  border: 1px solid var(--accent); border-radius: 8px;
+  font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  transition: opacity 0.1s ease;
+}
+.ui-form-submit:hover { opacity: 0.9; }
+.ui-form-submit:disabled { opacity: 0.5; cursor: wait; }
+.ui-form-label { display: block; font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 0.3rem; }
+.ui-form-input,
+.ui-form-textarea,
+.ui-form-select {
+  width: 100%; box-sizing: border-box;
+  padding: 0.55rem 0.65rem;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 0.95rem; font-family: inherit;
+  outline: none; transition: border-color 0.1s ease;
+  -webkit-appearance: none; appearance: none;
+}
+.ui-form-input:focus,
+.ui-form-textarea:focus,
+.ui-form-select:focus { border-color: var(--accent); }
+.ui-form-textarea { resize: vertical; min-height: calc(var(--tap) * 1.5); line-height: 1.4; }
+.ui-form-help { display: block; font-size: 0.75rem; color: var(--text-mute); margin-top: 0.3rem; }
+/* Section-divider field (FormField type="header") — splits a long
+ * form into visually grouped chunks without breaking the single-save
+ * pattern. Renders as a labeled rule above subsequent fields. */
+.ui-form-field.ui-form-section {
+  padding: 1.2rem 0 0.4rem;
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+  margin-top: 0.4rem;
+}
+.ui-form-field.ui-form-section:first-child {
+  border-top: none;
+  padding-top: 0.2rem;
+  margin-top: 0;
+}
+.ui-form-section-title {
+  font-size: 0.85rem; font-weight: 700; color: var(--text-hi);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.ui-form-section-help {
+  font-size: 0.78rem; color: var(--text-mute);
+  margin-top: 0.25rem; line-height: 1.4;
+}
+/* Collapsible header (Collapsed:true) — click to fold/unfold the group below. */
+.ui-form-section.ui-form-collapsible { cursor: pointer; user-select: none; }
+.ui-form-section.ui-form-collapsible .ui-form-section-title::after {
+  content: ' \25B8'; opacity: 0.55; font-weight: 400; /* ▸ collapsed */
+}
+.ui-form-section.ui-form-collapsible.open .ui-form-section-title::after {
+  content: ' \25BE'; /* ▾ expanded */
+}
+.ui-form-section.ui-form-collapsible:hover .ui-form-section-title { color: var(--accent, #58a6ff); }
+.ui-form-suggest-row {
+  display: flex; gap: 0.4rem; align-items: center;
+  margin-top: 0.3rem;
+}
+.ui-form-suggest-btn {
+  background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--text-mute);
+  padding: 0.25rem 0.6rem; border-radius: 4px;
+  cursor: pointer; font-size: 0.74rem; font-family: inherit;
+  transition: color 0.1s ease, border-color 0.1s ease;
+}
+.ui-form-suggest-btn:hover { color: var(--accent); border-color: var(--accent); }
+.ui-form-suggest-btn.busy {
+  opacity: 0.7; cursor: progress;
+}
+.ui-form-suggest-btn[disabled] { cursor: not-allowed; }
+
+/* --- PipelineWatchPanel — live pipeline-follow view --- */
+.ui-watch { display: flex; flex-direction: column; gap: 0; }
+.ui-watch-header {
+  padding: 0.75rem 1rem;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+}
+.ui-watch-app {
+  font-size: 0.85rem; color: var(--text-mute);
+  margin-bottom: 0.3rem; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.ui-watch-title-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 0.3rem;
+}
+.ui-watch-title {
+  font-size: 1.05rem; color: var(--text-hi); font-weight: 600;
+}
+.ui-watch-cancel {
+  padding: 0.3rem 0.8rem; background: var(--danger);
+  color: #fff; border: none; border-radius: 6px;
+  font-size: 0.8rem; cursor: pointer;
+}
+.ui-watch-cancel:hover { filter: brightness(1.1); }
+.ui-watch-topic {
+  color: var(--text-mute); font-size: 0.9rem;
+  white-space: normal; word-break: break-word;
+}
+.ui-watch-spinner {
+  display: inline-block; width: 12px; height: 12px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: ui-spin 0.8s linear infinite;
+  vertical-align: middle; margin-right: 0.4rem;
+}
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+.ui-watch-stages {
+  display: flex; flex-wrap: wrap; gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--bg-2);
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.ui-watch-pill {
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-mute);
+  font-size: 0.78rem;
+}
+.ui-watch-pill.active {
+  border-color: var(--accent); color: var(--accent);
+}
+.ui-watch-pill.done {
+  border-color: var(--success); color: var(--success);
+}
+.ui-watch-pill.error {
+  border-color: var(--danger, var(--danger)); color: var(--danger, var(--danger));
+}
+.ui-watch-status {
+  flex: 1; overflow-y: auto; padding: 1rem;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-top: none;
+  min-height: 12rem;
+  max-height: 60vh;
+}
+.ui-watch-status-msg {
+  color: var(--text-mute); font-size: 0.88rem;
+  padding: 0.3rem 0;
+}
+.ui-watch-status-msg:last-child { color: var(--text); }
+.ui-watch-draft {
+  padding: 0.75rem 1rem;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.ui-watch-draft summary {
+  cursor: pointer; color: var(--text-mute); font-size: 0.85rem;
+  user-select: none;
+}
+/* ============================================================
+ * .ui-md — canonical rendered-markdown prose
+ * ------------------------------------------------------------
+ * Every surface that drops mdToHTML output into the DOM carries
+ * this class (stamped automatically by uiRenderMarkdown). It is
+ * the single source of truth for how rendered markdown looks:
+ * headings, code, lists, links. Sizes are em-relative so each
+ * surface's own base font-size sets the absolute scale — a
+ * compact card and a full report share these rules yet stay
+ * proportional to their container.
+ *
+ * Carrying .ui-md is also what stops a markdown sink from
+ * falling back to the browser UA stylesheet — that fallback
+ * (h1 at 2em, the bare-monospace size shrink) was the "giant
+ * headings next to tiny console text" bug this block replaced.
+ *
+ * Defined BEFORE the per-surface bodies on purpose: a surface
+ * with a deliberate character (the modal's Orbitron report
+ * headings, the article's long-form scale) overrides by equal-
+ * specificity source order. Do NOT re-declare generic
+ * heading/pre/code rules in a surface body — add the ui-md
+ * class and override only what is genuinely surface-specific
+ * (e.g. a darker code background).
+ * ============================================================ */
+.ui-md > :first-child { margin-top: 0; }
+.ui-md > :last-child { margin-bottom: 0; }
+.ui-md p { margin: 0.5em 0; }
+.ui-md h1, .ui-md h2, .ui-md h3,
+.ui-md h4, .ui-md h5, .ui-md h6 {
+  font-weight: 600; line-height: 1.3; color: var(--text);
+  text-transform: none; letter-spacing: normal;
+  margin: 1em 0 0.3em;
+}
+.ui-md h1 { font-size: 1.3em; }
+.ui-md h2 { font-size: 1.18em; }
+.ui-md h3 { font-size: 1.07em; }
+.ui-md h4 { font-size: 1em; }
+.ui-md h5, .ui-md h6 { font-size: 0.92em; color: var(--text-mute); }
+.ui-md ul, .ui-md ol { margin: 0.5em 0; padding-left: 1.4em; }
+.ui-md li { margin: 0.15em 0; }
+.ui-md a { color: var(--accent-hi); text-decoration: underline; }
+.ui-md strong { color: var(--text); font-weight: 700; }
+.ui-md code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  background: var(--bg-2); padding: 0.05em 0.3em; border-radius: 4px;
+}
+.ui-md pre {
+  margin: 0.5em 0; padding: 0.5em 0.7em;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.85em; line-height: 1.45;
+  white-space: pre; overflow-x: auto;
+}
+.ui-md pre code {
+  background: transparent; padding: 0; border-radius: 0; font-size: inherit;
+}
+
+.ui-watch-draft-body {
+  margin-top: 0.7rem; color: var(--text);
+  font-size: 0.9rem; line-height: 1.6;
+}
+.ui-watch-article {
+  padding: 1.5rem 2rem;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-top: none;
+}
+.ui-watch-article-title {
+  font-size: 1.4rem; color: var(--text-hi); margin: 0 0 1rem;
+}
+.ui-watch-article-body {
+  color: var(--text); line-height: 1.7; font-size: 0.95rem;
+}
+.ui-watch-article-body h2 { font-size: 1.15rem; margin: 1.5rem 0 0.4rem; color: var(--text-hi); }
+.ui-watch-article-body h3 { font-size: 1.02rem; margin: 1.2rem 0 0.35rem; color: var(--text-hi); }
+.ui-watch-article-body p  { margin: 0.6rem 0; }
+.ui-watch-done-actions {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: center;
+  padding: 1rem;
+  border: 1px solid var(--border); border-top: none;
+  background: var(--bg-1);
+  border-radius: 0 0 6px 6px;
+}
+.ui-watch-action {
+  padding: 0.5rem 1rem;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 0.88rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+.ui-watch-action:hover { border-color: var(--accent); }
+.ui-watch-action.primary {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.ui-watch-action.danger {
+  background: var(--danger, var(--danger)); color: #fff; border-color: var(--danger, var(--danger));
+}
+
+/* --- ApiKeyPanel — single rotating API key with Copy/Generate --- */
+.ui-apikey { display: flex; gap: 0.4rem; align-items: center; }
+.ui-apikey-input {
+  flex: 1; min-width: 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: monospace;
+  font-size: 0.82rem;
+  outline: none;
+}
+.ui-apikey-btn {
+  flex-shrink: 0;
+  padding: 0.4rem 0.7rem;
+  border-radius: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.ui-apikey-btn:hover:not(:disabled) { border-color: var(--accent); }
+.ui-apikey-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* --- SuggestPanel — LLM-backed topic suggestion list --- */
+.ui-suggest { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-suggest-controls { display: flex; gap: 0.5rem; align-items: center; }
+.ui-suggest-direction { flex: 1; min-width: 0; }
+.ui-suggest-btn { white-space: nowrap; }
+.ui-suggest-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.ui-suggest-loading, .ui-suggest-empty {
+  font-size: 0.85rem; color: var(--text-mute); padding: 0.4rem 0.2rem;
+}
+.ui-suggest-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ui-suggest-item:hover { border-color: var(--accent); background: var(--bg-2); }
+.ui-suggest-item-body { flex: 1; min-width: 0; }
+.ui-suggest-item-q {
+  color: var(--text); font-size: 0.9rem; font-weight: 500;
+  white-space: normal; word-break: break-word;
+}
+.ui-suggest-item-hook {
+  color: var(--text-mute); font-size: 0.8rem; margin-top: 0.15rem;
+  white-space: normal; word-break: break-word;
+}
+.ui-suggest-secondary {
+  flex-shrink: 0;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.6rem;
+}
+
+/* --- FormField type="tags" — chip-style array editor --- */
+.ui-tags {
+  display: flex; flex-wrap: wrap; gap: 0.35rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  min-height: calc(var(--tap) * 0.9);
+}
+.ui-tag {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  color: var(--text); font-size: 0.82rem;
+  white-space: nowrap;
+}
+.ui-tag-del {
+  background: transparent; border: none; color: var(--text-mute);
+  padding: 0; margin: 0; cursor: pointer;
+  font-size: 1rem; line-height: 1;
+}
+.ui-tag-del:hover { color: var(--danger, var(--danger)); }
+.ui-tag-input {
+  flex: 1; min-width: 6rem;
+  background: transparent; border: none;
+  color: var(--text); font-size: 0.85rem; font-family: inherit;
+  outline: none; padding: 0.1rem 0.2rem;
+}
+.ui-tags-empty {
+  font-size: 0.78rem; color: var(--text-mute);
+  padding: 0.1rem 0.2rem;
+}
+
+/* --- FormField type="checklist" — multi-select checkbox list --- */
+.ui-checklist {
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  max-height: 28rem;
+  overflow-y: auto;
+}
+.ui-checklist-toolbar {
+  display: flex; gap: 0.3rem;
+  padding-bottom: 0.4rem; margin-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.ui-checklist-toolbtn {
+  background: var(--bg-1); border: 1px solid var(--border);
+  color: var(--text-mute); padding: 0.2rem 0.55rem;
+  border-radius: 4px; cursor: pointer;
+  font-size: 0.74rem;
+  font-family: inherit;
+}
+.ui-checklist-toolbtn:hover { color: var(--text-hi); }
+.ui-checklist-count {
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--text-mute);
+  align-self: center;
+}
+.ui-checklist-group {
+  font-size: 0.7rem; font-weight: 600;
+  color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-top: 0.55rem; margin-bottom: 0.2rem;
+  padding-left: 0.1rem;
+}
+.ui-checklist-group:first-child { margin-top: 0; }
+.ui-checklist-row {
+  display: flex; align-items: flex-start; gap: 0.55rem;
+  padding: 0.3rem 0.3rem;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.ui-checklist-row:hover { background: var(--bg-1); }
+.ui-checklist-cb { margin-top: 0.25rem; flex-shrink: 0; }
+.ui-checklist-lbl { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.ui-checklist-name { color: var(--text-hi); font-size: 0.85rem; }
+.ui-checklist-help {
+  color: var(--text-mute); font-size: 0.76rem;
+  word-wrap: break-word;
+}
+
+/* --- FormField type="rules" — list editor for line-separated rules --- */
+.ui-rules { display: flex; flex-direction: column; gap: 0.35rem; }
+.ui-rules-row {
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.ui-rules-num {
+  flex: 0 0 auto; min-width: 1.4rem; text-align: right;
+  font-size: 0.78rem; color: var(--text-mute); font-variant-numeric: tabular-nums;
+}
+.ui-rules-input {
+  flex: 1; min-width: 0;
+  padding: 0.4rem 0.55rem; border-radius: 6px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--text); font-size: 0.88rem; font-family: inherit;
+  outline: none; transition: border-color 0.1s ease;
+}
+.ui-rules-input:focus { border-color: var(--accent); }
+.ui-rules-del {
+  flex: 0 0 auto;
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  width: 1.7rem; height: 1.7rem; padding: 0; cursor: pointer;
+  font-size: 0.95rem; line-height: 1;
+}
+.ui-rules-del:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
+.ui-rules-add {
+  align-self: flex-start;
+  background: transparent; color: var(--accent); border: 1px dashed var(--accent);
+  border-radius: 6px; padding: 0.35rem 0.7rem; font-size: 0.78rem; cursor: pointer;
+  margin-top: 0.2rem;
+}
+.ui-rules-add:hover { background: var(--bg-2); }
+.ui-rules-empty { font-size: 0.8rem; color: var(--text-mute); padding: 0.2rem 0; }
+/* Chips row above a form input — applied to FormField with
+   chips_source set. Each chip = preset; click applies to the input. */
+.ui-form-chips {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.4rem;
+}
+.ui-form-chip {
+  font-size: 0.72rem; padding: 0.2rem 0.55rem; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg-0); color: var(--text-mute);
+  cursor: pointer; white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.ui-form-chip:hover { color: var(--text); border-color: var(--accent); }
+.ui-form-chip-add { color: var(--accent); border-color: var(--accent); }
+.ui-form-chips-loading { color: var(--text-mute); font-size: 0.72rem; padding: 0.2rem 0.55rem; }
+/* Inline static presets — small click-to-fill chips. Slightly more
+ * compact than ui-form-chip since presets are reference fills, not
+ * the field's primary input affordance. */
+.ui-form-presets {
+  display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.35rem;
+}
+.ui-form-preset-chip {
+  font-size: 0.68rem; padding: 0.15rem 0.5rem; border-radius: 4px;
+  border: 1px solid var(--border); background: var(--bg-0); color: var(--text-mute);
+  cursor: pointer; white-space: nowrap; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-form-preset-chip:hover { color: var(--text); border-color: var(--accent); background: var(--bg-1); }
+/* Form chip create modal — AI Assist + Save flow. */
+.ui-form-modal-overlay {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.ui-form-modal {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  width: 100%; max-width: 520px;
+  display: flex; flex-direction: column; gap: 0.4rem;
+  padding: 1.2rem;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+.ui-form-modal-h { font-size: 1rem; font-weight: 600; color: var(--text); }
+.ui-form-modal-hint { font-size: 0.78rem; color: var(--text-mute); }
+.ui-form-modal-actions { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.6rem; }
+.ui-form-saving { font-size: 0.7rem; color: var(--text-mute); margin-left: 0.4rem; opacity: 0; transition: opacity 0.15s ease; }
+.ui-form-saving.show { opacity: 1; }
+
+/* --- DisplayPanel --- */
+.ui-display { display: flex; flex-direction: column; }
+.ui-display-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.7rem; padding: 0.45rem 0; border-bottom: 1px solid var(--border);
+}
+.ui-display-row:last-child { border-bottom: none; }
+.ui-display-label { font-size: 0.85rem; color: var(--text-mute); }
+.ui-display-value { font-size: 0.9rem; color: var(--text); text-align: right; word-break: break-all; }
+.ui-display-value.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.82rem; }
+/* Block-style row: label on its own line, value as a <pre> block
+   below — for multi-line content like script bodies. */
+.ui-display-row-block {
+  flex-direction: column; align-items: stretch; gap: 0.35rem;
+}
+.ui-display-value-block {
+  margin: 0; padding: 0.5rem 0.65rem;
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8rem;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+  max-height: 420px; overflow: auto;
+}
+
+/* --- BarChart --- */
+.ui-chart { width: 100%; }
+.ui-chart-svg { display: block; max-width: 100%; }
+.ui-chart-panel svg { display: block; width: 100%; height: auto; }
+.ui-chart-axis { stroke: var(--border); stroke-width: 1; }
+.ui-chart-grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.5; }
+.ui-chart-axis-label { font-size: 10px; fill: var(--text-mute); font-family: ui-monospace, monospace; }
+.ui-chart-bar { fill: var(--accent); transition: fill 0.1s ease; }
+.ui-chart-bar:hover { fill: var(--accent-hi); }
+.ui-chart-empty { color: var(--text-mute); padding: 1rem 0; text-align: center; }
+.ui-chart-summary { font-size: 0.8rem; color: var(--text-mute); margin-top: 0.5rem; text-align: right; }
+.ui-chart-tip {
+  position: absolute; z-index: 5;
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.5rem 0.7rem; font-size: 0.82rem;
+  white-space: nowrap; pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  min-width: 12rem;
+}
+.ui-chart-tip-h { font-weight: 600; color: var(--text-hi); margin-bottom: 0.25rem; }
+.ui-chart-tip-y { font-size: 1.05rem; color: var(--accent-hi); margin-bottom: 0.4rem; }
+.ui-chart-tip-rows {
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+  display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.7rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.75rem;
+}
+.ui-chart-tip-row { display: contents; }
+.ui-chart-tip-label { color: var(--text-mute); }
+.ui-chart-tip-val { color: var(--text); text-align: right; }
+.ui-chart-tip-val.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+/* --- ActionList --- */
+.ui-actionlist { display: flex; flex-direction: column; gap: 0.4rem; }
+.ui-actionlist-row {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.55rem 0.5rem;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px;
+}
+.ui-actionlist-text { flex: 1; min-width: 0; }
+.ui-actionlist-label { font-size: 0.92rem; color: var(--text); }
+.ui-actionlist-desc  { font-size: 0.78rem; color: var(--text-mute); margin-top: 0.15rem; }
+.ui-actionlist-status { font-size: 0.78rem; color: var(--text-mute); min-width: 4rem; text-align: right; }
+.ui-actionlist-empty { color: var(--text-mute); font-size: 0.9rem; padding: 0.5rem 0; }
+
+/* --- JSONView --- */
+.ui-jsonview-h { font-size: 0.7rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); margin-bottom: 0.4rem; }
+.ui-jsonview-body {
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.55rem 0.7rem; margin: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.78rem;
+  line-height: 1.4;
+  max-height: 40vh; overflow: auto;
+  white-space: pre; word-break: normal;
+}
+
+/* --- ChatPanel ---
+ * Desktop: two-column grid (sidebar + main). Sidebar always visible inline.
+ * Mobile (≤700px): sidebar becomes a slide-in drawer with backdrop. Main
+ * column gets a compact header bar with hamburger + session title +
+ * new-chat shortcut. Matches the Claude mobile pattern: full-width chat,
+ * sessions hidden behind a tap. */
+.ui-chat {
+  display: grid; grid-template-columns: 240px 1fr;
+  gap: 1rem;
+  /* Reserve only the actual page-header + root padding (~70px after
+   * the header shrink) so the chat fills the rest of the viewport
+   * instead of leaving a leftover gap at the bottom. Matches the standard chat-panel
+   * / codewriter / agent-loop panels. min-height keeps mobile usable
+   * when 100dvh is unreliable mid-keyboard. */
+  height: calc(100vh - 70px);
+  height: calc(100dvh - 70px);
+  min-height: 400px;
+  position: relative;
+}
+@media (min-width: 1100px) {
+  /* Wider rail on big screens — fits the verdict snippet + pills on
+   * one row each, makes session titles less likely to truncate. */
+  .ui-chat { grid-template-columns: 280px 1fr; }
+}
+@media (min-width: 1500px) {
+  .ui-chat { grid-template-columns: 320px 1fr; }
+}
+/* Collapsed state — hide the sessions sidebar, reflow the grid so
+ * the main column fills the available width minus a small gutter
+ * for the floating expand tab. Mirrors techwriter / codewriter. */
+.ui-chat.side-collapsed { grid-template-columns: 1fr; }
+.ui-chat.side-collapsed .ui-chat-side { display: none; }
+.ui-chat.side-collapsed .ui-tw-expand { display: block; }
+.ui-chat.side-collapsed .ui-chat-main { margin-left: 32px; }
+/* Single mode — one ongoing thread, no sidebar at all. Collapse to one
+ * column and fill the host container (e.g. a nav_shell content pane)
+ * rather than forcing viewport height, so the chat doesn't sit in the
+ * empty first grid column ("only on the left"). */
+.ui-chat.ui-chat-single { grid-template-columns: 1fr; height: 100%; min-height: 0; }
+.ui-chat.ui-chat-single .ui-chat-side { display: none; }
+.ui-chat-side {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.ui-chat-mobile-hdr { display: none; }
+.ui-chat-backdrop { display: none; }
+
+@media (max-width: 700px) {
+  /* Mobile layout — single column, full-screen-ish chat. */
+  .ui-chat {
+    grid-template-columns: 1fr;
+    /* Use dvh when available so iOS Safari's URL bar doesn't subtract
+     * twice when collapsing. Fallback to vh for older browsers. */
+    height: calc(100vh - 120px);
+    height: calc(100dvh - 120px);
+    min-height: 0;
+  }
+  /* Sidebar becomes a full-screen drawer that slides in over the chat —
+   * on a phone the history list is the only useful thing while it's
+   * open, so taking the whole viewport gives users far more rows to
+   * scan than an 80%-wide partial drawer. */
+  .ui-chat-side {
+    position: absolute; top: 0; left: 0; bottom: 0; right: 0; z-index: 30;
+    width: 100%; max-width: none;
+    transform: translateX(-105%);
+    transition: transform 0.22s ease;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .ui-chat-side.open { transform: translateX(0); }
+  /* Backdrop dims the main column while drawer is open. */
+  .ui-chat-backdrop {
+    display: block;
+    position: absolute; inset: 0; z-index: 25;
+    background: rgba(0,0,0,0.5);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+  .ui-chat-backdrop.show { opacity: 1; pointer-events: auto; }
+  /* Mobile header — hamburger + title + new. */
+  .ui-chat-mobile-hdr {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.5rem 0.6rem;
+    background: var(--bg-2); border-bottom: 1px solid var(--border);
+  }
+  .ui-chat-hamburger {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px;
+    min-width: 40px; min-height: 40px; padding: 0;
+    font-size: 1.05rem; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ui-chat-hamburger:active { background: var(--bg-1); }
+  .ui-chat-mobile-title {
+    flex: 1; min-width: 0;
+    font-size: 0.95rem; font-weight: 600; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  /* Trim main-column chrome on mobile so the chat dominates the viewport. */
+  .ui-chat-modes { padding: 0.4rem 0.6rem; }
+  .ui-chat-thread { padding: 0.6rem 0.7rem; }
+  .ui-chat-input-area { padding: 0.5rem; padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+}
+.ui-chat-side-h {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+/* Stretch the "Sessions" label so action buttons hug the right edge —
+ * Select sits just left of + New, with Mobile-only × close on the far
+ * left of the header. */
+.ui-chat-side-h > span:first-child,
+.ui-chat-side-h > .ui-chat-side-h-label {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* "⋯" overflow menu for secondary sidebar actions. */
+.ui-side-menu-wrap { position: relative; flex: 0 0 auto; display: inline-flex; }
+.ui-side-menu {
+  position: absolute; top: 100%; left: 0; z-index: 20; min-width: 150px;
+  margin-top: 0.25rem; padding: 0.25rem;
+  background: var(--bg-1, #1b1b2b); border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.3);
+}
+.ui-side-menu-item {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; color: var(--text); font: inherit; font-size: 0.8rem;
+  text-transform: none; letter-spacing: normal;
+  padding: 0.35rem 0.5rem; border-radius: 4px; cursor: pointer; white-space: nowrap;
+}
+.ui-side-menu-item:hover { background: var(--bg-2, rgba(127,127,127,0.18)); }
+.ui-chat-new {
+  background: transparent; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 0.2rem 0.55rem; font-size: 0.75rem; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  flex: 0 0 auto; white-space: nowrap;
+}
+.ui-chat-new:hover { background: var(--bg-2); }
+.ui-chat-new.active { background: var(--accent); color: var(--text-on-accent, #fff); }
+/* Split "+ New ▾": the primary button and the caret read as one control
+ * — joined borders, shared corners. The caret is a slim affordance whose
+ * menu (new-session variants) right-aligns to the rail edge. */
+.ui-chat-new-wrap .ui-chat-new:first-child {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+}
+.ui-chat-new-caret {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left: 0; padding-left: 0.35rem; padding-right: 0.35rem;
+}
+.ui-chat-new-wrap .ui-side-menu { left: auto; right: 0; }
+
+/* Secondary sidebar button — same shape as .ui-chat-new but neutral
+   color so it doesn't compete with the primary "New" action. Used
+   for Select (matches header bg in default state, fills with accent
+   when active so the click → mode-on transition is visible). */
+.ui-chat-side-btn {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.2rem 0.55rem; font-size: 0.75rem; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  flex: 0 0 auto; white-space: nowrap;
+}
+.ui-chat-side-btn:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-chat-side-btn.active {
+  background: var(--accent); color: var(--text-on-accent, #fff);
+  border-color: var(--accent);
+}
+.ui-chat-side-list { flex: 1; overflow-y: auto; padding: 0.2rem 0.35rem; }
+/* Sidebar search — sits between the header and list, filters
+   visible session rows by substring on title + meta text. */
+.ui-chat-side-search {
+  margin: 0.4rem 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 0.78rem; font-family: inherit;
+  -webkit-appearance: none;
+}
+.ui-chat-side-search:focus { outline: none; border-color: var(--accent); }
+.ui-chat-side-search::placeholder { color: var(--text-mute); }
+.ui-chat-side-item {
+  position: relative;
+  padding: 0.3rem 0.6rem; padding-right: 1.6rem;
+  border-radius: 6px; cursor: pointer; user-select: none;
+  margin-bottom: 0.1rem;
+}
+.ui-chat-side-text { flex: 1; min-width: 0; overflow: hidden; }
+.ui-chat-side-item { display: flex; align-items: flex-start; gap: 0.5rem; }
+
+/* --- Bulk-select pill + selected state ---
+ * The pill toggles the side list into "select mode". While active,
+ * tapping items toggles them into a selection (with a colored
+ * highlight) instead of opening them. A second action bar at the
+ * bottom shows Select-all / Delete once anything is checked. */
+.ui-bulk-bar {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  margin-bottom: 0.4rem;
+}
+.ui-bulk-bar.bottom { margin: 0.4rem 0 0; border-top: 1px solid var(--border); padding-top: 0.5rem; }
+.ui-bulk-bar .ui-row-btn { padding: 0.3rem 0.65rem; font-size: 0.78rem; min-height: 0; min-width: 0; }
+.ui-bulk-pill {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.3rem 0.85rem; font-size: 0.78rem; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.1s ease, border-color 0.1s ease, background 0.1s ease;
+}
+.ui-bulk-pill:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-bulk-pill.active {
+  color: #1a1a1a; background: var(--accent); border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Selectable items show a small left indicator + cursor change so
+ * the user can tell which list rows are tappable in select mode.
+ * Padding-left includes the indicator's full footprint plus extra
+ * breathing room so the article/session title never collides with
+ * the checkbox. */
+.ui-chat-side-item.selectable {
+  position: relative; cursor: pointer;
+  padding-left: 2.2rem;
+  transition: background 0.1s ease, border-color 0.1s ease;
+}
+.ui-chat-side-item.selectable::before {
+  content: ''; position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; border-radius: 4px;
+  border: 1.5px solid var(--text-mute);
+  background: transparent;
+  transition: all 0.1s ease;
+}
+.ui-chat-side-item.selected {
+  background: rgba(212, 166, 87, 0.12); /* amber-tinted on Blackboard */
+  border-radius: 6px;
+}
+.ui-chat-side-item.selected::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  /* Tiny check mark via inline SVG-ish trick: use a unicode check. */
+  content: '✓';
+  color: #1a1a1a; font-weight: 700; font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+.ui-chat-side-item:hover { background: var(--bg-2); }
+.ui-chat-side-item.active { background: var(--bg-2); border-left: 2px solid var(--accent); padding-left: calc(0.6rem - 2px); }
+/* When the active item is also selectable (bulk-select mode is on),
+ * the checkbox indicator needs its 2.2rem indent — restore it instead
+ * of letting .active's narrower padding stack the title under the
+ * checkbox. -2px keeps the active border accounted for. */
+.ui-chat-side-item.active.selectable { padding-left: calc(2.2rem - 2px); }
+/* Channels rail section — a distinct region above the session list with its
+ * own header + Add control. Rows reuse .ui-chat-side-item styling. */
+.ui-channels-rail { padding: 0.25rem 0 0.35rem; border-bottom: 1px solid var(--border); margin-bottom: 0.25rem; }
+.ui-channels-h { display: flex; align-items: center; justify-content: space-between; padding: 0.2rem 0.6rem 0.25rem; }
+.ui-channels-h-title { font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-mute); font-weight: 600; }
+.ui-channels-add {
+  border: none; background: transparent; color: var(--text-mute); cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0 0.25rem; border-radius: 4px;
+}
+.ui-channels-add:hover { background: var(--bg-2); color: var(--text); }
+.ui-channels-empty { padding: 0.15rem 0.6rem 0.3rem; font-size: 0.75rem; color: var(--text-mute); }
+.ui-channels-dir {
+  flex: 0 0 auto; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-mute); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 0.25rem; margin-left: 0.35rem; align-self: center;
+}
+.ui-channels-inert {
+  flex: 0 0 auto; font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-mute); opacity: 0.7; border: 1px dashed var(--border); border-radius: 3px;
+  padding: 0 0.25rem; margin-left: 0.3rem; align-self: center;
+}
+.ui-chat-side-title {
+  font-size: 0.85rem; color: var(--text); line-height: 1.3;
+  /* Allow up to 3 lines before truncating — single-line ellipsis
+   * truncated too much information from long session titles get
+   * truncated. -webkit-line-clamp is widely supported and
+   * preserves the ellipsis at the cap point. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.ui-chat-side-meta {
+  font-size: 0.7rem; color: var(--text-mute); margin-top: 0.05rem;
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
+}
+/* Source badge on session rows — small inline pill tagging where a
+ * session came from when it was contributed by an external
+ * ExtraSessionsSource registrant. The base style is neutral; the
+ * contributing app can colorize its own variant via
+ * .ui-chat-side-source-<sourcename> in Page.ExtraHeadHTML. */
+.ui-chat-side-source {
+  font-size: 0.6rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-0);
+  color: var(--text-mute);
+  text-transform: lowercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Running indicator on session rows — pulsing green dot in front of
+ * the title when the runs registry has an in-flight Run for this
+ * session. Survives client disconnect (the run keeps running
+ * detached), so a user reopening the chat sees at a glance which
+ * sessions are still working. Pulse animation draws the eye without
+ * being so loud it competes with the title text itself. */
+.ui-chat-side-running-dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.55);
+  vertical-align: middle;
+  margin-right: 0.4rem;
+  animation: ui-chat-side-running-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ui-chat-side-running-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0.55); }
+  70%  { box-shadow: 0 0 0 6px rgba(63, 185, 80, 0); }
+  100% { box-shadow: 0 0 0 0   rgba(63, 185, 80, 0); }
+}
+.ui-chat-side-del {
+  position: absolute; right: 0.4rem; top: 50%; transform: translateY(-50%);
+  background: transparent; color: var(--text-mute);
+  border: none; border-radius: 4px;
+  width: 1.4rem; height: 1.4rem; cursor: pointer;
+  font-size: 1rem; line-height: 1;
+}
+.ui-chat-side-del:hover { color: var(--danger); background: var(--bg-2); }
+.ui-chat-side-ren {
+  position: absolute; right: 2rem; top: 50%; transform: translateY(-50%);
+  background: transparent; color: var(--text-mute);
+  border: none; border-radius: 4px;
+  width: 1.4rem; height: 1.4rem; cursor: pointer;
+  font-size: 0.9rem; line-height: 1;
+}
+.ui-chat-side-ren:hover { color: var(--text-hi); background: var(--bg-2); }
+/* Rename (✎) stays hidden until the session row is hovered, to keep the
+ * rail uncluttered. visibility (not display) so the reserved space doesn't
+ * shift on hover and the button isn't clickable while hidden. */
+.ui-chat-side-ren { visibility: hidden; }
+.ui-chat-side-item:hover .ui-chat-side-ren,
+.ui-chat-side-ren:focus-visible { visibility: visible; }
+/* Rows that carry a rename button (✎) need extra right padding
+ * so the title doesn't run under both ✎ and × buttons. */
+.ui-chat-side-item.ui-chat-side-item-renable { padding-right: 3.2rem; }
+/* Drawer-close button — hidden on desktop where the sidebar is inline,
+ * visible on mobile where the drawer covers the whole viewport and the
+ * backdrop tap-target sits behind it. */
+.ui-chat-side-close { display: none; }
+@media (max-width: 700px) {
+  .ui-chat-side-close {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; color: var(--text-mute);
+    border: 1px solid var(--border); border-radius: 6px;
+    width: 1.7rem; height: 1.7rem; padding: 0;
+    font-size: 1rem; line-height: 1; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ui-chat-side-close:active { background: var(--bg-2); }
+}
+
+.ui-chat-main {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.ui-chat-thread {
+  flex: 1; overflow-y: auto;
+  padding: 0.8rem 1rem;
+  display: flex; flex-direction: column; gap: 0.7rem;
+}
+.ui-chat-empty { color: var(--text-mute); text-align: center; padding: 2rem 1rem; font-size: 0.9rem; }
+.ui-chat-msg {
+  max-width: 85%;
+  padding: 0.6rem 0.85rem; border-radius: 10px;
+  font-size: 0.92rem; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word;
+}
+.ui-chat-msg.user { background: var(--bg-2); align-self: flex-end; border: 1px solid var(--border); }
+.ui-chat-msg.assistant { background: var(--bg-0); align-self: flex-start; border: 1px solid var(--border); border-left: 3px solid var(--accent); }
+.ui-chat-actions {
+  display: flex; gap: 0.4rem;
+  margin-top: 0.4rem; padding-top: 0.4rem;
+  border-top: 1px dashed var(--border);
+}
+.ui-chat-edit-bar { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.ui-chat-edit-ta {
+  width: 100%; box-sizing: border-box; min-height: 60px;
+  padding: 0.5rem 0.7rem; resize: vertical;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: inherit; font-size: 0.92rem; line-height: 1.4; outline: none;
+}
+.ui-chat-edit-ta:focus { border-color: var(--accent); }
+.ui-chat-edit-actions { display: flex; gap: 0.4rem; }
+.ui-chat-round-stats {
+  margin-top: 0.4rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.7rem; color: var(--text-mute);
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+.ui-chat-stats-bar {
+  padding: 0.35rem 0.9rem;
+  border-top: 1px solid var(--border);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.72rem; color: var(--text-mute);
+  background: var(--bg-2);
+  letter-spacing: 0.02em;
+}
+.ui-chat-act {
+  background: transparent; color: var(--text-mute); border: 1px solid var(--border);
+  border-radius: 5px; padding: 0.2rem 0.55rem; font-size: 0.72rem; cursor: pointer;
+}
+.ui-chat-act:hover { color: var(--text); border-color: var(--text-mute); }
+
+.ui-chat-tools-toggle {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  margin-top: 0.4rem; padding: 0.25rem 0.55rem;
+  background: var(--bg-2); color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 999px;
+  font-size: 0.72rem; cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-chat-tools-toggle:hover { color: var(--text); border-color: var(--accent); }
+.ui-chat-tools-toggle.open { background: var(--bg-1); color: var(--text); }
+.ui-chat-tools-panel {
+  margin-top: 0.4rem; padding: 0.4rem;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+.ui-chat-tool {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  font-size: 0.78rem; color: var(--text-mute);
+  font-family: ui-monospace, monospace;
+}
+.ui-chat-tool-summary {
+  list-style: none; cursor: pointer; user-select: none;
+  padding: 0.35rem 0.65rem;
+}
+.ui-chat-tool-summary::-webkit-details-marker { display: none; }
+.ui-chat-tool-summary::before {
+  content: '▸'; display: inline-block; margin-right: 0.35rem;
+  color: var(--text-mute); font-size: 0.7rem;
+  transition: transform 0.12s ease;
+}
+.ui-chat-tool[open] > .ui-chat-tool-summary::before { transform: rotate(90deg); }
+.ui-chat-tool-summary:hover { background: var(--bg-1); }
+.ui-chat-tool-name { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
+.ui-chat-tool-args { color: var(--text-mute); font-size: 0.72rem; }
+.ui-chat-tool-body { padding: 0 0.5rem 0.5rem 0.5rem; }
+.ui-chat-tool-empty { color: var(--text-mute); font-style: italic; padding: 0.3rem 0; }
+.ui-chat-tool-result {
+  align-self: flex-start; max-width: 100%;
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.45rem 0.65rem; margin: 0;
+  font-family: ui-monospace, monospace; font-size: 0.75rem;
+  color: var(--text-mute); max-height: 320px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+/* Full args block inside the expanded tool details — one row per
+   key, pretty-printed value. Distinct from result via accent-tinted
+   key labels so it's obvious which lines are inputs vs. output. */
+.ui-chat-tool-argblock {
+  display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.4rem;
+}
+.ui-chat-tool-argrow {
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.ui-chat-tool-argkey {
+  font-size: 0.7rem; font-weight: 600; color: var(--accent);
+  font-family: ui-monospace, monospace; opacity: 0.85;
+}
+.ui-chat-tool-argval {
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.35rem 0.55rem; margin: 0;
+  font-family: ui-monospace, monospace; font-size: 0.75rem;
+  color: var(--text); max-height: 280px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+.ui-chat-status { align-self: center; font-size: 0.78rem; color: var(--text-mute); font-style: italic; padding: 0.2rem 0; }
+/* Themed confirm / alert / prompt dialog (uiDefaultModal) — the in-page
+ * replacement for native browser dialogs, so the chrome matches the app
+ * and mirrors the gohort-desktop host modal. */
+.ui-modal-dialog {
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 1.1rem 1.2rem; width: 92%; max-width: 440px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  font: inherit;
+}
+.ui-modal-dialog::backdrop { background: rgba(0,0,0,0.5); }
+.ui-modal-msg { margin-bottom: 1rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.ui-modal-input {
+  width: 100%; box-sizing: border-box; margin-bottom: 0.9rem;
+  padding: 0.45rem 0.6rem; border-radius: 5px;
+  border: 1px solid var(--border); background: var(--bg-0); color: var(--text); font: inherit;
+}
+.ui-modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
+.ui-chat-attachments {
+  display: flex; flex-direction: column; align-items: flex-start;
+  gap: 0.4rem; margin-top: 0.5rem; clear: both;
+}
+.ui-chat-attached-image {
+  display: block; max-width: 100%; max-height: 400px;
+  border-radius: 6px; border: 1px solid var(--border);
+}
+.ui-chat-attached-file {
+  display: inline-block; padding: 0.4rem 0.7rem;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); text-decoration: none; font-size: 0.85rem;
+  max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-chat-attached-file:hover { background: var(--bg-3, var(--bg-2)); border-color: var(--accent, #4f8cff); }
+.ui-chat-typing {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 0.1rem 0.1rem;
+}
+.ui-chat-typing > span {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--text-mute);
+  animation: ui-typing 1.2s ease-in-out infinite;
+}
+.ui-chat-typing > span:nth-child(2) { animation-delay: 0.15s; }
+.ui-chat-typing > span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes ui-typing {
+  0%, 60%, 100% { transform: translateY(0);   opacity: 0.4; }
+  30%           { transform: translateY(-3px); opacity: 1;   }
+}
+.ui-chat-error { align-self: center; color: var(--danger); font-size: 0.85rem; padding: 0.4rem 0.6rem; }
+
+.ui-chat-modesbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.ui-chat-modes { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.ui-chat-empty-hint {
+  margin-left: auto; color: var(--text-mute);
+  font-size: 0.78rem; font-style: italic;
+}
+/* Tools badge — expandable "🔧 N tools" pill on the right of the
+   modes bar. Click expands a popover listing every tool the LLM
+   can call (name + description). */
+.ui-chat-tools-wrap { position: relative; margin-left: auto; }
+/* When the empty hint is showing, tools-wrap sits right after it on
+   the right edge — no extra auto-margin needed (the hint already has
+   margin-left:auto pushing the cluster right). Keep a small gap. */
+.ui-chat-empty-hint:not([style*="display: none"]) + .ui-chat-tools-wrap {
+  margin-left: 0.5rem;
+}
+.ui-chat-tools-badge {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0.2rem 0.6rem; font-size: 0.72rem; cursor: pointer;
+  font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-chat-tools-badge:hover { color: var(--text); border-color: var(--accent); }
+.ui-chat-tools-popover {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 60;
+  min-width: 320px; max-width: 480px; max-height: 60vh; overflow-y: auto;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  padding: 0.4rem;
+  display: flex; flex-direction: column; gap: 0.3rem;
+}
+.ui-chat-tools-row {
+  padding: 0.35rem 0.45rem; border-radius: 4px;
+  background: var(--bg-2); border: 1px solid var(--border);
+}
+.ui-chat-tools-name {
+  font-family: ui-monospace, monospace; font-size: 0.78rem;
+  font-weight: 600; color: var(--accent);
+}
+.ui-chat-tools-desc {
+  font-size: 0.72rem; color: var(--text-mute);
+  line-height: 1.35; margin-top: 0.15rem;
+}
+.ui-chat-tools-loading { color: var(--text-mute); font-size: 0.78rem; padding: 0.5rem; }
+@media (max-width: 600px) {
+  .ui-chat-tools-popover {
+    position: fixed; left: 0.5rem; right: 0.5rem; top: auto; bottom: 4rem;
+    min-width: 0; max-width: none;
+  }
+}
+
+/* --- PipelinePanel --- */
+.ui-pl-form {
+  padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+  display: flex; flex-direction: column; gap: 0.5rem;
+}
+.ui-pl-formrow { display: flex; flex-direction: column; gap: 0.2rem; }
+.ui-pl-formlabel { font-size: 0.72rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Toggle row — laid out horizontally as a compact pill instead of
+ * the default full-width stacked input. Hugs its content so the
+ * label + switch don't dominate a form whose primary input is a
+ * textarea. */
+.ui-pl-formrow-toggle {
+  flex-direction: row;
+  align-items: center;
+  align-self: flex-start;
+  gap: 0.5rem;
+  padding: 0.25rem 0.6rem 0.25rem 0.7rem;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.ui-pl-formrow-toggle .ui-pl-formlabel {
+  font-size: 0.74rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+/* Small switch variant for inline use. Trimmed to ~70% of the
+ * default switch footprint so a row of action buttons + toggle
+ * doesn't tower over plain icons. */
+.ui-switch.ui-switch-sm {
+  width: 34px; height: 20px; border-radius: 10px;
+}
+.ui-switch.ui-switch-sm::before {
+  width: 16px; height: 16px;
+}
+.ui-switch.ui-switch-sm:checked::before {
+  transform: translateX(14px);
+}
+.ui-pl-input {
+  font-family: inherit; font-size: 0.9rem;
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+}
+.ui-pl-input:focus { outline: none; border-color: var(--accent); }
+.ui-pl-textarea { resize: vertical; min-height: 3rem; }
+.ui-pl-file { padding: 0.35rem 0.5rem; cursor: pointer; }
+.ui-pl-file::file-selector-button {
+  font-family: inherit; font-size: 0.82rem; cursor: pointer;
+  margin-right: 0.6rem; padding: 0.3rem 0.6rem;
+  background: var(--bg-2, var(--bg-1)); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+}
+.ui-pl-file-status { font-size: 0.8rem; color: var(--text-mute); min-height: 1rem; }
+.ui-pl-file-status.is-error { color: var(--danger, #e5534b); }
+.ui-pl-formactions {
+  display: flex; justify-content: flex-end; gap: 0.4rem;
+  padding-top: 0.2rem; align-items: center;
+}
+.ui-pl-prefill-wrap { position: relative; }
+.ui-pl-prefill-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 50;
+  min-width: 360px; max-width: 560px;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  max-height: 60vh; overflow-y: auto;
+  padding: 0.4rem;
+}
+/* Suggest button — AI-styled with sparkle icon. Compact on mobile,
+ * more prominent on desktop so it reads as a "magic helper" call to
+ * action rather than a generic toolbar button. */
+.ui-pl-prefill-btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  background: linear-gradient(135deg, rgba(212, 166, 87, 0.18), rgba(212, 166, 87, 0.06));
+  color: var(--accent); border: 1px solid var(--accent);
+  font-weight: 600;
+}
+.ui-pl-prefill-btn:hover:not(:disabled):not(.is-disabled) {
+  background: linear-gradient(135deg, rgba(212, 166, 87, 0.28), rgba(212, 166, 87, 0.12));
+  filter: none;
+}
+.ui-pl-prefill-icon {
+  display: inline-block; font-size: 0.95em;
+  /* Subtle pulse so the icon reads as an active AI affordance. */
+  animation: ui-pl-sparkle 2.4s ease-in-out infinite;
+}
+@keyframes ui-pl-sparkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.7; transform: scale(0.9); }
+}
+@media (min-width: 700px) {
+  .ui-pl-prefill-btn {
+    padding: 0.55rem 1.1rem;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+  }
+  .ui-pl-prefill-icon { font-size: 1.05em; }
+}
+.ui-pl-prefill-item {
+  padding: 0.65rem 0.8rem; border-radius: 6px; cursor: pointer;
+  color: var(--text); line-height: 1.4;
+}
+.ui-pl-prefill-item + .ui-pl-prefill-item { margin-top: 0.25rem; }
+.ui-pl-prefill-item:hover { background: var(--bg-2); }
+.ui-pl-prefill-item:hover .ui-pl-prefill-item-q { color: var(--accent); }
+.ui-pl-prefill-item-q {
+  color: var(--text); font-size: 1rem; line-height: 1.4; font-weight: 500;
+}
+.ui-pl-prefill-item-hook {
+  color: var(--text-mute); font-size: 0.85rem; line-height: 1.5;
+  margin-top: 0.3rem;
+}
+/* On narrow viewports the popover would overflow off-screen
+   if anchored to the button's right edge, and the min-width
+   forces it wider than the viewport. Switch to a fixed-position
+   strip with viewport-relative width so suggestions are always
+   reachable. */
+@media (max-width: 600px) {
+  .ui-pl-prefill-menu {
+    position: fixed;
+    left: 0.5rem; right: 0.5rem; top: auto; bottom: 4rem;
+    min-width: 0; max-width: none;
+    max-height: 50vh;
+  }
+  .ui-pl-prefill-item { padding: 0.75rem 0.8rem; }
+  .ui-pl-prefill-item-q { font-size: 1.02rem; }
+  .ui-pl-prefill-item-hook { font-size: 0.88rem; }
+}
+.ui-pl-btn {
+  font-family: inherit; font-size: 0.85rem;
+  padding: 0.4rem 0.85rem; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--bg-1); color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-pl-btn:disabled,
+.ui-pl-btn.is-disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+.ui-pl-btn.primary { background: var(--accent); color: var(--text-on-accent, #fff); border-color: var(--accent); }
+.ui-pl-btn.danger { background: transparent; color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
+.ui-pl-btn.secondary { background: var(--bg-2); }
+.ui-pl-btn:hover:not(:disabled):not(.is-disabled) { filter: brightness(1.1); }
+
+.ui-pl-actions {
+  padding: 0.5rem 0.9rem;
+  border-bottom: 1px solid var(--border); background: var(--bg-2);
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+}
+/* Stream-modal — used by PipelineAction.Method=="modal" for things
+   like Generate Report. Styled to match the legacy report
+   modal: roomy content, big metallic h1, blue h2 with bottom rule. */
+.ui-pl-modal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.85);
+  overflow-y: auto; padding: 2rem 1rem;
+  display: flex; justify-content: center;
+}
+.ui-pl-modal {
+  position: relative;
+  background: var(--bg-0); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  width: 100%; max-width: 800px; height: fit-content;
+  padding: 2rem;
+  display: flex; flex-direction: column; gap: 0.4rem;
+}
+.ui-pl-modal-h {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0 2.5rem 0 0; /* leave space for the absolute × */
+  margin-bottom: 0.5rem;
+}
+.ui-pl-modal-title {
+  font-size: 0.78rem; font-weight: 700; color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+.ui-pl-modal-h-actions {
+  display: flex; flex-wrap: wrap; gap: 0.35rem;
+  margin-left: auto;
+}
+.ui-pl-modal-h-actions .ui-pl-btn { font-size: 0.75rem; padding: 0.3rem 0.7rem; }
+.ui-pl-modal-close {
+  position: absolute; top: 1rem; right: 1rem;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-mute); font-size: 1.2rem; cursor: pointer;
+  width: 2rem; height: 2rem; border-radius: 6px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+}
+.ui-pl-modal-close:hover { background: var(--bg-2); color: var(--text); }
+.ui-pl-modal-body {
+  font-size: 0.92rem; line-height: 1.7; color: var(--text);
+}
+/* Related-action popover items — the "click a topic to drill in"
+ * style the legacy panels had inline. Each entry is a clickable card
+ * with the question on top and an optional reason below. */
+.ui-pl-related-h {
+  font-size: 0.72rem; color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin: 0.6rem 0 0.4rem;
+}
+.ui-pl-related-h:first-child { margin-top: 0; }
+.ui-pl-related-item {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  margin-bottom: 0.4rem; cursor: pointer;
+  transition: border-color 0.1s ease, background 0.1s ease;
+  background: var(--bg-1);
+}
+.ui-pl-related-item:hover {
+  border-color: var(--accent); background: var(--bg-2);
+}
+.ui-pl-related-item.accent { border-left: 3px solid var(--accent); }
+/* Variant accents — match the legacy panel where unanswered
+ * questions surfaced in amber (gap, needs follow-up) and previously-
+ * answered questions surfaced in green (already covered, click to
+ * open the existing report). The colored left rule + matching header
+ * + matching reason-text color make the three groups scannable at
+ * a glance instead of three identical white-bordered card stacks. */
+.ui-pl-related-item.warning {
+  border-left: 3px solid var(--warning);
+}
+.ui-pl-related-item.warning:hover { border-color: var(--warning); }
+.ui-pl-related-item.success {
+  border-left: 3px solid var(--success);
+}
+.ui-pl-related-item.success:hover { border-color: var(--success); }
+.ui-pl-related-h.warning { color: var(--warning); }
+.ui-pl-related-h.success { color: var(--success); }
+.ui-pl-related-item.warning .ui-pl-related-reason { color: var(--warning); }
+.ui-pl-related-item.success .ui-pl-related-reason { color: var(--success); }
+.ui-pl-related-q { color: var(--text); font-size: 0.92rem; line-height: 1.4; }
+.ui-pl-related-reason {
+  color: var(--text-mute); font-size: 0.8rem;
+  line-height: 1.45; margin-top: 0.2rem;
+}
+.ui-pl-related-hint {
+  display: inline-block; margin-top: 0.3rem;
+  font-size: 0.7rem; color: var(--accent);
+  background: rgba(212, 166, 87, 0.12);
+  padding: 0.1rem 0.45rem; border-radius: 999px;
+}
+/* Headline: Orbitron metallic gradient, matches legacy report h1. */
+.ui-pl-modal-headline {
+  font-family: 'Orbitron', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif;
+  font-size: 1.5rem; line-height: 1.3; text-align: center;
+  text-wrap: balance; margin: 0 0 0.5rem;
+  background: linear-gradient(180deg, #f0f6fc 0%, #30363d 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.ui-pl-modal-sub {
+  color: var(--text-mute); font-size: 0.85rem;
+  margin-bottom: 0.2rem; text-align: center;
+}
+.ui-pl-modal-content { margin-top: 1rem; }
+.ui-pl-modal-content p { margin: 0.5rem 0; }
+.ui-pl-modal-content h1 {
+  font-family: 'Orbitron', sans-serif;
+  color: var(--text); font-size: 1.25rem; margin: 1rem 0 0.4rem;
+}
+.ui-pl-modal-content h2 {
+  color: var(--accent); font-size: 1.1rem; margin: 1.5rem 0 0.5rem;
+  border-bottom: 1px solid var(--border); padding-bottom: 0.3rem;
+  text-transform: none; letter-spacing: normal; font-weight: 600;
+}
+.ui-pl-modal-content h2:first-child { margin-top: 0; }
+.ui-pl-modal-content h3 {
+  color: var(--text); font-size: 0.98rem; margin: 1rem 0 0.3rem;
+  font-weight: 600; text-transform: none; letter-spacing: normal;
+}
+.ui-pl-modal-content ol, .ui-pl-modal-content ul {
+  margin: 0.5rem 0; padding-left: 1.5rem;
+}
+.ui-pl-modal-content li { margin-bottom: 0.3rem; }
+.ui-pl-modal-content strong { color: var(--text); }
+.ui-pl-modal-content a { color: var(--accent); text-decoration: none; word-break: break-all; }
+.ui-pl-modal-content a:hover { text-decoration: underline; }
+.ui-pl-modal-content code {
+  background: var(--bg-2); padding: 0.1rem 0.3rem; border-radius: 3px;
+  font-size: 0.85em;
+}
+.ui-pl-modal-status {
+  display: flex; gap: 0.4rem; align-items: center; justify-content: center;
+  padding: 1rem; color: var(--text-mute); font-style: italic;
+}
+.ui-pl-actions .ui-pl-btn { font-size: 0.78rem; padding: 0.3rem 0.7rem; }
+.ui-pl-btn-cancel { margin-left: auto !important; }
+/* Inline feedback flash — the Copy Link button briefly turns green
+   on success so the user gets confirmation without a corner toast. */
+.ui-pl-btn.copied { background: var(--success) !important; color: #fff !important; border-color: var(--success) !important; }
+/* Sidebar session-row meta fields: verdict snippet, confidence pill,
+   winning-side pill. Compact, scannable. */
+.ui-pl-side-metaline {
+  font-size: 0.7rem; color: var(--text-mute); line-height: 1.3;
+  margin-top: 0.08rem;
+  /* Multi-line up to 3 lines so verdict snippets don't get
+   * truncated to a useless half-sentence. line-clamp keeps the cap
+   * sensible — anything longer collapses with an ellipsis. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.ui-pl-side-metalabel { color: var(--text-mute); font-weight: 600; }
+.ui-pl-side-pillrow {
+  display: flex; flex-wrap: wrap; gap: 0.25rem; align-items: center;
+  margin-top: 0.1rem;
+}
+.ui-pl-side-pillrow .ui-chat-side-meta { margin-top: 0; }
+.ui-pl-side-pill {
+  display: inline-block; font-size: 0.6rem; font-weight: 700;
+  padding: 0.02rem 0.3rem; border-radius: 999px;
+  background: var(--bg-2); color: var(--text-mute);
+  border: 1px solid var(--border);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap; line-height: 1.4;
+}
+.ui-pl-session-title {
+  padding: 0.55rem 0.95rem 0.45rem;
+  border-bottom: 1px solid var(--border); background: var(--bg-1);
+  font-size: 1rem; font-weight: 600; color: var(--text);
+  line-height: 1.35;
+}
+
+.ui-pl-transcript {
+  flex: 1; min-height: 0; overflow-y: auto; padding: 0.6rem 0.9rem;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+/* Don't let blocks shrink below their content height in the
+ * column-flex transcript. Without flex-shrink: 0, a tall block
+ * (e.g. the final synthesized report) gets squeezed by other
+ * children, and combined with .ui-pl-block's overflow:hidden
+ * the overflow gets clipped — that's the "report cuts off" bug. */
+.ui-pl-block { flex-shrink: 0; }
+.ui-pl-block {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden;
+}
+.ui-pl-block-h {
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-2); border-bottom: 1px solid var(--border);
+  font-weight: 600; font-size: 0.85rem; color: var(--text);
+}
+.ui-pl-block-body {
+  padding: 0.6rem 0.8rem;
+  font-size: 0.92rem; line-height: 1.55;
+  color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.ui-pl-block-body p { margin: 0.4rem 0; }
+/* Pipeline-block prose (headings / pre / code / lists) comes from
+ * .ui-md — see the canonical block above. */
+
+/* Status with spinner — live + done variants. The active state
+ * uses a brighter foreground + accent-tinted border so the
+ * "something is happening" indicator stands out against the
+ * surrounding read-only blocks. The done variant fades back to
+ * muted styling once the spinner stops, keeping the trail of
+ * earlier statuses unobtrusive. */
+.ui-pl-status {
+  align-self: center;
+  display: inline-flex; align-items: center; gap: 0.55rem;
+  font-size: 0.82rem; color: var(--text); font-weight: 500;
+  padding: 0.3rem 0.75rem; border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 0 3px rgba(212, 166, 87, 0.08);
+}
+.ui-pl-status-done {
+  color: var(--text-mute); font-weight: normal;
+  border-color: var(--border);
+  box-shadow: none;
+  opacity: 0.55;
+}
+.ui-pl-status-done .ui-pl-spinner { display: none; }
+
+/* Generic spinning indicator — used by status pills, streaming
+ * cards, and any "work in progress" affordance. Inline-block so it
+ * sits beside text without breaking the line flow. The accent
+ * border + subtle halo make it the focal point of whatever row
+ * contains it. */
+.ui-pl-spinner {
+  display: inline-block; width: 0.85rem; height: 0.85rem;
+  border: 2px solid var(--accent);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: ui-pl-spin 0.9s linear infinite;
+  box-shadow: 0 0 0 1px rgba(212, 166, 87, 0.18);
+}
+@keyframes ui-pl-spin { to { transform: rotate(360deg); } }
+
+/* Indicator INSIDE the in-flight Cancel button — a persistent "still working"
+ * signal anchored to a control that stays put (it can't scroll away like the
+ * activity trail). A breathing (scale + fade) dot in currentColor, so it
+ * auto-matches the button's text and contrasts on any button variant. */
+.ui-agent-cancel { display: inline-flex; align-items: center; gap: 0.4rem; }
+.ui-agent-cancel-spinner {
+  display: inline-block; width: 0.5rem; height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: ui-agent-cancel-pulse 1.2s ease-in-out infinite;
+  flex: none;
+}
+@keyframes ui-agent-cancel-pulse {
+  0%, 100% { opacity: 1;    transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.6); }
+}
+
+/* Generic expandable card — collapsible "show details" panel. */
+.ui-pl-expandable {
+  margin-top: 0.6rem; padding: 0.5rem 0.75rem;
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer;
+}
+.ui-pl-expandable-h {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+.ui-pl-expandable-title {
+  flex: 1; min-width: 0;
+  font-weight: 700; color: var(--accent);
+  white-space: normal; word-break: break-word;
+}
+.ui-pl-expandable-subtitle {
+  margin-top: 0.2rem;
+  font-weight: 500; color: var(--text-mute);
+  font-size: 0.78rem;
+}
+.ui-pl-expandable-toggle {
+  flex-shrink: 0;
+  font-size: 0.7rem; color: var(--text-mute);
+}
+.ui-pl-expandable.expanded .ui-pl-expandable-toggle::after { content: ' ▾'; }
+.ui-pl-expandable-body { display: none; margin-top: 0.5rem; font-size: 0.85rem; line-height: 1.5; color: var(--text); }
+.ui-pl-expandable.expanded .ui-pl-expandable-body { display: block; }
+/* Expandable-card prose comes from .ui-md — the em-relative scale keeps
+ * headings compact against this card's smaller base font-size. */
+
+.ui-chat-field {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.75rem; color: var(--text-mute);
+}
+.ui-chat-field-label { white-space: nowrap; }
+.ui-chat-field-input {
+  background: var(--bg-1); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.15rem 0.35rem; font-size: 0.75rem;
+  font-family: inherit;
+}
+.ui-chat-field-input[type="number"] { width: 4rem; }
+.ui-chat-mode {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.25rem 0.6rem; font-size: 0.75rem; cursor: pointer;
+  transition: color 0.1s ease, border-color 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-chat-mode:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-chat-mode.active { color: var(--accent); border-color: var(--accent); }
+/* Locked mode = ForcePrivate / DisableInferred is set on the agent. Render
+ * as a visible-but-disabled indicator: dashed border + reduced opacity
+ * cue that the state is enforced, not user-chosen. Hover stays muted
+ * (no pseudo-affordance for a click that won't do anything). */
+.ui-chat-mode.ui-chat-mode-locked {
+  border-style: dashed;
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+.ui-chat-mode.ui-chat-mode-locked:hover {
+  color: var(--accent); border-color: var(--accent);
+}
+
+.ui-chat-input-area {
+  display: flex; gap: 0.5rem; padding: 0.6rem; border-top: 1px solid var(--border);
+}
+.ui-chat-iconbtn {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 8px;
+  min-width: 40px; min-height: 40px; padding: 0 0.6rem;
+  font-size: 1.1rem; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.ui-chat-iconbtn:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-chat-iconbtn.active { color: var(--accent); border-color: var(--accent); }
+.ui-chat-iconbtn.recording {
+  background: var(--danger); color: #fff; border-color: var(--danger);
+  animation: ui-mic-pulse 1s ease-in-out infinite;
+}
+@keyframes ui-mic-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(248,81,73,0.6); } 50% { box-shadow: 0 0 0 6px rgba(248,81,73,0); } }
+
+/* Chat-bubble prose (headings / pre / code / lists / links) comes from
+ * .ui-md — see the canonical block above. No surface-specific overrides
+ * needed here; don't re-add them. */
+.ui-chat-input {
+  flex: 1; min-height: 40px; max-height: 200px; resize: none;
+  padding: 0.5rem 0.7rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  font-family: inherit; font-size: 0.92rem; line-height: 1.4; outline: none;
+}
+.ui-chat-input:focus { border-color: var(--accent); }
+.ui-chat-send, .ui-chat-cancel {
+  padding: 0 1.1rem; min-height: 40px;
+  border: 1px solid var(--accent); border-radius: 8px;
+  background: var(--accent); color: #1a1a1a; font-weight: 600;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ui-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-chat-cancel { background: transparent; color: var(--danger); border-color: var(--danger); }
+
+/* --- CodeWriterPanel ---
+ * Reuses the .ui-tw two-pane grid (sidebar + main) and adds the
+ * codewriter toolbar + monospace code editor inside the main column.
+ * Snippet titles are typically short ("list users", "backup db") so
+ * the sidebar runs narrower than techwriter's article list. */
+/* Halved sidebar width vs. techwriter (which inherits .ui-tw). The
+ * compound .ui-cw.ui-tw selector beats .ui-tw on specificity so this
+ * actually wins regardless of stylesheet ordering. Snippet titles
+ * have ellipsis + hover tooltip so a narrow rail still works. */
+.ui-cw.ui-tw { grid-template-columns: 175px 1fr; }
+@media (min-width: 1100px) {
+  .ui-cw.ui-tw { grid-template-columns: 215px 1fr; }
+}
+/* Mobile — collapse to single column so the editor pane isn't
+ * squashed against a 175px sidebar. Matches the standard chat-panel's mobile
+ * rule; specificity (2 classes) must match the base selector
+ * for the override to apply. */
+@media (max-width: 700px) {
+  .ui-cw.ui-tw { grid-template-columns: 1fr; }
+}
+
+/* AgentLoopPanel — optional list rail (sessions/workspaces/...) +
+ * conversation pane + activity pane (optionally split with a
+ * terminal below). Reuses .ui-chat-side (list rail) styling so
+ * apps that mix chat and agent surfaces look consistent.
+ *
+ * Layout matrix:
+ *   - hasList + !sideCollapsed: 2-col grid (rail + main)
+ *   - hasList + sideCollapsed:  1-col grid; floating expand tab
+ *   - !hasList:                 1-col grid (no rail at all)
+ */
+.ui-agent {
+  display: flex; flex-direction: column;
+  gap: 0.6rem; position: relative;
+  /* height (not min-height) so the panel is capped at viewport
+   * size. Without the cap, a long workspace replay grows the
+   * whole page taller than the viewport and the inner convo log's
+   * overflow-y never engages — you'd scroll the page instead of
+   * the conversation. Same pattern .ui-chat uses. */
+  height: calc(100vh - 70px);
+}
+@media (max-width: 900px) {
+  /* Mobile: chat fills the full visible viewport; the page header
+   * (title) + top bundle (buttons row) sit ABOVE in flow and scroll
+   * out of view on first paint. User reveals them by scrolling up.
+   * Two independent rules combine to make this work:
+   *   - .ui-agent grows past viewport (no height/min-height cap) so
+   *     page total = header + bundle + grid > viewport.
+   *   - .ui-agent-grid is pinned to one full viewport height so the
+   *     chat pane + input fill the screen on its own. */
+  .ui-agent {
+    height: auto;
+    min-height: 0;
+  }
+  .ui-agent-grid {
+    height: 100vh;
+    height: 100dvh;
+  }
+  /* Hide the page back-link on chat-panel pages: the scroll-past
+   * layout is all about maximizing the convo pane, and the back-arrow
+   * is pure navigation chrome that just adds height above the fold
+   * when you scroll up. Browser back still works. Scoped via :has()
+   * so non-chat pages keep their back button. */
+  #ui-root:has(.ui-agent) .ui-back-link { display: none; }
+}
+.ui-agent-topbar {
+  display: flex; flex-direction: column;
+  flex: 0 0 auto;
+}
+.ui-agent-grid {
+  display: grid; grid-template-columns: 240px 1fr;
+  gap: 1rem;
+  flex: 1 1 auto; min-height: 0;
+  position: relative;
+}
+@media (min-width: 900px)  { .ui-agent-grid { grid-template-columns: 280px 1fr; } }
+@media (min-width: 1200px) { .ui-agent-grid { grid-template-columns: 320px 1fr; } }
+.ui-agent.ui-agent-no-list  .ui-agent-grid,
+.ui-agent.side-collapsed    .ui-agent-grid {
+  /* Collapsed: 1-col grid. The expand tab is positioned absolutely
+   * over the top-left corner; no column reservation needed. */
+  grid-template-columns: 1fr;
+}
+.ui-agent.side-collapsed .ui-chat-side { display: none; }
+@media (max-width: 900px) {
+  .ui-agent-grid { grid-template-columns: 1fr; }
+  .ui-agent .ui-chat-side { display: none; }
+  .ui-agent .ui-chat-side.open { display: flex; }
+  .ui-agent .ui-agent-main {
+    margin-left: 0;
+    /* On mobile the panel fills the viewport width — the border +
+     * border-radius from the desktop card look just clip the leading
+     * / trailing pixel of toolbar buttons against the curve. Drop
+     * them so the topbar rows have a clean edge to align against.
+     * overflow stays hidden (still want the convo log to scroll
+     * inside the panel, not the page). */
+    border: 0;
+    border-radius: 0;
+  }
+  .ui-agent .ui-agent-expand { display: none; }
+  /* The topbar is pinned to 2.5rem + align-items:center in list-top
+   * mode (one-row desktop layout). On mobile, when the action row
+   * wraps (Revert + several buttons drop to a 2nd line), the wrapped
+   * content gets vertically CENTERED in the 2.5rem-tall topbar,
+   * which clips the top half off-screen. Three things together fix it:
+   *   1. height:auto + flex:0 0 auto → topbar grows to fit content
+   *   2. align-items:flex-start → if any clip remains, top stays visible
+   *   3. flex-wrap:wrap → top-level children (actions + extras) stack
+   *      vertically when they don't fit on one row */
+  .ui-agent.ui-agent-list-top .ui-agent-topbar {
+    height: auto !important;
+    min-height: 2.5rem;
+    flex: 0 0 auto !important;
+    flex-wrap: wrap !important;
+    align-items: flex-start !important;
+    padding: 0.3rem 0.7rem !important;
+  }
+  /* Inner action button row — when its OWN buttons wrap to a second
+   * line, the row's natural height is 2x button height. Centered
+   * alignment again caused clipping; align top + give a row gap so
+   * wrapped lines breathe instead of jamming together. NO forced
+   * width:100% — that pushed each section onto its own line even
+   * when (action+modes+picker) could fit side-by-side on a wider
+   * mobile (tablet / landscape phone). Let flex-wrap kick in only
+   * when content actually overflows. */
+  .ui-agent.ui-agent-list-top .ui-agent-actions {
+    align-items: flex-start !important;
+    row-gap: 0.3rem;
+    flex-wrap: wrap !important;
+  }
+  .ui-agent.ui-agent-list-top .ui-agent-extras-slot {
+    align-items: flex-start !important;
+    row-gap: 0.3rem;
+    flex-wrap: wrap !important;
+  }
+}
+/* ListPosition: "top" — two-card surface: rail (picker + sessions
+ * stacked) on the left, conversation pane on the right. Both wear
+ * rounded card chrome with a gap between them; the conversation
+ * pane's topbar reads as a single header bar (☰  agent-name  +New
+ * …actions). The activity pane is hidden via LockActivity at the app
+ * level.
+ *
+ * Earlier this mode dropped all chrome to read as a chat-style
+ * single-pane surface; the card look here mirrors a multi-column
+ * pipeline's two-card layout for visual consistency across surfaces
+ * that all sit under one Page. */
+.ui-agent.ui-agent-list-top {
+  --rail-width: 260px;
+}
+.ui-agent.ui-agent-list-top .ui-agent-grid {
+  grid-template-columns: var(--rail-width) 1fr;
+}
+.ui-agent.ui-agent-list-top.side-collapsed .ui-agent-grid {
+  grid-template-columns: 1fr;
+}
+/* Desktop: the rail is permanent in list-top mode. Earlier we let
+ * the user collapse it, but the placement of the expand affordance
+ * kept fighting the layout (sitting inside the chat card was
+ * confusing; a left-edge tab added chrome no one asked for; the
+ * 260px rail isn't large enough on desktop to warrant a hide).
+ *
+ * On desktop we therefore force the rail visible regardless of the
+ * stored sideCollapsed preference, and hide both the in-rail
+ * hamburger (collapse) and the floating expand tab so the user
+ * can't toggle a state that no longer exists.
+ *
+ * Mobile keeps the current drawer behavior — collapsing IS useful
+ * there because the rail would eat the whole viewport. The rules
+ * inside @media (max-width: 900px) further down govern that path
+ * and aren't affected. */
+@media (min-width: 901px) {
+  .ui-agent.ui-agent-list-top .ui-agent-collapse,
+  .ui-agent.ui-agent-list-top .ui-agent-expand {
+    display: none !important;
+  }
+  .ui-agent.ui-agent-list-top.side-collapsed .ui-chat-side {
+    display: flex !important;
+  }
+  .ui-agent.ui-agent-list-top.side-collapsed .ui-agent-grid {
+    grid-template-columns: var(--rail-width) 1fr;
+  }
+}
+/* Lock the rail header to the same fixed height as the chat-pane
+ * topbar so the two bars on either side of the divider line up
+ * exactly. Padding stays compact and same horizontal as before;
+ * the height: 2.5rem is the single source of truth that all
+ * top-row bars (top bundle, rail header, chat-pane topbar) share. */
+.ui-agent.ui-agent-list-top .ui-chat-side > .ui-chat-side-h {
+  height: 2.5rem;
+  flex: 0 0 2.5rem;
+  padding: 0 0.7rem;
+  box-sizing: border-box;
+}
+.ui-agent.ui-agent-list-top .ui-agent-top-bundle {
+  /* Was a fixed 2.5rem when the bundle held a single row; now it
+   * hosts a 2-row buttons table, so let the content drive the
+   * height. min-height sets the bar's overall vertical breathing
+   * room — wider than single-row to read as a substantial top
+   * bar rather than a thin strip. */
+  height: auto;
+  min-height: 3.5rem;
+}
+/* Main pane keeps the shared .ui-agent-main card chrome in this
+ * mode now — the rail is also a card (see .ui-chat-side default) so
+ * they read as two distinct rounded panels with a gap between, like
+ * a multi-column pipeline layout. Earlier this rule stripped the
+ * border/radius to render as a single flat surface. */
+/* Topbar lives INSIDE main in this mode, so its underline doesn't
+ * span the rail. Chat-app-style: flat row with bg-1 + border-bottom.
+ * The actions row collapses into the topbar inline. Compact — sits
+ * as a thin header strip, not a fat toolbar. */
+.ui-agent.ui-agent-list-top .ui-agent-topbar {
+  display: flex; flex-direction: row; align-items: center;
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+  gap: 0.4rem;
+  /* Match the Sessions rail header EXACTLY: same padding, same
+   * fixed height, no flex-wrap (so buttons can't push the bar to
+   * a second line). overflow visible so the pill's rounded ends
+   * aren't clipped — overflow-x:auto was implicitly clipping the
+   * y-axis and chopping the pill's top/bottom curves. */
+  padding: 0 0.7rem;
+  height: 2.5rem;
+  flex: 0 0 2.5rem;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  overflow: visible;
+}
+/* When the rail is collapsed, the floating ☰ expand-tab sits at
+ * (left: 4px, width: 26px) on the chat pane's top-left corner.
+ * Push the topbar's content right enough to clear it so the action
+ * buttons don't hide behind the tab. */
+.ui-agent.ui-agent-list-top.side-collapsed .ui-agent-topbar {
+  padding-left: 2.6rem;
+}
+/* Two-row chat-pane topbar in list-top mode:
+ *   Row 1: action buttons (New / Edit / Clone / Tools / Memory / …)
+ *   Row 2: extras-slot (Agent picker + Private mode pill)
+ * Each block claims a full row via flex-basis: 100% so the line
+ * break is structural, not "happens to fit when wrapped." */
+.ui-agent.ui-agent-list-top .ui-agent-actions {
+  background: transparent;
+  border-bottom: 0;
+  padding: 0;
+  gap: 0.3rem;
+  flex: 0 1 auto;
+  margin-right: 0;
+  /* Children size to content (border tight to text) instead of
+   * stretching to fill the container's height. Same reasoning as
+   * the .ui-agent-modes fix above. */
+  align-items: center;
+  /* Visual order: modes/extras (Private) render BEFORE actions
+   * (Memory). DOM order stays actions-then-extras (so the default
+   * rail's vertical-stack layout puts actions above extras); CSS
+   * order flips it in the horizontal list-top row. */
+  order: 2;
+}
+.ui-agent.ui-agent-list-top .ui-agent-extras-slot {
+  flex: 0 1 auto;
+  order: 1;
+}
+/* Match the sidebar session-item row size so the chat-pane toolbar
+ * reads as the same visual weight as the rail's clickable rows.
+ * Drops the global .ui-row-btn 44px tap-target min-size — that
+ * default is for primary action surfaces, not header chrome. */
+/* Match the rail's "+ New" / Select buttons: transparent bg,
+ * border, same padding/font/radius. Color is left unset so the
+ * .danger variant (Delete/Revert) keeps its red. */
+.ui-agent.ui-agent-list-top .ui-agent-actions .ui-row-btn,
+.ui-agent.ui-agent-list-top .ui-agent-actions button {
+  min-width: 0 !important; min-height: 0 !important;
+  padding: 0.2rem 0.55rem !important;
+  font-size: 0.75rem !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+}
+/* Extras strip (Agent picker, etc.) + Modes (Private, Explorer, …)
+ * inline in the topbar — strip the default bg-2 / border / padding
+ * so they blend with the action buttons instead of reading as a
+ * separate block, AND match the same compact size the action
+ * buttons use. */
+.ui-agent.ui-agent-list-top .ui-agent-extras-slot {
+  background: transparent;
+}
+/* Top bundle bar — when ExtraFieldsInSidebar is set, the Agent
+ * picker AND the action buttons share a single full-width bar
+ * above the grid row. Uses GRID with the same template as the
+ * .ui-agent-grid below so the picker block occupies EXACTLY the
+ * rail's column footprint (no flex negotiation, no width drift).
+ *
+ *   ┌─────────────┬─────────────────────────────┐
+ *   │ Agent: <…>  │ New Edit Clone …           │  top bundle
+ *   ├─────────────┼─────────────────────────────┤
+ *   │ Sessions    │ Chat pane                   │  grid row
+ *   │ …           │                             │
+ *   └─────────────┴─────────────────────────────┘
+ *
+ * Inner divider element ignored in grid mode — the picker block
+ * has a border-right that naturally aligns with the rail's
+ * border-right below since both are at the rail-width boundary.
+ */
+.ui-agent-top-bundle {
+  display: grid;
+  grid-template-columns: var(--rail-width, 260px) 1fr;
+  align-items: center;
+  flex: 0 0 auto;
+  /* Match the rail header (.ui-chat-side-h) padding so the bundle
+   * lines up visually as one continuous strip with the Sessions
+   * header — same vertical breathing room above and below the
+   * controls so the bar heights match. */
+  padding: 0;
+  min-height: 2.3rem;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+}
+.ui-agent-top-bundle-divider { display: none; }
+
+/* Mobile: rail collapses to a drawer, so the grid's first column
+ * (rail-width) is no longer visible underneath. Drop the rigid grid
+ * here — picker stacks above the action buttons row, both at full
+ * width, with their own little breathing room. */
+@media (max-width: 900px) {
+  .ui-agent-top-bundle {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.3rem;
+    /* More horizontal breathing room — on narrow phones the last
+     * button in a wrapped row was kissing the right edge (or being
+     * clipped by the .ui-agent-main border). 0.7rem matches the
+     * topbar's desktop padding and gives wrapped pills a clean
+     * right edge. box-sizing pins the padding inside the width so
+     * nothing overflows. */
+    padding: 0.4rem 0.7rem;
+    box-sizing: border-box;
+    /* Desktop pins the bundle to height: 2.5rem; on mobile the
+     * stacked picker+actions need more vertical room, so lift the
+     * height clip. Without this the second row clips behind the
+     * grid row below. */
+    height: auto !important;
+    min-height: 0 !important;
+  }
+  .ui-agent-top-bundle .ui-agent-actions,
+  .ui-agent-top-bundle .ui-agent-extras-slot {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    box-sizing: border-box;
+    /* Reserve a hair of right margin so wrapped rows don't kiss the
+     * bundle's right edge — the bundle's 0.7rem padding handles the
+     * outside, this prevents the last button's border from grazing
+     * the bundle's inner edge on flex-overflow-with-wrap cases. */
+    max-width: 100%;
+    width: 100%;
+  }
+  .ui-agent .ui-agent-extras.ui-agent-extras-in-side {
+    padding: 0 !important;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .ui-agent .ui-agent-extras.ui-agent-extras-in-side .ui-agent-extras-label select {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+.ui-agent .ui-agent-extras.ui-agent-extras-in-side {
+  /* Picker block IS the grid's first column (rail-width).
+   * Right padding kept tight (0.4rem) so the gap between the
+   * select's right edge and the first action button is small.
+   * Actions block adds its own 0.4rem left-padding, totaling
+   * ~0.8rem visible gap. */
+  background: transparent;
+  border: 0;
+  padding: 0 0.4rem 0 0.6rem !important;
+  gap: 0.35rem;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: 100%;
+}
+/* Action buttons in the SECOND column. !important on padding-left
+ * because .ui-agent.ui-agent-list-top .ui-agent-actions has higher
+ * specificity than .ui-agent-top-bundle .ui-agent-actions and would
+ * otherwise win with padding: 0. */
+.ui-agent-top-bundle .ui-agent-actions {
+  padding-left: 0.4rem !important;
+  justify-content: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  background: transparent;
+  border: 0;
+  align-items: center;
+}
+/* Explicit vertical divider between picker and action buttons —
+ * doesn't rely on the picker's border or padding surviving the
+ * later list-top cascade. Same height as the bundle content. */
+.ui-agent-top-bundle-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
+  margin: 0;
+  flex: 0 0 1px;
+}
+.ui-agent .ui-agent-extras.ui-agent-extras-in-side .ui-agent-extras-label {
+  flex: 1 1 auto;
+  font-size: 0.78rem;
+  color: var(--text-mute);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.ui-agent .ui-agent-extras.ui-agent-extras-in-side .ui-agent-extras-label select,
+.ui-agent .ui-agent-extras.ui-agent-extras-in-side .ui-agent-extras-label input {
+  /* Fill the rail-width container so the select extends across the
+   * full 260px column above the sessions rail. Otherwise the picker
+   * looks like an isolated small dropdown floating left of a big
+   * empty space. height: auto + line-height:1.2 keep the native
+   * <select> from forcing the bundle row taller than the rail
+   * header below it. */
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.2;
+  height: auto;
+  min-height: 0;
+}
+/* Action buttons inside the top bundle — same compact size as the
+ * other top-bundle controls so they read as one cohesive bar.
+ * flex: 1 1 0 + flex-wrap on the inner row: actions take whatever
+ * width is left after the Agent picker, and buttons wrap inside
+ * this row (not the outer bundle) when there's not enough room. */
+.ui-agent-top-bundle .ui-agent-actions {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  gap: 0.3rem;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.ui-agent-top-bundle .ui-agent-actions .ui-row-btn,
+.ui-agent-top-bundle .ui-agent-actions button {
+  min-width: 0 !important; min-height: 0 !important;
+  padding: 0.2rem 0.55rem !important;
+  font-size: 0.75rem !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+}
+.ui-agent.ui-agent-list-top .ui-agent-extras {
+  background: transparent;
+  padding: 0;
+  gap: 0.4rem;
+}
+.ui-agent.ui-agent-list-top .ui-agent-extras-label {
+  font-size: 0.78rem;
+}
+.ui-agent.ui-agent-list-top .ui-agent-extras-label select,
+.ui-agent.ui-agent-list-top .ui-agent-extras-label input {
+  min-width: 0;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.75rem;
+}
+.ui-agent.ui-agent-list-top .ui-agent-modes {
+  background: transparent;
+  border-top: 0;
+  padding: 0;
+  gap: 0.3rem;
+  /* align-items: center so child pills size to their CONTENT and
+   * aren't stretched to the modes-row height. flex default is
+   * stretch — that was making the Private pill render taller than
+   * its content (border pushed out from the text) instead of
+   * hugging the text the way the action buttons do. */
+  align-items: center;
+}
+.ui-agent.ui-agent-list-top .ui-agent-mode {
+  /* Same shape as the rail's + New / Select and the action
+   * buttons — slight-rounded rectangle (6px), same padding, same
+   * font, transparent bg, muted text. */
+  padding: 0.2rem 0.55rem !important;
+  font-size: 0.75rem !important;
+  border-radius: 6px !important;
+}
+.ui-agent.ui-agent-list-top .ui-agent-expand { display: none; }
+
+/* Mobile / tablet override for list-top mode — must come AFTER the
+ * non-media rules above so it actually wins on narrow viewports.
+ * On screens ≤900px the 260px inline rail would eat half the
+ * viewport; fall back to the standard slide-in drawer (hidden by
+ * default, .open class makes it overlay the main column) and
+ * surface the mobile hamburger so the user can summon the rail
+ * back when they need it. */
+@media (max-width: 900px) {
+  .ui-agent.ui-agent-list-top .ui-agent-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .ui-agent.ui-agent-list-top .ui-chat-side {
+    display: none;
+    border-right: 0;
+  }
+  .ui-agent.ui-agent-list-top .ui-chat-side.open { display: flex; }
+  .ui-agent.ui-agent-list-top .ui-chat-mobile-hdr { display: flex; }
+}
+
+.ui-agent-collapse, .ui-agent-expand {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 3px;
+  width: 26px; height: 24px; font-size: 0.95rem; line-height: 1;
+  cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ui-agent-collapse:hover, .ui-agent-expand:hover {
+  color: var(--text-hi); border-color: var(--accent);
+}
+.ui-agent-expand {
+  /* Positioned over the top-left of the main column (inside the
+   * grid row, so it sits below the full-width topbar and never
+   * overlaps the toolbar's buttons). Only visible when the rail
+   * is collapsed; the in-rail ☰ does the reverse direction. */
+  position: absolute; left: 4px; top: 6px;
+  display: none; z-index: 2;
+}
+.ui-agent.side-collapsed .ui-agent-expand { display: block; }
+
+/* Activity-pane toggle — × inside the header collapses; the
+ * floating ☰ on the right edge re-opens. Symmetric with the
+ * side-rail collapse pattern. */
+.ui-agent-activity-h {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.ui-agent-activity-toggle {
+  background: transparent; color: var(--text-mute);
+  border: none; cursor: pointer;
+  width: 22px; height: 22px; font-size: 1rem; line-height: 1;
+  padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ui-agent-activity-toggle:hover { color: var(--accent); }
+.ui-agent-activity-expand {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 3px;
+  width: 26px; height: 24px; font-size: 0.95rem; line-height: 1;
+  cursor: pointer; padding: 0;
+  display: none; align-items: center; justify-content: center;
+  position: absolute; right: 4px; top: 6px;
+  z-index: 2;
+}
+.ui-agent-activity-expand:hover { color: var(--text-hi); border-color: var(--accent); }
+.ui-agent.activity-collapsed .ui-agent-activity-expand { display: inline-flex; }
+.ui-agent.activity-collapsed .ui-agent-divider { display: none; }
+.ui-agent.activity-collapsed .ui-agent-right { display: none; }
+/* When an app actively LOCKS the activity pane hidden (a panel
+ * config opts out of activity entirely), hide the floating expand
+ * affordance too — the pane isn't user-toggleable in that state. */
+.ui-agent.activity-locked-hidden .ui-agent-activity-expand { display: none; }
+.ui-agent-main {
+  display: flex; flex-direction: column;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  overflow: hidden;
+  min-height: 0;
+}
+.ui-agent-status {
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-2); color: var(--text-mute);
+  font-size: 0.78rem; border-bottom: 1px solid var(--border);
+}
+.ui-agent-actions {
+  display: flex; gap: 0.4rem; padding: 0.5rem 0.7rem;
+  border-bottom: 1px solid var(--border); background: var(--bg-2);
+  /* Wrap to a second/third row instead of running off-screen on
+   * narrow viewports. Horizontal-scroll is the other option but
+   * action buttons that need a tap discovery aren't great hidden
+   * behind a scroll. */
+  flex-wrap: wrap;
+}
+/* Toolbar overflow dropdown (Agent / Configure / Session ▾). The menu is
+ * portaled to <body> and position:fixed (placed via JS from the button's rect)
+ * so the list-top .ui-agent-actions cascade — which kept dragging it into flow
+ * as a stacked/side-by-side row — can't reach it at all. */
+.ui-toolbar-menu {
+  position: fixed; z-index: 1000; min-width: 170px;
+  display: none; flex-direction: column; gap: 0.1rem; padding: 0.3rem;
+  border: 1px solid var(--border, rgba(127,127,127,0.3)); border-radius: 6px;
+  background: var(--bg-1, #1b1b2b); box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+.ui-toolbar-menu.open { display: flex; }
+.ui-toolbar-menu button {
+  display: block; width: 100%; text-align: left; padding: 0.4rem 0.6rem;
+  border: none; background: transparent; cursor: pointer; font: inherit;
+  font-size: 0.82rem; color: var(--text, inherit); border-radius: 4px;
+}
+.ui-toolbar-menu button:hover { background: var(--bg-2, rgba(127,127,127,0.15)); }
+.ui-toolbar-menu button.danger { color: var(--danger, #d9534f); }
+@media (max-width: 700px) {
+  .ui-agent-actions { padding: 0.4rem 0.5rem; gap: 0.3rem; }
+  .ui-agent-actions .ui-row-btn { font-size: 0.78rem; padding: 0.3rem 0.55rem; }
+}
+.ui-agent-split {
+  display: flex; flex: 1 1 auto; min-height: 0;
+}
+.ui-agent-convo {
+  flex: 1 1 60%;
+  display: flex; flex-direction: column;
+  min-width: 0; min-height: 0;
+  /* Darker output canvas — matches the Activity pane's bg-0 so
+   * the conversation surface reads like a console / editor body
+   * rather than a card. Message bubbles still ride on bg-2,
+   * giving them a clear lift off the canvas. */
+  background: var(--bg-0);
+}
+.ui-agent-convo-log {
+  flex: 1 1 auto; overflow-y: auto;
+  padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem;
+}
+.ui-agent-empty {
+  color: var(--text-mute); font-style: italic; text-align: center;
+  padding: 1.5rem 0;
+}
+/* Mid-turn status from send_status, rendered as a real message bubble
+ * (same .ui-agent-msg-body card chrome as a normal reply) so it reads
+ * like the agent talking. Left-aligned like the assistant; tinted with
+ * muted text + an accent left-stripe so it's clearly INTERIM status,
+ * not the settled answer. Persists in the flow (not cleared on done). */
+.ui-agent-msg-status { align-self: flex-start; }
+.ui-agent-msg-status .ui-agent-msg-body {
+  background: var(--bg-1);
+  color: var(--text-mute);
+  border-left: 3px solid var(--accent);
+  font-size: 0.92rem;
+}
+/* Per-message container — transparent layout slot. The card chrome
+ * (bg + border + padding) lives on .ui-agent-msg-body so the meta
+ * row (action bar, timestamp, stats) sits cleanly against the chat
+ * pane background, matching Claude's surface where only the message
+ * text has a card. Attachments hang below the body inside the same
+ * container; they're outside the card by design so image thumbnails
+ * read as "what was sent" without competing with the text card. */
+.ui-agent-msg {
+  max-width: 92%; line-height: 1.45;
+  word-wrap: break-word; overflow-wrap: anywhere;
+  display: flex; flex-direction: column;
+}
+.ui-agent-msg-body {
+  padding: 0.55rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+/* Channel-room transcript: a small sender name above the bubble so a
+ * messaging thread reads as who-said-what, like a chat history. Only
+ * present on .ui-agent-msg-named bubbles (channel sessions). */
+.ui-agent-msg-sender {
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-mute);
+  margin-bottom: 0.18rem;
+  padding: 0 0.2rem;
+}
+.ui-agent-msg-user.ui-agent-msg-named .ui-agent-msg-sender { text-align: right; }
+/* User bubble — elevated bg + accent stripe on the right edge of
+ * the body card (mirrors ChatPanel's stripe + right-aligns so the
+ * eye reads "this is your message"). Text is muted so the eye's
+ * attention lands on the assistant's reply, not on the user's
+ * own message echoed back. The user's own message is reference;
+ * the LLM's reply is the focus. */
+.ui-agent-msg-user { align-self: flex-end; }
+.ui-agent-msg-user .ui-agent-msg-body {
+  background: var(--bg-2);
+  border-right: 3px solid var(--accent);
+  /* Brighter than --text-mute (too dim — own messages became hard
+   * to scan), still clearly secondary to the assistant's pure
+   * white reply. Sits between mute and text in luminance. */
+  color: #b5bbc7;
+}
+/* Attachment-only user message: no text → empty body card, which
+ * otherwise renders as a blank styled box above the attachment.
+ * Collapse it so only the attachment shows. The attachment box is a
+ * sibling (appended to the bubble), so it stays visible. */
+.ui-agent-msg-user .ui-agent-msg-body:empty { display: none; }
+/* Mid-flight interjection — dim the body card until the agent
+ * drains it, then solidify. The .consumed modifier is added by
+ * the app's notes_consumed handler when the orchestrator picks
+ * up the note between rounds. */
+.ui-agent-msg-user.ui-agent-interjection .ui-agent-msg-body {
+  opacity: 0.7;
+  font-style: italic;
+}
+.ui-agent-msg-user.ui-agent-interjection.consumed .ui-agent-msg-body {
+  opacity: 1; font-style: normal;
+}
+.ui-agent-msg-user.ui-agent-interjection-failed .ui-agent-msg-body {
+  border-right-color: var(--danger);
+  opacity: 0.5;
+}
+/* Assistant bubble — the focal point of the chat. Card sits one
+ * tier above the canvas (bg-1) so it visually rises off the page;
+ * text is pure white (--text-hi) so the LLM's reply reads as
+ * primary content. The user's bubble (above) is muted by contrast
+ * so the eye naturally settles on the assistant's answer. */
+.ui-agent-msg-assistant { align-self: flex-start; }
+.ui-agent-msg-assistant .ui-agent-msg-body {
+  background: var(--bg-1);
+  color: var(--text-hi);
+}
+.ui-agent-msg-system {
+  color: var(--text-mute); font-style: italic;
+  align-self: center; font-size: 0.85rem;
+}
+.ui-agent-msg-system .ui-agent-msg-body {
+  background: transparent; border: 0; padding: 0;
+}
+.ui-agent-msg-body p:first-child { margin-top: 0; }
+.ui-agent-msg-body p:last-child  { margin-bottom: 0; }
+/* Prose comes from .ui-md; only the code-block background is surface-
+ * specific here — the assistant bubble sits on --bg-1 and the user
+ * bubble on --bg-2, so code needs the darker --bg-0 to read as a
+ * distinct block against either. */
+.ui-agent-msg-body pre { background: var(--bg-0); }
+/* During streaming the body holds raw text (textContent) — preserve
+ * the LLM's newlines so paragraphs don't collapse into a wall of
+ * text. finalizeMessage runs mdToHTML and removes this class, so
+ * structured HTML (p / pre / lists) takes over from there. */
+.ui-agent-msg-streaming .ui-agent-msg-body { white-space: pre-wrap; }
+
+/* Empty assistant bubble (lazy materialization for tool_call events)
+ * stays hidden so the convo log shows just the thinking spinner
+ * while the model is still working through tool rounds. unmarkEmptyBubble
+ * strips this class as soon as real text arrives. */
+.ui-agent-msg-empty { display: none; }
+
+.ui-agent-divider {
+  flex: 0 0 4px; cursor: col-resize;
+  background: var(--border);
+}
+.ui-agent-divider:hover { background: var(--accent); }
+
+.ui-agent-right {
+  flex: 1 1 40%;
+  display: flex; flex-direction: column;
+  background: var(--bg-0); min-width: 220px; min-height: 0;
+}
+.ui-agent-hdivider {
+  flex: 0 0 4px; cursor: row-resize;
+  background: var(--border);
+}
+.ui-agent-hdivider:hover { background: var(--accent); }
+.ui-agent-terminal {
+  flex: 1 1 40%; min-height: 100px;
+  display: flex; flex-direction: column;
+  background: var(--bg-0);
+}
+.ui-agent-terminal-h {
+  padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border);
+  font-size: 0.78rem; font-weight: 600; color: var(--text-hi);
+  background: var(--bg-2);
+}
+.ui-agent-terminal-body {
+  flex: 1 1 auto; overflow: hidden;
+  background: #0d1117; color: #e6edf3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  min-height: 0;
+  position: relative;
+}
+/* xterm.js fills its host; ensure the viewport claims the pane's
+ * full height so cursor + scrollback aren't clipped. */
+.ui-agent-terminal-body .xterm { height: 100%; }
+.ui-agent-terminal-body .xterm-viewport { overflow-y: hidden !important; }
+.ui-agent-terminal-placeholder {
+  color: var(--text-mute); font-style: italic;
+  padding: 0.4rem 0.6rem;
+}
+
+.ui-agent-activity {
+  flex: 1 1 60%;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.ui-agent-activity.collapsed { flex: 0 0 0; min-width: 0; overflow: hidden; }
+.ui-agent-activity-h {
+  padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--border);
+  font-size: 0.78rem; font-weight: 600; color: var(--text-hi);
+  background: var(--bg-2);
+}
+.ui-agent-activity-log {
+  flex: 1 1 auto; overflow-y: auto; padding: 0.5rem 0.7rem;
+  display: flex; flex-direction: column; gap: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+}
+.ui-agent-act {
+  padding: 0.25rem 0.4rem; border-radius: 3px;
+  white-space: pre-wrap; word-break: break-word;
+  /* Each activity row keeps its natural size. Without this, the
+   * column's default flex-shrink:1 squashes earlier rows as new
+   * ones arrive — and once squashed, the collapsed/expanded
+   * max-height rules can't enlarge them again. */
+  flex: 0 0 auto;
+}
+.ui-agent-act-status { color: var(--text-mute); }
+.ui-agent-act-cmd {
+  background: var(--bg-2); color: var(--text-hi);
+  border-left: 2px solid var(--accent);
+}
+.ui-agent-act-output {
+  background: var(--bg-1); color: var(--text);
+  max-height: 10em; overflow: hidden; cursor: pointer;
+  position: relative;
+  padding-bottom: 1.3rem;
+}
+/* Bottom strip always visible — "▾ Show more / ▴ Show less" so
+ * the user sees the affordance even when the row is short.
+ * pointer-events:none so clicks pass through to the parent div
+ * (the click handler is attached to the row, not the pseudo). */
+.ui-agent-act-output::after {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 0.15rem 0.5rem;
+  background: var(--bg-2); color: var(--accent);
+  font-size: 0.72rem; text-align: center;
+  border-top: 1px solid var(--border);
+  font-family: system-ui, -apple-system, sans-serif;
+  pointer-events: none;
+}
+.ui-agent-act-output.collapsed::after  { content: '▾  show more  ▾'; }
+.ui-agent-act-output:not(.collapsed)   { max-height: none; }
+.ui-agent-act-output:not(.collapsed)::after { content: '▴  show less  ▴'; }
+.ui-agent-act-output:hover::after { background: var(--bg-1); }
+/* Short outputs that fit within the cap: no truncation, no show
+ * more, no pointer cursor — the affordance is a lie when the row
+ * already shows everything. */
+.ui-agent-act-output.no-truncate {
+  max-height: none;
+  cursor: default;
+  padding-bottom: 0.25rem;
+}
+.ui-agent-act-output.no-truncate::after { display: none; }
+.ui-agent-act-watch { color: var(--text-mute); display: flex; gap: 0.3rem; align-items: center; }
+.ui-agent-act-error { color: var(--danger); }
+
+.ui-agent-confirm {
+  background: var(--warn-mute, #5a4a1a);
+  border: 1px solid var(--warn, #d4a017);
+  border-radius: 4px; padding: 0.5rem 0.6rem;
+  margin: 0.3rem 0;
+}
+.ui-agent-confirm-prompt { font-weight: 600; color: var(--text-hi); margin-bottom: 0.3rem; }
+.ui-agent-confirm-detail { color: var(--text-mute); font-size: 0.75rem; margin-bottom: 0.4rem; }
+.ui-agent-confirm-btns  { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+/* Resolved confirm card — the operator answered. Drop the warning
+ * tint to a neutral/settled look and stamp the chosen disposition so
+ * the card no longer reads as a pending, unacted prompt. */
+.ui-agent-confirm-resolved { background: var(--bg-2); border-color: var(--border); }
+.ui-agent-confirm-resolved.is-deny { border-color: var(--danger, #d44); }
+.ui-agent-confirm-status {
+  font-weight: 600; font-size: 0.82rem;
+  color: var(--ok, #4caf50);
+}
+.ui-agent-confirm-resolved.is-deny .ui-agent-confirm-status { color: var(--danger, #d44); }
+
+.ui-agent-extras {
+  display: flex; gap: 0.6rem; padding: 0.4rem 0.7rem;
+  background: var(--bg-2);
+  flex-wrap: wrap; align-items: center;
+}
+.ui-agent-extras-label {
+  display: flex; align-items: center; gap: 0.35rem;
+  font-size: 0.78rem; color: var(--text-mute);
+}
+.ui-agent-extras-label select, .ui-agent-extras-label input {
+  min-width: 12rem;
+}
+
+/* --- Inline tool-call rendering inside an assistant bubble ---
+ * Same shape as ChatPanel's tool toggle: a small "🔧 N tools" pill
+ * sits below the message body; clicking expands a panel of
+ * collapsible <details>, one per call, showing name + args + result.
+ * Used when the activity pane is hidden so the user still sees what
+ * tools fired and what came back. */
+/* Tools toggle is an action-bar button (uses .ui-agent-msg-act base
+ * styles); these rules only handle the open state and override the
+ * hover/focus opacity so an expanded panel keeps its toggle visible
+ * even when the cursor leaves the bubble. */
+.ui-agent-tools-toggle.open {
+  color: var(--text); border-color: var(--accent);
+}
+.ui-agent-msg:has(.ui-agent-tools-toggle.open) .ui-agent-msg-actions {
+  opacity: 1;
+}
+.ui-agent-tools-panel {
+  margin-top: 0.3rem;
+  border-left: 2px solid var(--border);
+  padding-left: 0.5rem;
+}
+.ui-agent-tool { margin: 0.25rem 0; }
+.ui-agent-tool-summary {
+  cursor: pointer;
+  padding: 0.2rem 0;
+  font-size: 0.78rem;
+  list-style: none;
+  user-select: none;
+}
+.ui-agent-tool-summary::-webkit-details-marker { display: none; }
+.ui-agent-tool-summary::before { content: '▸ '; color: var(--text-mute); }
+.ui-agent-tool[open] > .ui-agent-tool-summary::before { content: '▾ '; }
+.ui-agent-tool-name { color: var(--accent); font-weight: 600; margin-right: 0.5rem; }
+.ui-agent-tool-args { color: var(--text-mute); font-size: 0.72rem; }
+.ui-agent-tool-body { padding: 0.2rem 0 0.4rem 0.8rem; }
+.ui-agent-tool-empty { color: var(--text-mute); font-style: italic; font-size: 0.78rem; }
+.ui-agent-tool-result {
+  margin: 0;
+  padding: 0.3rem 0.5rem;
+  background: var(--bg-1);
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 16rem;
+  overflow: auto;
+}
+
+/* Per-message stats footer (chat-app parity). */
+.ui-agent-stats {
+  margin-top: 0.3rem;
+  color: var(--text-mute);
+  font-size: 0.7rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+  opacity: 0; transition: opacity 0.12s ease;
+}
+.ui-agent-msg:hover .ui-agent-stats { opacity: 0.85; }
+
+/* The extras slot stacks vertically by default (one row per child).
+ * When both extras and modes are present we want them on ONE line so
+ * the chat surface stays compact — flex-wrap the slot's children. */
+.ui-agent-extras-slot {
+  display: flex; flex-wrap: wrap; align-items: center;
+  background: var(--bg-2);
+}
+.ui-agent-extras-slot > .ui-agent-extras,
+.ui-agent-extras-slot > .ui-agent-modes {
+  border-top: none;
+  background: transparent;
+}
+
+/* Per-session mode toggle pills (Private, Explorer, …) — same shape
+ * as ChatPanel's chat-mode pill, restyled for AgentLoopPanel's bar. */
+.ui-agent-modes {
+  display: flex; flex-wrap: wrap; gap: 0.4rem;
+  padding: 0.4rem 0.7rem;
+  background: var(--bg-2);
+  border-top: 1px solid var(--border);
+}
+.ui-agent-mode {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-mute);
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.76rem; font-family: inherit;
+  transition: color 0.1s ease, border-color 0.1s ease;
+}
+.ui-agent-mode:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-agent-mode.active {
+  color: var(--accent); border-color: var(--accent);
+}
+/* Mode pills riding inside the top bundle — strip the row chrome
+ * (background, border-top, big padding) so they sit cleanly between
+ * the bundle's dividers instead of looking like a band stacked
+ * above. Buttons themselves keep their pill shape. */
+.ui-agent-top-bundle .ui-agent-modes-in-bundle {
+  /* Match row 1's left inset (.ui-agent-actions padding-left) so the
+   * bottom row's buttons line up flush under the top row's instead of
+   * sitting 0.4rem further left. !important is required to beat the
+   * higher-specificity .ui-agent.ui-agent-list-top .ui-agent-modes
+   * rule (padding: 0), same trick row 1's .ui-agent-actions uses. */
+  padding: 0 0 0 0.4rem !important;
+  background: transparent;
+  border-top: 0;
+  gap: 0.3rem;
+  align-items: center;
+  flex: 0 1 auto;
+}
+.ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-agent-mode {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  min-height: 0;
+}
+/* Two-row buttons table inside the top bundle's right column.
+ * Using <table> sidesteps the bundle's CSS-grid layout — rows are
+ * structural HTML rather than flex/grid items that fight the
+ * parent's grid-template-columns. */
+.ui-agent-top-bundle-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+.ui-agent-top-bundle-table td {
+  padding: 0.3rem 0.4rem;
+  vertical-align: middle;
+}
+/* Visual gap between row 1 (record actions) and row 2 (mode toggles
+ * + relocated context buttons) — no separator line, just enough
+ * vertical breathing room to read as two logical groups. */
+.ui-agent-top-bundle-table td.ui-agent-top-bundle-row-2 {
+  padding-top: 0.225rem;
+}
+/* When the modes row hosts both pill toggles and app-relocated
+ * rectangular context buttons (.ui-row-btn), keep them on the same
+ * baseline — the .ui-row-btn default styling carries its own padding
+ * that would otherwise tower over the pills. */
+.ui-agent-top-bundle .ui-agent-modes-in-bundle .ui-row-btn {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  min-height: 0;
+  border-radius: 6px;
+}
+.ui-agent-input-row {
+  display: flex; gap: 0.4rem; align-items: flex-end;
+  /* flex-end (not stretch) so the textarea uses its own height
+   * — governed by min-height + autosizeInput's inline style.height
+   * — rather than stretching to match the row's intrinsic height.
+   * Without this, the spinner + cancel button showing during a run
+   * make the row slightly taller than the resting send-button row,
+   * and the textarea stretches vertically with it. Aligning buttons
+   * to the bottom keeps things visually consistent at rest AND while
+   * a run is in flight. */
+  padding: 0.5rem 0.7rem; border-top: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.ui-agent-input {
+  flex: 1 1 auto; resize: vertical; min-height: 2.2rem;
+  /* Cap auto-grow at roughly 8 lines — enough for medium messages
+   * but doesn't eat the chat pane. Content beyond scrolls inside the
+   * box. Pastes longer than the snippet threshold get redirected to
+   * an attachment chip instead, see the paste handler. */
+  max-height: 12rem; overflow-y: auto;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.4rem 0.55rem; font: inherit;
+  white-space: pre-wrap; word-wrap: break-word;
+}
+/* ui-ask-card — the default ask_user / ask_user_form clarifying card
+ * rendered inline in an AgentLoopPanel transcript (the framework control
+ * tools). Scoped + theme-tokened; the Agency chat ships a richer variant. */
+.ui-ask-card {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 0.9rem 1rem; margin: 0.3rem 0; max-width: 100%;
+}
+.ui-ask-card.submitted { opacity: 0.72; }
+.ui-ask-q { color: var(--text-hi); font-weight: 600; margin: 0 0 0.6rem; line-height: 1.45; }
+.ui-ask-field { margin: 0 0 0.8rem; }
+.ui-ask-field .ui-ask-q { font-weight: 500; }
+.ui-ask-opts { display: flex; flex-direction: column; gap: 0.35rem; margin: 0 0 0.6rem; }
+.ui-ask-opt { display: flex; align-items: flex-start; gap: 0.5rem; cursor: pointer; color: var(--text); font-size: 0.92rem; }
+.ui-ask-opt input { margin-top: 0.2rem; }
+.ui-ask-extra, .ui-ask-input {
+  width: 100%; box-sizing: border-box; background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px; padding: 0.4rem 0.55rem; font: inherit;
+}
+.ui-ask-extra { resize: vertical; }
+.ui-ask-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.6rem; }
+/* Legacy .ui-agent-spinner — kept for any app that still wires it
+ * up directly. Any chat-style panel now
+ * uses .ui-agent-status-pill in the top bar instead (see below).
+ * Hidden by inline style at the JS layer; this rule retains the
+ * sizing in case a downstream app surfaces it again. */
+.ui-agent-spinner {
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 0.4rem;
+  min-height: var(--tap);
+}
+.ui-agent-spinner .ui-spinner {
+  width: 20px; height: 20px; border-width: 3px; margin-right: 0;
+}
+
+/* Top-bar in-flight status indicator. Spinner + "Running…" label,
+ * pill-shaped and quiet so it reads as status, not as an action
+ * button. Right-aligned in its parent (action row / topBundle row1
+ * cell) via margin-left:auto. Display toggled inline by JS:
+ * disableInput shows, enableInput hides. */
+.ui-agent-status-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  margin-left: auto;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-1); color: var(--text-mute);
+  font-size: 0.75rem; line-height: 1;
+  flex-shrink: 0;
+  /* Sits at the end of the flex row regardless of DOM order. The
+   * topbar uses CSS order: 1 on .ui-agent-extras-slot and order: 2
+   * on .ui-agent-actions to reorder picker-before-buttons in
+   * list-top mode. Without an explicit order here, statusPill (DOM
+   * order 0) would render visually FIRST and push everything else
+   * right when it appears. order: 99 pins it past every reordered
+   * sibling. */
+  order: 99;
+  /* Soft glow so the spinning state catches the eye without
+   * shouting — matches the muted top-bar palette. */
+  box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.10) inset;
+}
+.ui-agent-status-pill .ui-spinner {
+  width: 12px; height: 12px; border-width: 2px; margin-right: 0;
+}
+.ui-agent-status-pill-label {
+  white-space: nowrap;
+}
+.ui-agent-attach-strip {
+  padding: 0.3rem 0.7rem; border-top: 1px solid var(--border);
+  background: var(--bg-2); display: flex; gap: 0.4rem; flex-wrap: wrap;
+  font-size: 0.78rem;
+}
+.ui-agent-attach-chip {
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 12px; padding: 0.15rem 0.45rem;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+}
+.ui-agent-attach-x {
+  background: none; border: 0; color: var(--text-mute); cursor: pointer;
+  font-size: 1rem; line-height: 1; padding: 0;
+}
+.ui-agent-attach-x:hover { color: var(--danger); }
+/* Per-bubble attachment box for inline images + files. Hangs off the
+ * bottom of a user or assistant bubble; populated by user-side paperclip
+ * uploads (rendered into the user's own bubble) and tool-side image /
+ * file / video deliveries (rendered into the assistant bubble the tool
+ * fired from). */
+.ui-agent-msg-attachments {
+  margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;
+}
+/* Per-message action bar (Edit/Delete/Retry on user; Retry/Copy on
+ * assistant) + timestamp + per-msg stats. All hover-revealed so the
+ * resting state is clean — matches Claude's per-bubble surface.
+ * Mid-history Edit/Retry/Delete do a truncate-and-replay so the
+ * action set is uniform across the whole conversation; only the
+ * latest assistant gets a stats footer in the live flow, but the
+ * footer also surfaces for replayed messages when the server emits
+ * a usage payload in the session record. */
+.ui-agent-msg-actions {
+  display: flex; gap: 0.35rem; margin-top: 0.4rem;
+  align-items: center;
+  opacity: 0; transition: opacity 0.12s ease;
+}
+.ui-agent-msg-user .ui-agent-msg-actions,
+.ui-agent-msg-assistant .ui-agent-msg-actions { justify-content: flex-start; }
+.ui-agent-msg:hover .ui-agent-msg-actions,
+.ui-agent-msg-actions:focus-within { opacity: 1; }
+.ui-agent-msg-timestamp {
+  color: var(--text-mute);
+  font-size: 0.7rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+/* Soaks up remaining width between the timestamp (pinned left) and
+ * the action buttons (packed right via justify-content on user) so
+ * the two clusters sit at opposite edges of the bar. */
+.ui-agent-msg-spacer { flex: 1 1 auto; }
+.ui-agent-msg-act {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-mute); padding: 0.18rem 0.55rem; border-radius: 4px;
+  cursor: pointer; font: inherit; font-size: 0.74rem;
+}
+.ui-agent-msg-act:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-agent-msg-act.primary { color: var(--accent); border-color: var(--accent); }
+.ui-agent-msg-act.danger { color: var(--danger); }
+.ui-agent-msg-act.danger:hover { border-color: var(--danger); }
+.ui-agent-msg-act:disabled { opacity: 0.5; cursor: not-allowed; }
+.ui-agent-msg-edit-bar {
+  margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem;
+}
+.ui-agent-msg-edit-ta {
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.4rem 0.55rem; font: inherit; resize: vertical;
+  min-height: 7rem;
+  /* Cap autosize growth so a paste of a multi-page block doesn't
+   * push the rest of the chat off-screen. User can still drag taller
+   * via resize: vertical past this cap. */
+  max-height: 40rem;
+  width: 100%; box-sizing: border-box;
+}
+.ui-agent-msg-edit-ta:focus { border-color: var(--accent); outline: none; }
+.ui-agent-msg-edit-actions { display: flex; gap: 0.4rem; }
+.ui-agent-msg-image {
+  max-width: 100%; max-height: 320px; border-radius: 6px;
+  border: 1px solid var(--border); cursor: zoom-in; display: block;
+  /* Parent .ui-agent-msg-attachments is a flex column. Without
+   * this, the default align-items: stretch makes the img fill
+   * the bubble's width and then the max-height cap stretches the
+   * aspect ratio. align-self: flex-start anchors the image to
+   * its natural intrinsic size (capped by max-width/max-height
+   * proportionally). object-fit belt-and-suspenders for any
+   * future caller that does set explicit width+height. */
+  align-self: flex-start;
+  object-fit: contain;
+}
+.ui-agent-msg-file {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.6rem; border-radius: 6px;
+  background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--text); text-decoration: none; font-size: 0.88rem;
+  max-width: 100%; align-self: flex-start;
+}
+.ui-agent-msg-file:hover { background: var(--bg-3, var(--bg-2)); border-color: var(--accent, #4f8cff); }
+.ui-agent-msg-video {
+  max-width: 100%; max-height: 320px; border-radius: 6px;
+  border: 1px solid var(--border); display: block;
+}
+/* Full-screen lightbox for image zoom. Pinned to viewport, dims the
+ * background, click-anywhere-or-Esc to dismiss. Used by both user-
+ * attached images (rendered in user bubbles) and tool-delivered
+ * images (rendered in assistant bubbles) so click-to-zoom feels
+ * consistent regardless of source. window.open with a data: URL is
+ * blocked by modern browsers; this is the in-page replacement. */
+.ui-img-lightbox {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.85);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10000; cursor: zoom-out;
+  padding: 2rem;
+}
+.ui-img-lightbox-img {
+  max-width: 100%; max-height: 100%;
+  border-radius: 4px; box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+  object-fit: contain;
+}
+@media (min-width: 1500px) {
+  .ui-cw.ui-tw { grid-template-columns: 240px 1fr; }
+}
+/* Compact snippet rows — title-only, ~half the height of a default
+ * sidebar item. Full name + lang + date land in the row's title=
+ * attribute so a hover tooltip surfaces them when the text ellipsizes
+ * at the narrower sidebar width. */
+.ui-cw .ui-chat-side-item {
+  padding: 0.15rem 0.5rem; padding-right: 1.4rem;
+  margin-bottom: 0.05rem;
+  align-items: center;
+}
+.ui-cw .ui-chat-side-title {
+  font-size: 0.85rem; line-height: 1.3;
+}
+.ui-cw .ui-chat-side-del {
+  width: 1.2rem; height: 1.2rem; font-size: 0.85rem;
+}
+.ui-cw-main { background: var(--bg-1); }
+.ui-cw-toolbar {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.ui-cw-name {
+  flex: 1; min-width: 12rem;
+  background: transparent; color: var(--text);
+  border: none; outline: none;
+  font-size: 1.0rem; font-weight: 600; font-family: inherit;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.ui-cw-name:focus { border-bottom-color: var(--accent); }
+.ui-cw-name::placeholder { color: var(--text-mute); font-weight: normal; }
+.ui-cw-lang {
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.35rem 0.55rem; font-size: 0.82rem; font-family: inherit;
+  outline: none;
+}
+.ui-cw-lang:focus { border-color: var(--accent); }
+.ui-cw-toolbar .ui-row-btn { padding: 0.4rem 0.85rem; min-height: 0; min-width: 0; font-size: 0.82rem; }
+.ui-cw-toolbar .ui-row-btn.primary {
+  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
+  border-color: var(--accent); font-weight: 600;
+}
+.ui-cw-toolbar .ui-row-btn.copied {
+  background: var(--success); color: #fff; border-color: var(--success);
+}
+.ui-cw-saved {
+  font-size: 0.72rem; color: var(--text-mute); white-space: nowrap;
+  align-self: center;
+}
+/* Revision navigation group — pinned next to the snippet name. The
+ * renderer toggles inline display:none/inline-flex via updateRevNav;
+ * default in CSS is inline-flex so the layout intent is preserved
+ * (don't set display:none here — clearing the inline override would
+ * fall back to it and the group would never re-appear). */
+.ui-cw-rev-group {
+  align-items: center; gap: 0.25rem;
+  padding: 0 0.4rem; margin: 0 0.2rem;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+.ui-cw-rev-btn {
+  padding: 0.25rem 0.5rem !important; min-height: 0; min-width: 0;
+  font-size: 0.78rem;
+}
+.ui-cw-rev-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ui-cw-rev-ind {
+  font-size: 0.72rem; color: var(--text-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  min-width: 4.5rem; text-align: center;
+}
+.ui-cw-rev-mark {
+  padding: 0.25rem 0.55rem !important; font-size: 0.72rem;
+  background: transparent; color: var(--accent); border-color: var(--accent);
+}
+.ui-cw-rev-mark:hover { background: var(--bg-2); }
+.ui-cw-body {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: row;
+}
+.ui-cw-editor-wrap {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  display: flex; position: relative;
+}
+.ui-cw-editor {
+  flex: 1; width: 100%; min-height: 0;
+  resize: none; outline: none;
+  background: var(--bg-0); color: var(--text);
+  border: none;
+  padding: 0.85rem 1rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88rem; line-height: 1.5; tab-size: 2;
+}
+
+/* Chat pane on the right side of the body row. Matches the tw-asst
+ * pattern: header + scrollable transcript + sticky input area. */
+.ui-cw-chat {
+  /* flex-basis auto so inline width set by the chat resizer takes
+   * effect — fixed flex-basis would clobber the inline value and
+   * the drag would visually do nothing. */
+  flex: 0 0 auto;
+  width: 360px; min-width: 240px;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-1);
+  min-height: 0;
+}
+@media (max-width: 900px) {
+  .ui-cw-body { flex-direction: column; }
+  .ui-cw-chat {
+    flex: 0 0 auto; max-width: none;
+    border-left: none; border-top: 1px solid var(--border);
+    max-height: 45%;
+  }
+}
+.ui-cw-chat-h {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.78rem; color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.ui-cw-chat-h .ui-row-btn { padding: 0.25rem 0.55rem; font-size: 0.72rem; min-height: 0; min-width: 0; }
+.ui-cw-chat-msgs {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto;
+  padding: 0.75rem;
+  display: flex; flex-direction: column; gap: 0.55rem;
+}
+.ui-cw-msg {
+  max-width: 95%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  font-size: 0.86rem; line-height: 1.45;
+  background: var(--bg-2); color: var(--text);
+}
+.ui-cw-msg.user {
+  align-self: flex-end;
+  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
+  border-radius: 10px 10px 2px 10px;
+}
+.ui-cw-msg.assistant {
+  align-self: flex-start;
+  border-radius: 10px 10px 10px 2px;
+}
+.ui-cw-msg p { margin: 0 0 0.4rem 0; }
+.ui-cw-msg p:last-child { margin-bottom: 0; }
+.ui-cw-msg pre {
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.65rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8rem; line-height: 1.45;
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0.2rem 0;
+}
+.ui-cw-mode-tag {
+  display: inline-block;
+  font-size: 0.62rem; font-weight: 700;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: var(--bg-1); color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-right: 0.3rem;
+}
+.ui-cw-msg.user .ui-cw-mode-tag {
+  background: rgba(0,0,0,0.15); color: rgba(0,0,0,0.7);
+}
+.ui-cw-spinner {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--text-mute);
+  animation: ui-cw-blink 1s ease-in-out infinite;
+}
+@keyframes ui-cw-blink { 50% { opacity: 0.2; } }
+.ui-cw-err { color: var(--danger, var(--danger)); }
+.ui-cw-diff-summary {
+  margin-top: 0.4rem;
+  font-size: 0.78rem; color: var(--text-mute);
+  font-style: italic;
+}
+.ui-cw-chat-input-area {
+  border-top: 1px solid var(--border);
+  padding: 0.55rem; display: flex; gap: 0.4rem; flex-wrap: wrap;
+}
+.ui-cw-chat-input {
+  flex: 1 1 100%;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-family: inherit; font-size: 0.85rem; line-height: 1.4;
+  resize: vertical; outline: none;
+}
+.ui-cw-chat-input:focus { border-color: var(--accent); }
+.ui-cw-chat-input-area .ui-row-btn { flex: 1 1 auto; }
+.ui-cw-chat-input-area .ui-row-btn.primary {
+  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
+  border-color: var(--accent); font-weight: 600;
+}
+
+/* Editor wrap stacks: [code editor (flex)] over [context section]. */
+.ui-cw-editor-wrap { flex-direction: column; }
+
+/* Resize handles. Vertical (chat-resizer) is a 4px column between
+ * editor and chat pane; horizontal (ctx-resizer) is a 4px row between
+ * the code editor and the context section. Hover and active states
+ * tint the bar with the accent color so the drag affordance is
+ * obvious. */
+.ui-cw-chat-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: var(--border);
+  transition: background 0.1s ease;
+  align-self: stretch;
+}
+.ui-cw-chat-resizer:hover,
+.ui-cw-chat-resizer.dragging { background: var(--accent); }
+.ui-cw-ctx-resizer {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  background: var(--border);
+  transition: background 0.1s ease;
+  width: 100%;
+}
+.ui-cw-ctx-resizer:hover,
+.ui-cw-ctx-resizer.dragging { background: var(--accent); }
+@media (max-width: 900px) {
+  /* On stacked mobile layout the chat resizer would resize the wrong
+   * axis (width while everything is column-flowed). Hide it. */
+  .ui-cw-chat-resizer { display: none; }
+}
+
+/* Collapsible context section under the editor. Header bar acts as the
+ * toggle; pane underneath holds a second textarea for reference docs. */
+.ui-cw-ctx-section {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg-1);
+  flex: 0 0 auto; max-height: 35%;
+}
+.ui-cw-ctx-section.ui-cw-ctx-pane-only-collapsed { /* placeholder */ }
+.ui-cw-ctx-toggle {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.78rem; color: var(--text-mute);
+  cursor: pointer; user-select: none;
+  border-bottom: 1px solid transparent;
+}
+.ui-cw-ctx-toggle:hover { color: var(--text); }
+.ui-cw-ctx-arrow {
+  display: inline-block; transition: transform 0.15s ease;
+  font-size: 0.7rem;
+}
+.ui-cw-ctx-arrow.open { transform: rotate(90deg); }
+.ui-cw-ctx-actions { display: inline-flex; align-items: center; gap: 0.35rem; margin-left: auto; }
+.ui-cw-ctx-btn {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.2rem 0.5rem; font-size: 0.72rem; cursor: pointer;
+  font-family: inherit;
+}
+.ui-cw-ctx-btn:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-cw-ctx-current { font-size: 0.72rem; color: var(--accent); margin-left: 0.4rem; font-style: italic; }
+.ui-cw-ctx-pane {
+  display: none; flex: 1 1 auto; min-height: 0;
+  border-top: 1px solid var(--border);
+}
+.ui-cw-ctx-pane.open { display: flex; flex-direction: column; }
+.ui-cw-coll-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-1);
+  font-size: 0.74rem;
+}
+.ui-cw-coll-lbl {
+  color: var(--text-mute); text-transform: uppercase;
+  letter-spacing: 0.04em; margin-right: 0.15rem;
+}
+.ui-cw-coll-chip {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.1rem 0.5rem 0.1rem 0.35rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text); cursor: pointer; user-select: none;
+}
+.ui-cw-coll-chip:hover { border-color: var(--accent); }
+.ui-cw-coll-add {
+  background: var(--bg-2); color: var(--text-mute);
+  border: 1px dashed var(--border); border-radius: 999px;
+  padding: 0.12rem 0.6rem; font-size: 0.74rem; cursor: pointer;
+  font-family: inherit;
+}
+.ui-cw-coll-add:hover { color: var(--text); border-color: var(--accent); }
+.ui-cw-coll-x {
+  cursor: pointer; color: var(--text-mute); font-weight: 700;
+  padding-left: 0.1rem;
+}
+.ui-cw-coll-x:hover { color: var(--danger, var(--danger)); }
+.ui-cw-list-check { display: flex; align-items: center; margin: 0; padding: 0; }
+.ui-cw-modal-sub {
+  font-size: 0.72rem; color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 0.55rem 0 0.3rem;
+}
+.ui-cw-coll-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.ui-cw-list-btn.add { color: var(--accent); border-color: var(--accent); font-weight: 700; min-width: 1.9rem; }
+.ui-cw-list-btn.add:hover { background: var(--accent); color: var(--text-on-accent, #1a1a1a); border-color: var(--accent); }
+.ui-cw-ctx-editor {
+  flex: 1; width: 100%; min-height: 80px;
+  resize: none; outline: none;
+  background: var(--bg-0); color: var(--text);
+  border: none;
+  padding: 0.55rem 0.75rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem; line-height: 1.45;
+}
+
+/* --- CodeWriterPanel modal (variables / values / contexts) --- */
+.ui-cw-modal-overlay {
+  display: none;
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);
+  align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.ui-cw-modal-overlay.open { display: flex; }
+.ui-cw-modal-box {
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.1rem 1.2rem;
+  width: 100%; max-width: 540px; max-height: 85vh;
+  overflow-y: auto;
+  display: flex; flex-direction: column; gap: 0.5rem;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+}
+.ui-cw-modal-box h3 {
+  margin: 0 0 0.3rem 0; font-size: 1.05rem; color: var(--text);
+}
+.ui-cw-modal-desc { font-size: 0.82rem; color: var(--text-mute); margin-bottom: 0.3rem; }
+.ui-cw-modal-box label {
+  display: block; font-size: 0.72rem; color: var(--text-mute);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin: 0.4rem 0 0.2rem;
+}
+.ui-cw-modal-box input[type="text"] {
+  width: 100%; box-sizing: border-box;
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: inherit; font-size: 0.85rem;
+  outline: none;
+}
+.ui-cw-modal-box input[type="text"]:focus { border-color: var(--accent); }
+.ui-cw-modal-box input.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+.ui-cw-modal-btns {
+  display: flex; gap: 0.45rem; justify-content: flex-end;
+  margin-top: 0.6rem;
+}
+.ui-cw-modal-btns .ui-row-btn.primary {
+  background: var(--accent); color: var(--text-on-accent, #1a1a1a);
+  border-color: var(--accent); font-weight: 600;
+}
+
+.ui-cw-var-inputs { display: flex; flex-direction: column; gap: 0.5rem; }
+.ui-cw-var-row {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 0.4rem 0.5rem;
+  align-items: center;
+}
+.ui-cw-var-row label {
+  margin: 0; padding: 0; text-transform: none; letter-spacing: 0;
+  font-size: 0.85rem; color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.ui-cw-var-picker {
+  grid-column: 2;
+  background: var(--bg-2); color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.3rem 0.45rem; font-size: 0.78rem; font-family: inherit;
+  outline: none;
+}
+.ui-cw-var-picker:focus { border-color: var(--accent); }
+
+.ui-cw-list { display: flex; flex-direction: column; gap: 0.35rem; }
+.ui-cw-list-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+}
+.ui-cw-list-info { flex: 1; min-width: 0; overflow: hidden; }
+.ui-cw-list-title {
+  font-size: 0.88rem; color: var(--text); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-cw-list-meta {
+  font-size: 0.74rem; color: var(--text-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-cw-list-meta.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.ui-cw-list-btn {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.3rem 0.55rem; font-size: 0.78rem; cursor: pointer;
+  font-family: inherit; flex-shrink: 0;
+}
+.ui-cw-list-btn:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-cw-list-btn.danger { width: 1.8rem; height: 1.8rem; padding: 0; }
+.ui-cw-list-btn.danger:hover { color: var(--danger, var(--danger)); border-color: var(--danger, var(--danger)); }
+.ui-cw-empty {
+  font-size: 0.85rem; color: var(--text-mute);
+  padding: 0.4rem 0.2rem; text-align: center;
+}
+
+/* --- ArticleEditor --- */
+.ui-tw {
+  display: grid; grid-template-columns: 175px 1fr;
+  gap: 1rem;
+  /* Subtract just the page header (back link + title) so the editor
+   * uses essentially every available pixel. dvh handles iOS Safari's
+   * collapsing URL bar; vh fallback for everything else.
+   * Sidebar widths match codewriter — narrower than the original
+   * 280/340/380 because article rows are title-only with hover
+   * tooltip, no body preview. */
+  height: calc(100vh - 70px);
+  height: calc(100dvh - 70px);
+  min-height: 500px;
+  position: relative;
+}
+@media (min-width: 1100px) {
+  .ui-tw { grid-template-columns: 215px 1fr; }
+}
+@media (min-width: 1500px) {
+  .ui-tw { grid-template-columns: 240px 1fr; }
+}
+/* Compact title-only rows (mirrors .ui-cw treatment). Drops the
+ * date meta line and tightens padding so more articles fit on one
+ * screen. Full title + date land in the row's title attribute. */
+.ui-tw .ui-chat-side-item {
+  padding: 0.15rem 0.5rem; padding-right: 1.4rem;
+  margin-bottom: 0.05rem;
+  align-items: center;
+}
+.ui-tw .ui-chat-side-title {
+  font-size: 0.85rem; line-height: 1.3;
+}
+.ui-tw .ui-chat-side-meta { display: none; }
+.ui-tw .ui-chat-side-del {
+  width: 1.2rem; height: 1.2rem; font-size: 0.85rem;
+}
+.ui-tw-side {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  display: flex; flex-direction: column; overflow: hidden;
+  transition: opacity 0.18s ease;
+}
+.ui-tw-side-h {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border);
+}
+.ui-tw-side-h > span:first-child { flex: 1; }
+.ui-tw-collapse {
+  background: transparent; color: var(--text-mute);
+  border: 1px solid var(--border); border-radius: 6px;
+  width: 26px; height: 26px; padding: 0; cursor: pointer;
+  font-size: 0.95rem; line-height: 1;
+}
+.ui-tw-collapse:hover { color: var(--text); border-color: var(--text-mute); }
+@media (max-width: 700px) { .ui-tw-collapse { display: none; } }
+.ui-tw-side-list { flex: 1; overflow-y: auto; padding: 0.3rem 0.4rem; }
+
+/* Floating expand tab — only visible when the sidebar is collapsed.
+ * Sits flush against the left edge of the main pane so the user can
+ * always reopen the list without digging through menus. */
+.ui-tw-expand {
+  display: none;
+  position: absolute; top: 0.5rem; left: 0; z-index: 5;
+  background: var(--bg-2); color: var(--text-mute);
+  border: 1px solid var(--border); border-left: none;
+  border-radius: 0 8px 8px 0;
+  width: 26px; height: 36px; padding: 0; cursor: pointer;
+  font-size: 1rem; line-height: 1;
+}
+.ui-tw-expand:hover { color: var(--text); }
+
+/* Collapsed state — sidebar slides out and the grid reflows so the
+ * main pane fills the entire width minus a small reserved gutter for
+ * the floating expand tab. Without the gutter, the tab overlaps the
+ * title input on the left edge of the editor. */
+.ui-tw.side-collapsed { grid-template-columns: 1fr; }
+.ui-tw.side-collapsed .ui-tw-side { display: none; }
+.ui-tw.side-collapsed .ui-tw-expand { display: block; }
+.ui-tw.side-collapsed .ui-tw-main { margin-left: 32px; }
+
+.ui-tw-main {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px;
+  display: flex; flex-direction: column;
+  overflow: hidden; min-height: 0;
+  position: relative; /* Anchor the revisions / rules slide-in panels. */
+}
+.ui-tw-titlebar {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.55rem 0.8rem; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.ui-tw-titlebar .ui-row-btn { padding: 0.4rem 0.85rem; min-height: 0; min-width: 0; font-size: 0.82rem; }
+
+/* "More" menu — anchored popover that holds less-frequent actions
+ * (Suggest title, Generate image, etc) so the titlebar doesn't get
+ * crowded. Shows below + right-aligned to the trigger button. */
+.ui-tw-extras-wrap { position: relative; display: inline-flex; }
+.ui-tw-extras-menu {
+  position: absolute; top: calc(100% + 4px); right: 0;
+  min-width: 180px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  padding: 0.25rem; z-index: 50;
+  display: flex; flex-direction: column;
+}
+.ui-tw-extras-item {
+  background: transparent; border: none;
+  color: var(--text); text-align: left;
+  padding: 0.45rem 0.7rem; border-radius: 6px;
+  font-family: inherit; font-size: 0.85rem; cursor: pointer;
+  white-space: nowrap;
+}
+.ui-tw-extras-item:hover { background: var(--bg-2); color: var(--text-hi); }
+.ui-tw-title {
+  flex: 1; min-width: 0;
+  background: transparent; color: var(--text-hi);
+  border: none; outline: none;
+  font-size: 1.05rem; font-weight: 600; font-family: inherit;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.ui-tw-title:focus { border-bottom-color: var(--accent); }
+.ui-tw-saved { font-size: 0.72rem; color: var(--text-mute); white-space: nowrap; flex-shrink: 0; }
+.ui-tw-body {
+  width: 100%; min-height: 200px;
+  flex: 1 1 auto; /* absorb remaining vertical space inside the flex-column main */
+  padding: 0.8rem 1rem;
+  background: var(--bg-0); color: var(--text);
+  border: none; outline: none; resize: none;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.9rem; line-height: 1.55;
+  box-sizing: border-box;
+}
+
+.ui-tw-asst {
+  display: flex; flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  max-height: 35%; /* default cap; overridden by inline style when the user drag-resizes */
+  flex-shrink: 0;
+}
+/* Drag handle between editor body and assistant pane. Six pixels
+ * tall is enough to grab without being visually noisy. Hover-and
+ * active states use the accent color so the handle reads as
+ * interactive without a label. */
+.ui-tw-resizer {
+  height: 6px; flex-shrink: 0;
+  background: var(--border);
+  cursor: ns-resize;
+  transition: background 0.1s ease;
+  position: relative;
+}
+.ui-tw-resizer:hover, .ui-tw-resizer:active { background: var(--accent); }
+/* A subtle 3-dot grip indicator centered on the handle so users
+ * realize it can be dragged (vs an inert separator line). */
+.ui-tw-resizer::before {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 30px; height: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 1px;
+}
+.ui-tw-resizer:hover::before { background: rgba(0, 0, 0, 0.4); }
+.ui-tw-asst-thread {
+  flex: 1; overflow-y: auto; padding: 0.5rem 0.7rem;
+  display: flex; flex-direction: column; gap: 0.45rem;
+  min-height: 80px;
+}
+.ui-tw-asst-empty { color: var(--text-mute); font-size: 0.82rem; padding: 0.4rem 0.2rem; }
+.ui-tw-asst-input-row {
+  display: flex; gap: 0.5rem; padding: 0.5rem 0.7rem;
+  border-top: 1px solid var(--border);
+}
+.ui-tw-image-row {
+  display: flex; gap: 0.6rem; align-items: flex-start;
+  padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.ui-tw-image { max-width: 360px; max-height: 200px; border-radius: 6px; border: 1px solid var(--border); }
+.ui-tw-revs {
+  position: absolute; top: 60px; right: 0.6rem; z-index: 5;
+  width: 320px; max-height: 60vh; overflow-y: auto;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px;
+  padding: 0.5rem; box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+}
+.ui-tw-revs-h {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.3rem 0.4rem 0.5rem; border-bottom: 1px solid var(--border);
+  margin-bottom: 0.4rem;
+  font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.ui-tw-rev-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.4rem 0.5rem; border-radius: 6px;
+}
+.ui-tw-rev-row:hover { background: var(--bg-2); }
+.ui-tw-rev-date { font-size: 0.85rem; color: var(--text); }
+.ui-tw-rev-indicator {
+  font-size: 0.75rem; color: var(--text-mute);
+  font-family: ui-monospace, monospace;
+  padding: 0 0.3rem;
+  white-space: nowrap;
+}
+/* Line-level diff for assistant article proposals. Red/green tinted
+ * backgrounds with monospace formatting so additions and removals
+ * read like a github diff. */
+.ui-tw-diff-h {
+  font-size: 0.78rem; color: var(--text-mute);
+  margin-bottom: 0.4rem;
+}
+.ui-tw-diff-h .add { color: var(--success); font-weight: 600; }
+.ui-tw-diff-h .rem { color: var(--danger); font-weight: 600; }
+.ui-tw-diff {
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.4rem 0.5rem;
+  max-height: 320px; overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.78rem; line-height: 1.45;
+}
+.ui-tw-diff-row { padding: 0.05rem 0.3rem; white-space: pre-wrap; word-break: break-word; }
+.ui-tw-diff-row.add { background: rgba(86, 211, 100, 0.12); color: var(--success); border-left: 2px solid var(--success); padding-left: 0.55rem; }
+.ui-tw-diff-row.rem { background: rgba(248, 81, 73, 0.12); color: var(--danger);  border-left: 2px solid var(--danger); padding-left: 0.55rem; text-decoration: none; }
+.ui-tw-diff-row.same { color: var(--text-mute); }
+.ui-tw-diff-row .prefix { display: inline-block; width: 1.2rem; opacity: 0.7; }
+.ui-tw-image-actions { display: flex; flex-direction: column; gap: 0.4rem; }
+.ui-chat-act-status { font-size: 0.78rem; color: var(--text-mute); padding: 0.3rem 0.5rem; }
+.ui-tw-rules-ta {
+  width: 100%; box-sizing: border-box;
+  min-height: 220px; resize: vertical;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-0); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85rem; line-height: 1.5; outline: none;
+}
+.ui-tw-rules-ta:focus { border-color: var(--accent); }
+.ui-tw-rules-hint { font-size: 0.78rem; color: var(--text-mute); margin-bottom: 0.4rem; }
+.ui-tw-rules-actions {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 0.5rem; gap: 0.5rem;
+}
+.ui-tw-rules-saved { font-size: 0.78rem; color: var(--text-mute); }
+/* Merge panel gets a touch wider than the rules panel so the dropdown
+ * + paste area + guidance fit without horizontal squeeze. */
+.ui-tw-merge-panel { width: 420px; }
+
+@media (max-width: 700px) {
+  .ui-tw {
+    grid-template-columns: 1fr;
+    height: calc(100vh - 120px);
+    height: calc(100dvh - 120px);
+  }
+  .ui-tw-side {
+    position: absolute; top: 0; left: 0; bottom: 0; right: 0; z-index: 30;
+    width: 100%; max-width: none;
+    transform: translateX(-105%); transition: transform 0.22s ease;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .ui-tw-side.open { transform: translateX(0); }
+  .ui-tw-asst { max-height: 45%; }
+}
+
+/* --- Card escape hatch --- */
+.ui-card { padding: 0.4rem 0.2rem; }
+
+@media (min-width: 700px) {
+  #ui-root { padding: 1rem; }
+  .ui-panic-bar { margin: -1rem -1rem 0.8rem; padding: 1rem; }
+}

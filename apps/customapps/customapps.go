@@ -75,7 +75,7 @@ func (T *CustomApps) Routes() { T.HandleFunc("/", T.route) }
 // dispatches. "_apps" is reserved for the index data feed so it can't collide
 // with a real slug.
 func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
-	user, udb, ok := RequireUser(w, r, T.DB)
+	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -90,7 +90,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case "_app":
 		// DELETE ?slug=… removes a custom app (its spec + records + active state).
-		T.handleDeleteApp(w, r, user, udb)
+		T.handleDeleteApp(w, r, user)
 		return
 	}
 
@@ -105,6 +105,12 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// appdb is the app's record store for THIS user: a dedicated per-app file when
+	// the spec opts into a private DB, else today's shared customapps sub-store
+	// (identical to udb). Everything below that reads/writes records, the active
+	// marker, or co-authored content goes through appdb so a private app's data
+	// stays entirely in its own file.
+	appdb := T.recordBase(spec, user)
 	switch {
 	case rest == "":
 		// Component Source/PostURL are relative ("records"), so the page must
@@ -115,21 +121,21 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = ui.RenderPageJSON(w, spec.Page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case strings.HasPrefix(rest, "data/"):
-		T.handleData(w, r, user, udb, spec, strings.TrimPrefix(rest, "data/"))
+		T.handleData(w, r, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "actions":
 		T.handleActionsList(w, r, spec)
 	case strings.HasPrefix(rest, "action/"):
-		T.handleAction(w, r, user, udb, spec, strings.TrimPrefix(rest, "action/"))
+		T.handleAction(w, r, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "records":
-		T.handleRecords(w, r, udb, spec)
+		T.handleRecords(w, r, appdb, spec)
 	case rest == "record":
-		T.handleRecord(w, r, udb, spec)
+		T.handleRecord(w, r, appdb, spec)
 	case rest == "chat" || strings.HasPrefix(rest, "chat/"):
 		// The app's chat surface: a chat section's AgentLoopPanel points at
 		// chat/* and these dispatch into orchestrate's PublicHandle* methods,
 		// bound to the app's agent. Reuses ALL the chat/session/runner plumbing
 		// — customapps stores no chat state of its own.
-		T.handleChat(w, r, udb, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
+		T.handleChat(w, r, appdb, spec, strings.TrimPrefix(strings.TrimPrefix(rest, "chat"), "/"))
 	default:
 		http.NotFound(w, r)
 	}
@@ -256,7 +262,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 // handleDeleteApp removes a custom app: its spec, its per-app record store, and
 // any workbench active-selection state. The demo "notes" app re-seeds on next
 // visit (by design); delete a real app and it stays gone.
-func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, user string, udb Database) {
+func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, user string) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -266,10 +272,30 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 		http.Error(w, "slug required", http.StatusBadRequest)
 		return
 	}
-	DeleteAppSpec(user, slug)    // shared per-owner spec store
-	udb.Drop(recTable(slug))     // this app's records (customapps bucket)
-	udb.Unset(activeTable, slug) // workbench open-document marker
+	// Drop the app's data from wherever it actually lives — the per-app private
+	// file for a private app, else the shared store — before removing the spec.
+	// Loaded before deletion so PrivateDB is still known.
+	spec, _ := loadSpec(user, slug)
+	appdb := T.recordBase(spec, user)
+	DeleteAppSpec(user, slug)      // shared per-owner spec store
+	appdb.Drop(recTable(slug))     // this app's records
+	appdb.Unset(activeTable, slug) // workbench open-document marker
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// recordBase returns the per-user record store for one app: a dedicated private
+// database file when the spec opts in (PrivateDB), else today's shared customapps
+// sub-store. The two are namespace-compatible — same UserDB scoping, same table
+// names — so switching an app onto its own file changes only WHERE the records
+// live, not how they're keyed. A nil private handle (opener unwired) falls back
+// to the shared store so nothing breaks outside a serve context.
+func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
+	if spec.PrivateDB {
+		if db := OpenCustomAppDB(spec.Owner, spec.Slug); db != nil {
+			return UserDB(db, uid)
+		}
+	}
+	return UserDB(T.DB, uid)
 }
 
 func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {

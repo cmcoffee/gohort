@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -69,6 +70,78 @@ type MemoryFact struct {
 // behaves exactly as before (dedup only, no supersession).
 type FactChatFunc func(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error)
 
+// Memory-hygiene tunables (admin-configurable via core/tunables.go). All numeric,
+// since the tunable registry only carries numbers.
+const (
+	// TunableFactSweepThreshold: when a namespace's non-superseded fact count
+	// reaches this, an async prune sweep runs. 0 disables the sweep.
+	TunableFactSweepThreshold = "tune_fact_sweep_threshold"
+	// TunableFactHardCap: after a sweep, evict least-recently-updated facts until
+	// the namespace is at or below this count. 0 disables the cap.
+	TunableFactHardCap = "tune_fact_hard_cap"
+	// TunableFactGate: 1 = apply the write-time relevance gate in strict modes
+	// (reject ephemeral notes before they are stored); 0 = accept all (dedup +
+	// supersession only).
+	TunableFactGate = "tune_fact_gate"
+)
+
+func init() {
+	RegisterTunable(TunableSpec{Key: TunableFactSweepThreshold, Category: "Limits",
+		Label: "Memory sweep threshold (0 = off)",
+		Help:  "When an agent's saved-fact count reaches this, an async worker-LLM prune removes junk and collapses redundant notes so the always-in-prompt block stays lean.",
+		Kind:  KindInt, Default: 40, Min: 0, Max: 500})
+	RegisterTunable(TunableSpec{Key: TunableFactHardCap, Category: "Limits",
+		Label: "Memory hard cap (0 = off)",
+		Help:  "After a sweep, evict least-recently-updated facts until the store is at or below this many. Backstop against unbounded prompt growth.",
+		Kind:  KindInt, Default: 60, Min: 0, Max: 1000})
+	RegisterTunable(TunableSpec{Key: TunableFactGate, Category: "Limits",
+		Label: "Memory relevance gate (chatbot mode)",
+		Help:  "1 = reject ephemeral, non-durable notes at write time in chatbot-mode agents (the personal-assistant/group-chat persona). 0 = store everything the model decides to save.",
+		Kind:  KindInt, Default: 1, Min: 0, Max: 1})
+}
+
+// FactWritePolicy carries the per-call context StoreMemoryFactP needs beyond the
+// raw note. The zero value is the legacy permissive behavior (dedup only, no gate,
+// no supersession), so StoreMemoryFact can wrap it without changing existing
+// callers.
+type FactWritePolicy struct {
+	// Mode is the agent's MemoryMode ("agent" / "chatbot" / "shortcuts"). The
+	// write-time relevance gate engages only for modes FactGateApplies reports
+	// strict (currently "chatbot"), where broad personalization and conversational
+	// chatter tend to accumulate as junk.
+	Mode string
+	// Chat is the worker-tier LLM used for the relevance gate, supersession
+	// judging, and (once triggered) the prune sweep. Nil disables all three; dedup
+	// still runs.
+	Chat FactChatFunc
+}
+
+// FactWriteReason explains what StoreMemoryFactP did with a submitted note.
+type FactWriteReason int
+
+const (
+	FactStored    FactWriteReason = iota // newly saved
+	FactDuplicate                        // folded into an existing fact by dedup
+	FactRejected                         // gate judged it non-durable, or input was empty
+)
+
+// FactWriteResult is the full outcome of a StoreMemoryFactP call. Fact holds the
+// stored fact on FactStored or the existing duplicate on FactDuplicate, and is
+// zero on FactRejected. Superseded lists facts the new note replaced.
+type FactWriteResult struct {
+	Fact       MemoryFact
+	Reason     FactWriteReason
+	Superseded []MemoryFact
+}
+
+// FactGateApplies reports whether the write-time relevance gate should run for an
+// agent in the given memory mode. Scoped to "chatbot" mode (the broad,
+// personal-assistant/group-chat persona where ephemeral junk collects) and
+// controlled by the TunableFactGate on/off switch.
+func FactGateApplies(mode string) bool {
+	return mode == "chatbot" && TuneInt(TunableFactGate) == 1
+}
+
 // factDedupSimThreshold is the cosine cutoff above which two notes
 // are considered semantic duplicates. Same value phantom uses for
 // its memory layer — calibrated for "rephrasing the same fact"
@@ -108,24 +181,40 @@ func factDBKey(namespace, id string) string {
 // contradiction. Keys are NOT used for this — the keyed model was reverted
 // because the LLM picks inconsistent keys; supersession runs on meaning.
 func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) (MemoryFact, bool, []MemoryFact) {
+	var c FactChatFunc
+	if len(chat) > 0 {
+		c = chat[0]
+	}
+	// Legacy wrapper: no Mode, so the relevance gate never engages (dedup +
+	// supersession only), preserving the exact behavior every existing caller
+	// depends on. A FactDuplicate maps to the old isNew=false.
+	res := StoreMemoryFactP(db, namespace, note, FactWritePolicy{Chat: c})
+	return res.Fact, res.Reason == FactStored, res.Superseded
+}
+
+// StoreMemoryFactP is the policy-aware save path. It runs the two dedup tiers,
+// then — when the policy supplies a worker chat — a relevance gate (strict modes
+// only) and supersession judging, and finally kicks off a lazy prune sweep once
+// the store crosses the sweep threshold. Returns a FactWriteResult so callers can
+// distinguish stored / deduped / gate-rejected and surface the right message.
+func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) FactWriteResult {
 	namespace = strings.TrimSpace(namespace)
 	note = strings.TrimSpace(note)
 	if db == nil || namespace == "" || note == "" {
-		return MemoryFact{}, false, nil
+		return FactWriteResult{Reason: FactRejected}
 	}
 	existing := ListMemoryFacts(db, namespace)
 	// Tier 1: normalized text match.
 	wantNorm := normalizeFactNote(note)
 	for _, f := range existing {
 		if normalizeFactNote(f.Note) == wantNorm {
-			return f, false, nil
+			return FactWriteResult{Fact: f, Reason: FactDuplicate}
 		}
 	}
-	// Tier 2: semantic similarity, when embeddings are available
-	// and there's something to compare against. The same pass collects
-	// "supersession candidates" — facts in the related-but-not-duplicate
-	// band [factSupersedeBandFloor, factDedupSimThreshold) — at no extra
-	// embedding cost, for the contradiction check below.
+	// Tier 2: semantic similarity, when embeddings are available and there's
+	// something to compare against. The same pass collects "supersession
+	// candidates" — facts in the related-but-not-duplicate band
+	// [factSupersedeBandFloor, factDedupSimThreshold) — at no extra embedding cost.
 	var supersedeCandidates []MemoryFact
 	var newVec []float32
 	if cfg := GetEmbeddingConfig(); cfg.Enabled {
@@ -140,7 +229,7 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 				}
 				sim := Cosine(newVec, existVec)
 				if sim >= factDedupSimThreshold {
-					return f, false, nil
+					return FactWriteResult{Fact: f, Reason: FactDuplicate}
 				}
 				if sim >= factSupersedeBandFloor {
 					supersedeCandidates = append(supersedeCandidates, f)
@@ -159,23 +248,56 @@ func StoreMemoryFact(db Database, namespace, note string, chat ...FactChatFunc) 
 		Vector:    newVec,
 	}
 
-	// Supersession: only fires when a chat func was passed AND the embedding
-	// pass found related candidates — so the common case (no related facts)
-	// pays nothing. The LLM decides which candidates the new note replaces.
+	// Relevance gate + supersession. When the gate applies (strict mode + worker
+	// available), a single worker call answers both "does this belong?" and "what
+	// does it replace?" — so a gated save costs at most one extra LLM round-trip.
+	// Otherwise fall back to the supersession-only judge, which runs only when the
+	// embedding pass surfaced related candidates (the common case pays nothing).
 	var superseded []MemoryFact
-	if len(chat) > 0 && chat[0] != nil && len(supersedeCandidates) > 0 {
-		for _, old := range judgeSupersedes(chat[0], note, supersedeCandidates) {
-			old.SupersededAt = now
-			old.SupersededBy = f.ID
-			old.Updated = now // status change — bump Updated
-			db.Set(MemoryFactsTable, factDBKey(old.Namespace, old.ID), old)
-			Debug("[factstore] superseded %q -> %q (ns=%s)", old.Note, note, namespace)
-			superseded = append(superseded, old)
+	if p.Chat != nil && FactGateApplies(p.Mode) {
+		relevant, toSupersede := judgeFactWrite(p.Chat, note, supersedeCandidates)
+		if !relevant {
+			Debug("[factstore] gate rejected non-durable note %q (ns=%s)", note, namespace)
+			return FactWriteResult{Reason: FactRejected}
 		}
+		superseded = applySupersede(db, f.ID, now, toSupersede)
+	} else if p.Chat != nil && len(supersedeCandidates) > 0 {
+		superseded = applySupersede(db, f.ID, now, judgeSupersedes(p.Chat, note, supersedeCandidates))
 	}
 
 	db.Set(MemoryFactsTable, factDBKey(namespace, f.ID), f)
-	return f, true, superseded
+
+	// Live (non-superseded) count as the store now stands: existing minus what this
+	// call just superseded, plus the one we added.
+	live := len(existing) - len(superseded) + 1
+	// Cheap synchronous backstop: keep the store at or under the hard cap on every
+	// write, independent of the rate-limited async sweep. Just-added fact is the
+	// most-recently-updated, so LRU never evicts it. Runs only when over the cap.
+	if limit := TuneInt(TunableFactHardCap); limit > 0 && live > limit {
+		enforceFactHardCap(db, namespace)
+	}
+	// Expensive periodic cleanup: once the store crosses the sweep threshold, an
+	// async, single-flight, rate-limited sweep prunes junk and collapses redundancy.
+	if th := TuneInt(TunableFactSweepThreshold); th > 0 && live >= th {
+		maybeSweepFacts(db, namespace, p.Chat)
+	}
+
+	return FactWriteResult{Fact: f, Reason: FactStored, Superseded: superseded}
+}
+
+// applySupersede marks each old fact superseded by newID and persists it. Returns
+// the facts it touched so the caller can report what went stale.
+func applySupersede(db Database, newID string, now time.Time, olds []MemoryFact) []MemoryFact {
+	var out []MemoryFact
+	for _, old := range olds {
+		old.SupersededAt = now
+		old.SupersededBy = newID
+		old.Updated = now // status change — bump Updated
+		db.Set(MemoryFactsTable, factDBKey(old.Namespace, old.ID), old)
+		Debug("[factstore] superseded %q (ns=%s)", old.Note, old.Namespace)
+		out = append(out, old)
+	}
+	return out
 }
 
 // factVector returns a fact's cached embedding, computing and lazily persisting
@@ -243,6 +365,226 @@ Reply with ONLY a JSON array of the numbers of existing facts the new fact repla
 		}
 	}
 	return out
+}
+
+// judgeFactWrite is the combined gate + supersession call used on the strict-mode
+// write path. One worker turn returns whether the new note is durable enough to
+// keep (relevant) and which existing candidates it replaces (supersedes). Fails
+// OPEN on any error, nil chat, or unparseable reply: relevant=true, no
+// supersession — a save is never silently dropped because the judge was down.
+func judgeFactWrite(chat FactChatFunc, newNote string, candidates []MemoryFact) (bool, []MemoryFact) {
+	if chat == nil {
+		return true, nil
+	}
+	var list strings.Builder
+	for i, f := range candidates {
+		fmt.Fprintf(&list, "%d. %s\n", i+1, f.Note)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resp, err := chat(ctx, []Message{
+		{Role: "user", Content: fmt.Sprintf(`A personal chatbot keeps a SMALL set of short, durable facts about a user. Every saved fact is injected into every future prompt forever, so junk is expensive. A NEW note is about to be saved. Make two judgments.
+
+1. relevant: Is this a DURABLE fact worth recalling across sessions - a name, a stable preference, an identity, role, or relationship, ongoing project context, or a standing instruction? Reject it (relevant = false) if it is EPHEMERAL: small talk, a one-off remark, transient state ("user said hello", "user is typing", "it is raining right now"), or anything that will not matter next session. When you are genuinely unsure, keep it (relevant = true).
+
+2. supersedes: For each EXISTING fact listed, does the new note REPLACE it - same attribute or relationship, and they cannot both be currently true ("lives in Denver" becomes "lives in Austin")? Do NOT flag facts that can independently coexist ("likes coffee" vs "likes tea"). List the numbers of the facts the new note replaces.
+
+NEW note: %q
+
+EXISTING facts:
+%s
+Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use [] when nothing is superseded.`, newNote, list.String())},
+	}, WithSystemPrompt("You gate a personal chatbot's long-term memory: decide whether a new note is durable enough to keep, and which existing notes it replaces. Reply with ONLY the requested JSON object."),
+		WithThink(false),
+		WithMaxTokens(192))
+	if err != nil || resp == nil {
+		return true, nil
+	}
+	var parsed struct {
+		Relevant   *bool `json:"relevant"`
+		Supersedes []int `json:"supersedes"`
+	}
+	if DecodeJSON(ResponseText(resp), &parsed) != nil {
+		return true, nil
+	}
+	relevant := parsed.Relevant == nil || *parsed.Relevant // missing field => keep
+	var out []MemoryFact
+	for _, n := range parsed.Supersedes {
+		if n >= 1 && n <= len(candidates) {
+			out = append(out, candidates[n-1])
+		}
+	}
+	return relevant, out
+}
+
+// factSweepCooldown rate-limits how often one namespace is swept. Without it a
+// store that legitimately sits above the threshold (nothing to prune) would fire a
+// worker call on every subsequent write. The cheap hard-cap backstop runs on the
+// write path regardless, so bounded growth doesn't depend on this cadence.
+const factSweepCooldown = 10 * time.Minute
+
+// factSweepInFlight + factSweepLast guard against stacking and over-frequent
+// sweeps on the same namespace: a busy store fires many writes, and each would
+// otherwise launch its own sweep.
+var (
+	factSweepMu       sync.Mutex
+	factSweepInFlight = map[string]bool{}
+	factSweepLast     = map[string]time.Time{}
+)
+
+// maybeSweepFacts launches an async, single-flight, cooldown-limited prune of a
+// namespace that has grown past the sweep threshold. Best-effort and off the write
+// path: a sweep never blocks or fails the save that triggered it. Requires a
+// worker chat to judge what to prune.
+func maybeSweepFacts(db Database, namespace string, chat FactChatFunc) {
+	if db == nil || chat == nil {
+		return
+	}
+	factSweepMu.Lock()
+	if factSweepInFlight[namespace] || time.Since(factSweepLast[namespace]) < factSweepCooldown {
+		factSweepMu.Unlock()
+		return
+	}
+	factSweepInFlight[namespace] = true
+	factSweepLast[namespace] = time.Now() // measured from sweep start
+	factSweepMu.Unlock()
+	go func() {
+		defer func() {
+			factSweepMu.Lock()
+			delete(factSweepInFlight, namespace)
+			factSweepMu.Unlock()
+			if r := recover(); r != nil {
+				Debug("[factstore] sweep panic (ns=%s): %v", namespace, r)
+			}
+		}()
+		sweepFacts(db, namespace, chat)
+	}()
+}
+
+// sweepFacts asks the worker which facts are junk and which cluster into one,
+// applies both, then enforces the hard cap. All index-to-ID resolution happens up
+// front so mutations don't shift the indices the judge referenced.
+func sweepFacts(db Database, namespace string, chat FactChatFunc) {
+	facts := ListMemoryFacts(db, namespace)
+	if len(facts) == 0 {
+		return
+	}
+	drop, merges := judgeFactSweep(chat, facts)
+	removed, mergedGroups := 0, 0
+	// Merges first: resolve sources to IDs, delete them, then store the combined
+	// note (plain policy so it can't recurse into another sweep). Delete-before-
+	// store keeps the merged text from deduping against a source about to be gone.
+	for _, m := range merges {
+		text := strings.TrimSpace(m.Keep)
+		if text == "" || len(m.Replace) < 2 {
+			continue
+		}
+		var ids []string
+		for _, n := range m.Replace {
+			if n >= 1 && n <= len(facts) {
+				ids = append(ids, facts[n-1].ID)
+			}
+		}
+		if len(ids) < 2 {
+			continue
+		}
+		for _, id := range ids {
+			if ForgetMemoryFactByID(db, namespace, id) {
+				removed++
+			}
+		}
+		StoreMemoryFactP(db, namespace, text, FactWritePolicy{})
+		mergedGroups++
+	}
+	for _, n := range drop {
+		if n >= 1 && n <= len(facts) {
+			if ForgetMemoryFactByID(db, namespace, facts[n-1].ID) {
+				removed++
+			}
+		}
+	}
+	if removed > 0 || mergedGroups > 0 {
+		Log("[factstore] sweep on %s: removed %d fact(s), merged %d cluster(s)", namespace, removed, mergedGroups)
+	}
+	enforceFactHardCap(db, namespace)
+}
+
+// factMerge is one cluster the sweep collapses: Replace holds the 1-based indices
+// to remove, Keep the combined note that stands in for them.
+type factMerge struct {
+	Keep    string `json:"keep"`
+	Replace []int  `json:"replace"`
+}
+
+// judgeFactSweep asks the worker to prune a large fact list CONSERVATIVELY. Best-
+// effort: any error or unparseable reply yields no changes, so a sweep can only
+// ever remove what the model explicitly named.
+func judgeFactSweep(chat FactChatFunc, facts []MemoryFact) (drop []int, merges []factMerge) {
+	if chat == nil || len(facts) == 0 {
+		return nil, nil
+	}
+	var list strings.Builder
+	for i, f := range facts {
+		fmt.Fprintf(&list, "%d. %s\n", i+1, f.Note)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := chat(ctx, []Message{
+		{Role: "user", Content: fmt.Sprintf(`Below is a numbered list of short memory facts kept about a user and injected into every prompt. The list has grown large. Prune it CONSERVATIVELY.
+
+- drop: numbers of facts that are clearly worthless to keep - empty, meaningless, or transient one-offs that will never matter again. Do NOT drop a fact just because it is specific or old; only clear junk.
+- merge: groups of facts that state the SAME thing in different words, or that read naturally as a single fact. For each group give the combined replacement text and the two-or-more numbers it replaces.
+
+Keep anything you are unsure about. Deleting a real fact is far worse than leaving a redundant one.
+
+FACTS:
+%s
+Reply with ONLY JSON: {"drop": [numbers], "merge": [{"keep": "combined text", "replace": [numbers]}]}. Use empty arrays when there is nothing to do.`, list.String())},
+	}, WithSystemPrompt("You conservatively prune a user's long-term memory: remove only clear junk, merge only clear restatements, keep everything else. Reply with ONLY the requested JSON object."),
+		WithThink(false),
+		WithMaxTokens(512))
+	if err != nil || resp == nil {
+		return nil, nil
+	}
+	var parsed struct {
+		Drop  []int       `json:"drop"`
+		Merge []factMerge `json:"merge"`
+	}
+	if DecodeJSON(ResponseText(resp), &parsed) != nil {
+		return nil, nil
+	}
+	return parsed.Drop, parsed.Merge
+}
+
+// enforceFactHardCap evicts least-recently-updated facts until the namespace holds
+// at most TunableFactHardCap of them. The backstop that guarantees bounded prompt
+// growth even if the sweep judge is timid. No-op when the cap is 0 (disabled).
+func enforceFactHardCap(db Database, namespace string) {
+	limit := TuneInt(TunableFactHardCap)
+	if limit <= 0 {
+		return
+	}
+	facts := ListMemoryFacts(db, namespace)
+	if len(facts) <= limit {
+		return
+	}
+	// Updated falls back to Created for facts saved before Updated existed.
+	stamp := func(f MemoryFact) time.Time {
+		if !f.Updated.IsZero() {
+			return f.Updated
+		}
+		return f.Created
+	}
+	sort.Slice(facts, func(i, j int) bool { return stamp(facts[i]).Before(stamp(facts[j])) })
+	evicted := 0
+	for i := 0; i < len(facts)-limit; i++ {
+		if ForgetMemoryFactByID(db, namespace, facts[i].ID) {
+			evicted++
+		}
+	}
+	if evicted > 0 {
+		Log("[factstore] hard cap evicted %d least-recently-updated fact(s) from %s (limit %d)", evicted, namespace, limit)
+	}
 }
 
 // ForgetMemoryFactByIndex removes the fact at the given 1-based

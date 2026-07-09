@@ -914,25 +914,10 @@ const docsModalScript = `<script>
   function register() {
     if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
     window.uiRegisterClientAction('agents_knowledge_modal', function() {
-      // Custom overlay (not native <dialog>) — same rationale as the
-      // Memory modal: native <dialog>+showModal renders blank on
-      // some iOS / older Android browsers.
-      var overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:1rem;box-sizing:border-box';
-      var dlg = document.createElement('div');
-      dlg.style.cssText = 'box-sizing:border-box;background:var(--bg-1);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:1rem;width:100%;max-width:640px;max-height:88vh;display:flex;flex-direction:column';
-      overlay.appendChild(dlg);
-      function closeDlg() { overlay.remove(); document.removeEventListener('keydown', _esc); }
-      function _esc(ev) { if (ev.key === 'Escape') closeDlg(); }
-      overlay.addEventListener('click', function(ev) { if (ev.target === overlay) closeDlg(); });
-      document.addEventListener('keydown', _esc);
-      dlg.close = closeDlg; dlg.remove = closeDlg;
-      var h = document.createElement('h3'); h.textContent = 'Knowledge';
-      h.style.cssText = 'margin:0 0 0.5rem';
-      dlg.appendChild(h);
-      var body = document.createElement('div');
-      body.style.cssText = 'overflow-y:auto;flex:1;padding-right:0.3rem;display:flex;flex-direction:column;gap:1rem;-webkit-overflow-scrolling:touch';
-      dlg.appendChild(body);
+      // Shared modal chrome via uiOpenModal (plain overlay, mobile-safe,
+      // Escape-to-close, default Close button, no backdrop-close). This modal
+      // only needs a Close button, so we let uiOpenModal supply it.
+      var body = window.uiOpenModal({ title: 'Knowledge', width: '640px' }).body;
 
       // (Shared / admin-curated docs removed — the agent's reference
       // corpus now lives in Collections attached via the editor.)
@@ -1042,13 +1027,7 @@ const docsModalScript = `<script>
       // surface owns Reference Memory pruning, per-entry and bulk.
       // Knowledge modal stays focused on uploaded files.)
 
-      var actions = document.createElement('div');
-      actions.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';
-      var close = document.createElement('button'); close.className = 'ui-row-btn primary'; close.textContent = 'Close';
-      close.addEventListener('click', function(){ dlg.close(); dlg.remove(); });
-      actions.appendChild(close);
-      dlg.appendChild(actions);
-      document.body.appendChild(overlay);
+      // Footer: uiOpenModal supplies the default Close button.
     });
   }
   register();

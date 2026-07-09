@@ -12,6 +12,7 @@ import (
 	_ "github.com/cmcoffee/gohort/tools/calculate"
 	_ "github.com/cmcoffee/gohort/tools/datemath"
 	_ "github.com/cmcoffee/gohort/tools/email"
+	_ "github.com/cmcoffee/gohort/tools/export"
 	_ "github.com/cmcoffee/gohort/tools/files"
 	_ "github.com/cmcoffee/gohort/tools/findtools"
 	_ "github.com/cmcoffee/gohort/tools/imagefetch"

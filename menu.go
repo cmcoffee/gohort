@@ -261,9 +261,23 @@ func (m *menu) Show() {
 	os.Stderr.Write([]byte(fmt.Sprintf("For extended help on any command, type %s <command> --help.\n", os.Args[0])))
 }
 
-// get_agentstore returns the database bucket for the agent.
-func get_agentstore(name string) Database {
+// get_agentstore returns the app's store: a dedicated private database file when
+// the app opts in (private), else a bucket of the shared global DB. The private
+// file is opened once and cached (core.OpenAppDB); nil falls back to the bucket
+// so a non-serve context or an open failure degrades gracefully.
+func get_agentstore(name string, private bool) Database {
+	if private {
+		if db := OpenAppDB("app_" + name); db != nil {
+			return db
+		}
+	}
 	return global.db.Bucket(name)
+}
+
+// wantsPrivateDB reports whether an app has opted into its own database file.
+func wantsPrivateDB(a Agent) bool {
+	p, ok := a.(PrivateDBApp)
+	return ok && p.UsePrivateDB()
 }
 
 // Select processes the provided input to execute agents.
@@ -299,7 +313,7 @@ func (m *menu) Select(input [][]string) (err error) {
 				show_help = true
 			}
 
-			set_agent_db(x.agent, get_agentstore(strings.Split(x.name, ":")[0]))
+			set_agent_db(x.agent, get_agentstore(strings.Split(x.name, ":")[0], wantsPrivateDB(x.agent)))
 			set_agent_llm(x.agent)
 			set_agent_flags(x.agent, *x.flags)
 
@@ -433,7 +447,7 @@ func execAgent(entry *menu_elem, args []string) (string, error) {
 	flags := &FlagSet{EFlagSet: NewFlagSet(cmdName, ReturnErrorOnly)}
 	flags.FlagArgs = args
 	set_agent_flags(agent, *flags)
-	set_agent_db(agent, get_agentstore(cmdName))
+	set_agent_db(agent, get_agentstore(cmdName, wantsPrivateDB(agent)))
 	set_agent_llm(agent)
 	set_agent_report(agent, NewTaskReport(cmdName, "chat", flags))
 

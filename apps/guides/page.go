@@ -73,12 +73,28 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := ui.Page{
-		Title:         "Guides",
-		ShowTitle:     true,
-		BackURL:       "/",
-		MaxWidth:      "100%",
-		Sections:      []ui.Section{{NoChrome: true, Body: wb}},
-		ExtraHeadHTML: guideDocCSS + guideSectionCtrlCSS + guideSectionJS + guideKnowledgeJS + guideSourcesJS + guideSettingsJS,
+		Title:     "Guides",
+		ShowTitle: true,
+		BackURL:   "/",
+		MaxWidth:  "100%",
+		Sections:  []ui.Section{{NoChrome: true, Body: wb}},
+		// Migrated off a raw ExtraHeadHTML concatenation onto the typed
+		// ui.Head builder: the doc CSS rides in as pre-wrapped <style> blobs
+		// (.HTML), the section-controls listener as raw JS (.JS), the shared
+		// el() helper once (.JS), and each modal as a typed client action
+		// (.ClientAction) — the framework assembles the <script> + register
+		// calls + readiness guard.
+		Head: ui.NewHead().
+			HTML(guideDocCSS).
+			HTML(guideSectionCtrlCSS).
+			CSS(guideKnowledgeCSS).
+			CSS(guideSourcesCSS).
+			CSS(guideSettingsCSS).
+			JS(guideModalElJS).
+			JS(guideSectionCode).
+			ClientAction("guides_knowledge", guideKnowledgeAction).
+			ClientAction("guides_sources", guideSourcesAction).
+			ClientAction("guides_settings", guideSettingsAction),
 	}
 	page.ServeHTTP(w, r)
 }
@@ -178,14 +194,21 @@ const guideSectionCtrlCSS = `<style>
 }
 </style>`
 
-// guideSectionJS wires the inline section controls (rendered server-side in
-// renderGuideHTML with data-guide-act attributes) to the section endpoints, then
-// refreshes the WorkbenchPanel viewer via uiInvalidate. App-specific behavior,
-// injected through ExtraHeadHTML so it stays out of the domain-agnostic core/ui.
-// One delegated listener handles edit / move / delete / add for the live viewer
-// (which re-renders, so per-element handlers would not survive).
-const guideSectionJS = `<script>
-(function(){
+// guideModalElJS is the shared DOM helper the guides_* client actions call. It
+// is emitted once in the ui.Head init block; function declarations hoist, so
+// the action handlers (registered before it in the block) resolve el() at
+// click time.
+const guideModalElJS = `function el(tag, attrs, kids){
+  var n = document.createElement(tag);
+  if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
+  (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return n;
+}`
+
+// guideSectionCode wires the inline per-section controls (data-guide-act) via
+// one delegated click listener. Injected as-is (its own IIFE + helpers) through
+// ui.Head.JS — it registers no client action, so it needs no unwrapping.
+const guideSectionCode = `(function(){
   function el(tag, attrs, kids){
     var n = document.createElement(tag);
     if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
@@ -249,24 +272,13 @@ const guideSectionJS = `<script>
       jpost('section/move?' + gp + sp + '&dir=' + act).then(refresh);
     }
   });
-})();
-</script>`
+})();`
 
-// guideKnowledgeJS registers the 'guides_knowledge' client action behind the
+// guideKnowledgeAction is the 'guides_knowledge' client action behind the
 // Knowledge toolbar button: a modal that attaches/detaches knowledge collections
 // to the open guide (the set the Guide Author's search_knowledge tool consults).
 // App-specific, injected via ExtraHeadHTML so the picker stays out of core/ui.
-const guideKnowledgeJS = `<script>
-(function(){
-  function el(tag, attrs, kids){
-    var n = document.createElement(tag);
-    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
-    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
-    return n;
-  }
-  function register(){
-    if (!window.uiRegisterClientAction) return;
-    window.uiRegisterClientAction('guides_knowledge', function(ctx){
+const guideKnowledgeAction = `function(ctx){
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
       var qp = 'guide=' + encodeURIComponent(gid);
@@ -303,38 +315,25 @@ const guideKnowledgeJS = `<script>
           });
         }});
       });
-    });
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
-})();
-</script>
-<style>
-.guide-kn-intro { color: var(--text-mute); font-size: 0.88rem; margin: 0 0 0.9rem; }
+}`
+
+// guideKnowledgeCSS styles the knowledge-picker modal (shared by the sources
+// picker too). Injected via ui.Head.CSS.
+const guideKnowledgeCSS = `.guide-kn-intro { color: var(--text-mute); font-size: 0.88rem; margin: 0 0 0.9rem; }
 .guide-kn-empty { color: var(--text-mute); font-style: italic; padding: 0.5rem 0; }
 .guide-kn-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 22rem; overflow-y: auto; }
 .guide-kn-item { display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.55rem; align-items: center; cursor: pointer; padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; }
 .guide-kn-item:hover { border-color: var(--accent); }
 .guide-kn-name { font-weight: 600; color: var(--text-hi); font-size: 0.92rem; }
-.guide-kn-desc { grid-column: 2; color: var(--text-mute); font-size: 0.8rem; }
-</style>`
+.guide-kn-desc { grid-column: 2; color: var(--text-mute); font-size: 0.8rem; }`
 
-// guideSourcesJS registers the 'guides_sources' client action behind the Sources
+// guideSourcesAction is the 'guides_sources' client action behind the Sources
 // toolbar button: a modal that attaches/detaches cross-app reference sources
 // (servitor Systems, connected document sources like Confluence) to the open
 // guide. The Guide Author's list_reference_sources flags the attached set so it
 // builds from them. App-specific, injected via ExtraHeadHTML to keep it out of
 // core/ui. Reuses the guide-kn-* picker styles plus a group header.
-const guideSourcesJS = `<script>
-(function(){
-  function el(tag, attrs, kids){
-    var n = document.createElement(tag);
-    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
-    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
-    return n;
-  }
-  function register(){
-    if (!window.uiRegisterClientAction) return;
-    window.uiRegisterClientAction('guides_sources', function(ctx){
+const guideSourcesAction = `function(ctx){
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
       var qp = 'guide=' + encodeURIComponent(gid);
@@ -376,39 +375,25 @@ const guideSourcesJS = `<script>
           });
         }});
       });
-    });
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
-})();
-</script>
-<style>
-.guide-src-group { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); font-weight: 700; margin: 0.5rem 0 0.1rem; }
-.guide-src-group:first-child { margin-top: 0; }
-</style>`
+}`
 
-// guideSettingsJS registers the 'guides_settings' client action behind the Edit
+// guideSourcesCSS adds the group header to the shared picker styles.
+const guideSourcesCSS = `.guide-src-group { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); font-weight: 700; margin: 0.5rem 0 0.1rem; }
+.guide-src-group:first-child { margin-top: 0; }`
+
+// guideSettingsAction is the 'guides_settings' client action behind the Edit
 // toolbar button: ONE modal for the guide's name/subtitle, the Private
 // (no-internet) flag, AND its sharing (off / view / edit). Owner/admin only
 // (server-enforced). App-specific, injected via ExtraHeadHTML to keep it out of
 // core/ui.
-const guideSettingsJS = `<script>
-(function(){
-  function el(tag, attrs, kids){
-    var n = document.createElement(tag);
-    if (attrs) for (var k in attrs){ if (k === 'text') n.textContent = attrs[k]; else n.setAttribute(k, attrs[k]); }
-    (kids||[]).forEach(function(c){ n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
-    return n;
-  }
-  function fieldText(label, value){
-    var inp = el('input', {type:'text', value: value || ''});
-    inp.style.width = '100%'; inp.style.padding = '0.45rem 0.6rem'; inp.style.background = 'var(--bg-0)';
-    inp.style.color = 'var(--text)'; inp.style.border = '1px solid var(--border)'; inp.style.borderRadius = '6px';
-    var wrap = el('div', {class:'guide-edit-field'}, [el('label', {text: label}), inp]);
-    return {wrap: wrap, input: inp};
-  }
-  function register(){
-    if (!window.uiRegisterClientAction) return;
-    window.uiRegisterClientAction('guides_settings', function(ctx){
+const guideSettingsAction = `function(ctx){
+      function fieldText(label, value){
+        var inp = el('input', {type:'text', value: value || ''});
+        inp.style.width = '100%'; inp.style.padding = '0.45rem 0.6rem'; inp.style.background = 'var(--bg-0)';
+        inp.style.color = 'var(--text)'; inp.style.border = '1px solid var(--border)'; inp.style.borderRadius = '6px';
+        var wrap = el('div', {class:'guide-edit-field'}, [el('label', {text: label}), inp]);
+        return {wrap: wrap, input: inp};
+      }
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
       var qp = 'id=' + encodeURIComponent(gid);
@@ -452,14 +437,10 @@ const guideSettingsJS = `<script>
           });
         }});
       });
-    });
-  }
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', register); else register();
-})();
-</script>
-<style>
-.guide-share-row { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; padding: 0.5rem 0; font-size: 0.92rem; color: var(--text-hi); }
+}`
+
+// guideSettingsCSS styles the settings/sharing modal rows.
+const guideSettingsCSS = `.guide-share-row { display: flex; align-items: center; gap: 0.55rem; cursor: pointer; padding: 0.5rem 0; font-size: 0.92rem; color: var(--text-hi); }
 .guide-share-modes { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.2rem 0 0.3rem 1.6rem; }
 .guide-share-mode { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 0.88rem; color: var(--text); }
-.guide-set-head { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); font-weight: 700; margin: 0.9rem 0 0.2rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }
-</style>`
+.guide-set-head { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-mute); font-weight: 700; margin: 0.9rem 0 0.2rem; border-top: 1px solid var(--border); padding-top: 0.7rem; }`

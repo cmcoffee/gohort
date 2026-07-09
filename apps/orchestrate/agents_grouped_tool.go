@@ -407,6 +407,21 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	} else if target.Hidden {
 		return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or add it to this agent's allowed_dispatch_targets", target.Name, target.Name)
 	}
+	// Per-turn same-target cap — the hard stop for a chat agent that re-fires
+	// agents(run, X) round after round in ONE turn. dispatchDepth (recursion)
+	// and dispatchChain (cycles) both miss it: depth resets as each sub-run
+	// returns and there's no cycle. A prompt "don't dispatch again" is a soft
+	// guard the worker ignores; this is code-enforced. Counts only dispatches
+	// that pass the gates above (a refused one shouldn't burn the budget).
+	if t.agentDispatchCounts == nil {
+		t.agentDispatchCounts = map[string]int{}
+	}
+	t.agentDispatchCounts[target.ID]++
+	if t.agentDispatchCounts[target.ID] > maxSameTargetDispatch {
+		Log("[orchestrate.agents.run] per-turn dispatch cap: %s → %s hit %d× this turn — blocking further dispatch",
+			t.agent.ID, target.ID, t.agentDispatchCounts[target.ID])
+		return fmt.Sprintf("STOP — you have already dispatched %q %d times in this single turn; running it again will not make new progress. Do NOT dispatch it again now. Reply to the user directly: summarize what %q produced, or state plainly what is blocked and what you need from them. Any further work happens on the user's NEXT message, not by re-running now.", target.Name, maxSameTargetDispatch, target.Name), nil
+	}
 	t.dispatchDepth++
 	defer func() { t.dispatchDepth-- }()
 

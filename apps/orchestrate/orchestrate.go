@@ -222,6 +222,11 @@ func (T *OrchestrateApp) Routes() {
 	// Channel wake-rule gatekeeper: the transport calls this before dispatching
 	// an inbound, so master (admin) + per-channel rules gate the agent run.
 	registerChannelGatekeeper(T)
+	// Recorded-only mirror: when the gatekeeper BLOCKS an inbound (no wake), the
+	// transport calls this to append the message into the bound agent's own
+	// transcript, so it shows in the agent's chat and is in-context on the next
+	// wake — the agent reads along even while it stays silent.
+	registerChannelSilentRecorder(T)
 	// MCP agent gate: the inbound MCP server (ask_agent) calls this so only agents
 	// the owner marked "Reachable over MCP" can be dispatched from an external
 	// client. Reads the owner's own store; seeds resolve to their per-user shadow.

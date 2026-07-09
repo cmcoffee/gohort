@@ -1,6 +1,9 @@
 package core
 
 import (
+	"fmt"
+	"sync"
+
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -127,6 +130,61 @@ func (t Table) CountKeys() int {
 // OpenCache opens a memory-only kvlite store.
 func OpenCache() Database {
 	return &DBase{kvlite.MemStore()}
+}
+
+// --- per-app private databases ------------------------------------------------
+//
+// By default every app shares the one global DB, namespaced by a Bucket keyed on
+// the app's name (see get_agentstore). An app that holds a lot of data, or wants
+// an isolated / independently relocatable / independently disposable store, can
+// instead ask for its OWN hardware-locked kvlite database FILE — the same shape
+// as VectorDB / RepoFilesDB, which are dedicated stores split off the main one.
+//
+// Go apps opt in by implementing PrivateDBApp; the framework then hands them a
+// dedicated file instead of a bucket. Custom (app_def) apps opt in per-spec (see
+// AppSpec.PrivateDB) and reach their file through OpenCustomAppDB. Both resolve
+// through OpenAppDB, whose concrete secure-open is injected by main at startup
+// (main owns the data dir + the hardware padlock; core does not).
+
+// PrivateDBApp is implemented by an app that wants its own dedicated kvlite
+// database file rather than a bucket of the shared global DB.
+type PrivateDBApp interface {
+	UsePrivateDB() bool
+}
+
+var (
+	privateDBOpener func(name string) (Database, error)
+	privateDBs      = map[string]Database{}
+	privateDBMu     sync.Mutex
+)
+
+// SetPrivateDBOpener wires the concrete secure database open. main calls this
+// once at startup with a closure that builds the file path under the data dir
+// and opens it hardware-locked (SecureDatabase). Until wired, OpenAppDB returns
+// nil so callers fall back to the shared bucket.
+func SetPrivateDBOpener(fn func(name string) (Database, error)) { privateDBOpener = fn }
+
+// OpenAppDB returns the dedicated, hardware-locked kvlite database for the given
+// logical name, opened once and cached for the process lifetime (opening the
+// same file twice is unsafe). Returns nil when no opener is wired (e.g. a
+// non-serve context) or the open fails; callers must fall back to a shared
+// bucket on nil.
+func OpenAppDB(name string) Database {
+	privateDBMu.Lock()
+	defer privateDBMu.Unlock()
+	if db, ok := privateDBs[name]; ok {
+		return db
+	}
+	if privateDBOpener == nil || name == "" {
+		return nil
+	}
+	db, err := privateDBOpener(name)
+	if err != nil {
+		Err(fmt.Errorf("open private app database %q: %w", name, err))
+		return nil
+	}
+	privateDBs[name] = db
+	return db
 }
 
 // Bucket returns a new Database instance representing the given table.

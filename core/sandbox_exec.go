@@ -29,13 +29,41 @@ import (
 )
 
 var (
-	bwrapDetectOnce  sync.Once
-	bwrapPath        string
-	bwrapWarnedOnce  sync.Once
+	bwrapDetectOnce sync.Once
+	bwrapPath       string
+	bwrapWarnedOnce sync.Once
 )
+
+// sandboxWaitDelay bounds how long Run() will keep blocking AFTER ctx is
+// cancelled, waiting on stdout/stderr pipes the child left open. Once it
+// elapses the pipes are force-closed and Run() returns. Guards the
+// fallback (non-bwrap) path: a command that backgrounds a process still
+// holding the pipe ("sleep 300 &") would otherwise wedge Run() past the
+// deadline even though the direct child was killed. The bwrap path can't
+// hit this (--die-with-parent reaps the whole tree), so this is harmless
+// belt-and-suspenders there.
+const sandboxWaitDelay = 5 * time.Second
 
 // detectBwrap finds the bwrap binary on PATH once and caches the result.
 // Empty path means no sandbox — caller falls back to plain sh -c.
+// sandboxRequired reports whether the operator has demanded fail-closed
+// sandboxing via the GOHORT_SANDBOX_REQUIRED env var. When set and bubblewrap
+// is unavailable, shell/script execution is refused rather than silently
+// dropping to an unsandboxed subshell running at the service account's full
+// privilege. Default (unset) preserves the historical fail-open behavior so
+// hosts without bubblewrap keep working; a hardened deployment sets it.
+func sandboxRequired() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GOHORT_SANDBOX_REQUIRED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// errSandboxUnavailable is returned when the sandbox is required but bwrap is
+// missing — the fail-closed alternative to running unsandboxed.
+const errSandboxUnavailable = Error("sandbox required (GOHORT_SANDBOX_REQUIRED) but bubblewrap (bwrap) is not installed — refusing to run the tool unsandboxed; install bubblewrap or clear GOHORT_SANDBOX_REQUIRED")
+
 func detectBwrap() string {
 	bwrapDetectOnce.Do(func() {
 		if p, err := exec.LookPath("bwrap"); err == nil {
@@ -151,11 +179,12 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	if extraEnv == nil {
 		extraEnv = map[string]string{}
 	}
-	if existing := extraEnv["PYTHONPATH"]; existing == "" {
-		extraEnv["PYTHONPATH"] = SandboxGohortLibMountPath
-	} else if !strings.Contains(existing, SandboxGohortLibMountPath) {
-		extraEnv["PYTHONPATH"] = SandboxGohortLibMountPath + ":" + existing
-	}
+	// PYTHONPATH must include both the gohort helper mount (so `from
+	// gohort import fetch` resolves) and the managed python-deps mount
+	// (so `import openpyxl` and friends resolve). Prepend rather than
+	// clobber so a caller-supplied PYTHONPATH also stays searchable.
+	extraEnv["PYTHONPATH"] = prependPythonPath(extraEnv["PYTHONPATH"],
+		SandboxGohortLibMountPath, SandboxPyDepsMountPath)
 
 	var c *exec.Cmd
 	sandbox := false
@@ -163,9 +192,11 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 		args := bwrapArgvWithEnv(workspaceDir, command, extraEnv, allowNetwork)
 		c = exec.CommandContext(ctx, bwrap, args...)
 		sandbox = true
+	} else if sandboxRequired() {
+		return SandboxedShellResult{Err: errSandboxUnavailable}
 	} else {
 		bwrapWarnedOnce.Do(func() {
-			Log("[sandbox] WARNING: bwrap not installed — shell tools run with gohort user permissions. Install bubblewrap to enable real sandboxing (apt install bubblewrap / dnf install bubblewrap).")
+			Log("[sandbox] WARNING: bwrap not installed — shell tools run with gohort user permissions. Install bubblewrap to enable real sandboxing (apt install bubblewrap / dnf install bubblewrap). Set GOHORT_SANDBOX_REQUIRED=1 to refuse unsandboxed execution instead.")
 		})
 		c = exec.CommandContext(ctx, "sh", "-c", command)
 		c.Dir = workspaceDir
@@ -181,6 +212,7 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	var buf bytes.Buffer
 	c.Stdout = &buf
 	c.Stderr = &buf
+	c.WaitDelay = sandboxWaitDelay
 	// Spawn/exit breadcrumbs: when a dispatch hangs, the gap between
 	// these two lines tells us exec is wedged versus the wrapper code
 	// upstream. argv-count distinguishes "tiny argv → exec failed
@@ -289,6 +321,13 @@ func bwrapArgv(workspaceDir, shellCmd string, allowNetwork bool) []string {
 	if libDir := EnsureGohortLibDir(); libDir != "" {
 		args = append(args, "--ro-bind", libDir, SandboxGohortLibMountPath)
 	}
+	// Managed python deps (openpyxl, python-docx, ...) live in a host
+	// dir populated by EnsurePyDeps; bind RO so `import openpyxl`
+	// resolves. PYTHONPATH is extended to include SandboxPyDepsMountPath
+	// by the caller (RunSandboxedShellWithEnv).
+	if pyDir := EnsurePyDepsDir(); pyDir != "" {
+		args = append(args, "--ro-bind", pyDir, SandboxPyDepsMountPath)
+	}
 	args = append(args,
 		"--ro-bind", "/usr", "/usr",
 		"--ro-bind-try", "/bin", "/bin",
@@ -337,6 +376,8 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 		args := bwrapPipeArgv(command)
 		c = exec.CommandContext(ctx, bwrap, args...)
 		sandbox = true
+	} else if sandboxRequired() {
+		return SandboxedShellResult{Err: errSandboxUnavailable}
 	} else {
 		bwrapWarnedOnce.Do(func() {
 			Log("[sandbox] WARNING: bwrap not installed — response pipes run with gohort user permissions. Install bubblewrap to enable real sandboxing.")
@@ -350,6 +391,7 @@ func RunSandboxedShellPipe(ctx context.Context, command, stdinData string) Sandb
 	var buf bytes.Buffer
 	c.Stdout = &buf
 	c.Stderr = &buf
+	c.WaitDelay = sandboxWaitDelay
 	err := c.Run()
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	return SandboxedShellResult{
@@ -420,6 +462,8 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 		args := bwrapScriptArgv(interpreter, script)
 		c = exec.CommandContext(ctx, bwrap, args...)
 		sandbox = true
+	} else if sandboxRequired() {
+		return SandboxedScriptResult{Err: errSandboxUnavailable}
 	} else {
 		bwrapWarnedOnce.Do(func() {
 			Log("[sandbox] WARNING: bwrap not installed — evaluator scripts run with gohort user permissions. Install bubblewrap to enable real sandboxing.")
@@ -432,6 +476,7 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
+	c.WaitDelay = sandboxWaitDelay
 	err := c.Run()
 	timedOut := ctx.Err() == context.DeadlineExceeded
 	return SandboxedScriptResult{
@@ -446,7 +491,7 @@ func RunSandboxedScript(ctx context.Context, interpreter, script, stdinData stri
 // bwrapScriptArgv builds bwrap args for a script invocation. Tighter
 // than bwrapArgv (no writable bind, no network).
 func bwrapScriptArgv(interpreter, script string) []string {
-	return []string{
+	args := []string{
 		"--die-with-parent",
 		"--new-session",
 		"--unshare-pid",
@@ -465,9 +510,19 @@ func bwrapScriptArgv(interpreter, script string) []string {
 		"--dev", "/dev",
 		"--tmpfs", "/tmp",
 		"--chdir", "/tmp",
-		"--",
-		interpreter, "-c", script,
 	}
+	// Managed python deps: bind RO and point PYTHONPATH at the mount so
+	// generator scripts (xlsx/docx/pptx) can import their libraries even
+	// though this sandbox keeps --unshare-net and a read-only /usr. The
+	// packages were provisioned host-side by EnsurePyDeps.
+	if pyDir := EnsurePyDepsDir(); pyDir != "" {
+		args = append(args,
+			"--ro-bind", pyDir, SandboxPyDepsMountPath,
+			"--setenv", "PYTHONPATH", SandboxPyDepsMountPath,
+		)
+	}
+	args = append(args, "--", interpreter, "-c", script)
+	return args
 }
 
 // sandboxEnv returns the environment for sandboxed commands. PATH must

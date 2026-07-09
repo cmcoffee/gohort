@@ -26,7 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/cmcoffee/gohort/core/mcpclient"
+	"github.com/cmcoffee/gohort/core/internal/mcpclient"
 )
 
 const (

@@ -10,7 +10,8 @@
 //	delete          — remove an app.
 //
 // The LLM describes the app declaratively (sections of kind form/table/display/
-// empty/chat); this tool translates that into a ui.Page, marshals it with
+// chart/empty/chat/workbench/actions, plus an html raw-HTML escape hatch); this
+// tool translates that into a ui.Page, marshals it with
 // ConfigJSON, and stores the bytes via core.SaveAppSpec. customapps serves the
 // stored page + a generic per-app record store (the form writes records, the
 // table lists them) with no per-app Go code. A chat section binds the app's
@@ -29,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -58,6 +60,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the app is for (shown on the Custom Apps index)."},
 				"record_key":  {Type: "string", Description: "(create/update) The primary-key field of each record. Default 'id' — the host allocates one on save. Only override if the records have a natural key."},
 				"full_width":  {Type: "boolean", Description: "(create/update) Render the page EDGE-TO-EDGE instead of the default centered ~900px column. Set true for DATA-HEAVY surfaces — a dashboard, a wide table with many columns, a live monitor — where the extra horizontal space helps. Leave false (default) for forms and simple lists, which read better in a narrow column. A workbench app is always full-width regardless of this flag."},
+				"private_db":  {Type: "boolean", Description: "(create/update) Give this app its OWN dedicated database file instead of sharing the common custom-apps store. Set true for a data-heavy app (many records, or data you want isolated / independently disposable) — its records live in a separate hardware-encrypted file, and deleting the app removes that data cleanly. Leave false (default) for ordinary small apps; the shared store is fine. Opt-in only: flipping this on an EXISTING app starts a fresh empty store and does NOT migrate records already saved in the shared store, so choose it at create time."},
 				"agent_id":    {Type: "string", Description: "(create/update) Optional name or id of an agent that powers this app (reserved for the chat surface). Stored on the app; not required."},
 				"data_sources": {
 					Type:        "array",
@@ -71,7 +74,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute, link}; set `link` to the name of another field holding a URL to render THIS cell as a clickable link — e.g. a story row {title, url} uses column {field:\"title\", link:\"url\"}. NEVER put raw <a>…</a> HTML in a cell value; cells are escaped and it shows as literal markup — use the link field instead), `empty_text` (shown when there are no records — ALWAYS set this), `editable` (boolean — adds an Edit button per row that opens the record in a PREFILLED dialog; the user fixes a typo or updates a value and saves in place. Fields default to the create form's fields (same types/labels/selects), or pass `edit_fields` (same shape as form fields) to edit a different subset. Set this on any record-store table paired with a create form — records the user typed are records the user will want to fix. NOT for source_script tables: computed rows aren't stored records), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute, link}; set `link` to the name of another field holding a URL to render THIS cell as a clickable link — e.g. a story row {title, url} uses column {field:\"title\", link:\"url\"}. NEVER put raw <a>…</a> HTML in a cell value; cells are escaped and it shows as literal markup — use the link field instead), `empty_text` (shown when there are no records — ALWAYS set this), `editable` (boolean — adds an Edit button per row that opens the record in a PREFILLED dialog; the user fixes a typo or updates a value and saves in place. Fields default to the create form's fields (same types/labels/selects), or pass `edit_fields` (same shape as form fields) to edit a different subset. Set this on any record-store table paired with a create form — records the user typed are records the user will want to fix. NOT for source_script tables: computed rows aren't stored records), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"chart\" — a bar / line / area / pie chart. Set `chart_type` (bar|line|area|pie; default bar). Data is EITHER inline — `labels`:[...] + `series`:[{name, points:[numbers]}] (one point per label; for pie use `series`:[{name, value}]) — OR computed: set `source_script` to a data_sources entry whose script PRINTS a JSON object {\"labels\":[...], \"series\":[...]} (optionally chart_type/title/options), i.e. a chart OF the app's records. Options (flat on the section): `stacked` (bars), `height`. The section title is the heading; the chart draws no duplicate title. Use this to VISUALIZE what a table lists — e.g. a form logging {day, amount} + a data source that buckets them, rendered as a bar chart.\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"html\" — a raw-HTML escape hatch. Field: `html` (the markup, rendered VERBATIM and unescaped; inline <script> runs). This is the ONLY way to put hand-written HTML/CSS/JS into a custom app, and it is a LAST RESORT — reach for a typed section (form/table/display/chart) first, because those give you the record store, editing, refresh, and styling for free. Use html only for a bespoke widget or layout the typed primitives genuinely can't express. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -107,7 +110,7 @@ const appDefHelpText = `app_def actions:
 - test {id(slug), sample?:[{...}], params?:{...}} — RUN every data_source + action script and report each one's output/errors (catches broken scripts before the user opens the app). Run this after authoring any app with scripts. Pass sample=[{field:value,...}] (example form submissions, keyed by the form's field names) to exercise the full form→record→data-source→output chain even before any real records exist — e.g. test that adding {"city":"Santa Cruz, CA"} actually yields a forecast.
 - delete {id(slug)}.
 
-Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id).
+Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (raw-HTML escape hatch — set the html field; last resort, prefer typed sections).
 
 Minimal good app = a form (modal=true) + a table (editable, deletable) over the same records. The form's saves and the table's source both point at the app's per-record store automatically — you don't wire endpoints. For an assistant app, set agent_id and add a chat section so the LLM lives inside the app. For a 'list | document viewer | chat' three-panel app, use ONE workbench section (it IS the whole app).
 
@@ -175,6 +178,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// the key is present so an update without it keeps the existing choice.
 	if _, ok := args["full_width"]; ok {
 		spec.FullWidth = boolArg(args, "full_width")
+	}
+	// private_db: opt the app into its own dedicated database file. Only honored
+	// when the key is present so an update without it keeps the existing choice.
+	// No migration — records already in the shared store stay there.
+	if _, ok := args["private_db"]; ok {
+		spec.PrivateDB = boolArg(args, "private_db")
 	}
 	// Script-backed data sources (the "logic" seam): a table/display section can
 	// be backed by a python script instead of the record store. Passed wholesale
@@ -438,8 +447,39 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 			EmptyText:    firstNonEmptyStr(mapStr(m, "empty_text"), "Ask the assistant to get started."),
 			Placeholder:  firstNonEmptyStr(mapStr(m, "placeholder"), "Ask anything…"),
 		}
+	case "chart":
+		// A chart is either STATIC (inline labels + series) or COMPUTED by
+		// a data source that prints {labels, series[, chart_type, title,
+		// options]} — the source-script path is the useful one for a data
+		// app (a chart of the records). The section title is the heading;
+		// the SVG carries no duplicate title.
+		cp := ui.ChartPanel{
+			ChartType: firstNonEmptyStr(strings.ToLower(strings.TrimSpace(mapStr(m, "chart_type"))), "bar"),
+			Labels:    appChartLabels(m["labels"]),
+			Series:    appChartSeries(m["series"]),
+			Options:   appChartOptions(m),
+		}
+		if name := slugify(mapStr(m, "source_script")); name != "" {
+			cp.Source = "data/" + name
+		}
+		if cp.Source == "" && len(cp.Series) == 0 {
+			return ui.Section{}, errors.New("a chart section needs a source_script (computed data) or inline series")
+		}
+		sec.Body = cp
+	case "html", "card":
+		// Raw-HTML escape hatch (ui.Card): render an author-supplied HTML blob
+		// verbatim, for the rare surface the typed primitives don't model — a
+		// bespoke layout, an embedded widget. The HTML is rendered UNescaped and
+		// any inline <script> runs, so this is trusted input: same owner-only
+		// trust level as the python data_sources (which run arbitrary code
+		// server-side). Reach for a typed section first; this is a last resort.
+		html := mapStr(m, "html")
+		if strings.TrimSpace(html) == "" {
+			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render)")
+		}
+		sec.Body = ui.Card{HTML: html}
 	default:
-		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | empty | chat | workbench | actions", kind)
+		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | chart | empty | chat | workbench | actions | html", kind)
 	}
 	return sec, nil
 }
@@ -715,6 +755,126 @@ func appDisplayPairs(raw any) []ui.DisplayPair {
 		out = append(out, ui.DisplayPair{Label: firstNonEmptyStr(mapStr(m, "label"), field), Field: field})
 	}
 	return out
+}
+
+// appChartSeries parses the declarative series array into ui.ChartSeries.
+// Each item is {name?, points?:[numbers]} for bar/line/area, or
+// {name?, value?:number} for a pie slice.
+func appChartSeries(raw any) []ui.ChartSeries {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	var out []ui.ChartSeries
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		s := ui.ChartSeries{
+			Name:   strings.TrimSpace(mapStr(m, "name")),
+			Points: appFloatList(m["points"]),
+		}
+		if v, ok := floatVal(m["value"]); ok {
+			s.Value = &v
+		}
+		if len(s.Points) == 0 && s.Value == nil && s.Name == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// appChartOptions reads the flat chart tweaks off a section map (height /
+// width / stacked / legend). Returns nil when none are set so the
+// renderer's defaults apply.
+func appChartOptions(m map[string]any) *ui.ChartOptions {
+	opt := ui.ChartOptions{
+		Height:  intFromArgs(m, "height"),
+		Width:   intFromArgs(m, "width"),
+		Stacked: boolArg(m, "stacked"),
+	}
+	if lv, ok := m["legend"].(bool); ok {
+		opt.Legend = &lv
+	}
+	if opt.Height == 0 && opt.Width == 0 && !opt.Stacked && opt.Legend == nil {
+		return nil
+	}
+	return &opt
+}
+
+// appChartLabels coerces a chart's labels array to []string, keeping
+// index alignment with the series points. Unlike appStringList it does
+// NOT drop non-strings: a numeric label (2020, from a JSON number) is
+// stringified rather than silently dropped, which would otherwise leave
+// the axis blank / renumbered 0,1,2. A bare comma-string list falls back
+// to the shared string parser.
+func appChartLabels(raw any) []string {
+	arr, ok := raw.([]any)
+	if !ok {
+		return appStringList(raw)
+	}
+	out := make([]string, 0, len(arr))
+	for _, e := range arr {
+		out = append(out, labelString(e))
+	}
+	return out
+}
+
+// labelString renders one chart label value as display text: strings
+// pass through, integer-valued numbers render without a trailing ".0"
+// (2020, not 2020.0), other numbers use their shortest form, nil is "".
+func labelString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case nil:
+		return ""
+	}
+	if f, ok := floatVal(v); ok {
+		if f == float64(int64(f)) {
+			return strconv.FormatInt(int64(f), 10)
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// appFloatList coerces a JSON array to []float64, keeping index
+// alignment (a non-numeric entry becomes 0 so a series stays aligned
+// with its labels).
+func appFloatList(raw any) []float64 {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]float64, 0, len(arr))
+	for _, e := range arr {
+		f, _ := floatVal(e)
+		out = append(out, f)
+	}
+	return out
+}
+
+// floatVal coerces the common JSON-decoded numeric shapes (and a
+// stringified number) to float64.
+func floatVal(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		return f, err == nil
+	}
+	return 0, false
 }
 
 func (t *chatTurn) appDefList() (string, error) {

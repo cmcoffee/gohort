@@ -61,6 +61,12 @@ type Page struct {
 	// addition to the document <title>). Pairs with BackURL — the
 	// header bar shows back-arrow + title + optional badge area.
 	ShowTitle bool
+	// Nav renders a shared menu of page links below the header, spanning
+	// the full viewport width. Use it to give a multi-page app one
+	// persistent top menu instead of chained Footer links — set the same
+	// Nav on every page, marking the current page's link Active. Empty
+	// omits the bar.
+	Nav []NavLink
 	// Sticky is rendered above all sections, sticky to the top of the
 	// viewport. Typically a PanicBar or AlertBar.
 	Sticky Component
@@ -90,12 +96,26 @@ type Page struct {
 	Footer string
 	// FooterURL turns Footer into a link.
 	FooterURL string
-	// ExtraHeadHTML is injected into the <head> verbatim. Use sparingly
-	// — escape hatch for apps that need to bring in legacy CSS/JS that
-	// hasn't been ported into the framework yet (e.g. codewriter's
-	// inline diff renderer from core/editor). Trusted strings only;
-	// the framework does not escape this.
+	// Head is the typed builder for app-specific browser behavior injected
+	// into the <head> — client actions, block renderers, markdown extensions,
+	// CSS, etc. Prefer this over ExtraHeadHTML: the framework assembles the
+	// register calls and <script> wrapping so apps don't hand-write JS blobs.
+	// See extensions.go. Its output is emitted before ExtraHeadHTML.
+	Head *Head
+	// ExtraHeadHTML is injected into the <head> verbatim, after Head. Use
+	// sparingly — escape hatch for apps that need to bring in legacy CSS/JS
+	// that hasn't been ported into the framework yet (e.g. codewriter's
+	// inline diff renderer from core/editor). Trusted strings only; the
+	// framework does not escape this.
 	ExtraHeadHTML string
+}
+
+// NavLink is one entry in a Page.Nav top menu: a label and the URL it
+// points to. Active marks the current page so the runtime underlines it.
+type NavLink struct {
+	Label  string
+	URL    string
+	Active bool
 }
 
 // ServeHTTP renders the Page to w. Apps wire it directly into HandleFunc.
@@ -113,7 +133,9 @@ func (p Page) Render(w http.ResponseWriter) error {
 	if err != nil {
 		return err
 	}
-	return RenderPageJSON(w, blob, p.Theme, p.ExtraHeadHTML, p.Title)
+	// Typed Head extensions render first, then the raw ExtraHeadHTML escape
+	// hatch — so a page can use both while migrating off hand-written blobs.
+	return RenderPageJSON(w, blob, p.Theme, p.Head.Render()+p.ExtraHeadHTML, p.Title)
 }
 
 // ConfigJSON marshals the page into the JSON config blob the client runtime
@@ -136,6 +158,9 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 	}
 	if cfg.MaxWidth == "" {
 		cfg.MaxWidth = "600px"
+	}
+	for _, n := range p.Nav {
+		cfg.Nav = append(cfg.Nav, navLinkConfig{Label: n.Label, URL: n.URL, Active: n.Active})
 	}
 	for _, s := range p.Sections {
 		cfg.Sections = append(cfg.Sections, sectionConfig{
@@ -273,6 +298,7 @@ type pageConfig struct {
 	Title     string          `json:"title"`
 	BackURL   string          `json:"back_url,omitempty"`
 	ShowTitle bool            `json:"show_title,omitempty"`
+	Nav       []navLinkConfig `json:"nav,omitempty"`
 	Sticky    json.RawMessage `json:"sticky,omitempty"`
 	Sections  []sectionConfig `json:"sections"`
 	MaxWidth  string          `json:"max_width"`
@@ -280,6 +306,12 @@ type pageConfig struct {
 	Tabbed    bool            `json:"tabbed,omitempty"`
 	Footer    string          `json:"footer,omitempty"`
 	FooterURL string          `json:"footer_url,omitempty"`
+}
+
+type navLinkConfig struct {
+	Label  string `json:"label"`
+	URL    string `json:"url"`
+	Active bool   `json:"active,omitempty"`
 }
 
 type sectionConfig struct {
