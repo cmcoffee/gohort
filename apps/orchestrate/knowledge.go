@@ -1176,6 +1176,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	// through to a normal save rather than dropping the content. Scoped to the
 	// agent's OWN derived chunks (orch-know-*), across all topics, so a
 	// duplicate saved under a different topic slug is still caught.
+	var conflictNote string
 	if VectorDB != nil {
 		if cfg := GetEmbeddingConfig(); cfg.Enabled {
 			if vec, err := Embed(ctx, content); err == nil && len(vec) > 0 {
@@ -1186,16 +1187,22 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 					}
 					return strings.HasPrefix(c.ReportID, "orch-know-") // derived (memory_save) only
 				}
-				if hits := SearchChunksByPredicate(VectorDB, allow, vec, 1); len(hits) > 0 && float64(hits[0].Score) >= memorySaveDedupThreshold {
+				// One search serves two checks: top-1 for dedup, and the
+				// related-but-not-duplicate band for the conflict rail.
+				hits := SearchChunksByPredicate(VectorDB, allow, vec, conflictScanK)
+				if len(hits) > 0 && float64(hits[0].Score) >= memorySaveDedupThreshold {
 					return fmt.Sprintf("Already saved (deduped): a near-identical finding is already in Memory (%.0f%% match). Skipping to avoid duplicate chunks — retrieve the existing one via %s.",
 						hits[0].Score*100, memRecallPhrase()), nil
 				}
+				// Conflict rail (opt-in): surface an existing finding this one
+				// contradicts. Never blocks the save — the flag rides the result.
+				conflictNote = t.detectFindingConflict(content, hits)
 			}
 		}
 	}
 	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
-	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.",
-		len(content), topic, memRecallPhrase()), nil
+	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.%s",
+		len(content), topic, memRecallPhrase(), conflictNote), nil
 }
 
 // searchKnowledgeToolDef builds the read-side tool over the
