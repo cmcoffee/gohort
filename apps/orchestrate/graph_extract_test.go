@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -61,6 +62,32 @@ func TestExtractGraphFromText(t *testing.T) {
 		if e.Source != MemSourceObserved {
 			t.Errorf("extracted edge %q should be Source=observed, got %v", e.Rel, e.Source)
 		}
+	}
+}
+
+// TestFoldUserText: the fold extraction input is the USER turns of the batch
+// only (relationships are stated there), joined and capped.
+func TestFoldUserText(t *testing.T) {
+	folded := []Message{
+		{Role: "user", Content: "Craig owns a dog named Hansel."},
+		{Role: "assistant", Content: "Noted — Hansel the dog."},
+		{Role: "user", Content: "  Craig works at Acme.  "},
+		{Role: "assistant", Content: "Got it."},
+		{Role: "user", Content: "   "}, // whitespace-only → skipped
+	}
+	got := foldUserText(folded)
+	want := "Craig owns a dog named Hansel.\nCraig works at Acme."
+	if got != want {
+		t.Fatalf("foldUserText = %q, want %q", got, want)
+	}
+	if foldUserText(nil) != "" {
+		t.Fatal("empty batch should yield empty string")
+	}
+
+	// Cap: a very long user turn is truncated to the max.
+	big := strings.Repeat("x", foldExtractMaxChars+500)
+	if n := len(foldUserText([]Message{{Role: "user", Content: big}})); n != foldExtractMaxChars {
+		t.Fatalf("expected fold text capped at %d, got %d", foldExtractMaxChars, n)
 	}
 }
 

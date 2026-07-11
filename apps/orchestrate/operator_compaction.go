@@ -348,6 +348,11 @@ func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID strin
 	// Shared core primitive: redacts secret-shaped lines, then ingests.
 	IngestRecallSpan(context.Background(), udb, source, reportID, title, body, "lcm")
 	Log("[operator.lcm] archived span %s (%d msgs)", reportID, len(folded))
+	// Batch entity extraction: the fold is the completeness backstop for graph
+	// population — every turn's stated relationships get extracted here when they
+	// age out, catching anything the per-turn pass skipped under its cooldown.
+	// Async + gated; idempotent with the per-turn writes.
+	extractGraphFromFold(udb, factsNamespace(agentID), folded, T.WorkerChat)
 }
 
 // splitSummaryAndFacts pulls the trailing "FACTS: a; b; c" line off the model

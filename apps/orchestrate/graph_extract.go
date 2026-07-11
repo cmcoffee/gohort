@@ -49,10 +49,13 @@ const (
 	// graphExtractMinChars skips messages too short to plausibly state a
 	// relationship, so trivial turns ("thanks", "ok") never spend a worker call.
 	graphExtractMinChars = 40
-	// graphExtractCooldown is the minimum gap between extractions per namespace.
-	// Best-effort population — missing an occasional turn is fine (entities
-	// recur), and this keeps the background pass from contending every turn.
+	// graphExtractCooldown is the minimum gap between per-turn extractions per
+	// namespace. Best-effort population — a turn skipped under the cooldown is not
+	// lost: it gets extracted when it folds (extractGraphFromFold, no cooldown).
 	graphExtractCooldown = 90 * time.Second
+	// foldExtractMaxChars caps the extraction input built from a folded span, so a
+	// very long batch doesn't blow the worker prompt.
+	foldExtractMaxChars = 6000
 )
 
 var (
@@ -93,6 +96,57 @@ func maybeExtractGraph(db Database, namespace, text string, chat FactChatFunc) {
 		}()
 		extractGraphFromText(db, namespace, text, chat)
 	}()
+}
+
+// extractGraphFromFold fires a background extraction over a batch of messages
+// folding out of the live window. Unlike the per-turn trigger it has NO cooldown:
+// a fold is the batch boundary, so extracting it is what GUARANTEES no turn's
+// stated relationships are permanently missed — a turn the per-turn pass skipped
+// under its cooldown gets caught here when it folds. Writes are idempotent
+// (UpsertGraphEntity merges, LinkGraphEdge keys on the triple), so re-covering a
+// turn the per-turn pass already handled costs nothing but a no-op write. Gated,
+// best-effort, off the hot path (its own goroutine — the fold itself runs on the
+// turn path).
+func extractGraphFromFold(db Database, namespace string, folded []Message, chat FactChatFunc) {
+	if !graphExtractEnabled() || db == nil || chat == nil {
+		return
+	}
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return
+	}
+	text := foldUserText(folded)
+	if len(text) < graphExtractMinChars {
+		return
+	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Debug("[graph-extract] fold panic (ns=%s): %v", namespace, r)
+			}
+		}()
+		extractGraphFromText(db, namespace, text, chat)
+	}()
+}
+
+// foldUserText joins the USER messages of a folded batch — the source of stated
+// relationships — into one extraction input, capped at foldExtractMaxChars.
+func foldUserText(folded []Message) string {
+	var b strings.Builder
+	for _, m := range folded {
+		if m.Role != "user" {
+			continue
+		}
+		if t := strings.TrimSpace(m.Content); t != "" {
+			b.WriteString(t)
+			b.WriteByte('\n')
+		}
+	}
+	s := strings.TrimSpace(b.String())
+	if len(s) > foldExtractMaxChars {
+		s = s[:foldExtractMaxChars]
+	}
+	return s
 }
 
 // graphTriple is one extracted subject-relation-object relationship.
