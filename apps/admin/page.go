@@ -1231,6 +1231,45 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Connectors",
+				Subtitle: "Bridge types drafted by the assistant (via the connector tool) and awaiting your approval — e.g. a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents (a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above). The assistant never handles a secret — auth is a referenced API credential or per-user OAuth. Nothing runs until you approve; Delete tears the capability down.",
+				Body: ui.Stack{
+					Children: []ui.Component{
+						ui.Table{
+							Source: "api/connectors",
+							RowKey: "name",
+							Columns: []ui.Col{
+								{Field: "name", Flex: 1},
+								{Field: "kind", Label: "Type", Mute: true},
+								{Field: "summary", Mute: true, Flex: 2},
+								{Field: "owner", Label: "Drafted by", Mute: true},
+								{
+									Field: "approved", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Approved", Color: "success"},
+										{Value: false, Label: "Pending", Color: "warning"},
+									},
+								},
+							},
+							RowActions: []ui.RowAction{
+								{Type: "button", Label: "Approve",
+									PostTo: "api/connectors?action=approve&name={name}",
+									Method: "POST", HideIf: "approved", Variant: "primary"},
+								{Type: "button", Label: "Unapprove",
+									PostTo: "api/connectors?action=unapprove&name={name}",
+									Method: "POST", OnlyIf: "approved"},
+								{Type: "button", Label: "Delete",
+									PostTo:  "api/connectors?name={name}",
+									Method:  "DELETE",
+									Confirm: "Delete this connector and tear down its capability (for remote_mcp, remove its MCP server)?",
+									Variant: "danger"},
+							},
+							EmptyText: "No connectors yet. The assistant drafts these with the connector tool; approve them here to make their tools available to agents.",
+						},
+					},
+				},
+			},
+			{
 				Title:    "Source Hooks",
 				Subtitle: "Curated external sources (PubMed, OpenAlex, EDGAR, custom API/RAG endpoints). Flip \"Expose to LLM\" and the hook becomes a per-hook agent tool (e.g. pubmed_search) any orchestrate agent can call directly; otherwise it's reachable only by the research/debate pipelines via topic routing.",
 				Body: ui.Stack{
@@ -1782,7 +1821,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Web Search": "Capabilities", "Mail (SMTP)": "System",
 		"Network Timeouts": "Tuning",
 
-		"API Credentials": "Tools", "MCP Servers": "Tools",
+		"API Credentials": "Tools", "MCP Servers": "Tools", "Connectors": "Tools",
 		"Source Hooks": "Tools", "Persistent Tools (Pending)": "Tools",
 		"Persistent Tools (Active)": "Tools", "Tool Groups": "Tools",
 		"Skills": "Tools", "Pipelines": "Tools",
@@ -1796,7 +1835,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
-		"API Credentials": true, "MCP Servers": true, "Source Hooks": true,
+		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
 		"Migrations": true, "Database Browser": true,

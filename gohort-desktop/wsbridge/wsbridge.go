@@ -60,6 +60,29 @@ type Approver interface {
 	RequestApprovalBlocking(id, name string, args map[string]any) bool
 }
 
+// Installer applies a server-pushed capability install to the daemon: host a
+// local MCP server (Install) or drop one (Remove). The daemon supplies an
+// implementation backed by the mcp host. A nil Installer means the daemon
+// IGNORES install frames — server-push is off unless the daemon opts in. The
+// consent gate for applying an install lives in the bridge (it reuses the
+// Approver), so an implementation here just does the mechanical work.
+type Installer interface {
+	Install(name, command string, args []string, env map[string]string) error
+	Remove(name string) error
+	InstallCommand(name string, spec CommandSpec) error
+	RemoveCommand(name string) error
+}
+
+// CommandSpec is a declared-command capability (a fixed executable run per
+// tool-call). The mechanical shape the daemon's command host consumes.
+type CommandSpec struct {
+	Desc     string
+	Command  string
+	Args     []string
+	Params   map[string]core.ToolParam
+	Required []string
+}
+
 // Config is the live config source the client reads on every (re)connect
 // — so a config edit takes effect without restarting. Both *core.Config
 // and a sidecar-backed adapter satisfy it.
@@ -72,8 +95,9 @@ type Config interface {
 // reconnect loop is the only goroutine, plus per-connection read/
 // ping pumps spawned when a connection is live.
 type wsClient struct {
-	cfg      Config
-	approver Approver
+	cfg       Config
+	approver  Approver
+	installer Installer
 
 	mu      sync.Mutex
 	stop    chan struct{}
@@ -85,16 +109,36 @@ type wsClient struct {
 // the returned function around to cleanly tear it down on shutdown.
 // Safe to call before the daemon is configured; the loop keeps
 // retrying with backoff until a server URL + API key are set.
-func StartClient(cfg Config, approver Approver) func() {
-	c := &wsClient{cfg: cfg, approver: approver, stop: make(chan struct{})}
+func StartClient(cfg Config, approver Approver, installer Installer) func() {
+	c := &wsClient{cfg: cfg, approver: approver, installer: installer, stop: make(chan struct{})}
+	// Re-announce the catalog whenever the dynamic tool set changes (an MCP
+	// server coming online, a declared command installed) — so a new capability
+	// reaches the server without waiting for a reconnect.
+	core.SetRegistryChangeHook(c.reannounce)
 	go c.runForever()
 	return func() {
+		core.SetRegistryChangeHook(nil)
 		close(c.stop)
 		c.mu.Lock()
 		if c.conn != nil {
 			c.conn.Close()
 		}
 		c.mu.Unlock()
+	}
+}
+
+// reannounce pushes the current tool catalog on the live connection, if any.
+// Wired to core.SetRegistryChangeHook. No-op when disconnected — the next
+// connect announces the fresh catalog anyway.
+func (c *wsClient) reannounce() {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+	if conn == nil {
+		return
+	}
+	if err := c.announce(conn); err != nil {
+		core.Warn("[ws-bridge] re-announce failed: %v", err)
 	}
 }
 
@@ -231,21 +275,113 @@ func (c *wsClient) connectAndServe(serverURL string) error {
 		if json.Unmarshal(data, &head) != nil {
 			continue
 		}
-		if head.Type != "invoke" {
-			continue
+		switch head.Type {
+		case "invoke":
+			var inv struct {
+				ID   string         `json:"id"`
+				Name string         `json:"name"`
+				Args map[string]any `json:"args"`
+			}
+			if json.Unmarshal(data, &inv) != nil {
+				continue
+			}
+			// Run the tool in its own goroutine so a slow one doesn't
+			// block delivery of subsequent invocations.
+			go c.handleInvoke(conn, inv.ID, inv.Name, inv.Args)
+		case "install":
+			var m installFrame
+			if json.Unmarshal(data, &m) != nil {
+				continue
+			}
+			// Off the read loop — installs spawn subprocesses + prompt.
+			go c.handleInstall(m)
+		default:
+			// Unknown — ignore. Forward-compat for future message types.
 		}
-		var inv struct {
-			ID   string         `json:"id"`
-			Name string         `json:"name"`
-			Args map[string]any `json:"args"`
-		}
-		if json.Unmarshal(data, &inv) != nil {
-			continue
-		}
-		// Run the tool in its own goroutine so a slow one doesn't
-		// block delivery of subsequent invocations.
-		go c.handleInvoke(conn, inv.ID, inv.Name, inv.Args)
 	}
+}
+
+// installFrame is the server→daemon capability-install message: host the MCP
+// servers in Servers and declared commands in Commands; drop the ones named in
+// Remove (MCP) / RemoveCommands.
+type installFrame struct {
+	Servers map[string]struct {
+		Command string            `json:"command"`
+		Args    []string          `json:"args"`
+		Env     map[string]string `json:"env"`
+	} `json:"servers"`
+	Commands map[string]struct {
+		Desc     string                    `json:"desc"`
+		Command  string                    `json:"command"`
+		Args     []string                  `json:"args"`
+		Params   map[string]core.ToolParam `json:"params"`
+		Required []string                  `json:"required"`
+	} `json:"commands"`
+	Remove         []string `json:"remove"`
+	RemoveCommands []string `json:"remove_commands"`
+}
+
+// handleInstall applies a server-pushed capability install. Removes apply
+// directly (tearing down is safe); each new/replaced server is gated behind the
+// SAME user-consent prompt as a tool call, so the machine's owner authorizes
+// running a new local subprocess. A nil Installer means server-push is off.
+func (c *wsClient) handleInstall(m installFrame) {
+	if c.installer == nil {
+		core.Warn("[ws-bridge] ignoring install frame — server-push not enabled on this daemon")
+		return
+	}
+	// Removes apply directly — tearing down is safe.
+	for _, name := range m.Remove {
+		if err := c.installer.Remove(name); err != nil {
+			core.Warn("[ws-bridge] install remove %q failed: %v", name, err)
+		} else {
+			core.Log("[ws-bridge] removed pushed capability %q", name)
+		}
+	}
+	for _, name := range m.RemoveCommands {
+		if err := c.installer.RemoveCommand(name); err != nil {
+			core.Warn("[ws-bridge] install remove command %q failed: %v", name, err)
+		} else {
+			core.Log("[ws-bridge] removed pushed command %q", name)
+		}
+	}
+	// Each new/replaced capability is gated by the SAME user-consent prompt as a
+	// tool call — the machine's owner authorizes running new local code.
+	for name, s := range m.Servers {
+		if !c.consentInstall(name, s.Command, s.Args) {
+			continue
+		}
+		if err := c.installer.Install(name, s.Command, s.Args, s.Env); err != nil {
+			core.Warn("[ws-bridge] install of %q failed: %v", name, err)
+			continue
+		}
+		core.Log("[ws-bridge] installed pushed capability %q (%s)", name, s.Command)
+	}
+	for name, s := range m.Commands {
+		if !c.consentInstall(name, s.Command, s.Args) {
+			continue
+		}
+		spec := CommandSpec{Desc: s.Desc, Command: s.Command, Args: s.Args, Params: s.Params, Required: s.Required}
+		if err := c.installer.InstallCommand(name, spec); err != nil {
+			core.Warn("[ws-bridge] install command %q failed: %v", name, err)
+			continue
+		}
+		core.Log("[ws-bridge] installed pushed command %q (%s)", name, s.Command)
+	}
+}
+
+// consentInstall asks the user to authorize running a new local capability.
+// A nil Approver auto-allows (the daemon's own config opted into that).
+func (c *wsClient) consentInstall(name, command string, args []string) bool {
+	if c.approver == nil {
+		return true
+	}
+	ok := c.approver.RequestApprovalBlocking("install-"+name, "install_capability:"+name,
+		map[string]any{"command": command, "args": args})
+	if !ok {
+		core.Log("[ws-bridge] install of %q denied by user", name)
+	}
+	return ok
 }
 
 func (c *wsClient) pingLoop(conn *websocket.Conn, stop <-chan struct{}) {

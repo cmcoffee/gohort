@@ -54,8 +54,6 @@ func Start() func() {
 		return func() {}
 	}
 
-	var mu sync.Mutex
-	var servers []*server
 	for name, sc := range cfg.MCPServers {
 		name, sc := name, sc
 		go func() {
@@ -64,22 +62,123 @@ func Start() func() {
 				core.Warn("[mcp] server %q failed to start: %v", name, err)
 				return
 			}
-			mu.Lock()
-			servers = append(servers, srv)
-			mu.Unlock()
+			trackServer(name, srv)
 		}()
 	}
 	return func() {
-		mu.Lock()
-		defer mu.Unlock()
-		for _, s := range servers {
+		running_mu.Lock()
+		defer running_mu.Unlock()
+		for name, s := range running {
+			core.ReplaceDynamicTools(mcpSource(name), nil) // drop its tools from the catalog
 			s.close()
+			delete(running, name)
 		}
 	}
 }
 
-// bringUp starts one server, handshakes, then lists + registers its
-// tools into the core registry.
+// running tracks live servers by name so a runtime Install can replace one and
+// Remove can tear one down (kill the subprocess + drop its tools).
+var (
+	running_mu sync.Mutex
+	running    = map[string]*server{}
+)
+
+// trackServer records a live server, closing any prior one under the same name.
+func trackServer(name string, srv *server) {
+	running_mu.Lock()
+	if old := running[name]; old != nil {
+		old.close()
+	}
+	running[name] = srv
+	running_mu.Unlock()
+}
+
+// Install brings up (or replaces) one MCP server at runtime and persists it to
+// mcp.json so it survives a daemon restart. Its tools register via
+// ReplaceDynamicTools, which re-announces the catalog to the server. This is
+// the server-push path: a desktop_mcp connector, once approved + user-consented,
+// lands here. Applying it means SPAWNING the command — callers must gate on user
+// consent first.
+func Install(name, command string, args []string, env map[string]string) error {
+	sc := serverConfig{Command: command, Args: args, Env: env}
+	srv, err := bringUp(name, sc)
+	if err != nil {
+		return err
+	}
+	trackServer(name, srv)
+	if err := persistServer(name, sc); err != nil {
+		core.Warn("[mcp] installed %q but failed to persist mcp.json: %v", name, err)
+	}
+	return nil
+}
+
+// Remove tears down a server (kills the subprocess, drops its tools) and drops
+// it from mcp.json. Safe when the server isn't running.
+func Remove(name string) error {
+	core.ReplaceDynamicTools(mcpSource(name), nil)
+	running_mu.Lock()
+	if srv := running[name]; srv != nil {
+		srv.close()
+		delete(running, name)
+	}
+	running_mu.Unlock()
+	return removeServer(name)
+}
+
+// --- mcp.json persistence -------------------------------------------------
+
+// readConfig loads mcp.json, tolerating a missing/invalid file (empty result).
+func readConfig(path string) config {
+	var cfg config
+	if b, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(b, &cfg)
+	}
+	if cfg.MCPServers == nil {
+		cfg.MCPServers = map[string]serverConfig{}
+	}
+	return cfg
+}
+
+// writeConfig writes mcp.json (pretty-printed, 0600) creating the dir if needed.
+func writeConfig(path string, cfg config) error {
+	b, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
+func persistServer(name string, sc serverConfig) error {
+	path := configPath()
+	if path == "" {
+		return nil
+	}
+	cfg := readConfig(path)
+	cfg.MCPServers[name] = sc
+	return writeConfig(path, cfg)
+}
+
+func removeServer(name string) error {
+	path := configPath()
+	if path == "" {
+		return nil
+	}
+	cfg := readConfig(path)
+	delete(cfg.MCPServers, name)
+	return writeConfig(path, cfg)
+}
+
+// mcpSource namespaces a server's dynamic-registry entry so re-bringing-up the
+// same server REPLACES its tools rather than duplicating them (the reload path),
+// and so teardown can drop exactly that server's tools.
+func mcpSource(name string) string { return "mcp:" + name }
+
+// bringUp starts one server, handshakes, then lists + registers its tools into
+// the core registry as a dynamic source (replaceable, so a re-init swaps the
+// set cleanly instead of colliding on duplicate names).
 func bringUp(name string, sc serverConfig) (*server, error) {
 	srv, err := startServer(name, sc.Command, sc.Args, sc.Env)
 	if err != nil {
@@ -94,21 +193,11 @@ func bringUp(name string, sc serverConfig) (*server, error) {
 		srv.close()
 		return nil, err
 	}
+	registered := make([]core.Tool, 0, len(tools))
 	for _, def := range tools {
-		safeRegister(newTool(srv, def))
+		registered = append(registered, newTool(srv, def))
 	}
+	core.ReplaceDynamicTools(mcpSource(name), registered)
 	core.Log("[mcp] server %q online — %d tool(s)", name, len(tools))
 	return srv, nil
-}
-
-// safeRegister registers a tool, swallowing the duplicate-name panic
-// core.RegisterTool raises on a re-registration (the registry has no
-// unregister yet — a clean restart/re-register story is a follow-up).
-func safeRegister(t core.Tool) {
-	defer func() {
-		if r := recover(); r != nil {
-			core.Warn("[mcp] skip duplicate tool %q", t.Name())
-		}
-	}()
-	core.RegisterTool(t)
 }

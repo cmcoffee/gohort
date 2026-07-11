@@ -17,6 +17,7 @@ import (
 
 	"fyne.io/systray"
 
+	"github.com/cmcoffee/gohort/gohort-desktop/command"
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
 	"github.com/cmcoffee/gohort/gohort-desktop/mcp"
 	"github.com/cmcoffee/gohort/gohort-desktop/wsbridge"
@@ -63,7 +64,11 @@ func Run() {
 	initFSConsent()        // load approved folders + wire just-in-time consent
 	startNativeServices()  // iMessage relay (macOS); no-op elsewhere
 	stopMCP := mcp.Start() // host configured MCP servers; their tools register like native ones
-	stopWS := wsbridge.StartClient(sidecarCfg{}, daemonApprover{})
+	command.Start()        // host persisted declared-command tools (desktop_command)
+	// daemonInstaller lets the server push a new local capability (a desktop_mcp
+	// or desktop_command connector, once admin-approved AND user-consented) —
+	// applied through the mcp / command hosts, persisted so it survives restart.
+	stopWS := wsbridge.StartClient(sidecarCfg{}, daemonApprover{}, daemonInstaller{})
 
 	onReady := func() {
 		systray.SetIcon(appIcon)

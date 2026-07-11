@@ -66,6 +66,12 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 		// monitors; Builder references the credential by name (admin owns
 		// the secret).
 		ChatToolToAgentToolDefWithSession(bridgeDefTool(""), sess),
+		// connector — declare a new BRIDGE TYPE (e.g. a calendar via its
+		// MCP server) so its whole tool surface becomes available to
+		// agents, no code change. LLM authors the config; an admin
+		// approves it in Admin > Connectors. Distinct from bridge, which
+		// polls one URL; connector registers a capability type.
+		ChatToolToAgentToolDefWithSession(connectorDefTool(), sess),
 		// collections — read-only enumeration so Builder can
 		// resolve user-named collections to IDs when authoring
 		// agents (attached_collections=[...]). Mutating

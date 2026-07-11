@@ -752,6 +752,12 @@ func ServeDashboard(addr string) error {
 	// startup.
 	MCP().Reload()
 
+	// Re-materialize approved connectors (LLM-drafted "bridge types") now that
+	// their target subsystems (MCP) are up. Idempotent; a remote_mcp connector
+	// already persists an enabled MCP server, so this mainly refreshes state and
+	// re-surfaces any last materialize error.
+	ReloadApprovedConnectors(RootDB)
+
 	// Sort by WebOrder (if implemented), then alphabetically.
 	sort.Slice(apps, func(i, j int) bool {
 		oi, oj := 50, 50

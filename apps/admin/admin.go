@@ -1487,6 +1487,70 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
 	})
 
+	// Connectors — "bridge types" drafted by an authoring agent (the connector
+	// tool) and awaiting admin approval, e.g. a calendar/CRM exposed through its
+	// MCP server. GET lists; POST?action=approve|unapprove&name toggles; DELETE
+	// removes + tears down. Approve MATERIALIZES the underlying capability (for
+	// remote_mcp: an enabled MCP server), so its tools go live for agents. The
+	// LLM never handles a secret — auth is a referenced credential or per-user
+	// oauth; approval is the human gate.
+	sub.HandleFunc("/api/connectors", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			type connRow struct {
+				Name      string `json:"name"`
+				Kind      string `json:"kind"`
+				Summary   string `json:"summary"`
+				Owner     string `json:"owner"`
+				Approved  bool   `json:"approved"`
+				LastError string `json:"last_error"`
+			}
+			var rows []connRow
+			for _, c := range ListConnectors(RootDB) {
+				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError})
+			}
+			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			var err error
+			switch r.URL.Query().Get("action") {
+			case "approve":
+				err = ApproveConnector(RootDB, name)
+			case "unapprove":
+				err = UnapproveConnector(RootDB, name)
+			default:
+				http.Error(w, "action must be approve|unapprove", http.StatusBadRequest)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			if err := DeleteConnector(RootDB, name); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// Source hooks — curated external sources (PubMed, OpenAlex, EDGAR,
 	// custom APIs / RAG). GET lists; POST upserts (or ?action=expose|hide
 	// toggles LLM-tool exposure); DELETE removes. A hook with

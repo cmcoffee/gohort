@@ -108,6 +108,49 @@ type resultMsg struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// DesktopMCPServer describes a LOCAL MCP server the daemon should host — a
+// stdio subprocess on the user's own machine. Same shape as the daemon's
+// mcp.json entry (Claude-Desktop-compatible). Pushed by the server via an
+// install frame so a connector can add a desktop capability without the user
+// hand-editing mcp.json.
+type DesktopMCPServer struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// DesktopCommand describes a DECLARED-COMMAND capability the daemon should host:
+// a fixed executable run per tool-call with {placeholder} args filled from the
+// call, stdout returned. The lightweight sibling of DesktopMCPServer — for a
+// local capability that doesn't warrant a whole MCP server.
+type DesktopCommand struct {
+	Desc     string               `json:"desc,omitempty"`
+	Command  string               `json:"command"`
+	Args     []string             `json:"args,omitempty"` // may contain {placeholder} tokens
+	Params   map[string]ToolParam `json:"params,omitempty"`
+	Required []string             `json:"required,omitempty"`
+}
+
+// DesktopInstall is the capability-install payload pushed to a user's desktop:
+// host the MCP Servers and declared Commands, drop the ones named in the
+// Remove* lists. One struct so a connector of any desktop kind uses one path.
+type DesktopInstall struct {
+	Servers        map[string]DesktopMCPServer `json:"servers,omitempty"`
+	Commands       map[string]DesktopCommand   `json:"commands,omitempty"`
+	Remove         []string                    `json:"remove,omitempty"`          // MCP server names
+	RemoveCommands []string                    `json:"remove_commands,omitempty"` // command names
+}
+
+// desktopInstallMsg is sent by the SERVER to a desktop to apply a DesktopInstall.
+// The daemon persists the change (mcp.json / commands.json) and brings the
+// capability up/down at runtime, then re-announces the fresh catalog. Applying
+// is gated by the daemon's own user-consent layer — the server proposes, the
+// machine's owner disposes.
+type desktopInstallMsg struct {
+	Type string `json:"type"` // "install"
+	DesktopInstall
+}
+
 // desktopClient is one live connection from a gohort-desktop.
 type desktopClient struct {
 	user string
@@ -443,6 +486,51 @@ func (c *desktopClient) invoke(name string, args map[string]any) (string, error)
 	case <-time.After(desktopInvokeDeadline()):
 		return "", fmt.Errorf("desktop tool %q timed out after %s", name, desktopInvokeDeadline())
 	}
+}
+
+// writeFrame sends a pre-marshaled control frame (e.g. an install) to the
+// desktop, serialized against concurrent writes. Unlike invoke it doesn't wait
+// for a reply — install is applied asynchronously on the daemon.
+func (c *desktopClient) writeFrame(frame []byte) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return errors.New("desktop disconnected")
+	}
+	c.mu.Unlock()
+	c.writeMu.Lock()
+	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err := c.conn.WriteMessage(websocket.TextMessage, frame)
+	c.writeMu.Unlock()
+	return err
+}
+
+// InstallToDesktop pushes a capability install to a user's connected desktop
+// bridge(s). Returns the number of desktop connections the frame reached.
+// Errors when the user has no desktop online — the caller (a desktop_* connector)
+// surfaces that so an admin retries once the user's app is running. The daemon
+// still gates applying the install behind its own consent layer.
+func InstallToDesktop(user string, inst DesktopInstall) (int, error) {
+	clients := desktopReg.clientsFor(user)
+	if len(clients) == 0 {
+		return 0, fmt.Errorf("no connected desktop bridge for user %q — the user must have the gohort desktop app running to install a desktop capability", user)
+	}
+	frame, err := json.Marshal(desktopInstallMsg{Type: "install", DesktopInstall: inst})
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, c := range clients {
+		if err := c.writeFrame(frame); err != nil {
+			Warn("[desktop-bridge] install to user=%s failed on one conn: %v", user, err)
+			continue
+		}
+		n++
+	}
+	if n == 0 {
+		return 0, fmt.Errorf("failed to deliver install to any desktop connection for %q", user)
+	}
+	return n, nil
 }
 
 // add/remove maintain the per-user list. The list shape (not single

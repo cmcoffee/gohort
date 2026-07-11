@@ -25,6 +25,10 @@ launchd / Run-key ── Gohort-Bridge.app (cmd/gohort-bridge; always on)
                        ├─ WS tool bridge → gohort  /api/desktop/ws   (X-API-Key)
                        ├─ local tools: filesystem.* , contacts.lookup / contacts.search
                        ├─ MCP host (configured stdio MCP servers → tools)
+                       ├─ declared-command host (fixed commands → tools)
+                       ├─ server-push install: server sends a capability (a
+                       │   desktop_mcp / desktop_command connector, admin-approved
+                       │   + user-consented) → new local tool, no reship
                        ├─ iMessage relay (macOS): chat.db → /bridges/api/hook,
                        │                          outbox poll → /bridges/api/poll
                        ├─ owns Full Disk Access, Contacts, folder consent
@@ -57,8 +61,9 @@ gohort-desktop/
 ├── macos/                # darwin-only capabilities (//go:build darwin)
 │   ├── imsg/             # iMessage relay: chat.db watch + AppleScript send
 │   └── contacts/         # AddressBook lookup → contacts.lookup core.Tool
-├── mcp/                  # MCP host: stdio JSON-RPC client, adapts MCP tools → core.Tool
-├── wsbridge/             # WebSocket client to gohort (X-API-Key, Approver iface)
+├── mcp/                  # MCP host: stdio JSON-RPC client, adapts MCP tools → core.Tool; runtime Install/Remove + mcp.json persistence
+├── command/              # declared-command host: fixed command → core.Tool (no shell); Install/Remove + commands.json persistence
+├── wsbridge/             # WebSocket client to gohort (X-API-Key, Approver + Installer ifaces); announce, invoke, install frames
 ├── bridge/               # the daemon: systray, services, consent, per-OS install
 ├── cmd/gohort-bridge/    # bridge binary entry point (cgo + systray, NO Wails)
 ├── frontend/             # Wails viewer assets
@@ -102,6 +107,25 @@ the agent's allowlist like any server-side tool. Filesystem reads/writes go
 through per-folder consent (read and write are separate, stronger grants);
 a tool that returns a `data:image/...;base64,...` URI (e.g. MCP image
 tools) is delivered to the LLM as a vision attachment automatically.
+
+The registry has two tiers. **Native** tools (`filesystem.*`, `contacts.*`)
+register at `init()` and are permanent. **Dynamic** tools register at runtime
+via `core.ReplaceDynamicTools(source, tools)`, keyed by source (an MCP server,
+a declared command), and can be swapped or dropped wholesale. A native tool
+always wins a name clash. When the dynamic set changes the registry fires a
+change hook, so the WS bridge **re-announces** the fresh catalog without a
+reconnect. This is what makes the tool surface expandable at runtime.
+
+**Server-push install.** The server can send an `install` frame (a
+`desktop_mcp` or `desktop_command` connector, once admin-approved on the
+server) carrying an MCP server spec or a declared-command spec. Applying it is
+gated by the same user-consent prompt as a tool call (`install_capability:*`),
+so the machine's owner authorizes running new local code; a nil `Installer`
+turns server-push off entirely. Accepted installs persist to `mcp.json` /
+`commands.json`, so they survive a daemon restart, and the resulting tools ride
+the dynamic-registry path above. Removes apply directly (tearing down is safe).
+Declared commands run via `exec` with no shell involved: `{placeholder}` tokens
+only fill argument values, so there is no shell-injection surface.
 
 ## Menu (viewer, "Account")
 

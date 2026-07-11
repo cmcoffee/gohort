@@ -131,3 +131,22 @@ and it accrues per-source for the admin **Costs** tab:
 ```go
 RecordExternalCost(sourceID, label, costPerCall) // accrues per-source; read via CostBySource
 ```
+
+## Connectors
+
+`connector.go` is a domain-agnostic "bridge type" primitive: a `Connector`
+record an authoring agent drafts and an admin approves, materializing a real
+capability with no code change. core owns only the record + draft→approve
+lifecycle; each kind supplies a handler:
+
+```go
+RegisterConnectorKind(kind, handler) // handler: Validate / Materialize / Teardown / Summary
+```
+
+Shipped kinds live in sibling files: `connector_mcp.go` (`remote_mcp`, wraps
+`MCPServerConfig`), `connector_restpoll.go` (`rest_poll`, a watch-monitor;
+implements the optional `ConnectorAutoApprover` so it goes live on create),
+`connector_desktop.go` (`desktop_mcp`) and `connector_command.go`
+(`desktop_command`) — the last two push a `DesktopInstall` to the owner's
+desktop bridge via `InstallToDesktop`. The LLM-facing `connector` tool and the
+**Admin › Connectors** surface live in `apps/orchestrate` and `apps/admin`.
