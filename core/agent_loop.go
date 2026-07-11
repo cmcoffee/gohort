@@ -344,6 +344,13 @@ type AgentLoopConfig struct {
 	// from chat. Tools with empty Caps (unannotated) pass through unfiltered
 	// during the migration period.
 	AllowedCaps []Capability
+	// GroundingSources is extra text the grounding gate treats as a legitimate
+	// source alongside this conversation's tool results and user messages — so a
+	// figure that legitimately came from provably-sourced memory (a user-entered
+	// or tool-retrieved fact, via SourcedFactCorpus) isn't false-flagged as an
+	// unsourced guess. Empty (the default) preserves the memory-excluded behavior,
+	// so callers that don't set it are unaffected.
+	GroundingSources string
 }
 
 // defaultConfirm prompts the user in the terminal with a Claude Code-style
@@ -1535,7 +1542,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if GroundingGateEnabled() && len(tools) > 0 &&
 				groundingGateCorrections < maxGroundingGateCorrections &&
 				round < maxRounds {
-				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)); len(figs) > 0 {
+				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)+"\n"+cfg.GroundingSources); len(figs) > 0 {
 					Debug("[agent_loop] grounding gate: %d unsourced money figure(s) %v — re-prompting to look up or drop (correction %d/%d)",
 						len(figs), figs, groundingGateCorrections+1, maxGroundingGateCorrections)
 					history = append(history, Message{Role: "user", Content: groundingGatePrompt(figs)})

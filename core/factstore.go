@@ -134,6 +134,12 @@ type FactWritePolicy struct {
 	// judging, and (once triggered) the prune sweep. Nil disables all three; dedup
 	// still runs.
 	Chat FactChatFunc
+	// Source records HOW this note entered memory, stored on the fact's
+	// provenance envelope. It drives the grounding split: user_stated and
+	// retrieved facts are legitimate grounds (SourcedFactCorpus surfaces them to
+	// the grounding gate), while observed/inferred/unknown are not. Zero
+	// (MemSourceUnknown) leaves the origin unrecorded.
+	Source MemSource
 }
 
 // FactWriteReason explains what StoreMemoryFactP did with a submitted note.
@@ -307,11 +313,10 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		Note:      note,
 		Created:   now,
 		Updated:   now,
-		// A fresh fact is confirmed-true as of now, and its volatility is inferred
-		// from its subject (category-based, deterministic). Source stays unknown
-		// until a caller threads it through; that plus the grounding-gate wiring
-		// is the next slice.
-		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note)},
+		// A fresh fact is confirmed-true as of now, its volatility is inferred from
+		// its subject (category-based, deterministic), and its Source comes from the
+		// write policy (MemSourceUnknown when the caller doesn't set one).
+		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note), Source: p.Source},
 		Vector:           newVec,
 	}
 
@@ -961,6 +966,24 @@ func FactStalenessNote(f MemoryFact, now time.Time) string {
 	default:
 		return ""
 	}
+}
+
+// SourcedFactCorpus returns the notes of facts whose Source makes them a
+// legitimate grounding source — user_stated (a human entered it) or retrieved
+// (pulled from a tool at save time) — joined by newlines, for feeding the
+// grounding gate's "sourced" corpus. Observed and inferred facts are excluded:
+// an LLM-recorded note is ambiguous (it may be a stale prior, like the "$1,600
+// 5090"), so it must not license a specific the model couldn't otherwise source.
+// Empty when no fact qualifies, so callers can append it unconditionally.
+func SourcedFactCorpus(facts []MemoryFact) string {
+	var b strings.Builder
+	for _, f := range facts {
+		if f.Source == MemSourceUserStated || f.Source == MemSourceRetrieved {
+			b.WriteString(f.Note)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
 
 // factAgeDays is the whole-day age of a timestamp at now, floored at 0.

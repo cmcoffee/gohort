@@ -72,6 +72,11 @@ func (t *chatTurn) storeFactNote(note string) (string, error) {
 	res := StoreMemoryFactP(t.udb, factsNamespace(t.agent.ID), note, FactWritePolicy{
 		Mode: t.agent.MemoryMode,
 		Chat: t.app.WorkerChat,
+		// The model authored this note from the session, not a human directly and
+		// not a tool result — observed, so it does NOT license grounded specifics
+		// (an LLM-recorded figure may be a stale prior). Human-entered facts get
+		// MemSourceUserStated on the admin path instead.
+		Source: MemSourceObserved,
 	})
 	switch res.Reason {
 	case FactDuplicate:
@@ -277,8 +282,10 @@ func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request
 			}
 			// Pass the worker chat so the admin path resolves contradictions the
 			// same way the LLM's store_fact does — a corrected note supersedes the
-			// stale one it replaces instead of coexisting as a contradiction.
-			StoreMemoryFact(udb, ns, n, T.WorkerChat)
+			// stale one it replaces instead of coexisting as a contradiction. These
+			// are human-entered, so Source = user_stated: they DO count as a
+			// grounding source (SourcedFactCorpus), unlike model-authored notes.
+			StoreMemoryFactP(udb, ns, n, FactWritePolicy{Chat: T.WorkerChat, Source: MemSourceUserStated})
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:

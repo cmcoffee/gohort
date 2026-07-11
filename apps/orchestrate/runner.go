@@ -5317,6 +5317,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		Tools:                allTools,
 		DynamicTools:         t.dynamicNewTempTools(sess),
 		ToolFallbackResolver: t.lazyToolFallback,
+		// Provably-sourced memory (user-entered / tool-retrieved facts) counts as a
+		// grounding source; incognito nils facts, so this is empty there too.
+		GroundingSources:     SourcedFactCorpus(facts),
 		Stream:               streamHandler,
 		OnStep:               onStepHandler,
 		OnRoundStart:         onRoundStartHandler,
