@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,83 @@ func TestListMemoryFactsFiltersSuperseded(t *testing.T) {
 	got := ListMemoryFacts(db, ns)
 	if len(got) != 1 || got[0].ID != "a" {
 		t.Fatalf("expected only the active fact, got %+v", got)
+	}
+}
+
+// TestClassifyVolatility: notes are classified by SUBJECT, not confidence, and
+// default to stable unless a clear volatile/slow signal is present.
+func TestClassifyVolatility(t *testing.T) {
+	cases := []struct {
+		note string
+		want Volatility
+	}{
+		{"RTX 5090 price is $1999", VolVolatile},
+		{"the latest version is 2.3.1", VolVolatile},
+		{"team is currently ranked 4th", VolVolatile},
+		{"user works at Acme on the platform team", VolSlow},
+		{"user lives in Denver", VolSlow},
+		{"the CEO is Jane Roe", VolSlow},
+		{"user prefers metric units", VolStable},
+		{"water boils at 100C at sea level", VolStable},
+		{"the project is named Atlas", VolStable},
+	}
+	for _, c := range cases {
+		if got := classifyVolatility(c.note); got != c.want {
+			t.Errorf("classifyVolatility(%q) = %d, want %d", c.note, got, c.want)
+		}
+	}
+}
+
+// TestStaleness: a volatile fact ages past its half-life and goes stale past 2x;
+// a stable fact never ages regardless of age.
+func TestStaleness(t *testing.T) {
+	db := memDB(t)
+	db.Set(WebTable, TunableStaleVolatileDays, float64(3))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+	now := time.Now()
+	mk := func(vol Volatility, ageDays int) MemoryProvenance {
+		return MemoryProvenance{Volatility: vol, AsOf: now.AddDate(0, 0, -ageDays)}
+	}
+	if s := mk(VolVolatile, 1).Staleness(now); s != Fresh {
+		t.Errorf("1-day volatile should be Fresh, got %d", s)
+	}
+	if s := mk(VolVolatile, 4).Staleness(now); s != Aging {
+		t.Errorf("4-day volatile (half-life 3) should be Aging, got %d", s)
+	}
+	if s := mk(VolVolatile, 7).Staleness(now); s != Stale {
+		t.Errorf("7-day volatile (>= 2x3) should be Stale, got %d", s)
+	}
+	if s := mk(VolStable, 999).Staleness(now); s != Fresh {
+		t.Errorf("stable fact never ages, got %d", s)
+	}
+}
+
+// TestFactProvenanceMarker + render: a volatile fact carries a STABLE absolute
+// as-of marker in the always-in-prompt block; stable and legacy (no AsOf) facts
+// render clean.
+func TestFactProvenanceMarker(t *testing.T) {
+	asof := time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC)
+	vol := MemoryFact{Note: "price is $X", MemoryProvenance: MemoryProvenance{Volatility: VolVolatile, AsOf: asof}}
+	if m := factProvenanceMarker(vol); !strings.Contains(m, "volatile, as of 2026-07-07") {
+		t.Errorf("volatile marker missing absolute date: %q", m)
+	}
+	slow := MemoryFact{Note: "works at Acme", MemoryProvenance: MemoryProvenance{Volatility: VolSlow, AsOf: asof}}
+	if m := factProvenanceMarker(slow); !strings.Contains(m, "may change, as of 2026-07-07") {
+		t.Errorf("slow marker wrong: %q", m)
+	}
+	stable := MemoryFact{Note: "prefers metric", MemoryProvenance: MemoryProvenance{Volatility: VolStable, AsOf: asof}}
+	if m := factProvenanceMarker(stable); m != "" {
+		t.Errorf("stable fact should have no marker, got %q", m)
+	}
+	legacy := MemoryFact{Note: "price is $X", MemoryProvenance: MemoryProvenance{Volatility: VolVolatile}} // AsOf zero
+	if m := factProvenanceMarker(legacy); m != "" {
+		t.Errorf("legacy fact without AsOf should render clean, got %q", m)
+	}
+	// End-to-end through the render block.
+	block := RenderMemoryFactsBlockWith([]MemoryFact{vol}, "", "")
+	if !strings.Contains(block, "volatile, as of 2026-07-07") {
+		t.Errorf("render block missing volatile marker:\n%s", block)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -155,8 +156,9 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 			// Explicit → graph nudge: list the graph once, then flag any fact that
 			// names a known entity with a recall_about pointer. Empty graph → no cost.
 			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
+			now := time.Now()
 			for i, f := range facts {
-				fmt.Fprintf(&b, "%d. %s%s\n", i+1, f.Note, factEntityNudge(ents, f.Note))
+				fmt.Fprintf(&b, "%d. %s%s%s\n", i+1, f.Note, factEntityNudge(ents, f.Note), FactStalenessNote(f, now))
 			}
 			return b.String(), nil
 		},

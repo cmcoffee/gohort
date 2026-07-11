@@ -110,6 +110,14 @@ func init() {
 		Label: "Memory tombstone retention (days, 0 = keep none)",
 		Help:  "How long a retired fact (superseded, evicted, or merged) stays queryable so recall can explain a hole (\"you had X; it was dropped on <date>\") before it is permanently deleted. 0 = delete retired facts immediately.",
 		Kind:  KindInt, Default: 30, Min: 0, Max: 365})
+	RegisterTunable(TunableSpec{Key: TunableStaleVolatileDays, Category: "Memory",
+		Label: "Volatile fact half-life (days)",
+		Help:  "A fact classified volatile (prices, live status, versions) is flagged aging on pull once older than this, and stale past 2x. 0 = never flag volatile facts. Does not affect the always-in-prompt block (it shows the fixed as-of date).",
+		Kind:  KindInt, Default: 3, Min: 0, Max: 365})
+	RegisterTunable(TunableSpec{Key: TunableStaleSlowDays, Category: "Memory",
+		Label: "Slow-changing fact half-life (days)",
+		Help:  "A fact classified slow-changing (employer, city, role) is flagged aging on pull once older than this, and stale past 2x. 0 = never flag slow facts.",
+		Kind:  KindInt, Default: 90, Min: 0, Max: 3650})
 }
 
 // FactWritePolicy carries the per-call context StoreMemoryFactP needs beyond the
@@ -152,6 +160,48 @@ type FactWriteResult struct {
 // controlled by the TunableFactGate on/off switch.
 func FactGateApplies(mode string) bool {
 	return mode == "chatbot" && TuneBool(TunableFactGate)
+}
+
+// volatileFactSignals mark a note whose value changes on a days-to-weeks scale
+// (prices, live status, versions, standings). Category-based, NOT confidence-
+// based: the model is most certain of exactly these stale priors (the "$1,600
+// 5090" case), so the note's SUBJECT, not the model's sureness, sets volatility.
+var volatileFactSignals = []string{
+	"price", "cost", "costs ", "$", " usd", "dollar", "msrp", "how much",
+	"in stock", "out of stock", "sold out", "availability", "available now",
+	"currently", "current ", "latest", "right now", "as of ", "this week", "this month",
+	"score", "standings", "ranked", "ranking", "leaderboard",
+	"latest version", "version is", "current version",
+	"stock price", "share price", "market cap",
+}
+
+// slowFactSignals mark a note whose value changes over months to years
+// (employer, city, role, relationship, contact details).
+var slowFactSignals = []string{
+	"works at", "works for", "employed", "employer", "job at", "company is",
+	"lives in", "based in", "located in", "moved to", "resides",
+	"ceo", "president", "prime minister", "director of", "head of",
+	"married", "dating", "spouse", "partner is", "girlfriend", "boyfriend",
+	"phone number", "address is", "email is",
+}
+
+// classifyVolatility infers a note's Volatility from its subject. Conservative:
+// defaults to VolStable (never flagged stale) and only escalates on a clear
+// signal — a false "stable" is just the status quo, while a false "volatile"
+// only adds a mild as-of marker. Volatile wins ties with slow.
+func classifyVolatility(note string) Volatility {
+	n := strings.ToLower(note)
+	for _, s := range volatileFactSignals {
+		if strings.Contains(n, s) {
+			return VolVolatile
+		}
+	}
+	for _, s := range slowFactSignals {
+		if strings.Contains(n, s) {
+			return VolSlow
+		}
+	}
+	return VolStable
 }
 
 // factDedupSimThreshold is the cosine cutoff above which two notes
@@ -257,10 +307,11 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		Note:      note,
 		Created:   now,
 		Updated:   now,
-		// A fresh fact is confirmed-true as of now. Source/Volatility stay at
-		// their zero values (unknown / stable) until a write-time classifier
-		// populates them; an unclassified fact is treated as never-decaying.
-		MemoryProvenance: MemoryProvenance{AsOf: now},
+		// A fresh fact is confirmed-true as of now, and its volatility is inferred
+		// from its subject (category-based, deterministic). Source stays unknown
+		// until a caller threads it through; that plus the grounding-gate wiring
+		// is the next slice.
+		MemoryProvenance: MemoryProvenance{AsOf: now, Volatility: classifyVolatility(note)},
 		Vector:           newVec,
 	}
 
@@ -872,10 +923,55 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 		b.WriteString(intToString(i + 1))
 		b.WriteString(". ")
 		b.WriteString(f.Note)
+		b.WriteString(factProvenanceMarker(f))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// factProvenanceMarker returns a STABLE provenance suffix for a non-stable fact:
+// its volatility class plus the absolute AsOf date. Absolute (not "N days ago")
+// so the always-in-prompt block doesn't churn the prompt cache as the fact ages;
+// the model judges freshness against today's date (carried on the user turn).
+// Empty for stable facts and facts without an AsOf, so the common case is clean.
+func factProvenanceMarker(f MemoryFact) string {
+	if f.AsOf.IsZero() {
+		return ""
+	}
+	switch f.Volatility {
+	case VolVolatile:
+		return " (volatile, as of " + f.AsOf.Format("2006-01-02") + "; verify if relied on)"
+	case VolSlow:
+		return " (may change, as of " + f.AsOf.Format("2006-01-02") + ")"
+	default:
+		return ""
+	}
+}
+
+// FactStalenessNote returns a relative-time staleness hint for PULL surfaces
+// (recall / search), or "" when the fact is Fresh. Relative time is fine here
+// because pull results are not part of the cached always-in-prompt block.
+func FactStalenessNote(f MemoryFact, now time.Time) string {
+	switch f.Staleness(now) {
+	case Stale:
+		return fmt.Sprintf(" (STALE: last confirmed ~%dd ago, re-verify before relying)", factAgeDays(f.AsOf, now))
+	case Aging:
+		return fmt.Sprintf(" (aging: last confirmed ~%dd ago)", factAgeDays(f.AsOf, now))
+	default:
+		return ""
+	}
+}
+
+// factAgeDays is the whole-day age of a timestamp at now, floored at 0.
+func factAgeDays(t, now time.Time) int {
+	if t.IsZero() {
+		return 0
+	}
+	if d := int(now.Sub(t).Hours()) / 24; d > 0 {
+		return d
+	}
+	return 0
 }
 
 func intToString(n int) string {

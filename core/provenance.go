@@ -91,3 +91,50 @@ func RetireReasonLabel(r RetireReason) string {
 		return "retired"
 	}
 }
+
+// Staleness classifies how aged a claim is relative to its Volatility. Used at
+// PULL time (recall / search), where relative-time labeling is fine. The
+// always-in-prompt facts block deliberately does NOT use this: it renders the
+// stable absolute AsOf date instead, so the cached preamble doesn't churn as
+// facts age (date-on-user-turn / deterministic-payload rules).
+type Staleness uint8
+
+const (
+	Fresh Staleness = iota // within the half-life: trust silently
+	Aging                  // past the half-life: surface with an as-of note
+	Stale                  // past 2x the half-life: re-verify before relying
+)
+
+// Staleness half-life tunables (days). A volatile fact is Aging once older than
+// its half-life and Stale past 2x it; slow facts likewise. Stable facts never
+// age. 0 disables aging for that class. Registered in factstore.go's init.
+const (
+	TunableStaleSlowDays     = "tune_fact_stale_slow_days"
+	TunableStaleVolatileDays = "tune_fact_stale_volatile_days"
+)
+
+// Staleness reports how aged the claim is at `now`, from Volatility + AsOf. A
+// future AsOf (clock skew) or a missing one reads as Fresh.
+func (p MemoryProvenance) Staleness(now time.Time) Staleness {
+	var half int
+	switch p.Volatility {
+	case VolVolatile:
+		half = TuneInt(TunableStaleVolatileDays)
+	case VolSlow:
+		half = TuneInt(TunableStaleSlowDays)
+	default:
+		return Fresh // stable / unknown never ages
+	}
+	if half <= 0 || p.AsOf.IsZero() {
+		return Fresh
+	}
+	ageDays := int(now.Sub(p.AsOf).Hours()) / 24
+	switch {
+	case ageDays >= 2*half:
+		return Stale
+	case ageDays >= half:
+		return Aging
+	default:
+		return Fresh
+	}
+}
