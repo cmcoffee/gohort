@@ -1019,6 +1019,12 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	if len(topics) == 0 {
 		return ""
 	}
+	// Cap to the most-recently-used slugs (the tail — recordAgentTopic keeps the
+	// list recency-ordered). Dropped slugs still work; the agent just mints or
+	// reuses them without the hint. 0 = show all.
+	if maxN := TuneInt(tuneKnownTopicsMax); maxN > 0 && len(topics) > maxN {
+		topics = topics[len(topics)-maxN:]
+	}
 	var b strings.Builder
 	b.WriteString("\n\n## Known topics\n\n")
 	saveVerb := "memory_save"

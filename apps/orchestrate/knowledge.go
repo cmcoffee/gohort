@@ -100,6 +100,17 @@ func normalizeTopic(t string) string {
 // listAgentTopics returns the topics this (user, agent) has accumulated
 // so far. Caller-callable from the classifier prompt to nudge the LLM
 // toward reusing existing slugs instead of inventing near-duplicates.
+// tuneKnownTopicsMax caps how many memory topic slugs the "Known topics" block
+// lists in the system prompt. 0 = show all.
+const tuneKnownTopicsMax = "tune_known_topics_max"
+
+func init() {
+	RegisterTunable(TunableSpec{Key: tuneKnownTopicsMax, Category: "Limits",
+		Label: "Known-topics shown",
+		Help:  "Max recently-used memory topic slugs listed in the system prompt for bucket reuse. Lower to save context; 0 = show all. Dropped slugs still work — the agent just reuses or mints them without the hint.",
+		Kind:  KindInt, Default: 12, Min: 0, Max: 100})
+}
+
 func listAgentTopics(db Database, user, agentID string) []string {
 	if db == nil {
 		return nil
@@ -122,13 +133,16 @@ func recordAgentTopic(db Database, user, agentID, topic string) {
 	key := user + ":" + agentID
 	var rec AgentTopics
 	db.Get(knowledgeTopicsTable, key, &rec)
+	// Recency order: drop any existing copy and append, so the slug just used
+	// lands at the END. The tail is then the most-recently-used set, which is
+	// what renderKnownTopicsBlock's cap keeps when the list outgrows the budget.
+	filtered := make([]string, 0, len(rec.Topics)+1)
 	for _, t := range rec.Topics {
-		if t == topic {
-			return
+		if t != topic {
+			filtered = append(filtered, t)
 		}
 	}
-	rec.Topics = append(rec.Topics, topic)
-	sort.Strings(rec.Topics)
+	rec.Topics = append(filtered, topic)
 	db.Set(knowledgeTopicsTable, key, rec)
 }
 

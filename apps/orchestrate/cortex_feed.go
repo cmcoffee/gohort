@@ -149,11 +149,14 @@ func cortexContextBlock(db Database, agentID string) string {
 	if db == nil || strings.TrimSpace(agentID) == "" {
 		return ""
 	}
+	maxLines := TuneInt(tuneCortexFeedLines)
+	if maxLines <= 0 {
+		return "" // operator hid the standing-activity block
+	}
 	sess, ok := loadChatSession(db, agentID, cortexSessionID(agentID))
 	if !ok || len(sess.Messages) == 0 {
 		return ""
 	}
-	const maxLines = 8
 	var lines []string
 	for i := len(sess.Messages) - 1; i >= 0 && len(lines) < maxLines; i-- {
 		m := sess.Messages[i]
@@ -170,7 +173,18 @@ func cortexContextBlock(db Database, agentID string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors, shown complete as notes. These are NOT run records and have no run id: do not try to fetch one with inspect_run (you would have to invent an id, which fails). Use only if relevant to what the user asks; do not recite it. To inspect an actual scheduled run, call list_runs first for a real id.\n\n" + strings.Join(lines, "\n") + "\n"
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors. Use only if relevant; don't recite. These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
+}
+
+// tuneCortexFeedLines caps how many recent cortex observations the standing-
+// activity block injects into a forked session's prompt. 0 hides the block.
+const tuneCortexFeedLines = "tune_cortex_feed_lines"
+
+func init() {
+	RegisterTunable(TunableSpec{Key: tuneCortexFeedLines, Category: "Limits",
+		Label: "Cortex standing-activity lines",
+		Help:  "How many recent cortex observations to inject as background awareness at the top of a forked session. Lower to save context; 0 hides the block.",
+		Kind:  KindInt, Default: 5, Min: 0, Max: 20})
 }
 
 // truncateObs shortens an observation snippet to n runes, appending an ellipsis.
