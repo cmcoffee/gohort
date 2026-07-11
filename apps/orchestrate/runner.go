@@ -5447,6 +5447,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		},
 	})
 	stopKeepalive()
+	// Off-hot-path graph population: after a clean turn, best-effort extract the
+	// entity relationships the user stated into the graph. Single-flight +
+	// cooldown + own goroutine (never blocks the turn, self-throttles on the
+	// shared GPU); gated off by default.
+	if loopErr == nil {
+		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID), LatestUserContent(llmMsgs), t.app.WorkerChat)
+	}
 	{
 		respLen := 0
 		if resp != nil {

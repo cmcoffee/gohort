@@ -355,7 +355,18 @@ func mergeGraphEntity(e *GraphEntity, name string, aliases []string, attrs map[s
 // same (From, rel) are removed first — delete-on-update. When false, the edge
 // coexists with siblings (multi-valued relations like "knows"). From/To are
 // entity IDs; rel is slugged. Returns the stored edge.
+// LinkGraphEdge records a live edge with no provenance stamp (the hand-curated
+// path, link_entities). LinkGraphEdgeP is the variant that marks origin.
 func LinkGraphEdge(db Database, namespace, from, rel, to, note string, replace bool) GraphEdge {
+	return LinkGraphEdgeP(db, namespace, from, rel, to, note, replace, MemoryProvenance{})
+}
+
+// LinkGraphEdgeP is LinkGraphEdge with an ORIGIN provenance stamp (Source /
+// Volatility / AsOf) copied onto the edge — only the origin fields, never
+// retirement, so a fresh edge is always born live. Auto-extraction uses it with
+// Source=MemSourceObserved so machine-extracted edges can be told apart from the
+// hand-curated ones (link_entities) for later review or bulk pruning.
+func LinkGraphEdgeP(db Database, namespace, from, rel, to, note string, replace bool, prov MemoryProvenance) GraphEdge {
 	namespace = strings.TrimSpace(namespace)
 	from = strings.TrimSpace(from)
 	to = strings.TrimSpace(to)
@@ -396,6 +407,11 @@ func LinkGraphEdge(db Database, namespace, from, rel, to, note string, replace b
 		}
 	}
 	edge := GraphEdge{Namespace: namespace, From: from, Rel: rel, To: to, Note: strings.TrimSpace(note), Created: now, Updated: now}
+	// Stamp ONLY the origin fields — a newly linked edge is always live, so
+	// retirement fields on prov (if any) are deliberately ignored here.
+	edge.Source = prov.Source
+	edge.Volatility = prov.Volatility
+	edge.AsOf = prov.AsOf
 	// Preserve Created if the exact triple already existed (this is an update).
 	var prior GraphEdge
 	if db.Get(GraphEdgeTable, key, &prior) && !prior.Created.IsZero() {

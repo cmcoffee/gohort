@@ -1,0 +1,172 @@
+// Automatic entity extraction — off-hot-path population of the graph layer.
+//
+// The graph (link_entities) is the strongest memory layer architecturally but is
+// dead weight while it depends on the model deciding to file relationships by
+// hand. This runs a conservative worker-LLM extraction over a completed turn's
+// user message and writes the subject-relation-object triples it finds straight
+// into the graph via the same UpsertGraphEntity (alias-merge) + LinkGraphEdge
+// path link_entities uses — so the graph populates itself.
+//
+// Two hard design constraints, learned the expensive way:
+//   - OFF THE HOT PATH. It fires AFTER the turn in its own goroutine, single-
+//     flight + cooldown per namespace, so it never blocks the response and
+//     self-throttles on the shared GPU (a single card can't run an extraction
+//     pass inline every turn).
+//   - CONSERVATIVE, so the graph fills CLEAN not fragmented. A keyed entity fact
+//     store was reverted once because the LLM picked inconsistent keys; the
+//     guards here are (a) extract only EXPLICIT relationships between NAMED
+//     entities, never inferred, (b) alias-merge on write (UpsertGraphEntity),
+//     (c) never replace — corrections stay the user's explicit call. Extracted
+//     edges are stamped Source=observed so a bad batch can be told apart from
+//     hand-curated edges and pruned.
+
+package orchestrate
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	. "github.com/cmcoffee/gohort/core"
+)
+
+// TunableGraphExtract gates automatic entity extraction. Off by default: it costs
+// one worker round-trip per eligible turn (bounded by the cooldown).
+const TunableGraphExtract = "tune_graph_extract"
+
+func init() {
+	RegisterTunable(TunableSpec{Key: TunableGraphExtract, Category: "Memory",
+		Label: "Automatic entity extraction (0 = off)",
+		Help:  "After a turn, run a worker-LLM pass over the user's message and auto-populate the graph memory with the entity relationships it states. Off the hot path (background, single-flight + cooldown). Conservative: explicit relationships between named entities only, alias-merged, never auto-replacing. Extracted edges are marked observed.",
+		Kind:  KindBool, Default: 0, Min: 0, Max: 1})
+}
+
+func graphExtractEnabled() bool { return TuneBool(TunableGraphExtract) }
+
+const (
+	// graphExtractMinChars skips messages too short to plausibly state a
+	// relationship, so trivial turns ("thanks", "ok") never spend a worker call.
+	graphExtractMinChars = 40
+	// graphExtractCooldown is the minimum gap between extractions per namespace.
+	// Best-effort population — missing an occasional turn is fine (entities
+	// recur), and this keeps the background pass from contending every turn.
+	graphExtractCooldown = 90 * time.Second
+)
+
+var (
+	graphExtractMu       sync.Mutex
+	graphExtractInFlight = map[string]bool{}
+	graphExtractLast     = map[string]time.Time{}
+)
+
+// maybeExtractGraph fires a background entity-extraction pass over text, subject
+// to the gate, a length floor, and single-flight + cooldown per namespace. It
+// returns immediately; the work (a worker call + graph writes) runs in its own
+// goroutine so the turn is never blocked. Mirrors maybeSweepFacts.
+func maybeExtractGraph(db Database, namespace, text string, chat FactChatFunc) {
+	if !graphExtractEnabled() || db == nil || chat == nil {
+		return
+	}
+	text = strings.TrimSpace(text)
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" || len(text) < graphExtractMinChars {
+		return
+	}
+	graphExtractMu.Lock()
+	if graphExtractInFlight[namespace] || time.Since(graphExtractLast[namespace]) < graphExtractCooldown {
+		graphExtractMu.Unlock()
+		return
+	}
+	graphExtractInFlight[namespace] = true
+	graphExtractLast[namespace] = time.Now() // measured from pass start
+	graphExtractMu.Unlock()
+	go func() {
+		defer func() {
+			graphExtractMu.Lock()
+			delete(graphExtractInFlight, namespace)
+			graphExtractMu.Unlock()
+			if r := recover(); r != nil {
+				Debug("[graph-extract] panic (ns=%s): %v", namespace, r)
+			}
+		}()
+		extractGraphFromText(db, namespace, text, chat)
+	}()
+}
+
+// graphTriple is one extracted subject-relation-object relationship.
+type graphTriple struct {
+	Subject     string `json:"subject"`
+	SubjectKind string `json:"subject_kind"`
+	Relation    string `json:"relation"`
+	Object      string `json:"object"`
+	ObjectKind  string `json:"object_kind"`
+}
+
+// extractGraphFromText runs the worker extraction and writes each triple into the
+// graph, alias-merging entities and NEVER replacing (extraction is additive; a
+// correction is the user's explicit link_entities(replace=true) call). Extracted
+// edges are stamped observed. Returns the number of edges written (for tests /
+// logging).
+func extractGraphFromText(db Database, namespace, text string, chat FactChatFunc) int {
+	now := time.Now()
+	prov := MemoryProvenance{Source: MemSourceObserved, AsOf: now}
+	written := 0
+	for _, tr := range judgeGraphTriples(chat, text) {
+		subject := strings.TrimSpace(tr.Subject)
+		relation := strings.TrimSpace(tr.Relation)
+		object := strings.TrimSpace(tr.Object)
+		if subject == "" || relation == "" || object == "" || strings.EqualFold(subject, object) {
+			continue
+		}
+		subj, _ := UpsertGraphEntity(db, namespace, tr.SubjectKind, subject, nil, nil)
+		obj, _ := UpsertGraphEntity(db, namespace, tr.ObjectKind, object, nil, nil)
+		if subj.ID == "" || obj.ID == "" {
+			continue
+		}
+		LinkGraphEdgeP(db, namespace, subj.ID, relation, obj.ID, "", false, prov)
+		written++
+	}
+	if written > 0 {
+		Debug("[graph-extract] wrote %d edge(s) (ns=%s)", written, namespace)
+	}
+	return written
+}
+
+// judgeGraphTriples asks the worker to extract explicit named-entity
+// relationships from text as subject-relation-object triples. Worker tier,
+// no-think, JSON. Best-effort — nil chat / error / unparseable reply → no
+// triples (nothing is written).
+func judgeGraphTriples(chat FactChatFunc, text string) []graphTriple {
+	if chat == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	resp, err := chat(ctx, []Message{
+		{Role: "user", Content: fmt.Sprintf(`Extract relationships between NAMED entities from the text below, as subject-relation-object triples for a knowledge graph.
+
+Rules:
+- Only EXPLICIT relationships the text actually states. Do NOT infer or guess.
+- Only NAMED entities — specific people, organizations, places, projects, or named things. Skip generic nouns ("a dog", "the meeting") unless they carry a proper name.
+- relation is a short lowercase verb phrase ("works at", "owns", "lives in", "married to", "manages").
+- subject_kind / object_kind is one of: person, org, project, place, thing.
+- If the text states no such relationship, reply with an empty array.
+
+TEXT:
+%s
+
+Reply with ONLY a JSON array of objects, each {"subject","subject_kind","relation","object","object_kind"}. Reply [] if none.`, text)},
+	}, WithSystemPrompt("You extract explicit relationships between named entities as subject-relation-object triples for a knowledge graph. Be conservative: never infer, named entities only. Reply with ONLY a JSON array."),
+		WithThink(false),
+		WithMaxTokens(512))
+	if err != nil || resp == nil {
+		return nil
+	}
+	var out []graphTriple
+	if DecodeJSON(ResponseText(resp), &out) != nil {
+		return nil
+	}
+	return out
+}
