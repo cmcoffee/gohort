@@ -16,7 +16,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-
 const promptDocumentation = `You are a technical writing assistant helping create documentation, runbooks, and instruction articles for IT teams.
 
 When the user shares commands or partial instructions, expand them into clear step-by-step documentation. Preserve all commands exactly as given — wrap them in code blocks. Add context around commands: what they do, expected output, and potential errors.
@@ -143,8 +142,10 @@ func (T *TechWriterAgent) WebRestricted(r *http.Request) bool {
 // WebAccessKey + WebAccessCheck expose a boolean at /api/access so
 // other apps (research UI) can hide their "Push to TechWriter"
 // controls from users without access. Mirrors WebRestricted.
-func (T *TechWriterAgent) WebAccessKey() string                 { return "techwriter" }
-func (T *TechWriterAgent) WebAccessCheck(r *http.Request) bool  { return UserHasAppAccess(r, "/techwriter") }
+func (T *TechWriterAgent) WebAccessKey() string { return "techwriter" }
+func (T *TechWriterAgent) WebAccessCheck(r *http.Request) bool {
+	return UserHasAppAccess(r, "/techwriter")
+}
 func (T *TechWriterAgent) WebDesc() string {
 	return "Technical article co-writer for documentation and instructions"
 }
@@ -244,9 +245,9 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Subject  string `json:"subject"`
-		Body     string `json:"body"`
-		Message  string `json:"message"`
+		Subject string `json:"subject"`
+		Body    string `json:"body"`
+		Message string `json:"message"`
 		// Mode controls whether the LLM may propose an article rewrite.
 		// "edit" (default) = legacy behavior; the LLM may emit an
 		// ARTICLE:-prefixed response and the UI offers to apply it.
@@ -1345,4 +1346,3 @@ func headerImageHTML(url string) string {
 
 // Use shared functions from core:
 // HTMLEscape, MarkdownToHTML, InlineMarkdownToHTML, HTMLToMarkdown, HTMLUnescape
-

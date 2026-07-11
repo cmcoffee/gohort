@@ -298,9 +298,9 @@ func buildToolParamsSchema(t Tool) json.RawMessage {
 
 // ToolCall represents the LLM's request to invoke a tool.
 type ToolCall struct {
-	ID    string         `json:"id"`
-	Name  string         `json:"name"`
-	Args  map[string]any `json:"args"`
+	ID   string         `json:"id"`
+	Name string         `json:"name"`
+	Args map[string]any `json:"args"`
 }
 
 // parseToolArgs converts a raw JSON map into a tool argument map.
@@ -479,8 +479,8 @@ type ChatConfig struct {
 	Tools        []Tool
 	JSONMode     bool
 	MaxRetries   *int
-	Think        *bool // Enable/disable thinking for thinking models (nil = model default)
-	ThinkBudget  *int  // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
+	Think        *bool  // Enable/disable thinking for thinking models (nil = model default)
+	ThinkBudget  *int   // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
 	Caller       string // Identifier of the app/pipeline making the call; used by the Ollama fair-queueing scheduler. Empty → "unknown".
 	MaskDebug    bool   // Suppress request/response content from debug logs (use for sessions with sensitive data).
@@ -625,19 +625,19 @@ func applyOpts(defaultModel string, defaultMaxTokens int, opts []ChatOption) Cha
 
 // LLMProviderConfig holds stored configuration for an LLM provider.
 type LLMProviderConfig struct {
-	Provider        string
-	Model           string
-	APIKey          string
-	Endpoint        string
-	ContextSize     int           // Context window size (Ollama only); 0 uses default.
-	ConnectTimeout    time.Duration // Dial timeout; defaults to 10s if zero.
-	RequestTimeout    time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
-	StreamIdleTimeout time.Duration // Idle-read deadline applied ONLY to streaming chat calls — if no bytes arrive for this long the body is closed and the error reads as transient so the retry layer can take another shot. Defaults to DefaultStreamIdleTimeout (60s) if zero. Tune up if the model legitimately stalls between tokens (heavy thinking budgets, cold prefills on a busy server).
-	DisableThinking bool          // Master override: forces think=false on every call regardless of per-call WithThink(true). Supported for Ollama and Gemini (Flash) providers.
-	ThinkingBudget  int           // Max thinking tokens per call (Gemini and Ollama). 0 = model default. Ignored when DisableThinking is set.
-	NativeTools     bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
-	OllamaMaxParallel   int         // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
-	LlamacppMaxParallel int         // llama.cpp only: global concurrency cap. Default 1 (llama.cpp is single-threaded). Raise only when the server supports concurrent requests.
+	Provider            string
+	Model               string
+	APIKey              string
+	Endpoint            string
+	ContextSize         int           // Context window size (Ollama only); 0 uses default.
+	ConnectTimeout      time.Duration // Dial timeout; defaults to 10s if zero.
+	RequestTimeout      time.Duration // Per-Read idle deadline applied via iotimeout; defaults to 5min if zero. Long because non-streaming Gemini / model-listing calls need to ride out slow handshakes; streaming paths layer a shorter StreamIdleTimeout on top.
+	StreamIdleTimeout   time.Duration // Idle-read deadline applied ONLY to streaming chat calls — if no bytes arrive for this long the body is closed and the error reads as transient so the retry layer can take another shot. Defaults to DefaultStreamIdleTimeout (60s) if zero. Tune up if the model legitimately stalls between tokens (heavy thinking budgets, cold prefills on a busy server).
+	DisableThinking     bool          // Master override: forces think=false on every call regardless of per-call WithThink(true). Supported for Ollama and Gemini (Flash) providers.
+	ThinkingBudget      int           // Max thinking tokens per call (Gemini and Ollama). 0 = model default. Ignored when DisableThinking is set.
+	NativeTools         bool          // When true, use native function calling. When false, tools are described in the system prompt and parsed from <tool_call> tags. Default false for ollama models without tool support.
+	OllamaMaxParallel   int           // Ollama only: global concurrency cap. 0 or negative = scheduler disabled; 1 = strict serial (default). Requests are fair-queued across sessions.
+	LlamacppMaxParallel int           // llama.cpp only: global concurrency cap. Default 1 (llama.cpp is single-threaded). Raise only when the server supports concurrent requests.
 	// NoThink* fields control individual signals sent to llama.cpp on
 	// WithThink(false) calls. Defaults are what's empirically proven
 	// to work on Qwen 3 unified — kwarg + budget alone is sufficient,
@@ -943,6 +943,7 @@ func responseIsUseable(resp *Response) bool {
 //   - timeout errors (thinking is the slow part)
 //   - "empty LLM response" errors (model exhausted budget producing nothing)
 //   - successful but empty responses (model produced only reasoning)
+//
 // shouldRetryEmpty reports whether the inner closure in retryLLM
 // should attempt the "hint then drop thinking" recovery path. That
 // path is meant for a specific model-side failure: a 200 response

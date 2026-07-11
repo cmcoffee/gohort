@@ -34,8 +34,8 @@ func init() {}
 
 type AttachFileTool struct{}
 
-func (t *AttachFileTool) Name() string         { return "attach_file" }
-func (t *AttachFileTool) Caps() []Capability   { return []Capability{CapRead} }
+func (t *AttachFileTool) Name() string       { return "attach_file" }
+func (t *AttachFileTool) Caps() []Capability { return []Capability{CapRead} }
 
 func (t *AttachFileTool) Desc() string {
 	return "Deliver a file from your workspace to the user as an attachment. Pair with run_local or temp tools that produce files: create the file in /workspace/, then call attach_file with its relative path. Works for any file type (PDF, CSV, ZIP, audio, generated image, etc.) — the user receives it as a download. Cap: 20MB per file. The path must be workspace-relative; absolute paths and `..` traversal are rejected."

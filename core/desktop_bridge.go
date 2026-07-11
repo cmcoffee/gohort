@@ -126,8 +126,8 @@ type desktopClient struct {
 // (LocalToolsForUser, lookups) are the hot path; writes
 // (connect/disconnect) are rare, so a single RWMutex is fine.
 type desktopRegistry struct {
-	mu      sync.RWMutex
-	byUser  map[string][]*desktopClient
+	mu     sync.RWMutex
+	byUser map[string][]*desktopClient
 }
 
 var desktopReg = &desktopRegistry{byUser: map[string][]*desktopClient{}}
@@ -149,6 +149,7 @@ var desktopUpgrader = websocket.Upgrader{
 //     cross-site web page.
 //   - loopback origin → local webview (e.g. Wails' wails.localhost).
 //   - same-origin (Origin host == the server's Host).
+//
 // SameSite=Lax on the session cookie is the primary control; this is
 // defense-in-depth for the residual gaps.
 func desktopCheckOrigin(r *http.Request) bool {

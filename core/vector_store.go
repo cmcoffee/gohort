@@ -155,6 +155,13 @@ type EmbeddedChunk struct {
 	// Knowledge agents are taught to cite these differently
 	// ("one commenter noted…" vs "the doc says…").
 	Kind string `json:"kind,omitempty"`
+	// MemoryProvenance is reserved: the vector layer has no retirement pass yet, so
+	// these fields sit unset. Embedded now so a future chunk-staleness or
+	// supersession pass inherits the same vocabulary as the fact store. Zero value
+	// = live, unknown origin, never decays; all fields omitempty. Note the existing
+	// Date string above is a separate, pre-existing ingestion stamp; a later pass
+	// can migrate it into the typed AsOf.
+	MemoryProvenance
 }
 
 // SearchHit is one result from a semantic or keyword search. ID is the

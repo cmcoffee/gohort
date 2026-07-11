@@ -18,7 +18,7 @@ import (
 )
 
 const rulesTable = "techwriter_rules"
-const rulesKey   = "default"
+const rulesKey = "default"
 
 func (T *TechWriterAgent) handleRules(w http.ResponseWriter, r *http.Request) {
 	_, udb, ok := RequireUser(w, r, T.DB)

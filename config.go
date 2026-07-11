@@ -13,6 +13,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -1489,7 +1490,7 @@ func init_database() {
 	// Deployment document branding — set the PDF export header line from the
 	// admin-configured brand (falls back to the built-in default when unset).
 	if b := AuthGetDocBrand(global.db); strings.TrimSpace(b) != "" {
-		PDFBranding = b
+		media.PDFBranding = b
 	}
 }
 

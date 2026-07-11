@@ -1,4 +1,4 @@
-package core
+package textutil
 
 import (
 	"regexp"
@@ -62,6 +62,59 @@ func StripMetaTags(s string) string {
 	s = metaTrailingWSRe.ReplaceAllString(s, "\n")
 	s = metaExtraBlankRe.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)
+}
+
+var (
+	// codeSpanRe isolates fenced code blocks (```…```) and inline code (`…`) so
+	// the em-dash strip never rewrites a — that legitimately lives in code.
+	codeSpanRe = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
+	// emDashRe matches an em-dash (U+2014) with any surrounding spaces/tabs but
+	// NOT newlines, so line structure is preserved. Replaced with ", " per the
+	// house style guidance (comma in place of the dash).
+	emDashRe = regexp.MustCompile(`[ \t]*\x{2014}[ \t]*`)
+	// leadingCommaRe cleans the ", " a line-leading em-dash (rare bullet form)
+	// would otherwise leave at the start of a line.
+	leadingCommaRe = regexp.MustCompile(`(?m)^,[ \t]*`)
+)
+
+// StripEmDashes replaces em-dashes (U+2014) in user-facing text with a comma,
+// enforcing the house no-em-dash style DETERMINISTICALLY rather than hoping a
+// system-prompt rule suppresses a token the model is heavily biased to emit.
+// An em-dash is a mechanical transform (the correct text is a function of the
+// wrong text), so it belongs at the output boundary, not in the prompt. Code is
+// preserved: anything inside a fenced ``` block or inline `code` span is left
+// exactly as written. Fast no-op when the string contains no em-dash.
+//
+// Note: this targets the em-dash only. En-dashes (U+2013), hyphens, and minus
+// signs are left alone — the style rule is specifically about the "—" tic.
+func StripEmDashes(s string) string {
+	if !strings.ContainsRune(s, '—') {
+		return s
+	}
+	// Split into code / non-code segments; transform only the non-code text.
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for _, loc := range codeSpanRe.FindAllStringIndex(s, -1) {
+		b.WriteString(transformEmDash(s[last:loc[0]]))
+		b.WriteString(s[loc[0]:loc[1]]) // code span verbatim
+		last = loc[1]
+	}
+	b.WriteString(transformEmDash(s[last:]))
+	return b.String()
+}
+
+// transformEmDash applies the em-dash → comma rewrite to a non-code segment.
+func transformEmDash(seg string) string {
+	if !strings.ContainsRune(seg, '—') {
+		return seg
+	}
+	seg = emDashRe.ReplaceAllString(seg, ", ")
+	seg = leadingCommaRe.ReplaceAllString(seg, "")
+	// A dash at end-of-line leaves the inserted ", " stranded before the
+	// newline; drop the trailing space so line ends stay clean.
+	seg = strings.ReplaceAll(seg, ", \n", ",\n")
+	return strings.ReplaceAll(seg, ", ,", ",")
 }
 
 // StripToolCallTags removes leaked tool-call / tool-code / function-call markup

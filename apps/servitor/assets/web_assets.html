@@ -797,36 +797,24 @@
 
       // Linked Knowledge — collections the investigator can search (via
       // search_knowledge) to ground answers in curated reference material.
-      // Applies to every appliance type, so it loads as soon as the form opens.
+      // Rendered with the canonical chip_picker (same component guides /
+      // orchestrate use) in LOCAL mode: the selection rides along in the
+      // appliance save payload below via on_change, so there's no separate
+      // attach endpoint — one Create/Save writes the whole record.
       var kbSelected = (rec.collections || []).slice();
-      var kbBox = el('div', {}, ['Loading collections…']);
-      fetch('api/collections')
-        .then(function(r){ return r.ok ? r.json() : []; })
-        .then(function(list) {
-          kbBox.innerHTML = '';
-          list = list || [];
-          if (!list.length) {
-            kbBox.appendChild(el('div', {class: 'ui-form-hint'},
-              ['No knowledge collections yet — create some in the Knowledge app, then link them here.']));
-            return;
-          }
-          list.forEach(function(c) {
-            var cb = el('input', {type: 'checkbox'});
-            cb.checked = kbSelected.indexOf(c.id) >= 0;
-            cb.onchange = function() {
-              var i = kbSelected.indexOf(c.id);
-              if (cb.checked && i < 0) kbSelected.push(c.id);
-              else if (!cb.checked && i >= 0) kbSelected.splice(i, 1);
-            };
-            kbBox.appendChild(el('label', {style: 'display:flex; align-items:center; gap:0.5rem; padding:0.2rem 0;'},
-              [cb, (c.name || c.id)]));
-          });
-        })
-        .catch(function(){ kbBox.innerHTML = ''; kbBox.appendChild(el('div', {class: 'ui-form-hint'}, ['Failed to load collections.'])); });
+      var kbBox = el('div', {});
+      window.uiMountComponent({
+        type: 'chip_picker', mode: 'attach',
+        options_source: 'api/collections',
+        value: kbSelected,
+        name_field: 'id', label_field: 'name', desc_field: 'description',
+        noun: 'collection',
+        intro: 'Curated collections the investigator can search (via search_knowledge) to ground answers in reference material (runbooks, vendor docs, a guide) alongside what it finds on the system itself.',
+        empty_text: 'No knowledge collections yet — create some in the Knowledge app, then link them here.',
+        on_change: function(sel){ kbSelected = sel; }
+      }, kbBox);
       var knowledgeSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Linked Knowledge']), kbBox,
-        el('div', {class: 'ui-form-hint'},
-          ['Curated collections the investigator can search (via search_knowledge) to ground answers in reference material — runbooks, vendor docs, a guide — alongside what it finds on the system itself.']),
       ]);
 
       // Shared toggle — when on, every user can discover and use this

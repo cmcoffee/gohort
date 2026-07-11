@@ -15,13 +15,13 @@ func TestMentionedNoArgTool(t *testing.T) {
 	}
 
 	cases := []struct{ content, want string }{
-		{"Sure, let me get_joke for you.", "get_joke"},  // token, eligible
-		{"I'll fire get_meme now", "get_meme"},          // token, eligible
-		{"here is a joke i made up myself", ""},         // no tool token at all
-		{"I could web_search that", ""},                 // has required args → excluded
-		{"look at these images", ""},                    // "image" substring + no underscore → excluded
-		{"the getjokes endpoint", ""},                   // not token-bounded, no underscore
-		{"maybe use get_joke instead", "get_joke"},      // bounded by space/edge
+		{"Sure, let me get_joke for you.", "get_joke"}, // token, eligible
+		{"I'll fire get_meme now", "get_meme"},         // token, eligible
+		{"here is a joke i made up myself", ""},        // no tool token at all
+		{"I could web_search that", ""},                // has required args → excluded
+		{"look at these images", ""},                   // "image" substring + no underscore → excluded
+		{"the getjokes endpoint", ""},                  // not token-bounded, no underscore
+		{"maybe use get_joke instead", "get_joke"},     // bounded by space/edge
 	}
 	for _, c := range cases {
 		if got := mentionedNoArgTool(c.content, handlers, defs); got != c.want {
@@ -36,10 +36,10 @@ func TestMentionsToken(t *testing.T) {
 		want        bool
 	}{
 		{"let me get_joke now", "get_joke", true},
-		{"get_joke", "get_joke", true},           // whole string
-		{"call get_joke.", "get_joke", true},     // trailing punctuation
-		{"get_jokes plural", "get_joke", false},  // 's' is an ident byte → not a token
-		{"forget_joke", "get_joke", false},       // preceding letter → not a token
+		{"get_joke", "get_joke", true},          // whole string
+		{"call get_joke.", "get_joke", true},    // trailing punctuation
+		{"get_jokes plural", "get_joke", false}, // 's' is an ident byte → not a token
+		{"forget_joke", "get_joke", false},      // preceding letter → not a token
 		{"no mention here", "get_joke", false},
 	}
 	for _, c := range cases {

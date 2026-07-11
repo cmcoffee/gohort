@@ -112,9 +112,9 @@ type gemContent struct {
 }
 
 type gemPart struct {
-	Text             string              `json:"text,omitempty"`
-	Thought          bool                `json:"thought,omitempty"`
-	FunctionCall     *gemFunctionCall    `json:"functionCall,omitempty"`
+	Text             string               `json:"text,omitempty"`
+	Thought          bool                 `json:"thought,omitempty"`
+	FunctionCall     *gemFunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *gemFunctionResponse `json:"functionResponse,omitempty"`
 }
 
@@ -143,10 +143,10 @@ type gemThinkingConfig struct {
 }
 
 type gemGenerationConfig struct {
-	MaxOutputTokens int               `json:"maxOutputTokens,omitempty"`
-	Temperature     *float64          `json:"temperature,omitempty"`
-	ResponseMimeType string           `json:"responseMimeType,omitempty"`
-	ThinkingConfig  *gemThinkingConfig `json:"thinkingConfig,omitempty"`
+	MaxOutputTokens  int                `json:"maxOutputTokens,omitempty"`
+	Temperature      *float64           `json:"temperature,omitempty"`
+	ResponseMimeType string             `json:"responseMimeType,omitempty"`
+	ThinkingConfig   *gemThinkingConfig `json:"thinkingConfig,omitempty"`
 }
 
 type gemSafetySetting struct {

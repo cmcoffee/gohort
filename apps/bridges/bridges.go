@@ -371,11 +371,11 @@ func firstNonEmpty(vals ...string) string {
 // dashboard's connection status.
 type BridgeKey struct {
 	ID       string `json:"id"`
-	Name     string `json:"name"`            // friendly label, e.g. "Craig's MacBook"
-	Key      string `json:"key"`             // the secret; shown once on creation
-	Owner    string `json:"owner"`           // gohort user this bridge belongs to
-	Service  string `json:"service"`         // "imessage", "telegram", … (the bridge's service id)
-	Enabled  bool   `json:"enabled"`         // per-bridge switch; create sets true. Disabled = inbound recorded, not routed/delivered
+	Name     string `json:"name"`    // friendly label, e.g. "Craig's MacBook"
+	Key      string `json:"key"`     // the secret; shown once on creation
+	Owner    string `json:"owner"`   // gohort user this bridge belongs to
+	Service  string `json:"service"` // "imessage", "telegram", … (the bridge's service id)
+	Enabled  bool   `json:"enabled"` // per-bridge switch; create sets true. Disabled = inbound recorded, not routed/delivered
 	Created  string `json:"created"`
 	LastSeen string `json:"last_seen,omitempty"`
 }

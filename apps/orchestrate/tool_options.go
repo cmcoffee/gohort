@@ -15,13 +15,13 @@ import (
 //
 // Sources merged:
 //
-//   1. Globally-registered ChatTools minus BlockedTools, filtered to
-//      capabilities {Read, Network}.
-//   2. The given user's persistent temp tools — surfaces user-defined
-//      tools (vapi-style API wrappers, scripts, etc.) so admin groups
-//      that include them produce visible section headers in the modal.
-//      Empty user → no temp tools surfaced (e.g. unauthenticated
-//      preview path).
+//  1. Globally-registered ChatTools minus BlockedTools, filtered to
+//     capabilities {Read, Network}.
+//  2. The given user's persistent temp tools — surfaces user-defined
+//     tools (vapi-style API wrappers, scripts, etc.) so admin groups
+//     that include them produce visible section headers in the modal.
+//     Empty user → no temp tools surfaced (e.g. unauthenticated
+//     preview path).
 //
 // keep_going is dropped because the agent loop auto-loads it; users
 // shouldn't have to remember to enable it, and unchecking it would

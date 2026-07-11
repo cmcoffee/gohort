@@ -24,9 +24,9 @@ func init() { RegisterChatTool(&KeepGoingTool{}) }
 
 type KeepGoingTool struct{}
 
-func (t *KeepGoingTool) Name() string           { return "keep_going" }
-func (t *KeepGoingTool) IsFrameworkTool() bool  { return true } // always-wired round-shape essential
-func (t *KeepGoingTool) Caps() []Capability     { return nil }
+func (t *KeepGoingTool) Name() string          { return "keep_going" }
+func (t *KeepGoingTool) IsFrameworkTool() bool { return true } // always-wired round-shape essential
+func (t *KeepGoingTool) Caps() []Capability    { return nil }
 
 func (t *KeepGoingTool) Desc() string {
 	return "Call when you know you have more work to do but aren't ready to call the real tool yet (still planning the next step, or the next call depends on what you just learned). Returns a brief continuation message; the loop runs another round so you can take the real action then. The reason param is a private note to your next-round self."

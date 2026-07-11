@@ -38,6 +38,7 @@ const (
 	KindMinutes                    // duration, entered in minutes
 	KindHours                      // duration, entered in hours
 	KindDays                       // duration, entered in days
+	KindBool                       // on/off flag; stored as 0/1, rendered as a toggle
 )
 
 // TunableSpec describes one operator knob: its storage key, the admin category
@@ -123,6 +124,11 @@ func tuneValue(key string) float64 {
 
 // TuneInt returns an integer knob's effective value.
 func TuneInt(key string) int { return int(tuneValue(key)) }
+
+// TuneBool returns a KindBool knob's effective value (any nonzero stored value
+// is true). A stored 0 persists as false because a bool's Min is 0, so
+// tuneValue accepts the stored zero rather than falling back to the default.
+func TuneBool(key string) bool { return tuneValue(key) != 0 }
 
 // TuneFloat returns a float knob's effective value.
 func TuneFloat(key string) float64 { return tuneValue(key) }
@@ -231,9 +237,9 @@ func init() {
 // Retrieval accessors — keep the names the orchestrate recall code already
 // calls; bodies now resolve through the registry.
 
-func KnowledgeTopK() int       { return TuneInt(TunableKnowledgeTopK) }
-func KnowledgeMaxK() int       { return TuneInt(TunableKnowledgeMaxK) }
-func ReferenceRecallK() int    { return TuneInt(TunableReferenceK) }
-func RecallMinScore() float64  { return TuneFloat(TunableRecallMinScore) }
-func ChunkChars() int          { return TuneInt(TunableChunkChars) }
-func LLMMaxRetries() int       { return TuneInt(TunableLLMMaxRetries) }
+func KnowledgeTopK() int      { return TuneInt(TunableKnowledgeTopK) }
+func KnowledgeMaxK() int      { return TuneInt(TunableKnowledgeMaxK) }
+func ReferenceRecallK() int   { return TuneInt(TunableReferenceK) }
+func RecallMinScore() float64 { return TuneFloat(TunableRecallMinScore) }
+func ChunkChars() int         { return TuneInt(TunableChunkChars) }
+func LLMMaxRetries() int      { return TuneInt(TunableLLMMaxRetries) }

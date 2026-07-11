@@ -121,7 +121,7 @@ var zoneAliases = map[string]string{
 	"denver": "America/Denver", "phoenix": "America/Phoenix",
 	"toronto": "America/Toronto", "mexico city": "America/Mexico_City",
 	"sao paulo": "America/Sao_Paulo",
-	"london": "Europe/London", "uk": "Europe/London", "dublin": "Europe/Dublin", "lisbon": "Europe/Lisbon",
+	"london":    "Europe/London", "uk": "Europe/London", "dublin": "Europe/Dublin", "lisbon": "Europe/Lisbon",
 	"paris": "Europe/Paris", "berlin": "Europe/Berlin", "madrid": "Europe/Madrid", "rome": "Europe/Rome",
 	"amsterdam": "Europe/Amsterdam", "zurich": "Europe/Zurich", "stockholm": "Europe/Stockholm",
 	"moscow": "Europe/Moscow", "istanbul": "Europe/Istanbul", "athens": "Europe/Athens",

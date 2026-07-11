@@ -36,6 +36,16 @@ func buildTunableSections() []ui.Section {
 		if _, seen := byCat[s.Category]; !seen {
 			order = append(order, s.Category)
 		}
+		// Bool knobs render as a real toggle, not a 0/1 number field.
+		if s.Kind == KindBool {
+			byCat[s.Category] = append(byCat[s.Category], ui.FormField{
+				Field: s.Key,
+				Label: s.Label,
+				Type:  "toggle",
+				Help:  s.Help,
+			})
+			continue
+		}
 		unit := ""
 		switch s.Kind {
 		case KindSeconds:
@@ -345,9 +355,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := ui.Page{
-		Title:         "Administrator",
-		ShowTitle:     true,
-		BackURL:       "/",
+		Title:     "Administrator",
+		ShowTitle: true,
+		BackURL:   "/",
 		// Head registers the per-row "Reset password" modal client action.
 		// Migrated off a hand-written <script> blob onto the typed ui.Head
 		// builder — the framework assembles the <script>, the register call,
@@ -357,8 +367,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			JS(adminUsersModalJS).
 			ClientAction("admin_reset_password", adminResetPasswordAction),
 		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
-		Grid:      false,     // single column: sections stack vertically within each tab (Wide flags become no-ops)
-		Tabbed:    true,      // category tab bar across the top (the multiple menus); sections grouped below
+		Grid:     false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
+		Tabbed:   true,     // category tab bar across the top (the multiple menus); sections grouped below
 		Sections: []ui.Section{
 			{
 				Title:    "System Status",
@@ -644,8 +654,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
-				Title:     "LLM Routing",
-				Subtitle:  "Pick which tier handles each pipeline stage. \"lead\" uses the precision (remote) LLM. \"worker\" uses the local model. \"worker (thinking)\" enables extended reasoning on the local model. Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
+				Title:    "LLM Routing",
+				Subtitle: "Pick which tier handles each pipeline stage. \"lead\" uses the precision (remote) LLM. \"worker\" uses the local model. \"worker (thinking)\" enables extended reasoning on the local model. Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead.",
 				Body: ui.Table{
 					Source: "api/routing",
 					RowKey: "key",
@@ -1042,26 +1052,29 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Fields:      credentialFormFields(),
 								}),
 								// Enable/Disable pair — only one renders depending on
-								// current state. Disable uses warning (amber) so it
-								// reads as suspend-not-destroy, distinct from Delete.
+								// current state. Left NEUTRAL (no variant): the button
+								// color used to encode action-severity (green Enable /
+								// amber Disable), which contradicted the adjacent state
+								// badge — a green Enable sat next to a red "Disabled"
+								// badge. Only the label changes now; state color lives
+								// on the badge alone.
 								{Type: "button", Label: "Enable",
 									PostTo: "api/secure-api?action=enable&name={name}",
-									Method: "POST", OnlyIf: "disabled", Variant: "success"},
+									Method: "POST", OnlyIf: "disabled"},
 								{Type: "button", Label: "Disable",
-									PostTo:  "api/secure-api?action=disable&name={name}",
-									Method:  "POST",
-									HideIf:  "disabled",
-									Variant: "warning"},
+									PostTo: "api/secure-api?action=disable&name={name}",
+									Method: "POST",
+									HideIf: "disabled"},
 								// Open/Secure pair — Secure (formerly Restrict) reads
 								// more naturally for "lock down to wrapped tools only".
+								// Neutral for the same reason as Enable/Disable.
 								{Type: "button", Label: "Open",
 									PostTo: "api/secure-api?action=open&name={name}",
-									Method: "POST", OnlyIf: "restricted", Variant: "success"},
+									Method: "POST", OnlyIf: "restricted"},
 								{Type: "button", Label: "Secure",
-									PostTo:  "api/secure-api?action=restrict&name={name}",
-									Method:  "POST",
-									HideIf:  "restricted",
-									Variant: "warning"},
+									PostTo: "api/secure-api?action=restrict&name={name}",
+									Method: "POST",
+									HideIf: "restricted"},
 								// Delete stays red — irreversible destruction.
 								{Type: "button", Label: "Delete",
 									PostTo:  "api/secure-api?name={name}",
@@ -1141,14 +1154,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									SubmitLabel: "Save changes",
 									Fields:      mcpServerFormFields(),
 								}),
+								// Enable/Disable — neutral (label-only). State color
+								// lives on the "Enabled/Disabled" badge, not the button.
 								{Type: "button", Label: "Enable",
 									PostTo: "api/mcp-servers?action=enable&name={name}",
-									Method: "POST", HideIf: "enabled", Variant: "success"},
+									Method: "POST", HideIf: "enabled"},
 								{Type: "button", Label: "Disable",
-									PostTo:  "api/mcp-servers?action=disable&name={name}",
-									Method:  "POST",
-									OnlyIf:  "enabled",
-									Variant: "warning"},
+									PostTo: "api/mcp-servers?action=disable&name={name}",
+									Method: "POST",
+									OnlyIf: "enabled"},
 								// Connect (oauth servers only): a GET button that opens
 								// the start endpoint in a new tab; it 302-redirects to the
 								// hosted login. Authorizes the CURRENT user.
@@ -1753,7 +1767,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Ollama Proxy": "LLMs", "Agent Loop Tuning": "LLMs",
 		"Local Model Scheduler": "LLMs",
 
-		"Embeddings": "Capabilities",
+		"Embeddings":                "Capabilities",
 		"Audio Transcription (STT)": "Capabilities", "Image Generation": "Capabilities",
 		"Web Search": "Capabilities", "Mail (SMTP)": "System",
 		"Network Timeouts": "Tuning",
@@ -1802,7 +1816,6 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	})
 	page.ServeHTTP(w, r)
 }
-
 
 // userAdminHTML is the Add-account panel (top of the Users section). It must
 // surface the invite LINK for manual copy when mail isn't configured — which

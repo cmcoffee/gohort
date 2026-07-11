@@ -188,11 +188,11 @@ func (p *ollamaProxy) handleOllama(w http.ResponseWriter, r *http.Request, backe
 
 // ollamaChatRequest is the Ollama /api/chat request shape.
 type ollamaChatRequest struct {
-	Model    string             `json:"model"`
-	Messages []json.RawMessage  `json:"messages"`
-	Stream   bool               `json:"stream"`
-	Think    *bool              `json:"think,omitempty"`
-	Options  map[string]any     `json:"options,omitempty"`
+	Model    string            `json:"model"`
+	Messages []json.RawMessage `json:"messages"`
+	Stream   bool              `json:"stream"`
+	Think    *bool             `json:"think,omitempty"`
+	Options  map[string]any    `json:"options,omitempty"`
 }
 
 // oaiChatRequest is the OpenAI /v1/chat/completions request shape.
@@ -315,10 +315,10 @@ func (p *ollamaProxy) llamaCppChat(w http.ResponseWriter, ctx context.Context, e
 // llamaCppGenerate handles /api/generate by wrapping the prompt as a chat message.
 func (p *ollamaProxy) llamaCppGenerate(w http.ResponseWriter, ctx context.Context, endpoint, model string, body []byte) {
 	var req struct {
-		Model  string         `json:"model"`
-		Prompt string         `json:"prompt"`
-		Stream bool           `json:"stream"`
-		Think  *bool          `json:"think,omitempty"`
+		Model   string         `json:"model"`
+		Prompt  string         `json:"prompt"`
+		Stream  bool           `json:"stream"`
+		Think   *bool          `json:"think,omitempty"`
 		Options map[string]any `json:"options,omitempty"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -371,14 +371,14 @@ func (p *ollamaProxy) convertOAIToOllama(w http.ResponseWriter, body io.Reader, 
 			"role":    oaiResp.Choices[0].Message.Role,
 			"content": oaiResp.Choices[0].Message.Content,
 		},
-		"done":               true,
-		"done_reason":        oaiResp.Choices[0].FinishReason,
-		"prompt_eval_count":  oaiResp.Usage.PromptTokens,
-		"eval_count":         oaiResp.Usage.CompletionTokens,
-		"total_duration":     0,
-		"load_duration":      0,
+		"done":                 true,
+		"done_reason":          oaiResp.Choices[0].FinishReason,
+		"prompt_eval_count":    oaiResp.Usage.PromptTokens,
+		"eval_count":           oaiResp.Usage.CompletionTokens,
+		"total_duration":       0,
+		"load_duration":        0,
 		"prompt_eval_duration": 0,
-		"eval_duration":      0,
+		"eval_duration":        0,
 	}
 	json.NewEncoder(w).Encode(out)
 }

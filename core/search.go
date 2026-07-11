@@ -571,7 +571,7 @@ type SearchCache struct {
 // searchFlight tracks an in-progress search so concurrent callers wait
 // for the same result instead of hitting the API twice.
 type searchFlight struct {
-	done chan struct{}
+	done   chan struct{}
 	result string
 }
 
@@ -722,8 +722,14 @@ func RunConsensusSearches(cache *SearchCache, shortTopic string, jurisdictionTag
 
 	var wg sync.WaitGroup
 	wg.Add(3)
-	go func() { defer wg.Done(); sr[0] = ConsensusSearchResult{Query: q1, Results: CachedCrossSearch(cache, q1)} }()
-	go func() { defer wg.Done(); sr[1] = ConsensusSearchResult{Query: q2, Results: CachedCrossSearch(cache, q2)} }()
+	go func() {
+		defer wg.Done()
+		sr[0] = ConsensusSearchResult{Query: q1, Results: CachedCrossSearch(cache, q1)}
+	}()
+	go func() {
+		defer wg.Done()
+		sr[1] = ConsensusSearchResult{Query: q2, Results: CachedCrossSearch(cache, q2)}
+	}()
 	go func() { defer wg.Done(); sr[2] = ConsensusSearchResult{Query: q3, Results: CachedSearch(cache, q3)} }()
 	wg.Wait()
 
@@ -904,9 +910,9 @@ func IsLowQualitySource(url, title string) bool {
 	// a generic .com are weak signals on their own, but specific known
 	// hosts are safe to block.
 	for _, domain := range []string{
-		"chsperiscope.com",        // Chagrin Falls HS
-		"wsspaper.com",            // West Springfield HS
-		"thepeaksunset.com",       // Mt. Si HS
+		"chsperiscope.com",  // Chagrin Falls HS
+		"wsspaper.com",      // West Springfield HS
+		"thepeaksunset.com", // Mt. Si HS
 		"thepowelltribune.com/category/student",
 	} {
 		if strings.Contains(u, domain) {

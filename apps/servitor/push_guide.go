@@ -13,8 +13,8 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-//	GET  ?appliance_id=<id>  → {guides:[{id,title}]}  — only guides that reference this system
-//	POST {appliance_id, guide_id, section_title, text} → {ok}
+// GET  ?appliance_id=<id>  → {guides:[{id,title}]}  — only guides that reference this system
+// POST {appliance_id, guide_id, section_title, text} → {ok}
 func (T *Servitor) handlePushToGuide(w http.ResponseWriter, r *http.Request) {
 	userID, _, ok := RequireUser(w, r, T.DB)
 	if !ok {

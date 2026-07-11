@@ -20,8 +20,8 @@ import (
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
-func visionMaxDim() int { return TuneInt("tune_vision_max_dim") } // longest side for images sent to LLM
-func visionJQQual() int  { return TuneInt("tune_vision_jpeg_quality") } // JPEG quality for resized images
+func visionMaxDim() int { return TuneInt("tune_vision_max_dim") }      // longest side for images sent to LLM
+func visionJQQual() int { return TuneInt("tune_vision_jpeg_quality") } // JPEG quality for resized images
 
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_vision_max_dim", Category: "Limits", Label: "Vision image max dimension", Help: "Longest-side pixel cap for images downscaled before sending to the LLM.", Kind: KindInt, Default: 1024, Min: 256, Max: 4096})
@@ -32,10 +32,10 @@ func init() {
 // c.api.RequestTimeout as the per-read idle timeout. These defaults give:
 //   - llmConnectTimeout:  dial + TLS handshake cap
 //   - llmRequestTimeout:  fallback request timeout used by Gemini / model
-//                         listing endpoints. Chat calls go through
-//                         newLLMAPIClient (in llm.go) which honors the
-//                         operator-configured request_timeout_seconds and
-//                         falls back to 12 min when unset.
+//     listing endpoints. Chat calls go through
+//     newLLMAPIClient (in llm.go) which honors the
+//     operator-configured request_timeout_seconds and
+//     falls back to 12 min when unset.
 func llmConnectTimeout() time.Duration { return TuneDuration("tune_llm_connect_timeout") }
 func llmRequestTimeout() time.Duration { return TuneDuration("tune_llm_request_timeout") }
 
@@ -116,23 +116,23 @@ func StripThinkTags(s string) (string, bool) {
 
 // openAIClient implements the LLM interface for OpenAI-compatible APIs.
 type openAIClient struct {
-	apiKey            string
-	model             string
-	endpoint          string
-	api               *apiclient.APIClient
-	streamIdleTimeout time.Duration // Idle-read deadline for streaming chat calls; zero falls back to DefaultStreamIdleTimeout.
-	ollama            bool          // true when created via NewOllamaLLM
-	llamacpp          bool          // true when provider is llama.cpp server
-	llamacppBudget    int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
-	contextSize       int           // Ollama num_ctx; 0 uses ollamaDefaultCtx
-	disableThinking  bool // master override forcing think=false / thinking_budget_tokens=0 on every call.
-	nativeTools      bool // When true, send native tool specs. When false, strip them (tools handled via text prompts at agent loop level).
-	thinkingBudget   int  // Gemini thinking budget tokens (see llm_gemini.go); ignored by other providers.
-	noThinkUseKwarg      bool // llama.cpp: send chat_template_kwargs.enable_thinking=false on no-think calls.
-	noThinkSendBudget    bool // llama.cpp: send thinking_budget_tokens cap on no-think calls.
-	noThinkPrependSystem bool // llama.cpp: prepend "/no_think " to system prompt on no-think calls.
-	noThinkPrependUser   bool // llama.cpp: prepend "/no_think " to last user message on no-think calls.
-	noThinkBudget        int  // llama.cpp: budget value when noThinkSendBudget is true. 0 falls back to llamacppNoThinkDefaultBudget.
+	apiKey               string
+	model                string
+	endpoint             string
+	api                  *apiclient.APIClient
+	streamIdleTimeout    time.Duration // Idle-read deadline for streaming chat calls; zero falls back to DefaultStreamIdleTimeout.
+	ollama               bool          // true when created via NewOllamaLLM
+	llamacpp             bool          // true when provider is llama.cpp server
+	llamacppBudget       int           // llama.cpp: default thinking_budget_tokens (0 = server default, >0 = limit)
+	contextSize          int           // Ollama num_ctx; 0 uses ollamaDefaultCtx
+	disableThinking      bool          // master override forcing think=false / thinking_budget_tokens=0 on every call.
+	nativeTools          bool          // When true, send native tool specs. When false, strip them (tools handled via text prompts at agent loop level).
+	thinkingBudget       int           // Gemini thinking budget tokens (see llm_gemini.go); ignored by other providers.
+	noThinkUseKwarg      bool          // llama.cpp: send chat_template_kwargs.enable_thinking=false on no-think calls.
+	noThinkSendBudget    bool          // llama.cpp: send thinking_budget_tokens cap on no-think calls.
+	noThinkPrependSystem bool          // llama.cpp: prepend "/no_think " to system prompt on no-think calls.
+	noThinkPrependUser   bool          // llama.cpp: prepend "/no_think " to last user message on no-think calls.
+	noThinkBudget        int           // llama.cpp: budget value when noThinkSendBudget is true. 0 falls back to llamacppNoThinkDefaultBudget.
 }
 
 // llamacppNoThinkDefaultBudget is the thinking_budget_tokens cap used
@@ -874,7 +874,7 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 				// alongside the pixels.
 				text := m.Content
 				var contextBlocks []string
-				if meta := extractImagesMetadata(m.Images); meta != "" {
+				if meta := ExtractImagesMetadata(m.Images); meta != "" {
 					Debug("[vision] extracted metadata for %d image(s):\n%s", len(m.Images), meta)
 					contextBlocks = append(contextBlocks, meta)
 				} else if len(m.Images) > 0 {
@@ -888,11 +888,11 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 				// degrade — we send what we have, including raw text.
 				images := m.Images
 				if len(m.Videos) > 0 {
-					if meta := extractVideosMetadata(m.Videos); meta != "" {
+					if meta := ExtractVideosMetadata(m.Videos); meta != "" {
 						Debug("[vision] extracted metadata for %d video(s):\n%s", len(m.Videos), meta)
 						contextBlocks = append(contextBlocks, meta)
 					}
-					if frames := extractVideosFrames(m.Videos, videoFrameSampleCount); len(frames) > 0 {
+					if frames := ExtractVideosFrames(m.Videos, VideoFrameSampleCount); len(frames) > 0 {
 						Debug("[vision] sampled %d frame(s) across %d video(s)", len(frames), len(m.Videos))
 						images = append(images, frames...)
 					} else {
@@ -1064,8 +1064,8 @@ type nativeOllamaChatRequest struct {
 type nativeOllamaMessage struct {
 	Role      string                 `json:"role"`
 	Content   string                 `json:"content"`
-	Thinking  string                 `json:"thinking,omitempty"`  // preserve_thinking: prior turn's reasoning content
-	Images    []string               `json:"images,omitempty"`    // base64-encoded images for vision
+	Thinking  string                 `json:"thinking,omitempty"` // preserve_thinking: prior turn's reasoning content
+	Images    []string               `json:"images,omitempty"`   // base64-encoded images for vision
 	ToolCalls []nativeOllamaToolCall `json:"tool_calls,omitempty"`
 }
 
@@ -1652,7 +1652,6 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		}
 		finishReason = result.Choices[0].FinishReason
 		toolCalls = parseOAIToolCalls(result.Choices[0].Message.ToolCalls)
-
 
 		// Ollama's OpenAI-compatible endpoint embeds <think> blocks
 		// directly in content rather than separating them into reasoning.

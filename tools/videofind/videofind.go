@@ -44,9 +44,9 @@ func (t *FindVideoTool) Desc() string {
 
 func (t *FindVideoTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"query": {Type: "string", Description: "Description of the video to find (topic, creator, distinctive details). Phrase like you'd phrase a search query."},
+		"query":  {Type: "string", Description: "Description of the video to find (topic, creator, distinctive details). Phrase like you'd phrase a search query."},
 		"prefer": {Type: "string", Description: "Optional platform hint: youtube | tiktok | vimeo | twitter | reddit | instagram | twitch | facebook. Biases the search toward that site."},
-		"count": {Type: "integer", Description: "Optional. Number of candidates to return (1-5, default 1). Use >1 when you're uncertain which URL fits the user's request."},
+		"count":  {Type: "integer", Description: "Optional. Number of candidates to return (1-5, default 1). Use >1 when you're uncertain which URL fits the user's request."},
 	}
 }
 

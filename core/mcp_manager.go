@@ -17,8 +17,10 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -459,6 +461,18 @@ func (m *MCPManager) callToolForUser(ctx context.Context, user, server, rawName 
 	return conn.client.CallTool(ctx, rawName, args)
 }
 
+// MCPNotConnectedError signals that (user, server) has no per-user OAuth
+// token yet — an INTERACTIVE Connect is required before the tool can run.
+// It is distinguished from transport/config errors so a live chat turn can
+// raise an inline consent prompt (see mcpProxyTool.RunWithSession) instead
+// of surfacing a dead-end error string. Server is the integration id the
+// user must authorize.
+type MCPNotConnectedError struct{ Server string }
+
+func (e MCPNotConnectedError) Error() string {
+	return "not connected to " + e.Server + " — authorize your own account to use it"
+}
+
 // connFor resolves the connection to use for (user, server). Shared
 // servers use the single shared connection; oauth servers use the
 // caller's per-user connection, lazily dialed when the user holds a
@@ -480,7 +494,9 @@ func (m *MCPManager) connFor(user, server string) (*mcpConn, error) {
 			return conn, nil
 		}
 		if _, ok := m.loadOAuthToken(server, user); !ok {
-			return nil, fmt.Errorf("not connected to %q — authorize it in Admin -> MCP Servers -> Connect", server)
+			// Typed so a live chat turn can raise an inline Connect prompt
+			// (RunWithSession) rather than dead-ending on this string.
+			return nil, MCPNotConnectedError{Server: server}
 		}
 		conn, err := m.dialMCP(cfg, m.oauthAuthorizer(user, server))
 		if err != nil {
@@ -530,6 +546,54 @@ func (m *MCPManager) connected(user, server string) bool {
 // connection live, or the user holds an oauth token). Exported for the
 // admin UI's per-row status.
 func (m *MCPManager) Connected(user, server string) bool { return m.connected(user, server) }
+
+// PerUserOAuthConnectionsFor lists every enabled oauth-mode MCP server a user
+// can connect with their own account, each flagged connected/not. It reuses the
+// SecureAPI PerUserConnection shape so the Account page can render MCP servers in
+// the same "Connected accounts" panel as SecureAPI OAuth integrations. ConnectURL
+// is the account-relative consent path; Kind="mcp" so the panel routes Connect /
+// Disconnect to the MCP endpoints rather than the SecureAPI ones.
+func (m *MCPManager) PerUserOAuthConnectionsFor(user string) []PerUserConnection {
+	var out []PerUserConnection
+	for _, c := range m.List() {
+		if c.AuthMode != MCPAuthOAuth || !c.Enabled {
+			continue
+		}
+		desc := ""
+		if u, err := url.Parse(c.URL); err == nil && u.Host != "" {
+			desc = "Sign in with your own account at " + u.Host + "."
+		}
+		out = append(out, PerUserConnection{
+			Name:        c.Name,
+			Description: desc,
+			Connected:   m.connected(user, c.Name),
+			OAuth:       true,
+			Kind:        "mcp",
+			ConnectURL:  "mcp/connect?server=" + url.QueryEscape(c.Name),
+		})
+	}
+	return out
+}
+
+// DisconnectUser drops a user's per-user OAuth token for a server and tears
+// down their live connection. Idempotent — a no-op when no token/connection
+// exists. The server's tool schemas stay registered (shared across users); only
+// this user's dispatch loses its credential until they reconnect.
+func (m *MCPManager) DisconnectUser(user, server string) {
+	if !m.ready() || user == "" {
+		return
+	}
+	m.db.Unset(mcpServersTable, mcpOAuthTokKey(server, user))
+	key := user + "\x00" + server
+	m.mu.Lock()
+	conn := m.userConns[key]
+	delete(m.userConns, key)
+	m.mu.Unlock()
+	if conn != nil {
+		conn.alive.Store(false)
+		conn.client.Close()
+	}
+}
 
 // oauthAuthorizer returns a refresh-aware per-user Authorizer for an
 // oauth server: it sets a valid Bearer token, refreshing when near
@@ -811,7 +875,17 @@ func (t *mcpProxyTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess != nil {
 		user = sess.Username
 	}
-	return t.mgr.callTool(user, t.server, t.rawName, args)
+	out, err := t.mgr.callTool(user, t.server, t.rawName, args)
+	// The user holds no token for this oauth server yet. Raise an inline
+	// Connect affordance (the app wires ConnectPrompt to emit a
+	// connect_required block) and return LLM-actionable guidance instead of a
+	// dead-end error, so the model asks the user to authorize and retry.
+	var nc MCPNotConnectedError
+	if errors.As(err, &nc) && sess != nil && sess.ConnectPrompt != nil {
+		sess.ConnectPrompt(nc.Server)
+		return "", fmt.Errorf("you are not connected to %q. A Connect button has been shown to the user — ask them to click it, authorize their own %s account, then try again", nc.Server, nc.Server)
+	}
+	return out, err
 }
 
 // Required reports the required params (consumed by the schema builder).
@@ -843,6 +917,10 @@ type mcpReferenceSource struct {
 
 func (s mcpReferenceSource) Kind() string  { return "mcp:" + s.server }
 func (s mcpReferenceSource) Label() string { return s.server }
+
+// ReachesNetwork marks this as a network-reaching source (a remote MCP server),
+// so a private/offline consumer skips it when gathering grounding.
+func (s mcpReferenceSource) ReachesNetwork() bool { return true }
 
 func (s mcpReferenceSource) List(user string) []ReferenceItem {
 	cfg, ok := s.mgr.Load(s.server)

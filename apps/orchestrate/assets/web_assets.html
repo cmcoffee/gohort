@@ -180,6 +180,27 @@
 .ui-orch-ask.submitted .ui-orch-ask-extra.empty {
   display: none;
 }
+/* connect_required — inline "authorize your account" card. */
+.ui-orch-connect {
+  display: flex; align-items: center; gap: 0.7rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.ui-orch-connect-icon { font-size: 1.3rem; line-height: 1; }
+.ui-orch-connect-body { flex: 1; min-width: 0; }
+.ui-orch-connect-title { font-weight: 600; color: var(--text); }
+.ui-orch-connect-sub { font-size: 0.82rem; color: var(--text-mute); margin-top: 0.15rem; }
+.ui-orch-connect-btn {
+  background: var(--accent); color: var(--bg-0);
+  border: 1px solid var(--accent);
+  padding: 0.35rem 0.9rem; border-radius: 4px; cursor: pointer;
+  font-size: 0.82rem; font-family: inherit; white-space: nowrap;
+}
+.ui-orch-connect-btn:hover { background: var(--accent-hi, var(--accent)); }
+.ui-orch-connect-btn[disabled] { opacity: 0.6; cursor: default; }
+.ui-orch-connect.connected { border-color: var(--success); background: color-mix(in srgb, var(--success) 10%, transparent); }
 /* Small "answered" footer for clarity. */
 .ui-orch-ask.submitted::after {
   content: "\2713 Answered";
@@ -803,6 +824,42 @@
         submit.disabled = true;
       });
 
+      return {wrap: wrap, body: null};
+    });
+
+    // connect_required — a tool (today: a per-user OAuth MCP server backing this
+    // agent/pipeline) needs the user to authorize their own account before it can
+    // run. Renders a Connect card whose button opens the account consent popup;
+    // when the popup reports success (postMessage), the card flips to "connected"
+    // so the user knows to retry. Keeps them in the conversation — no trip to the
+    // Account page. The connect URL + server id come from the runner (core wires
+    // ConnectPrompt); this renderer is purely presentational.
+    window.uiRegisterBlockRenderer('connect_required', function(d) {
+      var server = String(d.server || 'this integration');
+      var url = String(d.url || '');
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🔌']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'}, ['Connect ' + server]));
+      msg.appendChild(el('div', {class: 'ui-orch-connect-sub'},
+        ['This needs access to your ' + server + ' account. Sign in to continue, then send your message again.']));
+      wrap.appendChild(msg);
+      var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Connect']);
+      if (!url) { btn.disabled = true; }
+      btn.addEventListener('click', function() {
+        var w = window.open(url, 'gohort-connect', 'width=600,height=760');
+        if (!w) { window.open(url, '_blank'); }
+      });
+      wrap.appendChild(btn);
+      window.addEventListener('message', function(e) {
+        if (e && e.data === 'gohort-mcp-connected') {
+          wrap.classList.add('connected');
+          btn.textContent = 'Connected';
+          btn.disabled = true;
+          msg.querySelector('.ui-orch-connect-sub').textContent =
+            'Connected. Send your message again to continue.';
+        }
+      });
       return {wrap: wrap, body: null};
     });
 
@@ -1888,202 +1945,6 @@
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.json();
           });
-      }
-
-      // renderAllowlistPicker — generic checkbox list of items, with
-      // checked state mirrored from agent[agentField] and toggles
-      // committing immediately via POST /api/agents merge. Used by
-      // the Knowledge modal (collections) and Skills modal (skills).
-      // Each item is expected to have {id, name, description?}.
-      //
-      // opts:
-      //   host: container element to render into
-      //   listURL: GET endpoint returning either an array or an
-      //            object with an "items" / records key — auto-detected
-      //   agentField: agent record key to merge (e.g. "attached_collections")
-      //   agentID: the active agent's ID
-      //   emptyText: shown when listURL returns no items
-      //   nameField / descField: optional, default "name" / "description"
-      function renderAllowlistPicker(opts) {
-        var host = opts.host;
-        var nameField = opts.nameField || 'name';
-        var descField = opts.descField || 'description';
-        host.innerHTML = '';
-        var loading = document.createElement('div');
-        loading.style.cssText = 'font-size:0.78rem;color:var(--text-mute);font-style:italic';
-        loading.textContent = 'Loading…';
-        host.appendChild(loading);
-
-        // Pull the items list AND the agent's current state in parallel.
-        // Race is fine — neither write back, both feed the render below.
-        Promise.all([
-          fetch(opts.listURL).then(function(r){ return r.ok ? r.json() : null; }),
-          fetchAgent(opts.agentID)
-        ]).then(function(results) {
-          host.innerHTML = '';
-          var raw = results[0];
-          var agent = results[1] || {};
-          // Auto-detect the items array. Top-level array first, then
-          // the common shaped-response keys. Endpoints in this app
-          // use a mix: collections returns {collections: [...]};
-          // skills returns {skills: [...]}. If a new endpoint uses
-          // yet another key, add it here OR pass opts.recordsField
-          // for explicit override.
-          var items = Array.isArray(raw) ? raw
-            : (opts.recordsField && raw && Array.isArray(raw[opts.recordsField])) ? raw[opts.recordsField]
-            : (raw && Array.isArray(raw.items)) ? raw.items
-            : (raw && Array.isArray(raw.records)) ? raw.records
-            : (raw && Array.isArray(raw.sources)) ? raw.sources
-            : (raw && Array.isArray(raw.collections)) ? raw.collections
-            : (raw && Array.isArray(raw.skills)) ? raw.skills
-            : (raw && Array.isArray(raw.pipelines)) ? raw.pipelines
-            : [];
-          if (items.length === 0) {
-            var emp = document.createElement('div');
-            emp.style.cssText = 'font-size:0.78rem;color:var(--text-mute);font-style:italic';
-            emp.textContent = opts.emptyText || '(nothing to show)';
-            host.appendChild(emp);
-            return;
-          }
-          var checked = {};
-          (agent[opts.agentField] || []).forEach(function(id){ checked[id] = true; });
-          var byId = {};  // id -> item record (chip labels + available rows)
-          items.forEach(function(it){ byId[it.id] = it; });
-          var pool = items.filter(function(it){ return !it.disabled; }); // selectable (skills carry a disabled flag)
-          var noun = opts.noun || 'item';
-
-          // POST /api/agents is a FULL-record replace, not a merge (that's
-          // only the LLM-side update_agent tool). We hold the record in the
-          // closure from the initial fetch; patch the one field and ship it.
-          function save() {
-            agent[opts.agentField] = Object.keys(checked);
-            return fetch('api/agents', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify(agent)
-            }).then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); });
-          }
-          // Single add/remove path shared by the "+" buttons and the pill
-          // ×'s; rolls the visual state back on a failed save.
-          function toggle(id, on) {
-            if (on) checked[id] = true; else delete checked[id];
-            renderChips(); renderAvail();
-            save().catch(function(err){
-              window.uiAlert('Save failed: ' + (err && err.message || err));
-              if (on) delete checked[id]; else checked[id] = true;
-              renderChips(); renderAvail();
-            });
-          }
-
-          // Enabled stores as removable pills.
-          var chipBar = document.createElement('div');
-          chipBar.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.5rem';
-          host.appendChild(chipBar);
-          function renderChips() {
-            chipBar.innerHTML = '';
-            var ids = Object.keys(checked);
-            if (!ids.length) {
-              var none = document.createElement('span');
-              none.style.cssText = 'font-size:0.74rem;color:var(--text-mute);font-style:italic';
-              none.textContent = 'None enabled yet.';
-              chipBar.appendChild(none);
-              return;
-            }
-            ids.forEach(function(cid){
-              var it = byId[cid];
-              var chip = document.createElement('span');
-              chip.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;padding:0.1rem 0.35rem 0.1rem 0.55rem;border:1px solid var(--border);border-radius:999px;font-size:0.74rem;color:var(--text)';
-              chip.appendChild(document.createTextNode((it && (it[nameField] || it.id)) || cid));
-              var x = document.createElement('span');
-              x.textContent = '×';
-              x.title = 'Remove';
-              x.style.cssText = 'cursor:pointer;color:var(--text-mute);font-weight:700';
-              x.onmouseover = function(){ x.style.color = 'var(--danger,#ff7b72)'; };
-              x.onmouseout  = function(){ x.style.color = 'var(--text-mute)'; };
-              x.onclick = function(){ toggle(cid, false); };
-              chip.appendChild(x);
-              chipBar.appendChild(chip);
-            });
-          }
-
-          // "+ Add <noun>" reveals the available list on demand rather than
-          // dumping the full catalog by default. Each available row carries a
-          // "+" that MOVES it out of the list and into the pills above.
-          var availOpen = false;
-          var addBtn = document.createElement('button');
-          addBtn.type = 'button';
-          addBtn.className = 'ui-row-btn';
-          addBtn.style.cssText = 'padding:0.3rem 0.7rem;font-size:0.8rem;margin-bottom:0.5rem';
-          host.appendChild(addBtn);
-          var availWrap = document.createElement('div');
-          availWrap.style.cssText = 'display:none;flex-direction:column;gap:0.3rem';
-          host.appendChild(availWrap);
-          function setAddLabel(){ addBtn.textContent = availOpen ? 'Hide list' : ('+ Add ' + noun); }
-          addBtn.onclick = function(){ availOpen = !availOpen; setAddLabel(); renderAvail(); };
-
-          function renderAvail() {
-            availWrap.style.display = availOpen ? 'flex' : 'none';
-            if (!availOpen) return;
-            availWrap.innerHTML = '';
-            var any = false;
-            pool.forEach(function(item) {
-              if (checked[item.id]) return;  // enabled ones live in the pills
-              any = true;
-              var row = document.createElement('div');
-              row.style.cssText = 'display:flex;align-items:flex-start;gap:0.55rem;padding:0.35rem 0.6rem;background:var(--bg-0);border:1px solid var(--border);border-radius:4px';
-              var meta = document.createElement('div');
-              meta.style.cssText = 'flex:1;min-width:0';
-              var nm = document.createElement('div');
-              nm.style.cssText = 'font-size:0.85rem;color:var(--text);font-weight:500';
-              nm.textContent = item[nameField] || item.id;
-              meta.appendChild(nm);
-              var desc = (item[descField] || '').trim();
-              if (desc) {
-                var d = document.createElement('div');
-                d.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.4;margin-top:0.15rem';
-                if (desc.length > 200) desc = desc.slice(0, 200) + '…';
-                d.textContent = desc;
-                meta.appendChild(d);
-              }
-              // Size line — only collections carry documents/chunks; skills
-              // and pipelines have neither, so it renders for collections only.
-              var bits = [];
-              if (item.documents != null) bits.push(item.documents + (item.documents === 1 ? ' doc' : ' docs'));
-              if (item.chunks != null) bits.push(item.chunks + ' chunks');
-              if (bits.length) {
-                var cnt = document.createElement('div');
-                cnt.style.cssText = 'font-size:0.72rem;color:var(--text-mute);margin-top:0.12rem;font-family:ui-monospace,Menlo,Consolas,monospace';
-                cnt.textContent = bits.join(' · ');
-                meta.appendChild(cnt);
-              }
-              var add = document.createElement('button');
-              add.type = 'button';
-              add.textContent = '+';
-              add.title = 'Add';
-              add.style.cssText = 'flex-shrink:0;align-self:center;background:transparent;color:var(--accent,#56d364);border:1px solid var(--accent,#56d364);border-radius:6px;padding:0.15rem 0.55rem;font-size:1rem;font-weight:700;cursor:pointer';
-              add.onclick = function(){ toggle(item.id, true); };
-              row.appendChild(meta);
-              row.appendChild(add);
-              availWrap.appendChild(row);
-            });
-            if (!any) {
-              var done = document.createElement('div');
-              done.style.cssText = 'font-size:0.78rem;color:var(--text-mute);font-style:italic;padding:0.2rem 0';
-              done.textContent = 'Everything is added.';
-              availWrap.appendChild(done);
-            }
-          }
-
-          setAddLabel();
-          renderChips();
-          renderAvail();
-        }).catch(function(err){
-          host.innerHTML = '';
-          var fail = document.createElement('div');
-          fail.style.cssText = 'font-size:0.78rem;color:var(--danger,#ff7b72)';
-          fail.textContent = 'Failed to load: ' + (err && err.message || err);
-          host.appendChild(fail);
-        });
       }
 
       window.uiRegisterClientAction('orchestrate_tools_modal', function(ctx) {
@@ -3273,15 +3134,22 @@
 
         body.appendChild(collectionsWrap);
 
-        var pickerOpts = {
-          host: collectionsList,
-          listURL: 'api/collections',
-          agentField: 'attached_collections',
-          agentID: id,
+        // Shared core/ui picker (attach mode) against the agent record:
+        // GET api/agents/<id> for the current attachment, full-record POST
+        // back to api/agents on every add/remove.
+        var pickerCfg = {
+          type: 'chip_picker', mode: 'attach',
+          options_source: 'api/collections',
+          record_source: 'api/agents/' + encodeURIComponent(id),
+          field: 'attached_collections',
+          post_to: 'api/agents',
+          name_field: 'id', label_field: 'name', desc_field: 'description',
+          meta_fields: ['documents', 'chunks'],
           noun: 'Knowledge',
-          emptyText: '(no collections yet — use + Create knowledge for this agent, or author one under Knowledge)'
+          empty_text: '(no collections yet — use + Create knowledge for this agent, or author one under Knowledge)'
         };
-        renderAllowlistPicker(pickerOpts);
+        function renderCollections() { collectionsList.innerHTML = ''; window.uiMountComponent(pickerCfg, collectionsList); }
+        renderCollections();
 
         scaffoldBtn.onclick = function() {
           scaffoldBtn.disabled = true;
@@ -3292,7 +3160,7 @@
             .then(function(out) {
               scaffoldStatus.style.color = 'var(--accent,#56d364)';
               scaffoldStatus.textContent = 'Created "' + (out.name || 'collection') + '"';
-              renderAllowlistPicker(pickerOpts);
+              renderCollections();
             })
             .catch(function(err){
               scaffoldStatus.style.color = 'var(--danger,#ff7b72)';
@@ -3332,14 +3200,16 @@
         pipesWrap.appendChild(pipesList);
         body.appendChild(pipesWrap);
 
-        renderAllowlistPicker({
-          host: pipesList,
-          listURL: 'api/pipelines',
-          agentField: 'attached_pipelines',
-          agentID: id,
+        window.uiMountComponent({
+          type: 'chip_picker', mode: 'attach',
+          options_source: 'api/pipelines',
+          record_source: 'api/agents/' + encodeURIComponent(id),
+          field: 'attached_pipelines',
+          post_to: 'api/agents',
+          name_field: 'id', label_field: 'name', desc_field: 'description',
           noun: 'Pipeline',
-          emptyText: '(no pipelines yet — author one from chat with the pipeline tool)'
-        });
+          empty_text: '(no pipelines yet — author one from chat with the pipeline tool)'
+        }, pipesList);
       });
 
       // --- Skills modal ----------------------------------------------
@@ -3369,14 +3239,16 @@
         skillsWrap.appendChild(skillsList);
         body.appendChild(skillsWrap);
 
-        renderAllowlistPicker({
-          host: skillsList,
-          listURL: 'api/skills/list',
-          agentField: 'allowed_skills',
-          agentID: id,
+        window.uiMountComponent({
+          type: 'chip_picker', mode: 'attach',
+          options_source: 'api/skills/list',
+          record_source: 'api/agents/' + encodeURIComponent(id),
+          field: 'allowed_skills',
+          post_to: 'api/agents',
+          name_field: 'id', label_field: 'name', desc_field: 'description',
           noun: 'Skill',
-          emptyText: '(no skills authored yet — use skill_def in Builder to make one)'
-        });
+          empty_text: '(no skills authored yet — use skill_def in Builder to make one)'
+        }, skillsList);
       });
 
       window.uiRegisterClientAction('orchestrate_rules_modal', function() {

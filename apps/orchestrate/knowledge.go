@@ -1187,15 +1187,15 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 					return strings.HasPrefix(c.ReportID, "orch-know-") // derived (memory_save) only
 				}
 				if hits := SearchChunksByPredicate(VectorDB, allow, vec, 1); len(hits) > 0 && float64(hits[0].Score) >= memorySaveDedupThreshold {
-					return fmt.Sprintf("Already saved (deduped): a near-identical finding is already in Memory (%.0f%% match). Skipping to avoid duplicate chunks — retrieve the existing one via memory(action=\"search\").",
-						hits[0].Score*100), nil
+					return fmt.Sprintf("Already saved (deduped): a near-identical finding is already in Memory (%.0f%% match). Skipping to avoid duplicate chunks — retrieve the existing one via %s.",
+						hits[0].Score*100, memRecallPhrase()), nil
 				}
 			}
 		}
 	}
 	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
-	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via memory(action=\"search\").",
-		len(content), topic), nil
+	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.",
+		len(content), topic, memRecallPhrase()), nil
 }
 
 // searchKnowledgeToolDef builds the read-side tool over the
@@ -1439,7 +1439,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				chunks = append(chunks, c)
 			}
 			if len(chunks) == 0 {
-				return fmt.Sprintf("No document found with doc_id=%q in your accessible knowledge corpus. The doc_id either doesn't exist, has been deleted, or belongs to a corpus you can't access. If you got the doc_id from a recent knowledge_search call and the document was deleted between turns, re-run the search.", docID), nil
+				return fmt.Sprintf("No document found with doc_id=%q in your accessible knowledge corpus. The doc_id either doesn't exist, has been deleted, or belongs to a corpus you can't access. If you got the doc_id from a recent %s call and the document was deleted between turns, re-run the search.", docID, memKnowledgePhrase()), nil
 			}
 			// Order by Section (alphabetical groups same-section parts
 			// together; (part 1)/(part 2) suffixes preserve order
@@ -1482,7 +1482,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				if idx := strings.LastIndex(truncated, "\n\n"); idx > maxChars/2 {
 					truncated = truncated[:idx]
 				}
-				out = truncated + fmt.Sprintf("\n\n[…truncated; full document is %d chars. Pass max_chars=%d to fetch more, or use knowledge_search with a tighter query to find the specific section you need.]", len(out), fetchKnowledgeDocCap)
+				out = truncated + fmt.Sprintf("\n\n[…truncated; full document is %d chars. Pass max_chars=%d to fetch more, or use %s with a tighter query to find the specific section you need.]", len(out), fetchKnowledgeDocCap, memKnowledgePhrase())
 			}
 			return out, nil
 		},

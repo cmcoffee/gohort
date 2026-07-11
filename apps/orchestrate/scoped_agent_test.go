@@ -246,9 +246,15 @@ func TestSeedScopedRulesOverlay(t *testing.T) {
 func TestForScopeHandlersRequireSession(t *testing.T) {
 	app := &OrchestrateApp{AppCore: AppCore{DB: &DBase{Store: kvlite.MemStore()}}}
 	for _, call := range []func(http.ResponseWriter, *http.Request){
-		func(w http.ResponseWriter, r *http.Request) { app.PublicHandleAgentGraphForScope(w, r, "app:test:a", "tmpl") },
-		func(w http.ResponseWriter, r *http.Request) { app.PublicHandleAgentFactsForScope(w, r, "app:test:a", "tmpl") },
-		func(w http.ResponseWriter, r *http.Request) { app.PublicHandleAgentKnowledgeForScope(w, r, "app:test:a", "tmpl") },
+		func(w http.ResponseWriter, r *http.Request) {
+			app.PublicHandleAgentGraphForScope(w, r, "app:test:a", "tmpl")
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			app.PublicHandleAgentFactsForScope(w, r, "app:test:a", "tmpl")
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			app.PublicHandleAgentKnowledgeForScope(w, r, "app:test:a", "tmpl")
+		},
 	} {
 		w := httptest.NewRecorder()
 		call(w, httptest.NewRequest(http.MethodGet, "/", nil)) // no session

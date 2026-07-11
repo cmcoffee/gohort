@@ -619,8 +619,22 @@ func (T *OrchestrateApp) PublicHandleSessionList(w http.ResponseWriter, r *http.
 		return
 	}
 	sessions := listChatSessions(udb, agentID)
+	// The Cortex home-thread lives as a session keyed "channel:<agentID>"
+	// (see cortexSessionID). Orchestrate's own UI lifts that row out of the
+	// list and renders it as the pinned "Cortex" hero (AltNavFlag). The
+	// exposed agent-as-an-app front deliberately opts out of that hero
+	// (apps/agents/agents.go), so without this filter the same row leaks
+	// into the ordinary session rail. Drop it here rather than teaching the
+	// shared core/ui runtime about the "channel:" key convention.
+	filtered := sessions[:0]
+	for _, s := range sessions {
+		if strings.HasPrefix(s.ID, "channel:") {
+			continue
+		}
+		filtered = append(filtered, s)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = jsonEncode(w, sessions)
+	_ = jsonEncode(w, filtered)
 }
 
 // PublicHandleSessionOne is GET (load) / DELETE (drop) / PATCH

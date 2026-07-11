@@ -45,6 +45,8 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleExport(w, r, udb, user)
 	case path == "audit":
 		T.handleAudit(w, r, udb, user)
+	case path == "apply-audit":
+		T.handleApplyAudit(w, r, udb, user)
 	case path == "reorganize":
 		T.handleReorganize(w, r, udb, user)
 	case path == "update-sources":
@@ -174,7 +176,6 @@ func (T *Guides) handleNew(w http.ResponseWriter, r *http.Request, udb Database,
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
-
 // normalizeShareMode maps an arbitrary mode string to a stored ShareMode: "edit"
 // stays "edit", anything else is view-only ("").
 func normalizeShareMode(mode string) string {
@@ -299,6 +300,24 @@ func (T *Guides) handleRestore(w http.ResponseWriter, r *http.Request, udb Datab
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
+// applyAction is the optional follow-up button a "report" action can return so a
+// read-only report offers a one-click apply (see core/ui WorkbenchAction, Kind
+// "report"). The modal POSTs the report markdown to URL as {report: ...}.
+type applyAction struct {
+	Label      string   `json:"label"`
+	URL        string   `json:"url"`
+	Spinner    string   `json:"spinner,omitempty"`
+	Confirm    string   `json:"confirm,omitempty"`
+	Invalidate []string `json:"invalidate,omitempty"`
+}
+
+// reportResp is a "report" action's JSON response: the markdown to show, plus an
+// optional apply action.
+type reportResp struct {
+	Report string       `json:"report"`
+	Apply  *applyAction `json:"apply,omitempty"`
+}
+
 // handleAudit checks whether a guide is still current + still reflects its
 // LINKED SOURCES. It gathers a snapshot of the guide's attached collections and
 // reference sources (owner-scoped), then dispatches seed-research to compare the
@@ -396,7 +415,67 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 		http.Error(w, "audit failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, map[string]string{"report": cleanupNote + report})
+	// Offer a one-click apply: the report is read-only, but the author shouldn't
+	// have to hand-carry each finding into the chat. The apply endpoint feeds
+	// these exact findings back to the Guide Author to apply as revisions.
+	writeJSON(w, reportResp{
+		Report: cleanupNote + report,
+		Apply: &applyAction{
+			Label:      "Apply these fixes",
+			URL:        "apply-audit?id={id}",
+			Spinner:    "Applying…",
+			Confirm:    "Have the Guide Author apply the audit's recommended edits? Each change is saved as a revision you can roll back from History.",
+			Invalidate: []string{"guides"},
+		},
+	})
+}
+
+// handleApplyAudit takes an audit report (the findings, posted back from the
+// audit modal) and dispatches the Guide Author to APPLY those recommendations as
+// revisions — the mutating counterpart to the read-only audit. Owner/editor only.
+// Grounds edits in the guide's linked sources; honors Private (no-internet).
+func (T *Guides) handleApplyAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, owner, _, ok := resolveGuide(T.DB, udb, user, id)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if !(CanManageShared(user, owner, RequestIsAdmin(r)) || g.sharedForEdit()) {
+		http.Error(w, "you don't have edit access to this guide", http.StatusForbidden)
+		return
+	}
+	if len(g.Sections) == 0 {
+		writeJSON(w, map[string]string{"report": "_This guide has no sections yet — nothing to apply._"})
+		return
+	}
+	var body struct {
+		Report string `json:"report"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	findings := strings.TrimSpace(body.Report)
+	if findings == "" {
+		http.Error(w, "no audit findings to apply", http.StatusBadRequest)
+		return
+	}
+	orch := findOrchestrate()
+	if orch == nil {
+		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	report, err := T.runApplyAudit(r.Context(), udb, orch, user, id, findings, g.Private)
+	if err != nil {
+		http.Error(w, "apply failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if strings.TrimSpace(report) == "" {
+		report = "Applied. Review the guide and use History to roll back if needed."
+	}
+	writeJSON(w, map[string]string{"report": report})
 }
 
 // reorgSysPrompt steers the worker LLM to return ONLY a JSON ordering.
@@ -723,25 +802,34 @@ func (T *Guides) handleCollections(w http.ResponseWriter, r *http.Request, udb D
 	}
 }
 
-// handleReferences drives the per-guide Sources picker. GET ?guide=<id> returns
-// {groups: [ReferenceGroup], attached: [{kind,item_id}]} — every reference source
-// available to the user (servitor Systems, connected document sources) plus the
-// selections already attached to this guide. POST ?guide=<id> with
-// {references:[{kind,item_id}]} stores the selection on the guide. The registry
-// is per-user + access-gated, so the user only ever sees their own sources.
+// handleReferences drives the per-guide Sources picker. It speaks the generic
+// core/ui chip_picker (attach) contract so the shared component renders it:
+// GET ?guide=<id> returns {items: [{id,name,desc,group}], attached: [id]} where
+// each id is the composite "<kind>::<item_id>" and group is the source label —
+// every reference source available to the user (servitor Systems, connected
+// document sources) flattened, plus the ids already attached to this guide. POST
+// ?guide=<id> takes {references:[id]} and splits each composite id back into the
+// stored {kind,item_id}. The registry is per-user + access-gated, so the user
+// only ever sees their own sources.
 func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	switch r.Method {
 	case http.MethodGet:
-		groups := ReferenceGroups(user)
-		if groups == nil {
-			groups = []ReferenceGroup{}
+		items := []map[string]string{}
+		for _, grp := range ReferenceGroups(user) {
+			for _, it := range grp.Items {
+				items = append(items, map[string]string{
+					"id": grp.Kind + "::" + it.ID, "name": it.Name, "desc": it.Desc, "group": grp.Label,
+				})
+			}
 		}
-		attached := []ReferenceSelection{}
-		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok && g.References != nil {
-			attached = g.References
+		attached := []string{}
+		if g, _, _, _, ok := T.resolve(r, udb, user, gid); ok {
+			for _, s := range g.References {
+				attached = append(attached, s.Kind+"::"+s.ItemID)
+			}
 		}
-		writeJSON(w, map[string]any{"groups": groups, "attached": attached})
+		writeJSON(w, map[string]any{"items": items, "attached": attached})
 	case http.MethodPost:
 		g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, gid)
 		if !found {
@@ -753,13 +841,21 @@ func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 			return
 		}
 		var body struct {
-			References []ReferenceSelection `json:"references"`
+			References []string `json:"references"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		g.References = body.References
+		sel := make([]ReferenceSelection, 0, len(body.References))
+		for _, id := range body.References {
+			parts := strings.SplitN(id, "::", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				continue
+			}
+			sel = append(sel, ReferenceSelection{Kind: parts[0], ItemID: parts[1]})
+		}
+		g.References = sel
 		saveGuide(ownerUDB, g) // attachment is not a content change — no revision snapshot
 		writeJSON(w, map[string]bool{"ok": true})
 	default:
@@ -829,6 +925,11 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 			agent.ForcePrivate = true
 			agent.AllowedTools = withoutToolNames(agent.AllowedTools, "web_search", "fetch_url")
 			tools = withoutTools(tools, "research")
+			// Drop any attached-source tool that reaches the network or executes
+			// (e.g. a system's live investigate_<system>): a Private guide must stay
+			// off the wire. Read-only source tools (search_<system>_knowledge,
+			// get_<system>_facts) and the unannotated section-editing tools survive.
+			tools = FilterToolsByCaps(tools, []Capability{CapRead, CapWrite})
 		}
 	}
 	orch.PublicHandleSendWithAppTools(w, r, agent, tools)

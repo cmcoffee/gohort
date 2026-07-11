@@ -68,13 +68,13 @@ func (T *AgentsApp) WebHidden() bool { return true }
 // have path-parameter routing, so we parse the slug ourselves and
 // dispatch. URLs:
 //
-//   /                            — directory (lists exposed agents)
-//   /<slug>/                     — chat page
-//   /<slug>/api/send             — SSE chat (resolves slug, dispatches)
-//   /<slug>/api/cancel           — abort in-flight round
-//   /<slug>/api/sessions         — list user's sessions for this agent
-//   /<slug>/api/sessions/<sid>   — load / delete / truncate one session
-//   /<slug>/api/memory           — read / replace this user's memory under the agent
+//	/                            — directory (lists exposed agents)
+//	/<slug>/                     — chat page
+//	/<slug>/api/send             — SSE chat (resolves slug, dispatches)
+//	/<slug>/api/cancel           — abort in-flight round
+//	/<slug>/api/sessions         — list user's sessions for this agent
+//	/<slug>/api/sessions/<sid>   — load / delete / truncate one session
+//	/<slug>/api/memory           — read / replace this user's memory under the agent
 func (T *AgentsApp) Routes() {
 	T.HandleFunc("/", T.dispatch)
 }
@@ -313,9 +313,9 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		// dropdown-style buttons; no persistent rail.
 		// Matches the classic chat-app surface where
 		// one conversation owns the whole pane.
-		ListPosition:  "top",
-		SendURL:       "api/send",
-		CancelURL:     "api/cancel",
+		ListPosition: "top",
+		SendURL:      "api/send",
+		CancelURL:    "api/cancel",
 		// Run-stream reconnect: if the live /api/send socket drops mid-turn (a long
 		// RAG turn over a flaky link), the panel resumes from the run buffer instead
 		// of silently losing the reply until reload. Matches the admin console.

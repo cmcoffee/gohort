@@ -82,18 +82,18 @@ type memoryModeText struct {
 //
 // Two modes:
 //
-//   "agent" (default, narrow): store_fact is reserved for
-//     generalized lessons — the kind of design principle or recurring
-//     gotcha you'd want to recall across every future job. Anything
-//     more specific (an API quirk, a working approach, a configuration
-//     detail) belongs in Reference Memory via memory_save — searchable
-//     by similarity, not always in prompt.
+//	"agent" (default, narrow): store_fact is reserved for
+//	  generalized lessons — the kind of design principle or recurring
+//	  gotcha you'd want to recall across every future job. Anything
+//	  more specific (an API quirk, a working approach, a configuration
+//	  detail) belongs in Reference Memory via memory_save — searchable
+//	  by similarity, not always in prompt.
 //
-//   "chatbot" (broader): store_fact is generalized lessons PLUS user
-//     personalization (name, preferences, recurring details) PLUS
-//     memorable notes that keep conversation coherent across sessions
-//     ("the project we discussed last week", "the user is on the beta
-//     plan"). Reference Memory works the same way as in agent mode.
+//	"chatbot" (broader): store_fact is generalized lessons PLUS user
+//	  personalization (name, preferences, recurring details) PLUS
+//	  memorable notes that keep conversation coherent across sessions
+//	  ("the project we discussed last week", "the user is on the beta
+//	  plan"). Reference Memory works the same way as in agent mode.
 //
 // Both modes use Reference Memory (memory_save) identically; the mode
 // only widens or narrows what fits in the Explicit Memory bucket.

@@ -9,8 +9,8 @@ const (
 	MailTable        = "mail_config"
 	SearchTable      = "search_config"
 	ImageTable       = "image_config"
-	EmbeddingTable   = "embedding_config" // endpoint + model for vector-DB ingestion
-	EmbeddedChunks   = "embedded_chunks"  // stored per-chunk vectors keyed by chunk ID
+	EmbeddingTable   = "embedding_config"  // endpoint + model for vector-DB ingestion
+	EmbeddedChunks   = "embedded_chunks"   // stored per-chunk vectors keyed by chunk ID
 	TranscribeTable  = "transcribe_config" // endpoint + model for audio transcription (STT)
 	RoutingTable     = "llm_routing"
 	WebTable         = "web_config"

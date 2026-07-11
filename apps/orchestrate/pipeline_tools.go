@@ -53,14 +53,22 @@ func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg s
 			cleanNames = append(cleanNames, n)
 		}
 	}
-	tools, err := GetAgentTools(cleanNames...)
+	// Bind a session carrying the parent user + live callbacks so per-user
+	// tools work inside pipeline stages: an OAuth MCP tool resolves THIS user's
+	// token, and when they haven't authorized it raises the inline Connect
+	// prompt (ConnectPrompt) into the live conversation — same as a top-level
+	// agent turn. Without a session, session-aware tools get user="" and the
+	// per-user path can't run.
+	subSess := &ToolSession{Username: t.user, Ctx: ctx}
+	t.wireLiveCallbacks(subSess)
+	tools, err := GetAgentToolsWithSession(subSess, cleanNames...)
 	if err != nil {
 		// One bad name shouldn't kill the whole pipeline. Fall back
 		// to filtering individually so the sub-agent gets whatever
 		// was valid.
 		tools = nil
 		for _, n := range cleanNames {
-			if td, terr := GetAgentTools(n); terr == nil && len(td) > 0 {
+			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
 				tools = append(tools, td[0])
 			}
 		}

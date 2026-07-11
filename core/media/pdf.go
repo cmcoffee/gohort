@@ -1,4 +1,9 @@
-package core
+// Package media holds gohort's pure media-processing leaves — PDF rendering,
+// image/video metadata extraction, and frame sampling. It depends only on
+// stdlib, third-party codecs, and snugforge/nfo (logging); it does NOT import
+// core, so core (and apps) import it one-directionally with no cycle. This is
+// the first extraction from the core hub — see core modularization.
+package media
 
 import (
 	"bytes"
@@ -27,11 +32,11 @@ const (
 	pdfMarginT    = 20.0
 	pdfMarginB    = 20.0
 	pdfBodyW      = pdfPageW - pdfMarginL - pdfMarginR
-	pdfLineH      = 7.0  // ~1.7x line height for 12pt body text
-	pdfParaGap    = 3.0  // gap after paragraphs
-	pdfSectionGap = 6.0  // gap before section headers
-	pdfListIndent = 6.0  // bullet/number indent
-	pdfQuoteInset = 8.0  // blockquote left inset
+	pdfLineH      = 7.0 // ~1.7x line height for 12pt body text
+	pdfParaGap    = 3.0 // gap after paragraphs
+	pdfSectionGap = 6.0 // gap before section headers
+	pdfListIndent = 6.0 // bullet/number indent
+	pdfQuoteInset = 8.0 // blockquote left inset
 )
 
 // pdfWriter wraps an fpdf.Fpdf instance and provides markdown-aware
@@ -219,8 +224,12 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 				in_code = false
 				pw.ln(pdfParaGap)
 			} else {
-				if in_list { in_list = false }
-				if in_ol { in_ol = false }
+				if in_list {
+					in_list = false
+				}
+				if in_ol {
+					in_ol = false
+				}
 				in_code = true
 				pw.ln(1)
 			}
@@ -244,8 +253,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 		// reset list state); paragraph-internal pdfParaGap handles
 		// inter-line spacing.
 		if stripped == "" {
-			if in_list { in_list = false }
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_list {
+				in_list = false
+			}
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			if in_sources {
 				pw.ln(0.8)
 			}
@@ -259,8 +273,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// H1.
 		if strings.HasPrefix(stripped, "# ") && !strings.HasPrefix(stripped, "## ") {
-			if in_list { in_list = false }
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_list {
+				in_list = false
+			}
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			pw.ln(pdfSectionGap)
 			pw.setFont("Arial", "B", 18)
 			pw.setColor(36, 41, 47) // #24292f
@@ -271,8 +290,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// H2: browser default ~18pt, color #0550ae with bottom border.
 		if strings.HasPrefix(stripped, "## ") {
-			if in_list { in_list = false }
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_list {
+				in_list = false
+			}
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			pw.ln(pdfSectionGap + 2)
 			pw.setFont("Arial", "B", 18)
 			pw.setColor(5, 80, 174) // #0550ae
@@ -288,8 +312,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// H3: browser default ~14pt, color #24292f.
 		if strings.HasPrefix(stripped, "### ") {
-			if in_list { in_list = false }
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_list {
+				in_list = false
+			}
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			pw.ln(pdfSectionGap)
 			pw.setFont("Arial", "B", 14)
 			pw.setColor(36, 41, 47) // #24292f
@@ -300,8 +329,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// H4.
 		if strings.HasPrefix(stripped, "#### ") {
-			if in_list { in_list = false }
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_list {
+				in_list = false
+			}
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			pw.ln(pdfSectionGap - 1)
 			pw.setFont("Arial", "B", 12)
 			pw.setColor(36, 41, 47)
@@ -319,7 +353,10 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// Bullet list: browser uses margin 0.5rem top, li margin-bottom 0.3rem.
 		if strings.HasPrefix(stripped, "- ") || strings.HasPrefix(stripped, "* ") {
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			in_list = true
 			pw.setFont("Arial", "", 12)
 			pw.setColor(36, 41, 47)
@@ -332,7 +369,9 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// Numbered list.
 		if len(stripped) > 2 && stripped[0] >= '0' && stripped[0] <= '9' && strings.Contains(stripped[:min(5, len(stripped))], ". ") {
-			if in_list { in_list = false }
+			if in_list {
+				in_list = false
+			}
 			in_ol = true
 			ol_num++
 			dot := strings.Index(stripped, ". ")
@@ -347,8 +386,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 
 		// Blockquote.
 		if strings.HasPrefix(stripped, "> ") {
-			if in_list { in_list = false }
-			if in_ol { in_ol = false; ol_num = 0 }
+			if in_list {
+				in_list = false
+			}
+			if in_ol {
+				in_ol = false
+				ol_num = 0
+			}
 			y := pw.pdf.GetY()
 			pw.pdf.SetDrawColor(5, 80, 174)
 			pw.pdf.SetLineWidth(0.6)
@@ -374,8 +418,13 @@ func (pw *pdfWriter) renderMarkdown(md string) {
 		}
 
 		// Regular paragraph: 12pt, #24292f, 1.7x line height.
-		if in_list { in_list = false }
-		if in_ol { in_ol = false; ol_num = 0 }
+		if in_list {
+			in_list = false
+		}
+		if in_ol {
+			in_ol = false
+			ol_num = 0
+		}
 		pw.setFont("Arial", "", 12)
 		pw.setColor(36, 41, 47) // #24292f
 		pw.writeInline(stripped)

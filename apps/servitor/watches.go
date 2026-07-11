@@ -19,10 +19,10 @@ type ScheduledWatch struct {
 	ID          string `json:"id"`
 	ApplianceID string `json:"appliance_id"`
 	UserID      string `json:"user_id"`
-	Task        string `json:"task"`       // human description
-	Command     string `json:"command"`    // SSH command to run each tick
-	Pattern     string `json:"pattern"`    // substring in output → condition met
-	TimeoutAt   string `json:"timeout_at"` // RFC3339 — give up after this
+	Task        string `json:"task"`        // human description
+	Command     string `json:"command"`     // SSH command to run each tick
+	Pattern     string `json:"pattern"`     // substring in output → condition met
+	TimeoutAt   string `json:"timeout_at"`  // RFC3339 — give up after this
 	NextRunAt   string `json:"next_run_at"` // RFC3339 — when to run next
 	Created     string `json:"created"`
 	Done        bool   `json:"done"`

@@ -78,7 +78,7 @@ type BrowsePageTool struct {
 	mu      sync.Mutex
 }
 
-func (t *BrowsePageTool) Name() string { return "browse_page" }
+func (t *BrowsePageTool) Name() string       { return "browse_page" }
 func (t *BrowsePageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // headless browser fetch
 func (t *BrowsePageTool) Desc() string {
 	return "Load a URL in a real browser (JavaScript executed, cookies handled) and return " +

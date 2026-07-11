@@ -90,9 +90,9 @@ type SecureCredential struct {
 	// legacy credentials carrying only AllowedURLPattern keep working.
 	BaseURL          string   `json:"base_url,omitempty"`
 	AllowedEndpoints []string `json:"allowed_endpoints,omitempty"`
-	Description       string `json:"description,omitempty"`
-	ParamName         string `json:"param_name,omitempty"`
-	RequiresConfirm   bool   `json:"requires_confirm"`
+	Description      string   `json:"description,omitempty"`
+	ParamName        string   `json:"param_name,omitempty"`
+	RequiresConfirm  bool     `json:"requires_confirm"`
 	// CostPerCall, when > 0, prices each dispatched call through this
 	// credential into the admin cost chart + per-source breakdown (a "cost
 	// hook"). 0 = untracked (a free endpoint). Recorded via RecordExternalCost.
@@ -151,16 +151,16 @@ type SecureCredential struct {
 	// refresh_token). The minted access token is stored encrypted + cached
 	// (apiclient TokenStore) and injected as Authorization: Bearer. See
 	// secure_api_oauth.go.
-	Grant       string `json:"grant,omitempty"`        // client_credentials | jwt_bearer | refresh_token | authorization_code
+	Grant        string `json:"grant,omitempty"`         // client_credentials | jwt_bearer | refresh_token | authorization_code
 	AuthorizeURL string `json:"authorize_url,omitempty"` // authorization_code: the provider's consent (authorize) endpoint
-	TokenURL    string `json:"token_url,omitempty"`    // OAuth token endpoint (https)
-	ClientID    string `json:"client_id,omitempty"`    // client_credentials / refresh_token / password
-	Username    string `json:"username,omitempty"`     // password grant: resource-owner username (config, not secret)
-	Scope       string `json:"scope,omitempty"`        // requested scopes (space-separated)
-	JWTIssuer   string `json:"jwt_issuer,omitempty"`   // jwt_bearer: iss claim
-	JWTSubject  string `json:"jwt_subject,omitempty"`  // jwt_bearer: sub claim (optional)
-	JWTAudience string `json:"jwt_audience,omitempty"` // jwt_bearer: aud (defaults to token_url)
-	JWTKeyID    string `json:"jwt_key_id,omitempty"`   // jwt_bearer: kid header (optional)
+	TokenURL     string `json:"token_url,omitempty"`     // OAuth token endpoint (https)
+	ClientID     string `json:"client_id,omitempty"`     // client_credentials / refresh_token / password
+	Username     string `json:"username,omitempty"`      // password grant: resource-owner username (config, not secret)
+	Scope        string `json:"scope,omitempty"`         // requested scopes (space-separated)
+	JWTIssuer    string `json:"jwt_issuer,omitempty"`    // jwt_bearer: iss claim
+	JWTSubject   string `json:"jwt_subject,omitempty"`   // jwt_bearer: sub claim (optional)
+	JWTAudience  string `json:"jwt_audience,omitempty"`  // jwt_bearer: aud (defaults to token_url)
+	JWTKeyID     string `json:"jwt_key_id,omitempty"`    // jwt_bearer: kid header (optional)
 	// CredScope selects whose secret a request uses:
 	//   "" / "shared" — one deployment secret (the admin's), used for every
 	//     user's calls (the legacy/default behavior). Right for a shared service
@@ -489,6 +489,12 @@ type PerUserConnection struct {
 	Description string `json:"description,omitempty"`
 	Connected   bool   `json:"connected"`
 	OAuth       bool   `json:"oauth"` // true → connect via the consent flow (Connect button), false → paste a key
+	// Kind identifies which subsystem owns this connection so the Account panel
+	// routes Connect/Disconnect correctly: "" (SecureAPI, the default) or "mcp"
+	// (a per-user OAuth MCP server). ConnectURL, when set, is the account-relative
+	// consent path for OAuth kinds that don't use the default SecureAPI route.
+	Kind       string `json:"kind,omitempty"`
+	ConnectURL string `json:"connect_url,omitempty"`
 }
 
 // PerUserConnectionsFor returns the per_user credentials a user can connect, each
@@ -1298,10 +1304,11 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 // including slashes. Designed for endpoint allowlisting, not arbitrary
 // regex (regex is too easy to get wrong).
 //
-//   https://api.github.com/*           matches https://api.github.com/repos
-//                                      does NOT match https://api.github.com/repos/x/y
-//   https://api.github.com/**          matches both above
-//   https://api.example.com/users/*    matches /users/me, NOT /users/me/repos
+//	https://api.github.com/*           matches https://api.github.com/repos
+//	                                   does NOT match https://api.github.com/repos/x/y
+//	https://api.github.com/**          matches both above
+//	https://api.example.com/users/*    matches /users/me, NOT /users/me/repos
+//
 // Repeated-rejection guard. A credential whose allow-list / scheme keeps
 // rejecting requests in a short window is misconfigured (wrong base_url,
 // endpoints, or scheme) — retrying different URLs can never fix that. After a

@@ -127,9 +127,9 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 					// top bundle alongside the action buttons.
 					ListPosition:         "top",
 					ExtraFieldsInSidebar: true,
-					IDField:       "id",
-					TitleField:    "name",
-					DateField:     "updated",
+					IDField:              "id",
+					TitleField:           "name",
+					DateField:            "updated",
 
 					// SendURL returns JSON {session_id}; runtime then
 					// subscribes to EventsURL. This separation buys
@@ -269,4 +269,3 @@ func (T *Servitor) handleProfile(w http.ResponseWriter, r *http.Request) {
 		"scanned": a.Scanned,
 	})
 }
-

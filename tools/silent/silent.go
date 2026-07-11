@@ -11,9 +11,9 @@ func init() { RegisterChatTool(new(StaySilentTool)) }
 // delivers the file with no caption.
 type StaySilentTool struct{}
 
-func (t *StaySilentTool) Name() string             { return "stay_silent" }
-func (t *StaySilentTool) IsFrameworkTool() bool    { return true } // always-wired round-shape essential
-func (t *StaySilentTool) Caps() []Capability       { return nil }  // control-flow signal — no side effects
+func (t *StaySilentTool) Name() string          { return "stay_silent" }
+func (t *StaySilentTool) IsFrameworkTool() bool { return true } // always-wired round-shape essential
+func (t *StaySilentTool) Caps() []Capability    { return nil }  // control-flow signal — no side effects
 func (t *StaySilentTool) Desc() string {
 	return "Suppress your text reply this turn — user receives NO text. Use only when (a) attachments you produced are the message, or (b) you decided to take no action. Do NOT use after completing requested work — user wants confirmation. Calling this closes the turn."
 }

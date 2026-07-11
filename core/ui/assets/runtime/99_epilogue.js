@@ -11,6 +11,11 @@
     parent.appendChild(fn(cfg, ctx));
   }
 
+  // Public entry so app-specific JS (client actions, modals) can mount a
+  // declared component into any host — e.g. drop a chip_picker into a
+  // uiOpenSimpleModal body instead of hand-rolling the DOM.
+  window.uiMountComponent = mountComponent;
+
   // --- Pull-to-refresh: shared across all Tables on the page -----------
   var ptrCallbacks = [];
   function setupPTR(cb) { ptrCallbacks.push(cb); }

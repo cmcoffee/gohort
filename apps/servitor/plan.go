@@ -33,11 +33,11 @@ type PlanStep struct {
 // investigation. If durable plan storage becomes useful later, swap the
 // session map for a kvlite table.
 type Plan struct {
-	mu             sync.Mutex
-	Steps          []PlanStep
-	nextID         int  // next ID to assign for newly-added steps (revise_plan additions)
-	revisionCount  int  // number of revise_plan calls so far this session
-	gapsReported   bool // set when report_gaps is called; gates synthesis
+	mu            sync.Mutex
+	Steps         []PlanStep
+	nextID        int  // next ID to assign for newly-added steps (revise_plan additions)
+	revisionCount int  // number of revise_plan calls so far this session
+	gapsReported  bool // set when report_gaps is called; gates synthesis
 }
 
 // PlanRevisionLimit caps how many revise_plan calls are allowed per

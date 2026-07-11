@@ -1,4 +1,4 @@
-package core
+package geo
 
 import (
 	"bufio"
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/cmcoffee/snugforge/iotimeout"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // Offline reverse geocoding for vision-pipeline image/video EXIF coordinates.
@@ -49,17 +50,6 @@ const (
 // download body via iotimeout.NewReadCloser. If no bytes flow for
 // this long, the read errors and we fall to the next mirror. Lets
 // genuinely-fast transfers run uncapped while killing stalled ones.
-func geocodeIdleTimeout() time.Duration { return TuneDuration("tune_geocode_idle_timeout") }
-func geocodeConnectTimeout() time.Duration {
-	return TuneDuration("tune_geocode_connect_timeout")
-}
-func geocodeMaxAttempts() int { return TuneInt("tune_geocode_max_attempts") }
-
-func init() {
-	RegisterTunable(TunableSpec{Key: "tune_geocode_idle_timeout", Category: "Timeouts", Label: "Geocode download idle timeout", Help: "Moving-window no-bytes timeout for offline geocode-database downloads before falling to the next mirror.", Kind: KindSeconds, Default: 30, Min: 5, Max: 180})
-	RegisterTunable(TunableSpec{Key: "tune_geocode_connect_timeout", Category: "Timeouts", Label: "Geocode connect timeout", Help: "Dial + TLS handshake cap for offline geocode-database downloads.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_geocode_max_attempts", Category: "Concurrency", Label: "Geocode download attempts", Help: "Number of mirror attempts when downloading the offline geocode database.", Kind: KindInt, Default: 3, Min: 1, Max: 10})
-}
 
 // geocodeMirrors lists candidate URLs for each data file in priority order.
 // The downloader iterates the list per file; first one to deliver wins.
@@ -114,13 +104,13 @@ func getOfflineGeocoder() (*offlineGeocoder, error) {
 		}
 		offlineGeoInstance, offlineGeoLoadError = loadOfflineGeocoder(geocodeDir)
 		if offlineGeoLoadError != nil {
-			Debug("[geocode] offline DB unavailable: %s — Nominatim fallback only", offlineGeoLoadError)
+			nfo.Debug("[geocode] offline DB unavailable: %s — Nominatim fallback only", offlineGeoLoadError)
 		}
 	})
 	return offlineGeoInstance, offlineGeoLoadError
 }
 
-// offlineLookup is the entry point used by reverseGeocode. Returns "" if
+// offlineLookup is the entry point used by ReverseGeocode. Returns "" if
 // the offline DB isn't loaded or no city is near enough.
 func offlineLookup(lat, lon float64) string {
 	g, err := getOfflineGeocoder()
@@ -146,7 +136,7 @@ func loadOfflineGeocoder(dir string) (*offlineGeocoder, error) {
 	if err := g.loadCities(filepath.Join(dir, citiesDataFile)); err != nil {
 		return nil, fmt.Errorf("cities: %w", err)
 	}
-	Debug("[geocode] offline DB loaded: %d cities, %d countries",
+	nfo.Debug("[geocode] offline DB loaded: %d cities, %d countries",
 		len(g.cities), len(g.countries))
 	return g, nil
 }
@@ -287,10 +277,10 @@ func ensureGeoFiles(dir string) error {
 		maxAttempts := geocodeMaxAttempts()
 		for attempt := 1; attempt <= maxAttempts && !ok; attempt++ {
 			for _, url := range j.mirrors {
-				Log("[geocode] downloading %s (attempt %d, %s) …", j.filename, attempt, url)
+				nfo.Log("[geocode] downloading %s (attempt %d, %s) …", j.filename, attempt, url)
 				if err := downloadGeo(dir, j.filename, url); err != nil {
 					lastErr = err
-					Debug("[geocode] %s failed: %v — trying next mirror", url, err)
+					nfo.Debug("[geocode] %s failed: %v — trying next mirror", url, err)
 					continue
 				}
 				ok = true
@@ -298,15 +288,15 @@ func ensureGeoFiles(dir string) error {
 			}
 			if !ok && attempt < maxAttempts {
 				backoff := time.Duration(attempt) * 2 * time.Second
-				Debug("[geocode] all mirrors failed on attempt %d, sleeping %s before retry", attempt, backoff)
+				nfo.Debug("[geocode] all mirrors failed on attempt %d, sleeping %s before retry", attempt, backoff)
 				time.Sleep(backoff)
 			}
 		}
 		if !ok {
-			Log("[geocode] FAILED to download %s — last error: %v", j.filename, lastErr)
-			Log("[geocode] manual fallback: place the file in %s by running:", dir)
+			nfo.Log("[geocode] FAILED to download %s — last error: %v", j.filename, lastErr)
+			nfo.Log("[geocode] manual fallback: place the file in %s by running:", dir)
 			for _, url := range j.mirrors {
-				Log("[geocode]   curl -o %s %s", filepath.Join(dir, j.filename), url)
+				nfo.Log("[geocode]   curl -o %s %s", filepath.Join(dir, j.filename), url)
 			}
 			return fmt.Errorf("download %s: %w", j.filename, lastErr)
 		}

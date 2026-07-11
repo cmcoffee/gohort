@@ -1,4 +1,4 @@
-package core
+package factcheck
 
 import (
 	"regexp"
@@ -119,7 +119,6 @@ type RejectedFact struct {
 // Does NOT account for unit conversion (e.g., $1.5T vs $1500B) or
 // rounding (e.g., "$200 billion" vs "$202 billion"). These produce
 // false positives on legitimate paraphrases.
-//
 func VerifyFacts(output string, parentTexts []string) []RejectedFact {
 	// Build a set of normalized fact tokens from the parent text by
 	// running each extractor over the joined haystack. This replaces

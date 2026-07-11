@@ -266,7 +266,6 @@ func recordScopedLink(a Appliance, subjectKind, subject string, subjectAttrs map
 	return orch.SeedScopedGraphLink(scope, subjectKind, subject, subjectAttrs, relation, objectKind, object, note, replace)
 }
 
-
 // recordScopedExplicit records a SHORTCUT (a working access/operate command) or
 // a LESSON (a gotcha) into the scope's EXPLICIT Memory — the always-in-prompt
 // layer — because both are operational knowledge the investigator wants in view

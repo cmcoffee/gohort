@@ -31,11 +31,11 @@ func init() {
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
-		Key:           "app.servitor.orchestrator",
-		Label:         "Servitor: Orchestrator",
-		Default:       "worker (thinking)",
-		Group:         "Servitor",
-		Private:       true,
+		Key:     "app.servitor.orchestrator",
+		Label:   "Servitor: Orchestrator",
+		Default: "worker (thinking)",
+		Group:   "Servitor",
+		Private: true,
 	})
 }
 
@@ -148,8 +148,8 @@ type Appliance struct {
 	PersonaName   string     `json:"persona_name"`   // short label shown in the UI (e.g. "Support", "QA")
 	PersonaPrompt string     `json:"persona_prompt"` // shapes how the agent approaches this appliance
 	Profile       string     `json:"profile"`        // full system profile / CLI map markdown
-	LogMap       []LogEntry `json:"log_map"`      // structured list of discovered log files
-	Scanned      string     `json:"scanned"`      // RFC3339 timestamp of last map run
+	LogMap        []LogEntry `json:"log_map"`        // structured list of discovered log files
+	Scanned       string     `json:"scanned"`        // RFC3339 timestamp of last map run
 }
 
 // dedupeStrings trims, drops empties, and removes duplicates while preserving
@@ -170,7 +170,7 @@ func dedupeStrings(in []string) []string {
 
 // probeEvent is one event emitted by a running session goroutine.
 type probeEvent struct {
-	Kind   string     `json:"kind"`             // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
+	Kind   string     `json:"kind"` // status | cmd | output | message | confirm | reply | error | done | watch | notes_consumed | intent | plan_set | plan_step
 	Text   string     `json:"text,omitempty"`
 	Reason string     `json:"reason,omitempty"` // destructive reason for confirm events
 	IDs    []string   `json:"ids,omitempty"`    // notes_consumed: which queued notes the orchestrator just drained
@@ -201,11 +201,11 @@ const alwaysAllowTable = "ssh_always_allow"
 const notesTable = "ssh_notes"
 
 var (
-	probeSessions      = NewLiveSessionMap[probeEvent](0)
-	confirmChans       sync.Map // session_id -> chan bool
-	pendingCmds        sync.Map // session_id -> command string currently awaiting confirmation
-	termBuffers        sync.Map // "userID:applianceID" -> *termBuffer; persistent command+output log mirrored to any connected terminal WebSocket
-	sessionAppliances  sync.Map // session_id -> applianceID (for building resume URLs in the dashboard live-sessions panel)
+	probeSessions     = NewLiveSessionMap[probeEvent](0)
+	confirmChans      sync.Map // session_id -> chan bool
+	pendingCmds       sync.Map // session_id -> command string currently awaiting confirmation
+	termBuffers       sync.Map // "userID:applianceID" -> *termBuffer; persistent command+output log mirrored to any connected terminal WebSocket
+	sessionAppliances sync.Map // session_id -> applianceID (for building resume URLs in the dashboard live-sessions panel)
 )
 
 // Mid-flight injection-queue types + registry were lifted into
@@ -401,7 +401,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	// Expose servitor's appliances as a generic reference source so writer
 	// apps can ground drafts in gathered system knowledge. T.DB is final here.
-	RegisterReferenceSource(servitorSource{db: T.DB})
+	RegisterReferenceSource(servitorSource{app: T})
 
 	sub := NewWebUI(T, prefix, AppUIAssets{})
 	sub.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -2140,7 +2140,6 @@ func buildConsolidationPrompt(appliance Appliance) string {
 	return b.String()
 }
 
-
 // buildMapAppSystemPrompt returns the system prompt for a CLI application mapping session.
 func buildMapAppSystemPrompt(appliance Appliance, command string) string {
 	var b strings.Builder
@@ -2361,7 +2360,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				SystemPrompt:    buildMapAppSystemPrompt(appliance, command),
 				Tools:           []AgentToolDef{run_tool, note_lesson_tool},
 				MaxRounds:       60,
-					RouteKey:        "app.servitor",
+				RouteKey:        "app.servitor",
 				MaskDebugOutput: true,
 				ChatOptions:     []ChatOption{WithThink(false)},
 			},
@@ -2570,7 +2569,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	}
 	var sessionFailures []sessionFailure
 
-	const loopLimit      = 3
+	const loopLimit = 3
 	// Failure budget removed — sessionFailures still collected for the
 	// post-session summary, but no hard block on binary or global
 	// failure counts. Loop/topic-exhaustion guards (LOOP DETECTED,
@@ -2825,128 +2824,128 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// shared ptyCount. Tool struct cheap to recreate; counter persists.
 	newRunPtyTool := func() AgentToolDef {
 		return AgentToolDef{
-		Tool: Tool{
-			Name:        "run_pty",
-			Description: "Run a command via a PTY (pseudo-terminal) on the remote system. Use this for commands that require a TTY: password prompts (su, sudo, mysql -p), interactive programs (python3, irb, psql), or anything that checks isatty(). Output is captured with ANSI codes stripped. Provide the 'input' parameter to send responses to prompts (newline-separated).",
-			Parameters: map[string]ToolParam{
-				"command":     {Type: "string", Description: "The command to run on the remote host."},
-				"input":       {Type: "string", Description: "Optional lines to send to stdin after the command starts (newline-separated). Use for passwords, menu selections, shell commands inside an interactive session, etc."},
-				"timeout_sec": {Type: "integer", Description: "Seconds to wait for the command to finish (default 15, max 60)."},
+			Tool: Tool{
+				Name:        "run_pty",
+				Description: "Run a command via a PTY (pseudo-terminal) on the remote system. Use this for commands that require a TTY: password prompts (su, sudo, mysql -p), interactive programs (python3, irb, psql), or anything that checks isatty(). Output is captured with ANSI codes stripped. Provide the 'input' parameter to send responses to prompts (newline-separated).",
+				Parameters: map[string]ToolParam{
+					"command":     {Type: "string", Description: "The command to run on the remote host."},
+					"input":       {Type: "string", Description: "Optional lines to send to stdin after the command starts (newline-separated). Use for passwords, menu selections, shell commands inside an interactive session, etc."},
+					"timeout_sec": {Type: "integer", Description: "Seconds to wait for the command to finish (default 15, max 60)."},
+				},
+				Required: []string{"command"},
 			},
-			Required: []string{"command"},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			cmd, _ := args["command"].(string)
-			if cmd == "" {
-				return "", fmt.Errorf("command is required")
-			}
-			ptyCount[cmd]++
-			if ptyCount[cmd] > loopLimit {
-				msg := fmt.Sprintf("[LOOP DETECTED] run_pty(%q) has been called %d times in this session. Stop. Use a different command or approach.", cmd, ptyCount[cmd]-1)
-				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected (pty): %q (%dx)", cmd, ptyCount[cmd]-1)})
-				return msg, nil
-			}
-			inputText, _ := args["input"].(string)
-			timeout := 15
-			if t, ok := args["timeout_sec"].(float64); ok && t > 0 {
-				timeout = int(t)
-				if timeout > 60 {
-					timeout = 60
+			Handler: func(args map[string]any) (string, error) {
+				cmd, _ := args["command"].(string)
+				if cmd == "" {
+					return "", fmt.Errorf("command is required")
 				}
-			}
-
-			emit(id, probeEvent{Kind: "cmd", Text: "pty: " + cmd})
-
-			sess, err := a.conn.NewSession()
-			if err != nil {
-				// Attempt reconnect on connection-level errors.
-				errMsg := err.Error()
-				isConnErr := strings.Contains(errMsg, "EOF") ||
-					strings.Contains(errMsg, "connection reset") ||
-					strings.Contains(errMsg, "broken pipe") ||
-					strings.Contains(errMsg, "new SSH session")
-				if isConnErr {
-					emit(id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
-					dropConn(userID, appliance.ID)
-					newClient, rerr := acquireConn(userID, appliance)
-					if rerr != nil {
-						return fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
+				ptyCount[cmd]++
+				if ptyCount[cmd] > loopLimit {
+					msg := fmt.Sprintf("[LOOP DETECTED] run_pty(%q) has been called %d times in this session. Stop. Use a different command or approach.", cmd, ptyCount[cmd]-1)
+					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected (pty): %q (%dx)", cmd, ptyCount[cmd]-1)})
+					return msg, nil
+				}
+				inputText, _ := args["input"].(string)
+				timeout := 15
+				if t, ok := args["timeout_sec"].(float64); ok && t > 0 {
+					timeout = int(t)
+					if timeout > 60 {
+						timeout = 60
 					}
-					a.conn = newClient
-					emit(id, probeEvent{Kind: "status", Text: "SSH reconnected."})
-					sess, err = a.conn.NewSession()
 				}
+
+				emit(id, probeEvent{Kind: "cmd", Text: "pty: " + cmd})
+
+				sess, err := a.conn.NewSession()
 				if err != nil {
-					return "", fmt.Errorf("new SSH session: %w", err)
+					// Attempt reconnect on connection-level errors.
+					errMsg := err.Error()
+					isConnErr := strings.Contains(errMsg, "EOF") ||
+						strings.Contains(errMsg, "connection reset") ||
+						strings.Contains(errMsg, "broken pipe") ||
+						strings.Contains(errMsg, "new SSH session")
+					if isConnErr {
+						emit(id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
+						dropConn(userID, appliance.ID)
+						newClient, rerr := acquireConn(userID, appliance)
+						if rerr != nil {
+							return fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
+						}
+						a.conn = newClient
+						emit(id, probeEvent{Kind: "status", Text: "SSH reconnected."})
+						sess, err = a.conn.NewSession()
+					}
+					if err != nil {
+						return "", fmt.Errorf("new SSH session: %w", err)
+					}
 				}
-			}
-			defer sess.Close()
+				defer sess.Close()
 
-			modes := ssh.TerminalModes{
-				ssh.ECHO:          0,
-				ssh.TTY_OP_ISPEED: 14400,
-				ssh.TTY_OP_OSPEED: 14400,
-			}
-			if err := sess.RequestPty("xterm", 50, 220, modes); err != nil {
-				return "", fmt.Errorf("PTY request failed: %w", err)
-			}
-
-			stdinPipe, err := sess.StdinPipe()
-			if err != nil {
-				return "", fmt.Errorf("stdin pipe: %w", err)
-			}
-
-			var outBuf bytes.Buffer
-			sess.Stdout = &outBuf
-			sess.Stderr = &outBuf
-
-			if err := sess.Start(cmd); err != nil {
-				return "", fmt.Errorf("start: %w", err)
-			}
-
-			// Send input lines with a short delay between each to let prompts appear.
-			if inputText != "" {
-				time.Sleep(400 * time.Millisecond)
-				for _, line := range strings.Split(inputText, "\n") {
-					fmt.Fprintln(stdinPipe, line)
-					time.Sleep(200 * time.Millisecond)
+				modes := ssh.TerminalModes{
+					ssh.ECHO:          0,
+					ssh.TTY_OP_ISPEED: 14400,
+					ssh.TTY_OP_OSPEED: 14400,
 				}
-			}
+				if err := sess.RequestPty("xterm", 50, 220, modes); err != nil {
+					return "", fmt.Errorf("PTY request failed: %w", err)
+				}
 
-			done := make(chan error, 1)
-			go func() { done <- sess.Wait() }()
+				stdinPipe, err := sess.StdinPipe()
+				if err != nil {
+					return "", fmt.Errorf("stdin pipe: %w", err)
+				}
 
-			select {
-			case <-done:
-			case <-time.After(time.Duration(timeout) * time.Second):
-				stdinPipe.Write([]byte{3}) // Ctrl+C
-				time.Sleep(200 * time.Millisecond)
-				stdinPipe.Write([]byte{4}) // Ctrl+D
+				var outBuf bytes.Buffer
+				sess.Stdout = &outBuf
+				sess.Stderr = &outBuf
+
+				if err := sess.Start(cmd); err != nil {
+					return "", fmt.Errorf("start: %w", err)
+				}
+
+				// Send input lines with a short delay between each to let prompts appear.
+				if inputText != "" {
+					time.Sleep(400 * time.Millisecond)
+					for _, line := range strings.Split(inputText, "\n") {
+						fmt.Fprintln(stdinPipe, line)
+						time.Sleep(200 * time.Millisecond)
+					}
+				}
+
+				done := make(chan error, 1)
+				go func() { done <- sess.Wait() }()
+
 				select {
 				case <-done:
-				case <-time.After(2 * time.Second):
+				case <-time.After(time.Duration(timeout) * time.Second):
+					stdinPipe.Write([]byte{3}) // Ctrl+C
+					time.Sleep(200 * time.Millisecond)
+					stdinPipe.Write([]byte{4}) // Ctrl+D
+					select {
+					case <-done:
+					case <-time.After(2 * time.Second):
+					}
+				case <-ctx.Done():
+					sess.Close()
+					return "", ctx.Err()
 				}
-			case <-ctx.Done():
-				sess.Close()
-				return "", ctx.Err()
-			}
-			stdinPipe.Close()
+				stdinPipe.Close()
 
-			result := stripANSI(outBuf.String())
-			if len(result) > max_output {
-				result = result[:max_output] + fmt.Sprintf("\n... [truncated — %d chars total]", len(result))
-			}
-			if result != "" {
-				emit(id, probeEvent{Kind: "output", Text: result})
-			}
-			termEcho("pty: "+cmd, result)
-			// If this PTY session succeeded after prior attempts, force technique recording.
-			if ptyCount[cmd] > 1 {
-				result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] run_pty(%q) succeeded after %d attempt(s). You MUST call record_technique NOW with the exact working command and input sequence, before doing anything else.", cmd, ptyCount[cmd]-1)
-			}
-			return result, nil
-		},
-		NeedsConfirm: false,
+				result := stripANSI(outBuf.String())
+				if len(result) > max_output {
+					result = result[:max_output] + fmt.Sprintf("\n... [truncated — %d chars total]", len(result))
+				}
+				if result != "" {
+					emit(id, probeEvent{Kind: "output", Text: result})
+				}
+				termEcho("pty: "+cmd, result)
+				// If this PTY session succeeded after prior attempts, force technique recording.
+				if ptyCount[cmd] > 1 {
+					result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] run_pty(%q) succeeded after %d attempt(s). You MUST call record_technique NOW with the exact working command and input sequence, before doing anything else.", cmd, ptyCount[cmd]-1)
+				}
+				return result, nil
+			},
+			NeedsConfirm: false,
 		}
 	}
 
@@ -3135,7 +3134,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// link_entities is for everything with structure.
 	link_entities_tool := AgentToolDef{
 		Tool: Tool{
-			Name: "link_entities",
+			Name:        "link_entities",
 			Description: "Record a RELATIONSHIP between two named parts of this system — the structured graph map. State it subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080', or subject='app' relation='connects to' object='postgres'. Entities auto-merge by name. Use this whenever you learn how parts connect: a service to its port, an app to its database, a process to its config file, a service to the host. Put non-relational details (version, path, port) in subject_attrs. Use `store_fact` ONLY for appliance-wide properties (os, hostname, kernel); use `link_entities` for anything with structure or relationships.",
 			Parameters: map[string]ToolParam{
 				"subject":       {Type: "string", Description: "The subject entity's name, e.g. 'nginx', 'app', 'postgres'."},
@@ -3933,7 +3932,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			}
 			report_gaps_tool := AgentToolDef{
 				Tool: Tool{
-					Name: "report_gaps",
+					Name:        "report_gaps",
 					Description: "REQUIRED before you write your final answer. Returns a structured summary of every plan step that's blocked or never completed, plus the reasons. You MUST incorporate this into the final report under a clearly-labeled 'What I Couldn't Determine' section so the user sees the gaps explicitly rather than getting an overconfident report that quietly omits unverified things. The user trusts the report only if you're honest about what you couldn't see.",
 					Parameters:  map[string]ToolParam{},
 				},
@@ -4053,7 +4052,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 								SystemPrompt:    buildProbeWorkerPrompt(appliance),
 								Tools:           withFreshRunTool(workerTools),
 								MaxRounds:       12,
-													RouteKey:        "app.servitor",
+								RouteKey:        "app.servitor",
 								MaskDebugOutput: true,
 								ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
 								SerialTools:     true,
@@ -4348,7 +4347,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 						SystemPrompt:    buildSynthesisSystemPrompt(appliance),
 						Tools:           nil,
 						MaxRounds:       1,
-									RouteKey:        "app.servitor",
+						RouteKey:        "app.servitor",
 						MaskDebugOutput: true,
 						ChatOptions:     []ChatOption{WithThink(false)},
 					},
@@ -4503,7 +4502,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 							SystemPrompt:    buildProbeWorkerPrompt(appliance),
 							Tools:           withFreshRunTool(workerTools),
 							MaxRounds:       15,
-											RouteKey:        "app.servitor",
+							RouteKey:        "app.servitor",
 							MaskDebugOutput: true,
 							ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
 							SerialTools:     true,

@@ -17,7 +17,7 @@ import (
 func (t *chatTurn) introspectToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
-			Name: "introspect",
+			Name:        "introspect",
 			Description: "Get accurate, CURRENT details about YOURSELF and your gohort setup — configuration, capabilities (tools/skills/knowledge), channels + cortex, and memory state — read straight from the framework. Use it to answer \"what can you do?\" / \"how are you set up?\" / \"what are you connected to?\" from FACT instead of guessing, and to check your own config before acting. Read-only.",
 			Parameters: map[string]ToolParam{
 				"section": {Type: "string", Description: "Optional. Which slice to report: \"identity\", \"capabilities\", \"channels\", \"memory\", or \"all\" (default). Omit for the full picture."},

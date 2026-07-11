@@ -1,4 +1,4 @@
-package core
+package media
 
 import (
 	"fmt"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // ExtractVideoFrames is the exported variant of extractVideoFrames; same
@@ -23,7 +25,6 @@ func ExtractVideoFrames(data []byte, count int) ([][]byte, error) {
 func ExtractVideoMetadata(data []byte) string {
 	return extractVideoMetadata(data)
 }
-
 
 // extractVideoFrames samples N frames evenly distributed across the video
 // at `path`, returning each as JPEG bytes. The first frame is sampled at
@@ -103,7 +104,7 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 			out,
 		)
 		if err := cmd.Run(); err != nil {
-			Debug("[video] frame %d at %.2fs failed: %v", i, ts, err)
+			nfo.Debug("[video] frame %d at %.2fs failed: %v", i, ts, err)
 			continue
 		}
 		buf, err := os.ReadFile(out)
@@ -129,6 +130,7 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 //   - the video has no audio track (silent clip, GIF-style)
 //   - ffmpeg is missing
 //   - the audio stream is corrupt
+//
 // All failures are non-fatal at the caller's level — videodl falls
 // back to frames-only transcription.
 //
@@ -216,10 +218,10 @@ func TranscodeAudioToWAV(data []byte) ([]byte, error) {
 	return wav, nil
 }
 
-// extractVideosFrames is the multi-video helper used by buildMessages.
+// ExtractVideosFrames is the multi-video helper used by the vision pipeline.
 // Returns frames concatenated in order of the input videos. Failures on
 // any single video are logged and skipped — the rest still flow through.
-func extractVideosFrames(videos [][]byte, perVideo int) [][]byte {
+func ExtractVideosFrames(videos [][]byte, perVideo int) [][]byte {
 	if len(videos) == 0 {
 		return nil
 	}
@@ -227,7 +229,7 @@ func extractVideosFrames(videos [][]byte, perVideo int) [][]byte {
 	for i, v := range videos {
 		frames, err := extractVideoFrames(v, perVideo)
 		if err != nil {
-			Debug("[video] frame extract %d failed: %v", i, err)
+			nfo.Debug("[video] frame extract %d failed: %v", i, err)
 			continue
 		}
 		all = append(all, frames...)

@@ -75,7 +75,7 @@ var (
 
 	// reconcilers are periodic functions that ensure each app's expected
 	// tasks are actually scheduled. Run every 30 minutes.
-	reconcilers = map[string]func(context.Context) error{}
+	reconcilers   = map[string]func(context.Context) error{}
 	reconcilersMu sync.Mutex
 
 	// taskDescribers turn a task kind's opaque payload into a human label for

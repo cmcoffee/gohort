@@ -21,14 +21,14 @@ import (
 // Cheap to populate (a few map writes per round); cheap to emit (one
 // log line per loop exit). Not surfaced to the user, only to the log.
 type turnTelemetry struct {
-	rounds         int                // last observed round number
-	contentChars   int                // total streamed content chars
-	toolCallCounts map[string]int     // tool name → number of calls
-	dupFingerprint map[string]int     // tool name + canonical args hash → count
-	dupExemplar    map[string]string  // fingerprint → human-readable example name (so dup row reads as "tool×N")
-	lastTool       string             // last tool the LLM called
-	lastToolErr    bool               // did the most recent tool round include any errors
-	toolErrorCount int                // total tool errors across the turn
+	rounds         int               // last observed round number
+	contentChars   int               // total streamed content chars
+	toolCallCounts map[string]int    // tool name → number of calls
+	dupFingerprint map[string]int    // tool name + canonical args hash → count
+	dupExemplar    map[string]string // fingerprint → human-readable example name (so dup row reads as "tool×N")
+	lastTool       string            // last tool the LLM called
+	lastToolErr    bool              // did the most recent tool round include any errors
+	toolErrorCount int               // total tool errors across the turn
 }
 
 func newTurnTelemetry() *turnTelemetry {

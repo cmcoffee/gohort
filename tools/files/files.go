@@ -44,7 +44,7 @@ func init() {}
 
 type ReadFileTool struct{}
 
-func (t *ReadFileTool) Name() string { return "read_file" }
+func (t *ReadFileTool) Name() string       { return "read_file" }
 func (t *ReadFileTool) Caps() []Capability { return []Capability{CapRead} }
 func (t *ReadFileTool) Desc() string {
 	return "Read a file from your workspace sandbox. Path is relative to the workspace root; absolute paths and `..` traversal are rejected. Returns up to 64 KB of content; larger files are truncated. Binary files are returned as best-effort UTF-8 with replacement characters — use a more specific tool if you need raw bytes."
@@ -88,7 +88,7 @@ func (t *ReadFileTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 
 type ListDirectoryTool struct{}
 
-func (t *ListDirectoryTool) Name() string { return "list_directory" }
+func (t *ListDirectoryTool) Name() string       { return "list_directory" }
 func (t *ListDirectoryTool) Caps() []Capability { return []Capability{CapRead} }
 func (t *ListDirectoryTool) Desc() string {
 	return "List the contents of a directory inside your workspace sandbox. Path is relative to the workspace root (use empty string for the root itself). Each line shows: type-flag (d/f/l), size in bytes, and name. Capped at 200 entries — larger dirs are truncated."
@@ -150,7 +150,7 @@ func (t *ListDirectoryTool) RunWithSession(args map[string]any, sess *ToolSessio
 
 type WriteFileTool struct{}
 
-func (t *WriteFileTool) Name() string { return "write_file" }
+func (t *WriteFileTool) Name() string       { return "write_file" }
 func (t *WriteFileTool) Caps() []Capability { return []Capability{CapWrite} }
 
 // NeedsConfirm forces user approval for every write — the user sees the

@@ -41,9 +41,9 @@ const (
 //   - "" / "delegate":     delegate Brief to Agent (the default).
 //   - "send_message":      text Handle the contents of Text via the phantom bridge.
 //   - "converse_contact":  hand a GOAL (Brief) to phantom and let it run an
-//                          autonomous multi-turn conversation with Handle — one
-//                          upfront approval authorizes the whole exchange, not
-//                          each message. Reuses Handle (recipient) + Brief (goal).
+//     autonomous multi-turn conversation with Handle — one
+//     upfront approval authorizes the whole exchange, not
+//     each message. Reuses Handle (recipient) + Brief (goal).
 type Authorization struct {
 	ID        string    `json:"id"`
 	Owner     string    `json:"owner"`

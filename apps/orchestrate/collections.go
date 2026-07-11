@@ -765,11 +765,11 @@ func init() {
 	RegisterTunable(TunableSpec{Key: "tune_autofill_per_fetch", Category: "Timeouts", Label: "Autofill per-fetch timeout", Help: "Per-candidate fetch timeout during autofill.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
 }
 
-func autofillMaxDocs() int              { return TuneInt("tune_autofill_max_docs") }
-func autofillMaxQueries() int           { return TuneInt("tune_autofill_max_queries") }
-func autofillFetchLimit() int           { return TuneInt("tune_autofill_fetch_limit") }
-func autofillTimeout() time.Duration    { return TuneDuration("tune_autofill_timeout") }
-func autofillPerFetch() time.Duration   { return TuneDuration("tune_autofill_per_fetch") }
+func autofillMaxDocs() int            { return TuneInt("tune_autofill_max_docs") }
+func autofillMaxQueries() int         { return TuneInt("tune_autofill_max_queries") }
+func autofillFetchLimit() int         { return TuneInt("tune_autofill_fetch_limit") }
+func autofillTimeout() time.Duration  { return TuneDuration("tune_autofill_timeout") }
+func autofillPerFetch() time.Duration { return TuneDuration("tune_autofill_per_fetch") }
 
 // queriesForMaxDocs picks how many search queries to run for a
 // requested ingest count. Roughly one query per ~4 desired docs

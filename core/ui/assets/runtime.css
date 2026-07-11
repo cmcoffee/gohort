@@ -712,6 +712,44 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-chip:active { transform: scale(0.94); }
 .ui-chip.on { background: var(--accent); color: #1a1a1a; border-color: var(--accent); }
 
+/* --- chip_picker attach mode: selected-as-pills + reveal-list --- */
+.ui-chip-picker { display: flex; flex-direction: column; }
+.ui-cp-intro { font-size: 0.82rem; color: var(--text-mute); line-height: 1.45; margin-bottom: 0.6rem; }
+.ui-cp-empty, .ui-cp-none { font-size: 0.76rem; color: var(--text-mute); font-style: italic; }
+.ui-cp-pills { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-bottom: 0.5rem; }
+.ui-cp-pill {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.1rem 0.35rem 0.1rem 0.55rem;
+  border: 1px solid var(--border); border-radius: 999px;
+  font-size: 0.74rem; color: var(--text);
+}
+.ui-cp-pill-x { cursor: pointer; color: var(--text-mute); font-weight: 700; }
+.ui-cp-pill-x:hover { color: var(--danger); }
+.ui-cp-add { align-self: flex-start; padding: 0.3rem 0.7rem; font-size: 0.8rem; margin-bottom: 0.5rem; }
+.ui-cp-list { display: flex; flex-direction: column; gap: 0.3rem; }
+.ui-cp-group {
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-mute); font-weight: 700; margin: 0.4rem 0 0.1rem;
+}
+.ui-cp-group:first-child { margin-top: 0; }
+.ui-cp-row {
+  display: flex; align-items: flex-start; gap: 0.55rem;
+  padding: 0.35rem 0.6rem; background: var(--bg-0);
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.ui-cp-row-meta { flex: 1; min-width: 0; }
+.ui-cp-name { font-size: 0.85rem; color: var(--text); font-weight: 500; }
+.ui-cp-desc { font-size: 0.74rem; color: var(--text-mute); line-height: 1.4; margin-top: 0.15rem; }
+.ui-cp-metaline {
+  font-size: 0.72rem; color: var(--text-mute); margin-top: 0.12rem;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.ui-cp-add-btn {
+  flex-shrink: 0; align-self: center; background: transparent;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 6px;
+  padding: 0.15rem 0.55rem; font-size: 1rem; font-weight: 700; cursor: pointer;
+}
+
 /* --- Pull-to-refresh --- */
 .ui-ptr {
   position: fixed; top: env(safe-area-inset-top, 0px); left: 0; right: 0;

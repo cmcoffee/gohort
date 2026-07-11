@@ -19,13 +19,15 @@
 // missing interpreter is a separate "install python3" problem the
 // authoring note can't fix.
 
-package core
+package deps
 
 import (
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 var (
@@ -42,30 +44,30 @@ func probeSandboxPython() {
 	pythonProbeOnce.Do(func() {
 		out, err := exec.Command("python3", "--version").CombinedOutput()
 		if err != nil {
-			Debug("[sandbox] python3 --version failed (%v) — authoring note disabled", err)
+			nfo.Debug("[sandbox] python3 --version failed (%v) — authoring note disabled", err)
 			return
 		}
 		// Output is "Python X.Y.Z" on every supported release.
 		fields := strings.Fields(strings.TrimSpace(string(out)))
 		if len(fields) < 2 {
-			Debug("[sandbox] python3 --version produced unparseable output %q", string(out))
+			nfo.Debug("[sandbox] python3 --version produced unparseable output %q", string(out))
 			return
 		}
 		parts := strings.Split(fields[1], ".")
 		if len(parts) < 2 {
-			Debug("[sandbox] python3 version field %q has no minor component", fields[1])
+			nfo.Debug("[sandbox] python3 version field %q has no minor component", fields[1])
 			return
 		}
 		maj, err1 := strconv.Atoi(parts[0])
 		min, err2 := strconv.Atoi(parts[1])
 		if err1 != nil || err2 != nil {
-			Debug("[sandbox] python3 version %q failed to parse as int.int", fields[1])
+			nfo.Debug("[sandbox] python3 version %q failed to parse as int.int", fields[1])
 			return
 		}
 		pythonMajor = maj
 		pythonMinor = min
 		pythonOK = true
-		Debug("[sandbox] python3 detected: %d.%d (authoring note: %v)", maj, min, maj == 3 && min < 7)
+		nfo.Debug("[sandbox] python3 detected: %d.%d (authoring note: %v)", maj, min, maj == 3 && min < 7)
 	})
 }
 

@@ -896,7 +896,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "notify_me",
-				Description: "Send a text to the USER'S OWN phone (a notification to yourself / the owner). No approval needed — it only goes to the owner. Use this to push an alert or a monitor result to the user's phone. To include an image/file, pass its workspace path in `attachments`.",
+				Description: "Send a text to the USER'S OWN phone (the owner). Use this ONLY when the user has explicitly asked to be texted/notified, OR when a monitor, scheduled job, or long-running task is delivering a result the user asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status — for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`.",
 				Parameters: map[string]ToolParam{
 					"text":        {Type: "string", Description: "The message to send to the owner."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
@@ -917,10 +917,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return "", fmt.Errorf("no owner phone is configured (set the owner's handle in the messaging bridge settings)")
 				}
 				images := messageImages(sess, args, text)
-					// DeliverMessage (not SendToHandle) so attachments ride along;
-					// persona is inactive for the owner's own chat, so the text
-					// is sent verbatim. Empty chatID resolves the owner's thread.
-					if _, err := operatorDeliverMessage(owner, "", self, text, images); err != nil {
+				// DeliverMessage (not SendToHandle) so attachments ride along;
+				// persona is inactive for the owner's own chat, so the text
+				// is sent verbatim. Empty chatID resolves the owner's thread.
+				if _, err := operatorDeliverMessage(owner, "", self, text, images); err != nil {
 					return "", err
 				}
 				// The owner's channel (their phone) must see what was sent — record
@@ -935,9 +935,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// belongs in this agent's cortex. No-op if the agent has no cortex.
 				appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
 				if len(images) > 0 {
-						return fmt.Sprintf("Sent to your phone with %d attachment(s).", len(images)), nil
-					}
-					return "Sent to your phone.", nil
+					return fmt.Sprintf("Sent to your phone with %d attachment(s).", len(images)), nil
+				}
+				return "Sent to your phone.", nil
 			},
 		},
 		{

@@ -36,8 +36,8 @@ import (
 )
 
 const (
-	downloadTimeout   = 120 * time.Second
-	downloadMaxBytes  = 200 * 1024 * 1024 // 200 MB hard cap
+	downloadTimeout  = 120 * time.Second
+	downloadMaxBytes = 200 * 1024 * 1024 // 200 MB hard cap
 
 	// videodlCacheTable holds per-(scope, urlHash) records of
 	// already-downloaded videos so the LLM can't make the user redownload
@@ -255,4 +255,3 @@ func humanSize(n int64) string {
 		return fmt.Sprintf("%d B", n)
 	}
 }
-

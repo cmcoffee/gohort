@@ -20,8 +20,8 @@ import (
 	"unicode"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/snugforge/apiclient"
 	"github.com/cmcoffee/gohort/tools/browser"
+	"github.com/cmcoffee/snugforge/apiclient"
 	readability "github.com/go-shiori/go-readability"
 )
 
@@ -157,7 +157,7 @@ func SelectDiverseArticles(sources []Source, n int) []Source {
 // WebSearchTool performs web searches using the configured provider.
 type WebSearchTool struct{}
 
-func (t *WebSearchTool) Name() string { return "web_search" }
+func (t *WebSearchTool) Name() string       { return "web_search" }
 func (t *WebSearchTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // search engine API call
 func (t *WebSearchTool) Desc() string {
 	return "Search the live web for information. Returns results with titles, URLs, and snippets. Use for current state, recent events, and topics where freshness matters."
@@ -215,7 +215,7 @@ func (t *WebSearchTool) runWithSession(args map[string]any, sess *ToolSession) (
 // web, not internal infrastructure.
 type FetchURLTool struct{}
 
-func (t *FetchURLTool) Name() string { return "fetch_url" }
+func (t *FetchURLTool) Name() string       { return "fetch_url" }
 func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP against live web
 func (t *FetchURLTool) Desc() string {
 	return "Fetch a URL from the live web. Defaults to GET; pass method=POST/PUT/PATCH/DELETE with optional body for write calls. Two response modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nJSON endpoints: the body comes back as JSON text — read fields directly out of the text (the model handles it fluently) or, inside a script, json.loads(body). There is no separate fetch_json tool.\n\nFor credentialed endpoints, use the matching `fetch_url_<credential>` tool (e.g. fetch_url_github) — same shape (method / body / request_headers / save_to all work the same), auth injected server-side.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page — the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
@@ -1365,23 +1365,23 @@ func DomainCredibility(domain string) int {
 	// Exact domain matches for high-credibility sources.
 	high_credibility := map[string]int{
 		// Fact-check organizations
-		"snopes.com":         90,
-		"politifact.com":     90,
-		"factcheck.org":      90,
-		"fullfact.org":       85,
-		"apnews.com":         85,
-		"reuters.com":        85,
+		"snopes.com":     90,
+		"politifact.com": 90,
+		"factcheck.org":  90,
+		"fullfact.org":   85,
+		"apnews.com":     85,
+		"reuters.com":    85,
 		// Major scientific publishers
-		"nature.com":         95,
-		"science.org":        95,
-		"thelancet.com":      95,
-		"nejm.org":           95,
+		"nature.com":              95,
+		"science.org":             95,
+		"thelancet.com":           95,
+		"nejm.org":                95,
 		"pubmed.ncbi.nlm.nih.gov": 95,
-		"scholar.google.com": 80,
+		"scholar.google.com":      80,
 		// Reference
-		"wikipedia.org":      70,
-		"en.wikipedia.org":   70,
-		"britannica.com":     80,
+		"wikipedia.org":    70,
+		"en.wikipedia.org": 70,
+		"britannica.com":   80,
 		// Major news
 		"bbc.com":            80,
 		"bbc.co.uk":          80,
@@ -1466,16 +1466,16 @@ func IsBlockedURL(u string) bool {
 // DomainCategories holds curated authoritative domain lists by topic category.
 // Used by DiscoverDomains to provide topic-specific search guidance.
 var DomainCategories = map[string]string{
-	"legal": "- site:scholar.google.com (case law search)\n- site:courtlistener.com (federal/state court opinions)\n- site:law.justia.com (case law and codes)\n- site:law.cornell.edu (Legal Information Institute)\n- site:supremecourt.gov (Supreme Court opinions)\n- site:casetext.com (case law research)\n- site:congress.gov (legislation and CRS reports)",
-	"medical": "- site:pubmed.ncbi.nlm.nih.gov (medical research)\n- site:pmc.ncbi.nlm.nih.gov (full-text medical articles)\n- site:who.int (World Health Organization)\n- site:cdc.gov (CDC data and guidelines)\n- site:cochranelibrary.com (systematic reviews)\n- site:fda.gov (drug/device regulations)",
-	"economic": "- site:bls.gov (labor statistics)\n- site:census.gov (demographic and economic data)\n- site:nber.org (economic research papers)\n- site:cbo.gov (Congressional Budget Office)\n- site:imf.org (international economic data)\n- site:worldbank.org (global economic data)\n- site:fred.stlouisfed.org (Federal Reserve data)",
-	"scientific": "- site:nature.com (Nature journal)\n- site:science.org (Science journal)\n- site:arxiv.org (preprints)\n- site:pnas.org (Proceedings of the National Academy)\n- site:nih.gov (National Institutes of Health)\n- site:nasa.gov (space/earth science)",
-	"political": "- site:congress.gov (legislation)\n- site:gao.gov (Government Accountability Office)\n- site:brookings.edu (policy research)\n- site:rand.org (policy analysis)\n- site:pewresearch.org (public opinion data)",
+	"legal":            "- site:scholar.google.com (case law search)\n- site:courtlistener.com (federal/state court opinions)\n- site:law.justia.com (case law and codes)\n- site:law.cornell.edu (Legal Information Institute)\n- site:supremecourt.gov (Supreme Court opinions)\n- site:casetext.com (case law research)\n- site:congress.gov (legislation and CRS reports)",
+	"medical":          "- site:pubmed.ncbi.nlm.nih.gov (medical research)\n- site:pmc.ncbi.nlm.nih.gov (full-text medical articles)\n- site:who.int (World Health Organization)\n- site:cdc.gov (CDC data and guidelines)\n- site:cochranelibrary.com (systematic reviews)\n- site:fda.gov (drug/device regulations)",
+	"economic":         "- site:bls.gov (labor statistics)\n- site:census.gov (demographic and economic data)\n- site:nber.org (economic research papers)\n- site:cbo.gov (Congressional Budget Office)\n- site:imf.org (international economic data)\n- site:worldbank.org (global economic data)\n- site:fred.stlouisfed.org (Federal Reserve data)",
+	"scientific":       "- site:nature.com (Nature journal)\n- site:science.org (Science journal)\n- site:arxiv.org (preprints)\n- site:pnas.org (Proceedings of the National Academy)\n- site:nih.gov (National Institutes of Health)\n- site:nasa.gov (space/earth science)",
+	"political":        "- site:congress.gov (legislation)\n- site:gao.gov (Government Accountability Office)\n- site:brookings.edu (policy research)\n- site:rand.org (policy analysis)\n- site:pewresearch.org (public opinion data)",
 	"criminal_justice": "- site:bjs.ojp.gov (Bureau of Justice Statistics)\n- site:ussc.gov (US Sentencing Commission)\n- site:sentencingproject.org (sentencing data)\n- site:nij.ojp.gov (National Institute of Justice)\n- site:prisonpolicy.org (incarceration data)\n- site:scholar.google.com (case law search)",
-	"environmental": "- site:epa.gov (Environmental Protection Agency)\n- site:ipcc.ch (climate science)\n- site:noaa.gov (atmospheric/oceanic data)\n- site:nature.com (environmental research)\n- site:iea.org (energy data)\n- site:unep.org (UN Environment Programme)",
-	"technology": "- site:arxiv.org (CS/AI preprints)\n- site:acm.org (computing research)\n- site:ieee.org (engineering/technology)\n- site:nist.gov (standards and technology)\n- site:ftc.gov (tech regulation)\n- site:eff.org (digital rights analysis)",
-	"education": "- site:ed.gov (Department of Education)\n- site:nces.ed.gov (education statistics)\n- site:oecd.org (international education data)\n- site:nber.org (education economics)\n- site:rand.org (education policy)",
-	"military": "- site:defense.gov (Department of Defense)\n- site:sipri.org (arms/military spending data)\n- site:rand.org (defense analysis)\n- site:cbo.gov (defense budget analysis)\n- site:iiss.org (strategic studies)",
+	"environmental":    "- site:epa.gov (Environmental Protection Agency)\n- site:ipcc.ch (climate science)\n- site:noaa.gov (atmospheric/oceanic data)\n- site:nature.com (environmental research)\n- site:iea.org (energy data)\n- site:unep.org (UN Environment Programme)",
+	"technology":       "- site:arxiv.org (CS/AI preprints)\n- site:acm.org (computing research)\n- site:ieee.org (engineering/technology)\n- site:nist.gov (standards and technology)\n- site:ftc.gov (tech regulation)\n- site:eff.org (digital rights analysis)",
+	"education":        "- site:ed.gov (Department of Education)\n- site:nces.ed.gov (education statistics)\n- site:oecd.org (international education data)\n- site:nber.org (education economics)\n- site:rand.org (education policy)",
+	"military":         "- site:defense.gov (Department of Defense)\n- site:sipri.org (arms/military spending data)\n- site:rand.org (defense analysis)\n- site:cbo.gov (defense budget analysis)\n- site:iiss.org (strategic studies)",
 }
 
 // DiscoverDomains classifies a topic into research categories and returns
@@ -1709,9 +1709,9 @@ func extractPDFText(data []byte) string {
 
 // Regex patterns for PDF text operators.
 var (
-	pdfTjPattern  = regexp.MustCompile(`\(([^)]*)\)\s*Tj`)
-	pdfTJPattern  = regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
-	pdfTJStrings  = regexp.MustCompile(`\(([^)]*)\)`)
+	pdfTjPattern    = regexp.MustCompile(`\(([^)]*)\)\s*Tj`)
+	pdfTJPattern    = regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
+	pdfTJStrings    = regexp.MustCompile(`\(([^)]*)\)`)
 	pdfQuotePattern = regexp.MustCompile(`\(([^)]*)\)\s*['"]\s`)
 )
 

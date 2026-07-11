@@ -16,9 +16,9 @@
 //
 //   - /hello/        — a tiny FormPanel echoing a name back
 //   - /hello/agent   — an AgentLoopPanel demo. Sends fake activity
-//                      events, an operator-confirm prompt, and a
-//                      streamed assistant reply so you can see the
-//                      primitive's wire protocol end to end.
+//     events, an operator-confirm prompt, and a
+//     streamed assistant reply so you can see the
+//     primitive's wire protocol end to end.
 package hello
 
 import (

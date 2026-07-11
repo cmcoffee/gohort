@@ -60,10 +60,10 @@ const (
 
 // persistentShell wraps a long-lived bwrap+shell process pair.
 type persistentShell struct {
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  io.ReadCloser // combined stdout+stderr from the bwrap process
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser // combined stdout+stderr from the bwrap process
 
 	// promptRegex is compiled from TempTool.PersistentPromptPattern at
 	// open time. Nil when the author didn't supply a pattern — send
@@ -72,7 +72,7 @@ type persistentShell struct {
 
 	// buf holds drained output the LLM hasn't yet consumed. Reader
 	// goroutine appends; send/read pops.
-	buf []byte
+	buf     []byte
 	bufCond *sync.Cond // signaled when new bytes arrive in buf
 
 	// cancel terminates the bwrap process when close fires.

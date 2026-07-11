@@ -57,8 +57,8 @@ type PipelineResult struct {
 // PipelineCtx is passed to the work function so it can report status
 // and set the record ID for notification links.
 type PipelineCtx struct {
-	id       string
-	cfg      PipelineConfig
+	id        string
+	cfg       PipelineConfig
 	record_id string
 }
 

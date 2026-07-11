@@ -66,8 +66,8 @@ func (T *OrchestrateApp) resolveAgent(w http.ResponseWriter, r *http.Request, ud
 // persisted on the session record.
 type sessionListItem struct {
 	ChatSession
-	Source  string `json:"source,omitempty"`
-	ChatID  string `json:"chat_id,omitempty"`
+	Source string `json:"source,omitempty"`
+	ChatID string `json:"chat_id,omitempty"`
 	// ChannelID, when set, marks this row as a messaging-channel binding (the
 	// Channels rail group). The rail's delete (×) then removes the binding via
 	// the channel-delete URL instead of only wiping the session transcript.

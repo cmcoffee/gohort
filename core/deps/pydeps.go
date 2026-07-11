@@ -19,18 +19,21 @@
 // (an allowlist, a manifest declared by a skill/tool/export-format);
 // this file just does the install idempotently and reports the result.
 
-package core
+package deps
 
 import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // SandboxPyDepsMountPath is the in-sandbox path where the managed
@@ -82,13 +85,13 @@ func ensurePyDepsDirLocked() string {
 	if pyDepsDirPath != "" {
 		return pyDepsDirPath
 	}
-	base := WorkspacesDir()
+	base := workspacesDir()
 	if base == "" {
 		return ""
 	}
 	dir := filepath.Join(filepath.Dir(base), "_gohort_pydeps")
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		Debug("[pydeps] failed to mkdir %s: %v", dir, err)
+		nfo.Debug("[pydeps] failed to mkdir %s: %v", dir, err)
 		return ""
 	}
 	pyDepsDirPath = dir
@@ -125,7 +128,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 	// under pyInstallMu — never hold pyDepsDirMu across the pip run.
 	dir := EnsurePyDepsDir()
 	if dir == "" {
-		return Error("pydeps: WorkspacesDir unset — cannot provision python packages")
+		return errors.New("pydeps: WorkspacesDir unset — cannot provision python packages")
 	}
 
 	pyInstallMu.Lock()
@@ -143,7 +146,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 	}
 
 	if _, err := exec.LookPath("python3"); err != nil {
-		return Error("pydeps: python3 not found on PATH — cannot provision packages")
+		return errors.New("pydeps: python3 not found on PATH — cannot provision packages")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, pyInstallLimit)
@@ -163,7 +166,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 		"--no-input",
 		"--disable-pip-version-check",
 	}, missing...)
-	Debug("[pydeps] installing %v into %s", missing, dir)
+	nfo.Debug("[pydeps] installing %v into %s", missing, dir)
 	cmd := exec.CommandContext(ctx, "python3", args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -171,13 +174,13 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 	if err := cmd.Run(); err != nil {
 		trimmed := strings.TrimSpace(out.String())
 		if ctx.Err() == context.DeadlineExceeded {
-			return Error("pydeps: pip install " + strings.Join(missing, " ") + " timed out after " + pyInstallLimit.String())
+			return errors.New("pydeps: pip install " + strings.Join(missing, " ") + " timed out after " + pyInstallLimit.String())
 		}
-		return Error("pydeps: pip install " + strings.Join(missing, " ") + " failed: " + tailLines(trimmed, 12))
+		return errors.New("pydeps: pip install " + strings.Join(missing, " ") + " failed: " + tailLines(trimmed, 12))
 	}
 
 	appendInstalledMarker(dir, missing)
-	Log("[pydeps] provisioned python packages: %s", strings.Join(missing, ", "))
+	nfo.Log("[pydeps] provisioned python packages: %s", strings.Join(missing, ", "))
 	return nil
 }
 
@@ -230,7 +233,7 @@ func appendInstalledMarker(dir string, specs []string) {
 	f, err := os.OpenFile(filepath.Join(dir, pyDepsInstalledMarker),
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		Debug("[pydeps] could not update install marker: %v", err)
+		nfo.Debug("[pydeps] could not update install marker: %v", err)
 		return
 	}
 	defer f.Close()
@@ -239,11 +242,11 @@ func appendInstalledMarker(dir string, specs []string) {
 	}
 }
 
-// prependPythonPath returns a PYTHONPATH value with the given mount
+// PrependPythonPath returns a PYTHONPATH value with the given mount
 // paths prepended to any existing value, deduped and order-preserving.
 // A mount already present in existing isn't added twice, so repeated
 // calls stay stable.
-func prependPythonPath(existing string, mounts ...string) string {
+func PrependPythonPath(existing string, mounts ...string) string {
 	var parts []string
 	seen := map[string]bool{}
 	add := func(p string) {

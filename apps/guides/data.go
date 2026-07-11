@@ -233,6 +233,7 @@ func sanitizeGuideArtifacts(md string) (string, bool) {
 	cleaned, _ := StripThinkTags(md)
 	cleaned = StripMetaTags(cleaned)
 	cleaned = StripToolCallTags(cleaned)
+	cleaned = StripEmDashes(cleaned)
 	cleaned = strings.TrimSpace(cleaned)
 	return cleaned, cleaned != strings.TrimSpace(md)
 }

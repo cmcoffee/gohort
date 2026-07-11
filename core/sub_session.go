@@ -60,11 +60,11 @@ const (
 
 // SubSessionMode describes how this sub-session was invoked.
 //
-//   sync   — host blocks on the run; reply integrates into the
-//            host's own turn output.
-//   async  — host returns immediately; sub-agent runs in a goroutine
-//            and posts its reply back to the chat as a separate
-//            message when done.
+//	sync   — host blocks on the run; reply integrates into the
+//	         host's own turn output.
+//	async  — host returns immediately; sub-agent runs in a goroutine
+//	         and posts its reply back to the chat as a separate
+//	         message when done.
 //
 // Sync dispatches typically transition straight active → retired
 // (the host's turn was the only consumer). Async dispatches go
@@ -82,17 +82,17 @@ const (
 // drifts back into) from self-driving BACKGROUND tasks that own their
 // own turn loop and must never be promoted to the host persona.
 //
-//   normal     — promotion router applies: an idle record is joinable
-//                via RoutePromote, ages out of the stickiness window,
-//                and falls through to the host's main LLM.
-//   autonomous — a long-lived task that drives its OWN runner when a
-//                message arrives (RouteGoal) and is NEVER handed to the
-//                host persona. It is exempt from the promotion-window /
-//                turn-cap auto-retirement, because it spends most of its
-//                life idle waiting on an external party (a human texting
-//                back) — five minutes is the wrong yardstick. Retirement
-//                is the task's own responsibility (it finishes, hits its
-//                cap, or a timeout sweep retires it).
+//	normal     — promotion router applies: an idle record is joinable
+//	             via RoutePromote, ages out of the stickiness window,
+//	             and falls through to the host's main LLM.
+//	autonomous — a long-lived task that drives its OWN runner when a
+//	             message arrives (RouteGoal) and is NEVER handed to the
+//	             host persona. It is exempt from the promotion-window /
+//	             turn-cap auto-retirement, because it spends most of its
+//	             life idle waiting on an external party (a human texting
+//	             back) — five minutes is the wrong yardstick. Retirement
+//	             is the task's own responsibility (it finishes, hits its
+//	             cap, or a timeout sweep retires it).
 //
 // Kept generic on purpose: core never names the app or the task. Phantom's
 // operator-goal conversations are the first user; any later background-task
@@ -110,20 +110,20 @@ const (
 // stays there. SubSession just tracks "is this sub-agent joinable
 // right now and when was its last reply?"
 type SubSession struct {
-	SubSessionID    string           `json:"sub_session_id"`               // stable storage key; caller-supplied
-	HostSessionID   string           `json:"host_session_id"`              // parent session this sub-agent belongs to
-	HostApp         string           `json:"host_app,omitempty"`           // "orchestrate" / "phantom" / etc.
-	AgentID         string           `json:"agent_id"`                     // target agent's record ID
-	AgentName       string           `json:"agent_name,omitempty"`         // for log lines / UI; not load-bearing
-	OwnerUser       string           `json:"owner_user,omitempty"`         // user account that minted this dispatch
-	Mode            SubSessionMode   `json:"mode"`                         // sync or async
-	Kind            SubSessionKind   `json:"kind,omitempty"`               // "" normal (promotion); "autonomous" self-driving background task
-	Status          SubSessionStatus `json:"status"`                       // active / idle / retired
-	Started         time.Time        `json:"started"`                      // when the dispatch first ran
-	LastReplyAt     time.Time        `json:"last_reply_at,omitempty"`      // most recent sub-agent reply (drives promotion window)
-	TurnCount       int              `json:"turn_count,omitempty"`         // follow-up turns served after initial run (caps promotion)
-	RetiredAt       time.Time        `json:"retired_at,omitempty"`         // when the record left the promotion pool
-	RetiredReason   string           `json:"retired_reason,omitempty"`     // "window" / "cap" / "explicit" / "host_close"
+	SubSessionID  string           `json:"sub_session_id"`           // stable storage key; caller-supplied
+	HostSessionID string           `json:"host_session_id"`          // parent session this sub-agent belongs to
+	HostApp       string           `json:"host_app,omitempty"`       // "orchestrate" / "phantom" / etc.
+	AgentID       string           `json:"agent_id"`                 // target agent's record ID
+	AgentName     string           `json:"agent_name,omitempty"`     // for log lines / UI; not load-bearing
+	OwnerUser     string           `json:"owner_user,omitempty"`     // user account that minted this dispatch
+	Mode          SubSessionMode   `json:"mode"`                     // sync or async
+	Kind          SubSessionKind   `json:"kind,omitempty"`           // "" normal (promotion); "autonomous" self-driving background task
+	Status        SubSessionStatus `json:"status"`                   // active / idle / retired
+	Started       time.Time        `json:"started"`                  // when the dispatch first ran
+	LastReplyAt   time.Time        `json:"last_reply_at,omitempty"`  // most recent sub-agent reply (drives promotion window)
+	TurnCount     int              `json:"turn_count,omitempty"`     // follow-up turns served after initial run (caps promotion)
+	RetiredAt     time.Time        `json:"retired_at,omitempty"`     // when the record left the promotion pool
+	RetiredReason string           `json:"retired_reason,omitempty"` // "window" / "cap" / "explicit" / "host_close"
 }
 
 // Sub-session storage is read on every host turn (for ResolvePromotion)
@@ -278,8 +278,8 @@ func IdleSubSessionsFor(hostSessionID string) []SubSession {
 type SubSessionLivenessChecker func(subSessionID string) bool
 
 var (
-	livenessMu        sync.RWMutex
-	livenessCheckers  []SubSessionLivenessChecker
+	livenessMu       sync.RWMutex
+	livenessCheckers []SubSessionLivenessChecker
 )
 
 // RegisterSubSessionLivenessChecker plugs an app's liveness check

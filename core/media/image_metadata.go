@@ -1,4 +1,4 @@
-package core
+package media
 
 import (
 	"bytes"
@@ -102,11 +102,11 @@ func extractImageMetadata(data []byte) string {
 	return "[image_context]\n" + strings.Join(lines, "\n")
 }
 
-// extractImagesMetadata builds the metadata block for one or more images.
+// ExtractImagesMetadata builds the metadata block for one or more images.
 // When there's exactly one image, the [image_context] header is used; with
 // multiple images, each block is labeled [image N] so the model can refer
 // to them unambiguously.
-func extractImagesMetadata(images [][]byte) string {
+func ExtractImagesMetadata(images [][]byte) string {
 	if len(images) == 0 {
 		return ""
 	}

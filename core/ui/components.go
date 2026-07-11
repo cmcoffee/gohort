@@ -342,26 +342,77 @@ func (h HistoryPanel) MarshalJSON() ([]byte, error) {
 	}{"history_panel", alias(h)})
 }
 
-// ChipPicker renders a wrapping row of selectable chips. The selection
-// is bound to a field on a parent record (used inside expand actions
-// for things like per-conversation tool selection).
+// ChipPicker is the framework's one multi-select-over-a-record-field
+// picker. It binds an array selection to a record (or a dedicated
+// endpoint) with options pulled from a GET. Two display modes cover the
+// whole spectrum:
+//
+//   - "chips" (default): every option renders as a toggle chip, all
+//     visible at once. Best for small, stable option sets (admin
+//     app/group allowlists, per-conversation tool selection).
+//   - "attach": the SELECTED options render as removable pills, and a
+//     "+ Add <Noun>" control reveals the remaining options on demand,
+//     each with a description, an optional meta line, and a "+" button.
+//     Best for large catalogs — document collections, capabilities,
+//     pipelines, reference sources.
+//
+// It is domain-agnostic: apps supply endpoints, field names, and copy.
+// Composite-key or grouped domains adapt their *server* response to this
+// generic contract (a flat option array with a group field and a scalar
+// stored value) rather than teaching this component their shapes.
 type ChipPicker struct {
-	OptionsSource string `json:"options_source"`   // GET — array of options
-	RecordSource  string `json:"record_source"`    // GET — current record
-	Field         string `json:"field"`            // array field on record
-	PostTo        string `json:"post_to"`          // destination for updated record
-	Method        string `json:"method,omitempty"` // default POST; use PATCH for partial-update endpoints
+	// Mode is "chips" (default) or "attach". See the type doc.
+	Mode string `json:"mode,omitempty"`
+
+	OptionsSource string `json:"options_source"` // GET — array, or a shaped object (see RecordsField)
+	// RecordsField overrides the auto-detected array key when
+	// OptionsSource returns a shaped object ({records|items|…: [...]}).
+	RecordsField string `json:"records_field,omitempty"`
+
+	// Current selection comes from ONE of two sources:
+	//   (a) RecordSource + Field — GET a record, read its array Field.
+	//       Saving replaces that record (or PATCHes just Field).
+	RecordSource string `json:"record_source,omitempty"`
+	Field        string `json:"field,omitempty"` // array field on the record
+	//   (b) AttachedField — the OptionsSource response itself carries the
+	//       current selection under this key (array of stored values).
+	//       Pair with SaveKey to POST the selection to a dedicated
+	//       endpoint. No separate record fetch happens.
+	AttachedField string `json:"attached_field,omitempty"`
+
+	PostTo string `json:"post_to"`          // save destination
+	Method string `json:"method,omitempty"` // default POST; PATCH sends only the changed Field
+	// SaveKey, when set, POSTs the selection as {SaveKey: [values]}
+	// (dedicated-endpoint mode). Blank = full-record mode: the fetched
+	// RecordSource record is patched at Field and posted whole.
+	SaveKey string `json:"save_key,omitempty"`
+
 	// NameField is the option key whose value gets STORED in the
-	// record's selection array (e.g. "/phantom" path string).
-	// Default "name".
+	// selection array (e.g. "/phantom" path string). Default "name".
 	NameField string `json:"name_field,omitempty"`
-	// LabelField is the option key whose value is rendered as the
-	// chip's visible text. When unset, the chip shows NameField.
-	// Use this when the storage value isn't human-readable (e.g.
-	// store a URL path but display the app's friendly name).
+	// ValueField overrides the STORED key when it differs from the
+	// display name (default = NameField).
+	ValueField string `json:"value_field,omitempty"`
+	// LabelField is the option key rendered as the chip/pill text. When
+	// unset, shows NameField. Use when the stored value isn't
+	// human-readable (store a URL path, display the app's friendly name).
 	LabelField string `json:"label_field,omitempty"`
-	// DescField is the option key for tooltip text. Default "desc".
+	// DescField is the option key for tooltip / attach-row description.
+	// Default "desc".
 	DescField string `json:"desc_field,omitempty"`
+	// GroupByField groups the attach-mode option list under headers by
+	// this option key (e.g. reference sources grouped by kind). Blank =
+	// no grouping. Ignored in chips mode.
+	GroupByField string `json:"group_by_field,omitempty"`
+	// MetaFields render a compact "12 documents · 44 chunks" line beneath
+	// each attach-row: for each listed key present on the option, the
+	// value is shown followed by the key name. Ignored in chips mode.
+	MetaFields []string `json:"meta_fields,omitempty"`
+
+	// Attach-mode copy (all optional).
+	Noun      string `json:"noun,omitempty"`       // "+ Add <Noun>". Default "item".
+	Intro     string `json:"intro,omitempty"`      // help line above the picker
+	EmptyText string `json:"empty_text,omitempty"` // shown when there are no options
 }
 
 func (ChipPicker) componentType() string { return "chip_picker" }
@@ -2163,7 +2214,12 @@ type WorkbenchPanel struct {
 // Kind:
 //   - "download" — open URL in a new tab (browser downloads, or previews HTML).
 //   - "report"   — POST URL, render the returned {report} markdown in a modal
-//     (e.g. an audit). Spinner shows while it runs.
+//     (e.g. an audit). Spinner shows while it runs. The JSON response MAY also
+//     carry an optional {apply} action ({label, url, spinner, confirm,
+//     invalidate}) — the modal renders it as a button that POSTs {report: <the
+//     report markdown>} to apply.url, then invalidates and replaces the modal
+//     with the returned summary. This lets a read-only report (an audit) offer a
+//     one-click apply without re-deriving its findings, while staying generic.
 //   - "history"  — GET URL → [{id, at, note}]; render a list with Restore
 //     buttons that POST RestoreURL (with {id} = record, {rev} = entry id), then
 //     refresh the viewer.

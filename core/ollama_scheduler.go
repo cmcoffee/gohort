@@ -248,10 +248,10 @@ func ReleaseLlamacppSlot(callerID string) {
 func (s *OllamaScheduler) dispatch(initialMax int) {
 	maxParallel := initialMax
 	inFlight := 0
-	callers := map[string]int{}             // caller → in-flight count (no cap; informational)
+	callers := map[string]int{}              // caller → in-flight count (no cap; informational)
 	queues := map[string][]*ollamaReqToken{} // caller → FIFO of pending tokens
-	order := []string{}                     // round-robin order of callers with pending work
-	lastDispatched := ""                    // most recent caller, for round-robin preference
+	order := []string{}                      // round-robin order of callers with pending work
+	lastDispatched := ""                     // most recent caller, for round-robin preference
 
 	addToOrder := func(cid string) {
 		for _, c := range order {

@@ -5,8 +5,8 @@ package admin
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -3217,7 +3217,11 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
 	for _, s := range AllTunableSpecs() {
-		resp[s.Key] = TunableEffectiveValue(s.Key)
+		if s.Kind == KindBool {
+			resp[s.Key] = TunableEffectiveValue(s.Key) != 0 // toggle reads a bool
+		} else {
+			resp[s.Key] = TunableEffectiveValue(s.Key)
+		}
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -3331,8 +3335,22 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 			if !ok {
 				continue
 			}
-			f, ok := v.(float64) // JSON numbers decode as float64
-			if !ok || f < s.Min || f > s.Max {
+			// Numbers decode as float64; a KindBool toggle POSTs true/false.
+			var f float64
+			switch val := v.(type) {
+			case float64:
+				f = val
+			case bool:
+				if s.Kind != KindBool {
+					continue // a bool for a non-bool knob is malformed; ignore
+				}
+				if val {
+					f = 1
+				}
+			default:
+				continue
+			}
+			if f < s.Min || f > s.Max {
 				continue
 			}
 			a.db.Set(WebTable, s.Key, f)

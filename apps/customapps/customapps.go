@@ -9,10 +9,11 @@
 // moving AppSpec to core so orchestrate can reach it.
 //
 // Mount: /custom/                 → index (a normal Go page listing apps)
-//        /custom/<slug>/          → render the stored spec's Page (from JSON)
-//        /custom/<slug>/records   → GET list | POST upsert  (Table / FormPanel)
-//        /custom/<slug>/record    → DELETE one              (row action)
-//        /custom/_apps            → JSON app list (index Table source)
+//
+//	/custom/<slug>/          → render the stored spec's Page (from JSON)
+//	/custom/<slug>/records   → GET list | POST upsert  (Table / FormPanel)
+//	/custom/<slug>/record    → DELETE one              (row action)
+//	/custom/_apps            → JSON app list (index Table source)
 //
 // Every endpoint a component references resolves here, relative to the app's
 // own mount — a spec cannot point a data binding outside it.

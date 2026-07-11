@@ -148,9 +148,9 @@ func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32
 		Embedding []float32 `json:"embedding"`
 	}
 	var out struct {
-		Embeddings [][]float32    `json:"embeddings"`
-		Embedding  []float32      `json:"embedding"`
-		Data       []openAIItem   `json:"data"`
+		Embeddings [][]float32  `json:"embeddings"`
+		Embedding  []float32    `json:"embedding"`
+		Data       []openAIItem `json:"data"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("embed response parse: %w", err)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"sort"
 	"strings"
@@ -1015,7 +1016,11 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Known topics\n\n")
-	b.WriteString("Snake_case slugs already used for memory_save in this agent's bucket. Reuse one when the current finding fits — picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n")
+	saveVerb := "memory_save"
+	if unifiedMemoryEnabled() {
+		saveVerb = "remember (findings)"
+	}
+	fmt.Fprintf(&b, "Snake_case slugs already used for %s in this agent's bucket. Reuse one when the current finding fits — picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n", saveVerb)
 	for _, name := range topics {
 		b.WriteString("- ")
 		b.WriteString(name)
@@ -1063,7 +1068,7 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 func roundShapePreamble(maxSteps int) string {
 	stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
 	return "## How this round works\n\n" +
-		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with one of: **ask_user / ask_user_form** (pause for input), **respond_directly** (terminate with reply), or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
+		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). To reply, just write your answer as text; that ends the turn. There is no separate reply tool. The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
 		"**Before a tool call, write ONE short sentence in your own voice saying what you're about to do** — \"Let me grab that video.\" / \"Checking your calendar…\" / \"Pulling the latest numbers.\" The user sees it right away, so they're never left watching dead air while the tool runs. Keep it to a sentence. Do NOT write your actual ANSWER before a tool call — that's not the place for it, and you'd just repeat yourself once the result is back. Save the real answer for your final, tool-free reply AFTER you have the results.\n\n" +
 		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
 		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text.\n\n"
@@ -1267,6 +1272,48 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	}
 }
 
+// wireLiveCallbacks attaches the mid-turn user-facing hooks (send_status and the
+// per-user OAuth Connect prompt) to a ToolSession — the main turn session AND any
+// sub-agent session (pipeline stages) that should reach the live conversation.
+// Both only fire when this turn has a live SSE stream: a standing-agent / wake
+// turn has no watcher, so the tools fall through to their no-op guidance instead
+// of emitting into a dead writer.
+func (t *chatTurn) wireLiveCallbacks(sess *ToolSession) {
+	if sess == nil || t.sse == nil {
+		return
+	}
+	// send_status → a PERSISTENT muted line in the conversation flow
+	// (kind:status_note → convoLog), above the eventual reply — NOT the topbar
+	// status bar, which is cleared on 'done' so a mid-turn status would vanish
+	// before the user could read it.
+	sess.StatusCallback = func(text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		t.sse.Send(map[string]any{"kind": "status_note", "text": text})
+	}
+	// A tool needs the user to authorize a per-user OAuth integration (e.g. an
+	// MCP server backing this agent/pipeline). Emit a connect_required block: the
+	// client renders a Connect button that opens the consent popup at the account
+	// connect endpoint, so the user authorizes in-place and retries — no trip to
+	// the Account page. Site-absolute path since chat runs under a different app
+	// root than /account.
+	sess.ConnectPrompt = func(server string) {
+		server = strings.TrimSpace(server)
+		if server == "" {
+			return
+		}
+		t.sse.Send(map[string]any{
+			"kind":   "block",
+			"type":   "connect_required",
+			"id":     fmt.Sprintf("connect-%d", time.Now().UnixNano()),
+			"server": server,
+			"url":    "/account/mcp/connect?server=" + url.QueryEscape(server),
+		})
+	}
+}
+
 func (t *chatTurn) newToolSession() *ToolSession {
 	sess := &ToolSession{
 		LLM:      t.app.LLM,
@@ -1307,15 +1354,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// when this turn has a live SSE stream — a standing-agent / wake turn
 	// has no watcher, so send_status falls through to its built-in no-op
 	// guidance there instead of emitting into a dead writer.
-	if t.sse != nil {
-		sess.StatusCallback = func(text string) {
-			text = strings.TrimSpace(text)
-			if text == "" {
-				return
-			}
-			t.sse.Send(map[string]any{"kind": "status_note", "text": text})
-		}
-	}
+	t.wireLiveCallbacks(sess)
 	// Default workspace = per-user root. Tools that author scripts
 	// via script_body ship them here at registration; dispatch finds
 	// the same path. Tools that want explicit per-conversation
@@ -1858,7 +1897,13 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// the caller's own so the owner keeps Fleet on their own seed.
 	ownerRun := t.agent.Owner == "" || t.agent.Owner == t.user
 	if t.agent.Fleet && forOrchestrator && ownerRun {
-		om := append(operatorManagementTools(sess, t.agent.ID), operatorHistoryTools(sess, t.agent.ID)...)
+		om := operatorManagementTools(sess, t.agent.ID)
+		// History drill-in is its own pair (recall_history / expand_history) in
+		// legacy mode; the unified `recall` tool already spans folded-away
+		// history, so drop the pair to avoid two tools that search the past.
+		if !unifiedMemoryEnabled() {
+			om = append(om, operatorHistoryTools(sess, t.agent.ID)...)
+		}
 		tools = append(tools, om...)
 		for _, td := range om {
 			toolNames = append(toolNames, td.Tool.Name)
@@ -1920,8 +1965,17 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	for _, n := range toolNames {
 		have[n] = true
 	}
+	// Only OPEN-POOL agents (empty AllowedTools — the general Chat/seed
+	// assistants) receive the desktop's local surface. A CURATED agent with an
+	// explicit allowlist (a Guide Author, a techwriter, any app agent) scoped
+	// itself to a specific toolset and never opted into local-filesystem /
+	// screenshot / contacts access — appending it silently let those ambient
+	// tools SHADOW the agent's purpose-built ones (a Guide Author rummaging the
+	// local disk instead of dispatching investigate_<system> to servitor). The
+	// allowlist is the opt-in signal: no list ⇒ open pool ⇒ desktop surface; an
+	// explicit list ⇒ exactly those tools, nothing ambient.
 	var fromClient []AgentToolDef
-	if t.fromDesktopClient {
+	if t.fromDesktopClient && len(t.agent.AllowedTools) == 0 {
 		for _, lt := range LocalToolsForUser(t.user) {
 			if have[lt.Name()] {
 				continue
@@ -2935,7 +2989,7 @@ func (t *chatTurn) gatedPersona(prompt string) string {
 		// Framework always-on tools — sections that depend on these
 		// never get stripped regardless of admin allowlist.
 		"plan_set",
-		"ask_user", "ask_user_form", "respond_directly",
+		"ask_user", "ask_user_form",
 		"knowledge_search", "fetch_knowledge_doc",
 		"memory",
 		"store_fact", "forget_fact", "list_facts",
@@ -4117,8 +4171,9 @@ func (t *chatTurn) shouldUseLeadModel() bool {
 func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDef {
 	out := []AgentToolDef{t.introspectToolDef()} // self-awareness — always
 	// Knowledge — only when the agent has a corpus, else it hallucinates
-	// doc_ids the handler must refuse.
-	if t.agentHasRetrievableContent() {
+	// doc_ids the handler must refuse. Skipped under the unified surface:
+	// recall fronts knowledge search, and recall(id="doc:…") the drill-down.
+	if !unifiedMemoryEnabled() && t.agentHasRetrievableContent() {
 		out = append(out, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
 	}
 	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going"} {
@@ -4128,12 +4183,25 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	}
 	out = append(out, t.loadToolToolDef())  // gateway for the agent's lazy custom tools
 	out = append(out, t.skillToolDefs()...) // read_skill / skill_knowledge_*; nil when skills off
-	if !t.inferredOff() {
-		out = append(out, t.memoryToolDef()) // Reference Memory (memory_save / search / forget)
-	}
-	if !t.explicitOff() {
-		// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
-		out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+	if unifiedMemoryEnabled() {
+		// Collapsed surface: remember / recall / forget replace the six
+		// memory + knowledge tools (knowledge_search + fetch were skipped near
+		// the top of this function). Graph tools aren't part of the collapse
+		// and stay gated by explicitOff.
+		if t.hasAnyMemoryLayer() {
+			out = append(out, t.unifiedMemoryTools()...)
+		}
+		if !t.explicitOff() {
+			out = append(out, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+		}
+	} else {
+		if !t.inferredOff() {
+			out = append(out, t.memoryToolDef()) // Reference Memory (memory_save / search / forget)
+		}
+		if !t.explicitOff() {
+			// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
+			out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+		}
 	}
 	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID)...) // file_deliverable + note_to_cortex; nil for non-cortex
 	// (send_to_builder removed — agents reach Builder by DIRECT dispatch
@@ -4584,24 +4652,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return "Question relayed to the user; the framework will wait for their reply.", nil
 		},
 	}
-	replyTool := AgentToolDef{
-		Tool: Tool{
-			Name:        "respond_directly",
-			Description: "Reply to the user with the given text. The text you pass IS the final reply — equivalent to just stopping and writing the reply as your message content. Provided as a tool so you can be explicit when you want to terminate the turn with a specific text.",
-			Parameters: map[string]ToolParam{
-				"text": {
-					Type:        "string",
-					Description: "The final reply to the user, in plain markdown. This is what the user will see verbatim.",
-				},
-			},
-			Required: []string{"text"},
-		},
-		Handler: func(args map[string]any) (string, error) {
-			capturedReply = strings.TrimSpace(stringArg(args, "text"))
-			cancelOrch()
-			return "Reply relayed to the user.", nil
-		},
-	}
 	formTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user_form",
@@ -4692,7 +4742,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// pane (transparency: user sees "plan_set was called" / "ask_user
 	// was called" alongside the rest of the orchestrator's tool use).
 	// Control tools have no attachment surface — pass nil sess.
-	controlTools := []AgentToolDef{planTool, askTool, formTool, replyTool}
+	// respond_directly was removed: it was an OPTIONAL terminator whose
+	// effect is identical to the implicit path (stream the reply text and
+	// end the round with no tool call, handled below where resp.Content is
+	// non-empty). Offering it alongside "just reply as text" invited the
+	// model to do BOTH — stream the answer AND call respond_directly with
+	// the same text — producing a double reply. Workers never had it
+	// (runWorkerStep builds its own catalog), so this is lead-path only.
+	controlTools := []AgentToolDef{planTool, askTool, formTool}
 	t.wrapToolsForActivity(nil, controlTools)
 	// Three orthogonal layers; each gates its own tool group:
 	//
@@ -5650,8 +5707,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// the orchestrator catalog in runPlan. Workers are the ones
 	// actually researching, so they get write access to the Inferred
 	// Memory layer when it's enabled. Knowledge is always available.
-	tools = append(tools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
-	toolNames = append(toolNames, "knowledge_search", "fetch_knowledge_doc")
+	if !unifiedMemoryEnabled() {
+		tools = append(tools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
+		toolNames = append(toolNames, "knowledge_search", "fetch_knowledge_doc")
+	}
 	for _, td := range t.skillToolDefs() {
 		tools = append(tools, td)
 		toolNames = append(toolNames, td.Tool.Name)
@@ -5659,13 +5718,27 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// (dispatch_to_worker temporarily unmounted on the worker step
 	// too — same reason as the orchestrator catalog: discoverability
 	// problem, not a wiring problem.)
-	if !t.inferredOff() {
-		tools = append(tools, t.memoryToolDef())
-		toolNames = append(toolNames, "memory")
-	}
-	if !t.explicitOff() {
-		tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(),
-			t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+	if unifiedMemoryEnabled() {
+		// Collapsed surface (see frameworkConversationalTools). recall fronts
+		// knowledge search, so the legacy knowledge tools above are skipped too.
+		if t.hasAnyMemoryLayer() {
+			for _, td := range t.unifiedMemoryTools() {
+				tools = append(tools, td)
+				toolNames = append(toolNames, td.Tool.Name)
+			}
+		}
+		if !t.explicitOff() {
+			tools = append(tools, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+		}
+	} else {
+		if !t.inferredOff() {
+			tools = append(tools, t.memoryToolDef())
+			toolNames = append(toolNames, "memory")
+		}
+		if !t.explicitOff() {
+			tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(),
+				t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
+		}
 	}
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.
@@ -6022,9 +6095,10 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	}
 	t.sse.Send(map[string]any{"kind": "message_done", "id": msgID})
 	t.emitStats(msgID, resp, synthStart)
-	// Scrub framework-internal markers from the saved/exported copy (the client
-	// also strips on render — see uiRenderMarkdown). Cheap no-op when none.
-	return strings.TrimSpace(StripMetaTags(reply)), nil
+	// Scrub framework-internal markers AND enforce the no-em-dash house style on
+	// the saved/exported copy (the client also strips both on render — see
+	// uiRenderMarkdown). Cheap no-op when neither is present.
+	return strings.TrimSpace(StripEmDashes(StripMetaTags(reply))), nil
 }
 
 // --- helpers ---------------------------------------------------------------

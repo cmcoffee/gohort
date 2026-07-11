@@ -1254,16 +1254,16 @@ type SingleFireTool interface {
 // and session-aware tools. Pass a *ToolSession when building agent tools via
 // GetAgentToolsWithSession; read results back from it after the loop completes.
 type ToolSession struct {
-	Images            []string // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
-	Videos            []string // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
-	PendingViewImages [][]byte // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
+	Images            []string           // base64-encoded images accumulated by image tools (delivered as outbound attachments / displayed inline)
+	Videos            []string           // base64-encoded video data accumulated by video tools; consumers (phantom outbox) deliver as attachments
+	PendingViewImages [][]byte           // raw image bytes a tool wants the LLM to see on its NEXT round; the agent loop's caller injects these as a synthetic user message before the next LLM call, then clears. NOT delivered to the user — different channel from Images.
 	InboundMedia      []InboundMediaItem // turn-scoped registry of media that arrived on THIS turn (a contact's photo/clip), each addressable by a stable id (media#1, …) so the model can post a specific inbound item back BY ID. Populated at dispatch, listed via the media manifest, resolved by the outbound attachment collector. See RegisterInboundMedia.
-	Silenced          bool     // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
-	LLM               LLM      // optional LLM made available to tools that need sub-calls
-	LeadLLM           LLM      // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
-	DB                Database // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
-	WorkspaceDir      string   // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
-	WorkspaceID       string   // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
+	Silenced          bool               // set true by the stay_silent tool — caller suppresses the LLM's text reply but still flushes attachments
+	LLM               LLM                // optional LLM made available to tools that need sub-calls
+	LeadLLM           LLM                // optional lead/judge LLM for tools that want a higher-tier reasoner (delegate orchestrator); falls back to LLM when nil
+	DB                Database           // optional DB handle for tools that need persistence (e.g. create_temp_tool with persist=true)
+	WorkspaceDir      string             // absolute path to the sandbox dir for local-exec / file-I/O tools; empty disables sandboxed tools entirely
+	WorkspaceID       string             // ID of the managed workspace currently active; "" when WorkspaceDir is the app's default user workspace, set by workspace(action=create|use)
 	// ReplyAuthorizedKey, when set, is the recipient key (chat id or handle) of
 	// the conversation this run is REPLYING to — a channel inbound the agent is
 	// answering. Sending back to that same conversation is a reply, not a
@@ -1279,6 +1279,17 @@ type ToolSession struct {
 	// just ignore the call). Must be safe to call from a tool handler
 	// goroutine — set it once at session creation and don't mutate after.
 	StatusCallback func(text string)
+
+	// ConnectPrompt, if set, is invoked by a tool that needs the user to
+	// authorize an external integration (today: a per-user OAuth MCP server)
+	// before it can run. The app wires it to surface an inline Connect
+	// affordance — chat emits a connect_required block carrying the consent URL
+	// so the user authorizes in-place instead of navigating to their Account
+	// page. server is the integration id; the app builds the per-user connect
+	// URL from it. Nil ⇒ the tool falls back to an actionable error only (a
+	// standing-agent / wake turn with no live watcher). Must be safe to call
+	// from a tool goroutine — set once at session creation, don't mutate after.
+	ConnectPrompt func(server string)
 
 	// SubAgentRunner spawns a one-shot sub-agent loop for tools that
 	// need to dispatch their OWN LLM round (today: pipeline-mode

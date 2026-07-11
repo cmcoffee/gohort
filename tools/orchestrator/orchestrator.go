@@ -4,19 +4,19 @@
 //
 // Pattern (lifted from the servitor app):
 //
-//   parent LLM
-//      │
-//      └── delegate(request, tools?, notes?)
-//            │
-//            ├── orchestrator (sess.LeadLLM, thinking on)
-//            │   - decomposes request into a markdown plan
-//            │   - dispatches each subtask via dispatch_worker
-//            │   - synthesizes worker outputs into a final answer
-//            │
-//            └── dispatch_worker(task, tools?)   ← inline tool, only available to orchestrator
-//                  └── worker (sess.LLM, thinking off)
-//                        - focused subtask, fixed tool whitelist
-//                        - returns synthesized findings
+//	parent LLM
+//	   │
+//	   └── delegate(request, tools?, notes?)
+//	         │
+//	         ├── orchestrator (sess.LeadLLM, thinking on)
+//	         │   - decomposes request into a markdown plan
+//	         │   - dispatches each subtask via dispatch_worker
+//	         │   - synthesizes worker outputs into a final answer
+//	         │
+//	         └── dispatch_worker(task, tools?)   ← inline tool, only available to orchestrator
+//	               └── worker (sess.LLM, thinking off)
+//	                     - focused subtask, fixed tool whitelist
+//	                     - returns synthesized findings
 //
 // Recursion is hard-capped at 2 layers: workers don't see the `delegate`
 // tool, only the orchestrator does — so a worker can't spawn its own

@@ -315,7 +315,7 @@ func ChannelForInbound(db Database, owner, service string, addresses ...string) 
 type ChannelInbound struct {
 	Owner     string // the channel owner — whose agent runs and under whose store
 	AgentID   string // the bound agent (channel.AgentID)
-	SessionID        string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
+	SessionID string // per-contact session id, stable per conversation, so each contact accumulates its own thread under the agent
 	// ChatID + Handle identify the inbound conversation itself, so the agent's
 	// messaging tools can recognize a reply BACK to it as in-thread (no approval
 	// gate) versus a proactive reach-out to someone else (gated). ChatID is the
@@ -323,7 +323,7 @@ type ChannelInbound struct {
 	// groups). Either may be empty; the recipient key derives from whichever is set.
 	ChatID           string
 	Handle           string
-	SenderName       string // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
+	SenderName       string   // the inbound message's author display name (falls back to handle) — the per-message sender in the transcript
 	ConversationName string   // the conversation/room display name (the title editable on the transport side) — names the session
 	Roster           []string // known participant display names for a GROUP conversation, so the agent is handed who-is-here up front instead of having to call list_members. Empty for 1:1 chats or unknown rosters.
 	Text             string   // the inbound message text

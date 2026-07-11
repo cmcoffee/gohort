@@ -16,13 +16,13 @@ const techniquesTable = "ssh_techniques"
 // Facts are keyed by (appliance_id, key) and overwrite on re-store,
 // so re-mapping a system keeps the knowledge base current.
 type SshFact struct {
-	ID            string   `json:"id"`            // applianceID + ":" + key
+	ID            string   `json:"id"` // applianceID + ":" + key
 	ApplianceID   string   `json:"appliance_id"`
 	ApplianceName string   `json:"appliance_name"`
 	Key           string   `json:"key"`
 	Value         string   `json:"value"`
 	Tags          []string `json:"tags,omitempty"`
-	Updated       string   `json:"updated"`        // RFC3339
+	Updated       string   `json:"updated"`       // RFC3339
 	TTL           string   `json:"ttl,omitempty"` // "short" (30min) or "long" (24h); default "long"
 }
 

@@ -238,6 +238,35 @@
               var md = el('div', {class: 'ui-wb-md'});
               body.appendChild(md);
               uiRenderMarkdown(md, (d && d.report) || '_(no report)_');
+              // Optional follow-up action the report handler returned (d.apply):
+              // a button that POSTs the report BACK to an endpoint so a read-only
+              // report (e.g. an audit) can offer a one-click "apply" without
+              // re-deriving the findings. The report markdown rides in the body as
+              // {report}. On success we invalidate + replace the modal contents
+              // with the returned summary. Kept generic — core/ui never knows what
+              // "apply" means for a given app.
+              var ap = d && d.apply;
+              if (ap && ap.url) {
+                var footer = el('div', {class: 'ui-wb-working-actions'});
+                var applyBtn = el('button', {class: 'ui-wb-action-btn', text: ap.label || 'Apply'});
+                applyBtn.addEventListener('click', function() {
+                  function go() {
+                    var aurl = (ap.url || '').replace('{id}', encodeURIComponent(selectedId));
+                    applyBtn.disabled = true; applyBtn.textContent = ap.spinner || 'Applying…';
+                    fetch(aurl, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({report: (d && d.report) || ''})})
+                      .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
+                      .then(function(res) {
+                        if (ap.invalidate && ap.invalidate.length && window.uiInvalidate) window.uiInvalidate(ap.invalidate);
+                        footer.remove();
+                        uiRenderMarkdown(md, (res && res.report) || '_Applied._');
+                      })
+                      .catch(function(err) { applyBtn.disabled = false; applyBtn.textContent = ap.label || 'Apply'; alert((ap.label || 'Apply') + ' failed: ' + (err && err.message || err)); });
+                  }
+                  if (ap.confirm) { window.uiConfirm(ap.confirm).then(function(ok){ if (ok) go(); }); } else { go(); }
+                });
+                footer.appendChild(applyBtn);
+                body.appendChild(footer);
+              }
             }});
           })
           .catch(function(err) {

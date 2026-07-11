@@ -47,8 +47,8 @@ func init() {
 
 type ImageTool struct{}
 
-func (t *ImageTool) Name() string { return "image" }
-func (t *ImageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} }
+func (t *ImageTool) Name() string         { return "image" }
+func (t *ImageTool) Caps() []Capability   { return []Capability{CapNetwork, CapRead} }
 func (t *ImageTool) IsInternetTool() bool { return true }
 func (t *ImageTool) Desc() string {
 	return "Work with images — single entry point; pick the action matching intent. " +
@@ -90,7 +90,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 
 type FetchImageTool struct{}
 
-func (t *FetchImageTool) Name() string { return "fetch_image" }
+func (t *FetchImageTool) Name() string       { return "fetch_image" }
 func (t *FetchImageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP GET image
 func (t *FetchImageTool) Desc() string {
 	return "Download an image from a URL into your session workspace. Returns the saved path. Does NOT deliver — call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. Use this after finding an image URL via web_search, or whenever you already have a specific image URL the user wants."
@@ -117,7 +117,7 @@ func (t *FetchImageTool) RunWithSession(args map[string]any, sess *ToolSession) 
 
 type FindImageTool struct{}
 
-func (t *FindImageTool) Name() string { return "find_image" }
+func (t *FindImageTool) Name() string       { return "find_image" }
 func (t *FindImageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // search + download
 func (t *FindImageTool) Desc() string {
 	return "Search for an image by description and save the SINGLE BEST MATCH into your session workspace. The framework's internal vision-LLM picks the best candidate from multiple search results. Returns the saved path. Does NOT deliver to the user — call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. Use this whenever the user asks for a picture, meme, GIF, or photo."
@@ -263,7 +263,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 
 type GenerateImageTool struct{}
 
-func (t *GenerateImageTool) Name() string { return "generate_image" }
+func (t *GenerateImageTool) Name() string       { return "generate_image" }
 func (t *GenerateImageTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // image-gen API call
 func (t *GenerateImageTool) Desc() string {
 	return "Generate a NEW image from a text description (DALL·E / Stable Diffusion / whichever image-gen backend is wired up) and save it into your session workspace. Returns the saved path. Does NOT deliver — call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. USE ONLY when the user explicitly asks to CREATE / DRAW / MAKE / GENERATE a fresh image. NOT for finding existing images (use find_image), downloading a known URL (use fetch_image), or page screenshots (use screenshot_page). Generation makes things up — wrong tool for real-world reference."

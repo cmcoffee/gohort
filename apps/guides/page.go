@@ -88,7 +88,6 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			HTML(guideDocCSS).
 			HTML(guideSectionCtrlCSS).
 			CSS(guideKnowledgeCSS).
-			CSS(guideSourcesCSS).
 			CSS(guideSettingsCSS).
 			JS(guideModalElJS).
 			JS(guideSectionCode).
@@ -282,50 +281,26 @@ const guideKnowledgeAction = `function(ctx){
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
       var qp = 'guide=' + encodeURIComponent(gid);
-      fetch('collections?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
-        var available = (d && d.available) || [];
-        var attached = {};
-        ((d && d.attached) || []).forEach(function(id){ attached[id] = true; });
-        window.uiOpenSimpleModal({title:'Attach knowledge', width:'560px', mount: function(body, dlg){
-          body.appendChild(el('p', {class:'guide-kn-intro', text:'Pick the knowledge collections the Guide Author can search while drafting this guide. It searches them with the search_knowledge tool to ground sections in your own material.'}));
-          if (!available.length){
-            body.appendChild(el('div', {class:'guide-kn-empty', text:'You have no knowledge collections yet. Create one in the Knowledge app, then attach it here.'}));
-            return;
-          }
-          var boxes = [];
-          var listWrap = el('div', {class:'guide-kn-list'});
-          available.forEach(function(c){
-            var cb = el('input', {type:'checkbox'}); cb.value = c.id; if (attached[c.id]) cb.checked = true;
-            boxes.push(cb);
-            var label = el('label', {class:'guide-kn-item'}, [cb,
-              el('span', {class:'guide-kn-name', text: c.name || c.id})]);
-            if (c.description) label.appendChild(el('span', {class:'guide-kn-desc', text: c.description}));
-            listWrap.appendChild(label);
-          });
-          body.appendChild(listWrap);
-          var save = el('button', {class:'ui-row-btn primary', text:'Save'});
-          body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
-          save.addEventListener('click', function(){
-            var ids = boxes.filter(function(b){ return b.checked; }).map(function(b){ return b.value; });
-            save.disabled = true; save.textContent = 'Saving…';
-            fetch('collections?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({collections: ids})})
-              .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
-              .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} })
-              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
-          });
-        }});
-      });
+      window.uiOpenSimpleModal({title:'Attach knowledge', width:'560px', mount: function(body){
+        window.uiMountComponent({
+          type:'chip_picker', mode:'attach',
+          options_source:'collections?' + qp,
+          attached_field:'attached',
+          save_key:'collections',
+          post_to:'collections?' + qp,
+          name_field:'id', label_field:'name', desc_field:'description',
+          noun:'collection',
+          intro:'Pick the knowledge collections the Guide Author can search while drafting this guide. It searches them with the search_knowledge tool to ground sections in your own material.',
+          empty_text:'You have no knowledge collections yet. Create one in the Knowledge app, then attach it here.'
+        }, body);
+      }});
 }`
 
-// guideKnowledgeCSS styles the knowledge-picker modal (shared by the sources
-// picker too). Injected via ui.Head.CSS.
-const guideKnowledgeCSS = `.guide-kn-intro { color: var(--text-mute); font-size: 0.88rem; margin: 0 0 0.9rem; }
-.guide-kn-empty { color: var(--text-mute); font-style: italic; padding: 0.5rem 0; }
-.guide-kn-list { display: flex; flex-direction: column; gap: 0.5rem; max-height: 22rem; overflow-y: auto; }
-.guide-kn-item { display: grid; grid-template-columns: auto 1fr; gap: 0.1rem 0.55rem; align-items: center; cursor: pointer; padding: 0.4rem 0.5rem; border: 1px solid var(--border); border-radius: 8px; }
-.guide-kn-item:hover { border-color: var(--accent); }
-.guide-kn-name { font-weight: 600; color: var(--text-hi); font-size: 0.92rem; }
-.guide-kn-desc { grid-column: 2; color: var(--text-mute); font-size: 0.8rem; }`
+// guideKnowledgeCSS carries the one intro-paragraph style still shared by the
+// Settings modal. The knowledge + sources pickers now render via the shared
+// core/ui chip_picker (attach mode), which owns its own styling. Injected via
+// ui.Head.CSS.
+const guideKnowledgeCSS = `.guide-kn-intro { color: var(--text-mute); font-size: 0.88rem; margin: 0 0 0.9rem; }`
 
 // guideSourcesAction is the 'guides_sources' client action behind the Sources
 // toolbar button: a modal that attaches/detaches cross-app reference sources
@@ -337,49 +312,21 @@ const guideSourcesAction = `function(ctx){
       var gid = ctx.recordId;
       if (!gid || !window.uiOpenSimpleModal) return;
       var qp = 'guide=' + encodeURIComponent(gid);
-      fetch('references?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
-        var groups = (d && d.groups) || [];
-        var attached = {};
-        ((d && d.attached) || []).forEach(function(s){ attached[s.kind + '::' + s.item_id] = true; });
-        window.uiOpenSimpleModal({title:'Guide sources', width:'560px', mount: function(body, dlg){
-          body.appendChild(el('p', {class:'guide-kn-intro', text:'Attach knowledge other gohort services have gathered: your Systems (servitor) and connected document sources (e.g. Confluence). The Guide Author builds the guide from the sources you pick here.'}));
-          if (!groups.length){
-            body.appendChild(el('div', {class:'guide-kn-empty', text:'No reference sources available yet. Systems appear once you have appliances in the servitor app; document sources appear once connected.'}));
-            return;
-          }
-          var boxes = [];
-          var listWrap = el('div', {class:'guide-kn-list'});
-          groups.forEach(function(g){
-            listWrap.appendChild(el('div', {class:'guide-src-group', text: g.label}));
-            (g.items||[]).forEach(function(it){
-              var key = g.kind + '::' + it.id;
-              var cb = el('input', {type:'checkbox'}); cb.value = key; cb._kind = g.kind; cb._item = it.id;
-              if (attached[key]) cb.checked = true;
-              boxes.push(cb);
-              var label = el('label', {class:'guide-kn-item'}, [cb,
-                el('span', {class:'guide-kn-name', text: it.name || it.id})]);
-              if (it.desc) label.appendChild(el('span', {class:'guide-kn-desc', text: it.desc}));
-              listWrap.appendChild(label);
-            });
-          });
-          body.appendChild(listWrap);
-          var save = el('button', {class:'ui-row-btn primary', text:'Save'});
-          body.appendChild(el('div', {class:'guide-edit-actions'}, [save]));
-          save.addEventListener('click', function(){
-            var refs = boxes.filter(function(b){ return b.checked; }).map(function(b){ return {kind: b._kind, item_id: b._item}; });
-            save.disabled = true; save.textContent = 'Saving…';
-            fetch('references?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify({references: refs})})
-              .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); })
-              .then(function(){ try { dlg.close(); dlg.remove(); } catch(e){} })
-              .catch(function(err){ save.disabled = false; save.textContent = 'Save'; alert('Save failed: ' + (err && err.message || err)); });
-          });
-        }});
-      });
+      window.uiOpenSimpleModal({title:'Guide sources', width:'560px', mount: function(body){
+        window.uiMountComponent({
+          type:'chip_picker', mode:'attach',
+          options_source:'references?' + qp,
+          attached_field:'attached',
+          save_key:'references',
+          post_to:'references?' + qp,
+          name_field:'id', label_field:'name', desc_field:'desc',
+          group_by_field:'group',
+          noun:'source',
+          intro:'Attach knowledge other gohort services have gathered: your Systems (servitor) and connected document sources (e.g. Confluence). The Guide Author builds the guide from the sources you pick here.',
+          empty_text:'No reference sources available yet. Systems appear once you have appliances in the servitor app; document sources appear once connected.'
+        }, body);
+      }});
 }`
-
-// guideSourcesCSS adds the group header to the shared picker styles.
-const guideSourcesCSS = `.guide-src-group { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-mute); font-weight: 700; margin: 0.5rem 0 0.1rem; }
-.guide-src-group:first-child { margin-top: 0; }`
 
 // guideSettingsAction is the 'guides_settings' client action behind the Edit
 // toolbar button: ONE modal for the guide's name/subtitle, the Private

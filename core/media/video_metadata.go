@@ -1,4 +1,4 @@
-package core
+package media
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // Video metadata + frame extraction via ffmpeg/ffprobe. ffmpeg is required
@@ -56,14 +58,14 @@ func extractVideoMetadata(data []byte) string {
 	}
 	tmp, err := writeTempFile(data, "*.mp4")
 	if err != nil {
-		Debug("[video] tempfile failed: %v", err)
+		nfo.Debug("[video] tempfile failed: %v", err)
 		return ""
 	}
 	defer os.Remove(tmp)
 
 	probe, err := runFfprobe(tmp)
 	if err != nil {
-		Debug("[video] ffprobe failed: %v", err)
+		nfo.Debug("[video] ffprobe failed: %v", err)
 		return ""
 	}
 
@@ -154,9 +156,9 @@ func extractVideoMetadata(data []byte) string {
 	return "[video_context]\n" + strings.Join(lines, "\n")
 }
 
-// extractVideosMetadata builds the metadata block for one or more videos.
+// ExtractVideosMetadata builds the metadata block for one or more videos.
 // Multi-video messages get numbered headers like image multi-extraction.
-func extractVideosMetadata(videos [][]byte) string {
+func ExtractVideosMetadata(videos [][]byte) string {
 	if len(videos) == 0 {
 		return ""
 	}

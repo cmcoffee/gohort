@@ -56,7 +56,7 @@ var always_destructive = map[string]bool{
 	"kill": true, "killall": true, "pkill": true, "skill": true,
 	"shutdown": true, "reboot": true, "halt": true, "poweroff": true,
 	"truncate": true,
-	"userdel": true, "deluser": true, "groupdel": true, "delgroup": true,
+	"userdel":  true, "deluser": true, "groupdel": true, "delgroup": true,
 	"passwd": true, "chpasswd": true, "usermod": true,
 	"visudo": true, "sudoedit": true,
 	"insmod": true, "rmmod": true,
@@ -65,13 +65,13 @@ var always_destructive = map[string]bool{
 // destructive_verbs maps commands to sub-verb arguments that make them
 // destructive. "systemctl status" is safe; "systemctl stop" is not.
 var destructive_verbs = map[string][]string{
-	"systemctl":      {"stop", "kill", "disable", "mask", "reset-failed"},
-	"service":        {"stop"},
-	"iptables":       {"-F", "--flush", "-X", "-Z", "--delete-chain"},
-	"ip6tables":      {"-F", "--flush", "-X", "-Z"},
-	"nft":            {"flush", "delete"},
-	"firewall-cmd":   {"--remove-service", "--remove-port", "--remove-rule", "--panic-on"},
-	"modprobe":       {"-r", "--remove"},
+	"systemctl":    {"stop", "kill", "disable", "mask", "reset-failed"},
+	"service":      {"stop"},
+	"iptables":     {"-F", "--flush", "-X", "-Z", "--delete-chain"},
+	"ip6tables":    {"-F", "--flush", "-X", "-Z"},
+	"nft":          {"flush", "delete"},
+	"firewall-cmd": {"--remove-service", "--remove-port", "--remove-rule", "--panic-on"},
+	"modprobe":     {"-r", "--remove"},
 	// Container / orchestration tools
 	"kubectl":        {"delete", "drain", "cordon", "taint", "replace", "rollout"},
 	"terraform":      {"destroy", "apply"},

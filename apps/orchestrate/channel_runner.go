@@ -276,15 +276,15 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// per-contact-vs-unified choice there is a deferred setting.
 		sessionID := app.effectiveChannelSession(in.Owner, in.AgentID, in.SessionID)
 		res, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
-			AgentOwner:     in.Owner,
-			RuntimeUser:    in.Owner,
-			AgentKey:       in.AgentID,
-			SubSessionID:   sessionID,
-			Title:          title,
-			MessageSender:  in.SenderName,
-			Message:        in.Text + videoNote + attachNote,
-			Images:         images,
-			Interactive:    true, // a real person is texting — no delegation marker
+			AgentOwner:    in.Owner,
+			RuntimeUser:   in.Owner,
+			AgentKey:      in.AgentID,
+			SubSessionID:  sessionID,
+			Title:         title,
+			MessageSender: in.SenderName,
+			Message:       in.Text + videoNote + attachNote,
+			Images:        images,
+			Interactive:   true, // a real person is texting — no delegation marker
 			// Replying BACK to this same conversation is in-thread, not a
 			// proactive reach-out — so it skips the send approval gate.
 			ReplyAuthorizedKey: operatorRecipientKey(in.ChatID, in.Handle),

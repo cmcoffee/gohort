@@ -78,10 +78,10 @@ type PendingTempTool struct {
 // pool), subject to the same per-agent gating. See
 // LoadSharedPersistentTempTools.
 type PersistentTempTool struct {
-	Tool        TempTool  `json:"tool"`
-	ApprovedAt  time.Time `json:"approved_at"`
-	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
-	Shared      bool      `json:"shared,omitempty"`
+	Tool       TempTool  `json:"tool"`
+	ApprovedAt time.Time `json:"approved_at"`
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	Shared     bool      `json:"shared,omitempty"`
 }
 
 // LoadPendingTempTools returns the pending-approval queue for a user,

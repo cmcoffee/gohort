@@ -1,4 +1,4 @@
-package core
+package factcheck
 
 // Claim is a structured fact extracted from a synthesis report. The
 // prose report is the human-facing output; the claim ledger is the

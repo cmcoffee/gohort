@@ -24,7 +24,7 @@
 //   - Comments without a `@requires-tools:` directive are ignored
 //     (passed through to the model verbatim).
 
-package core
+package textutil
 
 import (
 	"regexp"

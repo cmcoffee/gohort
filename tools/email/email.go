@@ -14,7 +14,7 @@ func init() { RegisterChatTool(new(EmailTool)) }
 // EmailTool sends an email via SMTP using stored mail configuration.
 type EmailTool struct{}
 
-func (t *EmailTool) Name() string { return "send_email" }
+func (t *EmailTool) Name() string       { return "send_email" }
 func (t *EmailTool) Caps() []Capability { return []Capability{CapNetwork, CapWrite} } // SMTP send — outbound network + persistent side effect
 func (t *EmailTool) Desc() string {
 	return "Send an email to a recipient with a subject and body. The recipient email address must be known or explicitly provided by the user — never guess or fabricate an email address."

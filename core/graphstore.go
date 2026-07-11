@@ -56,6 +56,12 @@ type GraphEntity struct {
 	Attrs     map[string]string `json:"attrs,omitempty"`
 	Created   time.Time         `json:"created"`
 	Updated   time.Time         `json:"updated"`
+	// MemoryProvenance is reserved: the graph layer has no hygiene pass (sweep /
+	// eviction / merge) yet, so these fields sit unset. Embedded now so a future
+	// graph-tombstone or entity-staleness pass inherits the same vocabulary as the
+	// fact store rather than inventing a second one. Zero value = live, unknown
+	// origin, never decays; all fields omitempty, so unused adds nothing to the wire.
+	MemoryProvenance
 }
 
 // GraphEdge is one relationship: From --[Rel]--> To. From/To are entity IDs.

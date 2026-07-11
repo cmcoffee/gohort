@@ -9,7 +9,7 @@
 // Kept as a standalone helper because exposed-agent slugging in
 // orchestrate still uses it.)
 
-package core
+package textutil
 
 import (
 	"strings"

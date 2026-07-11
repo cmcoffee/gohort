@@ -29,15 +29,17 @@ type documentsRedirectApp struct {
 
 func (T documentsRedirectApp) Name() string         { return "documents-redirect" }
 func (T documentsRedirectApp) SystemPrompt() string { return "" }
-func (T documentsRedirectApp) Desc() string         { return "Internal: redirects legacy /documents/ URLs to /knowledge/." }
+func (T documentsRedirectApp) Desc() string {
+	return "Internal: redirects legacy /documents/ URLs to /knowledge/."
+}
 
 func (T *documentsRedirectApp) Init() error { return T.Flags.Parse() }
 func (T *documentsRedirectApp) Main() error { return nil }
 
-func (T *documentsRedirectApp) WebPath() string  { return "/documents" }
-func (T *documentsRedirectApp) WebName() string  { return "Documents (legacy)" }
-func (T *documentsRedirectApp) WebDesc() string  { return "Redirects to Knowledge." }
-func (T *documentsRedirectApp) WebHidden() bool  { return true }
+func (T *documentsRedirectApp) WebPath() string { return "/documents" }
+func (T *documentsRedirectApp) WebName() string { return "Documents (legacy)" }
+func (T *documentsRedirectApp) WebDesc() string { return "Redirects to Knowledge." }
+func (T *documentsRedirectApp) WebHidden() bool { return true }
 
 func (T *documentsRedirectApp) Routes() {
 	T.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

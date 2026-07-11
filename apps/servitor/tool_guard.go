@@ -21,29 +21,29 @@ import (
 // network call to anything other than the user's own SSH appliance or
 // the local llama.cpp inference server.
 var servitorWorkerToolAllowList = map[string]bool{
-	"run_command":         true, // SSH exec on the user's appliance
-	"run_pty":             true, // SSH pty on the user's appliance
-	"search_code":         true, // local: substring search over the encrypted repo store
-	"read_file":           true, // local: read a file from the encrypted repo store
-	"list_dir":            true, // local: list a directory in the encrypted repo store
-	"read_log":            true, // local: read log file from local fs / kvlite
-	"search_logs":         true, // local: grep over stored logs
-	"count_lines":         true, // local: bounded line count via SSH or local
-	"read_range":          true, // local: bounded file read
-	"note_lesson":         true, // local: kvlite write
-	"record_technique":    true, // local: kvlite write
-	"record_discovery":    true, // local: kvlite write
-	"store_fact":          true, // local: kvlite write
-	"link_entities":       true, // local: scoped graph write
-	"store_rule":          true, // local: kvlite write
-	"search_facts":        true, // local: kvlite read
-	"search_knowledge":    true, // local: vector search over owner's linked collections (embeds via local llama.cpp)
-	"watch_condition":     true, // local: watcher setup against the same appliance
-	"list_watches":        true, // local: watcher state
-	"save_to_codewriter":  true, // local: gohort CodeWriter DB write
-	"save_to_techwriter":  true, // local: gohort TechWriter DB write
-	"push_to_guide":       true, // local: gohort Guides DB write (via core DocumentTarget)
-	"list_guides":         true, // local: gohort Guides read
+	"run_command":        true, // SSH exec on the user's appliance
+	"run_pty":            true, // SSH pty on the user's appliance
+	"search_code":        true, // local: substring search over the encrypted repo store
+	"read_file":          true, // local: read a file from the encrypted repo store
+	"list_dir":           true, // local: list a directory in the encrypted repo store
+	"read_log":           true, // local: read log file from local fs / kvlite
+	"search_logs":        true, // local: grep over stored logs
+	"count_lines":        true, // local: bounded line count via SSH or local
+	"read_range":         true, // local: bounded file read
+	"note_lesson":        true, // local: kvlite write
+	"record_technique":   true, // local: kvlite write
+	"record_discovery":   true, // local: kvlite write
+	"store_fact":         true, // local: kvlite write
+	"link_entities":      true, // local: scoped graph write
+	"store_rule":         true, // local: kvlite write
+	"search_facts":       true, // local: kvlite read
+	"search_knowledge":   true, // local: vector search over owner's linked collections (embeds via local llama.cpp)
+	"watch_condition":    true, // local: watcher setup against the same appliance
+	"list_watches":       true, // local: watcher state
+	"save_to_codewriter": true, // local: gohort CodeWriter DB write
+	"save_to_techwriter": true, // local: gohort TechWriter DB write
+	"push_to_guide":      true, // local: gohort Guides DB write (via core DocumentTarget)
+	"list_guides":        true, // local: gohort Guides read
 }
 
 // servitorOrchestratorToolAllowList is the corresponding set for the
@@ -52,20 +52,20 @@ var servitorWorkerToolAllowList = map[string]bool{
 // itself only plans and records. Same external-call posture: nothing
 // here may reach a third-party service.
 var servitorOrchestratorToolAllowList = map[string]bool{
-	"probe":                  true, // delegate to a worker (internal)
-	"read_doc":               true, // local: doc state read
-	"update_doc":             true, // local: doc state write
-	"store_fact":             true, // local: kvlite write
-	"link_entities":          true, // local: scoped graph write
-	"record_discovery":       true, // local: kvlite write
-	"record_technique":       true, // local: kvlite write
-	"note_lesson":            true, // local: kvlite write
-	"set_plan":               true, // local: session plan state
-	"mark_step_in_progress":  true, // local: session plan state
-	"record_step_findings":   true, // local: session plan state
-	"mark_step_blocked":      true, // local: session plan state
-	"revise_plan":            true, // local: session plan state
-	"report_gaps":            true, // local: session plan state
+	"probe":                 true, // delegate to a worker (internal)
+	"read_doc":              true, // local: doc state read
+	"update_doc":            true, // local: doc state write
+	"store_fact":            true, // local: kvlite write
+	"link_entities":         true, // local: scoped graph write
+	"record_discovery":      true, // local: kvlite write
+	"record_technique":      true, // local: kvlite write
+	"note_lesson":           true, // local: kvlite write
+	"set_plan":              true, // local: session plan state
+	"mark_step_in_progress": true, // local: session plan state
+	"record_step_findings":  true, // local: session plan state
+	"mark_step_blocked":     true, // local: session plan state
+	"revise_plan":           true, // local: session plan state
+	"report_gaps":           true, // local: session plan state
 }
 
 // assertOnlyAllowedTools panics if any tool in tools has a name not

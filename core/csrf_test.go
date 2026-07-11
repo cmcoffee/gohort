@@ -20,10 +20,10 @@ func csrfReq(host, origin, referer string) *http.Request {
 
 func TestSameOriginRequest(t *testing.T) {
 	cases := []struct {
-		name           string
-		host           string
+		name            string
+		host            string
 		origin, referer string
-		want           bool
+		want            bool
 	}{
 		{"same origin", "app.example.com", "https://app.example.com", "", true},
 		{"cross origin", "app.example.com", "https://evil.com", "", false},

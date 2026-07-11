@@ -222,10 +222,34 @@
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   };
+  // uiStripEmDashes — deterministic house-style enforcement at the DISPLAY
+  // boundary: replace em-dashes (U+2014) with a comma so the model's em-dash
+  // tic never reaches the user, regardless of whether a system-prompt rule
+  // suppressed it. Mirrors core/textutil StripEmDashes (server side handles
+  // saved/exported copies; this handles the live-rendered view, streamed
+  // included). Code is preserved: anything inside a fenced ``` block or inline
+  // `code` span is left untouched. Fast no-op when no em-dash is present.
+  window.uiStripEmDashes = function(s) {
+    s = String(s == null ? '' : s);
+    if (s.indexOf('—') === -1) return s;
+    var codeRe = /```[\s\S]*?```|`[^`\n]*`/g, out = '', last = 0, m;
+    function tx(seg) {
+      if (seg.indexOf('—') === -1) return seg;
+      seg = seg.replace(/[ \t]*—[ \t]*/g, ', ');
+      seg = seg.replace(/^,[ \t]*/gm, '');       // line-leading dash artifact
+      seg = seg.replace(/, \n/g, ',\n');          // trailing space before newline
+      return seg.replace(/, ,/g, ',');
+    }
+    while ((m = codeRe.exec(s)) !== null) {
+      out += tx(s.slice(last, m.index)) + m[0];   // prose transformed, code verbatim
+      last = m.index + m[0].length;
+    }
+    return out + tx(s.slice(last));
+  };
   window.uiRenderMarkdown = function(target, raw) {
     if (!target) return;
     target.classList.add('ui-md');
-    target.innerHTML = mdToHTML(window.uiStripMetaTags(String(raw == null ? '' : raw)));
+    target.innerHTML = mdToHTML(window.uiStripEmDashes(window.uiStripMetaTags(String(raw == null ? '' : raw))));
   };
   // Markdown extension registry — apps add post-processors that
   // run after base mdToHTML passes complete.

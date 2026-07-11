@@ -46,13 +46,15 @@ func (T *Account) Routes() {
 	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
+	T.HandleFunc("/mcp/connect", T.handleMCPConnect)
+	T.HandleFunc("/mcp/callback", T.handleMCPCallback)
 	T.HandleFunc("/", T.servePage)
 }
 
-// oauthCallbackURI is the absolute redirect URI the OAuth provider sends the user
-// back to. Prefers the admin External URL (must match what the admin registered
-// with the provider); falls back to the request's scheme+host.
-func oauthCallbackURI(r *http.Request) string {
+// accountBaseURL is the absolute site base for OAuth redirect URIs. Prefers the
+// admin External URL (must match what the admin registered with the provider);
+// falls back to the request's scheme+host.
+func accountBaseURL(r *http.Request) string {
 	base := ""
 	if db := AuthDB(); db != nil {
 		var ext string
@@ -66,7 +68,20 @@ func oauthCallbackURI(r *http.Request) string {
 		}
 		base = scheme + "://" + r.Host
 	}
-	return base + "/account/oauth/callback"
+	return base
+}
+
+// oauthCallbackURI is the absolute redirect URI the SecureAPI OAuth provider
+// sends the user back to.
+func oauthCallbackURI(r *http.Request) string { return accountBaseURL(r) + "/account/oauth/callback" }
+
+// mcpConnectCallbackURI is the absolute redirect URI for the per-user MCP OAuth
+// consent flow. This is the CANONICAL per-user MCP callback — the account panel
+// and the inline chat Connect prompt both route through /account/mcp/connect, so
+// the registered redirect_uri stays consistent regardless of entry point. (A
+// provider with a pre-registered client must allow this path in its OAuth app.)
+func mcpConnectCallbackURI(r *http.Request) string {
+	return accountBaseURL(r) + "/account/mcp/callback"
 }
 
 // handleOAuthStart begins the consent flow for ?cred=<name>: mints state + PKCE
@@ -110,6 +125,84 @@ func (T *Account) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/account/?oauth=connected", http.StatusFound)
 }
 
+// handleMCPConnect begins the per-user OAuth consent for a hosted MCP server
+// (?server=<name>): it mints PKCE + state (registering the server-level OAuth
+// client via discovery + DCR on first use) and 302-redirects the user to the
+// provider's consent screen. Any logged-in user connects their OWN account — the
+// token is scoped to them — so this is NOT admin-gated. Reached from both the
+// Account panel and the inline chat Connect prompt.
+func (T *Account) handleMCPConnect(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	server := strings.TrimSpace(r.URL.Query().Get("server"))
+	if server == "" {
+		http.Error(w, "server required", http.StatusBadRequest)
+		return
+	}
+	cfg, found := MCP().Load(server)
+	if !found || cfg.AuthMode != MCPAuthOAuth {
+		http.Error(w, "no such OAuth MCP server", http.StatusNotFound)
+		return
+	}
+	authURL, err := MCP().StartOAuth(user, server, mcpConnectCallbackURI(r))
+	if err != nil {
+		mcpConnectResultPage(w, "Could not start authorization for "+server+":\n\n"+err.Error())
+		return
+	}
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// handleMCPCallback redeems the MCP OAuth callback (state + code), stores the
+// user's token, and brings up their per-user connection. The state is the
+// unguessable secret tying the callback to the authorizing user, so this only
+// needs a logged-in session. Renders a self-contained result page (this tab is
+// typically a consent popup opened from chat or the Account panel).
+func (T *Account) handleMCPCallback(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	q := r.URL.Query()
+	if e := q.Get("error"); e != "" {
+		mcpConnectResultPage(w, "Authorization was declined or failed: "+e+" "+q.Get("error_description"))
+		return
+	}
+	code, state := q.Get("code"), q.Get("state")
+	if code == "" || state == "" {
+		mcpConnectResultPage(w, "Missing authorization code or state.")
+		return
+	}
+	if err := MCP().CompleteOAuth(state, code); err != nil {
+		mcpConnectResultPage(w, "Could not complete the connection:\n\n"+err.Error())
+		return
+	}
+	mcpConnectResultPage(w, "Connected. You can close this tab and return to your conversation.")
+}
+
+// mcpConnectResultPage renders a minimal self-contained result page for the MCP
+// consent popup (no proxied assets — this tab may be a fresh OAuth popup). On a
+// successful connect it signals the opener so an inline chat prompt can mark
+// itself connected, then closes.
+func mcpConnectResultPage(w http.ResponseWriter, msg string) {
+	connected := strings.HasPrefix(msg, "Connected")
+	notify := ""
+	if connected {
+		notify = `<script>try{if(window.opener)window.opener.postMessage('gohort-mcp-connected','*');}catch(e){}setTimeout(function(){try{window.close();}catch(e){}},1200);</script>`
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Connect</title>` +
+		`<style>html,body{height:100%;margin:0}body{background:#0d1117;color:#c9d1d9;` +
+		`font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}` +
+		`.card{max-width:480px;width:90%;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:28px;white-space:pre-wrap;line-height:1.5}</style>` +
+		`</head><body><div class="card">` + htmlEscape(msg) + `</div>` + notify + `</body></html>`))
+}
+
+// htmlEscape is a tiny escaper for the result-page message.
+func htmlEscape(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
+
 // handleConnections GET lists the per-user (per_user-scoped) credentials the user
 // can connect, each flagged connected/not; POST sets or clears the user's secret
 // for one. The secret value is never returned — only connected status.
@@ -120,7 +213,11 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// SecureAPI per-user credentials + per-user OAuth MCP servers, rendered
+		// in one panel. MCP entries carry Kind="mcp" + a ConnectURL so the panel
+		// routes their Connect/Disconnect to the MCP endpoints.
 		conns := Secure().PerUserConnectionsFor(user)
+		conns = append(conns, MCP().PerUserOAuthConnectionsFor(user)...)
 		if conns == nil {
 			conns = []PerUserConnection{}
 		}
@@ -133,6 +230,18 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// MCP oauth server: only Disconnect flows through here (Connect goes via
+		// the /mcp/connect consent redirect, not a POST). Handle before the
+		// SecureAPI guard, whose Load() wouldn't find this name.
+		if cfg, found := MCP().Load(body.Name); found && cfg.AuthMode == MCPAuthOAuth {
+			if body.Disconnect {
+				MCP().DisconnectUser(user, body.Name)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			http.Error(w, "this integration connects via OAuth — use Connect", http.StatusBadRequest)
 			return
 		}
 		// Guard: only per_user credentials are touchable from the account page
@@ -398,6 +507,8 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
 (function(){
   var box = document.getElementById('acct-conns');
   if (!box) return;
+  // A consent popup reports success via postMessage; refresh so the badge flips.
+  window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected') load(); });
   function el(t, a, k){ var n=document.createElement(t); if(a) for(var x in a){ if(x==='text') n.textContent=a[x]; else if(x==='class') n.className=a[x]; else n.setAttribute(x,a[x]); } (k||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function post(body, btn){
     btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
@@ -418,9 +529,21 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
         if (c.description) card.appendChild(el('div',{class:'acct-conn-desc',text:c.description}));
         var row = el('div', {class:'acct-conn-row'});
         if (c.oauth){
-          // OAuth consent: a Connect button that redirects to the provider.
-          var conn = el('a', {class:'ui-row-btn primary', href:'oauth/start?cred='+encodeURIComponent(c.name), text: c.connected?'Reconnect':'Connect'});
-          row.appendChild(conn);
+          if (c.connect_url){
+            // MCP-style OAuth: open consent in a popup and refresh the list when
+            // it reports back (postMessage), so the badge flips without a full
+            // page nav. Falls back to a new tab if the popup is blocked.
+            var conn = el('button', {class:'ui-row-btn primary', text: c.connected?'Reconnect':'Connect'});
+            conn.addEventListener('click', function(){
+              var w = window.open(c.connect_url, 'gohort-connect', 'width=600,height=760');
+              if (!w) { window.open(c.connect_url, '_blank'); }
+            });
+            row.appendChild(conn);
+          } else {
+            // SecureAPI OAuth: a Connect link that redirects to the provider.
+            var connA = el('a', {class:'ui-row-btn primary', href:'oauth/start?cred='+encodeURIComponent(c.name), text: c.connected?'Reconnect':'Connect'});
+            row.appendChild(connA);
+          }
           if (c.connected){
             var d2 = el('button', {class:'ui-row-btn', text:'Disconnect'});
             d2.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your authorization is removed.')) return; disconnect(c.name, d2); });

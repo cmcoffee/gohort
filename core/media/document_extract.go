@@ -15,7 +15,7 @@
 // prompt: a typical "Attached: <filename>\n\n<text>\n\n<user msg>"
 // preamble works well.
 
-package core
+package media
 
 import (
 	"bytes"
@@ -28,16 +28,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cmcoffee/snugforge/nfo"
 	"golang.org/x/net/html"
 )
 
 // DocumentExtractTimeout caps any extraction call. Large PDFs can
 // take seconds; a per-doc timeout keeps a runaway extraction from
-// holding the user's send open.
-func DocumentExtractTimeout() time.Duration { return TuneDuration("tune_document_extract_timeout") }
-
-func init() {
-	RegisterTunable(TunableSpec{Key: "tune_document_extract_timeout", Category: "Timeouts", Label: "Document extraction timeout", Help: "Per-document cap for text extraction (PDFs, office files) on a user send.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
+// holding the user's send open. The concrete value comes from core's
+// tunable via the ExtractTimeout hook (wired at startup); defaults to
+// 30s when unset (media is a leaf and can't read the tunables registry).
+func DocumentExtractTimeout() time.Duration {
+	if ExtractTimeout != nil {
+		return ExtractTimeout()
+	}
+	return 30 * time.Second
 }
 
 // DocumentAttachment is one inbound document the user uploaded via
@@ -60,7 +64,7 @@ type DocumentAttachment struct {
 func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error) {
 	mime := strings.ToLower(strings.TrimSpace(doc.MimeType))
 	ext := strings.ToLower(filepath.Ext(doc.Name))
-	Debug("[document_extract] %q mime=%q ext=%q size=%d", doc.Name, mime, ext, len(doc.Data))
+	nfo.Debug("[document_extract] %q mime=%q ext=%q size=%d", doc.Name, mime, ext, len(doc.Data))
 	switch {
 	case mime == "application/pdf" || ext == ".pdf":
 		return extractPDF(ctx, doc.Data)
@@ -79,10 +83,10 @@ func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error
 	case strings.HasPrefix(mime, "text/") || ext == ".txt" || ext == ".md" || ext == ".log" || ext == ".csv":
 		return string(doc.Data), nil
 	case isAudioAttachment(mime, ext):
-		Debug("[document_extract] routing %q to audio transcription branch", doc.Name)
+		nfo.Debug("[document_extract] routing %q to audio transcription branch", doc.Name)
 		return extractAudio(ctx, doc)
 	}
-	Debug("[document_extract] no extractor matched for %q (mime=%q ext=%q)", doc.Name, mime, ext)
+	nfo.Debug("[document_extract] no extractor matched for %q (mime=%q ext=%q)", doc.Name, mime, ext)
 	return "", fmt.Errorf("unsupported document type: mime=%q ext=%q", mime, ext)
 }
 
@@ -381,7 +385,7 @@ func collapseHTMLWhitespace(s string) string {
 func extractAudio(ctx context.Context, doc DocumentAttachment) (string, error) {
 	cfg := GetTranscribeConfig()
 	if !cfg.Enabled {
-		Log("[transcribe] refused %q (%d bytes mime=%q): transcription disabled — configure via `gohort --setup`",
+		nfo.Log("[transcribe] refused %q (%d bytes mime=%q): transcription disabled — configure via `gohort --setup`",
 			doc.Name, len(doc.Data), doc.MimeType)
 		return "", fmt.Errorf("audio attachments need transcription enabled — configure via `gohort --setup` (Audio transcription section)")
 	}
@@ -389,18 +393,18 @@ func extractAudio(ctx context.Context, doc DocumentAttachment) (string, error) {
 	if name == "" {
 		name = "audio.mp3"
 	}
-	Log("[transcribe] sending %q (%d bytes mime=%q) to %s", name, len(doc.Data), doc.MimeType, cfg.Endpoint)
+	nfo.Log("[transcribe] sending %q (%d bytes mime=%q) to %s", name, len(doc.Data), doc.MimeType, cfg.Endpoint)
 	text, err := Transcribe(ctx, doc.Data, name)
 	if err != nil {
-		Log("[transcribe] %q failed: %v", name, err)
+		nfo.Log("[transcribe] %q failed: %v", name, err)
 		return "", fmt.Errorf("transcribe failed: %w", err)
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		Log("[transcribe] %q returned empty text (no speech detected)", name)
+		nfo.Log("[transcribe] %q returned empty text (no speech detected)", name)
 		return "", fmt.Errorf("transcription returned empty text (clip may have no speech)")
 	}
-	Log("[transcribe] %q → %d chars", name, len(text))
+	nfo.Log("[transcribe] %q → %d chars", name, len(text))
 	return text, nil
 }
 

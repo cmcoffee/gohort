@@ -1,5 +1,5 @@
 // HTML→PDF via the shared headless Chromium (the same instance browse_page +
-// screenshot_page use). Registers the core HTMLToPDF seam so apps render their
+// screenshot_page use). Registers the media HTMLToPDF seam so apps render their
 // HTML and get a print-to-PDF that matches it exactly — CSS, tables, and
 // clickable internal/ToC links that the pure-Go fpdf renderer can't produce.
 package browser

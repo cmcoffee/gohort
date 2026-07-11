@@ -100,9 +100,9 @@ func docTokenize(text string) map[string]bool {
 //
 // Expected block format per source:
 //
-//	1. Title
-//	   URL
-//	   Snippet (one or more lines)
+//  1. Title
+//     URL
+//     Snippet (one or more lines)
 //
 // Blocks are separated by blank lines.
 func parseCachedSources(result string) []indexedDoc {
@@ -289,4 +289,3 @@ func formatIndexedDocs(docs []indexedDoc) string {
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
-

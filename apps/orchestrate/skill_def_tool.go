@@ -143,9 +143,9 @@ skills compose better than one giant catch-all.`
 func skillDefList(sess *ToolSession) (string, error) {
 	skills := LoadSkills(sess.DB, sess.Username)
 	type row struct {
-		ID           string   `json:"id"`
-		Name         string   `json:"name"`
-		Description  string   `json:"description,omitempty"`
+		ID                  string   `json:"id"`
+		Name                string   `json:"name"`
+		Description         string   `json:"description,omitempty"`
 		Triggers            []string `json:"triggers,omitempty"`
 		AllowedTools        []string `json:"allowed_tools,omitempty"`
 		AttachedCollections []string `json:"attached_collections,omitempty"`

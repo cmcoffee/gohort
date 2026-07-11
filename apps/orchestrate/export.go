@@ -71,16 +71,16 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 // downstream consumer doesn't need a second fetch to know what the
 // session was for.
 type sessionExportPayload struct {
-	ExportedAt time.Time      `json:"exported_at"`
-	Agent      exportedAgent  `json:"agent"`
+	ExportedAt time.Time       `json:"exported_at"`
+	Agent      exportedAgent   `json:"agent"`
 	Session    exportedSession `json:"session"`
 }
 
 type exportedAgent struct {
-	ID               string   `json:"id"`
-	Name             string   `json:"name"`
-	Description      string   `json:"description,omitempty"`
-	AllowedTools     []string `json:"allowed_tools,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description,omitempty"`
+	AllowedTools []string `json:"allowed_tools,omitempty"`
 }
 
 type exportedSession struct {
@@ -98,10 +98,10 @@ func buildExportPayload(agent AgentRecord, sess ChatSession) sessionExportPayloa
 	return sessionExportPayload{
 		ExportedAt: time.Now(),
 		Agent: exportedAgent{
-			ID:               agent.ID,
-			Name:             agent.Name,
-			Description:      agent.Description,
-			AllowedTools:     agent.AllowedTools,
+			ID:           agent.ID,
+			Name:         agent.Name,
+			Description:  agent.Description,
+			AllowedTools: agent.AllowedTools,
 		},
 		Session: exportedSession{
 			ID:                  sess.ID,

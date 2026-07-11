@@ -1,4 +1,4 @@
-package core
+package geo
 
 import (
 	"encoding/json"
@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // Reverse geocoding turns raw GPS coords from EXIF into a human-readable
@@ -18,20 +19,14 @@ import (
 // landmark in a completely different country instead of admitting it
 // doesn't recognize the coordinates).
 //
-// Results are cached forever in RootDB — coordinates don't move, and
-// Nominatim's TOS strongly prefers cached answers over repeated lookups.
+// Results are cached forever in the injected cache bucket (core wires it to
+// RootDB) — coordinates don't move, and Nominatim's TOS strongly prefers
+// cached answers over repeated lookups.
 
 const (
-	geocodeCacheTable = "geocode_cache"
 	nominatimEndpoint = "https://nominatim.openstreetmap.org/reverse"
 	geocodeUserAgent  = "gohort (https://github.com/cmcoffee/gohort)"
 )
-
-func geocodeTimeout() time.Duration { return TuneDuration("tune_geocode_timeout") }
-
-func init() {
-	RegisterTunable(TunableSpec{Key: "tune_geocode_timeout", Category: "Timeouts", Label: "Geocode HTTP timeout", Help: "Per-request timeout for online (Nominatim) reverse-geocoding lookups.", Kind: KindSeconds, Default: 5, Min: 1, Max: 30})
-}
 
 // nominatimAddress mirrors the subset of /reverse fields we use.
 type nominatimAddress struct {
@@ -56,7 +51,7 @@ type nominatimResponse struct {
 // a single-process server; high-volume users should self-host an instance.
 var nominatimGate sync.Mutex
 
-// reverseGeocode resolves lat/lon to a short place string ("San Francisco,
+// ReverseGeocode resolves lat/lon to a short place string ("San Francisco,
 // California, United States"). Layered:
 //  1. kvlite cache by (lat, lon) at 4-decimal precision — permanent.
 //  2. Offline GeoNames DB (~150K cities) — fast, no network, no rate limit.
@@ -66,12 +61,12 @@ var nominatimGate sync.Mutex
 // Returns "" if every layer fails or the caches aren't initialized.
 // Errors are silent by design — the caller treats missing as "no info"
 // rather than surfacing a network/data failure to the user.
-func reverseGeocode(lat, lon float64) string {
-	if RootDB == nil {
+func ReverseGeocode(lat, lon float64) string {
+	cache := cacheBucket()
+	if cache == nil {
 		return "" // no cache available, skip — avoids hammering the public endpoint from CLI/test runs
 	}
 	key := fmt.Sprintf("%.4f,%.4f", lat, lon)
-	cache := RootDB.Bucket(geocodeCacheTable)
 	var cached string
 	if cache.Get("", key, &cached) {
 		return cached
@@ -101,7 +96,7 @@ func fetchNominatim(lat, lon float64) string {
 		nominatimEndpoint, lat, lon)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		Debug("[geocode] new request failed: %v", err)
+		nfo.Debug("[geocode] new request failed: %v", err)
 		return ""
 	}
 	// Nominatim TOS: every client must set a unique User-Agent identifying the app.
@@ -111,27 +106,27 @@ func fetchNominatim(lat, lon float64) string {
 	client := &http.Client{Timeout: geocodeTimeout()}
 	resp, err := client.Do(req)
 	if err != nil {
-		Debug("[geocode] request error for %.4f,%.4f: %v", lat, lon, err)
+		nfo.Debug("[geocode] request error for %.4f,%.4f: %v", lat, lon, err)
 		return ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		Debug("[geocode] %.4f,%.4f returned status %d", lat, lon, resp.StatusCode)
+		nfo.Debug("[geocode] %.4f,%.4f returned status %d", lat, lon, resp.StatusCode)
 		return ""
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		Debug("[geocode] read body for %.4f,%.4f failed: %v", lat, lon, err)
+		nfo.Debug("[geocode] read body for %.4f,%.4f failed: %v", lat, lon, err)
 		return ""
 	}
 	var nr nominatimResponse
 	if err := json.Unmarshal(body, &nr); err != nil {
-		Debug("[geocode] decode failed: %v", err)
+		nfo.Debug("[geocode] decode failed: %v", err)
 		return ""
 	}
 	place := formatPlace(nr)
 	if place != "" {
-		Debug("[geocode] %.4f,%.4f → %s", lat, lon, place)
+		nfo.Debug("[geocode] %.4f,%.4f → %s", lat, lon, place)
 	}
 	return place
 }

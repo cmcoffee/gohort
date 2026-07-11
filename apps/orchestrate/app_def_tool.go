@@ -44,7 +44,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			Name:        "app_def",
 			Description: "Author and manage data-driven gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) composed from ui primitives and served at /custom/<slug>/. This is how you build a gohort app: describe it declaratively as a list of sections, and the framework renders it + gives it a generic per-app record store (a form section saves records, a table section lists them) with no hand-written HTML/CSS/JS.\n\nUse this when the user asks for \"an app\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent multi-panel surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
 			Parameters: map[string]ToolParam{
-				"action":      {Type: "string", Description: "One of: create | update | test | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors before telling the user the app is ready. Pass sample=[{...}] to test the full form→data-source→output chain with example form data even before any records exist."},
+				"action": {Type: "string", Description: "One of: create | update | test | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors before telling the user the app is ready. Pass sample=[{...}] to test the full form→data-source→output chain with example form data even before any records exist."},
 				"sample": {
 					Type:        "array",
 					Description: "(test) Example form submissions to run the data sources/actions against, standing in for the live record store. Each item is an object keyed by the FORM's field names — exactly what a record looks like after the user submits the form (e.g. [{\"city\":\"Santa Cruz, CA\"}]). Use this to test end-to-end before the app has any real records: the scripts receive these as the `records` env var, so you see whether 'add a location → forecast' actually produces output. If a data source returns [] against a sample that clearly should match, the script isn't reading the records env var (or has the wrong field name).",
@@ -409,9 +409,9 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		// any returned records, and refreshes the records table. Button labels +
 		// per-action confirm ride on the items (see handleActionsList).
 		sec.Body = ui.ActionList{
-			Source:     "actions",
-			DescField:  "desc",
-			PostTo:     "action/{name}",
+			Source:    "actions",
+			DescField: "desc",
+			PostTo:    "action/{name}",
 			// An action upserts records, so refresh the record lists AND every
 			// script-backed panel computed from them (same as a form save).
 			Invalidate: appRecordWriteInvalidations(spec),

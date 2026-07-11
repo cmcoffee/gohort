@@ -718,38 +718,190 @@
     return wrap;
   };
 
+  // chip_picker — the framework's one multi-select-over-a-record-field
+  // picker. cfg.mode "chips" (default) toggles every option inline;
+  // "attach" shows the selection as removable pills with a "+ Add"
+  // reveal-list. Options come from cfg.options_source (a flat array or a
+  // shaped object — see extractOptions). Selection comes from either a
+  // fetched record (cfg.record_source + cfg.field) or the options
+  // response itself (cfg.attached_field). Saves either replace the whole
+  // record or POST {cfg.save_key: [values]} to a dedicated endpoint.
+  //
+  // LOCAL mode: when no cfg.post_to is given, the picker persists NOTHING —
+  // it seeds its selection from cfg.value (an array) and reports every change
+  // via cfg.on_change(values). Use this to embed the picker as one field of a
+  // larger form the caller saves itself (e.g. a create-record modal where the
+  // record doesn't exist yet), instead of a dedicated attach endpoint.
   components.chip_picker = function(cfg) {
-    var wrap = el('div', {class: 'ui-chips'}, ['Loading…']);
+    var mode       = cfg.mode || 'chips';
     var nameField  = cfg.name_field  || 'name';
-    var labelField = cfg.label_field || nameField; // display key; defaults to value key
+    var valueField = cfg.value_field || nameField; // key whose value is STORED
+    var labelField = cfg.label_field || nameField; // display key
     var descField  = cfg.desc_field  || 'desc';
+    var wrap = el('div', {class: mode === 'attach' ? 'ui-chip-picker' : 'ui-chips'}, ['Loading…']);
+
+    // extractOptions unwraps a shaped list response to its array. Endpoints
+    // use a mix of top-level keys; a flat array passes straight through.
+    function extractOptions(raw) {
+      if (Array.isArray(raw)) return raw;
+      if (!raw) return [];
+      if (cfg.records_field && Array.isArray(raw[cfg.records_field])) return raw[cfg.records_field];
+      var keys = ['items', 'records', 'sources', 'collections', 'skills', 'pipelines', 'available'];
+      for (var i = 0; i < keys.length; i++) { if (Array.isArray(raw[keys[i]])) return raw[keys[i]]; }
+      return [];
+    }
+    function valueOf(opt) { return opt[valueField]; }
+    function labelOf(opt) { return opt[labelField] || opt[nameField] || valueOf(opt); }
+
+    // LOCAL mode: no endpoint to save to — the caller owns persistence and
+    // just wants the live selection via cfg.on_change.
+    var local = !cfg.post_to;
+
+    // Only attach mode with a dedicated endpoint (attached_field) skips
+    // the record fetch — chips and full-record attach both need it. Local
+    // mode never fetches a record (its selection seeds from cfg.value).
+    var needRecord = !local && !cfg.attached_field && !!cfg.record_source;
+    var record = {};
     Promise.all([
       fetchJSON(cfg.options_source),
-      fetchJSON(cfg.record_source)
+      needRecord ? fetchJSON(cfg.record_source) : Promise.resolve(null)
     ]).then(function(r) {
-      var options = r[0] || [];
-      var record = r[1] || {};
-      var enabled = record[cfg.field] || [];
+      var options = extractOptions(r[0]);
+      record = r[1] || {};
+      // Current selection: caller-seeded (local), the options response
+      // (attached_field), or the fetched record's array field.
+      var selected = (local ? cfg.value
+                      : (cfg.attached_field ? (r[0] && r[0][cfg.attached_field]) : record[cfg.field])) || [];
+      selected = selected.slice();
+
+      // persist writes the current selection back. In local mode nothing is
+      // POSTed — the caller is handed the selection via cfg.on_change and saves
+      // it itself. Otherwise: {save_key: sel} to a dedicated endpoint, or the
+      // patched record (PATCH = field only, POST = whole record).
+      function persist() {
+        if (local) {
+          if (cfg.on_change) cfg.on_change(selected.slice());
+          return Promise.resolve();
+        }
+        var body;
+        if (cfg.save_key) { body = {}; body[cfg.save_key] = selected; }
+        else if (cfg.method && cfg.method.toUpperCase() === 'PATCH') { body = {}; body[cfg.field] = selected; }
+        else { record[cfg.field] = selected; body = record; }
+        return fetchJSON(cfg.post_to, {
+          method: cfg.method || 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+      }
+
       wrap.innerHTML = '';
+      if (mode === 'attach') renderAttach(options, selected, persist);
+      else renderChips(options, selected, persist);
+    }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
+
+    // --- chips mode: inline toggle chips (unchanged behavior) ---
+    function renderChips(options, selected, persist) {
       options.forEach(function(opt) {
         var chip = el('span', {
-          class: 'ui-chip' + (enabled.indexOf(opt[nameField]) >= 0 ? ' on' : ''),
+          class: 'ui-chip' + (selected.indexOf(valueOf(opt)) >= 0 ? ' on' : ''),
           title: opt[descField] || ''
-        }, [opt[labelField] || opt[nameField]]);
+        }, [labelOf(opt)]);
         chip.addEventListener('click', function() {
-          var i = enabled.indexOf(opt[nameField]);
-          if (i >= 0) { enabled.splice(i, 1); chip.classList.remove('on'); }
-          else { enabled.push(opt[nameField]); chip.classList.add('on'); }
-          record[cfg.field] = enabled;
-          var body = (cfg.method && cfg.method.toUpperCase() === 'PATCH') ? (function(){ var o = {}; o[cfg.field] = enabled; return o; })() : record;
-          fetchJSON(cfg.post_to, {
-            method: cfg.method || 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-          }).catch(function(err){ showToast('Save failed: ' + err.message); });
+          var i = selected.indexOf(valueOf(opt));
+          if (i >= 0) { selected.splice(i, 1); chip.classList.remove('on'); }
+          else { selected.push(valueOf(opt)); chip.classList.add('on'); }
+          persist().catch(function(err){ showToast('Save failed: ' + err.message); });
         });
         wrap.appendChild(chip);
       });
-    }).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });
+    }
+
+    // --- attach mode: selected-as-pills + "+ Add" reveal-list ---
+    function renderAttach(options, selected, persist) {
+      if (cfg.intro) wrap.appendChild(el('div', {class: 'ui-cp-intro', text: cfg.intro}));
+      if (!options.length) {
+        wrap.appendChild(el('div', {class: 'ui-cp-empty', text: cfg.empty_text || '(nothing to show)'}));
+        return;
+      }
+      var byVal = {};
+      options.forEach(function(o){ byVal[valueOf(o)] = o; });
+      var pool = options.filter(function(o){ return !o.disabled; });
+      var noun = cfg.noun || 'item';
+      var isSel = {};
+      selected.forEach(function(v){ isSel[v] = true; });
+
+      var pills = el('div', {class: 'ui-cp-pills'});
+      wrap.appendChild(pills);
+      var addBtn = el('button', {type: 'button', class: 'ui-row-btn ui-cp-add'});
+      wrap.appendChild(addBtn);
+      var listWrap = el('div', {class: 'ui-cp-list', style: 'display:none'});
+      wrap.appendChild(listWrap);
+      var open = false;
+
+      // toggle mutates selection, re-renders, and rolls back on save failure.
+      function toggle(val, on) {
+        if (on) { isSel[val] = true; selected.push(val); }
+        else { delete isSel[val]; var i = selected.indexOf(val); if (i >= 0) selected.splice(i, 1); }
+        renderPills(); renderList();
+        persist().catch(function(err){
+          showToast('Save failed: ' + err.message);
+          if (on) { delete isSel[val]; var j = selected.indexOf(val); if (j >= 0) selected.splice(j, 1); }
+          else { isSel[val] = true; selected.push(val); }
+          renderPills(); renderList();
+        });
+      }
+
+      function renderPills() {
+        pills.innerHTML = '';
+        var vals = selected.slice();
+        if (!vals.length) { pills.appendChild(el('span', {class: 'ui-cp-none', text: 'None selected yet.'})); return; }
+        vals.forEach(function(v){
+          var opt = byVal[v];
+          var pill = el('span', {class: 'ui-cp-pill'}, [(opt && labelOf(opt)) || v]);
+          var x = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
+          x.addEventListener('click', function(){ toggle(v, false); });
+          pill.appendChild(x);
+          pills.appendChild(pill);
+        });
+      }
+
+      function addRow(opt, host) {
+        var row = el('div', {class: 'ui-cp-row'});
+        var meta = el('div', {class: 'ui-cp-row-meta'});
+        meta.appendChild(el('div', {class: 'ui-cp-name', text: labelOf(opt)}));
+        var desc = (opt[descField] || '').trim();
+        if (desc) { if (desc.length > 200) desc = desc.slice(0, 200) + '…'; meta.appendChild(el('div', {class: 'ui-cp-desc', text: desc})); }
+        var bits = [];
+        (cfg.meta_fields || []).forEach(function(k){ if (opt[k] != null) bits.push(opt[k] + ' ' + k); });
+        if (bits.length) meta.appendChild(el('div', {class: 'ui-cp-metaline', text: bits.join(' · ')}));
+        var add = el('button', {type: 'button', class: 'ui-cp-add-btn', title: 'Add', text: '+'});
+        add.addEventListener('click', function(){ toggle(valueOf(opt), true); });
+        row.appendChild(meta); row.appendChild(add);
+        host.appendChild(row);
+      }
+
+      function renderList() {
+        listWrap.style.display = open ? 'block' : 'none';
+        if (!open) return;
+        listWrap.innerHTML = '';
+        var avail = pool.filter(function(o){ return !isSel[valueOf(o)]; });
+        if (!avail.length) { listWrap.appendChild(el('div', {class: 'ui-cp-empty', text: 'Everything is added.'})); return; }
+        if (cfg.group_by_field) {
+          var order = [], groups = {};
+          avail.forEach(function(o){ var g = o[cfg.group_by_field] || ''; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(o); });
+          order.forEach(function(g){
+            if (g) listWrap.appendChild(el('div', {class: 'ui-cp-group', text: g}));
+            groups[g].forEach(function(o){ addRow(o, listWrap); });
+          });
+        } else {
+          avail.forEach(function(o){ addRow(o, listWrap); });
+        }
+      }
+
+      addBtn.addEventListener('click', function(){ open = !open; addBtn.textContent = open ? 'Hide list' : ('+ Add ' + noun); renderList(); });
+      addBtn.textContent = '+ Add ' + noun;
+      renderPills(); renderList();
+    }
+
     return wrap;
   };
 

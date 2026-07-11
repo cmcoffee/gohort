@@ -50,35 +50,43 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 			Caps:     []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			note := strings.TrimSpace(stringArg(args, "note"))
-			if note == "" {
-				return "", errors.New("note is required")
-			}
-			// Pass the agent's memory mode + worker chat so: (a) a changed fact
-			// ("moved to Austin") supersedes the stale one instead of coexisting as
-			// a contradiction, and (b) in chatbot mode the relevance gate rejects
-			// ephemeral chatter before it bloats the always-in-prompt block.
-			res := StoreMemoryFactP(t.udb, factsNamespace(t.agent.ID), note, FactWritePolicy{
-				Mode: t.agent.MemoryMode,
-				Chat: t.app.WorkerChat,
-			})
-			switch res.Reason {
-			case FactDuplicate:
-				return fmt.Sprintf("Already remembered (deduped): %q. Skipping.", res.Fact.Note), nil
-			case FactRejected:
-				return "Not saved. That reads as a passing detail rather than a durable fact worth injecting into every future turn. If it's a lasting preference, identity fact, or standing instruction, rephrase it as one and try again.", nil
-			}
-			msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", res.Fact.Note)
-			if len(res.Superseded) > 0 {
-				dropped := make([]string, len(res.Superseded))
-				for i, s := range res.Superseded {
-					dropped[i] = fmt.Sprintf("%q", s.Note)
-				}
-				msg += fmt.Sprintf(" Superseded %d now-stale fact(s): %s.", len(dropped), strings.Join(dropped, ", "))
-			}
-			return msg, nil
+			return t.storeFactNote(stringArg(args, "note"))
 		},
 	}
+}
+
+// storeFactNote is the shared write path for the Explicit Memory (always-
+// in-prompt) layer. storeFactToolDef routes here, and so does the unified
+// `remember` tool's pin=true branch — one place owns dedup, supersession,
+// and the relevance gate so the two surfaces can't drift.
+func (t *chatTurn) storeFactNote(note string) (string, error) {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return "", errors.New("note is required")
+	}
+	// Pass the agent's memory mode + worker chat so: (a) a changed fact
+	// ("moved to Austin") supersedes the stale one instead of coexisting as
+	// a contradiction, and (b) in chatbot mode the relevance gate rejects
+	// ephemeral chatter before it bloats the always-in-prompt block.
+	res := StoreMemoryFactP(t.udb, factsNamespace(t.agent.ID), note, FactWritePolicy{
+		Mode: t.agent.MemoryMode,
+		Chat: t.app.WorkerChat,
+	})
+	switch res.Reason {
+	case FactDuplicate:
+		return fmt.Sprintf("Already remembered (deduped): %q. Skipping.", res.Fact.Note), nil
+	case FactRejected:
+		return "Not saved. That reads as a passing detail rather than a durable fact worth injecting into every future turn. If it's a lasting preference, identity fact, or standing instruction, rephrase it as one and try again.", nil
+	}
+	msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", res.Fact.Note)
+	if len(res.Superseded) > 0 {
+		dropped := make([]string, len(res.Superseded))
+		for i, s := range res.Superseded {
+			dropped[i] = fmt.Sprintf("%q", s.Note)
+		}
+		msg += fmt.Sprintf(" Superseded %d now-stale fact(s): %s.", len(dropped), strings.Join(dropped, ", "))
+	}
+	return msg, nil
 }
 
 // forgetFactToolDef removes one fact by its 1-based index in the
@@ -135,6 +143,12 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 				if query == "" {
 					return "(no facts stored yet)", nil
 				}
+				// No live match — check the history set so a hole gets a record
+				// ("you had X; it was dropped on <date>") instead of the model
+				// falling back to a stale prior with no signal it once knew this.
+				if hole := explainRetiredHole(t.udb, factsNamespace(t.agent.ID), query); hole != "" {
+					return hole, nil
+				}
 				return fmt.Sprintf("(no stored facts match %q)", query), nil
 			}
 			var b strings.Builder
@@ -149,15 +163,53 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 	}
 }
 
+// explainRetiredHole builds a recall message for a query that matched no LIVE
+// fact but does match one or more retired (tombstoned) ones — so the model learns
+// it once knew this and why the note is gone, instead of silently answering from
+// a stale prior. Case-insensitive substring match, newest-retired first, capped
+// at three. Returns "" when no retired fact matches.
+func explainRetiredHole(db Database, namespace, query string) string {
+	ql := strings.ToLower(query)
+	var b strings.Builder
+	shown := 0
+	for _, f := range ListRetiredFacts(db, namespace) {
+		if !strings.Contains(strings.ToLower(f.Note), ql) {
+			continue
+		}
+		if shown == 0 {
+			b.WriteString("No live fact matches, but you previously stored (now retired):\n")
+		}
+		fmt.Fprintf(&b, "- %q — %s", f.Note, RetireReasonLabel(f.Reason))
+		if !f.RetiredAt.IsZero() {
+			fmt.Fprintf(&b, " on %s", f.RetiredAt.Format("2006-01-02"))
+		}
+		if f.Successor != "" {
+			if succ, ok := GetMemoryFactByID(db, namespace, f.Successor); ok {
+				fmt.Fprintf(&b, "; current note: %q", succ.Note)
+			}
+		}
+		b.WriteString(".\n")
+		if shown++; shown >= 3 {
+			break
+		}
+	}
+	if shown == 0 {
+		return ""
+	}
+	b.WriteString("\nTreat retired notes as historical, not current — verify before relying on them.")
+	return b.String()
+}
+
 // --- HTTP handler ---------------------------------------------------------
 
 // handleAgentFacts serves the in-band memory layer for the admin UI.
-//   GET  → returns the current MemoryFact rows for (user, agent) plus
-//          the agent's KnowledgeFraming so the modal can render the
-//          right header / intro.
-//   POST → replaces the whole list. The client sends the edited set
-//          (deletes + manual adds collapsed into the new array); we
-//          diff against the existing rows so dedup + IDs stay sane.
+//
+//	GET  → returns the current MemoryFact rows for (user, agent) plus
+//	       the agent's KnowledgeFraming so the modal can render the
+//	       right header / intro.
+//	POST → replaces the whole list. The client sends the edited set
+//	       (deletes + manual adds collapsed into the new array); we
+//	       diff against the existing rows so dedup + IDs stay sane.
 //
 // Per-(user, agent) isolation comes from the same factsNamespace
 // scheme storeFactToolDef uses — the udb is already per-user, the

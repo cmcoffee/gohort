@@ -7,7 +7,7 @@
 // break because yt-dlp went months out of date. CheckDependencies probes them on
 // PATH, captures each version, and flags date-stamped tools that have gone stale,
 // so the admin "System Dependencies" panel and the boot log both surface it.
-package core
+package deps
 
 import (
 	"context"
@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // DependencyStatus reports whether one optional external binary is installed,
@@ -106,12 +108,12 @@ func LogDependencyHealth() {
 			stale = append(stale, fmt.Sprintf("%s (%s, %s)", d.Name, d.Version, d.Note))
 		}
 	}
-	Log("external dependencies: %d/%d present", present, len(deps))
+	nfo.Log("external dependencies: %d/%d present", present, len(deps))
 	if len(missing) > 0 {
-		Warn("missing optional dependencies (dependent features degrade): %s", strings.Join(missing, ", "))
+		nfo.Warn("missing optional dependencies (dependent features degrade): %s", strings.Join(missing, ", "))
 	}
 	if len(stale) > 0 {
-		Warn("stale dependencies, update recommended: %s", strings.Join(stale, "; "))
+		nfo.Warn("stale dependencies, update recommended: %s", strings.Join(stale, "; "))
 	}
 }
 

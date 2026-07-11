@@ -20,7 +20,7 @@ func init() { RegisterChatTool(new(DateMathTool)) }
 // compact and to let the LLM remember one name.
 type DateMathTool struct{}
 
-func (t *DateMathTool) Name() string { return "date_math" }
+func (t *DateMathTool) Name() string       { return "date_math" }
 func (t *DateMathTool) Caps() []Capability { return nil } // pure transform — no side effects
 
 func (t *DateMathTool) Desc() string {

@@ -70,17 +70,18 @@ const (
 // later stages' prompt templates.
 //
 // Prompt templating (resolved by the interpreter):
-//   {input}        — the pipeline's top-level input.
-//   {prev}         — the immediately-preceding stage's output.
-//   {stage:NAME}   — a named prior stage's output.
+//
+//	{input}        — the pipeline's top-level input.
+//	{prev}         — the immediately-preceding stage's output.
+//	{stage:NAME}   — a named prior stage's output.
 //
 // Unresolved placeholders are left as-is (so a literal brace in a
 // prompt isn't destroyed by a typo'd stage name).
 type PipelineStage struct {
-	Name   string            `json:"name"`              // unique stage label; also the output key
-	Kind   PipelineStageKind `json:"kind"`              // worker | agent | fanout | synthesize
-	Prompt string            `json:"prompt"`            // instruction, with {input}/{prev}/{stage:NAME} templating
-	Agent  string            `json:"agent,omitempty"`   // agent id/name for kind=agent (and kind=fanout's inner agent)
+	Name   string            `json:"name"`            // unique stage label; also the output key
+	Kind   PipelineStageKind `json:"kind"`            // worker | agent | fanout | synthesize
+	Prompt string            `json:"prompt"`          // instruction, with {input}/{prev}/{stage:NAME} templating
+	Agent  string            `json:"agent,omitempty"` // agent id/name for kind=agent (and kind=fanout's inner agent)
 	// Tools optionally overrides what this stage's worker has access
 	// to. Empty (default) = inherit the caller's tool catalog so a
 	// pipeline invoked from an agent with web_search / fetch_url

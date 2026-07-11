@@ -56,12 +56,15 @@ type MemoryFact struct {
 	// Empty on facts saved before this field existed; factVector backfills
 	// those lazily on first use. Mirrors EmbeddedChunk.Vector in vector_store.go.
 	Vector []float32 `json:"vector,omitempty"`
-	// SupersededAt is non-zero once a later fact replaced this one
-	// (the user changed an attribute: moved cities, switched jobs).
-	// Superseded facts stay in the table for history but are filtered
-	// out of ListMemoryFacts, so they no longer inject or dedup.
-	SupersededAt time.Time `json:"superseded_at,omitempty"`
-	SupersededBy string    `json:"superseded_by,omitempty"` // ID of the replacing fact
+	// MemoryProvenance carries origin (Source/Volatility/AsOf) and retirement
+	// (Reason/RetiredAt/Successor). Its Reason field REPLACES the former
+	// SupersededAt/SupersededBy pair: supersession is now Reason==RetireSuperseded
+	// with Successor set, one tombstone mechanism shared with eviction and merge.
+	// Retired facts stay in the table for history (surfaced by recall when a live
+	// query misses) but are filtered out of ListMemoryFacts, so they no longer
+	// inject, dedup, or index — until tombstone retention hard-deletes them.
+	// Legacy superseded_* rows are converted in MigrateLegacyFactStore.
+	MemoryProvenance
 }
 
 // FactChatFunc runs one worker-tier LLM chat for supersession judging.
@@ -83,6 +86,11 @@ const (
 	// (reject ephemeral notes before they are stored); 0 = accept all (dedup +
 	// supersession only).
 	TunableFactGate = "tune_fact_gate"
+	// TunableFactTombstoneDays: how many days a retired fact (superseded, evicted,
+	// or merged) stays queryable so recall can explain a hole before it is
+	// permanently deleted. 0 = delete retired facts immediately (retirement
+	// collapses back to a plain delete).
+	TunableFactTombstoneDays = "tune_fact_tombstone_days"
 )
 
 func init() {
@@ -97,7 +105,11 @@ func init() {
 	RegisterTunable(TunableSpec{Key: TunableFactGate, Category: "Limits",
 		Label: "Memory relevance gate (chatbot mode)",
 		Help:  "1 = reject ephemeral, non-durable notes at write time in chatbot-mode agents (the personal-assistant/group-chat persona). 0 = store everything the model decides to save.",
-		Kind:  KindInt, Default: 1, Min: 0, Max: 1})
+		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
+	RegisterTunable(TunableSpec{Key: TunableFactTombstoneDays, Category: "Limits",
+		Label: "Memory tombstone retention (days, 0 = keep none)",
+		Help:  "How long a retired fact (superseded, evicted, or merged) stays queryable so recall can explain a hole (\"you had X; it was dropped on <date>\") before it is permanently deleted. 0 = delete retired facts immediately.",
+		Kind:  KindInt, Default: 30, Min: 0, Max: 365})
 }
 
 // FactWritePolicy carries the per-call context StoreMemoryFactP needs beyond the
@@ -139,7 +151,7 @@ type FactWriteResult struct {
 // personal-assistant/group-chat persona where ephemeral junk collects) and
 // controlled by the TunableFactGate on/off switch.
 func FactGateApplies(mode string) bool {
-	return mode == "chatbot" && TuneInt(TunableFactGate) == 1
+	return mode == "chatbot" && TuneBool(TunableFactGate)
 }
 
 // factDedupSimThreshold is the cosine cutoff above which two notes
@@ -162,12 +174,12 @@ func factDBKey(namespace, id string) string {
 // fact was detected) so callers can surface what was dropped.
 //
 // Dedup runs in two tiers:
-//   1. Normalized text match (lowercase + collapsed whitespace +
-//      stripped edge punctuation). Cheap; catches rephrasing.
-//   2. Semantic similarity via embeddings (cosine ≥ 0.90). Catches
-//      different wordings of the same fact ("user's name is Robin"
-//      vs "Robin is the user's name"). Skipped when embeddings are
-//      disabled or the namespace is empty.
+//  1. Normalized text match (lowercase + collapsed whitespace +
+//     stripped edge punctuation). Cheap; catches rephrasing.
+//  2. Semantic similarity via embeddings (cosine ≥ 0.90). Catches
+//     different wordings of the same fact ("user's name is Robin"
+//     vs "Robin is the user's name"). Skipped when embeddings are
+//     disabled or the namespace is empty.
 //
 // First-write-wins on duplicate — the existing fact stays, the new
 // content is dropped. Match phantom's behavior.
@@ -245,7 +257,11 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 		Note:      note,
 		Created:   now,
 		Updated:   now,
-		Vector:    newVec,
+		// A fresh fact is confirmed-true as of now. Source/Volatility stay at
+		// their zero values (unknown / stable) until a write-time classifier
+		// populates them; an unclassified fact is treated as never-decaying.
+		MemoryProvenance: MemoryProvenance{AsOf: now},
+		Vector:           newVec,
 	}
 
 	// Relevance gate + supersession. When the gate applies (strict mode + worker
@@ -285,15 +301,28 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	return FactWriteResult{Fact: f, Reason: FactStored, Superseded: superseded}
 }
 
-// applySupersede marks each old fact superseded by newID and persists it. Returns
-// the facts it touched so the caller can report what went stale.
+// retireFact moves one live fact into the history set with the given reason and
+// (for supersede/merge) a successor pointer to the row that replaced or absorbed
+// it. Retired facts stay in the table — filtered out of the live ListMemoryFacts
+// view so they stop injecting, deduping, and indexing, but queryable by recall so
+// a hole has a record — until tombstone retention hard-deletes them. Updated is
+// bumped because retirement is a status change; the hard-cap LRU and retention
+// sort both read it.
+func retireFact(db Database, f MemoryFact, reason RetireReason, successor string, now time.Time) {
+	f.Reason = reason
+	f.RetiredAt = now
+	f.Successor = successor
+	f.Updated = now
+	db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f)
+}
+
+// applySupersede tombstones each old fact as superseded by newID and persists it.
+// Returns the (pre-retirement) facts it touched so the caller can report what went
+// stale by note.
 func applySupersede(db Database, newID string, now time.Time, olds []MemoryFact) []MemoryFact {
 	var out []MemoryFact
 	for _, old := range olds {
-		old.SupersededAt = now
-		old.SupersededBy = newID
-		old.Updated = now // status change — bump Updated
-		db.Set(MemoryFactsTable, factDBKey(old.Namespace, old.ID), old)
+		retireFact(db, old, RetireSuperseded, newID, now)
 		Debug("[factstore] superseded %q (ns=%s)", old.Note, old.Namespace)
 		out = append(out, old)
 	}
@@ -471,31 +500,40 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 	}
 	drop, merges := judgeFactSweep(chat, facts)
 	removed, mergedGroups := 0, 0
-	// Merges first: resolve sources to IDs, delete them, then store the combined
-	// note (plain policy so it can't recurse into another sweep). Delete-before-
-	// store keeps the merged text from deduping against a source about to be gone.
+	// Merges: tombstone the sources as RetireMerged FIRST so they leave the live
+	// set (which keeps the combined note from deduping against a source about to
+	// be gone), then store the combined note (plain policy so it can't recurse
+	// into another sweep) and point each source's Successor at it — so a later
+	// recall for a merged source can follow the pointer to the surviving note.
 	for _, m := range merges {
 		text := strings.TrimSpace(m.Keep)
 		if text == "" || len(m.Replace) < 2 {
 			continue
 		}
-		var ids []string
+		var srcs []MemoryFact
 		for _, n := range m.Replace {
 			if n >= 1 && n <= len(facts) {
-				ids = append(ids, facts[n-1].ID)
+				srcs = append(srcs, facts[n-1])
 			}
 		}
-		if len(ids) < 2 {
+		if len(srcs) < 2 {
 			continue
 		}
-		for _, id := range ids {
-			if ForgetMemoryFactByID(db, namespace, id) {
-				removed++
+		now := time.Now()
+		for _, s := range srcs {
+			retireFact(db, s, RetireMerged, "", now) // successor backfilled once we have the combined ID
+			removed++
+		}
+		res := StoreMemoryFactP(db, namespace, text, FactWritePolicy{})
+		if res.Reason == FactStored {
+			for _, s := range srcs {
+				retireFact(db, s, RetireMerged, res.Fact.ID, now)
 			}
 		}
-		StoreMemoryFactP(db, namespace, text, FactWritePolicy{})
 		mergedGroups++
 	}
+	// Drops are clear junk: hard-delete, no tombstone. A junk note has nothing a
+	// future recall would want to explain, so it earns no history record.
 	for _, n := range drop {
 		if n >= 1 && n <= len(facts) {
 			if ForgetMemoryFactByID(db, namespace, facts[n-1].ID) {
@@ -507,6 +545,7 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 		Log("[factstore] sweep on %s: removed %d fact(s), merged %d cluster(s)", namespace, removed, mergedGroups)
 	}
 	enforceFactHardCap(db, namespace)
+	enforceTombstoneRetention(db, namespace)
 }
 
 // factMerge is one cluster the sweep collapses: Replace holds the 1-based indices
@@ -576,15 +615,75 @@ func enforceFactHardCap(db Database, namespace string) {
 		return f.Created
 	}
 	sort.Slice(facts, func(i, j int) bool { return stamp(facts[i]).Before(stamp(facts[j])) })
+	now := time.Now()
 	evicted := 0
 	for i := 0; i < len(facts)-limit; i++ {
-		if ForgetMemoryFactByID(db, namespace, facts[i].ID) {
-			evicted++
-		}
+		// Tombstone rather than hard-delete: an evicted fact was real, just crowded
+		// out for space, so it carries the highest false-negative risk. Keeping a
+		// record lets recall answer "you had X; it was dropped on <date>" instead of
+		// the model silently answering from a stale prior. Retention prunes it later.
+		retireFact(db, facts[i], RetireEvicted, "", now)
+		evicted++
 	}
 	if evicted > 0 {
 		Log("[factstore] hard cap evicted %d least-recently-updated fact(s) from %s (limit %d)", evicted, namespace, limit)
 	}
+}
+
+// enforceTombstoneRetention permanently deletes retired facts whose RetiredAt is
+// older than the retention window (TunableFactTombstoneDays), bounding the history
+// set so tombstones can't defeat the live hard cap they came from. A window of 0
+// deletes every retired fact, collapsing retirement back to a plain delete. Runs
+// inside the async sweep, off the write path.
+func enforceTombstoneRetention(db Database, namespace string) {
+	namespace = strings.TrimSpace(namespace)
+	if db == nil || namespace == "" {
+		return
+	}
+	days := TuneInt(TunableFactTombstoneDays)
+	cutoff := time.Now().AddDate(0, 0, -days)
+	prefix := namespace + "/"
+	pruned := 0
+	for _, k := range db.Keys(MemoryFactsTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var f MemoryFact
+		if !db.Get(MemoryFactsTable, k, &f) || !f.Retired() {
+			continue
+		}
+		if days <= 0 || f.RetiredAt.Before(cutoff) {
+			db.Unset(MemoryFactsTable, k)
+			pruned++
+		}
+	}
+	if pruned > 0 {
+		Debug("[factstore] tombstone retention pruned %d retired fact(s) from %s (window %dd)", pruned, namespace, days)
+	}
+}
+
+// ListRetiredFacts returns the namespace's retired (tombstoned) facts, most
+// recently retired first. Excluded from the live ListMemoryFacts view but kept
+// for the retention window so recall can explain a hole ("you had X; it was
+// <reason> on <date>") when a live query finds nothing. Empty when none.
+func ListRetiredFacts(db Database, namespace string) []MemoryFact {
+	namespace = strings.TrimSpace(namespace)
+	if db == nil || namespace == "" {
+		return nil
+	}
+	prefix := namespace + "/"
+	var out []MemoryFact
+	for _, k := range db.Keys(MemoryFactsTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var f MemoryFact
+		if db.Get(MemoryFactsTable, k, &f) && f.Retired() {
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RetiredAt.After(out[j].RetiredAt) })
+	return out
 }
 
 // ForgetMemoryFactByIndex removes the fact at the given 1-based
@@ -603,6 +702,22 @@ func ForgetMemoryFactByIndex(db Database, namespace string, index int) (MemoryFa
 	target := facts[index-1]
 	db.Unset(MemoryFactsTable, factDBKey(namespace, target.ID))
 	return target, true
+}
+
+// GetMemoryFactByID returns one fact (live or retired) by ID and whether it was
+// found. Used to resolve a tombstone's Successor pointer when recall explains a
+// hole ("merged into: <current note>").
+func GetMemoryFactByID(db Database, namespace, id string) (MemoryFact, bool) {
+	namespace = strings.TrimSpace(namespace)
+	id = strings.TrimSpace(id)
+	if db == nil || namespace == "" || id == "" {
+		return MemoryFact{}, false
+	}
+	var f MemoryFact
+	if db.Get(MemoryFactsTable, factDBKey(namespace, id), &f) {
+		return f, true
+	}
+	return MemoryFact{}, false
 }
 
 // ForgetMemoryFactByID removes one fact by its ID. Used by admin /
@@ -637,10 +752,10 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 		}
 		var f MemoryFact
 		if db.Get(MemoryFactsTable, k, &f) {
-			// Superseded facts stay in the table for history but never
-			// inject, dedup, or get indexed for forget — they are stale by
-			// definition.
-			if !f.SupersededAt.IsZero() {
+			// Retired facts (superseded, evicted, merged) stay in the table for
+			// history but never inject, dedup, or get indexed for forget — they
+			// have left the live set by definition.
+			if f.Retired() {
 				continue
 			}
 			out = append(out, f)
@@ -874,5 +989,57 @@ func MigrateLegacyFactStore(db Database) {
 	}
 	if migrated+dedup > 0 {
 		Log("[factstore] migrated %d legacy fact(s) to flat shape (deduped %d on the way through)", migrated, dedup)
+	}
+	migrateSupersededTombstones(db)
+}
+
+// migrateSupersededTombstones converts rows written under the old supersession
+// shape ({superseded_at, superseded_by}) to the unified retirement envelope
+// ({reason: RetireSuperseded, retired_at, successor}). Runs at startup before
+// serving (called from MigrateLegacyFactStore). MUST run before any live read:
+// the retired MemoryFact no longer carries a superseded_at field, so an
+// unconverted old row would decode with Reason==RetireLive and resurrect into
+// the live set. Idempotent — a converted row has no superseded_at on re-scan and
+// is skipped.
+func migrateSupersededTombstones(db Database) {
+	if db == nil {
+		return
+	}
+	// Permissive probe. kvlite serializes with gob, which matches struct fields by
+	// NAME and errors ("no fields matched") if a decoder shares none with the
+	// stored row — and gob nests the embedded MemoryProvenance, so a converted row
+	// has no TOP-LEVEL retirement fields to read. Including Namespace + ID (present
+	// on every row, old and new) guarantees a match so the decode never fatals; the
+	// legacy-only SupersededAt then distinguishes an unconverted row (it is absent,
+	// hence zero, on new-shape rows).
+	type probe struct {
+		Namespace    string
+		ID           string
+		SupersededAt time.Time
+		SupersededBy string
+	}
+	converted := 0
+	for _, k := range db.Keys(MemoryFactsTable) {
+		var p probe
+		if !db.Get(MemoryFactsTable, k, &p) {
+			continue
+		}
+		// Legacy superseded row only: the old top-level stamp is set. New-shape rows
+		// (retirement nested under MemoryProvenance) decode with a zero SupersededAt.
+		if p.SupersededAt.IsZero() {
+			continue
+		}
+		var f MemoryFact
+		if !db.Get(MemoryFactsTable, k, &f) {
+			continue
+		}
+		f.Reason = RetireSuperseded
+		f.RetiredAt = p.SupersededAt
+		f.Successor = p.SupersededBy
+		db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f)
+		converted++
+	}
+	if converted > 0 {
+		Log("[factstore] converted %d legacy superseded fact(s) to retirement tombstones", converted)
 	}
 }

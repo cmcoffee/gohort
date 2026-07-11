@@ -80,7 +80,6 @@ type WebAppWide interface {
 	WebWide() bool
 }
 
-
 // WebAppRestricted is optionally implemented by WebApps that should be
 // hidden from certain requests (e.g. IP-based access control).
 type WebAppRestricted interface {
@@ -90,8 +89,8 @@ type WebAppRestricted interface {
 // WebAppAccess is optionally implemented by WebApps that expose access
 // flags to other apps via /api/access (e.g. "techwriter": true/false).
 type WebAppAccess interface {
-	WebAccessKey() string                    // JSON key name
-	WebAccessCheck(r *http.Request) bool     // returns the flag value for this request
+	WebAccessKey() string                // JSON key name
+	WebAccessCheck(r *http.Request) bool // returns the flag value for this request
 }
 
 // DashboardCard is a single tile rendered on the gohort dashboard.
@@ -137,7 +136,7 @@ type GrantableAppListSource interface {
 }
 
 var (
-	webAppMu         sync.Mutex
+	webAppMu          sync.Mutex
 	registeredWebApps []WebApp
 )
 
@@ -172,13 +171,12 @@ var globalQueue = &TaskQueue{
 // GlobalQueue returns the shared task queue.
 func GlobalQueue() *TaskQueue { return globalQueue }
 
-
 // TaskQueue manages a shared FIFO queue across all apps.
 type TaskQueue struct {
-	mu      sync.Mutex
-	active  int
-	queue   []queueWaiter
-	notify  chan struct{}
+	mu     sync.Mutex
+	active int
+	queue  []queueWaiter
+	notify chan struct{}
 }
 
 type queueWaiter struct {
@@ -757,9 +755,15 @@ func ServeDashboard(addr string) error {
 	// Sort by WebOrder (if implemented), then alphabetically.
 	sort.Slice(apps, func(i, j int) bool {
 		oi, oj := 50, 50
-		if o, ok := apps[i].app.(WebAppOrder); ok { oi = o.WebOrder() }
-		if o, ok := apps[j].app.(WebAppOrder); ok { oj = o.WebOrder() }
-		if oi != oj { return oi < oj }
+		if o, ok := apps[i].app.(WebAppOrder); ok {
+			oi = o.WebOrder()
+		}
+		if o, ok := apps[j].app.(WebAppOrder); ok {
+			oj = o.WebOrder()
+		}
+		if oi != oj {
+			return oi < oj
+		}
 		return apps[i].name < apps[j].name
 	})
 
@@ -1294,12 +1298,12 @@ func HistoryHandlers[R Dated, S any](db func() Database, table string, summarize
 // clients can catch up.
 type LiveSession[T any] struct {
 	ID      string
-	Label   string              // Human-readable label (topic, question, etc.)
+	Label   string // Human-readable label (topic, question, etc.)
 	Cancel  context.CancelFunc
 	Events  []T
 	Done    bool
-	Status  string              // Last status message for live view
-	Spawned bool                // True if spawned by a parent session. Cannot be cancelled directly -- cancel the parent instead.
+	Status  string // Last status message for live view
+	Spawned bool   // True if spawned by a parent session. Cannot be cancelled directly -- cancel the parent instead.
 	// Restoring is true for a session that was rehydrated from the
 	// persistent queue on startup but whose work goroutine has not yet
 	// begun. A race between restore and a stale browser cancel (e.g. a
@@ -1472,7 +1476,7 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 // LiveEntry is a JSON-serializable summary of an active or queued session.
 type LiveEntry struct {
 	ID      string `json:"id"`
-	Label   string `json:"topic"`             // "topic" for backwards compat with JS
+	Label   string `json:"topic"` // "topic" for backwards compat with JS
 	Queued  bool   `json:"queued,omitempty"`
 	Spawned bool   `json:"spawned,omitempty"` // spawned by a parent app
 	Status  string `json:"status,omitempty"`  // last status message
@@ -1486,8 +1490,8 @@ type LiveEntry struct {
 type LiveProvider func() []LiveEntry
 
 var (
-	liveProviderMu  sync.Mutex
-	liveProviders   []LiveProvider
+	liveProviderMu sync.Mutex
+	liveProviders  []LiveProvider
 )
 
 // RegisterLiveProvider adds a provider that contributes to the global live view.

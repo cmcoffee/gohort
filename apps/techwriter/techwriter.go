@@ -23,10 +23,10 @@ func init() {
 
 // ArticleRecord stores a saved article.
 type ArticleRecord struct {
-	ID       string `json:"ID"`
-	Subject  string `json:"Subject"`
-	Body     string `json:"Body"`
-	Date     string `json:"Date"`
+	ID      string `json:"ID"`
+	Subject string `json:"Subject"`
+	Body    string `json:"Body"`
+	Date    string `json:"Date"`
 	// ImageURL is the optional header image URL associated with the
 	// article. Set by the Generate Image flow, persisted across saves
 	// and included in HTML export and preview output. Either a remote

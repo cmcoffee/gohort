@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/media"
 	"github.com/cmcoffee/gohort/core/ui"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -236,16 +237,16 @@ func consumeResetToken(db Database, token string) (string, bool) {
 
 // AuthUser represents a stored user account.
 type AuthUser struct {
-	Username      string   `json:"username"`
-	PassHash      string   `json:"pass_hash"` // bcrypt hash ($2…); legacy SHA-256 hex auto-upgrades on next login
-	Admin         bool     `json:"admin"`
-	Pending       bool     `json:"pending,omitempty"`  // true if awaiting admin approval
-	Apps          []string `json:"apps,omitempty"`     // allowed app paths; empty = use defaults
-	Groups        []string `json:"groups,omitempty"`   // assigned app-group IDs; each expands to its apps (see AuthResolveUserApps)
-	NotifyDefault bool     `json:"notify_default,omitempty"` // persistent notify preference
-	PrivateMode   bool     `json:"private_mode,omitempty"`   // persistent chat private-mode preference — DEPRECATED global fallback; per-agent override lives in PrivateModePerAgent
-	APIExplorerMode bool   `json:"api_explorer_mode,omitempty"` // persistent chat api-explorer preference
-	InferredDisabled bool `json:"inferred_disabled,omitempty"` // persistent per-user toggle: when true, suppresses the Reference Memory layer for this user across agents (memory_save/memory_search/memory_forget stripped, synthesis auto-ingest skipped, derived chunks excluded from recall). Per-agent override lives in InferredDisabledPerAgent. (Renamed from KnowledgeDisabled — the toggle never controlled the Knowledge layer; it controlled what is now called Reference Memory.)
+	Username         string   `json:"username"`
+	PassHash         string   `json:"pass_hash"` // bcrypt hash ($2…); legacy SHA-256 hex auto-upgrades on next login
+	Admin            bool     `json:"admin"`
+	Pending          bool     `json:"pending,omitempty"`           // true if awaiting admin approval
+	Apps             []string `json:"apps,omitempty"`              // allowed app paths; empty = use defaults
+	Groups           []string `json:"groups,omitempty"`            // assigned app-group IDs; each expands to its apps (see AuthResolveUserApps)
+	NotifyDefault    bool     `json:"notify_default,omitempty"`    // persistent notify preference
+	PrivateMode      bool     `json:"private_mode,omitempty"`      // persistent chat private-mode preference — DEPRECATED global fallback; per-agent override lives in PrivateModePerAgent
+	APIExplorerMode  bool     `json:"api_explorer_mode,omitempty"` // persistent chat api-explorer preference
+	InferredDisabled bool     `json:"inferred_disabled,omitempty"` // persistent per-user toggle: when true, suppresses the Reference Memory layer for this user across agents (memory_save/memory_search/memory_forget stripped, synthesis auto-ingest skipped, derived chunks excluded from recall). Per-agent override lives in InferredDisabledPerAgent. (Renamed from KnowledgeDisabled — the toggle never controlled the Knowledge layer; it controlled what is now called Reference Memory.)
 
 	// PrivateModePerAgent / InferredDisabledPerAgent are per-(user, agent)
 	// overrides for the corresponding global toggles. Keyed by agent ID.
@@ -339,11 +340,11 @@ func AuthGetInferredDisabled(db Database, username string) bool {
 
 // AuthGetPrivateModeForAgent returns the effective Private toggle for
 // the (user, agent) pair. Lookup precedence:
-//   1. per-agent override (PrivateModePerAgent[agentID]) if present → use it
-//   2. ANY per-agent overrides exist for this user (map non-empty) → agents
-//      without explicit entries default to false (per-agent INDEPENDENT semantic)
-//   3. NO per-agent overrides at all → fall back to global PrivateMode
-//      (back-compat for users who never used per-agent toggles)
+//  1. per-agent override (PrivateModePerAgent[agentID]) if present → use it
+//  2. ANY per-agent overrides exist for this user (map non-empty) → agents
+//     without explicit entries default to false (per-agent INDEPENDENT semantic)
+//  3. NO per-agent overrides at all → fall back to global PrivateMode
+//     (back-compat for users who never used per-agent toggles)
 //
 // The first per-agent set promotes the user from "global single-source-of-truth"
 // to "per-agent independent." Without #2's gate, a stale global=true would
@@ -689,7 +690,7 @@ func AuthGetDocBrand(db Database) string {
 func AuthSetDocBrand(db Database, v string) {
 	db.Set(WebTable, "doc_brand", v)
 	if v = strings.TrimSpace(v); v != "" {
-		PDFBranding = v // keep PDF exports in sync without a restart
+		media.PDFBranding = v // keep PDF exports in sync without a restart
 	}
 }
 
@@ -758,7 +759,7 @@ func AuthApproveUser(db Database, username string) {
 
 	if isValidEmail(username) {
 		go SendNotification(username,
-			"[" + ServiceName() + "] Your account has been approved",
+			"["+ServiceName()+"] Your account has been approved",
 			fmt.Sprintf("Your account on %s has been approved. You can now log in.\n\n%s/login\n", DashboardURL(), DashboardURL()))
 	}
 }
@@ -767,7 +768,7 @@ func AuthApproveUser(db Database, username string) {
 func AuthRejectUser(db Database, username string) {
 	if isValidEmail(username) {
 		go SendNotification(username,
-			"[" + ServiceName() + "] Your account request",
+			"["+ServiceName()+"] Your account request",
 			fmt.Sprintf("Your account request on %s was not approved at this time.\n", DashboardURL()))
 	}
 	db.Unset(AuthTable, "user:"+username)
@@ -1150,7 +1151,7 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 		// this only bit restricted users.)
 		if path != "/" && !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/_") &&
 			path != "/login" && path != "/logout" && path != "/signup" &&
-				path != "/forgot" && path != "/reset" {
+			path != "/forgot" && path != "/reset" {
 			app_path := "/" + strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
 			if !UserHasAppAccess(r, app_path) {
 				writeForbidden(w, r, app_path)
@@ -1352,7 +1353,7 @@ func SignupHandler(db Database) http.HandlerFunc {
 			Log("[auth] new signup (pending): %q from %s", email, clientIP(r))
 
 			// Notify admins of the new signup.
-			NotifyAdmin("[" + ServiceName() + "] New signup pending approval",
+			NotifyAdmin("["+ServiceName()+"] New signup pending approval",
 				fmt.Sprintf("A new user has signed up on %s and is awaiting approval.\n\nEmail: %s\n\nAdmin panel: %s/admin/\n", DashboardURL(), email, DashboardURL()))
 
 			serveSignupPage(w, "Account created. An administrator will review your request.")

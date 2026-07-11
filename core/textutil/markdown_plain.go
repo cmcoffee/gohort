@@ -3,7 +3,7 @@
 // markdown_chunks.go so bridges can reuse it without depending on the retiring
 // phantom app. Strips formatting while preserving every word of content.
 
-package core
+package textutil
 
 import (
 	"regexp"
@@ -12,9 +12,9 @@ import (
 
 var (
 	// Inline patterns. Run on each line.
-	mdLink     = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)  // [text](url) → "text (url)"
-	mdBold     = regexp.MustCompile(`\*\*([^*]+)\*\*`)          // **x** → x
-	mdItalic1  = regexp.MustCompile(`\*([^*]+)\*`)              // *x* → x
+	mdLink    = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`) // [text](url) → "text (url)"
+	mdBold    = regexp.MustCompile(`\*\*([^*]+)\*\*`)         // **x** → x
+	mdItalic1 = regexp.MustCompile(`\*([^*]+)\*`)             // *x* → x
 	// _x_ → x, but ONLY at word boundaries. Intra-word underscores are NOT
 	// emphasis in CommonMark, so snake_case identifiers (link_entities,
 	// recall_about, store_fact) must survive to plain-text transports. A naive

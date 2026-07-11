@@ -480,12 +480,12 @@ func queryOpenAlex(hook SourceHook, query string) (string, error) {
 
 	var data struct {
 		Results []struct {
-			Title              string                     `json:"title"`
-			DOI                string                     `json:"doi"`
-			PublicationYear    int                        `json:"publication_year"`
-			CitedByCount       int                        `json:"cited_by_count"`
-			AbstractInvertedIndex map[string][]int         `json:"abstract_inverted_index"`
-			OpenAccess         struct {
+			Title                 string           `json:"title"`
+			DOI                   string           `json:"doi"`
+			PublicationYear       int              `json:"publication_year"`
+			CitedByCount          int              `json:"cited_by_count"`
+			AbstractInvertedIndex map[string][]int `json:"abstract_inverted_index"`
+			OpenAccess            struct {
 				OAURL string `json:"oa_url"`
 			} `json:"open_access"`
 		} `json:"results"`
@@ -670,11 +670,11 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 // + normalized query. Skips the API call entirely on cache hit.
 // Main package wires this up via SetHookCacheDB after database init.
 var (
-	hookCacheDB         Database
-	hookCacheMu         sync.RWMutex
-	hookCacheTTL        = 30 * 24 * time.Hour // 30 days for non-empty results
-	hookCacheEmptyTTL   = 7 * 24 * time.Hour  // 7 days for empty results (negative cache)
-	hookCacheBucket     = "source_hook_cache"
+	hookCacheDB       Database
+	hookCacheMu       sync.RWMutex
+	hookCacheTTL      = 30 * 24 * time.Hour // 30 days for non-empty results
+	hookCacheEmptyTTL = 7 * 24 * time.Hour  // 7 days for empty results (negative cache)
+	hookCacheBucket   = "source_hook_cache"
 )
 
 // hookCacheStopwords are removed from query strings before computing the

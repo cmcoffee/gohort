@@ -66,12 +66,135 @@ func TestListMemoryFactsFiltersSuperseded(t *testing.T) {
 		Namespace: ns, ID: "a", Note: "active fact", Created: time.Now(),
 	})
 	db.Set(MemoryFactsTable, factDBKey(ns, "b"), MemoryFact{
-		Namespace: ns, ID: "b", Note: "old fact",
-		Created: time.Now().Add(-time.Hour), SupersededAt: time.Now(), SupersededBy: "a",
+		Namespace: ns, ID: "b", Note: "old fact", Created: time.Now().Add(-time.Hour),
+		MemoryProvenance: MemoryProvenance{Reason: RetireSuperseded, RetiredAt: time.Now(), Successor: "a"},
 	})
 	got := ListMemoryFacts(db, ns)
 	if len(got) != 1 || got[0].ID != "a" {
 		t.Fatalf("expected only the active fact, got %+v", got)
+	}
+}
+
+// TestMigrateSupersededTombstones is the safety-critical path: a row written
+// under the OLD supersession shape ({superseded_at, superseded_by}) must NOT
+// resurrect into the live set after the field was removed from MemoryFact. Before
+// migration it would (the dropped field decodes as Reason==RetireLive); the
+// migration must convert it to a retirement tombstone so it stays hidden.
+func TestMigrateSupersededTombstones(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	// A legacy-shaped superseded row. kvlite uses gob, which keys on Go field
+	// NAMES (json tags are ignored), so these names reproduce exactly what the old
+	// MemoryFact wrote before SupersededAt/By moved into the envelope.
+	type legacyFact struct {
+		Namespace    string
+		ID           string
+		Note         string
+		Created      time.Time
+		SupersededAt time.Time
+		SupersededBy string
+	}
+	db.Set(MemoryFactsTable, factDBKey(ns, "old"), legacyFact{
+		Namespace: ns, ID: "old", Note: "lives in Denver",
+		Created: time.Now().Add(-time.Hour), SupersededAt: time.Now(), SupersededBy: "new",
+	})
+	// Proves the resurrection risk is real: read as the new shape, the legacy row
+	// looks live because superseded_at no longer maps to a field.
+	if got := ListMemoryFacts(db, ns); len(got) != 1 {
+		t.Fatalf("precondition: legacy superseded row should decode as live pre-migration, got %d", len(got))
+	}
+	migrateSupersededTombstones(db)
+	if got := ListMemoryFacts(db, ns); len(got) != 0 {
+		t.Fatalf("after migration the row must be filtered from live, got %+v", got)
+	}
+	retired := ListRetiredFacts(db, ns)
+	if len(retired) != 1 || retired[0].Reason != RetireSuperseded || retired[0].Successor != "new" {
+		t.Fatalf("expected one RetireSuperseded tombstone with successor 'new', got %+v", retired)
+	}
+	// Idempotent: a second pass converts nothing.
+	migrateSupersededTombstones(db)
+	if got := ListRetiredFacts(db, ns); len(got) != 1 {
+		t.Fatalf("migration must be idempotent, got %d retired", len(got))
+	}
+}
+
+// TestHardCapEvictsToTombstone: the hard cap must TOMBSTONE evicted facts, not
+// hard-delete them — an evicted real fact was crowded out for space, so recall
+// needs a record of it. Live count drops to the cap; the evicted ones become
+// RetireEvicted tombstones with no successor.
+func TestHardCapEvictsToTombstone(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	db.Set(WebTable, TunableFactHardCap, float64(2))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+	base := time.Now().Add(-10 * time.Hour)
+	for i := 0; i < 5; i++ {
+		id := string(rune('a' + i))
+		ts := base.Add(time.Duration(i) * time.Hour) // a<b<c<d<e by recency
+		db.Set(MemoryFactsTable, factDBKey(ns, id), MemoryFact{
+			Namespace: ns, ID: id, Note: "fact " + id, Created: ts, Updated: ts,
+		})
+	}
+	enforceFactHardCap(db, ns)
+	live := ListMemoryFacts(db, ns)
+	if len(live) != 2 {
+		t.Fatalf("expected 2 live facts at the cap, got %d: %+v", len(live), live)
+	}
+	retired := ListRetiredFacts(db, ns)
+	if len(retired) != 3 {
+		t.Fatalf("expected 3 evicted tombstones, got %d", len(retired))
+	}
+	for _, f := range retired {
+		if f.Reason != RetireEvicted || f.Successor != "" {
+			t.Fatalf("evicted fact should be RetireEvicted with no successor, got %+v", f)
+		}
+	}
+	// The 3 oldest (a,b,c) were evicted; the 2 newest (d,e) survive.
+	for _, f := range live {
+		if f.ID == "a" || f.ID == "b" || f.ID == "c" {
+			t.Fatalf("LRU eviction should keep the newest, but %q survived", f.ID)
+		}
+	}
+}
+
+// TestTombstoneRetentionPrunes: retired facts older than the retention window are
+// permanently deleted so tombstones can't defeat the live cap; fresh ones stay. A
+// window of 0 deletes every retired fact.
+func TestTombstoneRetentionPrunes(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	stale := MemoryFact{Namespace: ns, ID: "stale", Note: "old",
+		MemoryProvenance: MemoryProvenance{Reason: RetireEvicted, RetiredAt: time.Now().AddDate(0, 0, -40)}}
+	fresh := MemoryFact{Namespace: ns, ID: "fresh", Note: "recent",
+		MemoryProvenance: MemoryProvenance{Reason: RetireEvicted, RetiredAt: time.Now()}}
+	live := MemoryFact{Namespace: ns, ID: "live", Note: "current", Created: time.Now()}
+	for _, f := range []MemoryFact{stale, fresh, live} {
+		db.Set(MemoryFactsTable, factDBKey(ns, f.ID), f)
+	}
+	// 30-day window: the 40-day-old tombstone goes, the fresh one and the live fact stay.
+	db.Set(WebTable, TunableFactTombstoneDays, float64(30))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+	enforceTombstoneRetention(db, ns)
+	if _, ok := GetMemoryFactByID(db, ns, "stale"); ok {
+		t.Fatal("40-day-old tombstone should have been pruned at a 30-day window")
+	}
+	if _, ok := GetMemoryFactByID(db, ns, "fresh"); !ok {
+		t.Fatal("fresh tombstone must survive a 30-day window")
+	}
+	if _, ok := GetMemoryFactByID(db, ns, "live"); !ok {
+		t.Fatal("retention must never touch live facts")
+	}
+	// Window 0: every remaining tombstone is deleted, live untouched.
+	db.Set(WebTable, TunableFactTombstoneDays, float64(0))
+	InvalidateTunables()
+	enforceTombstoneRetention(db, ns)
+	if len(ListRetiredFacts(db, ns)) != 0 {
+		t.Fatal("a 0-day window must delete all tombstones")
+	}
+	if _, ok := GetMemoryFactByID(db, ns, "live"); !ok {
+		t.Fatal("live fact must survive a 0-day tombstone window")
 	}
 }
 
@@ -82,7 +205,8 @@ func TestForgetByIndexSkipsSuperseded(t *testing.T) {
 	db := memDB(t)
 	ns := "agent:x"
 	db.Set(MemoryFactsTable, factDBKey(ns, "old"), MemoryFact{
-		Namespace: ns, ID: "old", Note: "stale", Created: time.Now().Add(-2 * time.Hour), SupersededAt: time.Now(),
+		Namespace: ns, ID: "old", Note: "stale", Created: time.Now().Add(-2 * time.Hour),
+		MemoryProvenance: MemoryProvenance{Reason: RetireSuperseded, RetiredAt: time.Now()},
 	})
 	db.Set(MemoryFactsTable, factDBKey(ns, "keep"), MemoryFact{
 		Namespace: ns, ID: "keep", Note: "current", Created: time.Now(),

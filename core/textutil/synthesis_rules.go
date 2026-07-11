@@ -1,4 +1,4 @@
-package core
+package textutil
 
 // BannedWordsRule is applied to LLM stages so AI-tell words never
 // appear in output.

@@ -630,6 +630,21 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// without em-dashes (house style).
 		systemPrompt += "\n\n[Disagreeing with the user: your training is not sufficient grounds to tell the user they are wrong. When they state or assume a fact and you think it is mistaken, treat your own prior knowledge as possibly stale or incomplete. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it (no tool fits, the tool fails or returns empty, or you are offline), do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask a clarifying question. This is about EMPIRICAL claims (dates, numbers, who or what or when, current state, how something works, what is true now). Reasoning, logic, math you can show step by step, and the user's own stated preferences you can still engage with directly and decisively. Do not manufacture a confident contradiction from priors; ground the disagreement or hold it as uncertain until you can.]"
 		systemPrompt += "\n\n[Numbers: when you state a figure, price, count, or measurement from a source, reproduce it exactly as written, keep its unit or currency attached, and keep it bound to the specific thing it describes (which item, which date, which place) so you never swap two values that appeared in the same source. Do not perform multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: if a calculation matters, show the steps so it can be checked, or use a tool. If two sources disagree on a number, say so rather than silently picking one. Prices and other time-sensitive figures go stale: when you quote a price, make sure it is current, note when it was observed if the source says, and never present an old or cached figure as today's price — if you cannot confirm it is current, say so or re-check rather than stating it as fact.]"
+		// Volatile facts — a blunt, standalone restatement of the Grounding rule
+		// aimed at the specifics the worker keeps fabricating. Already covered
+		// inside Grounding + Capability-first + Numbers, but buried in long
+		// paragraphs those clauses don't land on a 27B: a price (or a "current
+		// version", a "current CEO") reads to the model like a stable fact it
+		// "knows", so the recency reflex that makes it search for "news" never
+		// fires. A short categorical block ("you do NOT know it") is what
+		// actually moves the worker to call the tool, same pattern as the
+		// Actions block. Lead with PRICES (the confirmed offender), name a tight
+		// cluster of the other things it misclassifies as stable, then anchor on
+		// the underlying test so it generalizes past the list rather than
+		// treating "not listed" as safe to recall. Kept short on purpose: a long
+		// enumeration re-buries the rule and loses the salience that makes it
+		// work. Written without em-dashes.
+		systemPrompt += "\n\n[Volatile facts: some facts change over time, and you do NOT know their current value no matter how confident it feels. PRICES are the clearest case: any price, rate, fee, cost, or money figure is volatile, so NEVER state one from memory, not even a rough number or a range; a remembered price is always a guess. The same rule covers stock and availability, the CURRENT holder of a changing role or record (who runs a company now, the latest version of something, the current champion or office-holder), and live status, scores, or counts. The test for any specific: could this have changed since your training, and does the user expect today's value? If yes, it is volatile — call web_search or fetch_url FIRST and quote what the result returns (with what it applies to and when observed), or, if you cannot look it up right now, say plainly you don't have a current figure and offer to check. Do not fill the gap with a plausible-sounding value. This is not a closed list: any fact that fails the test is volatile even if it is not named here.]"
 	}
 	// Output style — universal (every reply, with or without tools).
 	// Suppresses persistent LLM lexical/punctuation tics the user flagged.
@@ -644,7 +659,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 	// Internal-marker convention: gives the model a sanctioned, always-scrubbed
 	// wrapper for internal-only notes AND tells it not to type bare delivery
-	// markers into user-facing text (the StripMetaTags safety net catches both).
+	// markers into user-facing text (the textutil.StripMetaTags safety net catches both).
 	systemPrompt += "\n\n[Internal markers: anything wrapped in <gohort-meta>...</gohort-meta> is stripped before the user sees it — use it for internal-only notes and NEVER put anything the user should read inside it. Do not type bare delivery markers like [ATTACH: file] into your reply; attachments ride along through their tool, and any stray marker is scrubbed from your reply anyway.]"
 	// Round-budget awareness — let the LLM know how many rounds it has
 	// for the whole turn so it can pace itself (vs. exploring as if
@@ -663,6 +678,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// rounds without progress.
 	promiseCorrectionsTotal := 0
 	const maxPromiseCorrections = 2
+
+	// Grounding gate — conditional re-prompt budget (opt-in, tune_grounding_gate).
+	// Capped so an unsourced money figure the model keeps restating can't nag
+	// forever: after this many corrections the loop returns the answer as-is.
+	groundingGateCorrections := 0
+	const maxGroundingGateCorrections = 2
 
 	// toolFiredThisTurn tracks whether ANY tool dispatched at any
 	// point in this turn (any round). The action-promise correction
@@ -715,7 +736,6 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	failureStreak := 0
 	failureStreakWarned := false
 	const failureStreakThreshold = 3
-
 
 	// cumulativeToolErrors tracks tool errors across the WHOLE loop, not
 	// just the current round. Used to catch the "give up with errors
@@ -1499,6 +1519,27 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				if injected := cfg.InjectionDrain(); len(injected) > 0 {
 					Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round — continuing instead of finishing", len(injected))
 					history = append(history, injected...)
+					continue
+				}
+			}
+
+			// Grounding gate (conditional, opt-in via tune_grounding_gate).
+			// NOT an always-on self-verify pass: it fires ONLY when the final
+			// answer states a money figure absent from this conversation's tool
+			// results and user messages, i.e. one the model supplied from its
+			// weights. It then re-prompts once to look it up or drop it and
+			// re-loops (so the model can web_search). Guarded on len(tools) > 0
+			// so it never fires on a no-tool agent (where "look it up" is
+			// impossible), and budget-capped so a model that keeps restating a
+			// number can't nag forever. See core/grounding_gate.go.
+			if GroundingGateEnabled() && len(tools) > 0 &&
+				groundingGateCorrections < maxGroundingGateCorrections &&
+				round < maxRounds {
+				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)); len(figs) > 0 {
+					Debug("[agent_loop] grounding gate: %d unsourced money figure(s) %v — re-prompting to look up or drop (correction %d/%d)",
+						len(figs), figs, groundingGateCorrections+1, maxGroundingGateCorrections)
+					history = append(history, Message{Role: "user", Content: groundingGatePrompt(figs)})
+					groundingGateCorrections++
 					continue
 				}
 			}

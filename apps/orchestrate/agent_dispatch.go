@@ -491,7 +491,11 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// through the fleet instead).
 	if target.Fleet {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
-		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
+		// Unified recall spans folded-away history; skip the standalone
+		// recall_history / expand_history pair when it's active.
+		if !unifiedMemoryEnabled() {
+			tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
+		}
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
@@ -972,7 +976,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// tools.
 	if target.Fleet {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
-		tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
+		// Unified recall spans folded-away history; skip the standalone
+		// recall_history / expand_history pair when it's active.
+		if !unifiedMemoryEnabled() {
+			tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
+		}
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
@@ -1260,7 +1268,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// scrubs the marker text downstream, so resolving the marker HERE is what
 	// keeps a marker-delivered image from silently vanishing. Same helper the
 	// phantom messaging tools use, so channel replies reach parity with them.
-	// cleanReply still carries the marker at this point (StripMetaTags runs later).
+	// cleanReply still carries the marker at this point (textutil.StripMetaTags runs later).
 	imgs, vids := collectMessageMedia(subSess, cleanReply)
 	// Phantom-delivery backstop: the model produced a file (find/generate/fetch)
 	// but never called workspace(attach), then wrote a reply CLAIMING it sent it

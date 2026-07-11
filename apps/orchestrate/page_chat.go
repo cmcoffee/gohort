@@ -217,9 +217,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// substitutes it from the ExtraFields select value
 					// every fetch. Sessions live in their agent's bucket
 					// so switching the picker swaps the rail contents.
-					ListURL:        "api/sessions?agent_id={agent_id}",
-					LoadURL:        "api/sessions/{id}?agent_id={agent_id}",
-					DeleteURL:      "api/sessions/{id}?agent_id={agent_id}",
+					ListURL:   "api/sessions?agent_id={agent_id}",
+					LoadURL:   "api/sessions/{id}?agent_id={agent_id}",
+					DeleteURL: "api/sessions/{id}?agent_id={agent_id}",
 					// Channels rail section — its own region above Sessions with
 					// add/edit/remove. {id} → channel id on delete; save upserts.
 					ChannelsURL:      "api/channels?agent_id={agent_id}",
@@ -229,11 +229,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// Canonical default wake rule, so the channel editor can offer
 					// "Reset to default" on the gatekeeper rules (source of truth is Go).
 					DefaultGatekeeperRule: DefaultDMGatekeeperRule,
-					TruncateURL:    "api/sessions/{id}?agent_id={agent_id}",
+					TruncateURL:           "api/sessions/{id}?agent_id={agent_id}",
 					// Per-turn scrub (✕ on each bubble) — replaces the separate
 					// History view's row-delete; works on every thread, not just
 					// the home thread. See docs/channel-model.md.
-					MessageScrub: true,
+					MessageScrub:   true,
 					RenameURL:      "api/sessions/rename?agent_id={agent_id}",
 					MarkAllReadURL: "api/sessions/mark-all-read?agent_id={agent_id}",
 					ListTitle:      "Sessions",
@@ -330,8 +330,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// it lives here rather than in the per-turn Modes pills.
 					NewVariants: []ui.NewSessionVariant{
 						{
-							Label: "New incognito session",
-							Title: "Start a clean-room session: no cortex standing context and no memory/facts carried in, and nothing stored back. Set when the session is created.",
+							Label:  "New incognito session",
+							Title:  "Start a clean-room session: no cortex standing context and no memory/facts carried in, and nothing stored back. Set when the session is created.",
 							Extras: map[string]any{"incognito": true},
 						},
 					},

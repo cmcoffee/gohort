@@ -114,4 +114,3 @@ func operatorHistoryTools(sess *ToolSession, agentID string) []AgentToolDef {
 		},
 	}
 }
-

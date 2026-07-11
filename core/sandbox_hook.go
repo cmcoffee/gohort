@@ -948,20 +948,19 @@ func EnsureGohortLibDir() string {
 	return libBase
 }
 
-
 // SandboxHookPythonShim is the canonical helper file, deployed as
 // gohort.py. Every import shape works from this one source:
 //
-//   from gohort import fetch, secret, fetch_via, log
-//   data = fetch("https://...")
+//	from gohort import fetch, secret, fetch_via, log
+//	data = fetch("https://...")
 //
-//   from gohort import gohort                # singleton style
-//   data = gohort.fetch("https://...")
+//	from gohort import gohort                # singleton style
+//	data = gohort.fetch("https://...")
 //
-//   import gohort                            # module dot access
-//   data = gohort.fetch("https://...")
+//	import gohort                            # module dot access
+//	data = gohort.fetch("https://...")
 //
-//   from gohort import HookError             # exception
+//	from gohort import HookError             # exception
 //
 // All three shapes resolve against this one file. There is no
 // gohort_hook.py — old back-compat was retired since the small

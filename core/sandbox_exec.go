@@ -183,7 +183,7 @@ func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string,
 	// gohort import fetch` resolves) and the managed python-deps mount
 	// (so `import openpyxl` and friends resolve). Prepend rather than
 	// clobber so a caller-supplied PYTHONPATH also stays searchable.
-	extraEnv["PYTHONPATH"] = prependPythonPath(extraEnv["PYTHONPATH"],
+	extraEnv["PYTHONPATH"] = PrependPythonPath(extraEnv["PYTHONPATH"],
 		SandboxGohortLibMountPath, SandboxPyDepsMountPath)
 
 	var c *exec.Cmd
@@ -532,12 +532,12 @@ func bwrapScriptArgv(interpreter, script string) []string {
 func sandboxEnv() []string {
 	// Minimal allowlist. Anything not in this list is dropped.
 	keep := map[string]bool{
-		"PATH": true,
-		"LANG": true,
-		"LC_ALL": true,
+		"PATH":     true,
+		"LANG":     true,
+		"LC_ALL":   true,
 		"LC_CTYPE": true,
-		"TERM": true,
-		"HOME": true,
+		"TERM":     true,
+		"HOME":     true,
 	}
 	env := []string{}
 	for _, kv := range os.Environ() {

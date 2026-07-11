@@ -10,7 +10,7 @@
 // skip condition (videodl falls back to frames-only). Failures are
 // non-fatal at every layer.
 
-package core
+package media
 
 import (
 	"bytes"
@@ -24,7 +24,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
+
+// transcribeTable is the kvlite table holding the persisted STT config. Mirrors
+// core's tables.go TranscribeTable — a leaf can't import core, and the value is
+// just a table key, so a local copy keeps media dependency-free.
+const transcribeTable = "transcribe_config"
+
+// ConfigStore is the minimal key-value store the transcribe config persistence
+// needs. core's Database interface satisfies it structurally, so callers pass
+// their Database directly while media stays free of a core (or kvlite) import.
+type ConfigStore interface {
+	Get(table, key string, output any) bool
+	Set(table, key string, value any)
+}
 
 // TranscribeConfig holds the endpoint + model for the OpenAI-compatible
 // audio-transcription API. Model is optional — many local Whisper
@@ -59,12 +74,12 @@ func GetTranscribeConfig() TranscribeConfig {
 // LoadTranscribeConfigFromDB reads persisted STT config from the kvlite
 // DB and installs it. Silent no-op when the DB handle is nil or no
 // record exists.
-func LoadTranscribeConfigFromDB(db Database) {
+func LoadTranscribeConfigFromDB(db ConfigStore) {
 	if db == nil {
 		return
 	}
 	var cfg TranscribeConfig
-	if !db.Get(TranscribeTable, "current", &cfg) {
+	if !db.Get(transcribeTable, "current", &cfg) {
 		return
 	}
 	SetTranscribeConfig(cfg)
@@ -72,11 +87,11 @@ func LoadTranscribeConfigFromDB(db Database) {
 
 // SaveTranscribeConfigToDB persists the given config and updates the
 // process-wide config in memory.
-func SaveTranscribeConfigToDB(db Database, cfg TranscribeConfig) error {
+func SaveTranscribeConfigToDB(db ConfigStore, cfg TranscribeConfig) error {
 	if db == nil {
 		return fmt.Errorf("no database available")
 	}
-	db.Set(TranscribeTable, "current", cfg)
+	db.Set(transcribeTable, "current", cfg)
 	SetTranscribeConfig(cfg)
 	return nil
 }
@@ -105,21 +120,21 @@ func TranscribeRuntimeFlagScript() string {
 func Transcribe(ctx context.Context, audio []byte, filename string) (string, error) {
 	cfg := GetTranscribeConfig()
 	if !cfg.Enabled {
-		Debug("[transcribe] disabled (cfg.Enabled=false)")
+		nfo.Debug("[transcribe] disabled (cfg.Enabled=false)")
 		return "", fmt.Errorf("transcription disabled")
 	}
 	if cfg.Endpoint == "" {
-		Debug("[transcribe] no endpoint configured")
+		nfo.Debug("[transcribe] no endpoint configured")
 		return "", fmt.Errorf("transcription endpoint not configured")
 	}
 	if len(audio) == 0 {
-		Debug("[transcribe] empty audio buffer")
+		nfo.Debug("[transcribe] empty audio buffer")
 		return "", fmt.Errorf("transcription: empty audio")
 	}
 	if filename == "" {
 		filename = "audio.mp3"
 	}
-	Debug("[transcribe] POST %s/audio/transcriptions filename=%q bytes=%d model=%q",
+	nfo.Debug("[transcribe] POST %s/audio/transcriptions filename=%q bytes=%d model=%q",
 		strings.TrimRight(cfg.Endpoint, "/"), filename, len(audio), cfg.Model)
 
 	var body bytes.Buffer
@@ -156,12 +171,12 @@ func Transcribe(ctx context.Context, audio []byte, filename string) (string, err
 	client := &http.Client{Timeout: 5 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
-		Debug("[transcribe] transport error: %v", err)
+		nfo.Debug("[transcribe] transport error: %v", err)
 		return "", err
 	}
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
-	Debug("[transcribe] HTTP %d (%d-byte response)", resp.StatusCode, len(respBody))
+	nfo.Debug("[transcribe] HTTP %d (%d-byte response)", resp.StatusCode, len(respBody))
 	if resp.StatusCode >= 400 {
 		return "", fmt.Errorf("transcribe: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}

@@ -114,6 +114,67 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		},
 	}
 
+	// draft_section is the DETERMINISTIC grounded-write path. Unlike add_section
+	// (where the LLM writes the body from its own head), this tool gathers from
+	// BOTH the guide's knowledge collections AND every attached Source first, then
+	// writes the section from that material — so the gather can't be skipped, it's
+	// part of the same call. Cached-knowledge gather only (no live investigate).
+	draftSection := AgentToolDef{
+		Tool: Tool{
+			Name:        "draft_section",
+			Description: "Write a section GROUNDED in the guide's own backing. Unlike add_section (where YOU write the body), this tool DETERMINISTICALLY gathers material from BOTH the guide's knowledge collections AND every attached Source on this topic, then writes the section from that material and commits it — you do NOT need to call search_knowledge or pull_reference yourself first. Use this for any section that should be backed by the guide's attached knowledge/Sources. Provide the section title and a brief of what it should cover. If the section already exists, its body is replaced. Errors if the guide has no knowledge/Sources with anything on the topic — then use `research` (web) or add_section (write it yourself).",
+			Parameters: map[string]ToolParam{
+				"section_title": {Type: "string", Description: "Title of the section to write — created if new, re-drafted if it already exists."},
+				"instructions":  {Type: "string", Description: "What this section should cover: the angle, scope, and any specifics to include. The tool gathers the guide's knowledge + Sources on this topic and writes the section grounded in them."},
+			},
+			Required: []string{"section_title", "instructions"},
+		},
+		SingleFirePerBatch: true,
+		Handler: func(args map[string]any) (string, error) {
+			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
+			instr := strings.TrimSpace(fmt.Sprint(args["instructions"]))
+			if title == "" {
+				return "", fmt.Errorf("section_title is required")
+			}
+			g, ownerUDB, ownerUser, ok := openGuide()
+			if !ok {
+				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+			}
+			query := title
+			if instr != "" {
+				query = title + " — " + instr
+			}
+			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, query)
+			if !found {
+				return "", fmt.Errorf("no grounding found in this guide's knowledge collections or attached Sources for %q — attach a Source/collection with anything on this topic, use the `research` tool for a public/web topic, or write it yourself with add_section", title)
+			}
+			// Deterministic grounded write: a single lead-LLM completion (no tools),
+			// strictly bounded to the gathered material.
+			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown — sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title)
+			brief := instr
+			if brief == "" {
+				brief = "(no extra instructions — cover the topic from the material)"
+			}
+			userMsg := fmt.Sprintf("Section title: %s\n\nWhat to cover:\n%s\n\nGrounding material gathered from this guide's knowledge collections and attached Sources — write the section from THIS and nothing else:\n\n%s", title, brief, grounding)
+			resp, err := T.LeadChat(context.Background(), []Message{{Role: "user", Content: userMsg}}, WithSystemPrompt(sys), WithTemperature(0.3), WithThink(false))
+			if err != nil {
+				return "", fmt.Errorf("draft failed: %w", err)
+			}
+			md := strings.TrimSpace(resp.Content)
+			if md == "" {
+				return "", fmt.Errorf("the draft came back empty")
+			}
+			if idx := findIdx(g, title); idx >= 0 {
+				g.Sections[idx].Markdown = md
+				saveGuideRev(ownerUDB, g, "Drafted from sources: "+title)
+				return fmt.Sprintf("Re-drafted %q in %q, grounded in the guide's knowledge + attached Sources.", title, g.Title), nil
+			}
+			g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: md, Order: g.nextOrder()})
+			saveGuideRev(ownerUDB, g, "Drafted from sources: "+title)
+			return fmt.Sprintf("Added %q to %q (now %d section%s), grounded in the guide's knowledge + attached Sources.", title, g.Title, len(g.Sections), plural(len(g.Sections))), nil
+		},
+	}
+
 	listSections := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_sections",
@@ -418,7 +479,36 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 		},
 	}
 
-	return []AgentToolDef{addSection, editSection, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
+	base := []AgentToolDef{addSection, editSection, draftSection, listSections, renameSection, deleteSection, moveSection, research, searchKnowledge, listReferences, pullReference}
+
+	// Attached-source tools: every source the user linked via the Sources button
+	// contributes its OWN named tools (e.g. search_<system>_knowledge,
+	// investigate_<system>) directly into the kit — so the agent SEES and calls
+	// the guide's Sources instead of having to discover them through the generic
+	// list_reference_sources → pull_reference dance (which loses to the framework's
+	// own knowledge tools, leaving attached Sources untouched). Editors only:
+	// readers keep the owner-scoped pull_reference path — their tool set is
+	// name-whitelisted (readOnlyGuideTools), and a live investigate tool must never
+	// reach a view-only visitor. A Private guide's network/execute source tools are
+	// stripped downstream in handleChatSend by capability.
+	if canEdit {
+		if g, _, _, ok := openGuide(); ok {
+			have := map[string]bool{}
+			for _, t := range base {
+				have[t.Tool.Name] = true
+			}
+			for _, ref := range g.References {
+				for _, t := range ReferenceItemTools(user, ref.Kind, ref.ItemID) {
+					if t.Tool.Name == "" || have[t.Tool.Name] {
+						continue
+					}
+					have[t.Tool.Name] = true
+					base = append(base, t)
+				}
+			}
+		}
+	}
+	return base
 }
 
 // reorderSections moves the section at idx to clampedTarget (0-based), clamping
@@ -513,6 +603,49 @@ func plural(n int) string {
 	return "s"
 }
 
+// gatherGroundingFor deterministically pulls grounding for ONE section topic
+// from BOTH of a guide's backings — its knowledge collections (semantic search)
+// and each attached reference Source (focused fetch) — resolved in the owner's
+// context. query is the section title plus the author's brief. Returns the
+// assembled, labeled block and whether anything was found. This is the
+// deterministic "gather from both before drafting" step behind draft_section:
+// the gather can't be skipped by the LLM because it IS the drafting call. It uses
+// each Source's cached/gathered knowledge (FetchReference's focused fetch), NOT a
+// live investigation — the live investigate_<system> tool stays an explicit,
+// deliberate agent choice so a single draft can't spawn many SSH sessions.
+func gatherGroundingFor(ctx context.Context, ownerUser string, g Guide, query string) (string, bool) {
+	var b strings.Builder
+	// Knowledge: the guide's attached collections.
+	if len(g.Collections) > 0 {
+		hits := SearchCollections(ctx, CollectionsDB(), ownerUser, g.Collections, query, 6)
+		if len(hits) > 0 {
+			b.WriteString("#### From this guide's knowledge collections\n\n")
+			for _, h := range hits {
+				label := strings.TrimSpace(h.Section)
+				if label == "" {
+					label = h.Source
+				}
+				fmt.Fprintf(&b, "--- %s ---\n%s\n\n", label, strings.TrimSpace(h.Text))
+			}
+		}
+	}
+	// Sources: each attached reference, focused on the topic. A Private guide must
+	// stay off the wire, so skip any source that resolves over the network (a
+	// remote MCP doc source) — local sources' cached knowledge still grounds it.
+	for _, ref := range g.References {
+		if g.Private && ReferenceReachesNetwork(ref.Kind) {
+			continue
+		}
+		txt := strings.TrimSpace(FetchReference(ctx, ownerUser, ref.Kind, ref.ItemID, query))
+		if txt == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "#### From attached source [%s:%s]\n\n%s\n\n", ref.Kind, ref.ItemID, txt)
+	}
+	out := strings.TrimSpace(b.String())
+	return out, out != ""
+}
+
 // gatherLinkedSourceSnapshot pulls a bounded, owner-scoped snapshot of the
 // guide's CURRENT linked knowledge — passages from its attached collections
 // (searched per section) plus the content of each attached reference source. The
@@ -561,6 +694,11 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 	}
 
 	for _, ref := range g.References {
+		// A Private guide stays off the wire: skip network-reaching sources (remote
+		// MCP doc sources); local sources' cached knowledge still feeds the audit.
+		if g.Private && ReferenceReachesNetwork(ref.Kind) {
+			continue
+		}
 		txt := strings.TrimSpace(FetchReference(ctx, ownerUser, ref.Kind, ref.ItemID, g.Title))
 		if txt == "" {
 			continue
@@ -604,6 +742,46 @@ func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *o
 		RuntimeUser:  user,
 		AgentKey:     guideAgentID,
 		SubSessionID: "guide-update:" + guideID,
+		FreshSession: true,
+		Message:      prompt,
+		AppTools:     tools,
+	})
+	if err != nil {
+		return "", err
+	}
+	return res.Text, nil
+}
+
+// runApplyAudit dispatches the Guide Author to APPLY an audit's findings — the
+// mutating counterpart to the read-only audit. The findings (the audit report
+// markdown, posted back from the audit modal) are fed in verbatim; the agent
+// works through the recommendations, making each concrete edit through
+// edit_section/add_section as a revision (roll back via History). Every claim is
+// re-grounded in the guide's linked sources before writing, so the apply can't
+// launder an audit hallucination into the document. Honors Private (no-internet).
+func (T *Guides) runApplyAudit(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, findings string, private bool) (string, error) {
+	udb.Set(activeTable, "current", guideID)
+	groundClause := ", using search_knowledge / pull_reference (and web research where the finding is about currency) to confirm specifics before you write"
+	if private {
+		groundClause = ", using search_knowledge / pull_reference to confirm specifics before you write — this is a PRIVATE guide, so do NOT use web research"
+	}
+	prompt := "An audit of this guide produced the findings below. APPLY them — make the recommended edits to the document.\n\n" +
+		"1. Call list_sections to see the current structure.\n" +
+		"2. Work through the audit's recommendations in order. For each one that names a section and a concrete change, call edit_section to make it" + groundClause + ". Where the audit says important material is MISSING, add_section for it.\n" +
+		"3. Ground every edit strictly in the sources — carry any citations. Skip any recommendation you can't substantiate, and never remove correct content or invent facts to satisfy a finding. Leave sections the audit found fine unchanged.\n" +
+		"4. If the audit recommended a STRUCTURE / ordering change, apply it as far as your tools allow (move sections into the recommended order).\n\n" +
+		"THE AUDIT FINDINGS TO APPLY:\n\n" + findings + "\n\n" +
+		"When done, reply with a short bulleted summary of exactly which sections you changed or added and why, and note any recommendation you deliberately skipped. If you applied nothing, say why."
+	tools := T.coauthorTools(udb, orch, user, true)
+	if private {
+		ctx = WithNetworkConnector(ctx, NewNetworkConnector(true))
+		tools = withoutTools(tools, "research")
+	}
+	res, err := orch.RunAgentSyncContinuingRich(ctx, orchestrate.AgentSyncRun{
+		AgentOwner:   user,
+		RuntimeUser:  user,
+		AgentKey:     guideAgentID,
+		SubSessionID: "guide-apply-audit:" + guideID,
 		FreshSession: true,
 		Message:      prompt,
 		AppTools:     tools,

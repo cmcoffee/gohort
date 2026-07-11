@@ -177,6 +177,15 @@ func markdownFromData(raw json.RawMessage) string {
 	return ""
 }
 
+// tailLines returns at most the last n lines of s, for compact error surfacing.
+func tailLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return s
+	}
+	return "...\n" + strings.Join(lines[len(lines)-n:], "\n")
+}
+
 func init() {
 	// pdf — Go built-in, zero deps, reuses the markdown→PDF renderer.
 	RegisterExportFormat(&ExportFormat{

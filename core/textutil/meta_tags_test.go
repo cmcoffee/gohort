@@ -1,4 +1,4 @@
-package core
+package textutil
 
 import "testing"
 
@@ -26,8 +26,8 @@ func TestStripToolCallTags(t *testing.T) {
 		{"a\n<tool_call>\ncall\n</tool_call>\nb", "a\n\nb"},
 		{"text <function=foo>{}</function> end", "text  end"},
 		{"run <tool_code>print(1)</tool_code> now", "run  now"},
-		{"keep <tool_call> only", "keep  only"},   // orphan opener
-		{"answer </tool_call>", "answer"},         // stray closer
+		{"keep <tool_call> only", "keep  only"}, // orphan opener
+		{"answer </tool_call>", "answer"},       // stray closer
 		{"no tool markup here", "no tool markup here"},
 		{"", ""},
 		// \b boundary must NOT eat legit words/prose that merely start with the
