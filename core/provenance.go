@@ -12,7 +12,10 @@
 
 package core
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // MemSource records HOW a stored claim entered memory. It drives the honesty
 // signal at recall time: a user_stated fact carries more weight than an inferred
@@ -137,4 +140,49 @@ func (p MemoryProvenance) Staleness(now time.Time) Staleness {
 	default:
 		return Fresh
 	}
+}
+
+// TunableRecencyWeight scales how much recall down-weights aged claims against
+// their semantic score. 0 = pure semantic ranking (age ignored); 1 = full bite.
+// It never DROPS a hit — a stale claim is scaled by at least (1-strength), so a
+// strong old match still surfaces, just below an equally-strong fresh one.
+// Registered in tunables.go (Category "Retrieval").
+const TunableRecencyWeight = "tune_recency_weight"
+
+// RecencyWeight is the configured recency strength (0..1).
+func RecencyWeight() float64 { return TuneFloat(TunableRecencyWeight) }
+
+// RecencyMultiplier returns a factor in [1-strength, 1] that scales a hit's
+// semantic score by how aged the claim is, so fresher claims rank ahead of
+// equally-relevant stale ones. It reuses the Volatility half-lives that drive
+// Staleness: a stable claim never decays (always 1.0), volatile claims halve in
+// days, slow ones in months. `strength` (0..1) caps the maximum down-weight — 0
+// returns 1.0 always (recency off), 1 lets a very old claim approach 0. The
+// curve is a smooth exponential (0.5^(age/half-life)), not the Staleness bucket,
+// so ordering doesn't jump at the half-life boundary.
+func (p MemoryProvenance) RecencyMultiplier(now time.Time, strength float64) float64 {
+	if strength <= 0 {
+		return 1
+	}
+	if strength > 1 {
+		strength = 1
+	}
+	var half int
+	switch p.Volatility {
+	case VolVolatile:
+		half = TuneInt(TunableStaleVolatileDays)
+	case VolSlow:
+		half = TuneInt(TunableStaleSlowDays)
+	default:
+		return 1 // stable / unknown never decays
+	}
+	if half <= 0 || p.AsOf.IsZero() {
+		return 1
+	}
+	ageDays := now.Sub(p.AsOf).Hours() / 24
+	if ageDays <= 0 {
+		return 1 // future AsOf (clock skew) or just-written → no decay
+	}
+	decay := math.Pow(0.5, ageDays/float64(half)) // 1 at age 0, → 0 as age grows
+	return 1 - strength*(1-decay)
 }

@@ -858,14 +858,19 @@ func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
 				fact  MemoryFact
 				score float32
 			}
+			now := time.Now()
+			strength := RecencyWeight()
 			var ranked []scored
 			for _, f := range all {
 				fVec := factVector(ctx, db, f) // cached, backfilled if legacy
 				if len(fVec) != len(qVec) {
 					continue
 				}
+				// Floor on the RAW semantic score (recency must not drop a
+				// relevant hit below the floor), but rank on the recency-adjusted
+				// score so a fresher fact outranks an equally-relevant stale one.
 				if s := Cosine(qVec, fVec); s >= factSearchMinScore {
-					ranked = append(ranked, scored{f, s})
+					ranked = append(ranked, scored{f, s * float32(f.RecencyMultiplier(now, strength))})
 				}
 			}
 			if len(ranked) > 0 {

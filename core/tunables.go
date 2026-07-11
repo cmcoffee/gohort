@@ -228,6 +228,8 @@ func init() {
 		Help: "Default passages for memory_search (reference memory).", Kind: KindInt, Default: 5, Min: 1, Max: 100})
 	RegisterTunable(TunableSpec{Key: TunableRecallMinScore, Category: "Retrieval", Label: "Recall min score (0 = off)",
 		Help: "Cosine floor below which a recall hit is dropped. 0 keeps every top-k hit; raise to trade recall for precision.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
+	RegisterTunable(TunableSpec{Key: TunableRecencyWeight, Category: "Retrieval", Label: "Recency weight (0 = off)",
+		Help: "How much recall down-weights aged facts/findings vs their semantic score. 0 = pure semantic (age ignored); 1 = full bite. Never drops a hit — a stale one is scaled by at least (1-weight). Reuses the fact staleness half-lives; stable facts and curated knowledge never decay.", Kind: KindFloat, Default: 0.3, Min: 0, Max: 1, Decimals: 2})
 	RegisterTunable(TunableSpec{Key: TunableChunkChars, Category: "Retrieval", Label: "Embedding chunk size (chars)",
 		Help: "Max characters per embedded chunk. Applies to NEW ingestions only — existing documents keep their chunking until re-ingested.", Kind: KindInt, Default: 1000, Min: 200, Max: 8000})
 	RegisterTunable(TunableSpec{Key: TunableLLMMaxRetries, Category: "Limits", Label: "LLM retry attempts",

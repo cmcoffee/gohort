@@ -30,8 +30,10 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -323,10 +325,12 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	}
 
 	layers := t.recallLayerSet(args)
+	now := time.Now()
 	var sections []string
 
 	// [pinned] — Explicit Memory. Tagged with fact:<id> so forget can target
-	// the exact note regardless of its position in the prompt block.
+	// the exact note regardless of its position in the prompt block. An aging or
+	// stale note carries an as-of hint so the model weights it accordingly.
 	if layers["pinned"] && !t.explicitOff() {
 		facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
 		if len(facts) > perLayer {
@@ -335,7 +339,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		if len(facts) > 0 {
 			var b strings.Builder
 			for _, f := range facts {
-				fmt.Fprintf(&b, "- [pinned] %s\n  id: fact:%s\n", strings.TrimSpace(f.Note), f.ID)
+				fmt.Fprintf(&b, "- [pinned] %s%s\n  id: fact:%s\n", strings.TrimSpace(f.Note), FactStalenessNote(f, now), f.ID)
 			}
 			sections = append(sections, strings.TrimRight(b.String(), "\n"))
 		}
@@ -358,12 +362,17 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 				if !layers["finding"] || t.inferredOff() {
 					continue // Reference layer not requested or suppressed this turn
 				}
-				if len(findings) < perLayer {
-					findings = append(findings, h)
-				}
+				findings = append(findings, h) // collect all; recency re-rank + cap below
 			} else if layers["knowledge"] && len(knowledge) < perLayer {
 				knowledge = append(knowledge, h)
 			}
+		}
+		// Findings (self-saved reference material) get recency-reordered so a
+		// fresher finding outranks an equally-relevant older one; curated
+		// [knowledge] is authoritative source-of-truth and is left as ranked.
+		findings = rerankFindingsByRecency(findings, now)
+		if len(findings) > perLayer {
+			findings = findings[:perLayer]
 		}
 		if s := renderRecallChunks("finding", "mem", findings); s != "" {
 			sections = append(sections, s)
@@ -415,9 +424,57 @@ func recallNoMatchMessage(layers map[string]bool) string {
 	return "No matches anywhere in your memory (pinned notes, findings, knowledge, or conversation history). Don't infer an answer from the absence — either rephrase, or proceed and say your memory had nothing on it."
 }
 
+// rerankFindingsByRecency re-orders finding hits by semantic score × recency, so
+// a fresher finding outranks an equally-relevant older one. Findings are
+// self-saved reference material, so they age off their ingestion Date at the
+// "slow" half-life (VolSlow). No-op when recency weighting is off (strength 0)
+// or there's nothing to reorder — so the default-safe case pays nothing.
+func rerankFindingsByRecency(findings []SearchHit, now time.Time) []SearchHit {
+	strength := RecencyWeight()
+	if strength <= 0 || len(findings) < 2 {
+		return findings
+	}
+	type scored struct {
+		h SearchHit
+		s float64
+	}
+	ranked := make([]scored, len(findings))
+	for i, h := range findings {
+		prov := MemoryProvenance{Volatility: VolSlow}
+		if h.Date != "" {
+			if ts, err := time.Parse(time.RFC3339, h.Date); err == nil {
+				prov.AsOf = ts
+			}
+		}
+		ranked[i] = scored{h, float64(h.Score) * prov.RecencyMultiplier(now, strength)}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].s > ranked[j].s })
+	out := make([]SearchHit, len(ranked))
+	for i, r := range ranked {
+		out[i] = r.h
+	}
+	return out
+}
+
+// recallAgeNote renders a finding's saved date as a short freshness hint, or ""
+// when there's no parseable date. Absolute date (not "N days ago") so the model
+// judges it against today rather than a relative phrase that drifts.
+func recallAgeNote(date string) string {
+	if date == "" {
+		return ""
+	}
+	ts, err := time.Parse(time.RFC3339, date)
+	if err != nil {
+		return ""
+	}
+	return "(saved " + ts.Format("2006-01-02") + ")"
+}
+
 // renderRecallChunks formats a bucket of vector hits under a [tag], stamping an
 // id of the form <prefix>:<ReportID> so recall/forget can round-trip it. Uses
 // an excerpt (not the full chunk) to keep recall from dumping whole documents.
+// Findings carry a saved-date hint so the model can weight their freshness;
+// curated knowledge cites via its own locator, so no date line there.
 func renderRecallChunks(tag, idPrefix string, hits []SearchHit) string {
 	if len(hits) == 0 {
 		return ""
@@ -433,6 +490,11 @@ func renderRecallChunks(tag, idPrefix string, hits []SearchHit) string {
 		}
 		fmt.Fprintf(&b, "- [%s] %s\n  id: %s:%s\n  %s\n", tag, name, idPrefix, h.ReportID,
 			strings.ReplaceAll(knowledgeSearchExcerpt(h.Text), "\n", "\n  "))
+		if tag == "finding" {
+			if age := recallAgeNote(h.Date); age != "" {
+				fmt.Fprintf(&b, "  %s\n", age)
+			}
+		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
