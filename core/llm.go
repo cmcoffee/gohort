@@ -474,9 +474,9 @@ type ToolResult struct {
 type ChatConfig struct {
 	Model        string
 	MaxTokens    int
-	Temperature  *float64
-	TopK         *int     // Per-call top-k cutoff; nil = global default (tune_sampling_top_k), then server default.
-	TopP         *float64 // Per-call nucleus-sampling top-p; nil = global default (tune_sampling_top_p), then server default.
+	Temperature  *float64 // Per-call temperature; nil = the mode's global default (tune_sampling_temperature_{think,nothink}), then server default.
+	TopK         *int     // Per-call top-k cutoff; nil = the mode's global default (tune_sampling_top_k_{think,nothink}), then server default.
+	TopP         *float64 // Per-call nucleus-sampling top-p; nil = the mode's global default (tune_sampling_top_p_{think,nothink}), then server default.
 	MinP         *float64 // Per-call min-p cutoff; nil = server default (per-call only, no global tunable yet).
 	SystemPrompt string
 	Tools        []Tool

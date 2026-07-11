@@ -241,30 +241,72 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 
 // --- Sampling controls (temperature / top-k / top-p / min-p) --------------
 //
-// These mirror the think-budget model: an admin-configured global default
-// (tune_sampling_*), overridable per call via the With* options. A tunable value
-// of -1 means "unset — defer to the model server's own default," so 0 stays a
-// legal explicit value (temperature 0 for determinism). Per-call always wins.
+// These mirror the think-budget model: an admin-configured global default,
+// overridable per call via the With* options. A tunable value of -1 means
+// "unset — defer to the model server's own default," so 0 stays a legal explicit
+// value (temperature 0 for determinism). Per-call always wins.
+//
+// Each knob is split into a THINKING and a NON-THINKING profile, because a
+// reasoning model wants different sampling in each mode: Qwen 3 recommends
+// ~temp 0.6 / top-p 0.95 while thinking and ~temp 0.7 / top-p 0.8 in no-think
+// (top-k 20 for both). A single blended value is wrong for at least one mode.
+// The active profile is chosen per call from the effective think state
+// (samplerThinking): the master no-think override forces the non-think profile;
+// an explicit WithThink(bool) picks accordingly; a call that defers (Think=nil)
+// takes the thinking profile, since Qwen 3 unified launches thinking-on and the
+// lower-temperature profile is the safer default when the mode is unknown.
 
 const (
-	TunableSamplingTemperature = "tune_sampling_temperature"
+	TunableSamplingTemperature = "tune_sampling_temperature" // base key; real keys append _think / _nothink
 	TunableSamplingTopK        = "tune_sampling_top_k"
 	TunableSamplingTopP        = "tune_sampling_top_p"
 )
 
+// samplerModes drives the paired think / non-think tunable registration and the
+// suffix used by samplerKey. The suffix is appended to the base constants above.
+var samplerModes = []struct{ suffix, label string }{
+	{"_think", "thinking"},
+	{"_nothink", "non-thinking"},
+}
+
+// samplerKey returns the mode-specific tunable key for a base sampler constant.
+func samplerKey(base string, thinking bool) string {
+	if thinking {
+		return base + "_think"
+	}
+	return base + "_nothink"
+}
+
 func init() {
-	RegisterTunable(TunableSpec{Key: TunableSamplingTemperature, Category: "Sampling",
-		Label: "Default temperature (-1 = server default)",
-		Help:  "Sampling temperature applied when a call sets none. -1 defers to the model server; 0-2 pins it (0 = deterministic). Per-call WithTemperature always overrides.",
-		Kind:  KindFloat, Default: -1, Min: -1, Max: 2, Decimals: 2})
-	RegisterTunable(TunableSpec{Key: TunableSamplingTopK, Category: "Sampling",
-		Label: "Default top-k (-1 = server default)",
-		Help:  "top-k applied when a call sets none. -1 defers to the server default. Per-call override always wins.",
-		Kind:  KindInt, Default: -1, Min: -1, Max: 500})
-	RegisterTunable(TunableSpec{Key: TunableSamplingTopP, Category: "Sampling",
-		Label: "Default top-p (-1 = server default)",
-		Help:  "Nucleus-sampling top-p applied when a call sets none. -1 defers to the server default; 0-1 pins it. Per-call override always wins.",
-		Kind:  KindFloat, Default: -1, Min: -1, Max: 1, Decimals: 2})
+	for _, m := range samplerModes {
+		RegisterTunable(TunableSpec{Key: TunableSamplingTemperature + m.suffix, Category: "Sampling",
+			Label: "Temperature, " + m.label + " (-1 = server default)",
+			Help:  "Sampling temperature for " + m.label + " calls when the call sets none. -1 defers to the model server; 0-2 pins it (0 = deterministic). Qwen 3 recommends ~0.6 thinking / ~0.7 non-thinking. Per-call WithTemperature always overrides.",
+			Kind:  KindFloat, Default: -1, Min: -1, Max: 2, Decimals: 2})
+		RegisterTunable(TunableSpec{Key: TunableSamplingTopK + m.suffix, Category: "Sampling",
+			Label: "Top-k, " + m.label + " (-1 = server default)",
+			Help:  "top-k for " + m.label + " calls when the call sets none. -1 defers to the server default. Qwen 3 recommends 20 for both modes. Per-call override always wins.",
+			Kind:  KindInt, Default: -1, Min: -1, Max: 500})
+		RegisterTunable(TunableSpec{Key: TunableSamplingTopP + m.suffix, Category: "Sampling",
+			Label: "Top-p, " + m.label + " (-1 = server default)",
+			Help:  "Nucleus-sampling top-p for " + m.label + " calls when the call sets none. -1 defers to the server default; 0-1 pins it. Qwen 3 recommends ~0.95 thinking / ~0.8 non-thinking. Per-call override always wins.",
+			Kind:  KindFloat, Default: -1, Min: -1, Max: 1, Decimals: 2})
+	}
+}
+
+// samplerThinking reports the effective thinking state used to pick the sampler
+// profile. Best-effort: the master no-think override wins, then an explicit
+// per-call Think, then a defer (nil) is treated as thinking (Qwen 3 unified
+// launches thinking-on, and the lower-temp profile is the safer unknown-mode
+// default).
+func (c *openAIClient) samplerThinking(cfg ChatConfig) bool {
+	if c.disableThinking {
+		return false
+	}
+	if cfg.Think != nil {
+		return *cfg.Think
+	}
+	return true
 }
 
 // resolveFloatSampler returns the per-call value if set, else the global tunable
@@ -296,22 +338,25 @@ func resolveIntSampler(perCall *int, tunKey string) *int {
 // (no global tunable yet). Penalties are intentionally omitted: presence_penalty
 // alone costs ~23% throughput on llama.cpp even at 0.0.
 func (c *openAIClient) applySamplers(p *oaiRequest, cfg ChatConfig) {
-	p.Temperature = resolveFloatSampler(cfg.Temperature, TunableSamplingTemperature)
-	p.TopP = resolveFloatSampler(cfg.TopP, TunableSamplingTopP)
-	p.TopK = resolveIntSampler(cfg.TopK, TunableSamplingTopK)
+	think := c.samplerThinking(cfg)
+	p.Temperature = resolveFloatSampler(cfg.Temperature, samplerKey(TunableSamplingTemperature, think))
+	p.TopP = resolveFloatSampler(cfg.TopP, samplerKey(TunableSamplingTopP, think))
+	p.TopK = resolveIntSampler(cfg.TopK, samplerKey(TunableSamplingTopK, think))
 	p.MinP = cfg.MinP
 }
 
 // applySamplerOptions is applySamplers for Ollama's native `options` map, which
-// carries the same sampler knobs by name.
-func applySamplerOptions(options map[string]any, cfg ChatConfig) {
-	if t := resolveFloatSampler(cfg.Temperature, TunableSamplingTemperature); t != nil {
+// carries the same sampler knobs by name. A method so it can read the client's
+// effective think state to select the right sampler profile.
+func (c *openAIClient) applySamplerOptions(options map[string]any, cfg ChatConfig) {
+	think := c.samplerThinking(cfg)
+	if t := resolveFloatSampler(cfg.Temperature, samplerKey(TunableSamplingTemperature, think)); t != nil {
 		options["temperature"] = *t
 	}
-	if p := resolveFloatSampler(cfg.TopP, TunableSamplingTopP); p != nil {
+	if p := resolveFloatSampler(cfg.TopP, samplerKey(TunableSamplingTopP, think)); p != nil {
 		options["top_p"] = *p
 	}
-	if k := resolveIntSampler(cfg.TopK, TunableSamplingTopK); k != nil {
+	if k := resolveIntSampler(cfg.TopK, samplerKey(TunableSamplingTopK, think)); k != nil {
 		options["top_k"] = *k
 	}
 	if m := cfg.MinP; m != nil {
@@ -1336,7 +1381,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	msgs := convertToNativeOllamaMessages(oaiMsgs)
 
 	options := map[string]any{"num_ctx": c.ollamaNumCtx()}
-	applySamplerOptions(options, cfg)
+	c.applySamplerOptions(options, cfg)
 	// num_predict (Ollama's max_tokens) intentionally omitted — local
 	// inference doesn't need a billing/rate-limit cap, and Ollama's
 	// default of -1 (unlimited) lets EOS terminate naturally. See
@@ -1457,7 +1502,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	msgs := convertToNativeOllamaMessages(oaiMsgs)
 
 	options := map[string]any{"num_ctx": c.ollamaNumCtx()}
-	applySamplerOptions(options, cfg)
+	c.applySamplerOptions(options, cfg)
 	// num_predict intentionally omitted for the same reason as the
 	// non-streaming path above — let EOS terminate naturally.
 	_ = cfg.MaxTokens
