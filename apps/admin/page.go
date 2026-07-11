@@ -9,11 +9,21 @@ package admin
 import (
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
+
+// boolOffSuffixRE matches a trailing "(0 = off)"-style parenthetical. On a bool
+// tunable that renders as a toggle, the 0/1 convention is redundant noise, so the
+// admin UI strips it from the label. Left intact on number knobs, where "0 = off"
+// is a meaningful sentinel the operator needs to know.
+var boolOffSuffixRE = regexp.MustCompile(`(?i)\s*\(\s*0\s*=\s*off\s*\)\s*$`)
+
+// toggleLabel strips the redundant 0=off suffix from a bool tunable's label.
+func toggleLabel(label string) string { return boolOffSuffixRE.ReplaceAllString(label, "") }
 
 // themePickerOptions builds the Theme dropdown from the core/ui theme
 // registry, so a newly-registered theme appears here with no edit.
@@ -40,7 +50,7 @@ func buildTunableSections() []ui.Section {
 		if s.Kind == KindBool {
 			byCat[s.Category] = append(byCat[s.Category], ui.FormField{
 				Field: s.Key,
-				Label: s.Label,
+				Label: toggleLabel(s.Label),
 				Type:  "toggle",
 				Help:  s.Help,
 			})
