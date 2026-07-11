@@ -239,6 +239,86 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 // DynamicThinkBudget utility below stays available for any caller that
 // genuinely wants input-scaled sizing via WithThinkBudget(DynamicThinkBudget(n)).
 
+// --- Sampling controls (temperature / top-k / top-p / min-p) --------------
+//
+// These mirror the think-budget model: an admin-configured global default
+// (tune_sampling_*), overridable per call via the With* options. A tunable value
+// of -1 means "unset — defer to the model server's own default," so 0 stays a
+// legal explicit value (temperature 0 for determinism). Per-call always wins.
+
+const (
+	TunableSamplingTemperature = "tune_sampling_temperature"
+	TunableSamplingTopK        = "tune_sampling_top_k"
+	TunableSamplingTopP        = "tune_sampling_top_p"
+)
+
+func init() {
+	RegisterTunable(TunableSpec{Key: TunableSamplingTemperature, Category: "Sampling",
+		Label: "Default temperature (-1 = server default)",
+		Help:  "Sampling temperature applied when a call sets none. -1 defers to the model server; 0-2 pins it (0 = deterministic). Per-call WithTemperature always overrides.",
+		Kind:  KindFloat, Default: -1, Min: -1, Max: 2, Decimals: 2})
+	RegisterTunable(TunableSpec{Key: TunableSamplingTopK, Category: "Sampling",
+		Label: "Default top-k (-1 = server default)",
+		Help:  "top-k applied when a call sets none. -1 defers to the server default. Per-call override always wins.",
+		Kind:  KindInt, Default: -1, Min: -1, Max: 500})
+	RegisterTunable(TunableSpec{Key: TunableSamplingTopP, Category: "Sampling",
+		Label: "Default top-p (-1 = server default)",
+		Help:  "Nucleus-sampling top-p applied when a call sets none. -1 defers to the server default; 0-1 pins it. Per-call override always wins.",
+		Kind:  KindFloat, Default: -1, Min: -1, Max: 1, Decimals: 2})
+}
+
+// resolveFloatSampler returns the per-call value if set, else the global tunable
+// when it is >= 0 (a value of -1 means "defer to the server default"), else nil.
+func resolveFloatSampler(perCall *float64, tunKey string) *float64 {
+	if perCall != nil {
+		return perCall
+	}
+	if v := TuneFloat(tunKey); v >= 0 {
+		return &v
+	}
+	return nil
+}
+
+// resolveIntSampler is resolveFloatSampler for an integer knob (top-k).
+func resolveIntSampler(perCall *int, tunKey string) *int {
+	if perCall != nil {
+		return perCall
+	}
+	if v := TuneInt(tunKey); v >= 0 {
+		return &v
+	}
+	return nil
+}
+
+// applySamplers fills an OpenAI-compat request's sampling fields from the call
+// config and the global defaults. llama.cpp's OpenAI endpoint accepts top_k/min_p
+// as extensions alongside the standard temperature/top_p. min_p is per-call only
+// (no global tunable yet). Penalties are intentionally omitted: presence_penalty
+// alone costs ~23% throughput on llama.cpp even at 0.0.
+func (c *openAIClient) applySamplers(p *oaiRequest, cfg ChatConfig) {
+	p.Temperature = resolveFloatSampler(cfg.Temperature, TunableSamplingTemperature)
+	p.TopP = resolveFloatSampler(cfg.TopP, TunableSamplingTopP)
+	p.TopK = resolveIntSampler(cfg.TopK, TunableSamplingTopK)
+	p.MinP = cfg.MinP
+}
+
+// applySamplerOptions is applySamplers for Ollama's native `options` map, which
+// carries the same sampler knobs by name.
+func applySamplerOptions(options map[string]any, cfg ChatConfig) {
+	if t := resolveFloatSampler(cfg.Temperature, TunableSamplingTemperature); t != nil {
+		options["temperature"] = *t
+	}
+	if p := resolveFloatSampler(cfg.TopP, TunableSamplingTopP); p != nil {
+		options["top_p"] = *p
+	}
+	if k := resolveIntSampler(cfg.TopK, TunableSamplingTopK); k != nil {
+		options["top_k"] = *k
+	}
+	if m := cfg.MinP; m != nil {
+		options["min_p"] = *m
+	}
+}
+
 // applyNoThinkDirective prepends the `/no_think` soft-switch directive
 // to the system prompt and/or the most recent user message based on
 // the operator-controlled NoThinkPrependSystem and NoThinkPrependUser
@@ -541,6 +621,9 @@ type oaiRequest struct {
 	Messages             []oaiMessage       `json:"messages"`
 	MaxTokens            int                `json:"max_tokens,omitempty"`
 	Temperature          *float64           `json:"temperature,omitempty"`
+	TopP                 *float64           `json:"top_p,omitempty"` // standard OpenAI param; llama.cpp honors it
+	TopK                 *int               `json:"top_k,omitempty"` // llama.cpp extension; accepted on its OpenAI endpoint
+	MinP                 *float64           `json:"min_p,omitempty"` // llama.cpp extension
 	Stream               bool               `json:"stream,omitempty"`
 	StreamOptions        *oaiStreamOptions  `json:"stream_options,omitempty"` // OpenAI-compat: include_usage=true is required for streaming responses to carry a final usage block (input/output/reasoning_tokens). Without it, streamed responses arrive with zero token counts.
 	Tools                []oaiTool          `json:"tools,omitempty"`
@@ -1253,9 +1336,7 @@ func (c *openAIClient) chatViaOllamaNative(ctx context.Context, cfg ChatConfig, 
 	msgs := convertToNativeOllamaMessages(oaiMsgs)
 
 	options := map[string]any{"num_ctx": c.ollamaNumCtx()}
-	if cfg.Temperature != nil {
-		options["temperature"] = *cfg.Temperature
-	}
+	applySamplerOptions(options, cfg)
 	// num_predict (Ollama's max_tokens) intentionally omitted — local
 	// inference doesn't need a billing/rate-limit cap, and Ollama's
 	// default of -1 (unlimited) lets EOS terminate naturally. See
@@ -1376,9 +1457,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 	msgs := convertToNativeOllamaMessages(oaiMsgs)
 
 	options := map[string]any{"num_ctx": c.ollamaNumCtx()}
-	if cfg.Temperature != nil {
-		options["temperature"] = *cfg.Temperature
-	}
+	applySamplerOptions(options, cfg)
 	// num_predict intentionally omitted for the same reason as the
 	// non-streaming path above — let EOS terminate naturally.
 	_ = cfg.MaxTokens
@@ -1574,12 +1653,12 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		maxTokens = 0
 	}
 	payload := oaiRequest{
-		Model:       cfg.Model,
-		Messages:    c.buildMessages(cfg, messages),
-		MaxTokens:   maxTokens,
-		Temperature: cfg.Temperature,
-		Tools:       buildOAITools(cfg.Tools),
+		Model:     cfg.Model,
+		Messages:  c.buildMessages(cfg, messages),
+		MaxTokens: maxTokens,
+		Tools:     buildOAITools(cfg.Tools),
 	}
+	c.applySamplers(&payload, cfg)
 	if c.llamacpp {
 		payload.ChatTemplateKwargs = c.llamacppChatTemplateKwargs(cfg)
 		payload.ThinkingBudgetTokens = c.llamacppThinkBudget(cfg)
@@ -1786,11 +1865,11 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		Model:         cfg.Model,
 		Messages:      c.buildMessages(cfg, messages),
 		MaxTokens:     streamMaxTokens,
-		Temperature:   cfg.Temperature,
 		Stream:        true,
 		StreamOptions: &oaiStreamOptions{IncludeUsage: true},
 		Tools:         buildOAITools(cfg.Tools),
 	}
+	c.applySamplers(&payload, cfg)
 	if c.llamacpp {
 		payload.ChatTemplateKwargs = c.llamacppChatTemplateKwargs(cfg)
 		payload.ThinkingBudgetTokens = c.llamacppThinkBudget(cfg)

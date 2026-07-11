@@ -475,6 +475,9 @@ type ChatConfig struct {
 	Model        string
 	MaxTokens    int
 	Temperature  *float64
+	TopK         *int     // Per-call top-k cutoff; nil = global default (tune_sampling_top_k), then server default.
+	TopP         *float64 // Per-call nucleus-sampling top-p; nil = global default (tune_sampling_top_p), then server default.
+	MinP         *float64 // Per-call min-p cutoff; nil = server default (per-call only, no global tunable yet).
 	SystemPrompt string
 	Tools        []Tool
 	JSONMode     bool
@@ -526,6 +529,21 @@ func WithMaxTokens(n int) ChatOption {
 // WithTemperature sets the sampling temperature.
 func WithTemperature(t float64) ChatOption {
 	return func(c *ChatConfig) { c.Temperature = &t }
+}
+
+// WithTopK sets the top-k sampling cutoff for this call.
+func WithTopK(k int) ChatOption {
+	return func(c *ChatConfig) { c.TopK = &k }
+}
+
+// WithTopP sets the nucleus-sampling top-p for this call.
+func WithTopP(p float64) ChatOption {
+	return func(c *ChatConfig) { c.TopP = &p }
+}
+
+// WithMinP sets the min-p sampling cutoff for this call.
+func WithMinP(p float64) ChatOption {
+	return func(c *ChatConfig) { c.MinP = &p }
 }
 
 // WithSystemPrompt sets the system prompt for this call.
