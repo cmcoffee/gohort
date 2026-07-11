@@ -5288,20 +5288,6 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			}
 		}
 	}
-	// Router category-gate (opt-in, tune_lookup_gate): a question asking for a
-	// current real-world value is the setup for a confident stale-prior answer
-	// ("the 5090 costs $1,600"). When the agent HAS a lookup tool, inject a
-	// pre-answer directive to search first — a trigger on the QUESTION's category,
-	// not the model's (anti-correlated) confidence. Rides turnContext onto the user
-	// turn like the trigger hints, so the cacheable prefix stays byte-identical.
-	if LookupGateEnabled() && HasLookupTool(allTools) {
-		if cat, ok := LookupCategory(LatestUserContent(llmMsgs)); ok {
-			if turnContext != "" {
-				turnContext += "\n\n"
-			}
-			turnContext += LookupDirective(cat)
-		}
-	}
 	// Append per-turn, message-dependent content (skill/agent trigger hints +
 	// triggered-skill instructions, collected into turnContext during sys
 	// assembly) onto the LAST user message — AFTER the stable system prompt +
