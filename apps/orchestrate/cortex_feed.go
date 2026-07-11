@@ -120,7 +120,7 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "note_to_cortex",
-				Description: "Drop a ONE-LINE pointer about what THIS session did into your standing thread (cortex), so your future self and your OTHER sessions stay aware of it without re-reading this conversation. Use it when the session produced something notable — a deliverable, a decision, an action taken on the user's behalf. A POINTER, not a transcript: \"Drafted the Q3 brief\", \"Texted Mom her flight info\", \"Decided on Postgres for the billing service\". Keep your cortex a lean command center — the gist only; the details ride the memory layer (memory_save) or a filed session (file_deliverable). Distinct from store_fact (always-in-prompt rules) and memory_save (pull-only reference).",
+				Description: rewriteMemoryToolNames("Drop a ONE-LINE pointer about what THIS session did into your standing thread (cortex), so your future self and your OTHER sessions stay aware of it without re-reading this conversation. Use it when the session produced something notable — a deliverable, a decision, an action taken on the user's behalf. A POINTER, not a transcript: \"Drafted the Q3 brief\", \"Texted Mom her flight info\", \"Decided on Postgres for the billing service\". Keep your cortex a lean command center — the gist only; the details ride the memory layer (memory_save) or a filed session (file_deliverable). Distinct from store_fact (always-in-prompt rules) and memory_save (pull-only reference)."),
 				Parameters: map[string]ToolParam{
 					"note": {Type: "string", Description: "The one-line pointer. Self-contained, so it makes sense out of context later. e.g. \"Booked the dentist for Jun 24, 2pm.\""},
 				},

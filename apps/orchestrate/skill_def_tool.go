@@ -48,7 +48,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"attached_collections": {
 			Type:        "array",
-			Description: "(create) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list).",
+			Description: rewriteMemoryToolNames("(create) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list)."),
 			Items:       &ToolParam{Type: "string"},
 		},
 		"create_collection": {

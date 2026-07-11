@@ -4542,7 +4542,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 							"worker_brief": {Type: "string", Description: "The SYSTEM PROMPT the worker LLM gets for this step. 2-5 sentences. Be specific about what to produce, output format, and what to avoid. The framework auto-injects available tools + agent rules; you don't need to repeat them. **Always end the brief with: \"Lead your final response with ONE concrete sentence summarizing what you accomplished — that line surfaces on the plan card as the step's outcome. Then write the details underneath.\"** Workers that lead with process narration (\"I searched for X...\") leave the user with a misleading status line; leading with the outcome (\"Found 3 candidate Foundation cast updates from Apple TV's October press release.\") makes the plan card honest. NOT visible to the user."},
 							"tools": {
 								Type:        "array",
-								Description: "Explicit tool surface for THIS step's worker — tight list of tool names the worker actually needs to complete the brief. Pick from the tools currently in YOUR catalog (the worker can't access tools you don't see). Be tight: 2-5 names is typical; one tool is common when the step is a focused lookup. Framework essentials (knowledge_search, memory_*, agents, plan_set, ask_user, respond_directly, find_tools) are always available to the worker — don't list them. If you're unsure which tools the worker needs, list none and the worker gets the agent's default pool (broader catalog, more LLM cognitive load).",
+								Description: rewriteMemoryToolNames("Explicit tool surface for THIS step's worker — tight list of tool names the worker actually needs to complete the brief. Pick from the tools currently in YOUR catalog (the worker can't access tools you don't see). Be tight: 2-5 names is typical; one tool is common when the step is a focused lookup. Framework essentials (knowledge_search, memory_*, agents, plan_set, ask_user, respond_directly, find_tools) are always available to the worker — don't list them. If you're unsure which tools the worker needs, list none and the worker gets the agent's default pool (broader catalog, more LLM cognitive load)."),
 								Items:       &ToolParam{Type: "string"},
 							},
 						},
@@ -5922,7 +5922,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// Builder. Kept short on purpose: the rules that catch the most
 	// common authoring mistakes, no narrative.
 	if isBuilderAgent(t.agent.ID) {
-		sysPrompt += "\n\n" + builderWorkerDirectives
+		// builderWorkerDirectives is appended after prependAgentContext and this
+		// worker path skips appendAgentCapabilityBlocks, so run the mode-aware
+		// rewrite here too (the directives name store_fact in prose).
+		sysPrompt += "\n\n" + rewriteMemoryToolNames(builderWorkerDirectives)
 		sysPrompt += sandboxPythonNoteSection()
 	}
 
