@@ -112,7 +112,12 @@ func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, us
 	if agent.PreMortem || agent.Cortex {
 		sys += "\n\n" + preMortemPlanningBlock
 	}
-	return sys
+	// The guidance blocks appended above (search-order guidance, plan/pre-mortem,
+	// skills) also hardcode legacy tool names in prose. Re-run the mode-aware
+	// rewrite over the full assembled prompt so those are covered too on the
+	// interactive surfaces. Idempotent with the prependAgentContext pass — the
+	// unified replacements carry no legacy token, so a second run changes nothing.
+	return rewriteMemoryToolNames(sys)
 }
 
 // resolveDispatchThink decides whether a dispatched agent thinks, the SAME way

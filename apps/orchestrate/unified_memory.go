@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -119,6 +120,61 @@ func memRefMemToolsClause() string { // how the Reference-Memory layer is reache
 		return "the `remember` and `recall` tools"
 	}
 	return "the `memory` tool: action=\"save\"|\"search\"|\"forget\""
+}
+
+// --- mode-aware prompt rewrite --------------------------------------------
+//
+// The mem*Phrase helpers above cover prompts that were built with a hole for the
+// tool name. Older seed prompts and guidance blocks instead HARDCODE the legacy
+// names in prose ("call knowledge_search first", "capture gotchas via
+// store_fact") — often several times in one raw-string prompt, where inline
+// splicing would shatter the string. rewriteMemoryToolNames is the catch-all: a
+// single pass over an assembled system prompt that swaps every legacy memory
+// tool token for its collapsed-surface equivalent, but ONLY when the unified
+// surface is live (in legacy mode it's a no-op, so the prose ships byte-for-byte
+// as tuned). Applied at the two prompt-assembly tails (prependAgentContext,
+// appendAgentCapabilityBlocks) so it reaches every surface — web, dispatch,
+// worker, synthesis — from one place.
+//
+// The token set is deliberately underscore-bearing and word-bounded, which makes
+// the pass collision-free: `\bknowledge_search\b` cannot match inside
+// `skill_knowledge_search` (the underscore is a word char, so there's no
+// boundary before "knowledge"), so the distinct skill_* tools are never touched.
+// The replacements contain no legacy token, so a second pass is a no-op — the
+// two call sites can both run on the same string without double-rewriting.
+var legacyMemToolRE = regexp.MustCompile(`\b(knowledge_search|fetch_knowledge_doc|search_facts|recall_history|expand_history|list_facts|memory_search|store_fact|memory_save|forget_fact|memory_forget)\b`)
+
+// unifiedMemToolReplacements maps each legacy tool token to its collapsed-surface
+// phrasing. store_fact keeps the pin=true qualifier because the Explicit layer is
+// the pinned one — a bare "remember" defaults to the unpinned Reference layer, so
+// dropping the qualifier would silently change where the note lands.
+var unifiedMemToolReplacements = map[string]string{
+	"knowledge_search":    "recall",
+	"fetch_knowledge_doc": "recall",
+	"search_facts":        "recall",
+	"recall_history":      "recall",
+	"expand_history":      "recall",
+	"list_facts":          "recall",
+	"memory_search":       "recall",
+	"store_fact":          "remember (pin=true)",
+	"memory_save":         "remember",
+	"forget_fact":         "forget",
+	"memory_forget":       "forget",
+}
+
+// rewriteMemoryToolNames swaps hardcoded legacy memory-tool names in an
+// assembled prompt for their unified-surface equivalents when the collapsed
+// surface is live. No-op under the legacy surface.
+func rewriteMemoryToolNames(s string) string {
+	if !unifiedMemoryEnabled() {
+		return s
+	}
+	return legacyMemToolRE.ReplaceAllStringFunc(s, func(m string) string {
+		if r, ok := unifiedMemToolReplacements[m]; ok {
+			return r
+		}
+		return m
+	})
 }
 
 // unifiedRecallPerLayer caps how many hits recall pulls from each of the four

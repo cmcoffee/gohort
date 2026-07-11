@@ -59,7 +59,12 @@ func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact) str
 	if r := renderRulesPromptSection(agent.Rules); r != "" {
 		out = r + out
 	}
-	return out
+	// Catch-all mode-aware rewrite: when the unified surface is live, swap any
+	// hardcoded legacy tool names (in the persona prose OR the injected facts-
+	// block intro) for their collapsed-surface equivalents. No-op in legacy
+	// mode. This is the universal choke point — every surface (web, dispatch,
+	// worker, synthesis) finalizes its persona+context here.
+	return rewriteMemoryToolNames(out)
 }
 
 // memoryModeText is the mode-specific wording for the memory section.
