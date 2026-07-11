@@ -338,6 +338,15 @@ func renderGraphRecall(db Database, ns string, e GraphEntity, depth int) string 
 	for _, ed := range in {
 		fmt.Fprintf(&b, "- %s → %s → (this)\n", graphEndName(db, ns, ed.From), strings.ReplaceAll(ed.Rel, "_", " "))
 	}
+	// Past (superseded) relationships — a corrected single-valued relation keeps a
+	// validity window so recall can distinguish "used to" from "currently."
+	for _, ed := range RetiredGraphEdgesFrom(db, ns, e.ID) {
+		line := fmt.Sprintf("- (past) %s → %s", strings.ReplaceAll(ed.Rel, "_", " "), graphEndName(db, ns, ed.To))
+		if !ed.RetiredAt.IsZero() {
+			line += " (until " + ed.RetiredAt.Format("2006-01-02") + ")"
+		}
+		b.WriteString(line + "\n")
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 

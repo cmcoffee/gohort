@@ -72,6 +72,45 @@ func TestLinkGraphEdgeReplace(t *testing.T) {
 	}
 }
 
+// TestGraphEdgeSupersessionTombstone: a corrected single-valued relation keeps a
+// validity-window tombstone (the past relationship) instead of hard-dropping,
+// while the live view and counts show only the current value, and re-linking an
+// old target revives it.
+func TestGraphEdgeSupersessionTombstone(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:1"
+	robin, _ := UpsertGraphEntity(db, ns, "person", "Robin", nil, nil)
+	acme, _ := UpsertGraphEntity(db, ns, "org", "Acme", nil, nil)
+	globex, _ := UpsertGraphEntity(db, ns, "org", "Globex", nil, nil)
+
+	LinkGraphEdge(db, ns, robin.ID, "works at", acme.ID, "", true)
+	LinkGraphEdge(db, ns, robin.ID, "works at", globex.ID, "", true)
+
+	live := GraphEdgesFrom(db, ns, robin.ID)
+	if len(live) != 1 || live[0].To != globex.ID {
+		t.Fatalf("live edges should be only Globex, got %+v", live)
+	}
+	past := RetiredGraphEdgesFrom(db, ns, robin.ID)
+	if len(past) != 1 || past[0].To != acme.ID {
+		t.Fatalf("expected one retired edge to Acme, got %+v", past)
+	}
+	if past[0].Reason != RetireSuperseded || past[0].Successor != globex.ID {
+		t.Fatalf("retired edge should be RetireSuperseded with successor Globex, got %+v", past[0])
+	}
+	if _, edges := GraphCounts(db, ns); edges != 1 {
+		t.Fatalf("GraphCounts should count only live edges, got %d", edges)
+	}
+
+	// Re-linking the old target revives it live; Globex becomes the retired one.
+	LinkGraphEdge(db, ns, robin.ID, "works at", acme.ID, "", true)
+	if live2 := GraphEdgesFrom(db, ns, robin.ID); len(live2) != 1 || live2[0].To != acme.ID {
+		t.Fatalf("re-link should make Acme live again, got %+v", live2)
+	}
+	if p := RetiredGraphEdgesFrom(db, ns, robin.ID); len(p) != 1 || p[0].To != globex.ID {
+		t.Fatalf("after re-linking Acme, Globex should be the retired one, got %+v", p)
+	}
+}
+
 // TestGraphNamespaceIsolation: entities/edges in one agent's namespace are
 // invisible to another's.
 func TestGraphNamespaceIsolation(t *testing.T) {

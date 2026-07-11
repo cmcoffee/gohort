@@ -75,6 +75,13 @@ type GraphEdge struct {
 	Note      string    `json:"note,omitempty"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+	// MemoryProvenance carries retirement: correcting a single-valued relation via
+	// LinkGraphEdge(replace=true) tombstones the old edge (Reason=RetireSuperseded,
+	// Successor = the new target entity) as a validity window instead of
+	// hard-dropping it, so recall_about can show the past relationship ("previously
+	// worked at X"). Zero value = live; retired edges are filtered from live scans.
+	// The origin fields (Source/Volatility/AsOf) are unused for edges.
+	MemoryProvenance
 }
 
 // graphEntityKey / graphEdgeKey assemble the kvlite keys. Slash-delimited
@@ -357,17 +364,37 @@ func LinkGraphEdge(db Database, namespace, from, rel, to, note string, replace b
 	if db == nil || namespace == "" || from == "" || to == "" || rel == "" {
 		return GraphEdge{}
 	}
+	key := graphEdgeKey(namespace, from, rel, to)
 	if replace {
-		// Drop existing values for this (From, rel) pair before writing the
-		// new one. Prefix scan over "<namespace>/<from>|<rel>|".
+		// Correcting a single-valued relation: tombstone the OTHER values for this
+		// (From, rel) as superseded (a validity window) instead of hard-dropping,
+		// so recall_about can show the past relationship. The new triple's own key
+		// is skipped — it's (re)written live below. Spent tombstones past the
+		// retention window are pruned here to keep the lineage bounded.
 		prefix := namespace + "/" + from + "|" + rel + "|"
+		retDays := TuneInt(TunableFactTombstoneDays)
+		cutoff := now.AddDate(0, 0, -retDays)
 		for _, k := range db.Keys(GraphEdgeTable) {
-			if strings.HasPrefix(k, prefix) {
-				db.Unset(GraphEdgeTable, k)
+			if !strings.HasPrefix(k, prefix) || k == key {
+				continue
 			}
+			var old GraphEdge
+			if !db.Get(GraphEdgeTable, k, &old) {
+				continue
+			}
+			if old.Retired() {
+				if retDays <= 0 || old.RetiredAt.Before(cutoff) {
+					db.Unset(GraphEdgeTable, k) // spent tombstone
+				}
+				continue
+			}
+			old.Reason = RetireSuperseded
+			old.RetiredAt = now
+			old.Successor = to // the entity that replaced this relationship's target
+			old.Updated = now
+			db.Set(GraphEdgeTable, k, old)
 		}
 	}
-	key := graphEdgeKey(namespace, from, rel, to)
 	edge := GraphEdge{Namespace: namespace, From: from, Rel: rel, To: to, Note: strings.TrimSpace(note), Created: now, Updated: now}
 	// Preserve Created if the exact triple already existed (this is an update).
 	var prior GraphEdge
@@ -401,7 +428,7 @@ func scanGraphEdges(db Database, namespace string, keep func(GraphEdge) bool) []
 			continue
 		}
 		var e GraphEdge
-		if db.Get(GraphEdgeTable, k, &e) && keep(e) {
+		if db.Get(GraphEdgeTable, k, &e) && !e.Retired() && keep(e) {
 			out = append(out, e)
 		}
 	}
@@ -530,11 +557,40 @@ func GraphCounts(db Database, namespace string) (entities, edges int) {
 		}
 	}
 	for _, k := range db.Keys(GraphEdgeTable) {
-		if strings.HasPrefix(k, prefix) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var e GraphEdge // decode to skip retired (tombstoned) edges from the live count
+		if db.Get(GraphEdgeTable, k, &e) && !e.Retired() {
 			edges++
 		}
 	}
 	return entities, edges
+}
+
+// RetiredGraphEdgesFrom returns a node's superseded outbound edges — past
+// relationships tombstoned by LinkGraphEdge(replace=true) — most-recently retired
+// first, for recall surfaces that show history ("previously worked at X"). Empty
+// when none.
+func RetiredGraphEdgesFrom(db Database, namespace, from string) []GraphEdge {
+	namespace = strings.TrimSpace(namespace)
+	from = strings.TrimSpace(from)
+	if db == nil || namespace == "" || from == "" {
+		return nil
+	}
+	prefix := namespace + "/"
+	var out []GraphEdge
+	for _, k := range db.Keys(GraphEdgeTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		var e GraphEdge
+		if db.Get(GraphEdgeTable, k, &e) && e.Retired() && e.From == from {
+			out = append(out, e)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].RetiredAt.After(out[j].RetiredAt) })
+	return out
 }
 
 // --- small local helpers (no strconv dependency, matching factstore style) ---
