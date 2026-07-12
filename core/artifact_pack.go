@@ -84,6 +84,48 @@ type ArtifactType interface {
 	ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error)
 }
 
+// ArtifactDependencies is an OPTIONAL interface an ArtifactType implements when
+// its artifacts reference OTHER artifacts by name — a tool referencing its API
+// credential, a connector referencing the SecureAPI credential it polls
+// through. Export-time closure (ExportArtifactBundle) walks these so selecting
+// one artifact folds in everything it needs to install cleanly on a fresh box.
+//
+// Dependencies is BEST-EFFORT: return the artifacts this one references; the
+// exporter resolves each and silently drops any that can't be exported (a
+// bootstrap no_auth credential, a reference to something that no longer
+// exists). A dependency must never fail an otherwise-valid export — import
+// surfaces an unmet reference as a skip.
+type ArtifactDependencies interface {
+	Dependencies(db Database, name, owner string) []ArtifactSel
+}
+
+// artifactDeps returns the declared dependencies of one selection, or nil if
+// its type declares none (doesn't implement ArtifactDependencies).
+func artifactDeps(db Database, s ArtifactSel) []ArtifactSel {
+	at, ok := lookupArtifactType(strings.TrimSpace(s.Type))
+	if !ok {
+		return nil
+	}
+	dep, ok := at.(ArtifactDependencies)
+	if !ok {
+		return nil
+	}
+	return dep.Dependencies(db, strings.TrimSpace(s.Name), strings.TrimSpace(s.Owner))
+}
+
+// exportableCredential reports whether a credential NAME is worth folding into
+// a bundle as a dependency. The bootstrap sentinels ("", "none", "no_auth")
+// name gohort's built-in open-pattern credential, which exists on every
+// install — pulling it in as a dependency is noise, not portability. A caller
+// who genuinely wants to ship a custom-scoped no_auth selects it explicitly.
+func exportableCredential(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "none", "no_auth":
+		return false
+	}
+	return true
+}
+
 var artifactTypes = map[string]ArtifactType{}
 
 // RegisterArtifactType adds a portable artifact type to the registry. Called
@@ -101,23 +143,92 @@ func lookupArtifactType(name string) (ArtifactType, bool) {
 	return t, ok
 }
 
-// ExportArtifactBundle builds a bundle from an explicit selection. Errors on the
-// first bad selector (unknown type / missing artifact) so a typo is caught
-// rather than silently dropped — mirrors ExportConnectorPack.
+// ExportArtifactBundle builds a bundle from an explicit selection, then folds in
+// the transitive DEPENDENCY CLOSURE so a selected artifact travels with the
+// credentials (and other artifacts) it references — "export this tool" produces
+// a bundle that installs cleanly, credential and all, on a fresh box.
+//
+// Two tiers, different failure modes:
+//   - The EXPLICIT selection is strict: an unknown type or missing artifact
+//     errors on the first bad selector, so a typo is caught rather than
+//     silently dropped (mirrors ExportConnectorPack).
+//   - DEPENDENCIES are best-effort: a reference that can't be resolved (a
+//     bootstrap credential, something since deleted) is skipped, never fatal.
+//     A bad dependency must not sink an otherwise-valid export; import reports
+//     the unmet reference.
+//
+// Every artifact lands at most once (dedup by type+name+owner), so this is
+// idempotent — "export all" already contains every dependency and the closure
+// is a no-op over it. Dependency waves are sorted for byte-stable output.
 func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
 	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now()}
-	for _, s := range sels {
+	seen := map[string]bool{}
+	selKey := func(s ArtifactSel) string {
+		return strings.TrimSpace(s.Type) + "\x00" + strings.TrimSpace(s.Name) + "\x00" + strings.TrimSpace(s.Owner)
+	}
+	// addArtifact exports one selection and appends it. strict=true (explicit
+	// selection) propagates a resolution failure as an error; strict=false
+	// (dependency) skips it. Returns whether a new artifact was actually added,
+	// so the caller only chases the deps of things that made it into the bundle.
+	addArtifact := func(s ArtifactSel, strict bool) (bool, error) {
+		if seen[selKey(s)] {
+			return false, nil
+		}
 		typ := strings.TrimSpace(s.Type)
 		name := strings.TrimSpace(s.Name)
 		at, ok := lookupArtifactType(typ)
 		if !ok {
-			return ArtifactBundle{}, fmt.Errorf("unknown artifact type %q", typ)
+			if strict {
+				return false, fmt.Errorf("unknown artifact type %q", typ)
+			}
+			return false, nil
 		}
 		recipe, err := at.ExportArtifact(db, name, strings.TrimSpace(s.Owner))
 		if err != nil {
-			return ArtifactBundle{}, fmt.Errorf("export %s %q: %w", typ, name, err)
+			if strict {
+				return false, fmt.Errorf("export %s %q: %w", typ, name, err)
+			}
+			return false, nil
 		}
+		seen[selKey(s)] = true
 		bundle.Artifacts = append(bundle.Artifacts, PortableArtifact{Type: typ, Name: name, Recipe: recipe})
+		return true, nil
+	}
+
+	// Explicit selection first, in caller order, strict. Collect each added
+	// artifact's declared dependencies to seed the closure.
+	var pending []ArtifactSel
+	for _, s := range sels {
+		added, err := addArtifact(s, true)
+		if err != nil {
+			return ArtifactBundle{}, err
+		}
+		if added {
+			pending = append(pending, artifactDeps(db, s)...)
+		}
+	}
+
+	// Breadth-first closure over dependencies. seen[] both dedups and breaks any
+	// reference cycle. Each wave is sorted (type, owner, name) so the bundle is
+	// deterministic byte-for-byte given the same store.
+	for len(pending) > 0 {
+		wave := pending
+		pending = nil
+		sort.SliceStable(wave, func(i, j int) bool {
+			if wave[i].Type != wave[j].Type {
+				return wave[i].Type < wave[j].Type
+			}
+			if wave[i].Owner != wave[j].Owner {
+				return wave[i].Owner < wave[j].Owner
+			}
+			return wave[i].Name < wave[j].Name
+		})
+		for _, s := range wave {
+			added, _ := addArtifact(s, false)
+			if added {
+				pending = append(pending, artifactDeps(db, s)...)
+			}
+		}
 	}
 	return bundle, nil
 }

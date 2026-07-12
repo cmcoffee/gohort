@@ -47,6 +47,50 @@ func (connectorArtifact) ExportArtifact(db Database, name, _ string) (json.RawMe
 	return json.Marshal(toPortable(c))
 }
 
+// Dependencies folds in the SecureAPI credential a connector reaches out
+// through, so exporting a rest_poll / remote_mcp / desktop_mcp connector carries
+// its credential (as a disabled draft) with it. Parsed generically from the
+// Spec — see connectorCredentialRefs — so a new connector kind that names a
+// credential the same way is covered without touching this type.
+func (connectorArtifact) Dependencies(db Database, name, _ string) []ArtifactSel {
+	c, ok := GetConnector(db, name)
+	if !ok {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, cred := range connectorCredentialRefs(c.Spec) {
+		if exportableCredential(cred) {
+			out = append(out, ArtifactSel{Type: "credential", Name: cred})
+		}
+	}
+	return out
+}
+
+// connectorCredentialRefs extracts credential-name references from a connector
+// Spec without knowing each kind's concrete struct. rest_poll spells it
+// "credential"; the MCP kinds (remote_mcp / desktop_mcp) spell it "secure_cred".
+// A generic probe over both keys keeps closure decoupled from the spec types.
+func connectorCredentialRefs(spec json.RawMessage) []string {
+	if len(spec) == 0 {
+		return nil
+	}
+	var probe struct {
+		Credential string `json:"credential"`
+		SecureCred string `json:"secure_cred"`
+	}
+	if err := json.Unmarshal(spec, &probe); err != nil {
+		return nil
+	}
+	var out []string
+	if c := strings.TrimSpace(probe.Credential); c != "" {
+		out = append(out, c)
+	}
+	if c := strings.TrimSpace(probe.SecureCred); c != "" {
+		out = append(out, c)
+	}
+	return out
+}
+
 func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error) {
 	var pc PortableConnector
 	if err := json.Unmarshal(recipe, &pc); err != nil {
@@ -121,6 +165,58 @@ func (toolArtifact) ExportArtifact(db Database, name, owner string) (json.RawMes
 		}
 	}
 	return nil, fmt.Errorf("no tool named %q for user %q", name, owner)
+}
+
+// Dependencies folds in the API credential an api- / toolbox-mode tool
+// dispatches through (TempTool.Credential is a name reference — the secret
+// stays server-side). shell- and pipeline-mode tools carry their code inline
+// and reference no credential, so they contribute none. The bootstrap no_auth
+// sentinel is filtered by exportableCredential. Owner scopes the per-user tool
+// store, same as ExportArtifact.
+func (toolArtifact) Dependencies(db Database, name, owner string) []ArtifactSel {
+	t, ok := findOwnedTempTool(db, name, owner)
+	if !ok {
+		return nil
+	}
+	cred := strings.TrimSpace(t.Credential)
+	if !exportableCredential(cred) {
+		return nil
+	}
+	return []ArtifactSel{{Type: "credential", Name: cred}}
+}
+
+// findOwnedTempTool resolves the named temp tool owned by owner, checking the
+// persistent (admin-approved) pool first and then the pending queue — the same
+// order ExportArtifact uses so a tool and its dependency walk agree on which
+// record they mean. Shared by the tool artifact's own dependency walk and by
+// cross-type references (an agent that allowlists the tool by name).
+func findOwnedTempTool(db Database, name, owner string) (TempTool, bool) {
+	owner = strings.TrimSpace(owner)
+	name = strings.TrimSpace(name)
+	if owner == "" || name == "" {
+		return TempTool{}, false
+	}
+	for _, p := range LoadPersistentTempTools(db, owner) {
+		if p.Tool.Name == name {
+			return p.Tool, true
+		}
+	}
+	for _, p := range LoadPendingTempTools(db, owner) {
+		if p.Tool.Name == name {
+			return p.Tool, true
+		}
+	}
+	return TempTool{}, false
+}
+
+// IsExportableTool reports whether name resolves to a temp tool owned by owner
+// that the "tool" artifact type can export. It is the predicate another
+// artifact type uses to declare a dependency on a tool it references by name
+// (an agent's allowlist) without duplicating the store lookup or reaching into
+// tool internals — built-in registered tools and unknown names return false.
+func IsExportableTool(db Database, name, owner string) bool {
+	_, ok := findOwnedTempTool(db, name, owner)
+	return ok
 }
 
 func (toolArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error) {

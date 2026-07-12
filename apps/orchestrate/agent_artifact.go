@@ -83,6 +83,63 @@ func (a *agentArtifact) ExportArtifact(_ Database, name, owner string) (json.Raw
 	return nil, fmt.Errorf("no agent named %q for user %q", name, owner)
 }
 
+// Dependencies folds in the exportable temp tools this agent — and its bundled
+// sub-agents — name in their AllowedTools allowlist, so exporting an agent
+// carries the custom tools it was built to call and, transitively (the tool
+// artifact's own closure), those tools' API credentials.
+//
+// Only EXPLICITLY allowlisted names count. An empty AllowedTools means the
+// agent draws on the default deployment-wide pool of approved tools, which is
+// not an agent-specific dependency — pulling every persistent tool into the
+// bundle would be wrong. Built-in registered tool names (web_search, fetch_url)
+// and any name that isn't an exportable temp tool are skipped by
+// IsExportableTool. db is the RootDB the temp-tool store lives in; the agent
+// record itself resolves from the per-user app store, same as ExportArtifact.
+func (a *agentArtifact) Dependencies(db Database, name, owner string) []ArtifactSel {
+	owner = strings.TrimSpace(owner)
+	if owner == "" || a.app == nil || a.app.DB == nil {
+		return nil
+	}
+	udb := UserDB(a.app.DB, owner)
+	if udb == nil {
+		return nil
+	}
+	// Resolve the top-level agent by name, then pull its whole recipe (record +
+	// owned sub-agents) so sub-agent allowlists are covered too.
+	var exp agentExport
+	found := false
+	for _, rec := range listAgents(udb, owner) {
+		if rec.OwnedBy == "" && rec.Name == name {
+			if e, ok := buildAgentExport(udb, rec.ID, owner); ok {
+				exp, found = e, true
+			}
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []ArtifactSel
+	consider := func(names []string) {
+		for _, tn := range names {
+			tn = strings.TrimSpace(tn)
+			if tn == "" || seen[tn] {
+				continue
+			}
+			seen[tn] = true
+			if IsExportableTool(db, tn, owner) {
+				out = append(out, ArtifactSel{Type: "tool", Name: tn, Owner: owner})
+			}
+		}
+	}
+	consider(exp.AllowedTools)
+	for _, s := range exp.SubAgents {
+		consider(s.AllowedTools)
+	}
+	return out
+}
+
 // ImportArtifact reconstitutes an agent recipe under owner as a NEW agent (fresh
 // id, reborn sub-agents). A same-named top-level agent is skipped, never
 // clobbered — consistent with connector/tool import. Unlike those, agents have
