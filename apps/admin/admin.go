@@ -1749,7 +1749,13 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(res)
+			// Same message/warnings envelope as a file import — a catalog install
+			// runs the same importer, so an unmet reference surfaces the same way
+			// (a modal on the Install button rather than a form note).
+			_ = json.NewEncoder(w).Encode(struct {
+				ArtifactImportResult
+				Message string `json:"message"`
+			}{res, res.Summary()})
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}

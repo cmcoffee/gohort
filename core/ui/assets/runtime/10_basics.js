@@ -321,6 +321,16 @@
               if (window.uiInvalidate && cfg.source) {
                 window.uiInvalidate(cfg.source);
               }
+              // Surface a server-provided outcome message. A non-empty
+              // `warnings` array escalates to a modal alert so an unmet
+              // reference (e.g. a catalog install that leaves a tool
+              // wired to a missing credential) can't be missed; a plain
+              // message is a transient toast confirmation. Generic — any
+              // POST row action that returns `message` benefits.
+              if (resp && typeof resp.message === 'string' && resp.message) {
+                if (resp.warnings && resp.warnings.length && window.uiAlert) window.uiAlert(resp.message);
+                else showToast(resp.message);
+              }
             })
             .catch(function(err){
               // Restore the optimistically-hidden row so the user
