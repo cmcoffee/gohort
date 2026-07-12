@@ -13,11 +13,12 @@ import (
 	_ "github.com/cmcoffee/gohort/gohort-desktop/macos/contacts" // contacts.lookup
 )
 
-// startNativeServices launches the iMessage relay once the sidecar has
-// a server URL + API key. It waits (rather than giving up) so the agent
-// can be running before the user configures it in the viewer — config
-// shows up live and the relay starts. imsg.Run blocks, so this owns a
-// goroutine for the process lifetime.
+// startNativeServices supervises the iMessage relay: it starts the relay once
+// the sidecar has a server URL + key AND the service is enabled, and stops it
+// LIVE when a server-side disable arrives (a messaging_bridge connector
+// unapproved/deleted) — no daemon restart needed. It waits (rather than giving
+// up) so the daemon can be running before the user configures it; config +
+// enable/disable show up live on the 5s supervisor tick.
 func startNativeServices() {
 	// Touch chat.db immediately (even before configured) so macOS lists
 	// this app under Full Disk Access, ready to toggle on — the user
@@ -25,19 +26,41 @@ func startNativeServices() {
 	imsg.ProbeChatDB()
 
 	go func() {
+		var stop, done chan struct{} // non-nil while the relay goroutine is live
 		for {
 			c := core.ReadBridgeConfig()
-			// Start once we have a server URL and *some* key (sidecar or
-			// manual). core.BridgeAPIKey() is the single live resolver both
-			// this relay and the WS bridge share — so a rotated /
-			// auto-provisioned key is picked up without restarting.
-			if c.ServerURL != "" && core.BridgeAPIKey() != "" {
-				imsg.Run(imsg.Config{
+			// core.BridgeAPIKey() is the single live resolver both this relay
+			// and the WS bridge share — a rotated / auto-provisioned key is
+			// picked up without restarting.
+			configured := c.ServerURL != "" && core.BridgeAPIKey() != ""
+			enabled, pollOverride, managed := core.BridgeServiceEnabled("imessage")
+			// Default-on when the server never pushed state (managed=false) —
+			// preserves the historic behavior (relay runs whenever the daemon
+			// is configured). An explicit disable turns it off.
+			shouldRun := configured && !(managed && !enabled)
+
+			switch {
+			case shouldRun && stop == nil:
+				poll := c.PollSecs
+				if pollOverride > 0 {
+					poll = pollOverride
+				}
+				cfg := imsg.Config{
 					ServerURL: c.ServerURL, // bare origin; imsg appends /phantom
 					APIKey:    core.BridgeAPIKey,
-					PollSecs:  c.PollSecs,
-				}, false, false)
-				return
+					PollSecs:  poll,
+				}
+				stop, done = make(chan struct{}), make(chan struct{})
+				go func(stop, done chan struct{}) {
+					defer close(done)
+					imsg.Run(cfg, false, false, stop)
+				}(stop, done)
+				core.Log("[bridge] iMessage relay started")
+			case !shouldRun && stop != nil:
+				close(stop)
+				<-done // let the relay fully exit before a possible restart
+				stop, done = nil, nil
+				core.Log("[bridge] iMessage relay stopped (server-disabled)")
 			}
 			time.Sleep(5 * time.Second)
 		}

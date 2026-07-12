@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"github.com/cmcoffee/gohort/gohort-desktop/command"
+	"github.com/cmcoffee/gohort/gohort-desktop/core"
 	"github.com/cmcoffee/gohort/gohort-desktop/mcp"
 	"github.com/cmcoffee/gohort/gohort-desktop/wsbridge"
 )
@@ -32,4 +33,15 @@ func (daemonInstaller) InstallCommand(name string, spec wsbridge.CommandSpec) er
 
 func (daemonInstaller) RemoveCommand(name string) error {
 	return command.Remove(name)
+}
+
+// InstallBridge / RemoveBridge flip a built-in relay's enabled state in the
+// daemon-owned bridges.json; startNativeServices reads it to decide whether to
+// run the relay. No subprocess — the relay is compiled in.
+func (daemonInstaller) InstallBridge(service string, pollSecs int) error {
+	return core.SetBridgeService(service, pollSecs)
+}
+
+func (daemonInstaller) RemoveBridge(service string) error {
+	return core.RemoveBridgeService(service)
 }

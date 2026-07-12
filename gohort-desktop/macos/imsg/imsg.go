@@ -58,13 +58,18 @@ func expandHome(path string) string {
 	return path
 }
 
-// Run opens the Messages chat.db and runs the relay loop forever:
-// each tick it relays new inbound messages to the server and delivers
-// any queued outbound items. The daemon (cmd/gohort-bridge) calls
-// this in a goroutine. fromStart processes all existing messages
-// instead of only new ones; verbose logs every poll cycle. Blocks
-// until the process exits.
-func Run(cfg Config, fromStart, verbose bool) {
+// Run opens the Messages chat.db and runs the relay loop: each tick it
+// relays new inbound messages to the server and delivers any queued
+// outbound items. The daemon (cmd/gohort-bridge) calls this in a
+// goroutine. fromStart processes all existing messages instead of only
+// new ones; verbose logs every poll cycle.
+//
+// stop lets a supervisor stop the relay LIVE (e.g. a messaging_bridge
+// connector disabled server-side) without killing the process — Run
+// returns when stop is closed. Pass nil for a relay that runs until the
+// process exits. The stop is also honored while waiting for Full Disk
+// Access, so a disable takes effect even before chat.db is readable.
+func Run(cfg Config, fromStart, verbose bool, stop <-chan struct{}) {
 	dbPath := expandHome(defaultDB)
 	if cfg.DBPath != "" {
 		dbPath = expandHome(cfg.DBPath)
@@ -76,7 +81,11 @@ func Run(cfg Config, fromStart, verbose bool) {
 		interval = defaultPollInterval
 	}
 
-	db := openChatDB(dbPath, interval)
+	db := openChatDB(dbPath, interval, stop)
+	if db == nil {
+		// Stopped before chat.db became readable.
+		return
+	}
 	defer db.Close()
 
 	var lastRowID int64
@@ -89,33 +98,56 @@ func Run(cfg Config, fromStart, verbose bool) {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	for range ticker.C {
-		prev := lastRowID
-		lastRowID = processNewMessages(cfg, db, hasBody, lastRowID, verbose)
-		if verbose && lastRowID == prev {
-			nfo.Log("poll: no new messages (watermark=%d)", lastRowID)
+	for {
+		select {
+		case <-stop:
+			nfo.Log("imsg relay stopped")
+			return
+		case <-ticker.C:
+			prev := lastRowID
+			lastRowID = processNewMessages(cfg, db, hasBody, lastRowID, verbose)
+			if verbose && lastRowID == prev {
+				nfo.Log("poll: no new messages (watermark=%d)", lastRowID)
+			}
+			deliverOutbox(cfg, db)
 		}
-		deliverOutbox(cfg, db)
+	}
+}
+
+// waitOrStop sleeps for d, returning false immediately if stop fires first.
+// A nil stop channel never fires, so this degrades to a plain sleep.
+func waitOrStop(stop <-chan struct{}, d time.Duration) bool {
+	select {
+	case <-stop:
+		return false
+	case <-time.After(d):
+		return true
 	}
 }
 
 // openChatDB blocks until Messages' chat.db is readable, then returns
 // a read-only handle. The retry loop exists because Full Disk Access
 // may not be granted yet at first launch — the daemon keeps trying and
-// logs the grant instructions until access lands.
-func openChatDB(dbPath string, interval time.Duration) *sql.DB {
+// logs the grant instructions until access lands. Returns nil if stop
+// fires while waiting, so a live-disabled relay doesn't linger here
+// until access is granted.
+func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sql.DB {
 	for {
 		if _, err := os.Stat(dbPath); err != nil {
 			nfo.Log("chat.db not accessible (%v) — retrying in %s\n"+
 				"Make sure the bridge has Full Disk Access:\n"+
 				"System Settings → Privacy & Security → Full Disk Access", err, interval)
-			time.Sleep(interval)
+			if !waitOrStop(stop, interval) {
+				return nil
+			}
 			continue
 		}
 		d, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=5000")
 		if err != nil {
 			nfo.Log("open chat.db: %v — retrying in %s", err, interval)
-			time.Sleep(interval)
+			if !waitOrStop(stop, interval) {
+				return nil
+			}
 			continue
 		}
 		d.SetMaxOpenConns(3)
@@ -124,7 +156,9 @@ func openChatDB(dbPath string, interval time.Duration) *sql.DB {
 			nfo.Log("chat.db ping failed (%v) — retrying in %s\n"+
 				"Make sure the bridge has Full Disk Access:\n"+
 				"System Settings → Privacy & Security → Full Disk Access", err, interval)
-			time.Sleep(interval)
+			if !waitOrStop(stop, interval) {
+				return nil
+			}
 			continue
 		}
 		return d

@@ -71,6 +71,11 @@ type Installer interface {
 	Remove(name string) error
 	InstallCommand(name string, spec CommandSpec) error
 	RemoveCommand(name string) error
+	// InstallBridge enables a built-in messaging relay (e.g. iMessage) with the
+	// given poll interval; RemoveBridge disables it. No command runs — the relay
+	// is compiled into the daemon; this only flips its enabled state.
+	InstallBridge(service string, pollSecs int) error
+	RemoveBridge(service string) error
 }
 
 // CommandSpec is a declared-command capability (a fixed executable run per
@@ -317,8 +322,12 @@ type installFrame struct {
 		Params   map[string]core.ToolParam `json:"params"`
 		Required []string                  `json:"required"`
 	} `json:"commands"`
+	Bridges map[string]struct {
+		PollSecs int `json:"poll_secs"`
+	} `json:"bridges"`
 	Remove         []string `json:"remove"`
 	RemoveCommands []string `json:"remove_commands"`
+	RemoveBridges  []string `json:"remove_bridges"`
 }
 
 // handleInstall applies a server-pushed capability install. Removes apply
@@ -345,6 +354,13 @@ func (c *wsClient) handleInstall(m installFrame) {
 			core.Log("[ws-bridge] removed pushed command %q", name)
 		}
 	}
+	for _, service := range m.RemoveBridges {
+		if err := c.installer.RemoveBridge(service); err != nil {
+			core.Warn("[ws-bridge] disable bridge %q failed: %v", service, err)
+		} else {
+			core.Log("[ws-bridge] disabled pushed bridge %q", service)
+		}
+	}
 	// Each new/replaced capability is gated by the SAME user-consent prompt as a
 	// tool call — the machine's owner authorizes running new local code.
 	for name, s := range m.Servers {
@@ -368,6 +384,32 @@ func (c *wsClient) handleInstall(m installFrame) {
 		}
 		core.Log("[ws-bridge] installed pushed command %q (%s)", name, s.Command)
 	}
+	// Enabling a built-in relay reads the user's messages, so it's gated by the
+	// same consent prompt — the machine's owner authorizes turning it on.
+	for service, s := range m.Bridges {
+		if !c.consentBridge(service) {
+			continue
+		}
+		if err := c.installer.InstallBridge(service, s.PollSecs); err != nil {
+			core.Warn("[ws-bridge] enable bridge %q failed: %v", service, err)
+			continue
+		}
+		core.Log("[ws-bridge] enabled pushed bridge %q", service)
+	}
+}
+
+// consentBridge asks the user to authorize turning on a built-in messaging
+// relay. A nil Approver auto-allows (the daemon opted into that).
+func (c *wsClient) consentBridge(service string) bool {
+	if c.approver == nil {
+		return true
+	}
+	ok := c.approver.RequestApprovalBlocking("bridge-"+service, "enable_bridge:"+service,
+		map[string]any{"service": service})
+	if !ok {
+		core.Log("[ws-bridge] enabling bridge %q denied by user", service)
+	}
+	return ok
 }
 
 // consentInstall asks the user to authorize running a new local capability.
