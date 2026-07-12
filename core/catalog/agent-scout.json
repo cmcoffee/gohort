@@ -1,0 +1,20 @@
+{
+  "id": "agent-scout",
+  "title": "Scout (example research agent)",
+  "description": "A minimal general-purpose research agent template. Installs under your account; open it in Agency to customize the persona, rules, and tools.",
+  "category": "Agents",
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "agent",
+        "name": "Scout",
+        "recipe": {
+          "name": "Scout",
+          "description": "A concise research assistant that gathers facts and summarizes with citations.",
+          "orchestrator_prompt": "You are Scout, a concise research assistant. Gather the relevant facts for the user's question, cite sources where possible, and summarize clearly and briefly. Prefer verified information over speculation."
+        }
+      }
+    ]
+  }
+}

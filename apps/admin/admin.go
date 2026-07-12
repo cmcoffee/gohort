@@ -1698,6 +1698,42 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		_ = json.NewEncoder(w).Encode(res)
 	})
 
+	// Catalog — a curated, in-tree set of ready-made artifact bundles (the
+	// offline precursor to a marketplace). GET lists entries (metadata + what
+	// each installs); POST ?action=install&id=<id> installs one through the
+	// unified importer, so its artifacts land as DRAFTS for review — connectors
+	// unapproved, tools pending, credentials inert. Same governance as a file
+	// import; nothing a catalog install brings in goes live unreviewed.
+	sub.HandleFunc("/api/catalog", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ListCatalog())
+		case http.MethodPost:
+			if r.URL.Query().Get("action") != "install" {
+				http.Error(w, "action must be install", http.StatusBadRequest)
+				return
+			}
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			res, err := InstallCatalogEntry(RootDB, id, AuthCurrentUser(r))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(res)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// Source hooks — curated external sources (PubMed, OpenAlex, EDGAR,
 	// custom APIs / RAG). GET lists; POST upserts (or ?action=expose|hide
 	// toggles LLM-tool exposure); DELETE removes. A hook with

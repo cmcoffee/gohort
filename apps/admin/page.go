@@ -1320,6 +1320,26 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Catalog",
+				Subtitle: "Ready-made connectors, tools, API credentials, and agents you can install with one click. Installing runs the SAME import as a bundle file: everything lands as a DRAFT for review — connectors unapproved, tools pending, credentials inert — so nothing goes live until you approve it in the sections above.",
+				Body: ui.Table{
+					Source: "api/catalog",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "title", Flex: 1},
+						{Field: "category", Mute: true},
+						{Field: "summary", Label: "Installs", Mute: true, Flex: 1},
+						{Field: "description", Mute: true, Flex: 2},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Install", Method: "POST", Variant: "primary",
+							PostTo:  "api/catalog?action=install&id={id}",
+							Confirm: "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above — nothing goes live until you approve it."},
+					},
+					EmptyText: "The catalog is empty.",
+				},
+			},
+			{
 				Title:    "Source Hooks",
 				Subtitle: "Curated external sources (PubMed, OpenAlex, EDGAR, custom API/RAG endpoints). Flip \"Expose to LLM\" and the hook becomes a per-hook agent tool (e.g. pubmed_search) any orchestrate agent can call directly; otherwise it's reachable only by the research/debate pipelines via topic routing.",
 				Body: ui.Stack{
@@ -1884,7 +1904,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"API Credentials": "Tools", "MCP Servers": "Tools", "Connectors": "Tools",
 		"Source Hooks": "Tools", "Persistent Tools (Pending)": "Tools",
 		"Persistent Tools (Active)": "Tools", "Tool Groups": "Tools",
-		"Skills": "Tools", "Pipelines": "Tools",
+		"Skills": "Tools", "Pipelines": "Tools", "Catalog": "Tools",
 
 		"Agent Capabilities — Outward & Spending": "Agents",
 
@@ -1898,6 +1918,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
 		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
+		"Catalog":    true,
 		"Migrations": true, "Database Browser": true,
 		"Agent Capabilities — Outward & Spending": true,
 	}

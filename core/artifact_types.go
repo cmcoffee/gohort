@@ -209,9 +209,12 @@ func (credentialArtifact) ImportArtifact(_ Database, recipe json.RawMessage, _ s
 	c.CreatedAt = time.Time{}
 	c.LastUsedAt = time.Time{}
 	c.Pending = false
-	// Land inert — no secret travels, so it can't dispatch until the admin
-	// supplies one. oauth2 / key-style go through their draft-save; a no-auth
-	// (url-allowlist-only) credential has no secret and saves directly.
+	// Land inert — every imported credential is a draft the admin reviews and
+	// enables. oauth2 / key-style go through their draft-save (which forces
+	// disabled + a "(pending)" secret placeholder); a no-auth (url-allowlist-
+	// only) credential has no secret, so we save it directly but still
+	// DISABLED so nothing an import brought in can dispatch unreviewed.
+	c.Disabled = true
 	var err error
 	switch c.Type {
 	case SecureCredOAuth2:

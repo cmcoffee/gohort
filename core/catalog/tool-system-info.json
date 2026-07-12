@@ -1,0 +1,21 @@
+{
+  "id": "tool-system-info",
+  "title": "System info (uname)",
+  "description": "A minimal shell tool that reports the host operating system and kernel via `uname -a`. Demonstrates the tool type. Installs into the pending pool for review before it can run.",
+  "category": "Tools",
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "tool",
+        "name": "system_uname",
+        "recipe": {
+          "name": "system_uname",
+          "description": "Report the host operating system and kernel version.",
+          "command_template": "uname -a",
+          "mode": "shell"
+        }
+      }
+    ]
+  }
+}

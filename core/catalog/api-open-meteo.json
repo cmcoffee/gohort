@@ -1,0 +1,22 @@
+{
+  "id": "api-open-meteo",
+  "title": "Open-Meteo (free weather API)",
+  "description": "A no-auth API credential scoped to https://api.open-meteo.com — a free weather/forecast service that needs no key. Demonstrates the credential type. No secret travels; it installs DISABLED, so review the URL scope and enable it in Admin > APIs.",
+  "category": "APIs",
+  "bundle": {
+    "bundle": "gohort.bundle/v1",
+    "artifacts": [
+      {
+        "type": "credential",
+        "name": "open_meteo",
+        "recipe": {
+          "name": "open_meteo",
+          "type": "none",
+          "base_url": "https://api.open-meteo.com",
+          "allowed_endpoints": ["/**"],
+          "description": "Free Open-Meteo weather API (no authentication)."
+        }
+      }
+    ]
+  }
+}
