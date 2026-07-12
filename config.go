@@ -249,8 +249,170 @@ func (d dbCFG) openAIAPIKey() string {
 }
 
 // setup_fuzz runs the interactive configuration.
+// quickstartDefaultEndpoint returns the conventional local endpoint for a
+// self-hosted provider, so the express setup can pre-fill it and the operator
+// usually just hits enter. Cloud providers authenticate by key, not endpoint,
+// so they return "".
+func quickstartDefaultEndpoint(provider string) string {
+	switch provider {
+	case "ollama":
+		return "http://localhost:11434"
+	case "llama.cpp":
+		return "http://localhost:8080/v1"
+	}
+	return ""
+}
+
+// inputWithDefault prompts for a value, showing the default in brackets and
+// returning it when the operator just presses enter. Keeps the express setup
+// to "hit enter to accept" for the common case.
+func inputWithDefault(prompt, def string) string {
+	if def != "" {
+		prompt = fmt.Sprintf("%s [%s]: ", prompt, def)
+	} else {
+		prompt = prompt + ": "
+	}
+	if v := strings.TrimSpace(GetInput(prompt)); v != "" {
+		return v
+	}
+	return def
+}
+
+// quickstartProvider presents the provider picker and returns the chosen name,
+// or "" if the operator quit (skip LLM setup for now).
+func quickstartProvider() string {
+	var chosen string
+	sel := NewOptions(" [LLM Provider] ", "(pick one, or q to skip LLM setup for now)", 'q')
+	for _, p := range []string{"anthropic", "openai", "gemini", "ollama", "llama.cpp"} {
+		name := p
+		sel.Func(name, func() bool { chosen = name; return true })
+	}
+	sel.Select(false)
+	return chosen
+}
+
+// maybeQuickstart runs the guided express setup when the install is missing
+// anything a working deployment MUST have — an LLM provider, an admin login,
+// or a bind address. On an already-configured box it's a no-op, so the
+// operator goes straight to the full menu. Called from setup_fuzz.
+func maybeQuickstart() {
+	var provider string
+	global.db.Get(LLMTable, "provider", &provider)
+	needsLLM := strings.TrimSpace(provider) == ""
+	needsAuth := !AuthHasUsers(global.db)
+	needsAddr := loadWebString("addr", "") == ""
+	if needsLLM || needsAuth || needsAddr {
+		setup_quickstart()
+	}
+}
+
+// setup_quickstart is the guided first-run path: the handful of settings a
+// fresh install needs to actually run — LLM provider + endpoint/key + model
+// (validated with a LIVE connection test via browseModels), an admin login,
+// and the bind address. Everything else has a safe default and lives in the
+// full menu that follows. Each step self-skips if already configured, so it's
+// safe to re-enter to finish a partial setup. Writes to the SAME DB/INI keys
+// the full menu saves to, so quitting right after still leaves a runnable box.
+func setup_quickstart() {
+	Stdout("\n=== Gohort first-time setup ===\n")
+	Stdout("A few questions to get you running. Everything else has a safe\n")
+	Stdout("default you can tune afterward in the full menu.\n")
+
+	// 1. LLM — the one thing without which nothing works.
+	var curProvider string
+	global.db.Get(LLMTable, "provider", &curProvider)
+	if strings.TrimSpace(curProvider) == "" {
+		Stdout("\n--- Language model ---\n")
+		provider := quickstartProvider()
+		if provider == "" {
+			Warn("No LLM configured — chat and apps won't work until you set one.")
+		} else {
+			var endpoint, apiKey, model string
+			local := provider == "ollama" || provider == "llama.cpp"
+			for {
+				if local {
+					endpoint = inputWithDefault("  Endpoint", quickstartDefaultEndpoint(provider))
+				} else {
+					apiKey = strings.TrimSpace(nfo.GetSecret(fmt.Sprintf("  %s API key: ", provider)))
+				}
+				// anthropic has no model-list endpoint wired into browseModels,
+				// so it can't be connection-tested here — take the model name
+				// directly. Every other provider goes through browseModels,
+				// which queries the endpoint (the live test) then lets the
+				// operator pick from what came back.
+				if provider == "anthropic" {
+					model = inputWithDefault("  Model", "claude-sonnet-5")
+					break
+				}
+				Stdout("  Testing connection...\n")
+				if browseModels(provider, apiKey, endpoint, &model) {
+					break
+				}
+				if !nfo.GetConfirm("  Couldn't reach it or list models. Try again?") {
+					break
+				}
+			}
+			global.db.Set(LLMTable, "provider", provider)
+			if model != "" {
+				global.db.Set(LLMTable, "model", model)
+			}
+			if endpoint != "" {
+				global.db.Set(LLMTable, "endpoint", endpoint)
+			}
+			if apiKey != "" {
+				global.db.CryptSet(LLMTable, "api_key", apiKey)
+			}
+			if model != "" {
+				Stdout("  Set: %s / %s\n", provider, model)
+			}
+		}
+	}
+
+	// 2. Admin login — without one, the dashboard is wide open.
+	if !AuthHasUsers(global.db) {
+		Stdout("\n--- Admin login ---\n")
+		Stdout("Without an admin account the dashboard is OPEN to anyone who can\nreach it. Create one now:\n")
+		user := strings.TrimSpace(GetInput("  Admin email/username (blank to skip): "))
+		if user != "" {
+			var pass string
+			for {
+				pass = nfo.GetSecret("  Password: ")
+				if pass == "" {
+					Stdout("  Password can't be blank.\n")
+					continue
+				}
+				if nfo.GetSecret("  Confirm password: ") != pass {
+					Stdout("  Passwords didn't match — try again.\n")
+					continue
+				}
+				break
+			}
+			AuthSetUser(global.db, user, pass, true)
+			Stdout("  Admin %q created.\n", user)
+		} else {
+			Warn("No admin user — dashboard access is unrestricted until you add one.")
+		}
+	}
+
+	// 3. Bind address — where the dashboard listens.
+	if loadWebString("addr", "") == "" {
+		Stdout("\n--- Network ---\n")
+		addr := inputWithDefault("  Web bind address", "127.0.0.1:8181")
+		saveWebString("addr", addr)
+	}
+
+	Stdout("\nDone — start the server with:  gohort serve\n")
+	Stdout("Opening the full settings menu next (press q to skip anything).\n")
+}
+
 func setup_fuzz() {
 	init_database()
+
+	// Fresh (or partial) install → run the guided express quickstart first
+	// so the operator sets the must-haves (LLM, admin, bind addr) as a short
+	// linear flow, then falls through to the full menu below for the rest.
+	// No-op once those are configured.
+	maybeQuickstart()
 
 	// Load current LLM values.
 	var provider, model, apiKey, endpoint string
