@@ -1,0 +1,273 @@
+// Artifact bundles: the ONE portable export/import format for every shareable
+// gohort artifact — connectors, tools, and (as they register) agents, APIs,
+// pipelines. It generalizes the connector pack (core/connector_pack.go) into a
+// single envelope carrying a list of TYPED artifacts, so the whole surface has
+// one wire format, one import governance rule, and one file the marketplace
+// distributes.
+//
+// THE KEY IDEA: an individual export is just a one-item bundle. "Export this
+// tool", "export these three", and "export everything" are the same code path
+// at different cardinality — there is no separate per-type pack format.
+//
+// EXTENSIBILITY comes from the artifact-type registry: each type registers an
+// ArtifactType (Type/List/Export/Import). core/artifact_types.go registers
+// connectors and tools; adding agents or credentials later is a registration,
+// not a new format. The envelope header ({bundle, exported_at}) is exactly the
+// one the connector pack already used, so old connector packs still import.
+//
+// SECRETS NEVER TRAVEL. Every type's recipe references auth by NAME only (a
+// SecureAPI credential, a per-user OAuth account); the secret lives in the
+// subsystem the artifact materializes into. That is what makes a bundle
+// shareable — it carries the SHAPE of a capability, and the importer supplies
+// (or drafts) the matching credential on their side.
+//
+// IMPORT IS ALWAYS A DRAFT. A recipe can carry executable code (a tool's
+// command_template / script_body, an agent's rules). So import reconstitutes
+// artifacts in each type's REVIEW state — connectors land unapproved, tools
+// land in the pending pool — never live. Approval stays the human gate.
+package core
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+)
+
+// ArtifactBundleFormat identifies the unified wire format. Bumped only on a
+// breaking envelope change; importers accept older minor forms (and the legacy
+// gohort.connectors/v1 pack).
+const ArtifactBundleFormat = "gohort.bundle/v1"
+
+// PortableArtifact is one typed, identity-free, secret-free recipe. Type selects
+// the registered ArtifactType that knows how to reconstitute Recipe; Name is a
+// human/label convenience (the recipe carries its own authoritative name).
+type PortableArtifact struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name"`
+	Recipe json.RawMessage `json:"recipe"`
+}
+
+// ArtifactBundle is the unified export/import envelope. A one-item Artifacts
+// slice is an individual export; many items is a bundle. Same shape either way.
+type ArtifactBundle struct {
+	Bundle     string             `json:"bundle"`
+	ExportedAt time.Time          `json:"exported_at"`
+	Artifacts  []PortableArtifact `json:"artifacts"`
+}
+
+// ArtifactSel names one artifact to export. Owner scopes per-user types (tools);
+// global types (connectors) ignore it.
+type ArtifactSel struct {
+	Type  string `json:"type"`
+	Name  string `json:"name"`
+	Owner string `json:"owner,omitempty"`
+}
+
+// ArtifactType is the pluggable interface each portable artifact type registers.
+// One implementation per type (connector, tool, …) wraps that type's existing
+// store — the registry adds portability without the types knowing about bundles.
+type ArtifactType interface {
+	// ArtifactType returns the type discriminator ("connector", "tool", …).
+	ArtifactType() string
+	// ListArtifacts enumerates everything of this type that can be exported,
+	// with Owner set for per-user types. Powers "export all" and the future
+	// catalog browse.
+	ListArtifacts(db Database) []ArtifactSel
+	// ExportArtifact produces the portable recipe for one named artifact.
+	ExportArtifact(db Database, name, owner string) (json.RawMessage, error)
+	// ImportArtifact reconstitutes a DRAFT/PENDING artifact owned by owner.
+	// Returns (name, "", nil) on success; (name, reason, nil) to skip (e.g. a
+	// live artifact of that name already exists); (_, _, err) on hard failure.
+	ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error)
+}
+
+var artifactTypes = map[string]ArtifactType{}
+
+// RegisterArtifactType adds a portable artifact type to the registry. Called
+// from init() in core/artifact_types.go. Last registration for a given type
+// name wins (types are distinct in practice).
+func RegisterArtifactType(t ArtifactType) {
+	if t == nil {
+		return
+	}
+	artifactTypes[strings.TrimSpace(t.ArtifactType())] = t
+}
+
+func lookupArtifactType(name string) (ArtifactType, bool) {
+	t, ok := artifactTypes[strings.TrimSpace(name)]
+	return t, ok
+}
+
+// ExportArtifactBundle builds a bundle from an explicit selection. Errors on the
+// first bad selector (unknown type / missing artifact) so a typo is caught
+// rather than silently dropped — mirrors ExportConnectorPack.
+func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
+	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now()}
+	for _, s := range sels {
+		typ := strings.TrimSpace(s.Type)
+		name := strings.TrimSpace(s.Name)
+		at, ok := lookupArtifactType(typ)
+		if !ok {
+			return ArtifactBundle{}, fmt.Errorf("unknown artifact type %q", typ)
+		}
+		recipe, err := at.ExportArtifact(db, name, strings.TrimSpace(s.Owner))
+		if err != nil {
+			return ArtifactBundle{}, fmt.Errorf("export %s %q: %w", typ, name, err)
+		}
+		bundle.Artifacts = append(bundle.Artifacts, PortableArtifact{Type: typ, Name: name, Recipe: recipe})
+	}
+	return bundle, nil
+}
+
+// ExportAllArtifacts builds a bundle of every registered artifact, optionally
+// restricted to the named types (empty = all types). The selection is sorted
+// (type, then owner, then name) so exports are deterministic byte-for-byte given
+// the same store — friendlier for diffing and caching.
+func ExportAllArtifacts(db Database, types ...string) (ArtifactBundle, error) {
+	only := map[string]bool{}
+	for _, t := range types {
+		if t = strings.TrimSpace(t); t != "" {
+			only[t] = true
+		}
+	}
+	var sels []ArtifactSel
+	for name, at := range artifactTypes {
+		if len(only) > 0 && !only[name] {
+			continue
+		}
+		sels = append(sels, at.ListArtifacts(db)...)
+	}
+	sort.SliceStable(sels, func(i, j int) bool {
+		if sels[i].Type != sels[j].Type {
+			return sels[i].Type < sels[j].Type
+		}
+		if sels[i].Owner != sels[j].Owner {
+			return sels[i].Owner < sels[j].Owner
+		}
+		return sels[i].Name < sels[j].Name
+	})
+	return ExportArtifactBundle(db, sels)
+}
+
+// ParseArtifactBundle decodes bundle bytes, tolerating several shapes so both
+// this format and the legacy connector pack import through one path:
+//   - a full unified bundle ({"bundle":"gohort.bundle/v1","artifacts":[...]})
+//   - a bare single artifact ({"type":...,"name":...,"recipe":{...}})
+//   - a legacy connector pack / bare connector(s) — lifted into connector
+//     artifacts (back-compat with everything exported before this format)
+func ParseArtifactBundle(data []byte) (ArtifactBundle, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return ArtifactBundle{}, Error("empty artifact bundle")
+	}
+	var probe struct {
+		Bundle     string          `json:"bundle"`
+		Artifacts  json.RawMessage `json:"artifacts"`
+		Type       string          `json:"type"`
+		Recipe     json.RawMessage `json:"recipe"`
+		Connectors json.RawMessage `json:"connectors"`
+	}
+	if trimmed[0] == '{' {
+		_ = json.Unmarshal(trimmed, &probe)
+	}
+	// New unified bundle.
+	if probe.Bundle == ArtifactBundleFormat || len(probe.Artifacts) > 0 {
+		var b ArtifactBundle
+		if err := json.Unmarshal(trimmed, &b); err != nil {
+			return ArtifactBundle{}, fmt.Errorf("invalid artifact bundle: %w", err)
+		}
+		if strings.TrimSpace(b.Bundle) == "" {
+			b.Bundle = ArtifactBundleFormat
+		}
+		return b, nil
+	}
+	// Bare single artifact (hand-writable individual export).
+	if strings.TrimSpace(probe.Type) != "" && len(probe.Recipe) > 0 {
+		var one PortableArtifact
+		if err := json.Unmarshal(trimmed, &one); err != nil {
+			return ArtifactBundle{}, fmt.Errorf("invalid artifact: %w", err)
+		}
+		return ArtifactBundle{Bundle: ArtifactBundleFormat, Artifacts: []PortableArtifact{one}}, nil
+	}
+	// Legacy connector pack / bare connector(s): reuse the connector parser and
+	// lift each into a connector artifact so old files keep importing.
+	pack, err := ParseConnectorPack(trimmed)
+	if err != nil {
+		return ArtifactBundle{}, err
+	}
+	b := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: pack.ExportedAt}
+	for _, pc := range pack.Connectors {
+		recipe, mErr := json.Marshal(pc)
+		if mErr != nil {
+			continue
+		}
+		b.Artifacts = append(b.Artifacts, PortableArtifact{Type: "connector", Name: pc.Name, Recipe: recipe})
+	}
+	return b, nil
+}
+
+// ArtifactImportOutcome records what happened to one artifact in an import.
+type ArtifactImportOutcome struct {
+	Type   string `json:"type"`
+	Name   string `json:"name"`
+	Status string `json:"status"` // "imported" | "skipped"
+	Detail string `json:"detail,omitempty"`
+}
+
+// ArtifactImportResult summarizes a bundle import: per-artifact outcomes plus
+// running counts, so the caller can report a partial import honestly.
+type ArtifactImportResult struct {
+	Bundle   string                  `json:"bundle"`
+	Imported int                     `json:"imported"`
+	Skipped  int                     `json:"skipped"`
+	Outcomes []ArtifactImportOutcome `json:"outcomes"`
+}
+
+// ImportArtifactBundle reconstitutes every artifact in a bundle as owner's DRAFT
+// (each type's review state — connectors unapproved, tools pending). One
+// artifact's failure never aborts the rest: an unknown type or a per-type
+// import error surfaces as a skip with a reason. Referenced credentials must
+// exist on this install; a validate failure is a skip, not a fatal error.
+func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImportResult, error) {
+	var res ArtifactImportResult
+	bundle, err := ParseArtifactBundle(data)
+	if err != nil {
+		return res, err
+	}
+	res.Bundle = bundle.Bundle
+	if len(bundle.Artifacts) == 0 {
+		return res, Error("no artifacts in bundle")
+	}
+	for _, a := range bundle.Artifacts {
+		typ := strings.TrimSpace(a.Type)
+		at, ok := lookupArtifactType(typ)
+		if !ok {
+			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
+				Type: typ, Name: a.Name, Status: "skipped", Detail: "unknown artifact type"})
+			res.Skipped++
+			continue
+		}
+		name, skip, ierr := at.ImportArtifact(db, a.Recipe, owner)
+		if strings.TrimSpace(name) == "" {
+			name = a.Name
+		}
+		switch {
+		case ierr != nil:
+			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
+				Type: typ, Name: name, Status: "skipped", Detail: ierr.Error()})
+			res.Skipped++
+		case skip != "":
+			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
+				Type: typ, Name: name, Status: "skipped", Detail: skip})
+			res.Skipped++
+		default:
+			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
+				Type: typ, Name: name, Status: "imported"})
+			res.Imported++
+		}
+	}
+	return res, nil
+}

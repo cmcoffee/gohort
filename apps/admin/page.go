@@ -375,7 +375,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		Head: ui.NewHead().
 			CSS(adminUsersCSS).
 			JS(adminUsersModalJS).
-			ClientAction("admin_reset_password", adminResetPasswordAction),
+			JS(artifactDownloadHelper).
+			ClientAction("admin_reset_password", adminResetPasswordAction).
+			ClientAction("connectors_export", connectorsExportAction).
+			ClientAction("connectors_export_all", connectorsExportAllAction).
+			ClientAction("tools_export", toolsExportAction).
+			ClientAction("tools_export_all", toolsExportAllAction).
+			ClientAction("artifacts_export_all", artifactsExportAllAction),
 		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
 		Grid:     false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
 		Tabbed:   true,     // category tab bar across the top (the multiple menus); sections grouped below
@@ -1258,6 +1264,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Type: "button", Label: "Unapprove",
 									PostTo: "api/connectors?action=unapprove&name={name}",
 									Method: "POST", OnlyIf: "approved"},
+								{Type: "button", Label: "Export", Method: "client",
+									PostTo: "connectors_export", Compact: true},
 								{Type: "button", Label: "Delete",
 									PostTo:  "api/connectors?name={name}",
 									Method:  "DELETE",
@@ -1265,6 +1273,36 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Variant: "danger"},
 							},
 							EmptyText: "No connectors yet. The assistant drafts these with the connector tool; approve them here to make their tools available to agents.",
+						},
+						// Import — choose a gohort.bundle/v1 FILE. The unified
+						// importer accepts ANY artifact bundle (connectors AND/OR
+						// tools), a legacy connector pack, or a single artifact.
+						// Everything reconstitutes as a DRAFT: connectors land
+						// unapproved, tools land in the pending pool (see Tools).
+						// A name that already exists is skipped, and no secret ever
+						// travels — auth references a credential by name.
+						ui.FormPanel{
+							// No Source — this is a blank submit-only form.
+							// A Source would trigger a GET prefill against the
+							// import endpoint (POST-only) → 405, which renders
+							// the whole panel as "Failed to load: method not
+							// allowed".
+							PostURL:     "api/artifacts/import",
+							SubmitLabel: "Import artifacts",
+							Fields: []ui.FormField{
+								{Field: "pack", Label: "Artifact bundle file", Type: "file", Accept: ".json,application/json",
+									Help: "Choose an exported bundle (.json) — connectors and/or tools. Imported artifacts are drafted for review (connectors UNAPPROVED, tools PENDING); a name that already exists is skipped. No secrets travel — referenced credentials must exist on this install."},
+							},
+						},
+						// Export — per-row Export (in the table above) grabs one
+						// connector; these buttons grab whole sets as one secret-free
+						// gohort.bundle/v1. "Export everything" spans every artifact
+						// type (connectors + tools + future types).
+						ui.Toolbar{
+							Actions: []ui.ToolbarAction{
+								{Label: "Export all connectors", Method: "client", URL: "connectors_export_all"},
+								{Label: "Export everything", Method: "client", URL: "artifacts_export_all"},
+							},
 						},
 					},
 				},
@@ -1390,63 +1428,73 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Persistent Tools (Active)",
-				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Share publishes a tool to ALL users (it loads for everyone's agents, on top of their own pool); Unshare pulls it back to its owner. Delete to revoke immediately.",
-				Body: ui.Table{
-					Source:       "api/persistent-tools",
-					RecordsField: "active",
-					RowKey:       "tool.name",
-					Columns: []ui.Col{
-						{Field: "tool.name", Flex: 1},
-						{Field: "owner", Flex: 0, Mute: true},
-						{Field: "shared", Flex: 0, Label: "Shared", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: true, Label: "Shared", Color: "success"},
-						}},
-						{Field: "tool.description", Flex: 2, Mute: true},
-						{Field: "last_used_at", Format: "reltime", Mute: true},
+				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Share publishes a tool to ALL users (it loads for everyone's agents, on top of their own pool); Unshare pulls it back to its owner. Delete to revoke immediately. Export a tool (or all tools) as a portable bundle.",
+				Body: ui.Stack{Children: []ui.Component{
+					ui.Table{
+						Source:       "api/persistent-tools",
+						RecordsField: "active",
+						RowKey:       "tool.name",
+						Columns: []ui.Col{
+							{Field: "tool.name", Flex: 1},
+							{Field: "owner", Flex: 0, Mute: true},
+							{Field: "shared", Flex: 0, Label: "Shared", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "Shared", Color: "success"},
+							}},
+							{Field: "tool.description", Flex: 2, Mute: true},
+							{Field: "last_used_at", Format: "reltime", Mute: true},
+						},
+						RowActions: []ui.RowAction{
+							ui.Expand("View", ui.RecordView{
+								Pairs: []ui.DisplayPair{
+									{Label: "Name", Field: "tool.name", Mono: true},
+									{Label: "Owner", Field: "owner"},
+									{Label: "Description", Field: "tool.description"},
+									{Label: "Mode", Field: "tool.mode"},
+									{Label: "Method", Field: "tool.method", Mono: true},
+									{Label: "Command / URL template", Field: "tool.command_template", Mono: true, Block: true},
+									{Label: "Body template", Field: "tool.body_template", Mono: true, Block: true},
+									{Label: "Script name", Field: "tool.script_name", Mono: true},
+									{Label: "Script body", Field: "tool.script_body", Block: true},
+									{Label: "Credential", Field: "tool.credential", Mono: true},
+									{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
+									{Label: "Raw network", Field: "tool.raw_network"},
+									{Label: "State path", Field: "tool.state_path", Mono: true},
+									{Label: "Response pipe", Field: "tool.response_pipe", Mono: true, Block: true},
+									{Label: "Approved at", Field: "approved_at", Format: "reltime"},
+									{Label: "Last used", Field: "last_used_at", Format: "reltime"},
+								},
+							}),
+							// Share to all users / pull back. Mirror approve/reject: the
+							// visible button is the action NOT yet taken (Share when
+							// private, Unshare when shared).
+							{Type: "button", Label: "Share",
+								PostTo:     "api/persistent-tools?action=share&name={tool.name}&owner={owner}",
+								Method:     "POST",
+								HideIf:     "shared",
+								Optimistic: true},
+							{Type: "button", Label: "Unshare",
+								PostTo:     "api/persistent-tools?action=unshare&name={tool.name}&owner={owner}",
+								Method:     "POST",
+								OnlyIf:     "shared",
+								Optimistic: true},
+							{Type: "button", Label: "Export", Method: "client",
+								PostTo: "tools_export", Compact: true},
+							{Type: "button", Label: "Delete",
+								PostTo:     "api/persistent-tools?name={tool.name}&owner={owner}",
+								Method:     "DELETE",
+								Variant:    "danger",
+								Confirm:    "Delete this active tool? The LLM will lose access immediately.",
+								Optimistic: true},
+						},
+						EmptyText: "No active persistent tools.",
 					},
-					RowActions: []ui.RowAction{
-						ui.Expand("View", ui.RecordView{
-							Pairs: []ui.DisplayPair{
-								{Label: "Name", Field: "tool.name", Mono: true},
-								{Label: "Owner", Field: "owner"},
-								{Label: "Description", Field: "tool.description"},
-								{Label: "Mode", Field: "tool.mode"},
-								{Label: "Method", Field: "tool.method", Mono: true},
-								{Label: "Command / URL template", Field: "tool.command_template", Mono: true, Block: true},
-								{Label: "Body template", Field: "tool.body_template", Mono: true, Block: true},
-								{Label: "Script name", Field: "tool.script_name", Mono: true},
-								{Label: "Script body", Field: "tool.script_body", Block: true},
-								{Label: "Credential", Field: "tool.credential", Mono: true},
-								{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
-								{Label: "Raw network", Field: "tool.raw_network"},
-								{Label: "State path", Field: "tool.state_path", Mono: true},
-								{Label: "Response pipe", Field: "tool.response_pipe", Mono: true, Block: true},
-								{Label: "Approved at", Field: "approved_at", Format: "reltime"},
-								{Label: "Last used", Field: "last_used_at", Format: "reltime"},
-							},
-						}),
-						// Share to all users / pull back. Mirror approve/reject: the
-						// visible button is the action NOT yet taken (Share when
-						// private, Unshare when shared).
-						{Type: "button", Label: "Share",
-							PostTo:     "api/persistent-tools?action=share&name={tool.name}&owner={owner}",
-							Method:     "POST",
-							HideIf:     "shared",
-							Optimistic: true},
-						{Type: "button", Label: "Unshare",
-							PostTo:     "api/persistent-tools?action=unshare&name={tool.name}&owner={owner}",
-							Method:     "POST",
-							OnlyIf:     "shared",
-							Optimistic: true},
-						{Type: "button", Label: "Delete",
-							PostTo:     "api/persistent-tools?name={tool.name}&owner={owner}",
-							Method:     "DELETE",
-							Variant:    "danger",
-							Confirm:    "Delete this active tool? The LLM will lose access immediately.",
-							Optimistic: true},
+					// Export all persistent tools (every owner) as one bundle.
+					ui.Toolbar{
+						Actions: []ui.ToolbarAction{
+							{Label: "Export all tools", Method: "client", URL: "tools_export_all"},
+						},
 					},
-					EmptyText: "No active persistent tools.",
-				},
+				}},
 			},
 			{
 				Title:    "Tool Groups",
@@ -2008,4 +2056,49 @@ const adminUsersModalJS = `function el(tag, attrs, kids){ var n=document.createE
 const adminResetPasswordAction = `function(ctx){
   var u = ctx && ctx.record && (ctx.record.username || ctx.record.id);
   if(u) openModal(u, ctx);
+}`
+
+// artifactDownload is the shared client-action body: it navigates a hidden
+// anchor at the unified artifact-export endpoint so the browser downloads a
+// secret-free gohort.bundle/v1. All the export buttons below are one-liners
+// over it, differing only in the query (individual vs all-of-type vs all).
+const artifactDownloadHelper = `function __artifactDownload(href, filename){
+  var a = document.createElement('a');
+  a.href = href; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+}`
+
+// connectorsExportAction downloads ONE connector as a 1-item bundle. Dispatched
+// by the per-row "Export" button; reads the row's name.
+const connectorsExportAction = `function(ctx){
+  var n = ctx && ctx.record && ctx.record.name;
+  if(!n){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
+  __artifactDownload('api/artifacts/export?type=connector&name=' + encodeURIComponent(n), n + '.gohort.json');
+}`
+
+// connectorsExportAllAction downloads every connector as one bundle.
+const connectorsExportAllAction = `function(){
+  __artifactDownload('api/artifacts/export?all=connector', 'connectors.gohort.json');
+}`
+
+// toolsExportAction downloads ONE persistent tool as a 1-item bundle. The
+// persistent-tools row nests the definition under .tool and carries the owning
+// user in .owner (tools are per-user), so export needs both.
+const toolsExportAction = `function(ctx){
+  var r = (ctx && ctx.record) || {};
+  var n = (r.tool && r.tool.name) || r.name;
+  var o = r.owner || '';
+  if(!n){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
+  __artifactDownload('api/artifacts/export?type=tool&name=' + encodeURIComponent(n) + '&owner=' + encodeURIComponent(o), n + '.gohort.json');
+}`
+
+// toolsExportAllAction downloads every persistent tool (all owners) as one bundle.
+const toolsExportAllAction = `function(){
+  __artifactDownload('api/artifacts/export?all=tool', 'tools.gohort.json');
+}`
+
+// artifactsExportAllAction downloads EVERYTHING — connectors + tools + any
+// future registered type — as one gohort.bundle/v1.
+const artifactsExportAllAction = `function(){
+  __artifactDownload('api/artifacts/export', 'gohort-bundle.json');
 }`

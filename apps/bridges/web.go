@@ -84,6 +84,45 @@ func (T *Bridges) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	// even though the iMessage hook (which uses validateBridgeKey) worked.
 	// Registered here, at route time, because T.DB must be live (not init()).
 	RegisterAPIKeyValidator(T.bridgeKeyOwner)
+
+	// Server half of the messaging_bridge connector kind: ensure a routing
+	// BridgeKey exists for a service and reflect the connector's enabled state.
+	RegisterBridgeProvisioner(T.ensureServiceBridge)
+}
+
+// ensureServiceBridge is the server half of a messaging_bridge connector: make
+// sure the owner has a BridgeKey for the service and set its Enabled state.
+// Reuses an existing key for the service if present (avoids the iMessage
+// duplicate-key problem) rather than minting a second one; otherwise creates
+// one. The daemon still auto-negotiates the real desktop key — this just
+// guarantees a routing record exists and that approve/unapprove flips it
+// on/off.
+func (T *Bridges) ensureServiceBridge(owner, service string, enabled bool) error {
+	for _, k := range T.listBridgeKeys(owner) {
+		if k.Service == service {
+			if k.Enabled != enabled {
+				k.Enabled = enabled
+				T.saveBridgeKey(k)
+				Log("[bridges] %s bridge for %s set enabled=%v (via connector)", service, owner, enabled)
+			}
+			return nil
+		}
+	}
+	if !enabled {
+		return nil // nothing to disable
+	}
+	k := BridgeKey{
+		ID:      newToken()[:12],
+		Name:    ServiceDisplayName(service) + " bridge",
+		Key:     newToken(),
+		Owner:   owner,
+		Service: service,
+		Enabled: true,
+		Created: now(),
+	}
+	T.saveBridgeKey(k)
+	Log("[bridges] ensured %s bridge key for %s (via connector)", service, owner)
+	return nil
 }
 
 // handleConfig gets/sets the transport switch (so the panic state can be turned

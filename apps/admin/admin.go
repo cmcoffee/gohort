@@ -3,6 +3,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1549,6 +1550,152 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Connector export — download a portable, secret-free JSON pack. ?name=<n>
+	// exports one connector; omit name to export ALL as one bundle. Auth
+	// references (credential names) travel; secrets never do. Content-Disposition
+	// makes the browser download it.
+	sub.HandleFunc("/api/connectors/export", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		var names []string
+		if name != "" {
+			names = []string{name}
+		}
+		pack, err := ExportConnectorPack(RootDB, names...)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		filename := "connectors.connector.json"
+		if name != "" {
+			filename = name + ".connector.json"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(pack)
+	})
+
+	// Connector import — accept a pack (the JSON produced by export) and
+	// reconstitute its connectors as new DRAFTS owned by the admin. Governance
+	// re-applies: remote_mcp / desktop_* land unapproved; an existing name is
+	// skipped, never overwritten. Returns the import summary as JSON.
+	sub.HandleFunc("/api/connectors/import", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Accept either a raw pack body or {"pack":"<json string>"} from a form.
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		data := bytes.TrimSpace(body)
+		var wrap struct {
+			Pack string `json:"pack"`
+		}
+		if json.Unmarshal(data, &wrap) == nil && strings.TrimSpace(wrap.Pack) != "" {
+			data = []byte(strings.TrimSpace(wrap.Pack))
+		}
+		res, err := ImportConnectorPack(RootDB, data, AuthCurrentUser(r))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(res)
+	})
+
+	// Artifact export — the UNIFIED, cross-type download. Builds a
+	// gohort.bundle/v1 carrying any registered artifact (connector, tool, …).
+	// An individual export is just a one-item bundle:
+	//   ?type=<t>&name=<n>[&owner=<u>]  → one artifact (owner scopes tools)
+	//   ?all=<t1,t2>                    → every artifact of those types
+	//   (no params)                     → everything
+	// Auth references travel; secrets never do. Content-Disposition downloads it.
+	sub.HandleFunc("/api/artifacts/export", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		q := r.URL.Query()
+		typ := strings.TrimSpace(q.Get("type"))
+		name := strings.TrimSpace(q.Get("name"))
+		var (
+			bundle   ArtifactBundle
+			err      error
+			filename = "gohort-bundle.json"
+		)
+		switch {
+		case typ != "" && name != "":
+			bundle, err = ExportArtifactBundle(RootDB, []ArtifactSel{{
+				Type: typ, Name: name, Owner: strings.TrimSpace(q.Get("owner"))}})
+			filename = name + ".gohort.json"
+		case strings.TrimSpace(q.Get("all")) != "":
+			bundle, err = ExportAllArtifacts(RootDB, strings.Split(q.Get("all"), ",")...)
+		default:
+			bundle, err = ExportAllArtifacts(RootDB)
+		}
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(bundle)
+	})
+
+	// Artifact import — accept a gohort.bundle/v1 (or a legacy connector pack, or
+	// a bare single artifact) and reconstitute every artifact as a DRAFT owned by
+	// the importing admin: connectors land unapproved, tools land in the pending
+	// pool. Nothing goes live without a separate approval. Returns the per-
+	// artifact import summary as JSON. POST-only.
+	sub.HandleFunc("/api/artifacts/import", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Accept either a raw bundle body or {"pack":"<json string>"} from a form.
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		data := bytes.TrimSpace(body)
+		var wrap struct {
+			Pack string `json:"pack"`
+		}
+		if json.Unmarshal(data, &wrap) == nil && strings.TrimSpace(wrap.Pack) != "" {
+			data = []byte(strings.TrimSpace(wrap.Pack))
+		}
+		res, err := ImportArtifactBundle(RootDB, data, AuthCurrentUser(r))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(res)
 	})
 
 	// Source hooks — curated external sources (PubMed, OpenAlex, EDGAR,

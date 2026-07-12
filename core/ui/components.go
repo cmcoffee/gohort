@@ -638,6 +638,15 @@ type FormField struct {
 	// value from the loaded record (Source URL); use intake or a
 	// SuggestURL when you want a default a user can edit.
 	Default string `json:"default,omitempty"`
+
+	// Accept sets the file picker's accept filter (e.g. ".json") for a
+	// Type=="file" field. That field renders a native file chooser; the
+	// picked file is read as text ENTIRELY in the browser (no upload, no
+	// endpoint) and its contents become the field's submitted value,
+	// with the filename shown as confirmation. Use for "import this
+	// file" flows where the file's text IS the value. Ignored by other
+	// field types.
+	Accept string `json:"accept,omitempty"`
 }
 
 // FieldPreset is one entry in a FormField.Presets list. Label is the

@@ -131,14 +131,26 @@ type DesktopCommand struct {
 	Required []string             `json:"required,omitempty"`
 }
 
+// DesktopBridge describes a BUILT-IN messaging bridge the daemon should turn on
+// (e.g. iMessage). Unlike Servers/Commands there is NO command to run — the
+// bridge implementation is compiled into the daemon; the server only enables it
+// and sets its poll interval. Keyed by service id ("imessage") in the install
+// payload — there's one relay per service.
+type DesktopBridge struct {
+	PollSecs int `json:"poll_secs,omitempty"`
+}
+
 // DesktopInstall is the capability-install payload pushed to a user's desktop:
-// host the MCP Servers and declared Commands, drop the ones named in the
-// Remove* lists. One struct so a connector of any desktop kind uses one path.
+// host the MCP Servers and declared Commands, enable the built-in Bridges, and
+// drop the ones named in the Remove* lists. One struct so a connector of any
+// desktop kind uses one path.
 type DesktopInstall struct {
 	Servers        map[string]DesktopMCPServer `json:"servers,omitempty"`
 	Commands       map[string]DesktopCommand   `json:"commands,omitempty"`
+	Bridges        map[string]DesktopBridge    `json:"bridges,omitempty"`          // keyed by SERVICE id ("imessage")
 	Remove         []string                    `json:"remove,omitempty"`          // MCP server names
 	RemoveCommands []string                    `json:"remove_commands,omitempty"` // command names
+	RemoveBridges  []string                    `json:"remove_bridges,omitempty"`  // SERVICE ids to disable
 }
 
 // desktopInstallMsg is sent by the SERVER to a desktop to apply a DesktopInstall.

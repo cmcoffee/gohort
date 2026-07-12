@@ -52,6 +52,14 @@ lives in one governed surface (Admin > Connectors). Two kinds ship:
   when a full MCP server is overkill. Same UNAPPROVED + user-consent gates as
   desktop_mcp; the user's desktop app must be running.
 
+  messaging_bridge — turn on a BUILT-IN messaging relay on the user's OWN device
+  (today: iMessage, macOS-only) so their conversations route to agents through
+  channels. Two-sided: it ensures the server-side routing key AND enables the
+  device relay. Created UNAPPROVED (it enables a capability on the user's
+  machine) — an admin approves it, and the user's desktop then confirms. No
+  secret travels; the daemon auto-negotiates its own key. The user's desktop app
+  must be running for the device half to apply.
+
 Governance for remote_mcp: create leaves it UNAPPROVED and inert. Tell the user
 an admin must approve it in Admin > Connectors (there they confirm the endpoint +
 auth). You NEVER handle a secret:
@@ -74,7 +82,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":             {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option."},
+			"kind":             {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents."},
 			"name":             {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":              {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":        {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -88,6 +96,8 @@ Typical flow for a calendar:
 			"command":          {Type: "string", Description: "(desktop_mcp / desktop_command) the executable the desktop runs, e.g. \"npx\" or an absolute path."},
 			"args":             {Type: "array", Description: "(desktop_mcp / desktop_command, optional) command arguments as a list of strings. For desktop_command, an arg may contain a {placeholder} filled from the tool call, e.g. [\"--query\", \"{q}\"]."},
 			"params":           {Type: "object", Description: "(desktop_command, optional) the tool's parameters as {name: description} — each becomes a required string arg the caller supplies and can be referenced as {name} in args. Omit for a fixed command with no inputs."},
+			"service":          {Type: "string", Description: "(messaging_bridge) the built-in service to bridge. Only \"imessage\" is supported today."},
+			"poll_secs":        {Type: "number", Description: "(messaging_bridge, optional) how often the device relay polls for new messages, in seconds (default 5)."},
 			"description":      {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
 		Required: []string{"kind", "name"},
@@ -114,6 +124,17 @@ Typical flow for a calendar:
 		Params:      map[string]ToolParam{"name": {Type: "string", Description: "The connector name."}},
 		Required:    []string{"name"},
 		Handler:     connectorDelete,
+	})
+	gt.AddAction("export", &GroupedToolAction{
+		Description: "Export connector(s) as a portable, SECRET-FREE JSON pack the user can save, back up, or share. Omit name to export ALL connectors as one pack; pass name for a single one. Auth travels by credential NAME only — no secret is included.",
+		Params:      map[string]ToolParam{"name": {Type: "string", Description: "(optional) A single connector to export. Omit to export every connector as one pack."}},
+		Handler:     connectorExport,
+	})
+	gt.AddAction("import", &GroupedToolAction{
+		Description: "Import a connector pack (the JSON produced by export) as new DRAFT connectors owned by the user. Governance still applies: remote_mcp / desktop_* land UNAPPROVED (an admin must approve them); rest_poll goes live if its credential exists. A name that already exists is SKIPPED, never overwritten. Referenced credentials must exist (or be drafted) on this install.",
+		Params:      map[string]ToolParam{"pack": {Type: "string", Description: "The connector pack JSON — a full pack {\"bundle\":...,\"connectors\":[...]}, a single connector object, or an array of connectors."}},
+		Required:    []string{"pack"},
+		Handler:     connectorImport,
 	})
 	return gt
 }
@@ -267,6 +288,16 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		raw, _ := json.Marshal(spec)
 		c.Spec = raw
+	case MessagingBridgeConnectorKind:
+		if owner == "" {
+			return "", fmt.Errorf("messaging_bridge requires an authenticated session (it enables a relay on your own device)")
+		}
+		spec := MessagingBridgeSpec{
+			Service:  strings.ToLower(strings.TrimSpace(stringArg(args, "service"))),
+			PollSecs: oArgInt(args, "poll_secs"),
+		}
+		raw, _ := json.Marshal(spec)
+		c.Spec = raw
 	default:
 		return "", fmt.Errorf("unknown connector kind %q", kind)
 	}
@@ -354,4 +385,58 @@ func connectorDelete(args map[string]any, sess *ToolSession) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("Deleted connector %q and tore down its capability.", name), nil
+}
+
+func connectorExport(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(stringArg(args, "name"))
+	var names []string
+	if name != "" {
+		if _, ok := GetConnector(RootDB, name); !ok {
+			return "", fmt.Errorf("no connector named %q", name)
+		}
+		names = []string{name}
+	}
+	pack, err := ExportConnectorPack(RootDB, names...)
+	if err != nil {
+		return "", err
+	}
+	if len(pack.Connectors) == 0 {
+		return "No connectors to export yet.", nil
+	}
+	raw, err := json.MarshalIndent(pack, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(
+		"Exported %d connector(s) as a portable, secret-free pack (auth is referenced by credential name only — no secrets included). Save this JSON, or import it on another install with connector(action=\"import\"):\n\n```json\n%s\n```",
+		len(pack.Connectors), string(raw)), nil
+}
+
+func connectorImport(args map[string]any, sess *ToolSession) (string, error) {
+	owner := bridgeOwner(sess)
+	if owner == "" {
+		return "", fmt.Errorf("import requires an authenticated session (imported connectors are owned by you)")
+	}
+	raw := strings.TrimSpace(stringArg(args, "pack"))
+	if raw == "" {
+		return "", fmt.Errorf("pack is required — paste the JSON produced by connector(action=\"export\")")
+	}
+	res, err := ImportConnectorPack(RootDB, []byte(raw), owner)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	if len(res.Imported) == 0 {
+		b.WriteString("No connectors imported.")
+	} else {
+		fmt.Fprintf(&b, "Imported %d connector(s): %s.\n", len(res.Imported), strings.Join(res.Imported, ", "))
+		b.WriteString("remote_mcp / desktop_* land UNAPPROVED — an admin approves them in Admin > Connectors before their tools go live. rest_poll goes live if its credential is already registered.")
+	}
+	if len(res.Skipped) > 0 {
+		b.WriteString("\nSkipped:")
+		for _, s := range res.Skipped {
+			fmt.Fprintf(&b, "\n  - %s: %s", s.Name, s.Reason)
+		}
+	}
+	return strings.TrimSpace(b.String()), nil
 }

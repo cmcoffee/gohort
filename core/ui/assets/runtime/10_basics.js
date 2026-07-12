@@ -1406,6 +1406,35 @@
           var n = (f.decimals > 0) ? parseFloat(input.value) : parseInt(input.value, 10);
           save(f.field, isNaN(n) ? 0 : n);
         });
+      } else if (t === 'file') {
+        // Client-side file field: the picked file is read as TEXT in the
+        // browser (no upload, no endpoint) and its contents become this
+        // field's value in the submit body. Shows the filename as
+        // confirmation rather than dumping the raw text — use for
+        // "import this .json" flows where the file content IS the value.
+        // f.accept sets the picker filter. Registers its own setter so
+        // template/suggest paths (which write a string) still work.
+        input = el('div', {class: 'ui-form-file'});
+        var fileField = el('input', {type: 'file', class: 'ui-form-file-input'});
+        if (f.accept) fileField.accept = f.accept;
+        var fileName = el('span', {class: 'ui-form-file-name',
+          style: 'margin-left:0.5rem;font-size:0.8rem;color:var(--text-mute)'});
+        fileField.addEventListener('change', function(){
+          var file = fileField.files && fileField.files[0];
+          if (!file) { fileName.textContent = ''; save(f.field, ''); return; }
+          var reader = new FileReader();
+          reader.onload = function(){
+            save(f.field, reader.result == null ? '' : String(reader.result));
+            fileName.textContent = file.name;
+          };
+          reader.onerror = function(){
+            showToast('Could not read file: ' + (reader.error && reader.error.message || 'error'));
+          };
+          reader.readAsText(file);
+        });
+        input.appendChild(fileField);
+        input.appendChild(fileName);
+        fieldSetters[f.field] = function(v){ save(f.field, String(v == null ? '' : v)); };
       } else {
         // text, tel, anything else
         input = el('input', {type: t, class: 'ui-form-input', placeholder: f.placeholder || ''});
