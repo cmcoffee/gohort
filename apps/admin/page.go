@@ -376,6 +376,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			CSS(adminUsersCSS).
 			JS(adminUsersModalJS).
 			JS(artifactDownloadHelper).
+			JS(artifactExportControls).
 			ClientAction("admin_reset_password", adminResetPasswordAction).
 			ClientAction("connectors_export", connectorsExportAction).
 			ClientAction("connectors_export_all", connectorsExportAllAction).
@@ -1460,7 +1461,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Persistent Tools (Active)",
-				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Share publishes a tool to ALL users (it loads for everyone's agents, on top of their own pool); Unshare pulls it back to its owner. Delete to revoke immediately. Export a tool (or all tools) as a portable bundle.",
+				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Share publishes a tool to ALL users (it loads for everyone's agents, on top of their own pool); Unshare pulls it back to its owner. Delete to revoke immediately. Export a tool (or all tools) as a portable bundle — with dependencies on, the tool's API credential travels with it (as a disabled draft) so it installs cleanly elsewhere.",
 				Body: ui.Stack{Children: []ui.Component{
 					ui.Table{
 						Source:       "api/persistent-tools",
@@ -2101,17 +2102,68 @@ const artifactDownloadHelper = `function __artifactDownload(href, filename){
   document.body.appendChild(a); a.click(); a.remove();
 }`
 
+// artifactExportControls layers the "Include dependencies" export preference on
+// top of __artifactDownload. A single checkbox (default CHECKED) injects itself
+// above the first export toolbar on the page; every export action routes its
+// URL through __artifactExport, which appends deps=0 only when the admin opts
+// out. Default-on means a fresh export carries the credentials (and referenced
+// tools) the artifact needs, so it installs cleanly on another gohort. This is
+// app-specific export behavior — it lives here in the admin app, NOT in
+// core/ui, so the toolkit stays domain-agnostic.
+const artifactExportControls = `
+window.__artifactIncludeDeps = function(){
+  var c = document.getElementById('artifact-include-deps');
+  return !c || !!c.checked;   // absent -> default to including dependencies
+};
+function __artifactExport(query, filename){
+  var href = 'api/artifacts/export' + (query || '');
+  if(!window.__artifactIncludeDeps()){
+    href += (href.indexOf('?') >= 0 ? '&' : '?') + 'deps=0';
+  }
+  __artifactDownload(href, filename);
+}
+(function(){
+  function build(){
+    var label = document.createElement('label');
+    label.style.cssText = 'display:inline-flex;align-items:center;gap:0.4rem;font-size:0.82rem;color:var(--text-mute);margin:0 0 0.6rem';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.id = 'artifact-include-deps'; cb.checked = true;
+    var span = document.createElement('span');
+    span.textContent = 'Include dependencies (referenced API credentials & tools) in exports';
+    label.appendChild(cb); label.appendChild(span);
+    return label;
+  }
+  function tryInject(){
+    if(document.getElementById('artifact-include-deps')) return true;
+    var btns = document.querySelectorAll('button');
+    for(var i=0;i<btns.length;i++){
+      var t = (btns[i].textContent || '').trim();
+      if(t.indexOf('Export all') === 0 || t === 'Export everything'){
+        var bar = btns[i].parentNode;
+        if(bar && bar.parentNode){ bar.parentNode.insertBefore(build(), bar); return true; }
+      }
+    }
+    return false;
+  }
+  if(document.readyState !== 'loading') tryInject();
+  document.addEventListener('DOMContentLoaded', tryInject);
+  var obs = new MutationObserver(function(){ if(tryInject()) obs.disconnect(); });
+  obs.observe(document.documentElement, {childList:true, subtree:true});
+  // Safety valve: stop observing after 10s on pages with no export toolbar.
+  setTimeout(function(){ obs.disconnect(); }, 10000);
+})();`
+
 // connectorsExportAction downloads ONE connector as a 1-item bundle. Dispatched
 // by the per-row "Export" button; reads the row's name.
 const connectorsExportAction = `function(ctx){
   var n = ctx && ctx.record && ctx.record.name;
   if(!n){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
-  __artifactDownload('api/artifacts/export?type=connector&name=' + encodeURIComponent(n), n + '.gohort.json');
+  __artifactExport('?type=connector&name=' + encodeURIComponent(n), n + '.gohort.json');
 }`
 
 // connectorsExportAllAction downloads every connector as one bundle.
 const connectorsExportAllAction = `function(){
-  __artifactDownload('api/artifacts/export?all=connector', 'connectors.gohort.json');
+  __artifactExport('?all=connector', 'connectors.gohort.json');
 }`
 
 // toolsExportAction downloads ONE persistent tool as a 1-item bundle. The
@@ -2122,18 +2174,18 @@ const toolsExportAction = `function(ctx){
   var n = (r.tool && r.tool.name) || r.name;
   var o = r.owner || '';
   if(!n){ window.uiAlert && window.uiAlert('No tool selected.'); return; }
-  __artifactDownload('api/artifacts/export?type=tool&name=' + encodeURIComponent(n) + '&owner=' + encodeURIComponent(o), n + '.gohort.json');
+  __artifactExport('?type=tool&name=' + encodeURIComponent(n) + '&owner=' + encodeURIComponent(o), n + '.gohort.json');
 }`
 
 // toolsExportAllAction downloads every persistent tool (all owners) as one bundle.
 const toolsExportAllAction = `function(){
-  __artifactDownload('api/artifacts/export?all=tool', 'tools.gohort.json');
+  __artifactExport('?all=tool', 'tools.gohort.json');
 }`
 
 // artifactsExportAllAction downloads EVERYTHING — connectors + tools +
 // credentials + agents + any future registered type — as one gohort.bundle/v1.
 const artifactsExportAllAction = `function(){
-  __artifactDownload('api/artifacts/export', 'gohort-bundle.json');
+  __artifactExport('', 'gohort-bundle.json');
 }`
 
 // credentialsExportAction downloads ONE API credential's CONFIG as a 1-item
@@ -2142,10 +2194,10 @@ const artifactsExportAllAction = `function(){
 const credentialsExportAction = `function(ctx){
   var n = ctx && ctx.record && ctx.record.name;
   if(!n){ window.uiAlert && window.uiAlert('No credential selected.'); return; }
-  __artifactDownload('api/artifacts/export?type=credential&name=' + encodeURIComponent(n), n + '.gohort.json');
+  __artifactExport('?type=credential&name=' + encodeURIComponent(n), n + '.gohort.json');
 }`
 
 // credentialsExportAllAction downloads every API credential's config as one bundle.
 const credentialsExportAllAction = `function(){
-  __artifactDownload('api/artifacts/export?all=credential', 'credentials.gohort.json');
+  __artifactExport('?all=credential', 'credentials.gohort.json');
 }`

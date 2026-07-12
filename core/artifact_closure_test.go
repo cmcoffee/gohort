@@ -104,6 +104,29 @@ func TestExportClosure_TransitiveThreeLevels(t *testing.T) {
 	}
 }
 
+func TestExportShallow_SkipsDeps(t *testing.T) {
+	// The "Include dependencies" opt-out path: exactly the selection, no closure.
+	tool := &fakeArtifact{
+		typ:     "tool",
+		recipes: map[string]string{"weather": "wx"},
+		deps:    map[string][]ArtifactSel{"weather": {{Type: "credential", Name: "openweather"}}},
+	}
+	cred := &fakeArtifact{typ: "credential", recipes: map[string]string{"openweather": "key"}}
+	withFakeTypes(t, tool, cred)
+
+	b, err := ExportArtifactBundleShallow(nil, []ArtifactSel{{Type: "tool", Name: "weather", Owner: "u"}})
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	if got := bundleNames(b); len(got) != 1 || got[0] != "tool/weather" {
+		t.Fatalf("shallow export must not pull dependencies, got %v", got)
+	}
+	// The explicit selection is still strict even without closure.
+	if _, err := ExportArtifactBundleShallow(nil, []ArtifactSel{{Type: "tool", Name: "nope", Owner: "u"}}); err == nil {
+		t.Fatal("expected an error for a missing explicit selection in a shallow export")
+	}
+}
+
 func TestExportClosure_DedupsAndIsIdempotent(t *testing.T) {
 	// Two tools sharing one credential must not emit the credential twice.
 	tool := &fakeArtifact{

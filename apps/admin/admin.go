@@ -1637,6 +1637,21 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		q := r.URL.Query()
 		typ := strings.TrimSpace(q.Get("type"))
 		name := strings.TrimSpace(q.Get("name"))
+		// Dependency closure is ON by default — a 1-item export carries the
+		// credentials/tools it references so it installs cleanly elsewhere. The
+		// UI's "Include dependencies" checkbox sends deps=0 to opt out (a bare
+		// export of exactly the selection, for a target that already has them).
+		includeDeps := true
+		switch strings.ToLower(strings.TrimSpace(q.Get("deps"))) {
+		case "0", "false", "no", "none", "off":
+			includeDeps = false
+		}
+		exportSels := func(sels []ArtifactSel) (ArtifactBundle, error) {
+			if includeDeps {
+				return ExportArtifactBundle(RootDB, sels)
+			}
+			return ExportArtifactBundleShallow(RootDB, sels)
+		}
 		var (
 			bundle   ArtifactBundle
 			err      error
@@ -1644,13 +1659,13 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		)
 		switch {
 		case typ != "" && name != "":
-			bundle, err = ExportArtifactBundle(RootDB, []ArtifactSel{{
+			bundle, err = exportSels([]ArtifactSel{{
 				Type: typ, Name: name, Owner: strings.TrimSpace(q.Get("owner"))}})
 			filename = name + ".gohort.json"
 		case strings.TrimSpace(q.Get("all")) != "":
-			bundle, err = ExportAllArtifacts(RootDB, strings.Split(q.Get("all"), ",")...)
+			bundle, err = exportSels(ArtifactSelectionForTypes(RootDB, strings.Split(q.Get("all"), ",")...))
 		default:
-			bundle, err = ExportAllArtifacts(RootDB)
+			bundle, err = exportSels(ArtifactSelectionForTypes(RootDB))
 		}
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

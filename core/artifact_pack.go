@@ -161,6 +161,22 @@ func lookupArtifactType(name string) (ArtifactType, bool) {
 // idempotent — "export all" already contains every dependency and the closure
 // is a no-op over it. Dependency waves are sorted for byte-stable output.
 func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
+	return exportArtifactBundle(db, sels, true)
+}
+
+// ExportArtifactBundleShallow exports EXACTLY the selection with no dependency
+// closure — the bare artifacts. For the caller who knows the target install
+// already has the referenced credentials/tools (the "Include dependencies"
+// opt-out in the export UI). The explicit selection is still strict: a typo
+// errors, same as the closure path.
+func ExportArtifactBundleShallow(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
+	return exportArtifactBundle(db, sels, false)
+}
+
+// exportArtifactBundle is the shared body: it always exports the explicit
+// selection strictly, and walks the transitive dependency closure only when
+// includeDeps is set.
+func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool) (ArtifactBundle, error) {
 	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now()}
 	seen := map[string]bool{}
 	selKey := func(s ArtifactSel) string {
@@ -196,14 +212,15 @@ func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, erro
 	}
 
 	// Explicit selection first, in caller order, strict. Collect each added
-	// artifact's declared dependencies to seed the closure.
+	// artifact's declared dependencies to seed the closure (skipped entirely
+	// when includeDeps is false — a bare export of exactly what was asked for).
 	var pending []ArtifactSel
 	for _, s := range sels {
 		added, err := addArtifact(s, true)
 		if err != nil {
 			return ArtifactBundle{}, err
 		}
-		if added {
+		if added && includeDeps {
 			pending = append(pending, artifactDeps(db, s)...)
 		}
 	}
@@ -233,11 +250,13 @@ func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, erro
 	return bundle, nil
 }
 
-// ExportAllArtifacts builds a bundle of every registered artifact, optionally
-// restricted to the named types (empty = all types). The selection is sorted
-// (type, then owner, then name) so exports are deterministic byte-for-byte given
-// the same store — friendlier for diffing and caching.
-func ExportAllArtifacts(db Database, types ...string) (ArtifactBundle, error) {
+// ArtifactSelectionForTypes returns the selection "export all" would carry —
+// every registered artifact, optionally restricted to the named types (empty =
+// all types) — sorted (type, then owner, then name) so exports are
+// deterministic byte-for-byte given the same store. Exposed so a caller can
+// build the same selection and then choose whether to apply dependency closure
+// (ExportArtifactBundle vs ExportArtifactBundleShallow).
+func ArtifactSelectionForTypes(db Database, types ...string) []ArtifactSel {
 	only := map[string]bool{}
 	for _, t := range types {
 		if t = strings.TrimSpace(t); t != "" {
@@ -260,7 +279,15 @@ func ExportAllArtifacts(db Database, types ...string) (ArtifactBundle, error) {
 		}
 		return sels[i].Name < sels[j].Name
 	})
-	return ExportArtifactBundle(db, sels)
+	return sels
+}
+
+// ExportAllArtifacts builds a bundle of every registered artifact, optionally
+// restricted to the named types (empty = all types), WITH dependency closure —
+// though for a whole-store export the closure is a no-op (every dependency is
+// already in the selection).
+func ExportAllArtifacts(db Database, types ...string) (ArtifactBundle, error) {
+	return ExportArtifactBundle(db, ArtifactSelectionForTypes(db, types...))
 }
 
 // ParseArtifactBundle decodes bundle bytes, tolerating several shapes so both
