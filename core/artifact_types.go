@@ -154,17 +154,36 @@ func (toolArtifact) ExportArtifact(db Database, name, owner string) (json.RawMes
 	}
 	for _, p := range LoadPersistentTempTools(db, owner) {
 		if p.Tool.Name == name {
-			return json.Marshal(p.Tool)
+			return marshalExportedTool(p.Tool, owner)
 		}
 	}
 	// Fall back to the pending pool so a not-yet-approved draft can still be
 	// shared for review.
 	for _, p := range LoadPendingTempTools(db, owner) {
 		if p.Tool.Name == name {
-			return json.Marshal(p.Tool)
+			return marshalExportedTool(p.Tool, owner)
 		}
 	}
 	return nil, fmt.Errorf("no tool named %q for user %q", name, owner)
+}
+
+// ResolveToolScriptForExport, when set, backfills a tool's ScriptBody from its
+// on-disk workspace copy at export time. It exists for tools authored via
+// local(write) + a {workspace_dir} command_template reference BEFORE the
+// authoring path learned to capture the script into the record: their
+// ScriptBody is empty, so a bundle export would carry no script. temptool wires
+// this in init() (it owns the workspace + script-reference logic and would be a
+// package cycle to call from here). No-op / unset leaves the tool untouched.
+var ResolveToolScriptForExport func(t *TempTool, owner string)
+
+// marshalExportedTool serializes a tool for a bundle, first backfilling a
+// missing ScriptBody from disk (legacy tools) so the Python/bash script always
+// travels with the export. Operates on a copy — the stored record is untouched.
+func marshalExportedTool(t TempTool, owner string) (json.RawMessage, error) {
+	if t.ScriptBody == "" && ResolveToolScriptForExport != nil {
+		ResolveToolScriptForExport(&t, owner)
+	}
+	return json.Marshal(t)
 }
 
 // Dependencies folds in the API credential an api- / toolbox-mode tool

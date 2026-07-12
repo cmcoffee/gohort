@@ -1287,6 +1287,17 @@ body { min-height: 100vh; min-height: 100dvh; }
   color: var(--text); white-space: pre-wrap; word-break: break-word;
   max-height: 420px; overflow: auto;
 }
+/* List-style pair: an array field (toolbox actions, pipeline steps)
+   rendered as a stack of compact record cards. */
+.ui-display-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.ui-display-list-item {
+  padding: 0.45rem 0.6rem;
+  background: var(--bg-0); border: 1px solid var(--border); border-radius: 4px;
+  display: flex; flex-direction: column; gap: 0.15rem;
+}
+.ui-display-list-field { font-size: 0.82rem; color: var(--text); word-break: break-word; }
+.ui-display-list-key { color: var(--text-mute); }
+.ui-display-list-val.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.8rem; }
 
 /* --- BarChart --- */
 .ui-chart { width: 100%; }

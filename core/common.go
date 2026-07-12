@@ -1612,6 +1612,21 @@ type TempTool struct {
 	// every CommandTemplate reference to ScriptName into a reference
 	// to CanonicalScriptName at dispatch time.
 	CanonicalScriptName string `json:"canonical_script_name,omitempty"`
+
+	// WorkspaceFiles carries HELPER files a shell tool's primary script
+	// depends on — a Python module the script imports, a bash file it
+	// sources, a lookup table it reads. Like ScriptBody they persist IN
+	// the tool record (so the tool is self-contained: it exports whole
+	// and survives a workspace wipe), but plural: ScriptBody is the one
+	// entry script the command runs, WorkspaceFiles are everything it
+	// pulls in. Each is redeployed to {workspace_dir}/<Path> at dispatch
+	// under its LITERAL path (NOT canonicalized — the primary imports it
+	// by that exact name). Empty for single-file tools. This is the
+	// "a tool may bundle a few scripts underneath" case; distinct from
+	// Recipe, which stages an ISOLATED tmpdir from scratch rather than
+	// sharing the session workspace.
+	WorkspaceFiles []RecipeFile `json:"workspace_files,omitempty"`
+
 	// StatePath, when set, names a relative subdirectory inside the
 	// deployed sandbox whose contents are preserved across dispatches.
 	// Use for tools that legitimately need runtime state (counters,

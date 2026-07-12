@@ -705,6 +705,16 @@ type DisplayPair struct {
 	// newlines and scroll horizontally on overflow — script bodies,
 	// pipeline step dumps, full command_templates. Implies Mono.
 	Block bool `json:"block,omitempty"`
+	// Items, when set, renders the pair's Field as a LIST — the field
+	// must resolve to an array. For an array of OBJECTS each element is
+	// rendered from these sub-pairs (each sub-pair's Field is looked up
+	// on the element, Label prefixes the value); for an array of scalars
+	// use a single sub-pair with an empty Field. Generic: any
+	// array-of-records field (a toolbox's actions, a pipeline's steps, an
+	// agent's allowlist) renders as a readable list instead of the
+	// "[object Object]" a plain pair would show. Domain-agnostic — the
+	// caller names the sub-fields.
+	Items []DisplayPair `json:"items,omitempty"`
 }
 
 // ChartPanel renders a multi-series chart (bar / line / area / pie) as

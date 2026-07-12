@@ -3112,6 +3112,37 @@
     function render(rec) {
       wrap.innerHTML = '';
       (cfg.pairs || []).forEach(function(p) {
+        // List pairs render an array field as a readable list. For an
+        // array of objects each element is rendered from p.items
+        // sub-pairs; for scalars, a single sub-pair with empty field
+        // shows each value. Generic — nothing here knows what the list
+        // holds (toolbox actions, pipeline steps, an allowlist).
+        if (p.items && p.items.length) {
+          var arr = lookup(rec, p.field);
+          var rowL = el('div', {class: 'ui-display-row ui-display-row-block'}, [
+            el('span', {class: 'ui-display-label'}, [p.label]),
+          ]);
+          if (Array.isArray(arr) && arr.length) {
+            var list = el('div', {class: 'ui-display-list'});
+            arr.forEach(function(item) {
+              var itemEl = el('div', {class: 'ui-display-list-item'});
+              p.items.forEach(function(sp) {
+                var raw = sp.field ? lookup(item, sp.field) : item;
+                if (raw == null || raw === '') return;
+                var sub = el('div', {class: 'ui-display-list-field'});
+                if (sp.label) sub.appendChild(el('span', {class: 'ui-display-list-key'}, [sp.label + ': ']));
+                sub.appendChild(el('span', {class: 'ui-display-list-val' + (sp.mono ? ' mono' : '')}, [fmt(raw, sp.format)]));
+                itemEl.appendChild(sub);
+              });
+              list.appendChild(itemEl);
+            });
+            rowL.appendChild(list);
+          } else {
+            rowL.appendChild(el('span', {class: 'ui-display-value mute'}, ['—']));
+          }
+          wrap.appendChild(rowL);
+          return;
+        }
         var value = fmt(lookup(rec, p.field), p.format);
         // Block-style pairs (multi-line content: script bodies,
         // pipeline dumps, long command templates) render as a <pre>

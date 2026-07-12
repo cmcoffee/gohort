@@ -739,6 +739,12 @@ THE script_body / script_name PATTERN
   * command_template references {workspace_dir}/<script_name>.
   * One ship at registration; reused on every dispatch. You do not
     re-ship the script per call.
+  * MULTI-FILE: helper files your entry script pulls in (a Python
+    module it imports, a bash file it sources) are bundled into the
+    tool AUTOMATICALLY — write them to the workspace with local(write)
+    under the name the script imports (helper.py for "import helper"),
+    and they travel with the tool and survive workspace wipes. No
+    extra param; just author them beside the entry script.
 
 THE local() TOOL IS A DIFFERENT SANDBOX
   * local() lets you iterate on a script BEFORE wrapping it as a

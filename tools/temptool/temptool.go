@@ -58,7 +58,51 @@ const maxOutput = 50000
 // the consolidated tool_def grouped tool (registered in tool_def.go)
 // covers all four. Their implementations remain so tool_def.go's
 // dispatchers can call them; just dropped from the catalog.
-func init() {}
+func init() {
+	// Backfill a legacy tool's script into its exported bundle. New tools
+	// capture the script into the record at authoring time (see the
+	// create path), but tools authored before that — via local(write) + a
+	// {workspace_dir} command_template reference — have an empty ScriptBody
+	// and their script lives only in the owner's workspace on disk. Read it
+	// back here so exports carry it. Best-effort: single on-disk script,
+	// simple filename, owner's user-root workspace.
+	ResolveToolScriptForExport = captureExportScript
+}
+
+// captureExportScript populates t.ScriptBody (+ ScriptName/CanonicalScriptName)
+// from the owner's on-disk workspace when the tool references exactly one
+// existing {workspace_dir} script but carries no captured body. Mutates t in
+// place; leaves it untouched on any miss (no workspace, multi-file, sub-path,
+// unreadable). Wired into core.ResolveToolScriptForExport from init().
+func captureExportScript(t *TempTool, owner string) {
+	if t == nil || t.ScriptBody != "" {
+		return
+	}
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return
+	}
+	dir, err := EnsureWorkspaceDir(owner)
+	if err != nil {
+		return
+	}
+	present := presentWorkspaceScriptRefs(t.CommandTemplate, dir)
+	if len(present) != 1 || strings.ContainsAny(present[0], "/\\") {
+		return
+	}
+	content, err := os.ReadFile(filepath.Join(dir, present[0]))
+	if err != nil || len(content) == 0 {
+		return
+	}
+	t.ScriptBody = string(content)
+	t.ScriptName = present[0]
+	t.CanonicalScriptName = canonicalScriptName(t.Name, present[0], string(content))
+	// A legacy multi-file tool's helpers live on disk too — pull them in
+	// so the whole tool travels, not just the entry script.
+	if len(t.WorkspaceFiles) == 0 {
+		t.WorkspaceFiles = gatherWorkspaceHelpers(present[0], string(content), dir)
+	}
+}
 
 // formatTempToolSpec renders a just-registered TempTool the same way
 // BuildToolPrompt would describe a static tool: name, description,
@@ -263,6 +307,32 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		if missing := missingWorkspaceScriptRefs(cmd, sess.WorkspaceDir); len(missing) > 0 {
 			return "", fmt.Errorf("command_template references script file(s) %v in {workspace_dir} that don't exist on disk. Either (a) pass script_body so the framework ships the script with the tool record (preferred — survives workspace wipes), OR (b) call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") BEFORE this tool_def call, with the path matching what command_template expects", missing)
 		}
+		// CAPTURE-INTO-RECORD: the LLM authored via local(write) + a
+		// command_template reference rather than the script_body param.
+		// The script exists on disk but NOT in the tool record — so it
+		// works this session yet silently fails to travel: a bundle
+		// export carries an empty script_body, and a workspace wipe
+		// breaks the tool. Read the referenced script back into the
+		// record here so option (b) gets the SAME portability as option
+		// (a). We handle the single-file case (by far the common one — a
+		// lone Python/bash script); multi-file or sub-path references
+		// stay disk-resident (the single ScriptBody slot can't represent
+		// them, and {workspace_dir} refs rule out the Recipe tmpdir).
+		if present := presentWorkspaceScriptRefs(cmd, sess.WorkspaceDir); len(present) == 1 && !strings.ContainsAny(present[0], "/\\") {
+			rel := present[0]
+			if content, rerr := os.ReadFile(filepath.Join(sess.WorkspaceDir, rel)); rerr == nil && len(content) > 0 {
+				// Feed the standard capture block below (script body != "")
+				// so the record is populated identically to the script_body
+				// path: LLM-facing name = the referenced filename, canonical
+				// on-disk name = collision-proof hash. Dispatch redeploys the
+				// body under the canonical name and translates the reference.
+				scriptBody = string(content)
+				scriptName = rel
+				canonicalName = canonicalScriptName(name, scriptName, scriptBody)
+			} else if rerr != nil {
+				Debug("[temptool] %q: could not capture on-disk script %q into record: %v", name, rel, rerr)
+			}
+		}
 	}
 
 	params, err := parseParamsArg(args["params"])
@@ -314,6 +384,14 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		tool.ScriptBody = scriptBody
 		tool.ScriptName = scriptName
 		tool.CanonicalScriptName = canonicalName
+		// Bundle the helper files the entry script pulls in (imported
+		// Python modules, sourced bash files) so the tool is
+		// self-contained — it exports whole and survives a workspace
+		// wipe, not just the entry script. Best-effort: only on-disk
+		// siblings are captured; a missed helper is a no-op (it still
+		// sits in the shared workspace at runtime, it just wouldn't
+		// travel). See gatherWorkspaceHelpers.
+		tool.WorkspaceFiles = gatherWorkspaceHelpers(scriptName, scriptBody, sess.WorkspaceDir)
 	}
 	// Optional StatePath captures "this subdir of the workspace
 	// persists across invocations." Most tools don't need it — they
@@ -1178,6 +1256,33 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		}
 	}
 
+	// Redeploy bundled helper files (imported modules, sourced scripts)
+	// alongside the entry script — same survives-a-wipe idempotent write
+	// as ScriptBody, but under each file's LITERAL path because the entry
+	// script pulls them in by that exact name (`import helper` -> helper.py,
+	// `source lib.sh`). No canonical rename, no command translation. Skips
+	// any path that isn't a plain in-workspace filename (defense against a
+	// crafted imported record).
+	for _, wf := range tt.WorkspaceFiles {
+		rel := strings.TrimSpace(wf.Path)
+		if rel == "" || strings.ContainsAny(rel, "/\\") || rel == ".." {
+			Debug("[temptool] %q: skipping workspace_file with unsafe path %q", tt.Name, wf.Path)
+			continue
+		}
+		mode := os.FileMode(wf.Mode)
+		if mode == 0 {
+			mode = 0700
+		}
+		filePath := filepath.Join(workspaceDir, rel)
+		if existing, err := os.ReadFile(filePath); err == nil && string(existing) == wf.Content {
+			continue // already present with matching content — no-op
+		}
+		if err := os.WriteFile(filePath, []byte(wf.Content), mode); err != nil {
+			return "", fmt.Errorf("redeploy workspace file %q for tool %q: %w", rel, tt.Name, err)
+		}
+		Debug("[temptool] redeployed workspace file %s for tool %q (%dB)", filePath, tt.Name, len(wf.Content))
+	}
+
 	// Pre-exec validation for legacy tools: when ScriptBody is empty,
 	// the redeploy block above doesn't fire — so a command_template
 	// that references {workspace_dir}/<script>.py relies on the file
@@ -1752,6 +1857,137 @@ func missingWorkspaceScriptRefs(cmd, workspaceDir string) []string {
 		}
 	}
 	return missing
+}
+
+// presentWorkspaceScriptRefs is the complement of missingWorkspaceScriptRefs:
+// it returns the {workspace_dir}/<script> references whose extension marks
+// them as scripts AND which DO exist on disk under workspaceDir. Used at
+// authoring time to capture a local(write)-authored script back into the
+// tool record (so it travels with export and survives workspace wipes).
+// De-duplicated; preserves first-seen order.
+func presentWorkspaceScriptRefs(cmd, workspaceDir string) []string {
+	if cmd == "" || workspaceDir == "" {
+		return nil
+	}
+	matches := workspaceScriptRefRe.FindAllStringSubmatch(cmd, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var present []string
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		rel := m[1]
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		ext := strings.ToLower(filepath.Ext(rel))
+		if !scriptExtensions[ext] {
+			continue // arbitrary output path, not a script invocation
+		}
+		full := filepath.Join(workspaceDir, rel)
+		if info, err := os.Stat(full); err == nil && !info.IsDir() {
+			present = append(present, rel)
+		}
+	}
+	return present
+}
+
+// maxWorkspaceHelpers caps the transitive helper walk so a pathological
+// import graph can't stuff an unbounded pile of files into a tool record.
+const maxWorkspaceHelpers = 24
+
+// pyImportRe matches Python `import foo` / `import foo, bar` /
+// `from foo import x` / `from .foo import x` at the start of a (possibly
+// indented) line. It captures the FIRST module token; comma-lists and
+// dotted packages are handled by the caller splitting on the module name.
+var pyImportRe = regexp.MustCompile(`(?m)^[ \t]*(?:from[ \t]+\.?([A-Za-z_][A-Za-z0-9_]*)|import[ \t]+([A-Za-z_][A-Za-z0-9_]*(?:[ \t]*,[ \t]*[A-Za-z_][A-Za-z0-9_]*)*))`)
+
+// shSourceRe matches bash `source foo.sh` / `. foo.sh` (optionally
+// ./-prefixed or quoted), capturing the referenced filename.
+var shSourceRe = regexp.MustCompile(`(?m)^[ \t]*(?:source|\.)[ \t]+["']?(?:\./)?([A-Za-z0-9_./\-]+\.sh)["']?`)
+
+// scriptHelperRefs returns the LITERAL sibling filenames a script body pulls
+// in that could resolve to a helper file next to it — Python module imports
+// (foo -> foo.py) and bash sources (foo.sh). Best-effort and language-scoped
+// to Python/bash (where env-var params + gohort helpers already steer
+// authoring); anything it doesn't recognize simply isn't followed, which is a
+// no-op (the helper still sits in the shared workspace at runtime, it just
+// doesn't travel). ext picks which import grammar to scan.
+func scriptHelperRefs(body, ext string) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(name string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	switch ext {
+	case ".py":
+		for _, m := range pyImportRe.FindAllStringSubmatch(body, -1) {
+			// m[1] = from-import module; m[2] = import list (comma-separated).
+			if m[1] != "" {
+				add(m[1] + ".py")
+			}
+			if m[2] != "" {
+				for _, mod := range strings.Split(m[2], ",") {
+					if mod = strings.TrimSpace(mod); mod != "" {
+						add(mod + ".py")
+					}
+				}
+			}
+		}
+	case ".sh", ".bash":
+		for _, m := range shSourceRe.FindAllStringSubmatch(body, -1) {
+			if len(m) >= 2 {
+				add(m[1])
+			}
+		}
+	}
+	return out
+}
+
+// gatherWorkspaceHelpers walks the dependency graph of a primary script and
+// returns the helper files (as RecipeFile{Path,Content}) it pulls in that
+// EXIST on disk under workspaceDir. Starting from primaryBody it follows
+// Python imports / bash sources transitively (bounded), reading each resolved
+// sibling and scanning IT for further helpers. primaryName is excluded so the
+// entry script (which travels as ScriptBody) isn't duplicated. Best-effort:
+// a helper that can't be resolved or read is simply skipped.
+func gatherWorkspaceHelpers(primaryName, primaryBody, workspaceDir string) []RecipeFile {
+	if workspaceDir == "" || primaryBody == "" {
+		return nil
+	}
+	collected := map[string]bool{primaryName: true}
+	var out []RecipeFile
+	queue := scriptHelperRefs(primaryBody, strings.ToLower(filepath.Ext(primaryName)))
+	for len(queue) > 0 && len(out) < maxWorkspaceHelpers {
+		rel := queue[0]
+		queue = queue[1:]
+		if collected[rel] || strings.ContainsAny(rel, "/\\") {
+			// Already have it, or a sub-path we won't chase (helpers live
+			// beside the entry script in the flat workspace root).
+			continue
+		}
+		collected[rel] = true
+		full := filepath.Join(workspaceDir, rel)
+		info, err := os.Stat(full)
+		if err != nil || info.IsDir() {
+			continue // unresolved import (stdlib / third-party / typo) — skip
+		}
+		content, err := os.ReadFile(full)
+		if err != nil || len(content) == 0 {
+			continue
+		}
+		out = append(out, RecipeFile{Path: rel, Content: string(content), Mode: 0700})
+		queue = append(queue, scriptHelperRefs(string(content), strings.ToLower(filepath.Ext(rel)))...)
+	}
+	return out
 }
 
 // rawNetworkPatterns names script-side APIs that bypass the hook and

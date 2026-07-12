@@ -1437,11 +1437,28 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Label: "Body template", Field: "tool.body_template", Mono: true, Block: true},
 								{Label: "Script name", Field: "tool.script_name", Mono: true},
 								{Label: "Script body", Field: "tool.script_body", Block: true},
+								// Helper files (imported modules, sourced scripts) the
+								// entry script bundles — so a reviewer sees the whole
+								// tool, not just its entry point. Empty for single-file
+								// tools.
+								{Label: "Bundled files", Field: "tool.workspace_files", Items: []ui.DisplayPair{
+									{Field: "path", Mono: true},
+								}},
 								{Label: "Credential", Field: "tool.credential", Mono: true},
 								{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
 								{Label: "Raw network", Field: "tool.raw_network"},
 								{Label: "State path", Field: "tool.state_path", Mono: true},
 								{Label: "Response pipe", Field: "tool.response_pipe", Mono: true, Block: true},
+								// Toolbox-mode tools bundle several endpoints under one
+								// name — list each sub-action so the reviewer sees the
+								// whole surface, not just the wrapper. Empty for non-
+								// toolbox tools (the list pair renders nothing).
+								{Label: "Actions", Field: "tool.actions", Items: []ui.DisplayPair{
+									{Field: "name", Mono: true},
+									{Label: "method", Field: "method", Mono: true},
+									{Label: "url", Field: "url_template", Mono: true},
+									{Label: "desc", Field: "description"},
+								}},
 								{Label: "Requested at", Field: "requested_at", Format: "reltime"},
 								{Label: "From session", Field: "requested_session", Mono: true},
 							},
@@ -1488,11 +1505,25 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									{Label: "Body template", Field: "tool.body_template", Mono: true, Block: true},
 									{Label: "Script name", Field: "tool.script_name", Mono: true},
 									{Label: "Script body", Field: "tool.script_body", Block: true},
+									// Helper files bundled with the entry script (imported
+									// modules, sourced scripts). Empty for single-file tools.
+									{Label: "Bundled files", Field: "tool.workspace_files", Items: []ui.DisplayPair{
+										{Field: "path", Mono: true},
+									}},
 									{Label: "Credential", Field: "tool.credential", Mono: true},
 									{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
 									{Label: "Raw network", Field: "tool.raw_network"},
 									{Label: "State path", Field: "tool.state_path", Mono: true},
 									{Label: "Response pipe", Field: "tool.response_pipe", Mono: true, Block: true},
+									// Toolbox-mode tools bundle several endpoints under one
+									// name — list each sub-action so the whole surface is
+									// visible on expand. Empty for non-toolbox tools.
+									{Label: "Actions", Field: "tool.actions", Items: []ui.DisplayPair{
+										{Field: "name", Mono: true},
+										{Label: "method", Field: "method", Mono: true},
+										{Label: "url", Field: "url_template", Mono: true},
+										{Label: "desc", Field: "description"},
+									}},
 									{Label: "Approved at", Field: "approved_at", Format: "reltime"},
 									{Label: "Last used", Field: "last_used_at", Format: "reltime"},
 								},
