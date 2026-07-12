@@ -11,11 +11,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 func init() {
 	RegisterArtifactType(connectorArtifact{})
 	RegisterArtifactType(toolArtifact{})
+	RegisterArtifactType(credentialArtifact{})
 }
 
 // ---- connector -------------------------------------------------------------
@@ -139,6 +141,88 @@ func (toolArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner st
 	// the rest of the bundle still imports.
 	if err := QueuePendingTempTool(db, owner, t, "import"); err != nil {
 		return name, err.Error(), nil
+	}
+	return name, "", nil
+}
+
+// ---- credential (API) ------------------------------------------------------
+
+// credentialArtifact makes a SecureAPI credential portable. The SecureCredential
+// struct is ALREADY secret-free by design — the sensitive material (client
+// secret, refresh token, RSA key, api key) lives in a SEPARATE encrypted DB key,
+// never in the struct — so the recipe is just the config with runtime/identity
+// fields zeroed. On import the config lands as a DRAFT: DISABLED with a
+// "(pending)" secret placeholder (via SaveAPIDraft / SaveOAuthDraft), so it is
+// inert until the admin supplies the secret in Admin > APIs and enables it.
+// Global (admin) scope — Owner is ignored. Per-user secrets never travel either;
+// each install's users supply their own on their Account page.
+type credentialArtifact struct{}
+
+func (credentialArtifact) ArtifactType() string { return "credential" }
+
+func (credentialArtifact) ListArtifacts(_ Database) []ArtifactSel {
+	api := Secure()
+	if api == nil {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, c := range api.List() {
+		out = append(out, ArtifactSel{Type: "credential", Name: c.Name})
+	}
+	return out
+}
+
+func (credentialArtifact) ExportArtifact(_ Database, name, _ string) (json.RawMessage, error) {
+	api := Secure()
+	if api == nil {
+		return nil, Error("secure-api store not initialized")
+	}
+	c, ok := api.Load(name)
+	if !ok {
+		return nil, fmt.Errorf("no credential named %q", name)
+	}
+	// Zero the fields that describe a particular install rather than the
+	// credential's shape. No secret is present to strip — it was never here.
+	c.CreatedAt = time.Time{}
+	c.LastUsedAt = time.Time{}
+	c.Pending = false
+	c.Disabled = false
+	return json.Marshal(c)
+}
+
+func (credentialArtifact) ImportArtifact(_ Database, recipe json.RawMessage, _ string) (string, string, error) {
+	api := Secure()
+	if api == nil {
+		return "", "", Error("secure-api store not initialized")
+	}
+	var c SecureCredential
+	if err := json.Unmarshal(recipe, &c); err != nil {
+		return "", "", fmt.Errorf("invalid credential recipe: %w", err)
+	}
+	name := strings.TrimSpace(c.Name)
+	if name == "" {
+		return "", "", Error("missing credential name")
+	}
+	if _, exists := api.Load(name); exists {
+		return name, "a credential with this name already exists", nil
+	}
+	c.CreatedAt = time.Time{}
+	c.LastUsedAt = time.Time{}
+	c.Pending = false
+	// Land inert — no secret travels, so it can't dispatch until the admin
+	// supplies one. oauth2 / key-style go through their draft-save; a no-auth
+	// (url-allowlist-only) credential has no secret and saves directly.
+	var err error
+	switch c.Type {
+	case SecureCredOAuth2:
+		err = api.SaveOAuthDraft(c)
+	case SecureCredNone:
+		err = api.Save(c, "")
+	default:
+		err = api.SaveAPIDraft(c)
+	}
+	if err != nil {
+		return name, "", err
 	}
 	return name, "", nil
 }

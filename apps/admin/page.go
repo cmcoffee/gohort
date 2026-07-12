@@ -381,6 +381,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("connectors_export_all", connectorsExportAllAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
+			ClientAction("credentials_export", credentialsExportAction).
+			ClientAction("credentials_export_all", credentialsExportAllAction).
 			ClientAction("artifacts_export_all", artifactsExportAllAction),
 		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
 		Grid:     false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
@@ -1091,6 +1093,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo: "api/secure-api?action=restrict&name={name}",
 									Method: "POST",
 									HideIf: "restricted"},
+								{Type: "button", Label: "Export", Method: "client",
+									PostTo: "credentials_export", Compact: true},
 								// Delete stays red — irreversible destruction.
 								{Type: "button", Label: "Delete",
 									PostTo:  "api/secure-api?name={name}",
@@ -1115,6 +1119,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								TestLabel:   "Test token (oauth2)",
 								SubmitLabel: "Create credential",
 								Fields:      credentialFormFields(),
+							},
+						},
+						// Export all credentials' CONFIG as one bundle. Secrets never
+						// travel — imported credentials land inert (pending a secret)
+						// until the admin supplies one here.
+						ui.Toolbar{
+							Actions: []ui.ToolbarAction{
+								{Label: "Export all credentials", Method: "client", URL: "credentials_export_all"},
 							},
 						},
 					},
@@ -1291,7 +1303,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							SubmitLabel: "Import artifacts",
 							Fields: []ui.FormField{
 								{Field: "pack", Label: "Artifact bundle file", Type: "file", Accept: ".json,application/json",
-									Help: "Choose an exported bundle (.json) — connectors and/or tools. Imported artifacts are drafted for review (connectors UNAPPROVED, tools PENDING); a name that already exists is skipped. No secrets travel — referenced credentials must exist on this install."},
+									Help: "Choose an exported bundle (.json) — connectors, tools, API credentials, and/or agents. Imported artifacts are drafted for review (connectors UNAPPROVED, tools PENDING, credentials inert until you add the secret); a name that already exists is skipped. No secrets travel."},
 							},
 						},
 						// Export — per-row Export (in the table above) grabs one
@@ -2097,8 +2109,22 @@ const toolsExportAllAction = `function(){
   __artifactDownload('api/artifacts/export?all=tool', 'tools.gohort.json');
 }`
 
-// artifactsExportAllAction downloads EVERYTHING — connectors + tools + any
-// future registered type — as one gohort.bundle/v1.
+// artifactsExportAllAction downloads EVERYTHING — connectors + tools +
+// credentials + agents + any future registered type — as one gohort.bundle/v1.
 const artifactsExportAllAction = `function(){
   __artifactDownload('api/artifacts/export', 'gohort-bundle.json');
+}`
+
+// credentialsExportAction downloads ONE API credential's CONFIG as a 1-item
+// bundle. No secret travels — it lives in a separate encrypted key and is never
+// part of the recipe; the importer supplies it on their side.
+const credentialsExportAction = `function(ctx){
+  var n = ctx && ctx.record && ctx.record.name;
+  if(!n){ window.uiAlert && window.uiAlert('No credential selected.'); return; }
+  __artifactDownload('api/artifacts/export?type=credential&name=' + encodeURIComponent(n), n + '.gohort.json');
+}`
+
+// credentialsExportAllAction downloads every API credential's config as one bundle.
+const credentialsExportAllAction = `function(){
+  __artifactDownload('api/artifacts/export?all=credential', 'credentials.gohort.json');
 }`

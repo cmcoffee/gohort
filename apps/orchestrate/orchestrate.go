@@ -215,6 +215,11 @@ func (T *OrchestrateApp) Routes() {
 	// high-consequence tools).
 	registerStandingRunner(T)
 
+	// Register "agent" as a portable artifact type so agents export/import via
+	// the unified bundle (Admin > /api/artifacts/*). Holds the app because
+	// agents live in per-user stores (UserDB(T.DB, owner)), not RootDB.
+	RegisterAgentArtifactType(T)
+
 	// Channel agent runner: lets the transport (phantom) run a Channel's bound
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
 	// this registers the agent-execution half. See docs/channels-and-agents.md.

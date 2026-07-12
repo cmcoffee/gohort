@@ -1897,6 +1897,46 @@ type agentExport struct {
 	SubAgents []AgentRecord `json:"sub_agents,omitempty"`
 }
 
+// stripAgentIdentity clears the fields that describe a particular install of an
+// agent (id, owner, parent link, timestamps) so what remains is the portable
+// recipe. Memory does NOT travel — it's per-user-per-agent learning, not part
+// of the persona contract.
+func stripAgentIdentity(a AgentRecord) AgentRecord {
+	a.ID = ""
+	a.Owner = ""
+	a.OwnedBy = ""
+	a.Created = time.Time{}
+	a.Updated = time.Time{}
+	return a
+}
+
+// buildAgentExport assembles the portable recipe for one TOP-LEVEL agent: the
+// identity-stripped record plus its identity-stripped owned sub-agents, so
+// importing the parent recreates the whole tree. Returns false when the agent
+// isn't found or isn't owned by user. Shared by the HTTP export handler and the
+// unified artifact-bundle agent type (agent_artifact.go).
+func buildAgentExport(udb Database, id, user string) (agentExport, bool) {
+	a, ok := loadAgent(udb, id)
+	if !ok || (a.Owner != user && a.Owner != seedOwner) {
+		return agentExport{}, false
+	}
+	var subs []AgentRecord
+	for _, k := range udb.Keys(agentsTable) {
+		if k == id {
+			continue
+		}
+		var s AgentRecord
+		if !udb.Get(agentsTable, k, &s) {
+			continue
+		}
+		if s.OwnedBy != id || (s.Owner != user && s.Owner != seedOwner) {
+			continue
+		}
+		subs = append(subs, stripAgentIdentity(s))
+	}
+	return agentExport{AgentRecord: stripAgentIdentity(a), SubAgents: subs}, true
+}
+
 // handleAgentImport accepts a JSON agent record (the shape produced by
 // .../export) and saves it as a new agent owned by the importer.
 // Whatever ID, Owner, Created the importer sends are discarded — the
@@ -1916,28 +1956,42 @@ func (T *OrchestrateApp) handleAgentImport(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	saved, subCount, err := importAgentRecipe(udb, imp, user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if subCount > 0 {
+		Log("[orchestrate.agents] imported agent %q (%s) with %d sub-agent(s)", saved.Name, saved.ID, subCount)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(saved)
+}
+
+// importAgentRecipe reconstitutes an agent recipe under owner: the parent is
+// reborn with a fresh id (whatever id/owner/timestamps the recipe carried are
+// discarded, so cross-install imports stay collision-free), and its bundled
+// sub-agents are recreated parented to the new id. A malformed sub-agent is
+// skipped (logged), not fatal — the parent already saved. Returns the saved
+// parent and the number of sub-agents created. Shared by the HTTP import
+// handler and the unified artifact-bundle agent type.
+func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord, int, error) {
 	rec := imp.AgentRecord
 	if strings.TrimSpace(rec.Name) == "" {
-		http.Error(w, "import: name is required", http.StatusBadRequest)
-		return
+		return AgentRecord{}, 0, Error("import: name is required")
 	}
 	if strings.TrimSpace(rec.OrchestratorPrompt) == "" {
-		http.Error(w, "import: orchestrator_prompt is required", http.StatusBadRequest)
-		return
+		return AgentRecord{}, 0, Error("import: orchestrator_prompt is required")
 	}
 	rec.ID = ""
-	rec.Owner = user
+	rec.Owner = owner
 	rec.OwnedBy = ""
 	rec.Created = time.Time{}
 	rec.Updated = time.Time{}
 	saved, err := saveAgent(udb, rec)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return AgentRecord{}, 0, err
 	}
-	// Recreate bundled sub-agents under the freshly-minted parent id so
-	// the parent's specialist picker finds them. A malformed sub-agent is
-	// skipped (logged), not fatal — the parent already saved.
 	subCount := 0
 	for _, s := range imp.SubAgents {
 		if strings.TrimSpace(s.Name) == "" || strings.TrimSpace(s.OrchestratorPrompt) == "" {
@@ -1945,7 +1999,7 @@ func (T *OrchestrateApp) handleAgentImport(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 		s.ID = ""
-		s.Owner = user
+		s.Owner = owner
 		s.OwnedBy = saved.ID
 		s.Created = time.Time{}
 		s.Updated = time.Time{}
@@ -1955,11 +2009,7 @@ func (T *OrchestrateApp) handleAgentImport(w http.ResponseWriter, r *http.Reques
 		}
 		subCount++
 	}
-	if subCount > 0 {
-		Log("[orchestrate.agents] imported agent %q (%s) with %d sub-agent(s)", saved.Name, saved.ID, subCount)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(saved)
+	return saved, subCount, nil
 }
 
 // safeFilename returns a slug suitable for the Content-Disposition
@@ -2118,48 +2168,12 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		a, ok := loadAgent(udb, id)
-		if !ok || (a.Owner != user && a.Owner != seedOwner) {
+		payload, ok := buildAgentExport(udb, id, user)
+		if !ok {
 			http.NotFound(w, r)
 			return
 		}
-		// Strip identity fields so the JSON is a portable recipe.
-		// Owner is whoever imports; ID + Created are reassigned on
-		// import. Memory does NOT travel — it's per-user-per-agent
-		// learning, not part of the persona contract.
-		export := a
-		export.ID = ""
-		export.Owner = ""
-		export.OwnedBy = ""
-		export.Created = time.Time{}
-		export.Updated = time.Time{}
-		// Bundle the agent's owned sub-agents (specialists) and their
-		// inline Tools so the recipe is self-contained — importing the
-		// parent recreates the whole tree. Identity fields are stripped;
-		// OwnedBy is re-linked to the new parent id on import. Sub-agents
-		// are always parented to a TOP-LEVEL agent (they don't chain), so
-		// a single direct-children pass covers the tree.
-		var subs []AgentRecord
-		for _, k := range udb.Keys(agentsTable) {
-			if k == id {
-				continue
-			}
-			var s AgentRecord
-			if !udb.Get(agentsTable, k, &s) {
-				continue
-			}
-			if s.OwnedBy != id || (s.Owner != user && s.Owner != seedOwner) {
-				continue
-			}
-			s.ID = ""
-			s.Owner = ""
-			s.OwnedBy = ""
-			s.Created = time.Time{}
-			s.Updated = time.Time{}
-			subs = append(subs, s)
-		}
-		payload := agentExport{AgentRecord: export, SubAgents: subs}
-		filename := safeFilename(a.Name) + ".agent.json"
+		filename := safeFilename(payload.Name) + ".agent.json"
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Disposition",
 			`attachment; filename="`+filename+`"`)
