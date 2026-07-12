@@ -441,6 +441,7 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/save_snippet", T.handleSaveSnippet)
 	sub.HandleFunc("/api/rules", T.handleRules)
 	sub.HandleFunc("/api/rules/", T.handleRuleDelete)
+	sub.HandleFunc("/api/permissions", T.handlePermissions)
 	MountSubMux(mux, prefix, sub)
 	go T.runWatchLoop(AppContext())
 	RegisterLiveProvider(func() []LiveEntry {
@@ -2646,18 +2647,24 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				}
 				bin := cmdBinary(cmd)
 				emit(id, probeEvent{Kind: "cmd", Text: cmd})
-				destructive, reason := is_destructive(cmd)
-				if destructive {
-					// Check always-allow list before prompting.
-					if udb != nil {
-						var alwaysOK bool
-						if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
-							emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
-							destructive = false
-						}
+				cat, reason := classify_command(cmd)
+				needsConfirm := cat != RiskNone
+				if needsConfirm && udb != nil {
+					// Per-command always-allow (operator trusts this exact command).
+					var alwaysOK bool
+					if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
+						emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
+						needsConfirm = false
+					}
+					// Per-category allowance (operator trusts this whole class of
+					// command — the web analog of the CLI --allow flag, set via the
+					// Permissions modal).
+					if needsConfirm && loadAllowedCategories(udb)[cat] {
+						emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + "): " + cmd})
+						needsConfirm = false
 					}
 				}
-				if destructive {
+				if needsConfirm {
 					pendingCmds.Store(id, cmd)
 					emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
 					select {

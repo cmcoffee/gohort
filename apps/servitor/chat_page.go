@@ -183,6 +183,8 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 						// overflow menu so the toolbar stays lean.
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",
 							Method: "client", URL: "servitor_run_mapapp", Group: "More"},
+						{Label: "Permissions", Title: "Choose which categories of risky command run without asking — database writes, file deletion, outbound calls, system control. Unchecked categories still prompt before each command.",
+							Method: "client", URL: "servitor_permissions", Group: "More"},
 						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session", Group: "More"},
 						{Label: "Export knowledge", Title: "Download this system's accumulated knowledge (profile, facts, techniques, logs) as a markdown file — credentials excluded — for handing to Claude to help build or improve a support tool.",

@@ -47,54 +47,107 @@ func init() {
 	})
 }
 
-// always_destructive holds commands considered dangerous regardless of
-// arguments. Any command in this set requires user authorization.
-var always_destructive = map[string]bool{
-	"rm": true, "rmdir": true, "shred": true, "wipe": true,
+// RiskCategory names the KIND of risk a command carries, so the operator can
+// gate the categories that matter — changing database data, deleting files,
+// making outbound calls, or stopping/reconfiguring the host — while benign
+// work (a report redirected to a file, read-only probes) runs freely. This
+// replaced a blunt destructive/safe split that interrupted on every ">"
+// redirection yet never noticed a "psql -c DELETE" or a "curl" at all.
+type RiskCategory string
+
+const (
+	RiskNone       RiskCategory = ""            // read-only / benign — never gated
+	RiskFileDelete RiskCategory = "file_delete" // removes or overwrites files / disks
+	RiskDataMutate RiskCategory = "data_mutate" // changes data in a database
+	RiskNetEgress  RiskCategory = "net_egress"  // makes an outbound call from the appliance
+	RiskSysControl RiskCategory = "sys_control" // stops services, reboots, firewall/user/kernel
+)
+
+// AllRiskCategories is every gate-able category, in display order. Used to
+// validate --allow and to render the help.
+var AllRiskCategories = []RiskCategory{RiskFileDelete, RiskDataMutate, RiskNetEgress, RiskSysControl}
+
+// file_delete_cmds remove files or destroy whole filesystems / disks.
+var file_delete_cmds = map[string]bool{
+	"rm": true, "rmdir": true, "unlink": true, "shred": true, "wipe": true,
 	"dd": true, "mkfs": true, "mke2fs": true, "mkntfs": true, "mkswap": true,
 	"fdisk": true, "gdisk": true, "parted": true, "sfdisk": true, "cfdisk": true,
+	"truncate": true,
+}
+
+// sys_control_cmds stop/kill services, reboot the host, or reconfigure
+// users/kernel — control-plane changes, not file or database data.
+var sys_control_cmds = map[string]bool{
 	"kill": true, "killall": true, "pkill": true, "skill": true,
 	"shutdown": true, "reboot": true, "halt": true, "poweroff": true,
-	"truncate": true,
-	"userdel":  true, "deluser": true, "groupdel": true, "delgroup": true,
+	"userdel": true, "deluser": true, "groupdel": true, "delgroup": true,
 	"passwd": true, "chpasswd": true, "usermod": true,
 	"visudo": true, "sudoedit": true,
 	"insmod": true, "rmmod": true,
 }
 
-// destructive_verbs maps commands to sub-verb arguments that make them
-// destructive. "systemctl status" is safe; "systemctl stop" is not.
-var destructive_verbs = map[string][]string{
-	"systemctl":    {"stop", "kill", "disable", "mask", "reset-failed"},
-	"service":      {"stop"},
-	"iptables":     {"-F", "--flush", "-X", "-Z", "--delete-chain"},
-	"ip6tables":    {"-F", "--flush", "-X", "-Z"},
-	"nft":          {"flush", "delete"},
-	"firewall-cmd": {"--remove-service", "--remove-port", "--remove-rule", "--panic-on"},
-	"modprobe":     {"-r", "--remove"},
-	// Container / orchestration tools
-	"kubectl":        {"delete", "drain", "cordon", "taint", "replace", "rollout"},
-	"terraform":      {"destroy", "apply"},
-	"helm":           {"uninstall", "delete", "rollback"},
-	"docker":         {"rm", "rmi", "stop", "kill", "prune"},
-	"docker-compose": {"down", "rm", "kill"},
-	"podman":         {"rm", "rmi", "stop", "kill"},
-	"git":            {"clean", "reset", "push"},
-	"ansible":        {"playbook"},
-	"flux":           {"delete", "uninstall"},
-	"argocd":         {"delete", "terminate"},
+// net_egress_cmds make an outbound connection FROM the appliance — the vector
+// for pulling in code or exfiltrating data.
+var net_egress_cmds = map[string]bool{
+	"curl": true, "wget": true, "nc": true, "ncat": true, "netcat": true,
+	"telnet": true, "ssh": true, "scp": true, "sftp": true, "rsync": true,
+	"ftp": true, "tftp": true, "socat": true, "aria2c": true,
+	"http": true, "https": true, "lynx": true, "links": true, "w3m": true,
 }
 
-// has_file_redirect returns true if cmd writes to a file via shell redirection
-// (> or >>) to a path other than /dev/null.
-func has_file_redirect(cmd string) bool {
-	for _, safe := range []string{
-		"2>&1", "1>&2", ">&2", ">&1",
-		">/dev/null", "> /dev/null", ">>/dev/null", ">> /dev/null",
-	} {
-		cmd = strings.ReplaceAll(cmd, safe, " ")
-	}
-	return strings.Contains(cmd, ">")
+// control_verbs maps a command to the sub-verbs that make it a control-plane
+// change, with the category each falls under. "systemctl status" is safe;
+// "systemctl stop" is sys_control. git is handled separately (its verbs split
+// across net_egress and file_delete).
+var control_verbs = map[string]struct {
+	cat   RiskCategory
+	verbs []string
+}{
+	"systemctl":      {RiskSysControl, []string{"stop", "kill", "disable", "mask", "reset-failed"}},
+	"service":        {RiskSysControl, []string{"stop"}},
+	"iptables":       {RiskSysControl, []string{"-F", "--flush", "-X", "-Z", "--delete-chain"}},
+	"ip6tables":      {RiskSysControl, []string{"-F", "--flush", "-X", "-Z"}},
+	"nft":            {RiskSysControl, []string{"flush", "delete"}},
+	"firewall-cmd":   {RiskSysControl, []string{"--remove-service", "--remove-port", "--remove-rule", "--panic-on"}},
+	"modprobe":       {RiskSysControl, []string{"-r", "--remove"}},
+	"kubectl":        {RiskSysControl, []string{"delete", "drain", "cordon", "taint", "replace", "rollout"}},
+	"terraform":      {RiskSysControl, []string{"destroy", "apply"}},
+	"helm":           {RiskSysControl, []string{"uninstall", "delete", "rollback"}},
+	"docker":         {RiskSysControl, []string{"rm", "rmi", "stop", "kill", "prune"}},
+	"docker-compose": {RiskSysControl, []string{"down", "rm", "kill"}},
+	"podman":         {RiskSysControl, []string{"rm", "rmi", "stop", "kill"}},
+	"ansible":        {RiskSysControl, []string{"playbook"}},
+	"flux":           {RiskSysControl, []string{"delete", "uninstall"}},
+	"argocd":         {RiskSysControl, []string{"delete", "terminate"}},
+}
+
+// sql_clients run SQL; a mutating statement anywhere in the invocation counts
+// as a database data change. A read-only SELECT does not.
+var sql_clients = map[string]bool{
+	"psql": true, "mysql": true, "mariadb": true, "sqlite3": true, "sqlite": true,
+	"clickhouse-client": true, "cqlsh": true, "usql": true, "duckdb": true,
+}
+
+// sql_mutations are the statement keywords that change data or schema.
+var sql_mutations = []string{
+	"insert", "update", "delete", "drop", "truncate", "alter", "create",
+	"replace", "grant", "revoke", "merge", "upsert",
+}
+
+// mongo_clients + mongo_mutations: the same idea for MongoDB (usually --eval).
+var mongo_clients = map[string]bool{"mongo": true, "mongosh": true}
+var mongo_mutations = []string{
+	"insert", "update", "delete", "remove", "drop", "replaceone",
+	"deleteone", "deletemany", "updateone", "updatemany", "createcollection",
+	"dropdatabase", "renamecollection", "bulkwrite",
+}
+
+// redis_mutations are the redis-cli verbs that change stored data.
+var redis_mutations = []string{
+	"set", "setex", "setnx", "mset", "getset", "append", "del", "unlink",
+	"expire", "persist", "rename", "flushall", "flushdb", "hset", "hdel",
+	"lpush", "rpush", "lpop", "rpop", "sadd", "srem", "zadd", "zrem",
+	"incr", "decr", "incrby", "decrby", "move", "restore",
 }
 
 // cmd_base returns the basename of a possibly path-prefixed command.
@@ -153,50 +206,126 @@ func parse_cmd(seg string) (name string, args []string) {
 	return cmd_base(fields[i]), fields[i+1:]
 }
 
-// is_destructive returns (true, reason) if cmd or any sub-command within it
-// is potentially destructive. Safe read-only commands return (false, "").
-func is_destructive(cmd string) (bool, string) {
-	if has_file_redirect(cmd) {
-		return true, "writes to a file via shell redirection"
-	}
+// classify_command returns the risk CATEGORY of cmd (RiskNone for read-only or
+// benign writes) plus a short human reason. It inspects each sub-command of a
+// pipeline/compound line, so "cat x | psql -c 'DELETE ...'" is caught. The
+// first risky segment wins. A plain file redirection is deliberately NOT a
+// category — writing a report to a file is routine, not worth interrupting.
+func classify_command(cmd string) (RiskCategory, string) {
 	for _, seg := range shell_segments(cmd) {
 		name, args := parse_cmd(seg)
 		if name == "" {
 			continue
 		}
-		if always_destructive[name] {
-			return true, fmt.Sprintf("destructive command: %s", name)
+		if file_delete_cmds[name] {
+			return RiskFileDelete, "deletes or overwrites files: " + name
 		}
-		if verbs, ok := destructive_verbs[name]; ok {
-			for _, arg := range args {
-				for _, verb := range verbs {
-					if arg == verb || strings.HasPrefix(arg, verb) {
-						return true, fmt.Sprintf("destructive sub-command: %s %s", name, arg)
+		if sys_control_cmds[name] {
+			return RiskSysControl, "stops/reconfigures the host: " + name
+		}
+		// git splits across categories: network verbs contact a remote, clean/
+		// reset discard local files/changes.
+		if name == "git" {
+			for _, a := range args {
+				switch a {
+				case "push", "fetch", "pull", "clone":
+					return RiskNetEgress, "git " + a + " contacts a remote"
+				case "clean", "reset":
+					return RiskFileDelete, "git " + a + " discards files/changes"
+				}
+			}
+		}
+		if cv, ok := control_verbs[name]; ok {
+			for _, a := range args {
+				for _, v := range cv.verbs {
+					if a == v || strings.HasPrefix(a, v) {
+						return cv.cat, fmt.Sprintf("%s %s", name, a)
 					}
 				}
 			}
 		}
-		// ip has multi-word destructive sub-commands (e.g. "ip link set X down").
+		if cat, reason := db_category(name, seg); cat != RiskNone {
+			return cat, reason
+		}
+		if net_egress_cmds[name] {
+			return RiskNetEgress, "outbound call from the appliance: " + name
+		}
+		// ip has multi-word control sub-commands (e.g. "ip link set X down").
 		if name == "ip" && len(args) >= 2 {
 			joined := strings.Join(args, " ")
 			switch args[0] {
 			case "link":
 				if strings.Contains(joined, " down") || strings.Contains(joined, "delete") {
-					return true, "destructive: ip link down/delete"
+					return RiskSysControl, "ip link down/delete"
 				}
 			case "addr":
 				if args[1] == "del" || args[1] == "delete" {
-					return true, "destructive: ip addr del"
+					return RiskSysControl, "ip addr del"
 				}
 			case "route":
 				if args[1] == "del" || args[1] == "delete" {
-					return true, "destructive: ip route del"
+					return RiskSysControl, "ip route del"
 				}
 			}
 		}
 	}
-	return false, ""
+	return RiskNone, ""
 }
+
+// db_category flags a command that CHANGES data in a database — a SQL client
+// running a mutating statement (INSERT/UPDATE/DELETE/DROP/…), a redis-cli
+// write, or a mutating mongo --eval. A read-only query (SELECT, GET) is NOT
+// flagged, so investigation stays friction-free. Keyword match is whole-token
+// so a column named "created" doesn't trip "create".
+func db_category(name, seg string) (RiskCategory, string) {
+	lower := strings.ToLower(seg)
+	switch {
+	case sql_clients[name] && containsAnyWord(lower, sql_mutations):
+		return RiskDataMutate, "database write via " + name
+	case mongo_clients[name] && containsAnyWord(lower, mongo_mutations):
+		return RiskDataMutate, "database write via " + name
+	case name == "redis-cli" && containsAnyWord(lower, redis_mutations):
+		return RiskDataMutate, "redis write via redis-cli"
+	}
+	return RiskNone, ""
+}
+
+// containsAnyWord reports whether any word appears in hay as a whole token
+// (bounded by non-identifier characters).
+func containsAnyWord(hay string, words []string) bool {
+	for _, w := range words {
+		if wordPresent(hay, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// wordPresent reports whether w occurs in hay bounded by non-identifier
+// characters on both sides, so "delete" matches "delete from t" but not
+// "deleted_at".
+func wordPresent(hay, w string) bool {
+	from := 0
+	for {
+		j := strings.Index(hay[from:], w)
+		if j < 0 {
+			return false
+		}
+		j += from
+		beforeOK := j == 0 || !isIdentByte(hay[j-1])
+		end := j + len(w)
+		afterOK := end >= len(hay) || !isIdentByte(hay[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		from = j + 1
+	}
+}
+
+func isIdentByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_'
+}
+
 
 type Servitor struct {
 	input struct {
@@ -206,11 +335,23 @@ type Servitor struct {
 		key        string
 		password   string
 		confirm    bool
+		allow      string
 		output     string
 		max_rounds int
 	}
-	conn *ssh.Client
+	// allowSet holds the risk categories the operator has chosen to run WITHOUT
+	// confirmation (parsed from --allow in Init). A category not in the set
+	// still prompts. Empty = every risky category prompts.
+	allowSet map[RiskCategory]bool
+	conn     *ssh.Client
 	AppCore
+}
+
+// cmd_allowed reports whether a command of category cat should run without a
+// confirmation prompt: benign commands always, otherwise only if the operator
+// listed the category in --allow.
+func (T *Servitor) cmd_allowed(cat RiskCategory) bool {
+	return cat == RiskNone || T.allowSet[cat]
 }
 
 func (T Servitor) Name() string { return "servitor" }
@@ -602,11 +743,51 @@ func (T *Servitor) Init() error {
 	T.Flags.StringVar(&T.input.user, "user", "root", "SSH username.")
 	T.Flags.StringVar(&T.input.key, "key", "", "Path to SSH private key file (PEM). Tries ~/.ssh/id_rsa if not set.")
 	T.Flags.StringVar(&T.input.password, "password", "", "SSH password (key auth preferred).")
-	T.Flags.BoolVar(&T.input.confirm, "confirm", "Prompt for confirmation before every command (not just destructive ones).")
+	T.Flags.BoolVar(&T.input.confirm, "confirm", "Prompt for confirmation before every command (not just risky ones).")
+	T.Flags.StringVar(&T.input.allow, "allow", "", "Comma-separated risk categories to run WITHOUT confirmation (your \"levels of allowance\"): file_delete, data_mutate, net_egress, sys_control. \"all\" allows every category. Example: --allow=net_egress,sys_control leaves only file deletion and database writes prompting. Default: all four prompt.")
 	T.Flags.StringVar(&T.input.output, "output", "", "File path to save the Markdown report.")
 	T.Flags.IntVar(&T.input.max_rounds, "max_rounds", 100, "Max agent loop rounds (default 100).")
-	T.Flags.Order("host", "port", "user", "key", "password", "confirm", "output", "max_rounds")
-	return T.Flags.Parse()
+	T.Flags.Order("host", "port", "user", "key", "password", "confirm", "allow", "output", "max_rounds")
+	if err := T.Flags.Parse(); err != nil {
+		return err
+	}
+	set, err := parse_allow(T.input.allow)
+	if err != nil {
+		return err
+	}
+	T.allowSet = set
+	return nil
+}
+
+// parse_allow turns the --allow flag into a set of auto-run categories.
+// "all" enables every category; an unknown name is a hard error so a typo
+// (e.g. "network") doesn't silently leave a category gated.
+func parse_allow(spec string) (map[RiskCategory]bool, error) {
+	set := map[RiskCategory]bool{}
+	for _, raw := range strings.Split(spec, ",") {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" {
+			continue
+		}
+		if name == "all" {
+			for _, c := range AllRiskCategories {
+				set[c] = true
+			}
+			continue
+		}
+		valid := false
+		for _, c := range AllRiskCategories {
+			if string(c) == name {
+				set[c] = true
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, fmt.Errorf("unknown --allow category %q (valid: file_delete, data_mutate, net_egress, sys_control, all)", name)
+		}
+	}
+	return set, nil
 }
 
 // confirm_cmd prompts the user to allow or deny a command before it runs.
@@ -892,8 +1073,8 @@ func (T *Servitor) Main() error {
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
 			}
-			destructive, reason := is_destructive(cmd)
-			if destructive {
+			cat, reason := classify_command(cmd)
+			if cat != RiskNone && !T.cmd_allowed(cat) {
 				if !T.confirm_cmd(cmd, reason, true) {
 					return "", fmt.Errorf("command denied by user")
 				}

@@ -610,6 +610,58 @@
       refresh();
     });
 
+    // Command permissions — the operator's "levels of allowance": which
+    // categories of risky command run WITHOUT a confirmation prompt. Per-user
+    // (not per-appliance), mirrors the CLI --allow flag. Checked = auto-run;
+    // unchecked = still prompt each time. Autosaves on toggle.
+    window.uiRegisterClientAction('servitor_permissions', function() {
+      var cats = [
+        {key: 'data_mutate', label: 'Database writes',
+         desc: 'INSERT / UPDATE / DELETE / DROP and other data changes (psql, mysql, redis-cli, mongo). Read-only queries never prompt.'},
+        {key: 'file_delete', label: 'File deletion',
+         desc: 'rm, shred, dd, truncate, git clean/reset — removing or overwriting files.'},
+        {key: 'net_egress', label: 'Outbound calls',
+         desc: 'curl, wget, ssh, scp, git push — the appliance reaching out to the network.'},
+        {key: 'sys_control', label: 'System control',
+         desc: 'systemctl stop, reboot, kill, docker rm, firewall changes.'},
+      ];
+      var state = {};
+      var listBox = el('div', {}, [el('div', {class: 'ui-pl-empty'}, ['Loading…'])]);
+      function save() {
+        fetch('api/permissions', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(state),
+        });
+      }
+      function render() {
+        listBox.innerHTML = '';
+        listBox.appendChild(el('div', {class: 'ui-pl-empty',
+          style: 'text-align:left;margin-bottom:10px'},
+          ['Checked categories run WITHOUT asking. Unchecked ones prompt for confirmation before each matching command. Benign work — read-only probes, writing a report to a file — never prompts.']));
+        cats.forEach(function(c) {
+          var cb = el('input', {type: 'checkbox', style: 'margin-top:3px'});
+          cb.checked = !!state[c.key];
+          cb.onchange = function() { state[c.key] = cb.checked; save(); };
+          var row = el('label', {
+            style: 'display:flex;gap:10px;align-items:flex-start;padding:8px 4px;cursor:pointer;border-bottom:1px solid var(--border)'},
+            [cb, el('div', {}, [
+              el('div', {style: 'font-weight:600'}, [c.label]),
+              el('div', {class: 'ui-pl-empty', style: 'text-align:left;margin:2px 0 0'}, [c.desc]),
+            ])]);
+          listBox.appendChild(row);
+        });
+      }
+      fetch('api/permissions')
+        .then(function(r) { return r.json(); })
+        .then(function(d) { state = d || {}; render(); })
+        .catch(function() { state = {}; render(); });
+      var body = el('div', {class: 'ui-pl-modal-body'}, [listBox]);
+      var m = openModal('Command permissions', body);
+      var doneBtn = el('button', {class: 'ui-row-btn primary',
+        onclick: function(){ m.close(); }}, ['Done']);
+      m.footer(doneBtn);
+    });
+
     window.uiRegisterClientAction('servitor_open_profile', function() {
       var aid = getApplianceID();
       if (!aid) { window.uiAlert('Pick an appliance first'); return; }
