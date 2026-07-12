@@ -348,27 +348,71 @@ func ParseArtifactBundle(data []byte) (ArtifactBundle, error) {
 }
 
 // ArtifactImportOutcome records what happened to one artifact in an import.
+// Warnings are non-fatal: the artifact DID import, but a reference it needs (an
+// API credential, a tool an agent allowlists) isn't present on this install, so
+// it won't function until the admin supplies it.
 type ArtifactImportOutcome struct {
-	Type   string `json:"type"`
-	Name   string `json:"name"`
-	Status string `json:"status"` // "imported" | "skipped"
-	Detail string `json:"detail,omitempty"`
+	Type     string   `json:"type"`
+	Name     string   `json:"name"`
+	Status   string   `json:"status"` // "imported" | "skipped"
+	Detail   string   `json:"detail,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ArtifactImportResult summarizes a bundle import: per-artifact outcomes plus
-// running counts, so the caller can report a partial import honestly.
+// running counts, so the caller can report a partial import honestly. Warnings
+// aggregates every outcome's warnings (each already artifact-qualified) for a
+// flat top-level display.
 type ArtifactImportResult struct {
 	Bundle   string                  `json:"bundle"`
 	Imported int                     `json:"imported"`
 	Skipped  int                     `json:"skipped"`
 	Outcomes []ArtifactImportOutcome `json:"outcomes"`
+	Warnings []string                `json:"warnings,omitempty"`
+}
+
+// Summary renders a one-glance human summary of an import: the counts, then any
+// unmet-dependency warnings each on their own line. Suitable for a form's
+// post-submit message. Returns "" for a nil/empty result.
+func (r ArtifactImportResult) Summary() string {
+	if r.Imported == 0 && r.Skipped == 0 && len(r.Warnings) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Imported %d, skipped %d.", r.Imported, r.Skipped)
+	for _, w := range r.Warnings {
+		b.WriteString("\nWarning: ")
+		b.WriteString(w)
+	}
+	return b.String()
+}
+
+// artifactExists reports whether an artifact selection resolves on this install
+// — the existence probe used to tell a satisfied dependency from a missing one.
+// It reuses the type's ExportArtifact (which errors when the artifact isn't
+// found) so no separate lookup path can drift from what export/import see.
+func artifactExists(db Database, s ArtifactSel) bool {
+	at, ok := lookupArtifactType(strings.TrimSpace(s.Type))
+	if !ok {
+		return false
+	}
+	_, err := at.ExportArtifact(db, strings.TrimSpace(s.Name), strings.TrimSpace(s.Owner))
+	return err == nil
 }
 
 // ImportArtifactBundle reconstitutes every artifact in a bundle as owner's DRAFT
 // (each type's review state — connectors unapproved, tools pending). One
 // artifact's failure never aborts the rest: an unknown type or a per-type
-// import error surfaces as a skip with a reason. Referenced credentials must
-// exist on this install; a validate failure is a skip, not a fatal error.
+// import error surfaces as a skip with a reason.
+//
+// After importing, a second pass WARNS about unmet dependencies: for each
+// imported artifact it resolves the references the artifact declares (a tool's
+// API credential, an agent's allowlisted tools) and checks each is present on
+// this install — brought in by this same bundle or already here. A reference
+// that resolves to nothing is a per-outcome warning (also aggregated on the
+// result): the artifact imported, but won't function until the admin supplies
+// the missing piece. The check runs AFTER all imports so a credential bundled
+// alongside the tool that needs it doesn't false-warn.
 func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImportResult, error) {
 	var res ArtifactImportResult
 	bundle, err := ParseArtifactBundle(data)
@@ -379,6 +423,9 @@ func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImpor
 	if len(bundle.Artifacts) == 0 {
 		return res, Error("no artifacts in bundle")
 	}
+	// imported tracks the selection of each artifact that actually landed, so the
+	// dependency pass knows what to inspect (and can resolve it from the store).
+	var imported []ArtifactSel
 	for _, a := range bundle.Artifacts {
 		typ := strings.TrimSpace(a.Type)
 		at, ok := lookupArtifactType(typ)
@@ -405,7 +452,36 @@ func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImpor
 			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
 				Type: typ, Name: name, Status: "imported"})
 			res.Imported++
+			imported = append(imported, ArtifactSel{Type: typ, Name: name, Owner: owner})
 		}
 	}
+	warnMissingDependencies(db, &res, imported)
 	return res, nil
+}
+
+// warnMissingDependencies is the post-import pass: for every imported artifact
+// it resolves declared references and flags any that aren't present on the
+// install. Warnings attach to the matching outcome and to the aggregated list.
+func warnMissingDependencies(db Database, res *ArtifactImportResult, imported []ArtifactSel) {
+	// Index outcomes by the imported selection so a warning lands on the right
+	// row. Only "imported" outcomes are in `imported`, so keys are unique.
+	outcomeAt := map[string]int{}
+	for i, o := range res.Outcomes {
+		if o.Status == "imported" {
+			outcomeAt[o.Type+"\x00"+o.Name] = i
+		}
+	}
+	for _, s := range imported {
+		for _, dep := range artifactDeps(db, s) {
+			if artifactExists(db, dep) {
+				continue
+			}
+			msg := fmt.Sprintf("%s %q references %s %q, which isn't present on this install — add it before this %s can be used.",
+				s.Type, s.Name, dep.Type, dep.Name, s.Type)
+			res.Warnings = append(res.Warnings, msg)
+			if i, ok := outcomeAt[s.Type+"\x00"+s.Name]; ok {
+				res.Outcomes[i].Warnings = append(res.Outcomes[i].Warnings, msg)
+			}
+		}
+	}
 }

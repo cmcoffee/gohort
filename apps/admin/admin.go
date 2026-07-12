@@ -1710,7 +1710,13 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(res)
+		// message drives the form's post-submit note: counts plus any
+		// unmet-dependency warnings, so an import that leaves a tool wired to a
+		// missing credential says so instead of looking like a clean success.
+		_ = json.NewEncoder(w).Encode(struct {
+			ArtifactImportResult
+			Message string `json:"message"`
+		}{res, res.Summary()})
 	})
 
 	// Catalog — a curated, in-tree set of ready-made artifact bundles (the

@@ -1857,9 +1857,18 @@
       // RedirectURL is set) navigates on success.
       if (submitMode) {
         var submitBtn = el('button', {class: 'ui-form-submit', type: 'button'}, [cfg.submit_label]);
+        // Post-submit note: when the endpoint returns a `message` string, show
+        // it inline (persisting until the next submit). Generic — any create /
+        // import form can report an outcome without app-specific wiring. The
+        // `warnings` array, when present and non-empty, tints the note so an
+        // import that leaves an unmet reference reads as a caution, not a clean
+        // success.
+        var msgEl = el('div', {class: 'ui-form-msg', style: 'display:none;white-space:pre-wrap;margin-top:0.5rem;padding:0.5rem 0.7rem;border-left:3px solid var(--border);border-radius:4px;font-size:0.85rem;line-height:1.45;background:var(--bg-1)'});
         submitBtn.addEventListener('click', function() {
           submitBtn.disabled = true;
           submitBtn.textContent = 'Saving…';
+          msgEl.style.display = 'none';
+          msgEl.textContent = '';
           var postURL = cfg.post_url || cfg.source;
           fetchJSON(postURL, {
             method: cfg.method || 'POST',
@@ -1881,6 +1890,13 @@
             } else {
               submitBtn.textContent = cfg.submit_label;
               submitBtn.disabled = false;
+              if (resp && typeof resp.message === 'string' && resp.message) {
+                msgEl.textContent = resp.message;
+                var warned = resp.warnings && resp.warnings.length;
+                msgEl.style.borderLeftColor = warned ? 'var(--warn, #d97706)' : 'var(--border)';
+                msgEl.style.color = warned ? 'var(--warn, #d97706)' : 'var(--text)';
+                msgEl.style.display = '';
+              }
             }
           }).catch(function(err) {
             submitBtn.textContent = cfg.submit_label;
@@ -1889,6 +1905,7 @@
           });
         });
         wrap.appendChild(submitBtn);
+        wrap.appendChild(msgEl);
       }
     }
 

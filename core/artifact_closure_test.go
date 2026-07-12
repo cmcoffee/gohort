@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -25,8 +26,23 @@ func (f *fakeArtifact) ExportArtifact(_ Database, name, _ string) (json.RawMessa
 	return json.Marshal(payload)
 }
 
-func (f *fakeArtifact) ImportArtifact(Database, json.RawMessage, string) (string, string, error) {
-	return "", "", nil
+// ImportArtifact registers the artifact as present (recipe is a JSON string =
+// the artifact's name), so the post-import dependency pass can tell an imported
+// or pre-existing reference from a missing one. A same-named artifact skips.
+func (f *fakeArtifact) ImportArtifact(_ Database, recipe json.RawMessage, _ string) (string, string, error) {
+	var name string
+	_ = json.Unmarshal(recipe, &name)
+	if name == "" {
+		return "", "", Error("missing name")
+	}
+	if f.recipes == nil {
+		f.recipes = map[string]string{}
+	}
+	if _, exists := f.recipes[name]; exists {
+		return name, "already exists", nil
+	}
+	f.recipes[name] = name
+	return name, "", nil
 }
 
 func (f *fakeArtifact) Dependencies(_ Database, name, _ string) []ArtifactSel {
@@ -187,6 +203,78 @@ func TestExportClosure_ExplicitTypoStillErrors(t *testing.T) {
 	}
 	if _, err := ExportArtifactBundle(nil, []ArtifactSel{{Type: "bogus", Name: "x"}}); err == nil {
 		t.Fatal("expected an error for an unknown explicit type")
+	}
+}
+
+// importBundleBytes builds bundle JSON whose artifacts each carry their name as
+// the recipe (the shape fakeArtifact.ImportArtifact expects).
+func importBundleBytes(t *testing.T, sels ...ArtifactSel) []byte {
+	t.Helper()
+	b := ArtifactBundle{Bundle: ArtifactBundleFormat}
+	for _, s := range sels {
+		recipe, _ := json.Marshal(s.Name)
+		b.Artifacts = append(b.Artifacts, PortableArtifact{Type: s.Type, Name: s.Name, Recipe: recipe})
+	}
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("marshal bundle: %v", err)
+	}
+	return data
+}
+
+func TestImportWarns_MissingDependency(t *testing.T) {
+	tool := &fakeArtifact{typ: "tool", deps: map[string][]ArtifactSel{
+		"weather": {{Type: "credential", Name: "openweather"}}}}
+	cred := &fakeArtifact{typ: "credential"}
+	withFakeTypes(t, tool, cred)
+
+	// Bundle carries the tool but NOT its credential, and the install has none.
+	res, err := ImportArtifactBundle(nil, importBundleBytes(t, ArtifactSel{Type: "tool", Name: "weather"}), "u")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Imported != 1 || len(res.Warnings) != 1 {
+		t.Fatalf("expected 1 imported + 1 warning, got imported=%d warnings=%v", res.Imported, res.Warnings)
+	}
+	if len(res.Outcomes) != 1 || len(res.Outcomes[0].Warnings) != 1 {
+		t.Fatalf("warning should attach to the tool's outcome, got %+v", res.Outcomes)
+	}
+	if !strings.Contains(res.Summary(), "Warning:") {
+		t.Fatalf("summary should surface the warning, got %q", res.Summary())
+	}
+}
+
+func TestImportNoWarn_DependencyInBundle(t *testing.T) {
+	tool := &fakeArtifact{typ: "tool", deps: map[string][]ArtifactSel{
+		"weather": {{Type: "credential", Name: "openweather"}}}}
+	cred := &fakeArtifact{typ: "credential"}
+	withFakeTypes(t, tool, cred)
+
+	// Credential travels in the same bundle (after the tool, as closure emits it).
+	res, err := ImportArtifactBundle(nil, importBundleBytes(t,
+		ArtifactSel{Type: "tool", Name: "weather"},
+		ArtifactSel{Type: "credential", Name: "openweather"}), "u")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if res.Imported != 2 || len(res.Warnings) != 0 {
+		t.Fatalf("a bundled dependency must not warn, got imported=%d warnings=%v", res.Imported, res.Warnings)
+	}
+}
+
+func TestImportNoWarn_DependencyAlreadyPresent(t *testing.T) {
+	tool := &fakeArtifact{typ: "tool", deps: map[string][]ArtifactSel{
+		"weather": {{Type: "credential", Name: "openweather"}}}}
+	// Credential already on the install (not in the bundle).
+	cred := &fakeArtifact{typ: "credential", recipes: map[string]string{"openweather": "openweather"}}
+	withFakeTypes(t, tool, cred)
+
+	res, err := ImportArtifactBundle(nil, importBundleBytes(t, ArtifactSel{Type: "tool", Name: "weather"}), "u")
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("a dependency already present must not warn, got %v", res.Warnings)
 	}
 }
 

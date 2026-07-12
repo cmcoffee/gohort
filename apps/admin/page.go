@@ -1304,7 +1304,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							SubmitLabel: "Import artifacts",
 							Fields: []ui.FormField{
 								{Field: "pack", Label: "Artifact bundle file", Type: "file", Accept: ".json,application/json",
-									Help: "Choose an exported bundle (.json) — connectors, tools, API credentials, and/or agents. Imported artifacts are drafted for review (connectors UNAPPROVED, tools PENDING, credentials inert until you add the secret); a name that already exists is skipped. No secrets travel."},
+									Help: "Choose an exported bundle (.json) — connectors, tools, API credentials, and/or agents. Imported artifacts are drafted for review (connectors UNAPPROVED, tools PENDING, credentials inert until you add the secret); a name that already exists is skipped. No secrets travel. If an imported artifact references something not in the bundle or on this install (a missing API credential, a tool an agent needs), the import flags it as a warning so you can add it."},
 							},
 						},
 						// Export — per-row Export (in the table above) grabs one
