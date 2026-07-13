@@ -206,7 +206,7 @@ const documentsListAssets = `<style>
 const documentsDetailBody = `
 <div class="docs-detail">
   <div class="docs-detail-hdr">
-    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72)">Delete</button></div>
+    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle — document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72)">Delete</button></div>
     <div class="docs-desc-wrap">
       <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries — be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
       <div class="docs-desc-actions">
@@ -951,6 +951,15 @@ const documentsDetailAssets = `<style>
       body: JSON.stringify({name: newName.trim()}),
     }).then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); loadDetail(); })
       .catch(function(err){ window.uiAlert('Rename failed: ' + (err && err.message || err)); });
+  });
+
+  $('#docs-export').addEventListener('click', function() {
+    // Navigates a hidden anchor at the export endpoint; the server sets
+    // Content-Disposition so the browser downloads a gohort.bundle/v1.
+    var a = document.createElement('a');
+    a.href = api('/api/collections/' + encodeURIComponent(cid) + '/export');
+    a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
   });
 
   $('#docs-delete').addEventListener('click', async function() {

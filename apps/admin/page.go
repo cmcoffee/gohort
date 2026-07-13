@@ -1298,8 +1298,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						// The unified importer accepts ANY artifact bundle, a legacy
 						// connector pack, or a single artifact; everything
 						// reconstitutes as a DRAFT (connectors unapproved, tools
-						// pending, credentials inert, skills disabled). A name that
-						// already exists is skipped, and no secret ever travels.
+						// pending, credentials inert, skills disabled; collections
+						// land user-scoped and re-embed their corpus in the
+						// background). A name that already exists is skipped, and no
+						// secret ever travels.
 						//
 						// Export — per-row Export (in the table above) grabs one
 						// connector; these buttons grab whole sets as one secret-free

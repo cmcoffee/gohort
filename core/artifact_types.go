@@ -8,8 +8,10 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -19,6 +21,7 @@ func init() {
 	RegisterArtifactType(toolArtifact{})
 	RegisterArtifactType(credentialArtifact{})
 	RegisterArtifactType(skillArtifact{})
+	RegisterArtifactType(collectionArtifact{})
 }
 
 // ---- connector -------------------------------------------------------------
@@ -413,9 +416,12 @@ func skillRecipeDeps(db Database, s SkillRecord, owner string, inBundle func(typ
 			add("credential", cred, "")
 		}
 	}
+	// Collection references carry the skill's owner: collections are per-user
+	// artifacts, so the closure/probe resolves them through the owner's pool
+	// (an owner-less collection selector can't be exported).
 	for _, cid := range s.AttachedCollections {
 		if cid = strings.TrimSpace(cid); cid != DeploymentKnowledgeCollectionID {
-			add("collection", cid, "")
+			add("collection", cid, owner)
 		}
 	}
 	return out
@@ -447,6 +453,277 @@ func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner s
 		return name, "", err
 	}
 	return name, "", nil
+}
+
+// ---- collection --------------------------------------------------------
+
+// PortableCollection is a Document Collection's wire recipe: metadata plus
+// every chunk's TEXT — vectors deliberately do not travel. Embeddings are
+// tied to the exporting install's embedding model and dominate the payload
+// size, so the importing install re-embeds with its own model instead
+// (background pass; see ingestImportedCollectionChunks).
+//
+// ID is the ONE identity field that DOES travel, unlike every other artifact
+// type: a collection's ID is its cross-artifact reference key (skills'
+// AttachedCollections, agents' knowledge pickers), so preserving it is what
+// lets a skill+collection bundle land with its wiring intact.
+type PortableCollection struct {
+	ID                 string          `json:"id,omitempty"`
+	Name               string          `json:"name"`
+	Description        string          `json:"description,omitempty"`
+	FilterRules        string          `json:"filter_rules,omitempty"`
+	ClassifyOnAutofill bool            `json:"classify_on_autofill,omitempty"`
+	IngestedURLs       []string        `json:"ingested_urls,omitempty"`
+	Chunks             []PortableChunk `json:"chunks,omitempty"`
+}
+
+// PortableChunk is one EmbeddedChunk minus everything install-specific: no
+// chunk ID (fresh UUIDs on import), no Source tag (derived from the
+// collection ID), no Vector/Model (re-embedded on import).
+type PortableChunk struct {
+	ReportID string `json:"report_id,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Section  string `json:"section,omitempty"`
+	Text     string `json:"text"`
+	Date     string `json:"date,omitempty"`
+	Locator  string `json:"locator,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+}
+
+// collectionArtifact makes a Document Collection portable — the first
+// artifact type that carries DATA (a corpus) rather than a recipe for a
+// capability. Export = metadata + chunk text without vectors; import =
+// user-scoped collection under the importing owner, with chunks re-embedded
+// in the BACKGROUND so a large corpus doesn't stall the import request
+// (until the pass finishes — or when no embedding backend is configured —
+// the chunks are still keyword-searchable; vector search skips rows without
+// a matching vector).
+//
+// ListArtifacts enumerates user-scoped collections only: deployment-scoped
+// ones (notably the auto-populated deployment-knowledge corpus, which can be
+// enormous) never ride along in an "export all", though an explicit
+// per-collection export still resolves them.
+type collectionArtifact struct{}
+
+func (collectionArtifact) ArtifactType() string { return "collection" }
+
+func (collectionArtifact) ListArtifacts(_ Database) []ArtifactSel {
+	base := CollectionsDB()
+	authDB := AuthDB()
+	if base == nil || authDB == nil {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, u := range AuthListUsers(authDB) {
+		udb := UserDB(base, u.Username)
+		if udb == nil {
+			continue
+		}
+		for _, k := range udb.Keys(CollectionsTable) {
+			var c Collection
+			if !udb.Get(CollectionsTable, k, &c) {
+				continue
+			}
+			if c.Owner != u.Username || IsDeploymentScope(c) {
+				continue
+			}
+			out = append(out, ArtifactSel{Type: "collection", Name: c.Name, Owner: u.Username})
+		}
+	}
+	return out
+}
+
+// findCollectionForExport resolves a collection by ID first, then by
+// case-insensitive name. ID-first matters: cross-artifact references (a
+// skill's AttachedCollections) are IDs, so the dependency closure and the
+// existence probe address collections the same way humans' export buttons
+// address them by name.
+func findCollectionForExport(owner, nameOrID string) (Collection, bool) {
+	udb := UserDB(CollectionsDB(), owner)
+	if c, ok := LoadCollection(udb, owner, strings.TrimSpace(nameOrID)); ok {
+		return c, true
+	}
+	lower := strings.ToLower(strings.TrimSpace(nameOrID))
+	if lower == "" {
+		return Collection{}, false
+	}
+	for _, c := range ListCollections(udb, owner) {
+		if strings.ToLower(strings.TrimSpace(c.Name)) == lower {
+			return c, true
+		}
+	}
+	return Collection{}, false
+}
+
+// collectionChunks reads every chunk under the collection's source tag from
+// the store searches actually use: the dedicated VectorDB, falling back to
+// the legacy split homes (collections bucket root for user-scoped, RootDB
+// for deployment) only when VectorDB isn't up. Sorted for byte-stable
+// exports (snapshot order is cache order, not deterministic).
+func collectionChunks(c Collection) []EmbeddedChunk {
+	src := CollectionSource(c.ID)
+	var out []EmbeddedChunk
+	if VectorDB != nil {
+		out = ChunksForSource(VectorDB, src)
+	} else {
+		if base := CollectionsDB(); base != nil {
+			out = append(out, ChunksForSource(base, src)...)
+		}
+		if RootDB != nil {
+			out = append(out, ChunksForSource(RootDB, src)...)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].ReportID != out[j].ReportID {
+			return out[i].ReportID < out[j].ReportID
+		}
+		if out[i].Section != out[j].Section {
+			return out[i].Section < out[j].Section
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+func (collectionArtifact) ExportArtifact(_ Database, name, owner string) (json.RawMessage, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil, Error("collection export requires an owner")
+	}
+	c, ok := findCollectionForExport(owner, name)
+	if !ok {
+		return nil, fmt.Errorf("no collection named %q for user %q", name, owner)
+	}
+	pc := PortableCollection{
+		ID:                 c.ID,
+		Name:               c.Name,
+		Description:        c.Description,
+		FilterRules:        c.FilterRules,
+		ClassifyOnAutofill: c.ClassifyOnAutofill,
+		IngestedURLs:       c.IngestedURLs,
+	}
+	for _, ch := range collectionChunks(c) {
+		pc.Chunks = append(pc.Chunks, PortableChunk{
+			ReportID: ch.ReportID,
+			Title:    ch.Title,
+			Section:  ch.Section,
+			Text:     ch.Text,
+			Date:     ch.Date,
+			Locator:  ch.Locator,
+			Kind:     ch.Kind,
+		})
+	}
+	return json.Marshal(pc)
+}
+
+func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return "", "", Error("collection import requires an owner")
+	}
+	var pc PortableCollection
+	if err := json.Unmarshal(recipe, &pc); err != nil {
+		return "", "", fmt.Errorf("invalid collection recipe: %w", err)
+	}
+	name := strings.TrimSpace(pc.Name)
+	if name == "" {
+		return "", "", Error("missing collection name")
+	}
+	base := CollectionsDB()
+	if base == nil {
+		return name, "", Error("collections store not initialized")
+	}
+	udb := UserDB(base, owner)
+	// The recipe's ID is preserved (it's what skills in the same bundle
+	// reference), so same-ID — including a deployment-scoped one like
+	// deployment-knowledge — skips, same as a name collision.
+	id := strings.TrimSpace(pc.ID)
+	if id == "" {
+		id = UUIDv4()
+	}
+	if _, exists := LoadCollection(udb, owner, id); exists {
+		return name, "a collection with this id already exists", nil
+	}
+	for _, c := range ListCollections(udb, owner) {
+		if strings.EqualFold(strings.TrimSpace(c.Name), name) {
+			return name, "a collection with this name already exists", nil
+		}
+	}
+	c := Collection{
+		ID:                 id,
+		Owner:              owner,
+		Name:               name,
+		Description:        pc.Description,
+		FilterRules:        pc.FilterRules,
+		ClassifyOnAutofill: pc.ClassifyOnAutofill,
+		IngestedURLs:       pc.IngestedURLs,
+		Created:            time.Now(),
+	}
+	SaveCollection(udb, c) // always user-scoped on import; admin can re-scope locally
+	if len(pc.Chunks) > 0 {
+		go ingestImportedCollectionChunks(id, name, pc.Chunks)
+	}
+	return name, "", nil
+}
+
+// ingestImportedCollectionChunks is the background re-embed pass behind a
+// collection import: each traveled chunk keeps its text and shape but gets a
+// fresh ID, this install's embedding, and the collection's source tag. Runs
+// off the request goroutine — embedding a large corpus can take minutes.
+// Chunks that fail to embed (or arrive with no backend configured) are
+// stored WITHOUT a vector: keyword search still reaches them, and a future
+// re-embed pass can fill the gap; dropping the text would be data loss.
+func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
+	db := VectorDB
+	if db == nil {
+		db = CollectionsDB() // legacy pre-VectorDB home for user-scoped chunks
+	}
+	if db == nil {
+		Log("[artifacts] collection %q: no chunk store available; %d chunk(s) not ingested", name, len(chunks))
+		return
+	}
+	cfg := GetEmbeddingConfig()
+	src := CollectionSource(id)
+	now := time.Now().Format(time.RFC3339)
+	var embedded, empty int
+	for _, pc := range chunks {
+		text := strings.TrimSpace(pc.Text)
+		if text == "" {
+			continue
+		}
+		var vec []float32
+		if cfg.Enabled {
+			if v, err := EmbedWith(context.Background(), cfg, text); err == nil {
+				vec = v
+			}
+		}
+		if len(vec) > 0 {
+			embedded++
+		} else {
+			empty++
+		}
+		date := strings.TrimSpace(pc.Date)
+		if date == "" {
+			date = now
+		}
+		row := EmbeddedChunk{
+			ID:       UUIDv4(),
+			Source:   src,
+			ReportID: pc.ReportID,
+			Title:    pc.Title,
+			Section:  pc.Section,
+			Text:     text,
+			Vector:   vec,
+			Model:    cfg.Model,
+			Date:     date,
+			Locator:  pc.Locator,
+			Kind:     pc.Kind,
+		}
+		db.Set(EmbeddedChunks, row.ID, row)
+	}
+	InvalidateChunkCache()
+	Log("[artifacts] collection %q: ingested %d imported chunk(s) (%d embedded, %d without vectors)",
+		name, embedded+empty, embedded, empty)
 }
 
 // ---- credential (API) ------------------------------------------------------

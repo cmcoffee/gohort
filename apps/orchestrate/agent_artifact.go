@@ -135,26 +135,40 @@ func (a *agentArtifact) RecipeDependencies(db Database, recipe json.RawMessage, 
 }
 
 // agentExportDeps is the one walk behind both dependency interfaces: the
-// portable temp tools the recipe (parent + bundled sub-agents) allowlists.
-// Built-in tool names fail both probes and are skipped.
+// portable temp tools the recipe (parent + bundled sub-agents) allowlists,
+// plus the collections it attaches. Built-in tool names fail both tool
+// probes and are skipped; the well-known deployment-knowledge collection
+// exists on every install, so it is never a dependency.
 func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
 	seen := map[string]bool{}
 	var out []ArtifactSel
 	consider := func(names []string) {
 		for _, tn := range names {
 			tn = strings.TrimSpace(tn)
-			if tn == "" || seen[tn] {
+			if tn == "" || seen["tool\x00"+tn] {
 				continue
 			}
-			seen[tn] = true
+			seen["tool\x00"+tn] = true
 			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 				out = append(out, ArtifactSel{Type: "tool", Name: tn, Owner: owner})
 			}
 		}
 	}
+	collections := func(ids []string) {
+		for _, cid := range ids {
+			cid = strings.TrimSpace(cid)
+			if cid == "" || cid == DeploymentKnowledgeCollectionID || seen["collection\x00"+cid] {
+				continue
+			}
+			seen["collection\x00"+cid] = true
+			out = append(out, ArtifactSel{Type: "collection", Name: cid, Owner: owner})
+		}
+	}
 	consider(exp.AllowedTools)
+	collections(exp.AttachedCollections)
 	for _, s := range exp.SubAgents {
 		consider(s.AllowedTools)
+		collections(s.AttachedCollections)
 	}
 	return out
 }

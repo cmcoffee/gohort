@@ -287,6 +287,28 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 		T.handleCollectionAudit(w, r, user, c)
 	case action == "suggest-description":
 		T.handleCollectionSuggestDescription(w, r, udb, user, c)
+	case action == "export":
+		// Download this collection as a 1-item gohort.bundle/v1 — the same
+		// wire format the admin artifact surface uses, so the file imports
+		// anywhere bundles do. Owner-gated by the loadCollection above (a
+		// user can only reach collections they can see); addressed by ID so
+		// the export is unambiguous under renamed/duplicate display names.
+		// Chunk text travels, vectors don't (the importer re-embeds).
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		bundle, err := ExportArtifactBundle(RootDB, []ArtifactSel{{Type: "collection", Name: c.ID, Owner: user}})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		filename := strings.ReplaceAll(strings.TrimSpace(c.Name), `"`, "") + ".gohort.json"
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(bundle)
 	default:
 		http.NotFound(w, r)
 	}

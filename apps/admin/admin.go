@@ -4034,9 +4034,11 @@ func dbProbeRecord(store interface {
 // readArtifactBundleBody reads an artifact-bundle request body, accepting
 // either the raw bundle JSON or the {"pack":"<json string>"} wrapper a form
 // file-field posts. Shared by the import and preview endpoints so both accept
-// exactly the same shapes.
+// exactly the same shapes. The 64 MB cap exists for collection bundles: they
+// carry a corpus's chunk text (recipe-only bundles are kilobytes), and the
+// {"pack"} wrapper's JSON-string escaping roughly doubles the wire size.
 func readArtifactBundleBody(r *http.Request) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<26))
 	if err != nil {
 		return nil, err
 	}
