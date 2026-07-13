@@ -1699,18 +1699,10 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		// Accept either a raw bundle body or {"pack":"<json string>"} from a form.
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		data, err := readArtifactBundleBody(r)
 		if err != nil {
 			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 			return
-		}
-		data := bytes.TrimSpace(body)
-		var wrap struct {
-			Pack string `json:"pack"`
-		}
-		if json.Unmarshal(data, &wrap) == nil && strings.TrimSpace(wrap.Pack) != "" {
-			data = []byte(strings.TrimSpace(wrap.Pack))
 		}
 		res, err := ImportArtifactBundle(RootDB, data, AuthCurrentUser(r))
 		if err != nil {
@@ -1725,6 +1717,32 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			ArtifactImportResult
 			Message string `json:"message"`
 		}{res, res.Summary()})
+	})
+
+	// Artifact import PREVIEW — the dry-run twin of /api/artifacts/import.
+	// Same body shapes, same auth, writes NOTHING: returns what the bundle
+	// carries, what would import vs skip, and any unmet references, so the
+	// admin sees exactly what a bundle does before committing to it.
+	sub.HandleFunc("/api/artifacts/preview", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		data, err := readArtifactBundleBody(r)
+		if err != nil {
+			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		res, err := PreviewArtifactBundle(RootDB, data, AuthCurrentUser(r))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(res)
 	})
 
 	// Catalog — a curated, in-tree set of ready-made artifact bundles (the
@@ -4011,6 +4029,25 @@ func dbProbeRecord(store interface {
 	}
 	// Value exists but is a struct type — return a placeholder rather than crashing.
 	return map[string]string{"_type": "struct", "_note": "binary-encoded struct; map probe not supported"}, true
+}
+
+// readArtifactBundleBody reads an artifact-bundle request body, accepting
+// either the raw bundle JSON or the {"pack":"<json string>"} wrapper a form
+// file-field posts. Shared by the import and preview endpoints so both accept
+// exactly the same shapes.
+func readArtifactBundleBody(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	data := bytes.TrimSpace(body)
+	var wrap struct {
+		Pack string `json:"pack"`
+	}
+	if json.Unmarshal(data, &wrap) == nil && strings.TrimSpace(wrap.Pack) != "" {
+		data = []byte(strings.TrimSpace(wrap.Pack))
+	}
+	return data, nil
 }
 
 // truncStr returns s clipped to n runes with an ellipsis appended when

@@ -119,6 +119,25 @@ func (a *agentArtifact) Dependencies(db Database, name, owner string) []Artifact
 	if !found {
 		return nil
 	}
+	return agentExportDeps(db, exp, owner, nil)
+}
+
+// RecipeDependencies extracts the same references straight from a recipe (the
+// recipe IS an agentExport), for import preview. inBundle lets an allowlisted
+// tool traveling in the same bundle count as a portable-tool reference even
+// though it isn't in the store yet.
+func (a *agentArtifact) RecipeDependencies(db Database, recipe json.RawMessage, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
+	var exp agentExport
+	if json.Unmarshal(recipe, &exp) != nil {
+		return nil
+	}
+	return agentExportDeps(db, exp, strings.TrimSpace(owner), inBundle)
+}
+
+// agentExportDeps is the one walk behind both dependency interfaces: the
+// portable temp tools the recipe (parent + bundled sub-agents) allowlists.
+// Built-in tool names fail both probes and are skipped.
+func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
 	seen := map[string]bool{}
 	var out []ArtifactSel
 	consider := func(names []string) {
@@ -128,7 +147,7 @@ func (a *agentArtifact) Dependencies(db Database, name, owner string) []Artifact
 				continue
 			}
 			seen[tn] = true
-			if IsExportableTool(db, tn, owner) {
+			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 				out = append(out, ArtifactSel{Type: "tool", Name: tn, Owner: owner})
 			}
 		}

@@ -125,6 +125,30 @@ func TestSkillArtifact_Dependencies(t *testing.T) {
 	}
 }
 
+func TestSkillArtifact_RecipeDependencies(t *testing.T) {
+	db := skillTestDB(t)
+	recipe, _ := json.Marshal(SkillRecord{
+		Name:        "ops",
+		Description: "Use for ops.",
+		// Neither name resolves to a temp tool on this install; "helper"
+		// travels in the bundle under preview, "web_search" is a built-in.
+		AllowedTools: []string{"helper", "web_search"},
+		Tools:        []TempTool{{Name: "pager", Credential: "pagerduty"}},
+	})
+	inBundle := func(typ, name string) bool { return typ == "tool" && name == "helper" }
+
+	deps := skillArtifact{}.RecipeDependencies(db, recipe, "alice", inBundle)
+	want := map[string]bool{"tool\x00helper": true, "credential\x00pagerduty": true}
+	if len(deps) != len(want) {
+		t.Fatalf("expected %d deps, got %v", len(want), deps)
+	}
+	for _, d := range deps {
+		if !want[d.Type+"\x00"+d.Name] {
+			t.Fatalf("unexpected dependency %s/%s in %v", d.Type, d.Name, deps)
+		}
+	}
+}
+
 func TestSkillArtifact_ListEnumeratesAllOwners(t *testing.T) {
 	db := skillTestDB(t)
 	mustSave := func(user, name string) {

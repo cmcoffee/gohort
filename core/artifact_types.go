@@ -58,8 +58,25 @@ func (connectorArtifact) Dependencies(db Database, name, _ string) []ArtifactSel
 	if !ok {
 		return nil
 	}
+	return connectorSpecDeps(c.Spec)
+}
+
+// RecipeDependencies extracts the same credential references straight from a
+// recipe, for import preview. A PortableConnector's Spec is the stored Spec
+// verbatim, so both interfaces share connectorSpecDeps.
+func (connectorArtifact) RecipeDependencies(_ Database, recipe json.RawMessage, _ string, _ func(typ, name string) bool) []ArtifactSel {
+	var pc PortableConnector
+	if json.Unmarshal(recipe, &pc) != nil {
+		return nil
+	}
+	return connectorSpecDeps(pc.Spec)
+}
+
+// connectorSpecDeps is the one walk behind both dependency interfaces: the
+// exportable credential references a connector Spec names.
+func connectorSpecDeps(spec json.RawMessage) []ArtifactSel {
 	var out []ArtifactSel
-	for _, cred := range connectorCredentialRefs(c.Spec) {
+	for _, cred := range connectorCredentialRefs(spec) {
 		if exportableCredential(cred) {
 			out = append(out, ArtifactSel{Type: "credential", Name: cred})
 		}
@@ -198,6 +215,22 @@ func (toolArtifact) Dependencies(db Database, name, owner string) []ArtifactSel 
 	if !ok {
 		return nil
 	}
+	return tempToolCredDeps(t)
+}
+
+// RecipeDependencies extracts the same credential reference straight from a
+// recipe (the recipe IS a TempTool), for import preview.
+func (toolArtifact) RecipeDependencies(_ Database, recipe json.RawMessage, _ string, _ func(typ, name string) bool) []ArtifactSel {
+	var t TempTool
+	if json.Unmarshal(recipe, &t) != nil {
+		return nil
+	}
+	return tempToolCredDeps(t)
+}
+
+// tempToolCredDeps is the one walk behind both dependency interfaces: the
+// exportable credential a tool dispatches through, if any.
+func tempToolCredDeps(t TempTool) []ArtifactSel {
 	cred := strings.TrimSpace(t.Credential)
 	if !exportableCredential(cred) {
 		return nil
@@ -339,6 +372,26 @@ func (skillArtifact) Dependencies(db Database, name, owner string) []ArtifactSel
 	if !ok {
 		return nil
 	}
+	return skillRecipeDeps(db, s, owner, nil)
+}
+
+// RecipeDependencies extracts the same references straight from a recipe (the
+// recipe IS a SkillRecord), for import preview. inBundle lets an allowlisted
+// tool traveling in the same bundle count as a portable-tool reference even
+// though it isn't in the store yet.
+func (skillArtifact) RecipeDependencies(db Database, recipe json.RawMessage, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
+	var s SkillRecord
+	if json.Unmarshal(recipe, &s) != nil {
+		return nil
+	}
+	return skillRecipeDeps(db, s, owner, inBundle)
+}
+
+// skillRecipeDeps is the one walk behind both dependency interfaces. An
+// allowlisted name is a tool reference when it resolves to an exportable temp
+// tool on this install or (recipe path) travels in the bundle under preview —
+// built-ins and source-hook names fail both and are skipped.
+func skillRecipeDeps(db Database, s SkillRecord, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
 	seen := map[string]bool{}
 	var out []ArtifactSel
 	add := func(typ, name, owner string) {
@@ -350,7 +403,8 @@ func (skillArtifact) Dependencies(db Database, name, owner string) []ArtifactSel
 		out = append(out, ArtifactSel{Type: typ, Name: name, Owner: owner})
 	}
 	for _, tn := range s.AllowedTools {
-		if tn = strings.TrimSpace(tn); IsExportableTool(db, tn, owner) {
+		tn = strings.TrimSpace(tn)
+		if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 			add("tool", tn, owner)
 		}
 	}

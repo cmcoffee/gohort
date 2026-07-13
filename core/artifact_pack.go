@@ -99,6 +99,23 @@ type ArtifactDependencies interface {
 	Dependencies(db Database, name, owner string) []ArtifactSel
 }
 
+// ArtifactRecipeDependencies is the recipe-side twin of ArtifactDependencies,
+// implemented when a type's references can be extracted from a RECIPE alone —
+// no store lookup, because import PREVIEW inspects bundles whose artifacts
+// aren't in any store yet. A type should back both interfaces with one shared
+// walk over the decoded record so preview and the post-import warning pass
+// can never disagree about what an artifact references.
+//
+// inBundle reports whether the bundle under preview carries an artifact of
+// (type, name). It exists for per-user reference filtering: a skill/agent
+// allowlist name counts as a portable-tool reference when the tool is on this
+// install OR traveling in the same bundle — the store-side walk gets the
+// latter for free (the tool has landed by the time it runs), the recipe-side
+// walk needs the predicate. May be nil (treat as always-false).
+type ArtifactRecipeDependencies interface {
+	RecipeDependencies(db Database, recipe json.RawMessage, owner string, inBundle func(typ, name string) bool) []ArtifactSel
+}
+
 // artifactDeps returns the declared dependencies of one selection, or nil if
 // its type declares none (doesn't implement ArtifactDependencies).
 func artifactDeps(db Database, s ArtifactSel) []ArtifactSel {
@@ -476,12 +493,125 @@ func warnMissingDependencies(db Database, res *ArtifactImportResult, imported []
 			if artifactExists(db, dep) {
 				continue
 			}
-			msg := fmt.Sprintf("%s %q references %s %q, which isn't present on this install — add it before this %s can be used.",
-				s.Type, s.Name, dep.Type, dep.Name, s.Type)
+			msg := missingDepWarning(s, dep)
 			res.Warnings = append(res.Warnings, msg)
 			if i, ok := outcomeAt[s.Type+"\x00"+s.Name]; ok {
 				res.Outcomes[i].Warnings = append(res.Outcomes[i].Warnings, msg)
 			}
 		}
 	}
+}
+
+// missingDepWarning is the ONE unmet-reference message, shared by the
+// post-import warning pass and the import preview so a preview reads
+// identically to the import result it predicts.
+func missingDepWarning(s, dep ArtifactSel) string {
+	return fmt.Sprintf("%s %q references %s %q, which isn't present on this install — add it before this %s can be used.",
+		s.Type, s.Name, dep.Type, dep.Name, s.Type)
+}
+
+// ArtifactPreviewItem is one artifact's predicted import outcome. Action is
+// "import" (would land as a draft) or "skip" (with the reason in Detail);
+// Warnings carries unmet references, same shape as the import result's.
+type ArtifactPreviewItem struct {
+	Type     string   `json:"type"`
+	Name     string   `json:"name"`
+	Action   string   `json:"action"` // "import" | "skip"
+	Detail   string   `json:"detail,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// ArtifactPreviewResult is the dry-run summary of a bundle: per-artifact
+// predictions plus running counts and the aggregated warning list — the
+// preview twin of ArtifactImportResult.
+type ArtifactPreviewResult struct {
+	Bundle      string                `json:"bundle"`
+	ExportedAt  time.Time             `json:"exported_at"`
+	WouldImport int                   `json:"would_import"`
+	WouldSkip   int                   `json:"would_skip"`
+	Items       []ArtifactPreviewItem `json:"items"`
+	Warnings    []string              `json:"warnings,omitempty"`
+}
+
+// PreviewArtifactBundle is the DRY-RUN twin of ImportArtifactBundle: it parses
+// bundle bytes and predicts — writing nothing — what import would do. Which
+// artifacts land as drafts, which skip (unknown type / missing name / a name
+// already present), and which declared references are unmet (in neither the
+// bundle nor this install). Predictions reuse import's own machinery —
+// artifactExists for presence, ArtifactRecipeDependencies for references,
+// missingDepWarning for the message — so a clean preview reads identically to
+// the import result it predicts. One deliberate approximation: a tool whose
+// name matches only a PENDING draft previews as a skip, while import actually
+// replaces that draft in place.
+func PreviewArtifactBundle(db Database, data []byte, owner string) (ArtifactPreviewResult, error) {
+	var res ArtifactPreviewResult
+	bundle, err := ParseArtifactBundle(data)
+	if err != nil {
+		return res, err
+	}
+	res.Bundle = bundle.Bundle
+	res.ExportedAt = bundle.ExportedAt
+	if len(bundle.Artifacts) == 0 {
+		return res, Error("no artifacts in bundle")
+	}
+	// Index what the bundle itself carries so an in-bundle reference never
+	// reads as missing — the same reason the post-import warning pass runs
+	// only after every artifact has landed.
+	carried := map[string]bool{}
+	for _, a := range bundle.Artifacts {
+		carried[strings.TrimSpace(a.Type)+"\x00"+artifactRecipeName(a)] = true
+	}
+	inBundle := func(typ, name string) bool {
+		return carried[strings.TrimSpace(typ)+"\x00"+strings.TrimSpace(name)]
+	}
+	for _, a := range bundle.Artifacts {
+		typ := strings.TrimSpace(a.Type)
+		name := artifactRecipeName(a)
+		item := ArtifactPreviewItem{Type: typ, Name: name}
+		at, known := lookupArtifactType(typ)
+		switch {
+		case !known:
+			item.Action, item.Detail = "skip", "unknown artifact type"
+		case name == "":
+			item.Action, item.Detail = "skip", "missing artifact name"
+		case artifactExists(db, ArtifactSel{Type: typ, Name: name, Owner: owner}):
+			item.Action, item.Detail = "skip", "an artifact with this name already exists on this install"
+		default:
+			item.Action = "import"
+			// Unmet references, mirroring warnMissingDependencies: only for
+			// artifacts that would import, satisfied by the bundle or the
+			// install, one shared message shape.
+			if rd, ok := at.(ArtifactRecipeDependencies); ok {
+				self := ArtifactSel{Type: typ, Name: name, Owner: owner}
+				for _, dep := range rd.RecipeDependencies(db, a.Recipe, owner, inBundle) {
+					if inBundle(dep.Type, dep.Name) || artifactExists(db, dep) {
+						continue
+					}
+					msg := missingDepWarning(self, dep)
+					item.Warnings = append(item.Warnings, msg)
+					res.Warnings = append(res.Warnings, msg)
+				}
+			}
+		}
+		if item.Action == "import" {
+			res.WouldImport++
+		} else {
+			res.WouldSkip++
+		}
+		res.Items = append(res.Items, item)
+	}
+	return res, nil
+}
+
+// artifactRecipeName returns the authoritative name for one bundle artifact:
+// the recipe's own "name" field when present (every registered type's recipe
+// carries one), falling back to the envelope's convenience label.
+func artifactRecipeName(a PortableArtifact) string {
+	var probe struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(a.Recipe, &probe) == nil && strings.TrimSpace(probe.Name) != "" {
+		return strings.TrimSpace(probe.Name)
+	}
+	return strings.TrimSpace(a.Name)
 }
