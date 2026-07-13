@@ -384,6 +384,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
+			ClientAction("skills_export", skillsExportAction).
+			ClientAction("skills_export_all", skillsExportAllAction).
 			ClientAction("artifacts_export_all", artifactsExportAllAction),
 		MaxWidth: "1200px", // desktop admin: wide enough for full-width tables in a single column
 		Grid:     false,    // single column: sections stack vertically within each tab (Wide flags become no-ops)
@@ -1700,8 +1702,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Skills",
-				Subtitle: "Domain packs the assistant draws on in its own context — instructions plus optional knowledge sources (attached collections and/or source-hooks). The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources — collections + source-hooks merged) and skill_knowledge_fetch_doc. A skill with Triggers also auto-injects its instructions when they match the turn (e.g. *.pdf). No activation, no sub-agents — stateless calls. Builder is the canonical authoring path; this surface manages what's authored. Disabled skills are hidden from the LLM.",
-				Body: ui.Table{
+				Subtitle: "Domain packs the assistant draws on in its own context — instructions plus optional knowledge sources (attached collections and/or source-hooks). The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources — collections + source-hooks merged) and skill_knowledge_fetch_doc. A skill with Triggers also auto-injects its instructions when they match the turn (e.g. *.pdf). No activation, no sub-agents — stateless calls. Builder is the canonical authoring path; this surface manages what's authored. Disabled skills are hidden from the LLM. Export a skill (or all skills) as a portable bundle — instructions and bundled tool scripts travel inline, secrets never do; imports land disabled for review.",
+				Body: ui.Stack{Children: []ui.Component{ui.Table{
 					Source: "api/skills",
 					RowKey: "id",
 					Columns: []ui.Col{
@@ -1785,6 +1787,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							PostTo: "api/skills?action=enable&id={id}",
 							Method: "POST",
 							OnlyIf: "disabled"},
+						{Type: "button", Label: "Export", Method: "client",
+							PostTo: "skills_export", Compact: true},
 						{Type: "button", Label: "Delete",
 							PostTo:  "api/skills?id={id}",
 							Method:  "DELETE",
@@ -1793,6 +1797,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					},
 					EmptyText: "No skills defined. Talk to Builder in Agency to author one — \"create a skill called X that fires when…\".",
 				},
+					// Export all skills (every owner) as one bundle.
+					ui.Toolbar{
+						Actions: []ui.ToolbarAction{
+							{Label: "Export all skills", Method: "client", URL: "skills_export_all"},
+						},
+					},
+				}},
 			},
 			{
 				Title:    "Pipelines",
@@ -2214,7 +2225,8 @@ const toolsExportAllAction = `function(){
 }`
 
 // artifactsExportAllAction downloads EVERYTHING — connectors + tools +
-// credentials + agents + any future registered type — as one gohort.bundle/v1.
+// credentials + agents + skills + any future registered type — as one
+// gohort.bundle/v1.
 const artifactsExportAllAction = `function(){
   __artifactExport('', 'gohort-bundle.json');
 }`
@@ -2231,4 +2243,18 @@ const credentialsExportAction = `function(ctx){
 // credentialsExportAllAction downloads every API credential's config as one bundle.
 const credentialsExportAllAction = `function(){
   __artifactExport('?all=credential', 'credentials.gohort.json');
+}`
+
+// skillsExportAction downloads ONE skill as a 1-item bundle. Skills are
+// per-user and this surface lists the requesting admin's own pool, so no owner
+// travels in the query — the export endpoint defaults owner to the requester.
+const skillsExportAction = `function(ctx){
+  var n = ctx && ctx.record && ctx.record.name;
+  if(!n){ window.uiAlert && window.uiAlert('No skill selected.'); return; }
+  __artifactExport('?type=skill&name=' + encodeURIComponent(n), n + '.gohort.json');
+}`
+
+// skillsExportAllAction downloads every skill (all owners) as one bundle.
+const skillsExportAllAction = `function(){
+  __artifactExport('?all=skill', 'skills.gohort.json');
 }`

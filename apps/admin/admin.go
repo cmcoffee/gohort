@@ -1659,8 +1659,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		)
 		switch {
 		case typ != "" && name != "":
-			bundle, err = exportSels([]ArtifactSel{{
-				Type: typ, Name: name, Owner: strings.TrimSpace(q.Get("owner"))}})
+			// Per-user types (tools, skills) need an owner; when the query
+			// omits it, default to the requesting admin — the per-row export
+			// buttons on surfaces that only list the requester's own pool
+			// (Skills) don't have an owner field to send. Global types ignore
+			// Owner entirely, so the default is inert for them.
+			owner := strings.TrimSpace(q.Get("owner"))
+			if owner == "" {
+				owner = AuthCurrentUser(r)
+			}
+			bundle, err = exportSels([]ArtifactSel{{Type: typ, Name: name, Owner: owner}})
 			filename = name + ".gohort.json"
 		case strings.TrimSpace(q.Get("all")) != "":
 			bundle, err = exportSels(ArtifactSelectionForTypes(RootDB, strings.Split(q.Get("all"), ",")...))

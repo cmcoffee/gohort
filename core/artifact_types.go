@@ -18,6 +18,7 @@ func init() {
 	RegisterArtifactType(connectorArtifact{})
 	RegisterArtifactType(toolArtifact{})
 	RegisterArtifactType(credentialArtifact{})
+	RegisterArtifactType(skillArtifact{})
 }
 
 // ---- connector -------------------------------------------------------------
@@ -256,6 +257,140 @@ func (toolArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner st
 	// the rest of the bundle still imports.
 	if err := QueuePendingTempTool(db, owner, t, "import"); err != nil {
 		return name, err.Error(), nil
+	}
+	return name, "", nil
+}
+
+// ---- skill -------------------------------------------------------------
+
+// skillArtifact makes a SkillRecord portable. The recipe is the record with
+// identity stripped: ID / Owner / timestamps zeroed (import mints a fresh ID
+// under the importing owner) and the legacy Embedding cache dropped. Bundled
+// Tools ([]TempTool) travel INLINE — being self-contained is the point of
+// SkillRecord.Tools — with the same on-disk ScriptBody backfill legacy tools
+// get on export. AttachedCollections travel as ID references: the corpus
+// itself is not portable (yet), so import keeps the references and the
+// dependency pass warns that the collections aren't present.
+//
+// Per-user scope like tools. Import lands the skill DISABLED: a skill injects
+// prompt instructions, and its bundled tools load straight into the session
+// once the skill is consulted (consulting an allowed skill IS the opt-in — no
+// pending-pool gate), so the human review point has to be the admin reading
+// the skill and enabling it.
+type skillArtifact struct{}
+
+func (skillArtifact) ArtifactType() string { return "skill" }
+
+func (skillArtifact) ListArtifacts(db Database) []ArtifactSel {
+	store := skillStore(db)
+	if store == nil {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, u := range store.Keys(skillsTable) {
+		for _, s := range LoadSkills(db, u) {
+			out = append(out, ArtifactSel{Type: "skill", Name: s.Name, Owner: u})
+		}
+	}
+	return out
+}
+
+func (skillArtifact) ExportArtifact(db Database, name, owner string) (json.RawMessage, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil, Error("skill export requires an owner")
+	}
+	s, ok := FindSkillByName(db, owner, name)
+	if !ok {
+		return nil, fmt.Errorf("no skill named %q for user %q", name, owner)
+	}
+	// Strip identity — the importing install mints its own ID / owner /
+	// timestamps — and the Embedding cache (dead weight since activation went
+	// LLM-driven). Disabled is a local mute, not part of the skill's shape.
+	s.ID = ""
+	s.Owner = ""
+	s.Disabled = false
+	s.Embedding = nil
+	s.Created = time.Time{}
+	s.Updated = time.Time{}
+	// Bundled tools ship their scripts inline; backfill any legacy tool whose
+	// script still lives only in the on-disk workspace (same rule as the tool
+	// artifact's marshalExportedTool). LoadSkills decodes a fresh copy, so
+	// mutating here never touches the stored record.
+	for i := range s.Tools {
+		if s.Tools[i].ScriptBody == "" && ResolveToolScriptForExport != nil {
+			ResolveToolScriptForExport(&s.Tools[i], owner)
+		}
+	}
+	return json.Marshal(s)
+}
+
+// Dependencies folds in what the skill references by name: registered temp
+// tools from its AllowedTools allowlist (built-ins and source-hooks fail
+// IsExportableTool and are skipped), the SecureAPI credentials its bundled
+// tools dispatch through, and its attached collections. No "collection"
+// artifact type is registered today, so export closure silently drops those
+// and import warns the corpus isn't present — honest now, and the closure
+// starts carrying it the day collections become portable. The well-known
+// deployment-knowledge collection exists on every install, so it is never a
+// dependency (same rule as the bootstrap no_auth credential).
+func (skillArtifact) Dependencies(db Database, name, owner string) []ArtifactSel {
+	s, ok := FindSkillByName(db, strings.TrimSpace(owner), name)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []ArtifactSel
+	add := func(typ, name, owner string) {
+		key := typ + "\x00" + name
+		if name == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, ArtifactSel{Type: typ, Name: name, Owner: owner})
+	}
+	for _, tn := range s.AllowedTools {
+		if tn = strings.TrimSpace(tn); IsExportableTool(db, tn, owner) {
+			add("tool", tn, owner)
+		}
+	}
+	for _, bt := range s.Tools {
+		if cred := strings.TrimSpace(bt.Credential); exportableCredential(cred) {
+			add("credential", cred, "")
+		}
+	}
+	for _, cid := range s.AttachedCollections {
+		if cid = strings.TrimSpace(cid); cid != DeploymentKnowledgeCollectionID {
+			add("collection", cid, "")
+		}
+	}
+	return out
+}
+
+func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return "", "", Error("skill import requires an owner")
+	}
+	var s SkillRecord
+	if err := json.Unmarshal(recipe, &s); err != nil {
+		return "", "", fmt.Errorf("invalid skill recipe: %w", err)
+	}
+	name := strings.TrimSpace(s.Name)
+	if name == "" {
+		return "", "", Error("missing skill name")
+	}
+	if _, exists := FindSkillByName(db, owner, name); exists {
+		return name, "a skill with this name already exists", nil
+	}
+	// Fresh identity under the importing owner (SaveSkill assigns ID + stamps),
+	// landed DISABLED so nothing an import brought in can steer a conversation
+	// or surface its bundled tools before the admin reviews and enables it.
+	s.ID = ""
+	s.Embedding = nil
+	s.Disabled = true
+	if _, err := SaveSkill(db, owner, s); err != nil {
+		return name, "", err
 	}
 	return name, "", nil
 }
