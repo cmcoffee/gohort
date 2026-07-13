@@ -1162,12 +1162,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 
 		// DIAGNOSTIC: collapse-ish round — the model wrote a large reasoning
 		// block but little visible content and called no tool. The existing
-		// reasoning-collapse re-prompt below only triggers at <30 chars, so a
-		// near-miss (e.g. 35 chars of content over 4k tokens of reasoning) is
-		// returned as the reply with the reasoning silently dropped. Dump the
-		// reasoning here so we can confirm whether the actual answer was buried
-		// in the thinking channel. Thinking models put the conclusion at the
-		// END, so log the tail in full rather than truncating it off.
+		// reasoning-collapse re-prompt below only triggers on ~EMPTY content
+		// (<3 chars — a short-but-complete reply is normal and has already
+		// streamed), so anything from a stub sentence up to 200 chars over 4k
+		// tokens of reasoning is returned as the reply with the reasoning
+		// silently dropped. Dump the reasoning here so we can confirm whether
+		// the actual answer was buried in the thinking channel. Thinking
+		// models put the conclusion at the END, so log the tail in full
+		// rather than truncating it off.
 		if len(resp.ToolCalls) == 0 && len(strings.TrimSpace(resp.Content)) < 200 && len(resp.Reasoning) > 2000 {
 			tail := resp.Reasoning
 			if len(tail) > 4000 {
@@ -1451,13 +1453,22 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// reasoning and emit ~no visible content, while reporting
 			// finish=stop. From the user's view: black hole — sent a
 			// message, got nothing back. Detect: substantial reasoning
-			// (>200 chars), trivially-short content (<30 chars after
-			// trim), and no tool calls. Inject a corrective and retry
-			// so the next round either produces text or calls a tool.
-			// Budget-gated via promiseCorrectionsTotal so it can't loop.
+			// (>200 chars), EMPTY content (a bare stub like ""/"."/"…"
+			// after trim), and no tool calls. Inject a corrective and
+			// retry so the next round either produces text or calls a
+			// tool. Budget-gated via promiseCorrectionsTotal so it
+			// can't loop.
+			//
+			// The threshold is deliberately near-zero, NOT "short": a
+			// complete short reply ("Yes.", "7:57 AM PDT.") is normal
+			// for a thinking model, and this round's content has
+			// ALREADY streamed to the client — re-prompting makes the
+			// model repeat it, so the user watches the same sentence
+			// render once per correction (and each retry re-bills the
+			// full prompt). Only a round that showed nothing may retry.
 			trimmedContent := strings.TrimSpace(resp.Content)
 			if promiseCorrectionsTotal < maxPromiseCorrections && round < maxRounds &&
-				len(trimmedContent) < 30 && len(resp.Reasoning) > 200 {
+				len(trimmedContent) < 3 && len(resp.Reasoning) > 200 {
 				Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(resp.Reasoning), len(trimmedContent), promiseCorrectionsTotal+1, maxPromiseCorrections)
 				history = append(history, Message{
 					Role:    "user",
