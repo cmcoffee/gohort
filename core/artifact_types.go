@@ -24,6 +24,7 @@ func init() {
 	RegisterArtifactType(collectionArtifact{})
 	RegisterArtifactType(customAppArtifact{})
 	RegisterArtifactType(sourceHookArtifact{})
+	RegisterArtifactType(monitorArtifact{})
 }
 
 // ---- connector -------------------------------------------------------------
@@ -1110,5 +1111,241 @@ func (sourceHookArtifact) ImportArtifact(db Database, recipe json.RawMessage, _ 
 	h.AuthKey = ""
 	h.Disabled = true
 	SaveSourceHook(db, h)
+	return name, "", nil
+}
+
+// ---- monitor (event monitor) --------------------------------------------
+
+// monitorArtifact makes an EventMonitor portable — the standing trigger that
+// watches something (a tool's output, an HTTP value, an LLM-checked
+// condition, a webhook) and wakes an agent when it fires. This closes the
+// integration-bridge gap: a bridge is "credential + watch monitor", and until
+// now a bundle could carry the connector/credential/tool half but the monitor
+// arrived nowhere. The dependency walk pulls the watch tool (which pulls its
+// credential) and the checker/wake agents, so "export this monitor" produces
+// the whole bridge.
+//
+// EventMonitor is today's LIVE trigger record; the unified ScheduledTrigger
+// engine (core/trigger.go) has no authoring surface yet. When that migration
+// completes, this type's recipe rules (state stripped, token re-minted,
+// paused import) transfer to it directly.
+//
+// The recipe is the WHEN+GATE+ACTION shape only. Owner, the webhook Token
+// (re-minted on import — a traveled secret is either a leak or a lie), the
+// edge-trigger state (hashes, baselines, breach/match flags), scheduler
+// bookkeeping, and the instance-local delivery targets (WakeSession,
+// DeliverChatID — session/chat IDs that mean nothing elsewhere) never
+// travel. Agent references (CheckAgent / WakeAgent) are normalized ID→name
+// on export, same as pipelines and custom apps. One-shot monitors are
+// session-bound awaits, not reusable recipes — they neither list nor export.
+//
+// Import lands PAUSED: the existing console pause/resume surface is the
+// review gate, and resume is what schedules it. Webhook monitors get a fresh
+// token at import so they work the moment they're enabled.
+type monitorArtifact struct{}
+
+func (monitorArtifact) ArtifactType() string { return "monitor" }
+
+func (monitorArtifact) ListArtifacts(db Database) []ArtifactSel {
+	if db == nil {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, k := range db.Keys(eventMonitorsTable) {
+		var m EventMonitor
+		if !db.Get(eventMonitorsTable, k, &m) || m.OneShot {
+			continue
+		}
+		out = append(out, ArtifactSel{Type: "monitor", Name: m.Name, Owner: m.Owner})
+	}
+	return out
+}
+
+// findMonitorForExport resolves a monitor by exact name first (the storage
+// key), then case-insensitively.
+func findMonitorForExport(db Database, owner, name string) (EventMonitor, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return EventMonitor{}, false
+	}
+	if m, ok := GetEventMonitor(db, owner, name); ok {
+		return m, true
+	}
+	lower := strings.ToLower(name)
+	for _, m := range ListEventMonitors(db, owner) {
+		if strings.ToLower(strings.TrimSpace(m.Name)) == lower {
+			return m, true
+		}
+	}
+	return EventMonitor{}, false
+}
+
+// normalizeMonitorAgents rewrites the checker/wake agent references to agent
+// NAMES when they hold IDs (see ResolveAgentNameForExport) — the runtime
+// resolves either form, but an imported agent is reborn under a fresh ID.
+func normalizeMonitorAgents(m EventMonitor, owner string) EventMonitor {
+	if ResolveAgentNameForExport == nil {
+		return m
+	}
+	if ref := strings.TrimSpace(m.CheckAgent); ref != "" {
+		if n, ok := ResolveAgentNameForExport(owner, ref); ok {
+			m.CheckAgent = n
+		}
+	}
+	if ref := strings.TrimSpace(m.WakeAgent); ref != "" {
+		if n, ok := ResolveAgentNameForExport(owner, ref); ok {
+			m.WakeAgent = n
+		}
+	}
+	return m
+}
+
+func (monitorArtifact) ExportArtifact(db Database, name, owner string) (json.RawMessage, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil, Error("monitor export requires an owner")
+	}
+	m, ok := findMonitorForExport(db, owner, name)
+	if !ok {
+		return nil, fmt.Errorf("no monitor named %q for user %q", name, owner)
+	}
+	if m.OneShot {
+		return nil, fmt.Errorf("monitor %q is a one-shot await bound to its session — not a reusable recipe", m.Name)
+	}
+	// Refuse a recipe that would smuggle a literal secret: the polled URL and
+	// the format script travel verbatim, and tool args are passed to the
+	// watch tool on every fire.
+	argsJSON, _ := json.Marshal(m.ToolArgs)
+	for field, val := range map[string]string{
+		"url": m.URL, "format_script": m.FormatScript, "tool_args": string(argsJSON),
+	} {
+		if scanForEmbeddedSecret(val) {
+			return nil, fmt.Errorf("monitor %q looks like it hardcodes a secret in %s; route it through a credential before exporting", m.Name, field)
+		}
+	}
+	m = normalizeMonitorAgents(m, owner)
+	m.Owner = ""
+	m.Token = ""
+	m.WakeSession = ""
+	m.DeliverChatID = ""
+	m.LastHash = ""
+	m.LastBody = ""
+	m.LastResult = ""
+	m.LastBreached = false
+	m.LastMatched = false
+	m.Paused = false
+	m.Created = time.Time{}
+	m.NextCheck = time.Time{}
+	m.LastFired = time.Time{}
+	m.LastChecked = time.Time{}
+	m.SchedulerID = ""
+	return json.Marshal(m)
+}
+
+// Dependencies folds in what the monitor references: the watch tool it
+// invokes (or the source hook behind a hook-backed tool name) and the
+// checker/wake agents — so exporting a monitor carries the whole bridge
+// (monitor → tool → credential) it was built from.
+func (monitorArtifact) Dependencies(db Database, name, owner string) []ArtifactSel {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil
+	}
+	m, ok := findMonitorForExport(db, owner, name)
+	if !ok {
+		return nil
+	}
+	return monitorRecipeDeps(db, normalizeMonitorAgents(m, owner), owner, nil)
+}
+
+// RecipeDependencies extracts the same references straight from a recipe (the
+// recipe IS an EventMonitor), for import preview.
+func (monitorArtifact) RecipeDependencies(db Database, recipe json.RawMessage, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
+	var m EventMonitor
+	if json.Unmarshal(recipe, &m) != nil {
+		return nil
+	}
+	return monitorRecipeDeps(db, m, strings.TrimSpace(owner), inBundle)
+}
+
+// monitorRecipeDeps is the one walk behind both dependency interfaces: the
+// watch tool (an exportable temp tool, or the source hook behind a
+// hook-backed name — built-ins fail every probe and are skipped) plus the
+// checker and wake agents, emitted unconditionally so a missing agent warns
+// at import instead of vanishing.
+func monitorRecipeDeps(db Database, m EventMonitor, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
+	if owner == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []ArtifactSel
+	add := func(typ, name, o string) {
+		key := typ + "\x00" + name
+		if name == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, ArtifactSel{Type: typ, Name: name, Owner: o})
+	}
+	if tn := strings.TrimSpace(m.ToolName); tn != "" {
+		if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
+			add("tool", tn, owner)
+		} else if h, ok := FindSourceHookByToolName(tn); ok {
+			add("source_hook", h.Name, "")
+		}
+	}
+	if a := strings.TrimSpace(m.CheckAgent); a != "" {
+		add("agent", a, owner)
+	}
+	if a := strings.TrimSpace(m.WakeAgent); a != "" {
+		add("agent", a, owner)
+	}
+	return out
+}
+
+// ImportArtifact reconstitutes a monitor under owner, PAUSED and with fresh
+// local state: no edge baselines, no scheduler booking, and — for a webhook
+// monitor — a freshly minted token, so the recipe's WHEN+GATE+ACTION shape is
+// all that survives the trip. A same-named monitor already in owner's store
+// skips, never clobbered. Resume (the existing console surface) is both the
+// review gate and what schedules it.
+func (monitorArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return "", "", Error("monitor import requires an owner")
+	}
+	var m EventMonitor
+	if err := json.Unmarshal(recipe, &m); err != nil {
+		return "", "", fmt.Errorf("invalid monitor recipe: %w", err)
+	}
+	name := strings.TrimSpace(m.Name)
+	if name == "" {
+		return "", "", Error("missing monitor name")
+	}
+	if m.OneShot {
+		return name, "", fmt.Errorf("monitor %q is a one-shot await — not importable", name)
+	}
+	if _, exists := GetEventMonitor(db, owner, name); exists {
+		return name, "a monitor with this name already exists", nil
+	}
+	m.Owner = owner
+	m.Paused = true
+	m.Token = ""
+	if m.Kind == EventKindWebhook {
+		m.Token = NewEventToken()
+	}
+	m.WakeSession = ""
+	m.DeliverChatID = ""
+	m.LastHash = ""
+	m.LastBody = ""
+	m.LastResult = ""
+	m.LastBreached = false
+	m.LastMatched = false
+	m.NextCheck = time.Time{}
+	m.LastFired = time.Time{}
+	m.LastChecked = time.Time{}
+	m.SchedulerID = ""
+	m.Created = time.Now()
+	SaveEventMonitor(db, m)
 	return name, "", nil
 }
