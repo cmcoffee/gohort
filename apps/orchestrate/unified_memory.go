@@ -226,7 +226,10 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 				return t.storeFactNote(content)
 			}
 			if t.inferredOff() {
-				return "", errors.New("recall memory is disabled for this agent — call remember with pin=true to keep a short always-in-prompt note instead")
+				// Deliberately does NOT steer to pin=true: reference material
+				// funneled into the always-in-prompt block bloats every future
+				// turn. Pinning is only for what independently qualifies.
+				return "", errors.New("recall memory is disabled for this agent — the finding was NOT saved. Do not re-save it with pin=true unless it is genuinely a short durable preference or instruction that belongs in every prompt; reference material should simply not be saved here")
 			}
 			// memorySave reads content/topic/subject straight off args.
 			return t.memorySave(args)
@@ -245,7 +248,7 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 	params := map[string]ToolParam{
 		"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
 		"id":    {Type: "string", Description: "An id from a prior recall hit (e.g. `doc:…`, `span:…`, `mem:…`, `fact:…`). Returns the full item behind that id instead of searching."},
-		"k":     {Type: "number", Description: "Max hits per layer (default 4, cap follows the knowledge ceiling). Leave default unless you want a wider net."},
+		"k":     {Type: "number", Description: "Max hits in TOTAL, split across the layers searched (default 4 per layer; per-layer share capped by the knowledge ceiling). Leave default unless you want a wider or narrower net."},
 		"layer": {Type: "string", Enum: []string{"knowledge", "finding", "pinned", "history"}, Description: "Optional. Restrict the search to ONE source, named by the tag you see on hits: `knowledge` (authoritative docs), `finding` (your saved findings), `pinned` (always-in-prompt notes), or `history` (earlier conversation). Omit to search all four. Use `knowledge` when the answer must come strictly from the corpus."},
 	}
 	if t.recallCorpusOnly() {
@@ -311,37 +314,63 @@ func (t *chatTurn) recallLayerSet(args map[string]any) map[string]bool {
 	}
 }
 
+// recallPerLayerBudget resolves the caller's k into a per-layer depth. k is
+// the TOTAL hit budget, split across the layers being searched (ceiling
+// division, so k=5 over 4 layers still returns something per layer) —
+// matching the legacy per-tool k=total semantics instead of silently
+// multiplying the ask by the layer count. No k keeps the tuned per-layer
+// default; the per-layer share is capped by the knowledge ceiling.
+func recallPerLayerBudget(args map[string]any, layerCount int) int {
+	v, ok := args["k"].(float64)
+	if !ok || v <= 0 {
+		return unifiedRecallPerLayer
+	}
+	if layerCount < 1 {
+		layerCount = 1
+	}
+	perLayer := (int(v) + layerCount - 1) / layerCount
+	if maxK := KnowledgeMaxK(); perLayer > maxK {
+		perLayer = maxK
+	}
+	if perLayer < 1 {
+		perLayer = 1
+	}
+	return perLayer
+}
+
 // recallSearch fans out across every available layer, applies the shared
 // relevance floor, and renders one merged, provenance-tagged block. One embed
 // covers Reference + Knowledge (ChunkScopeAll, split by provenance); facts and
 // history run their own indexes.
 func (t *chatTurn) recallSearch(query string, args map[string]any) (string, error) {
-	perLayer := unifiedRecallPerLayer
-	if v, ok := args["k"].(float64); ok && v > 0 {
-		perLayer = int(v)
-		if maxK := KnowledgeMaxK(); perLayer > maxK {
-			perLayer = maxK
-		}
-	}
-
 	layers := t.recallLayerSet(args)
+	perLayer := recallPerLayerBudget(args, len(layers))
 	now := time.Now()
 	var sections []string
 
 	// [pinned] — Explicit Memory. Tagged with fact:<id> so forget can target
 	// the exact note regardless of its position in the prompt block. An aging or
 	// stale note carries an as-of hint so the model weights it accordingly.
+	// Same affordances as legacy search_facts: a fact naming a known graph
+	// entity gets the recall_about nudge, and a query that matches only
+	// RETIRED notes surfaces the tombstone explanation ("you had X; dropped on
+	// <date>") instead of a silent miss the model would paper over with a
+	// stale prior.
 	if layers["pinned"] && !t.explicitOff() {
 		facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
 		if len(facts) > perLayer {
 			facts = facts[:perLayer]
 		}
 		if len(facts) > 0 {
+			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
 			var b strings.Builder
 			for _, f := range facts {
-				fmt.Fprintf(&b, "- [pinned] %s%s\n  id: fact:%s\n", strings.TrimSpace(f.Note), FactStalenessNote(f, now), f.ID)
+				fmt.Fprintf(&b, "- [pinned] %s%s%s\n  id: fact:%s\n",
+					strings.TrimSpace(f.Note), factEntityNudge(ents, f.Note), FactStalenessNote(f, now), f.ID)
 			}
 			sections = append(sections, strings.TrimRight(b.String(), "\n"))
+		} else if hole := explainRetiredHole(t.udb, factsNamespace(t.agent.ID), query); hole != "" {
+			sections = append(sections, "[pinned] "+hole)
 		}
 	}
 
@@ -556,18 +585,29 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget",
-			Description: "Delete one thing from your memory by the id recall gave you.\n\n  fact:<id>  a pinned note (or pass a bare number matching the index in your \"Saved facts\" prompt block — then ALWAYS also pass quote)\n  mem:<id>   a finding you saved with remember\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id`.",
+			Description: "Delete something from your memory, by id or by search.\n\n  id — from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your \"Saved facts\" prompt block — then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query — no id in hand: deletes the findings matching the query (tightly capped, relevance-floored — same precision as recall). Use for \"drop what I saved about X\".\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.",
 			Parameters: map[string]ToolParam{
 				"id":    {Type: "string", Description: "The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your \"Saved facts\" block."},
 				"quote": {Type: "string", Description: "With a bare-number id: a distinctive phrase copied verbatim from the note you're deleting, so the right note is dropped even if the numbered list shifted since you read it. Ignored for fact:/mem: ids (those are stable)."},
+				"query": {Type: "string", Description: "Without an id: natural-language description of the FINDINGS to delete. Only close matches above the relevance floor are removed, capped per call."},
+				"k":     {Type: "number", Description: "(query mode) max findings to delete in one call (default 3, hard-capped)."},
 			},
-			Required: []string{"id"},
-			Caps:     []Capability{CapWrite},
+			Caps: []Capability{CapWrite},
 		},
 		Handler: func(args map[string]any) (string, error) {
 			id := strings.TrimSpace(stringArg(args, "id"))
 			if id == "" {
-				return "", errors.New("id is required")
+				// Query-mode: bulk finding delete, same engine as the legacy
+				// memory(action="forget") — search-then-delete with the shared
+				// relevance floor and maxForgetK cap, so a loose query can't
+				// wipe the store.
+				if strings.TrimSpace(stringArg(args, "query")) != "" {
+					if t.inferredOff() {
+						return "", errors.New("recall memory is disabled for this agent — there are no findings to forget")
+					}
+					return t.memoryForget(args)
+				}
+				return "", errors.New("id or query is required")
 			}
 			// Bare integer → prompt-block index (the affordance the model has
 			// for a pinned note it sees in its prompt but never recalled).
@@ -631,6 +671,20 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 		ids = append(ids, c.ID)
 	}
 	if len(ids) == 0 {
+		// Not a finding's ReportID — maybe it's a single chunk's row id (the
+		// granularity legacy memory(forget) addressed by mem_id). Same scope +
+		// derived-only gates as the ReportID path, so surgical per-chunk
+		// deletes work here too instead of dead-ending.
+		var c EmbeddedChunk
+		if VectorDB.Get(EmbeddedChunks, reportID, &c) {
+			inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":")
+			if inScope && chunkProvenance(c.Source, c.ReportID) == "derived" {
+				DeleteChunksByIDs(VectorDB, []string{reportID})
+				Log("[orchestrate.unified_memory.forget] user=%q agent=%q dropped chunk id=%s topic=%q",
+					t.user, t.agent.ID, reportID, c.Section)
+				return "Forgot that memory entry.", nil
+			}
+		}
 		return fmt.Sprintf("No finding with id mem:%s — it may already be gone.", reportID), nil
 	}
 	DeleteChunksByIDs(VectorDB, ids)
