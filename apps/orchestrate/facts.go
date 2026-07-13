@@ -97,17 +97,23 @@ func (t *chatTurn) storeFactNote(note string) (string, error) {
 
 // forgetFactToolDef removes one fact by its 1-based index in the
 // rendered list. The LLM reads its numbered notes in the system
-// prompt's "Saved facts" block and references the matching
-// index here.
+// prompt's "Saved facts" block and references the matching index
+// here, plus a verbatim quote from the note — the index alone can go
+// stale mid-turn (a store_fact can trigger supersession or a sweep
+// that shifts the list), and a stale index deletes the wrong note.
 func (t *chatTurn) forgetFactToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget_fact",
-			Description: "Delete a previously-stored fact by its index in the \"Saved facts\" block in your system prompt. Use when a stored fact is OBSOLETE (no longer applies — user moved jobs, project changed names, preference flipped). Index is 1-based and matches the number you see in the prompt.",
+			Description: "Delete a previously-stored fact by its index in the \"Saved facts\" block in your system prompt. Use when a stored fact is OBSOLETE (no longer applies — user moved jobs, project changed names, preference flipped). Index is 1-based and matches the number you see in the prompt. ALWAYS also pass quote — a distinctive phrase copied verbatim from that note — so the right note is deleted even if the list shifted since you read it.",
 			Parameters: map[string]ToolParam{
 				"index": {
 					Type:        "integer",
 					Description: "1-based index of the note to delete, matching the number prefix in your \"Saved facts\" block.",
+				},
+				"quote": {
+					Type:        "string",
+					Description: "A distinctive phrase copied verbatim from the note you're deleting. Protects against the numbered list having shifted since you read it — on a mismatch, nothing is deleted.",
 				},
 			},
 			Required: []string{"index"},
@@ -118,9 +124,10 @@ func (t *chatTurn) forgetFactToolDef() AgentToolDef {
 			if idx < 1 {
 				return "", errors.New("index is required and must be >= 1")
 			}
-			removed, ok := ForgetMemoryFactByIndex(t.udb, factsNamespace(t.agent.ID), idx)
+			quote := strings.TrimSpace(stringArg(args, "quote"))
+			removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.udb, factsNamespace(t.agent.ID), idx, quote)
 			if !ok {
-				return "", fmt.Errorf("no fact at index %d", idx)
+				return "", fmt.Errorf("nothing deleted: %s", reason)
 			}
 			return fmt.Sprintf("Forgot: %q.", removed.Note), nil
 		},

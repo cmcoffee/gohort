@@ -223,6 +223,13 @@ func deleteChatSession(db Database, agentID, sessionID string) {
 	// summary (prepended to every turn) outlives the history and re-primes
 	// the thread with its old context. No-op when no compact-state row exists.
 	deleteCompactState(db, agentID, sessionID)
+	// And the continuity archive: folded spans ingested for [history] recall
+	// live under lcm:<agent>:<session> in this same db. Without this wipe,
+	// "clear thread" left the conversation's content recoverable via recall —
+	// a privacy hole — and the archive grew without bound.
+	if n := WipeChunksBySourcePrefix(db, operatorLCMSource(agentID, sessionID)); n > 0 {
+		Log("[orchestrate.sessions] dropped %d archived history chunk(s) for agent=%s session=%s", n, agentID, sessionID)
+	}
 }
 
 // dropChatSessionBucket wipes every session for an agent. Called from
@@ -235,6 +242,12 @@ func dropChatSessionBucket(db Database, agentID string) {
 	tbl := sessionTable(agentID)
 	for _, k := range db.Keys(tbl) {
 		db.Unset(tbl, k)
+	}
+	// Every session's continuity archive shares the lcm:<agent>: source
+	// prefix — one sweep reclaims them all (operatorLCMSource with an empty
+	// session id IS that prefix).
+	if n := WipeChunksBySourcePrefix(db, operatorLCMSource(agentID, "")); n > 0 {
+		Log("[orchestrate.sessions] dropped %d archived history chunk(s) for deleted agent=%s", n, agentID)
 	}
 }
 

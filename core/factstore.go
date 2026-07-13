@@ -747,17 +747,60 @@ func ListRetiredFacts(db Database, namespace string) []MemoryFact {
 // fact + a boolean for success. Used by LLM-facing forget tools
 // where the model picks a row from the listed view.
 func ForgetMemoryFactByIndex(db Database, namespace string, index int) (MemoryFact, bool) {
+	f, _, ok := ForgetMemoryFactByIndexQuoted(db, namespace, index, "")
+	return f, ok
+}
+
+// ForgetMemoryFactByIndexQuoted is the race-safe form of forget-by-index. The
+// numbered list an LLM reads in its prompt can shift between render and the
+// forget call — a save in the same turn can trigger supersession or a sweep,
+// removing or merging rows — and a bare index then deletes the WRONG note,
+// irrecoverably (forget is a hard delete). quote is a verbatim snippet of the
+// note the caller intends to drop:
+//   - index resolves and the note contains quote (case-insensitive) → delete.
+//   - mismatch (or index out of range) but exactly ONE live note contains
+//     quote → the list shifted; delete that note instead (self-heals).
+//   - otherwise → (zero, reason, false): nothing deleted, reason says why.
+//
+// Empty quote skips verification (legacy behavior — the index alone is
+// trusted, wrong-note risk and all).
+func ForgetMemoryFactByIndexQuoted(db Database, namespace string, index int, quote string) (MemoryFact, string, bool) {
 	namespace = strings.TrimSpace(namespace)
 	if db == nil || namespace == "" || index < 1 {
-		return MemoryFact{}, false
+		return MemoryFact{}, "invalid index", false
 	}
+	quote = strings.TrimSpace(quote)
 	facts := ListMemoryFacts(db, namespace)
-	if index > len(facts) {
-		return MemoryFact{}, false
+	containsQuote := func(f MemoryFact) bool {
+		return strings.Contains(strings.ToLower(f.Note), strings.ToLower(quote))
 	}
-	target := facts[index-1]
+	if index <= len(facts) {
+		target := facts[index-1]
+		if quote == "" || containsQuote(target) {
+			db.Unset(MemoryFactsTable, factDBKey(namespace, target.ID))
+			return target, "", true
+		}
+	} else if quote == "" {
+		return MemoryFact{}, "index out of range", false
+	}
+	// Index and quote disagree (or the index ran off the end): the list has
+	// changed since the caller read it. A unique quote match still identifies
+	// the intended note.
+	var match *MemoryFact
+	for i := range facts {
+		if containsQuote(facts[i]) {
+			if match != nil {
+				return MemoryFact{}, "the note list has changed and the quote matches more than one note — search the notes and retry with a more specific quote", false
+			}
+			match = &facts[i]
+		}
+	}
+	if match == nil {
+		return MemoryFact{}, "the note list has changed and no note contains that quote — it may already be gone; search the notes to confirm", false
+	}
+	target := *match
 	db.Unset(MemoryFactsTable, factDBKey(namespace, target.ID))
-	return target, true
+	return target, "", true
 }
 
 // GetMemoryFactByID returns one fact (live or retired) by ID and whether it was

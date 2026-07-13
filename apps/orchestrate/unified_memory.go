@@ -384,19 +384,25 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 
 	// [history] — folded-away conversation spans. Best-effort: agents with no
 	// archive simply contribute nothing. Capped out for corpus-only agents so
-	// past conversation never poses as an authoritative source.
+	// past conversation never poses as an authoritative source. Floored like
+	// the other layers — an unfloored layer injected tangential old
+	// conversation on any weak match.
 	if layers["history"] {
 		source := operatorLCMSource(t.agent.ID, cortexSessionID(t.agent.ID))
-		if hh := SearchRecall(t.udb, source, query, perLayer); len(hh) > 0 {
-			var b strings.Builder
-			for _, h := range hh {
-				label := h.Title
-				if label == "" {
-					label = h.Section
-				}
-				fmt.Fprintf(&b, "- [history] %s\n  id: span:%s\n  %s\n", label, h.ReportID, recallSnippet(h.Text))
+		hh := SearchRecall(t.udb, source, query, perLayer)
+		var b strings.Builder
+		for _, h := range hh {
+			if h.Score < manualSearchMinScore {
+				continue
 			}
-			sections = append(sections, strings.TrimRight(b.String(), "\n"))
+			label := h.Title
+			if label == "" {
+				label = h.Section
+			}
+			fmt.Fprintf(&b, "- [history] %s\n  id: span:%s\n  %s\n", label, h.ReportID, recallSnippet(h.Text))
+		}
+		if s := strings.TrimRight(b.String(), "\n"); s != "" {
+			sections = append(sections, s)
 		}
 	}
 
@@ -550,9 +556,10 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget",
-			Description: "Delete one thing from your memory by the id recall gave you.\n\n  fact:<id>  a pinned note (or pass a bare number matching the index in your \"Saved facts\" prompt block)\n  mem:<id>   a finding you saved with remember\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id`.",
+			Description: "Delete one thing from your memory by the id recall gave you.\n\n  fact:<id>  a pinned note (or pass a bare number matching the index in your \"Saved facts\" prompt block — then ALWAYS also pass quote)\n  mem:<id>   a finding you saved with remember\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id`.",
 			Parameters: map[string]ToolParam{
-				"id": {Type: "string", Description: "The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your \"Saved facts\" block."},
+				"id":    {Type: "string", Description: "The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your \"Saved facts\" block."},
+				"quote": {Type: "string", Description: "With a bare-number id: a distinctive phrase copied verbatim from the note you're deleting, so the right note is dropped even if the numbered list shifted since you read it. Ignored for fact:/mem: ids (those are stable)."},
 			},
 			Required: []string{"id"},
 			Caps:     []Capability{CapWrite},
@@ -564,10 +571,14 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			}
 			// Bare integer → prompt-block index (the affordance the model has
 			// for a pinned note it sees in its prompt but never recalled).
+			// Quote-verified: the numbered list can shift mid-turn (a remember
+			// can trigger supersession or a sweep), and a stale bare index
+			// would hard-delete the wrong note.
 			if n, err := strconv.Atoi(id); err == nil {
-				removed, ok := ForgetMemoryFactByIndex(t.udb, factsNamespace(t.agent.ID), n)
+				quote := strings.TrimSpace(stringArg(args, "quote"))
+				removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.udb, factsNamespace(t.agent.ID), n, quote)
 				if !ok {
-					return "", fmt.Errorf("no pinned note at index %d", n)
+					return "", fmt.Errorf("nothing deleted: %s", reason)
 				}
 				return fmt.Sprintf("Forgot pinned note: %q.", removed.Note), nil
 			}

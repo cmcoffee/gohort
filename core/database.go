@@ -187,14 +187,59 @@ func OpenAppDB(name string) Database {
 	return db
 }
 
-// Bucket returns a new Database instance representing the given table.
-func (d DBase) Bucket(table string) Database {
-	return &DBase{d.Store.Bucket(table)}
+// dbHandles interns the child Database handles minted by Bucket/Sub, so the
+// SAME (parent, name) pair always yields the SAME pointer. Without this,
+// every Bucket/Sub call allocated a fresh wrapper, which made pointer
+// identity useless as a cache key — the chunk cache (core/vector_store.go)
+// keys its snapshots by Database and was rebuilding on every read through a
+// derived handle (UserDB chains never matched). Handles are stateless wrappers
+// over a shared kvlite.Store, so sharing one across goroutines is safe. The
+// map grows with distinct namespaces actually touched (users × buckets) and
+// is never evicted — entries are two words each.
+var (
+	dbHandleMu sync.Mutex
+	dbHandles  = map[dbHandleKey]Database{}
+)
+
+type dbHandleKey struct {
+	parent *DBase
+	bucket bool // Bucket vs Sub — same name, different kvlite namespace semantics
+	name   string
 }
 
-// Sub returns a sub-database with the given prefix.
-func (d DBase) Sub(table string) Database {
-	return &DBase{d.Store.Sub(table)}
+// child returns the interned handle for this parent + operation + name,
+// minting (and remembering) it on first use. Pointer receivers on Bucket/Sub
+// are what make the parent's address a stable key: every Database in the
+// process is a *DBase, and roots (OpenDB / OpenCache / literals) are created
+// once, so interned chains stay pointer-identical all the way down.
+func (d *DBase) child(bucket bool, name string) Database {
+	dbHandleMu.Lock()
+	defer dbHandleMu.Unlock()
+	key := dbHandleKey{parent: d, bucket: bucket, name: name}
+	if h, ok := dbHandles[key]; ok {
+		return h
+	}
+	var s kvlite.Store
+	if bucket {
+		s = d.Store.Bucket(name)
+	} else {
+		s = d.Store.Sub(name)
+	}
+	h := &DBase{s}
+	dbHandles[key] = h
+	return h
+}
+
+// Bucket returns the Database instance representing the given table —
+// interned, so repeated calls return the identical handle.
+func (d *DBase) Bucket(table string) Database {
+	return d.child(true, table)
+}
+
+// Sub returns the sub-database with the given prefix — interned, so repeated
+// calls return the identical handle.
+func (d *DBase) Sub(table string) Database {
+	return d.child(false, table)
 }
 
 // Drop deletes the specified table.

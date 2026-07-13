@@ -42,58 +42,95 @@ func applyTemporalDecay(rawScore float32, date string) float32 {
 	return rawScore * float32(decay)
 }
 
-// chunkCache holds a snapshot of every EmbeddedChunk row from a single
-// kvlite Database, so SearchChunks/SearchChunksSubstring can scan a Go
-// slice instead of re-deserializing every chunk from kvlite per query.
-// Lazy-loaded on first read; invalidated on every IngestReport /
-// DeleteReportChunks so the next read rebuilds. Keyed by the Database
-// pointer so a future multi-bucket setup just rebuilds when the bucket
-// changes — no correctness risk, only the rebuild cost.
+// chunkCache holds snapshots of every EmbeddedChunk row, one per Database,
+// so SearchChunks/SearchChunksSubstring can scan a Go slice instead of
+// re-deserializing every chunk from kvlite per query. Lazy-loaded on first
+// read; invalidated (whole cache) on every IngestReport / DeleteReportChunks
+// so the next read rebuilds.
 //
-// At gohort scale (thousands of chunks, low write rate, interactive
-// reads) invalidate-on-write + lazy-rebuild is the right trade: the
-// cost of a write is 1 extra db.Keys walk on the next read, and reads
-// drop from N×JSON-decode to a single slice walk.
+// It is a MAP keyed by the Database handle, not a single slot: one recall
+// touches both the shared VectorDB (findings/knowledge) and the per-user
+// store (history archive) back-to-back, and a single-slot cache thrashed —
+// two full N×kvlite-get rebuilds per recall, brutal when the store sits on
+// NFS. Handle interning (core/database.go dbHandles) is what makes the key
+// stable: UserDB/Bucket/Sub chains now return pointer-identical handles.
+// Capped at a handful of Databases, LRU-evicted, since each snapshot holds a
+// full chunk corpus in memory.
+//
+// At gohort scale (thousands of chunks, low write rate, interactive reads)
+// invalidate-on-write + lazy-rebuild is the right trade: the cost of a write
+// is 1 extra db.Keys walk per cached Database on the next read, and reads
+// drop from N×gob-decode to a single slice walk.
+const chunkCacheMaxDBs = 8
+
 var chunkCache struct {
-	mu     sync.RWMutex
-	db     Database
-	chunks []EmbeddedChunk
-	loaded bool
+	mu      sync.RWMutex
+	entries map[Database]*chunkCacheEntry
+	tick    uint64 // monotonic use-counter driving LRU eviction
 }
 
-// loadChunkCache fully (re)builds the cache from db. Caller must hold
-// chunkCache.mu for write.
-func loadChunkCache(db Database) {
-	chunkCache.db = db
-	chunkCache.chunks = chunkCache.chunks[:0]
+type chunkCacheEntry struct {
+	chunks   []EmbeddedChunk
+	lastUsed uint64 // chunkCache.tick at last snapshot; guarded by chunkCache.mu
+}
+
+// snapshotChunks returns the cached chunk slice for db, rebuilding from
+// kvlite on a miss. The returned slice is owned by the cache — callers must
+// NOT mutate it.
+func snapshotChunks(db Database) []EmbeddedChunk {
+	chunkCache.mu.RLock()
+	e := chunkCache.entries[db]
+	chunkCache.mu.RUnlock()
+	if e == nil {
+		return rebuildChunkCache(db)
+	}
+	// Bump recency under the write lock (cheap; the map hit above is the hot
+	// path and stays under the read lock).
+	chunkCache.mu.Lock()
+	if cur := chunkCache.entries[db]; cur != nil { // may have been invalidated since
+		chunkCache.tick++
+		cur.lastUsed = chunkCache.tick
+		chunks := cur.chunks
+		chunkCache.mu.Unlock()
+		return chunks
+	}
+	chunkCache.mu.Unlock()
+	return rebuildChunkCache(db)
+}
+
+// rebuildChunkCache loads db's full chunk table and installs it in the cache,
+// evicting the least-recently-used snapshot when the cache is at capacity.
+func rebuildChunkCache(db Database) []EmbeddedChunk {
+	chunkCache.mu.Lock()
+	defer chunkCache.mu.Unlock()
+	if e := chunkCache.entries[db]; e != nil { // raced with another rebuilder
+		chunkCache.tick++
+		e.lastUsed = chunkCache.tick
+		return e.chunks
+	}
+	var chunks []EmbeddedChunk
 	for _, key := range db.Keys(EmbeddedChunks) {
 		var c EmbeddedChunk
 		if db.Get(EmbeddedChunks, key, &c) {
-			chunkCache.chunks = append(chunkCache.chunks, c)
+			chunks = append(chunks, c)
 		}
 	}
-	chunkCache.loaded = true
-}
-
-// snapshotChunks returns the current cached chunk slice for db,
-// rebuilding from kvlite if the cache is empty or pointed at a
-// different Database. The returned slice is owned by the cache —
-// callers must NOT mutate it.
-func snapshotChunks(db Database) []EmbeddedChunk {
-	chunkCache.mu.RLock()
-	if chunkCache.loaded && chunkCache.db == db {
-		out := chunkCache.chunks
-		chunkCache.mu.RUnlock()
-		return out
+	if chunkCache.entries == nil {
+		chunkCache.entries = make(map[Database]*chunkCacheEntry, chunkCacheMaxDBs)
 	}
-	chunkCache.mu.RUnlock()
-
-	chunkCache.mu.Lock()
-	defer chunkCache.mu.Unlock()
-	if !chunkCache.loaded || chunkCache.db != db {
-		loadChunkCache(db)
+	for len(chunkCache.entries) >= chunkCacheMaxDBs {
+		var oldest Database
+		var oldestUsed uint64 = ^uint64(0)
+		for d, e := range chunkCache.entries {
+			if e.lastUsed < oldestUsed {
+				oldest, oldestUsed = d, e.lastUsed
+			}
+		}
+		delete(chunkCache.entries, oldest)
 	}
-	return chunkCache.chunks
+	chunkCache.tick++
+	chunkCache.entries[db] = &chunkCacheEntry{chunks: chunks, lastUsed: chunkCache.tick}
+	return chunks
 }
 
 // ChunksForSource returns every stored chunk whose Source exactly matches —
@@ -112,11 +149,13 @@ func ChunksForSource(db Database, source string) []EmbeddedChunk {
 	return out
 }
 
-// invalidateChunkCache marks the cache stale so the next read rebuilds.
-// Cheap: a single bool flip under lock.
+// invalidateChunkCache drops every cached snapshot so the next read per
+// Database rebuilds. Whole-cache invalidation keeps the write sites simple
+// (they don't all know which handle a row was written through); writes are
+// rare relative to reads, so the occasional multi-DB rebuild is fine.
 func invalidateChunkCache() {
 	chunkCache.mu.Lock()
-	chunkCache.loaded = false
+	chunkCache.entries = nil
 	chunkCache.mu.Unlock()
 }
 
@@ -1122,31 +1161,19 @@ func keywordTerms(query string) []string {
 	return out
 }
 
-// keywordCoverage is the fraction of the query's content terms present in the
-// chunk text (case-insensitive substring — cheap, and fine for the multi-char
-// identifiers this exists to catch). 0 = no term present.
-func keywordCoverage(text string, terms []string) float32 {
-	if len(terms) == 0 {
-		return 0
-	}
-	lt := strings.ToLower(text)
-	matched := 0
-	for _, t := range terms {
-		if strings.Contains(lt, t) {
-			matched++
-		}
-	}
-	return float32(matched) / float32(len(terms))
-}
-
 // SearchChunksKeywordByPredicate ranks chunks by LEXICAL overlap with the query
 // — the keyword half of hybrid search, so an exact term the embedding glosses
 // over (a product name, an acronym, an identifier like "OPNsense") still
-// surfaces. Score is synthesized into a cosine-comparable range (stronger
-// term-coverage ≈ a stronger match) so these hits compete fairly when merged
-// with vector hits AND survive similarity-floor filters. Nil when the query has
-// no usable terms. (First pass: plain coverage; IDF weighting to prioritize rare
-// terms over common ones is the obvious refinement.)
+// surfaces. Coverage is IDF-WEIGHTED over the allowed chunk set: matching a
+// term that appears in few chunks (the identifier this function exists for)
+// carries most of the query's weight, while matching only a term half the
+// corpus contains carries almost none. Score = 0.85 × weighted coverage, so a
+// full-coverage hit still lands at 0.85 (cosine-comparable, same ceiling as
+// before) but the scale is HONEST from zero: the old form (0.35 + 0.5·cov)
+// started every one-term hit above the 0.35 similarity floors, so the floors
+// filtered nothing on the keyword half and tangential single-common-term hits
+// leaked through. Now a hit passes a 0.35 floor only when the matched terms
+// carry ≥~41% of the query's IDF mass. Nil when the query has no usable terms.
 func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) bool, query string, k int) []SearchHit {
 	if db == nil || allow == nil || k <= 0 {
 		return nil
@@ -1156,21 +1183,74 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 		return nil
 	}
 	chunks := snapshotChunks(db)
-	type scored struct {
-		hit   SearchHit
-		score float32
+	// Pass 1: per-chunk term matches + document frequency per term, one text
+	// scan per chunk. Only candidates that matched something are kept.
+	type cand struct {
+		idx     int
+		matched []bool
 	}
-	var all []scored
+	df := make([]int, len(terms))
+	var cands []cand
+	allowed := 0
 	for i := range chunks {
 		c := &chunks[i]
 		if !allow(*c) {
 			continue
 		}
-		cov := keywordCoverage(c.Section+"\n"+c.Text, terms)
-		if cov <= 0 {
+		allowed++
+		lt := strings.ToLower(c.Section + "\n" + c.Text)
+		var matched []bool
+		any := false
+		for j, t := range terms {
+			if strings.Contains(lt, t) {
+				if matched == nil {
+					matched = make([]bool, len(terms))
+				}
+				matched[j] = true
+				df[j]++
+				any = true
+			}
+		}
+		if any {
+			cands = append(cands, cand{idx: i, matched: matched})
+		}
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	// Pass 2: IDF weights from the observed frequencies, then score each
+	// candidate by the fraction of total query weight its matches carry.
+	// Terms NO allowed chunk contains are excluded from the denominator:
+	// they can't discriminate between candidates, and (being rarest) they'd
+	// otherwise carry the largest weight — one filler word or typo in the
+	// query would dilute every real hit under the similarity floor,
+	// including the lone rare-identifier match this search exists to catch.
+	idf := make([]float64, len(terms))
+	var totalW float64
+	for j := range terms {
+		if df[j] == 0 {
 			continue
 		}
-		s := 0.35 + 0.5*cov // 0.35 (one of several terms) … 0.85 (all terms)
+		idf[j] = math.Log(1 + float64(allowed)/float64(1+df[j]))
+		totalW += idf[j]
+	}
+	if totalW <= 0 {
+		return nil
+	}
+	type scored struct {
+		hit   SearchHit
+		score float32
+	}
+	all := make([]scored, 0, len(cands))
+	for _, cd := range cands {
+		var w float64
+		for j, m := range cd.matched {
+			if m {
+				w += idf[j]
+			}
+		}
+		c := &chunks[cd.idx]
+		s := float32(0.85 * w / totalW)
 		all = append(all, scored{
 			hit: SearchHit{
 				ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,

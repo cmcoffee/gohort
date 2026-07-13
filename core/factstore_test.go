@@ -346,6 +346,53 @@ func TestForgetByIndexSkipsSuperseded(t *testing.T) {
 	}
 }
 
+// TestForgetByIndexQuoted: the quote-verified forget must delete on an
+// index+quote agreement, self-heal to a unique quote match when the list has
+// shifted under the caller, and refuse (deleting nothing) when the quote is
+// ambiguous or matches nothing.
+func TestForgetByIndexQuoted(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	seed := func(id, note string, age time.Duration) {
+		db.Set(MemoryFactsTable, factDBKey(ns, id), MemoryFact{
+			Namespace: ns, ID: id, Note: note, Created: time.Now().Add(-age),
+		})
+	}
+	seed("a", "user prefers metric units", 3*time.Hour)
+	seed("b", "production API needs JWT header", 2*time.Hour)
+	seed("c", "user's dog is named Rex", 1*time.Hour)
+
+	// Index and quote agree → that note goes.
+	removed, reason, ok := ForgetMemoryFactByIndexQuoted(db, ns, 2, "JWT header")
+	if !ok || removed.ID != "b" {
+		t.Fatalf("agreeing index+quote should delete b: ok=%v id=%q reason=%q", ok, removed.ID, reason)
+	}
+
+	// The list shifted (b is gone; c is now index 2). A caller holding the
+	// STALE index 3 with c's quote must still delete c, not error or misfire.
+	removed, reason, ok = ForgetMemoryFactByIndexQuoted(db, ns, 3, "dog is named Rex")
+	if !ok || removed.ID != "c" {
+		t.Fatalf("unique quote should self-heal a stale index: ok=%v id=%q reason=%q", ok, removed.ID, reason)
+	}
+
+	// Quote matching nothing → refuse, delete nothing.
+	if _, reason, ok = ForgetMemoryFactByIndexQuoted(db, ns, 1, "no such text"); ok || reason == "" {
+		t.Fatalf("unmatched quote must refuse with a reason, got ok=%v reason=%q", ok, reason)
+	}
+	if got := ListMemoryFacts(db, ns); len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("refusals must not delete: %+v", got)
+	}
+
+	// Ambiguous quote across multiple notes → refuse.
+	seed("d", "user prefers metric units for temperature too", time.Minute)
+	if _, reason, ok = ForgetMemoryFactByIndexQuoted(db, ns, 5, "prefers metric"); ok || reason == "" {
+		t.Fatalf("ambiguous quote must refuse, got ok=%v reason=%q", ok, reason)
+	}
+	if got := ListMemoryFacts(db, ns); len(got) != 2 {
+		t.Fatalf("ambiguous refusal must not delete: %+v", got)
+	}
+}
+
 // TestStoreMemoryFactNoChatStillDedups: the variadic chat arg is optional —
 // callers that pass none keep the prior dedup-only behavior. Tier-1
 // normalized match needs no embeddings, so this runs offline.
