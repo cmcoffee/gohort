@@ -22,6 +22,7 @@ func init() {
 	RegisterArtifactType(credentialArtifact{})
 	RegisterArtifactType(skillArtifact{})
 	RegisterArtifactType(collectionArtifact{})
+	RegisterArtifactType(customAppArtifact{})
 }
 
 // ---- connector -------------------------------------------------------------
@@ -838,4 +839,193 @@ func (credentialArtifact) ImportArtifact(_ Database, recipe json.RawMessage, _ s
 		return name, "", err
 	}
 	return name, "", nil
+}
+
+// ---- custom app --------------------------------------------------------
+
+// ResolveAgentNameForExport, when set, resolves an agent reference (ID or
+// name) in owner's store to the agent's canonical NAME. It exists because a
+// custom app binds its chat agent by ID (AppSpec.AgentID), but an agent
+// recipe is reborn under a fresh ID on import — only the name survives the
+// trip, so export normalizes the reference. Agents live in orchestrate's
+// per-user store, which core can't reach; orchestrate wires this from
+// Routes(). Unset / unresolvable leaves the reference untouched (best-effort,
+// same rule as every dependency walk).
+var ResolveAgentNameForExport func(owner, key string) (string, bool)
+
+// customAppArtifact makes a custom app (AppSpec) portable: the declarative
+// page, record-store shape, and inline data-source/action scripts travel as
+// one recipe; the bound chat agent and any fetch_via credentials the scripts
+// name ride along via the dependency closure. The spec store is core-side
+// (RootDB user:<owner>), so this registers from init() like skills — no app
+// capture needed.
+//
+// Import lands DISABLED: a spec can carry sandboxed scripts, and the Custom
+// Apps index's Enable button is the review gate (same posture as skills'
+// disabled draft). Records never travel — a recipe is the app's shape, not
+// its data.
+type customAppArtifact struct{}
+
+func (customAppArtifact) ArtifactType() string { return "custom_app" }
+
+func (customAppArtifact) ListArtifacts(_ Database) []ArtifactSel {
+	authDB := AuthDB()
+	if authDB == nil {
+		return nil
+	}
+	var out []ArtifactSel
+	for _, u := range AuthListUsers(authDB) {
+		for _, s := range ListAppSpecs(u.Username) {
+			out = append(out, ArtifactSel{Type: "custom_app", Name: s.Slug, Owner: u.Username})
+		}
+	}
+	return out
+}
+
+// findAppSpecForExport resolves a custom app by slug first (the storage key
+// and the identity ListArtifacts emits), then by case-insensitive display
+// name (the recipe's "name" field, which the preview's probes use).
+func findAppSpecForExport(owner, slugOrName string) (AppSpec, bool) {
+	key := strings.TrimSpace(slugOrName)
+	if key == "" {
+		return AppSpec{}, false
+	}
+	if s, ok := LoadAppSpec(owner, key); ok {
+		return s, true
+	}
+	lower := strings.ToLower(key)
+	for _, s := range ListAppSpecs(owner) {
+		if strings.ToLower(strings.TrimSpace(s.Name)) == lower {
+			return s, true
+		}
+	}
+	return AppSpec{}, false
+}
+
+func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.RawMessage, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil, Error("custom-app export requires an owner")
+	}
+	spec, ok := findAppSpecForExport(owner, name)
+	if !ok {
+		return nil, fmt.Errorf("no custom app %q for user %q", name, owner)
+	}
+	// Normalize the bound agent ref to the agent's NAME (see
+	// ResolveAgentNameForExport). Owner/timestamps are reassigned on import;
+	// Disabled is a local mute, not part of the app's shape.
+	if ref := strings.TrimSpace(spec.AgentID); ref != "" && ResolveAgentNameForExport != nil {
+		if n, resolved := ResolveAgentNameForExport(owner, ref); resolved {
+			spec.AgentID = n
+		}
+	}
+	spec.Owner = ""
+	spec.Created = ""
+	spec.Updated = ""
+	spec.Disabled = false
+	return json.Marshal(spec)
+}
+
+// Dependencies folds in what the app references: the chat agent it binds
+// (normalized to a name, so the emission matches what the recipe carries) and
+// the SecureAPI credentials its data-source/action scripts dispatch through
+// (the fetch_via:<cred> sandbox capability). Both are emitted unconditionally
+// — a missing agent or credential should warn at import, not vanish.
+func (customAppArtifact) Dependencies(_ Database, name, owner string) []ArtifactSel {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil
+	}
+	spec, ok := findAppSpecForExport(owner, name)
+	if !ok {
+		return nil
+	}
+	if ref := strings.TrimSpace(spec.AgentID); ref != "" && ResolveAgentNameForExport != nil {
+		if n, resolved := ResolveAgentNameForExport(owner, ref); resolved {
+			spec.AgentID = n
+		}
+	}
+	return customAppRecipeDeps(spec, owner)
+}
+
+// RecipeDependencies extracts the same references straight from a recipe (the
+// recipe IS an AppSpec), for import preview. The agent ref is already
+// normalized by export, so no store resolution is needed.
+func (customAppArtifact) RecipeDependencies(_ Database, recipe json.RawMessage, owner string, _ func(typ, name string) bool) []ArtifactSel {
+	var spec AppSpec
+	if json.Unmarshal(recipe, &spec) != nil {
+		return nil
+	}
+	return customAppRecipeDeps(spec, strings.TrimSpace(owner))
+}
+
+// customAppRecipeDeps is the one walk behind both dependency interfaces: the
+// bound chat agent plus every fetch_via credential named by a data source or
+// action's sandbox capabilities. Bootstrap credential sentinels are filtered,
+// same as everywhere.
+func customAppRecipeDeps(spec AppSpec, owner string) []ArtifactSel {
+	seen := map[string]bool{}
+	var out []ArtifactSel
+	add := func(typ, name, o string) {
+		key := typ + "\x00" + name
+		if name == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, ArtifactSel{Type: typ, Name: name, Owner: o})
+	}
+	if ref := strings.TrimSpace(spec.AgentID); ref != "" {
+		add("agent", ref, owner)
+	}
+	capCreds := func(caps []string) {
+		for _, c := range caps {
+			c = strings.TrimSpace(c)
+			if !strings.HasPrefix(c, "fetch_via:") {
+				continue
+			}
+			if cred := strings.TrimSpace(strings.TrimPrefix(c, "fetch_via:")); exportableCredential(cred) {
+				add("credential", cred, "")
+			}
+		}
+	}
+	for _, ds := range spec.DataSources {
+		capCreds(ds.Capabilities)
+	}
+	for _, ac := range spec.Actions {
+		capCreds(ac.Capabilities)
+	}
+	return out
+}
+
+// ImportArtifact reconstitutes a custom app under owner, DISABLED — the spec
+// can carry sandboxed scripts, so nothing runs until the owner reviews and
+// enables it from the Custom Apps index. A same-slug app already in owner's
+// store skips, never clobbered. Records don't travel, so the imported app
+// starts empty.
+func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return "", "", Error("custom-app import requires an owner")
+	}
+	var spec AppSpec
+	if err := json.Unmarshal(recipe, &spec); err != nil {
+		return "", "", fmt.Errorf("invalid custom-app recipe: %w", err)
+	}
+	slug := strings.TrimSpace(spec.Slug)
+	if slug == "" {
+		return strings.TrimSpace(spec.Name), "", Error("missing app slug")
+	}
+	if appSpecStore(owner) == nil {
+		return slug, "", Error("app spec store not initialized")
+	}
+	if _, exists := LoadAppSpec(owner, slug); exists {
+		return slug, "an app with this slug already exists", nil
+	}
+	spec.Slug = slug
+	spec.Owner = owner
+	spec.Created = ""
+	spec.Updated = ""
+	spec.Disabled = true
+	SaveAppSpec(spec)
+	return slug, "", nil
 }

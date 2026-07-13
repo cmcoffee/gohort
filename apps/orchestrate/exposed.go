@@ -221,11 +221,15 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	return out
 }
 
-// LookupAppAgent resolves an agent by ID within an owner's store, for a
-// data-driven app (customapps) that binds an agent to power its chat surface.
-// Unlike LookupExposedAgent this does NOT require Exposed=true — an app's agent
-// is reached through the app, not published on its own. Returns (zero, false)
-// when the owner or agent doesn't resolve.
+// LookupAppAgent resolves an agent by ID or name within an owner's store, for
+// a data-driven app (customapps) that binds an agent to power its chat
+// surface. The name fallback matters for imported apps: a bundle's custom-app
+// recipe carries the agent reference normalized to a NAME (an imported agent
+// is reborn under a fresh ID), so the binding must dispatch either form —
+// same rule as pipeline stage dispatch. Unlike LookupExposedAgent this does
+// NOT require Exposed=true — an app's agent is reached through the app, not
+// published on its own. Returns (zero, false) when the owner or agent doesn't
+// resolve.
 func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (AgentRecord, bool) {
 	if T.DB == nil || owner == "" || agentID == "" {
 		return AgentRecord{}, false
@@ -234,7 +238,7 @@ func (T *OrchestrateApp) LookupAppAgent(owner, agentID string) (AgentRecord, boo
 	if udb == nil {
 		return AgentRecord{}, false
 	}
-	return loadAgent(udb, agentID)
+	return findAgentByNameOrID(udb, owner, agentID)
 }
 
 // LookupExposedAgent resolves a slug to an exposed AgentRecord plus

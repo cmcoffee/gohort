@@ -93,6 +93,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// DELETE ?slug=… removes a custom app (its spec + records + active state).
 		T.handleDeleteApp(w, r, user)
 		return
+	case "_app/enable":
+		// POST ?slug=… flips an imported (disabled) app live — the review gate
+		// for bundle imports.
+		T.handleEnableApp(w, r, user)
+		return
 	}
 
 	parts := strings.SplitN(path, "/", 2)
@@ -104,6 +109,13 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	spec, found := loadSpec(user, slug)
 	if !found {
 		http.NotFound(w, r)
+		return
+	}
+	// A disabled app serves NOTHING — no page, no records, and above all no
+	// data-source/action scripts. Bundle imports land disabled; the Custom
+	// Apps index's Enable button is the review gate.
+	if spec.Disabled {
+		http.Error(w, "this app is disabled — review it and press Enable on the Custom Apps page to activate it", http.StatusForbidden)
 		return
 	}
 	// appdb is the app's record store for THIS user: a dedicated per-app file when
@@ -248,10 +260,13 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
 					{Field: "desc", Flex: 2, Mute: true},
+					{Field: "status", Flex: 1, Mute: true},
 				},
 				EmptyText: "No custom apps yet.",
 				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/"},
+					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "disabled"},
+					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
+						Confirm: "Enable this imported app? Review its data-source and action scripts first — they run in your sandbox once the app is live."},
 					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}",
 						Confirm: "Delete this app and all its data? This can't be undone."},
 				},
@@ -302,9 +317,42 @@ func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
 func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
 	out := []map[string]string{}
 	for _, s := range listSpecs(owner) {
-		out = append(out, map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc})
+		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc}
+		if s.Disabled {
+			// "disabled" drives the index's OnlyIf/HideIf row actions (truthy =
+			// non-empty); "status" is the human-readable column.
+			row["disabled"] = "1"
+			row["status"] = "disabled — review, then Enable"
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, out)
+}
+
+// handleEnableApp flips an imported (disabled) app live: POST ?slug=…. This is
+// the review gate for bundle imports — a recipe can carry sandboxed
+// data-source/action scripts, and none of them run until the owner has looked
+// and enabled the app here. Enabling an already-live app is a no-op.
+func (T *CustomApps) handleEnableApp(w http.ResponseWriter, r *http.Request, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	if slug == "" {
+		http.Error(w, "slug required", http.StatusBadRequest)
+		return
+	}
+	spec, ok := loadSpec(user, slug)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	if spec.Disabled {
+		spec.Disabled = false
+		SaveAppSpec(spec)
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // --- script-backed data sources (the "logic" seam) ---------------------------

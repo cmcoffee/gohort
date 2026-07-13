@@ -31,6 +31,7 @@ package orchestrate
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -225,6 +226,23 @@ func (T *OrchestrateApp) Routes() {
 	// agent's AttachedPipelines closure needs the pipeline type, a pipeline's
 	// agent stages need the agent type.
 	RegisterPipelineArtifactType(T)
+
+	// Agent-name resolution seam for core-side artifact types: the custom-app
+	// recipe normalizes its bound AgentID to the agent's NAME on export (an
+	// imported agent is reborn under a fresh ID; only the name survives).
+	// Core can't reach the per-user agent store, so orchestrate supplies the
+	// resolver.
+	ResolveAgentNameForExport = func(owner, key string) (string, bool) {
+		udb := UserDB(T.DB, owner)
+		if udb == nil {
+			return "", false
+		}
+		a, ok := findAgentByNameOrID(udb, owner, key)
+		if !ok || strings.TrimSpace(a.Name) == "" {
+			return "", false
+		}
+		return a.Name, true
+	}
 
 	// Channel agent runner: lets the transport (phantom) run a Channel's bound
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
