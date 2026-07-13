@@ -1831,6 +1831,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				TriggerDomains  []string `json:"trigger_domains"`
 				AlwaysActive    bool     `json:"always_active"`
 				ExposeToLLM     bool     `json:"expose_to_llm"`
+				Disabled        bool     `json:"disabled"`
 				ToolName        string   `json:"tool_name"`
 				EffectiveTool   string   `json:"effective_tool"`
 				ToolDescription string   `json:"tool_description"`
@@ -1851,6 +1852,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					SnippetField: h.SnippetField, ContentField: h.ContentField,
 					Domains: h.Domains, TriggerDomains: h.TriggerDomains,
 					AlwaysActive: h.AlwaysActive, ExposeToLLM: h.ExposeToLLM,
+					Disabled: h.Disabled,
 					ToolName: h.ToolName, EffectiveTool: eff, ToolDescription: h.ToolDescription,
 				})
 			}
@@ -1881,8 +1883,15 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					target.ExposeToLLM = true
 				case "hide":
 					target.ExposeToLLM = false
+				case "enable":
+					// The review gate for imported hooks: enabling is the
+					// admin's explicit "I've looked" — the hook starts
+					// receiving traffic (topic routing, tools) from here.
+					target.Disabled = false
+				case "disable":
+					target.Disabled = true
 				default:
-					http.Error(w, "action must be expose|hide", http.StatusBadRequest)
+					http.Error(w, "action must be expose|hide|enable|disable", http.StatusBadRequest)
 					return
 				}
 				SaveSourceHook(a.db, *target)
@@ -1921,14 +1930,19 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			}
 			// Preserve an existing encrypted secret when the auth_key field
 			// is left blank on an edit (matches the password-placeholder
-			// convention — re-saving the form shouldn't wipe the secret).
+			// convention — re-saving the form shouldn't wipe the secret), and
+			// the Disabled mute — the edit form doesn't carry it, and saving
+			// an imported hook's field mappings must not silently enable it
+			// (Enable is its own explicit action).
 			authKey := strings.TrimSpace(req.AuthKey)
-			if authKey == "" || authKey == "(configured)" {
-				for _, h := range RegisteredSourceHooks() {
-					if strings.EqualFold(h.Name, name) {
+			disabled := false
+			for _, h := range RegisteredSourceHooks() {
+				if strings.EqualFold(h.Name, name) {
+					if authKey == "" || authKey == "(configured)" {
 						authKey = h.AuthKey
-						break
 					}
+					disabled = h.Disabled
+					break
 				}
 			}
 			h := SourceHook{
@@ -1951,6 +1965,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				ExposeToLLM:     req.ExposeToLLM,
 				ToolName:        strings.TrimSpace(req.ToolName),
 				ToolDescription: strings.TrimSpace(req.ToolDescription),
+				Disabled:        disabled,
 			}
 			SaveSourceHook(a.db, h)
 			w.WriteHeader(http.StatusNoContent)

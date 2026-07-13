@@ -1363,6 +1363,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 										{Value: false, Label: "None", Color: "mute"},
 									},
 								},
+								{
+									Field: "disabled", Type: "badge", Label: "Status",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "Disabled", Color: "warning"},
+										{Value: false, Label: "Active", Color: "success"},
+									},
+								},
 							},
 							RowActions: []ui.RowAction{
 								ui.Expand("Edit", ui.FormPanel{
@@ -1372,6 +1379,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Templates:   sourceHookFormTemplates(),
 									Fields:      sourceHookFormFields(),
 								}),
+								{Type: "button", Label: "Enable",
+									PostTo: "api/source-hooks?action=enable&name={name}",
+									Method: "POST", OnlyIf: "disabled", Variant: "success",
+									Confirm: "Enable this source hook? Once active it receives search queries at its endpoint (topic routing, LLM tools) — review the endpoint and mappings first, and add its auth key if it needs one."},
+								{Type: "button", Label: "Disable",
+									PostTo: "api/source-hooks?action=disable&name={name}",
+									Method: "POST", HideIf: "disabled", Variant: "warning"},
 								{Type: "button", Label: "Expose to LLM",
 									PostTo: "api/source-hooks?action=expose&name={name}",
 									Method: "POST", HideIf: "expose_to_llm", Variant: "success"},

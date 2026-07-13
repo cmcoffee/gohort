@@ -200,6 +200,12 @@ func (p *pipelineArtifact) pipelineRecipeDeps(db Database, d PipelineDef, owner 
 			tn = strings.TrimSpace(tn)
 			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 				add("tool", tn)
+			} else if h, ok := FindSourceHookByToolName(tn); ok {
+				// A hook-backed stage tool references the source hook itself.
+				if !seen["source_hook\x00"+h.Name] {
+					seen["source_hook\x00"+h.Name] = true
+					out = append(out, ArtifactSel{Type: "source_hook", Name: h.Name})
+				}
 			}
 		}
 	}

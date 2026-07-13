@@ -154,6 +154,13 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 			seen["tool\x00"+tn] = true
 			if IsExportableTool(db, tn, owner) || (inBundle != nil && inBundle("tool", tn)) {
 				out = append(out, ArtifactSel{Type: "tool", Name: tn, Owner: owner})
+			} else if h, ok := FindSourceHookByToolName(tn); ok {
+				// A hook-backed tool name (pubmed_search) references the
+				// source hook itself — carry the hook, not a tool.
+				if !seen["source_hook\x00"+h.Name] {
+					seen["source_hook\x00"+h.Name] = true
+					out = append(out, ArtifactSel{Type: "source_hook", Name: h.Name})
+				}
 			}
 		}
 	}

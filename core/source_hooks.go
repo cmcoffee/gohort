@@ -127,6 +127,15 @@ type SourceHook struct {
 	ExposeToLLM     bool   `json:"expose_to_llm,omitempty"`
 	ToolName        string `json:"tool_name,omitempty"`        // LLM-facing tool name (lowercase, underscores). Defaults to "<name>_search" when ExposeToLLM is on but this is empty.
 	ToolDescription string `json:"tool_description,omitempty"` // LLM-facing description. Tells the model when to choose this over web_search. Defaults to a terse derived string when empty.
+
+	// Disabled mutes the hook everywhere it's CONSULTED — topic routing
+	// (HooksForTopic), paywall matching (HookForDomain), LLM tools, the
+	// query_source dispatcher — while it stays visible on management surfaces
+	// (admin list, CLI, export). It exists as the bundle-import review gate: an
+	// imported hook receives live search queries at its endpoint once active,
+	// so it lands disabled until the admin has looked. A local mute, not part
+	// of the hook's shape — export clears it.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // sourceHookRegistry manages all configured hooks.
@@ -135,13 +144,31 @@ var sourceHookRegistry struct {
 	hooks []SourceHook
 }
 
-// RegisteredSourceHooks returns all configured source hooks.
+// RegisteredSourceHooks returns all configured source hooks, INCLUDING
+// disabled ones. Management surfaces (admin list, CLI, artifact export) use
+// this; anything that CONSULTS hooks — routes queries to them, exposes them
+// as tools — must use ActiveSourceHooks (or a helper built on it) so a
+// disabled hook never receives traffic.
 func RegisteredSourceHooks() []SourceHook {
 	sourceHookRegistry.mu.RLock()
 	defer sourceHookRegistry.mu.RUnlock()
 	cp := make([]SourceHook, len(sourceHookRegistry.hooks))
 	copy(cp, sourceHookRegistry.hooks)
 	return cp
+}
+
+// ActiveSourceHooks returns the configured hooks that are NOT disabled — the
+// set every consultation path (topic routing, paywall matching, LLM tools,
+// research pipelines) draws from.
+func ActiveSourceHooks() []SourceHook {
+	var out []SourceHook
+	for _, h := range RegisteredSourceHooks() {
+		if h.Disabled {
+			continue
+		}
+		out = append(out, h)
+	}
+	return out
 }
 
 // LoadSourceHooks reads hooks from the database.
@@ -210,6 +237,9 @@ func HooksForTopic(topic_domains []string) []SourceHook {
 
 	var matched []SourceHook
 	for _, hook := range sourceHookRegistry.hooks {
+		if hook.Disabled {
+			continue
+		}
 		if hook.AlwaysActive {
 			matched = append(matched, hook)
 			continue
@@ -236,7 +266,7 @@ func HookForDomain(target_url string) *SourceHook {
 	defer sourceHookRegistry.mu.RUnlock()
 
 	for i, hook := range sourceHookRegistry.hooks {
-		if hook.Type != HookTypePaywall {
+		if hook.Disabled || hook.Type != HookTypePaywall {
 			continue
 		}
 		for _, d := range hook.Domains {

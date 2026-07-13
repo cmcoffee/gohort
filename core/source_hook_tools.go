@@ -32,7 +32,7 @@ func BuildSourceHookAgentToolDefs(db Database) []AgentToolDef {
 	}
 	out := make([]AgentToolDef, 0, len(hooks))
 	for _, h := range hooks {
-		if !h.ExposeToLLM {
+		if !h.ExposeToLLM || h.Disabled {
 			continue
 		}
 		// Paywall hooks aren't search surfaces — skip.
@@ -79,7 +79,7 @@ func SourceHookToolDefByName(name string) (AgentToolDef, bool) {
 		return AgentToolDef{}, false
 	}
 	for _, h := range RegisteredSourceHooks() {
-		if h.Type == HookTypePaywall {
+		if h.Type == HookTypePaywall || h.Disabled {
 			continue
 		}
 		if sourceHookToolName(h) == name {
@@ -87,6 +87,28 @@ func SourceHookToolDefByName(name string) (AgentToolDef, bool) {
 		}
 	}
 	return AgentToolDef{}, false
+}
+
+// FindSourceHookByToolName resolves an LLM tool name to the (non-paywall)
+// source hook behind it, INCLUDING disabled hooks — it serves the artifact
+// dependency walks, where "does this reference exist" is the question, not
+// "may it fire". A skill or agent that allowlists a hook-backed tool name
+// (pubmed_search) references the hook itself; the bundle closure uses this to
+// carry the hook along instead of silently dropping the name.
+func FindSourceHookByToolName(name string) (SourceHook, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return SourceHook{}, false
+	}
+	for _, h := range RegisteredSourceHooks() {
+		if h.Type == HookTypePaywall {
+			continue
+		}
+		if sourceHookToolName(h) == name {
+			return h, true
+		}
+	}
+	return SourceHook{}, false
 }
 
 // sourceHookToAgentToolDef converts one SourceHook into an
@@ -173,7 +195,7 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 func exposedQueryableHooks() []SourceHook {
 	var out []SourceHook
 	for _, h := range RegisteredSourceHooks() {
-		if !h.ExposeToLLM || h.Type == HookTypePaywall {
+		if !h.ExposeToLLM || h.Type == HookTypePaywall || h.Disabled {
 			continue
 		}
 		out = append(out, h)
