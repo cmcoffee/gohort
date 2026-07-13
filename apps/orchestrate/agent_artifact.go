@@ -136,9 +136,12 @@ func (a *agentArtifact) RecipeDependencies(db Database, recipe json.RawMessage, 
 
 // agentExportDeps is the one walk behind both dependency interfaces: the
 // portable temp tools the recipe (parent + bundled sub-agents) allowlists,
-// plus the collections it attaches. Built-in tool names fail both tool
-// probes and are skipped; the well-known deployment-knowledge collection
-// exists on every install, so it is never a dependency.
+// plus the collections, pipelines, and skills it attaches. Built-in tool
+// names fail both tool probes and are skipped; the well-known
+// deployment-knowledge collection exists on every install, so it is never a
+// dependency. Attached collections, pipelines, and skills are referenced by
+// ID — all three types preserve the traveled ID on import, which is what
+// keeps the agent's wiring intact.
 func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(typ, name string) bool) []ArtifactSel {
 	seen := map[string]bool{}
 	var out []ArtifactSel
@@ -164,11 +167,35 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 			out = append(out, ArtifactSel{Type: "collection", Name: cid, Owner: owner})
 		}
 	}
+	pipelines := func(ids []string) {
+		for _, pid := range ids {
+			pid = strings.TrimSpace(pid)
+			if pid == "" || seen["pipeline\x00"+pid] {
+				continue
+			}
+			seen["pipeline\x00"+pid] = true
+			out = append(out, ArtifactSel{Type: "pipeline", Name: pid, Owner: owner})
+		}
+	}
+	skills := func(ids []string) {
+		for _, sid := range ids {
+			sid = strings.TrimSpace(sid)
+			if sid == "" || seen["skill\x00"+sid] {
+				continue
+			}
+			seen["skill\x00"+sid] = true
+			out = append(out, ArtifactSel{Type: "skill", Name: sid, Owner: owner})
+		}
+	}
 	consider(exp.AllowedTools)
 	collections(exp.AttachedCollections)
+	pipelines(exp.AttachedPipelines)
+	skills(exp.AllowedSkills)
 	for _, s := range exp.SubAgents {
 		consider(s.AllowedTools)
 		collections(s.AttachedCollections)
+		pipelines(s.AttachedPipelines)
+		skills(s.AllowedSkills)
 	}
 	return out
 }

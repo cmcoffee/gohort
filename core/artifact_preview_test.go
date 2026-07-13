@@ -136,3 +136,30 @@ func TestArtifactRecipeName(t *testing.T) {
 		t.Fatalf("expected envelope label fallback, got %q", got)
 	}
 }
+
+func TestPreview_InBundleIDReferenceDoesNotWarn(t *testing.T) {
+	// Cross-artifact references can be traveled IDs, not names (a skill's
+	// AttachedCollections, an agent's AttachedPipelines). When the referenced
+	// artifact rides in the same bundle, preview must match it by its recipe's
+	// traveled ID — matching only by name would false-warn on every such pair.
+	collectionTestDB(t)
+	skillRec, _ := json.Marshal(SkillRecord{
+		Name: "law", Description: "Use for case law.",
+		AttachedCollections: []string{"coll-42"},
+	})
+	collRec, _ := json.Marshal(PortableCollection{ID: "coll-42", Name: "Case Law"})
+	data, _ := json.Marshal(ArtifactBundle{Bundle: ArtifactBundleFormat, Artifacts: []PortableArtifact{
+		{Type: "skill", Name: "law", Recipe: skillRec},
+		{Type: "collection", Name: "Case Law", Recipe: collRec},
+	}})
+	res, err := PreviewArtifactBundle(RootDB, data, "bob")
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	if res.WouldImport != 2 {
+		t.Fatalf("both artifacts should predict import: %+v", res.Items)
+	}
+	if len(res.Warnings) != 0 {
+		t.Fatalf("collection travels in-bundle (referenced by ID) — no warning expected: %v", res.Warnings)
+	}
+}

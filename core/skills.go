@@ -157,6 +157,8 @@ func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error)
 	}
 	if s.ID == "" {
 		s.ID = "skill-" + UUIDv4()
+	}
+	if s.Created.IsZero() {
 		s.Created = time.Now()
 	}
 	s.Owner = username

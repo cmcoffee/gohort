@@ -173,6 +173,8 @@ func SavePipelineDef(udb Database, d PipelineDef) PipelineDef {
 	}
 	if d.ID == "" {
 		d.ID = UUIDv4()
+	}
+	if d.Created.IsZero() {
 		d.Created = time.Now()
 	}
 	d.Updated = time.Now()
@@ -228,19 +230,23 @@ func DeletePipelineDef(udb Database, id string) {
 
 // --- export / import (portable recipe) ------------------------------
 
-// ExportPipeline returns a portable copy of a pipeline def with all
+// ExportPipeline returns a portable copy of a pipeline def with
 // storage/identity metadata stripped — the shareable recipe. Marshal
-// the result to JSON for a downloadable artifact. Mirrors the agent-
-// recipe export: identity is reassigned on import, never travels.
+// the result to JSON for a downloadable artifact.
+//
+// ID is the ONE identity field that DOES travel (same rule as
+// collections): agents reference pipelines by ID (AttachedPipelines),
+// so preserving it is what lets an agent+pipeline bundle land with its
+// wiring intact. Owner and timestamps are reassigned on import, never
+// travel.
 //
 // Note on portability: a recipe whose stages are all kind=worker is
 // fully self-contained. Agent stages reference an agent by id/name;
-// importing such a recipe assumes that agent exists in the target
-// deployment (a future "bundle" export — agent + its tools + its
-// pipelines — closes that gap). Export doesn't rewrite agent refs;
-// it's on the importer to have the referenced agents.
+// the "pipeline" artifact type (orchestrate) normalizes those refs to
+// agent NAMES on export and folds the agents into the bundle — this
+// plain export doesn't rewrite them, so it's on the importer to have
+// the referenced agents.
 func ExportPipeline(d PipelineDef) PipelineDef {
-	d.ID = ""
 	d.Owner = ""
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
@@ -248,12 +254,18 @@ func ExportPipeline(d PipelineDef) PipelineDef {
 }
 
 // ImportPipeline takes a recipe (from ExportPipeline or an uploaded
-// JSON file), assigns it to owner with a fresh ID, validates it, and
-// saves it to the user's store. Returns the saved def. The recipe's
-// own ID/Owner/timestamps (if present) are ignored — the importer
-// owns the copy.
+// JSON file), assigns it to owner, validates it, and saves it to the
+// user's store. Returns the saved def. The traveled ID is KEPT when
+// it's free — it's what an agent in the same bundle references via
+// AttachedPipelines — and reminted when it would collide, so importing
+// the same recipe twice makes a copy instead of clobbering. Owner and
+// timestamps are always the importer's.
 func ImportPipeline(udb Database, owner string, recipe PipelineDef) (PipelineDef, error) {
-	recipe.ID = ""
+	if recipe.ID != "" {
+		if _, exists := LoadPipelineDef(udb, "", recipe.ID); exists {
+			recipe.ID = ""
+		}
+	}
 	recipe.Owner = owner
 	recipe.Created = time.Time{}
 	recipe.Updated = time.Time{}

@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -44,8 +45,11 @@ func TestSkillArtifact_ExportStripsIdentity(t *testing.T) {
 	if err := json.Unmarshal(recipe, &got); err != nil {
 		t.Fatalf("recipe unmarshal: %v", err)
 	}
-	if got.ID != "" || got.Owner != "" || got.Embedding != nil || got.Disabled {
-		t.Fatalf("identity fields must not travel: %+v", got)
+	if got.ID != saved.ID {
+		t.Fatalf("ID must travel (it's the cross-artifact reference key), got %q want %q", got.ID, saved.ID)
+	}
+	if got.Owner != "" || got.Embedding != nil || got.Disabled {
+		t.Fatalf("owner/embedding/disabled must not travel: %+v", got)
 	}
 	if !got.Created.IsZero() || !got.Updated.IsZero() {
 		t.Fatalf("timestamps must not travel: %+v", got)
@@ -59,6 +63,11 @@ func TestSkillArtifact_ExportStripsIdentity(t *testing.T) {
 	}
 	if _, err := (skillArtifact{}).ExportArtifact(db, "nope", "alice"); err == nil {
 		t.Fatal("export of a missing skill must error")
+	}
+	// Export also resolves by ID — the form an agent's AllowedSkills closure
+	// and the existence probe use.
+	if _, err := (skillArtifact{}).ExportArtifact(db, saved.ID, "alice"); err != nil {
+		t.Fatalf("export by ID: %v", err)
 	}
 }
 
@@ -82,13 +91,42 @@ func TestSkillArtifact_ImportLandsDisabledDraft(t *testing.T) {
 		t.Fatal("an imported skill must land disabled for review")
 	}
 	if got.ID == "" || got.Owner != "bob" {
-		t.Fatalf("import must mint fresh identity under the owner: %+v", got)
+		t.Fatalf("an ID-less recipe must mint fresh identity under the owner: %+v", got)
 	}
 
 	// Same name again → skip, never clobber.
 	_, skip, err = skillArtifact{}.ImportArtifact(db, recipe, "bob")
 	if err != nil || skip == "" {
 		t.Fatalf("same-named import must skip: skip=%q err=%v", skip, err)
+	}
+}
+
+func TestSkillArtifact_ImportPreservesTraveledID(t *testing.T) {
+	db := skillTestDB(t)
+	recipe, _ := json.Marshal(SkillRecord{
+		ID:           "skill-77",
+		Name:         "triage",
+		Description:  "Use for triage.",
+		Instructions: "Assess first.",
+	})
+
+	name, skip, err := skillArtifact{}.ImportArtifact(db, recipe, "bob")
+	if err != nil || skip != "" || name != "triage" {
+		t.Fatalf("import: name=%q skip=%q err=%v", name, skip, err)
+	}
+	got, ok := FindSkillByName(db, "bob", "triage")
+	if !ok || got.ID != "skill-77" {
+		t.Fatalf("traveled ID must be preserved (the agent's AllowedSkills reference key): %+v", got)
+	}
+	if got.Owner != "bob" || got.Created.IsZero() {
+		t.Fatalf("owner/created must be the importer's: %+v", got)
+	}
+
+	// Same ID under a different name → skip, same as a name collision.
+	renamed, _ := json.Marshal(SkillRecord{ID: "skill-77", Name: "other", Description: "d"})
+	_, skip, err = skillArtifact{}.ImportArtifact(db, renamed, "bob")
+	if err != nil || !strings.Contains(skip, "id already exists") {
+		t.Fatalf("same-id import must skip: skip=%q err=%v", skip, err)
 	}
 }
 

@@ -331,19 +331,38 @@ func (skillArtifact) ListArtifacts(db Database) []ArtifactSel {
 	return out
 }
 
+// findSkillForExport resolves a skill by ID first, then by case-insensitive
+// name. ID-first matters: cross-artifact references (an agent's AllowedSkills)
+// are IDs, so the dependency closure and the existence probe address skills
+// the same way humans' export buttons address them by name.
+func findSkillForExport(db Database, owner, nameOrID string) (SkillRecord, bool) {
+	id := strings.TrimSpace(nameOrID)
+	if id == "" {
+		return SkillRecord{}, false
+	}
+	for _, s := range LoadSkills(db, owner) {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return FindSkillByName(db, owner, id)
+}
+
 func (skillArtifact) ExportArtifact(db Database, name, owner string) (json.RawMessage, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
 		return nil, Error("skill export requires an owner")
 	}
-	s, ok := FindSkillByName(db, owner, name)
+	s, ok := findSkillForExport(db, owner, name)
 	if !ok {
 		return nil, fmt.Errorf("no skill named %q for user %q", name, owner)
 	}
-	// Strip identity — the importing install mints its own ID / owner /
-	// timestamps — and the Embedding cache (dead weight since activation went
-	// LLM-driven). Disabled is a local mute, not part of the skill's shape.
-	s.ID = ""
+	// Strip owner + timestamps — the importing install reassigns them — and
+	// the Embedding cache (dead weight since activation went LLM-driven).
+	// Disabled is a local mute, not part of the skill's shape. ID TRAVELS
+	// (same rule as collections/pipelines): it's the key an agent's
+	// AllowedSkills references, so preserving it is what lets an agent+skill
+	// bundle land with its wiring intact.
 	s.Owner = ""
 	s.Disabled = false
 	s.Embedding = nil
@@ -443,10 +462,19 @@ func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner s
 	if _, exists := FindSkillByName(db, owner, name); exists {
 		return name, "a skill with this name already exists", nil
 	}
-	// Fresh identity under the importing owner (SaveSkill assigns ID + stamps),
-	// landed DISABLED so nothing an import brought in can steer a conversation
-	// or surface its bundled tools before the admin reviews and enables it.
-	s.ID = ""
+	// The traveled ID is preserved (it's what agents in the same bundle
+	// reference via AllowedSkills), so a same-ID skill skips, same as a name
+	// collision. A legacy recipe without an ID gets a fresh one from
+	// SaveSkill. Either way the skill lands DISABLED so nothing an import
+	// brought in can steer a conversation or surface its bundled tools before
+	// the admin reviews and enables it.
+	if id := strings.TrimSpace(s.ID); id != "" {
+		for _, ex := range LoadSkills(db, owner) {
+			if ex.ID == id {
+				return name, "a skill with this id already exists", nil
+			}
+		}
+	}
 	s.Embedding = nil
 	s.Disabled = true
 	if _, err := SaveSkill(db, owner, s); err != nil {
@@ -463,10 +491,11 @@ func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner s
 // size, so the importing install re-embeds with its own model instead
 // (background pass; see ingestImportedCollectionChunks).
 //
-// ID is the ONE identity field that DOES travel, unlike every other artifact
-// type: a collection's ID is its cross-artifact reference key (skills'
-// AttachedCollections, agents' knowledge pickers), so preserving it is what
-// lets a skill+collection bundle land with its wiring intact.
+// ID is the one identity field that DOES travel (a rule collections
+// established, now shared with skills and pipelines): a collection's ID is
+// its cross-artifact reference key (skills' AttachedCollections, agents'
+// knowledge pickers), so preserving it is what lets a skill+collection
+// bundle land with its wiring intact.
 type PortableCollection struct {
 	ID                 string          `json:"id,omitempty"`
 	Name               string          `json:"name"`

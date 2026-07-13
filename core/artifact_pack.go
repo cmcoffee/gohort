@@ -556,10 +556,16 @@ func PreviewArtifactBundle(db Database, data []byte, owner string) (ArtifactPrev
 	}
 	// Index what the bundle itself carries so an in-bundle reference never
 	// reads as missing — the same reason the post-import warning pass runs
-	// only after every artifact has landed.
+	// only after every artifact has landed. Indexed by recipe name AND by
+	// traveled recipe ID: cross-artifact references can be either (a skill's
+	// AttachedCollections and an agent's AttachedPipelines are IDs).
 	carried := map[string]bool{}
 	for _, a := range bundle.Artifacts {
-		carried[strings.TrimSpace(a.Type)+"\x00"+artifactRecipeName(a)] = true
+		typ := strings.TrimSpace(a.Type)
+		carried[typ+"\x00"+artifactRecipeName(a)] = true
+		if id := artifactRecipeID(a); id != "" {
+			carried[typ+"\x00"+id] = true
+		}
 	}
 	inBundle := func(typ, name string) bool {
 		return carried[strings.TrimSpace(typ)+"\x00"+strings.TrimSpace(name)]
@@ -614,4 +620,17 @@ func artifactRecipeName(a PortableArtifact) string {
 		return strings.TrimSpace(probe.Name)
 	}
 	return strings.TrimSpace(a.Name)
+}
+
+// artifactRecipeID returns a recipe's traveled "id", set only by types whose
+// identity travels because it is the cross-artifact reference key (collections,
+// pipelines); every other type strips identity and yields "".
+func artifactRecipeID(a PortableArtifact) string {
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if json.Unmarshal(a.Recipe, &probe) != nil {
+		return ""
+	}
+	return strings.TrimSpace(probe.ID)
 }

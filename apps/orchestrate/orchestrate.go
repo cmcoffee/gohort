@@ -220,6 +220,12 @@ func (T *OrchestrateApp) Routes() {
 	// agents live in per-user stores (UserDB(T.DB, owner)), not RootDB.
 	RegisterAgentArtifactType(T)
 
+	// Register "pipeline" alongside it — pipeline defs live in the same
+	// per-user stores, and the two types close each other's references: an
+	// agent's AttachedPipelines closure needs the pipeline type, a pipeline's
+	// agent stages need the agent type.
+	RegisterPipelineArtifactType(T)
+
 	// Channel agent runner: lets the transport (phantom) run a Channel's bound
 	// agent on inbound messages (Phase 2). core owns the Channel store + seam;
 	// this registers the agent-execution half. See docs/channels-and-agents.md.
