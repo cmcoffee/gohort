@@ -70,7 +70,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"actions": {
 					Type:        "array",
-					Description: "(create/update) Optional script-backed action buttons — the WRITE side of the logic seam (data_sources is the read side). Each is {name, label?, desc?, script, language?, capabilities?, confirm?}. A button labeled `label` runs the script when clicked; the script receives the app's stored records as an env var named records (a JSON string — read it with `json.loads(os.environ.get('records', '[]'))`, NOT `json.loads(\"records\")`) plus any params, and PRINTS a JSON OBJECT {message?: string, records?: [...]}. The FRAMEWORK upserts any returned records into the app's store (so they appear in the tables — your script does NOT write the store itself) and shows the message. Use for app verbs like \"Sync now\", \"Generate\", \"Refresh from API\". Surface the buttons with an `actions` section. Set confirm for destructive ones. capabilities work the same as data_sources (e.g. [\"fetch\"] for `from gohort import fetch`).",
+					Description: "(create/update) Optional script-backed action buttons — the WRITE side of the logic seam (data_sources is the read side). Each is {name, label?, desc?, script, language?, capabilities?, confirm?, schedule?}. A button labeled `label` runs the script when clicked; the script receives the app's stored records as an env var named records (a JSON string — read it with `json.loads(os.environ.get('records', '[]'))`, NOT `json.loads(\"records\")`) plus any params, and PRINTS a JSON OBJECT {message?: string, records?: [...]}. The FRAMEWORK upserts any returned records into the app's store (so they appear in the tables — your script does NOT write the store itself) and shows the message. Use for app verbs like \"Sync now\", \"Generate\", \"Refresh from API\". Surface the buttons with an `actions` section. Set confirm for destructive ones. capabilities work the same as data_sources (e.g. [\"fetch\"] for `from gohort import fetch`).\n\nSELF-UPDATING (dashboard / tracker): add `schedule` to an action to ALSO run it unattended on a timer, with no one clicking and no page open — this is how an app keeps itself fresh. `schedule` is {interval_seconds?, cron?, max_idle_days?}: set EITHER interval_seconds (fixed cadence; floored to 300s / 5 min for background) OR cron (e.g. \"MON 09:00\", \"* 08:00\" style NextCronOccurrence spec). Each fire runs the SAME script the button runs, in the owner's sandbox, and upserts what it returns — so the shape you choose decides behavior: a TRACKER returns a record with a NEW/absent key each fire (a fresh row appended over time, e.g. hourly {ts, value} — pair it with a chart/table to see history); a DASHBOARD returns a record with a FIXED key each fire (the latest snapshot replaced in place). Set max_idle_days to auto-pause the schedule after N days with no page view (it re-arms on the next visit) so a tracker nobody watches stops burning the sandbox. Only the app's OWNER copy self-updates; other users of a shared app still get fresh data when they open it. An imported app runs no scheduled script until its owner enables it. Use a schedule for 'refresh the metrics every hour', 'log the price daily', 'keep the leaderboard current' — an action WITHOUT a schedule stays a manual button.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"sections": {
@@ -120,7 +120,9 @@ Minimal good app = a form (modal=true) + a table (editable, deletable) over the 
 
 For LOGIC (fetch/aggregate/transform instead of plain CRUD): add data_sources:[{name, script, capabilities?}] — a python script that reads the app's records with 'records = json.loads(os.environ.get("records", "[]"))' (the records env var is a JSON STRING; never json.loads("records")) + query params, and PRINTS JSON; reach external data with 'from gohort import fetch_url; r = fetch_url(url)' (granted by default; r is {status,headers,body}; it RAISES on transport failure so wrap it in try/except and still print JSON). Then a table/display sets source_script:"<name>" to render the script's output. Served at /custom/<slug>/data/<name>. Run app_def action=test to execute the scripts and see their output/errors before telling the user it's ready. Owner-only.
 
-For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?}] — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Surface them with an "actions" section. Served at /custom/<slug>/action/<name>.`
+For ACTION BUTTONS (the write side): add actions:[{name, label, script, capabilities?, confirm?, schedule?}] — a script that gets the records + params and PRINTS {message?, records?}; the framework upserts the returned records (so they reach the tables) and shows the message. Surface them with an "actions" section. Served at /custom/<slug>/action/<name>.
+
+For SELF-UPDATING apps (dashboard/tracker): add schedule:{interval_seconds?|cron?, max_idle_days?} to an action to run it unattended on a timer (no click, no open page). interval_seconds is floored to 300s; cron uses NextCronOccurrence ("MON 09:00"). Each fire runs the same script and upserts what it returns — return a new-key record to APPEND a row (tracker/history), a fixed-key record to REPLACE the snapshot (dashboard). max_idle_days auto-pauses after N unviewed days (re-arms on next visit). Owner copy only; imported apps don't fire until enabled.`
 
 var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -739,7 +741,7 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 		if name != given {
 			notes = append(notes, fmt.Sprintf("action %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\") — its endpoint is action/%s", given, name, name))
 		}
-		out = append(out, AppAction{
+		act := AppAction{
 			Name:         name,
 			Label:        strings.TrimSpace(mapStr(m, "label")),
 			Desc:         strings.TrimSpace(mapStr(m, "desc")),
@@ -747,9 +749,48 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 			Script:       script,
 			Capabilities: appStringList(m["capabilities"]),
 			Confirm:      strings.TrimSpace(mapStr(m, "confirm")),
-		})
+		}
+		sch, snotes := appSchedule(m["schedule"], name)
+		act.Schedule = sch
+		notes = append(notes, snotes...)
+		out = append(out, act)
 	}
 	return out, notes
+}
+
+// appSchedule parses an action's optional `schedule` object into an *AppSchedule
+// (the self-update cadence). Returns nil when there's no schedule or it names no
+// cadence. Notes report a floored interval, a cron/interval clash, or a schedule
+// object that would do nothing — the same "report, don't swallow" contract the
+// rest of app_def parsing follows.
+func appSchedule(raw any, action string) (*AppSchedule, []string) {
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, nil
+	}
+	var notes []string
+	sch := &AppSchedule{Cron: strings.TrimSpace(mapStr(m, "cron"))}
+	if f, ok := floatVal(m["interval_seconds"]); ok && f > 0 {
+		sch.IntervalSeconds = int(f)
+	}
+	if f, ok := floatVal(m["max_idle_days"]); ok && f > 0 {
+		sch.MaxIdleDays = int(f)
+	}
+	// Cron and interval are mutually exclusive at the engine (cron wins); make the
+	// stored spec unambiguous and say so.
+	if sch.Cron != "" && sch.IntervalSeconds > 0 {
+		notes = append(notes, fmt.Sprintf("action %q schedule sets both cron and interval_seconds — using cron, ignoring the interval", action))
+		sch.IntervalSeconds = 0
+	}
+	if sch.IntervalSeconds > 0 && sch.IntervalSeconds < MinAppScheduleSeconds {
+		notes = append(notes, fmt.Sprintf("action %q schedule interval_seconds %d is below the %d-second minimum for unattended updates — it will run every %d seconds", action, sch.IntervalSeconds, MinAppScheduleSeconds, MinAppScheduleSeconds))
+		sch.IntervalSeconds = MinAppScheduleSeconds
+	}
+	if !sch.Scheduled() {
+		notes = append(notes, fmt.Sprintf("action %q has a schedule object with no cron or interval_seconds — it will NOT self-update (add interval_seconds or cron)", action))
+		return nil, notes
+	}
+	return sch, notes
 }
 
 // appStringList coerces a declarative value to []string: a JSON array of
@@ -945,6 +986,30 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"full_width": spec.FullWidth,
 		"url":        "/custom/" + spec.Slug + "/",
 		"page":       json.RawMessage(spec.Page),
+	}
+	// Surface the logic seam so an update can inspect + revise it (scripts omitted
+	// for size; names/caps/schedule are what you edit). schedule is the self-update
+	// cadence — present here means the action fires unattended.
+	if len(spec.DataSources) > 0 {
+		ds := make([]map[string]any, len(spec.DataSources))
+		for i, d := range spec.DataSources {
+			ds[i] = map[string]any{"name": d.Name, "language": d.Language, "capabilities": d.Capabilities}
+		}
+		out["data_sources"] = ds
+	}
+	if len(spec.Actions) > 0 {
+		acts := make([]map[string]any, len(spec.Actions))
+		for i, a := range spec.Actions {
+			m := map[string]any{"name": a.Name, "label": a.Label, "capabilities": a.Capabilities}
+			if a.Confirm != "" {
+				m["confirm"] = a.Confirm
+			}
+			if a.Schedule.Scheduled() {
+				m["schedule"] = a.Schedule
+			}
+			acts[i] = m
+		}
+		out["actions"] = acts
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil

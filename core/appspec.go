@@ -116,6 +116,42 @@ type AppAction struct {
 	Script       string   `json:"script"`                 // the script body
 	Capabilities []string `json:"capabilities,omitempty"` // sandbox hook caps
 	Confirm      string   `json:"confirm,omitempty"`      // optional confirm prompt before firing
+	// Schedule, when set, makes this action ALSO fire unattended on a timer, with
+	// no human clicking it — the seam that lets a custom app keep itself fresh
+	// (dashboard / tracker) while nobody has it open. Each fire runs the script in
+	// the OWNER's sandbox and upserts the records it returns, identical to a button
+	// click (a tracker returns a new-id record to append a row; a dashboard returns
+	// a fixed-id record to replace the snapshot). The host registers a
+	// ScheduledTrigger per scheduled action on spec save. Part of the app's SHAPE
+	// (it exports); the registered trigger is deployment-local and re-registered on
+	// import, and only for ENABLED apps, so an imported app runs no unattended
+	// script before its owner has reviewed it.
+	Schedule *AppSchedule `json:"schedule,omitempty"`
+}
+
+// AppSchedule is the cadence for a self-updating AppAction. Exactly one of
+// IntervalSeconds / Cron is set. It rides on the unified trigger engine
+// (core/trigger.go) as target_kind "customapp_action" — not a parallel
+// scheduler, so a scheduled action shows up in the same admin trigger surface as
+// every other standing trigger.
+type AppSchedule struct {
+	IntervalSeconds int    `json:"interval_seconds,omitempty"` // fixed cadence (floored, see MinAppScheduleSeconds)
+	Cron            string `json:"cron,omitempty"`             // NextCronOccurrence spec, e.g. "FRI 21:30"
+	// MaxIdleDays pauses the schedule after N days with no page view, so a tracker
+	// nobody looks at stops burning the sandbox. 0 = never pause. A page load
+	// touches the app's last-viewed stamp and re-arms a paused schedule.
+	MaxIdleDays int `json:"max_idle_days,omitempty"`
+}
+
+// MinAppScheduleSeconds floors a background action's cadence. Unattended network
+// in the owner's sandbox warrants a higher floor than the trigger engine's
+// foreground minimum (minTriggerInterval, 30s).
+const MinAppScheduleSeconds = 300
+
+// Scheduled reports whether this schedule actually fires (nil-safe: an action
+// with no Schedule returns false).
+func (s *AppSchedule) Scheduled() bool {
+	return s != nil && (s.IntervalSeconds > 0 || s.Cron != "")
 }
 
 // OpenCustomAppDB returns the dedicated private database for one custom app,
@@ -157,6 +193,29 @@ func LoadAppSpec(owner, slug string) (AppSpec, bool) {
 	return s, ok
 }
 
+// appSpecSavedHooks / appSpecDeletedHooks let a host react to spec lifecycle
+// without core knowing what the reaction is (customapps uses them to keep a
+// scheduled action's standing trigger in sync). Domain-agnostic: core owns the
+// registry, the app supplies the behavior. Registered once at startup.
+var (
+	appSpecSavedHooks   []func(AppSpec)
+	appSpecDeletedHooks []func(owner, slug string)
+)
+
+// RegisterAppSpecSavedHook installs a callback fired after every SaveAppSpec.
+func RegisterAppSpecSavedHook(fn func(AppSpec)) {
+	if fn != nil {
+		appSpecSavedHooks = append(appSpecSavedHooks, fn)
+	}
+}
+
+// RegisterAppSpecDeletedHook installs a callback fired after every DeleteAppSpec.
+func RegisterAppSpecDeletedHook(fn func(owner, slug string)) {
+	if fn != nil {
+		appSpecDeletedHooks = append(appSpecDeletedHooks, fn)
+	}
+}
+
 // SaveAppSpec writes a spec, stamping Owner/Created/Updated. Owner on the spec
 // wins; pass it set. No-op return when RootDB isn't available.
 func SaveAppSpec(s AppSpec) AppSpec {
@@ -170,6 +229,9 @@ func SaveAppSpec(s AppSpec) AppSpec {
 	}
 	s.Updated = now
 	db.Set(AppSpecTable, s.Slug, s)
+	for _, fn := range appSpecSavedHooks {
+		fn(s)
+	}
 	return s
 }
 
@@ -193,5 +255,8 @@ func ListAppSpecs(owner string) []AppSpec {
 func DeleteAppSpec(owner, slug string) {
 	if db := appSpecStore(owner); db != nil {
 		db.Unset(AppSpecTable, slug)
+	}
+	for _, fn := range appSpecDeletedHooks {
+		fn(owner, slug)
 	}
 }

@@ -77,6 +77,9 @@ func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." 
 
 func (T *CustomApps) Routes() {
 	T.HandleFunc("/", T.route)
+	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
+	// the spec-lifecycle hooks that keep each app's standing triggers in sync.
+	T.registerScheduling()
 	// The anonymous capability-URL surface (/custom/pub/<token>/…) authenticates
 	// via the unguessable token itself, so it must bypass the cookie-auth
 	// middleware. Prefix registration (trailing slash) covers every token + its
@@ -127,6 +130,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// POST ?slug=&on=… mints / revokes the anonymous capability URL.
 		T.handlePublishApp(w, r, user)
 		return
+	case "_app/schedule":
+		// POST ?slug=&on=… pauses / resumes an app's self-updating schedule.
+		T.handleScheduleToggle(w, r, user)
+		return
 	}
 
 	parts := strings.SplitN(path, "/", 2)
@@ -165,6 +172,10 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, T.WebPath()+"/"+slug+"/", http.StatusFound)
 			return
 		}
+		// A view keeps any self-updating schedule alive (and re-arms an idle-paused
+		// one). Keyed by the app's owner, so a shared app the owner still watches
+		// keeps its owner-side tracker running.
+		T.touchAppView(spec)
 		_ = ui.RenderPageJSON(w, spec.Page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, ownerUser, appdb, spec, strings.TrimPrefix(rest, "data/"))
@@ -307,6 +318,10 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 						Confirm: "Enable this imported app? Review its data-source and action scripts first — they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).
 					{Type: "button", Label: "Share", Method: "client", PostTo: "customapps_share", OnlyIf: "mine"},
+					// Pause / Resume a self-updating app. Only one shows at a time,
+					// gated on the auto_running / auto_paused fields the list sets.
+					{Type: "button", Label: "Pause", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=false", OnlyIf: "auto_running"},
+					{Type: "button", Label: "Resume", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=true", OnlyIf: "auto_paused"},
 					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}", OnlyIf: "mine", Variant: "danger",
 						Confirm: "Delete this app and all its data? This can't be undone."},
 				},
@@ -495,6 +510,25 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		if s.Disabled {
 			row["disabled"] = "1"
 			status = "disabled — review, then Enable"
+		} else if has, allPaused, next := appScheduleStatus(owner, s.Slug); has {
+			// Self-updating app: badge its state and expose auto_running/auto_paused
+			// so the Pause/Resume row actions show the right one.
+			row["auto"] = "1"
+			seg := "auto-updating"
+			if allPaused {
+				row["auto_paused"] = "1"
+				seg = "auto-update paused"
+			} else {
+				row["auto_running"] = "1"
+				if !next.IsZero() {
+					seg = "auto-updating · next " + humanizeNext(next)
+				}
+			}
+			if status == "private" {
+				status = seg
+			} else {
+				status += " · " + seg
+			}
 		}
 		row["status"] = status
 		out = append(out, row)
@@ -515,6 +549,29 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		})
 	}
 	writeJSON(w, out)
+}
+
+// handleScheduleToggle pauses or resumes an app's self-updating action
+// schedule(s): POST ?slug=&on=true|false. Owner-only (a schedule fires in the
+// owner's sandbox, so only the owner controls it). Pausing leaves the trigger in
+// place so Resume can re-arm it without re-authoring.
+func (T *CustomApps) handleScheduleToggle(w http.ResponseWriter, r *http.Request, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	if slug == "" {
+		http.Error(w, "slug required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := loadSpec(user, slug); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	resume := r.URL.Query().Get("on") == "true"
+	changed := setAppSchedulesPaused(user, slug, !resume)
+	writeJSON(w, map[string]any{"ok": true, "changed": changed})
 }
 
 // handleEnableApp flips an imported (disabled) app live: POST ?slug=…. This is
@@ -788,25 +845,36 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner 
 		}
 	}
 
-	out, err := runAppScript(owner, T.recordBase(spec, owner), spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
+	msg, saved, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args)
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Parse the script's JSON object: {message?, records?}. The framework owns
-	// persistence — it upserts the returned records so they reach the viewer.
+	writeJSON(w, map[string]any{"message": msg, "saved": saved})
+}
+
+// runActionAndPersist executes one action script in the owner's sandbox (ownerDB
+// is the owner's record store the script reads), parses its {message?, records?}
+// object, and upserts the returned records into udb keyed by RecordKey. It is the
+// shared core of both a button click (handleAction) and an unattended timer fire
+// (dispatchScheduledAction): the ONLY difference between the two is who builds
+// args and who reads the result. The framework owns persistence — the script
+// never writes the store itself.
+func runActionAndPersist(owner string, ownerDB, udb Database, spec AppSpec, act AppAction, args map[string]any) (msg string, saved int, err error) {
+	out, err := runAppScript(owner, ownerDB, spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
+	if err != nil {
+		return "", 0, err
+	}
 	var result struct {
 		Message string           `json:"message"`
 		Records []map[string]any `json:"records"`
 	}
 	trimmed := strings.TrimSpace(out)
 	if trimmed != "" && json.Unmarshal([]byte(trimmed), &result) != nil {
-		Log("[customapps] action %q/%q returned non-object JSON (first 200B): %.200s", spec.Slug, name, trimmed)
-		http.Error(w, "the action script must print a JSON object {message?, records?} to stdout", http.StatusInternalServerError)
-		return
+		return "", 0, fmt.Errorf("the action script must print a JSON object {message?, records?} to stdout (got %.200s)", trimmed)
 	}
-	saved := 0
+	tbl := recTable(spec.Slug)
 	for _, rec := range result.Records {
 		if rec == nil {
 			continue
@@ -822,15 +890,15 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner 
 		udb.Set(tbl, id, rec)
 		saved++
 	}
-	msg := strings.TrimSpace(result.Message)
+	msg = strings.TrimSpace(result.Message)
 	if msg == "" {
 		if saved > 0 {
-			msg = fmt.Sprintf("Done — %d record(s) updated.", saved)
+			msg = fmt.Sprintf("Done, %d record(s) updated.", saved)
 		} else {
 			msg = "Done."
 		}
 	}
-	writeJSON(w, map[string]any{"message": msg, "saved": saved})
+	return msg, saved, nil
 }
 
 // --- generic record store ----------------------------------------------------
