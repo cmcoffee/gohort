@@ -581,7 +581,11 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 			removed++
 		}
 		res := StoreMemoryFactP(db, namespace, text, FactWritePolicy{})
-		if res.Reason == FactStored {
+		// FactDuplicate counts too: the combined text deduped against an
+		// existing live fact, so THAT fact is the survivor the sources merged
+		// into — leaving Successor empty would strand the tombstones with a
+		// pointer recall can't follow.
+		if res.Reason == FactStored || res.Reason == FactDuplicate {
 			for _, s := range srcs {
 				retireFact(db, s, RetireMerged, res.Fact.ID, now)
 			}
@@ -742,6 +746,114 @@ func ListRetiredFacts(db Database, namespace string) []MemoryFact {
 	return out
 }
 
+// SearchRetiredFacts returns up to k retired (tombstoned) facts relevant to a
+// free-form query — the lookup behind "you previously stored X; it was dropped
+// on <date>". Semantic-first, like SearchMemoryFacts: tombstones keep their
+// save-time Vector, so a natural-language question ("where does the user
+// work?") finds a retired "works at Acme" that no substring test would.
+// Falls back to significant-term overlap when embeddings are off or a
+// tombstone predates vectors — NOT full-query substring, which a multi-word
+// question essentially never satisfies. Empty when nothing relevant.
+func SearchRetiredFacts(db Database, namespace, query string, k int) []MemoryFact {
+	q := strings.TrimSpace(query)
+	if q == "" || k <= 0 {
+		return nil
+	}
+	retired := ListRetiredFacts(db, namespace) // newest-retired first
+	if len(retired) == 0 {
+		return nil
+	}
+	var out []MemoryFact
+	matched := map[string]bool{}
+	if cfg := GetEmbeddingConfig(); cfg.Enabled {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if qVec, err := Embed(ctx, q); err == nil && len(qVec) > 0 {
+			type scored struct {
+				fact  MemoryFact
+				score float32
+			}
+			var ranked []scored
+			for _, f := range retired {
+				// No lazy backfill here (factVector would resurrect embed cost on
+				// dead rows) — vectorless legacy tombstones fall to the term tier.
+				if len(f.Vector) != len(qVec) {
+					continue
+				}
+				if s := Cosine(qVec, f.Vector); s >= factSearchMinScore {
+					ranked = append(ranked, scored{f, s})
+				}
+			}
+			sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+			for _, r := range ranked {
+				if len(out) >= k {
+					return out
+				}
+				out = append(out, r.fact)
+				matched[r.fact.ID] = true
+			}
+		}
+	}
+	// Term-overlap tier: covers embeddings-off and vectorless tombstones. A
+	// note qualifies when it contains at least half of the query's significant
+	// terms (substring containment, so "work" matches "works").
+	terms := significantQueryTerms(q)
+	if len(terms) == 0 {
+		return out
+	}
+	need := (len(terms) + 1) / 2
+	for _, f := range retired {
+		if len(out) >= k {
+			break
+		}
+		if matched[f.ID] {
+			continue
+		}
+		note := strings.ToLower(f.Note)
+		hits := 0
+		for _, t := range terms {
+			if strings.Contains(note, t) {
+				hits++
+			}
+		}
+		if hits >= need {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// factQueryStopwords are filler words dropped from a recall query before term
+// matching — question scaffolding that would otherwise count as "overlap"
+// with nearly any note.
+var factQueryStopwords = map[string]bool{
+	"the": true, "a": true, "an": true, "is": true, "are": true, "was": true,
+	"were": true, "be": true, "do": true, "does": true, "did": true,
+	"what": true, "whats": true, "where": true, "who": true, "whom": true,
+	"when": true, "how": true, "why": true, "which": true, "of": true,
+	"for": true, "to": true, "in": true, "on": true, "at": true, "my": true,
+	"your": true, "their": true, "his": true, "her": true, "its": true,
+	"it": true, "i": true, "you": true, "and": true, "or": true,
+	"about": true, "with": true, "have": true, "has": true, "had": true,
+}
+
+// significantQueryTerms lowercases a query and returns its content-bearing
+// terms: 3+ characters, stopwords dropped, deduped, order preserved.
+func significantQueryTerms(q string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, t := range strings.FieldsFunc(strings.ToLower(q), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if len(t) < 3 || factQueryStopwords[t] || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
 // ForgetMemoryFactByIndex removes the fact at the given 1-based
 // index in the namespace's oldest-first list. Returns the removed
 // fact + a boolean for success. Used by LLM-facing forget tools
@@ -817,6 +929,27 @@ func GetMemoryFactByID(db Database, namespace, id string) (MemoryFact, bool) {
 		return f, true
 	}
 	return MemoryFact{}, false
+}
+
+// WipeMemoryFactNamespace removes EVERY fact row under the namespace — live
+// and tombstoned alike. The scope-teardown primitive (an agent is deleted, a
+// seed's customized shadow is reverted): unlike the forget paths, history is
+// deliberately not retained — the owning scope is gone, so tombstones would
+// just be orphaned rows nothing can ever query. Returns rows removed.
+func WipeMemoryFactNamespace(db Database, namespace string) int {
+	namespace = strings.TrimSpace(namespace)
+	if db == nil || namespace == "" {
+		return 0
+	}
+	prefix := namespace + "/"
+	removed := 0
+	for _, k := range db.Keys(MemoryFactsTable) {
+		if strings.HasPrefix(k, prefix) {
+			db.Unset(MemoryFactsTable, k)
+			removed++
+		}
+	}
+	return removed
 }
 
 // ForgetMemoryFactByID removes one fact by its ID. Used by admin /

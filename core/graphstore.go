@@ -584,6 +584,32 @@ func GraphCounts(db Database, namespace string) (entities, edges int) {
 	return entities, edges
 }
 
+// WipeGraphNamespace removes every entity and edge — live and retired — under
+// the namespace. The scope-teardown primitive, paired with
+// WipeMemoryFactNamespace: an agent delete (or seed revert) drops the whole
+// graph its extraction passes populated, so recreating an agent with the same
+// ID never resurrects the old one's relationships. Returns rows removed.
+func WipeGraphNamespace(db Database, namespace string) (entities, edges int) {
+	namespace = strings.TrimSpace(namespace)
+	if db == nil || namespace == "" {
+		return 0, 0
+	}
+	prefix := namespace + "/"
+	for _, k := range db.Keys(GraphEntityTable) {
+		if strings.HasPrefix(k, prefix) {
+			db.Unset(GraphEntityTable, k)
+			entities++
+		}
+	}
+	for _, k := range db.Keys(GraphEdgeTable) {
+		if strings.HasPrefix(k, prefix) {
+			db.Unset(GraphEdgeTable, k)
+			edges++
+		}
+	}
+	return entities, edges
+}
+
 // RetiredGraphEdgesFrom returns a node's superseded outbound edges — past
 // relationships tombstoned by LinkGraphEdge(replace=true) — most-recently retired
 // first, for recall surfaces that show history ("previously worked at X"). Empty

@@ -432,9 +432,15 @@ func BackfillChunkTitles(db Database, kind string, resolve func(reportID string)
 // Summary"), which is meaningless without knowing what document it came
 // from. Pass title="" for sources that have no distinct document name
 // (equivalent to IngestReportTagged).
-func IngestReportTitled(ctx context.Context, db Database, source, reportID, title, report, kind string) {
+//
+// Returns the number of chunk rows stored (0 = nothing indexed). Rows are
+// stored even when their embedding fails — an unvectored chunk still serves
+// keyword search — so 0 means the ingest itself didn't happen, not that the
+// embedder was down. Callers that must not lose the content (the compaction
+// archive) treat 0-for-non-empty-input as a failure.
+func IngestReportTitled(ctx context.Context, db Database, source, reportID, title, report, kind string) int {
 	if db == nil || reportID == "" {
-		return
+		return 0
 	}
 	// Defense-in-depth: servitor handles SSH credentials, system facts,
 	// and other sensitive per-appliance data that must never be indexed
@@ -442,7 +448,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 	// caller ever wires it up by mistake.
 	if source == "servitor" {
 		Debug("[vector] refusing to ingest source=servitor (sensitive data — must stay in app)")
-		return
+		return 0
 	}
 	// Remove any existing chunks for this report — re-ingestion on
 	// resynth should replace, not duplicate.
@@ -451,7 +457,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 	chunks := SplitReportIntoChunks(report)
 	if len(chunks) == 0 {
 		Debug("[vector] no chunks extracted for %s/%s", source, reportID)
-		return
+		return 0
 	}
 	cfg := GetEmbeddingConfig()
 	now := time.Now().Format(time.RFC3339)
@@ -502,6 +508,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 	} else {
 		Debug("[vector] ingested %s/%s%s: %d chunks (%d embedded, %d empty)", source, reportID, tagSuffix, len(chunks), embedded, empty)
 	}
+	return embedded + empty
 }
 
 // IngestPagedReport is the same as IngestReport but takes text where

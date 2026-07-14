@@ -783,11 +783,16 @@ func deleteAgent(db Database, id, owner string) error {
 // state goes) and seed revert (the shadow's state was specific to
 // the customized version, doesn't belong to the framework default).
 //
-// Three stores get cleaned:
+// Four stores get cleaned:
 //
-//   - Memory notes: orchestrate_memory keyed by "<user>:<agent_id>".
+//   - Memory facts: MemoryFactsTable namespace "agent:<agent_id>" in
+//     the per-user db — live rows AND tombstones. Without this an
+//     agent delete stranded the whole fact store, and recreating an
+//     agent under the same ID resurrected the old one's memory.
+//   - Entity graph: GraphEntityTable/GraphEdgeTable under the same
+//     namespace (populated by link_entities + auto-extraction).
 //   - Knowledge topics accumulator: orchestrate_knowledge_topics
-//     keyed by the same "<user>:<agent_id>".
+//     keyed by "<user>:<agent_id>".
 //   - Embedded chunks: EmbeddedChunks rows with Source starting with
 //     "orchestrate:<user>:<agent_id>" (every topic-suffixed variant
 //     belongs to this agent). Scanned in one pass against AuthDB
@@ -797,10 +802,13 @@ func dropAgentSideData(db Database, owner, agentID string) {
 		return
 	}
 	key := owner + ":" + agentID
-	// (memoryTable / AgentMemory.Notes layer is gone — only knowledge
-	// topics + facts persist per-(owner, agent). Facts get cleaned
-	// via the factsNamespace / forget paths separately when the
-	// agent is deleted.)
+	ns := factsNamespace(agentID)
+	if n := WipeMemoryFactNamespace(db, ns); n > 0 {
+		Log("[orchestrate.agents] dropped %d memory fact(s) for deleted agent %s/%s", n, owner, agentID)
+	}
+	if ents, edges := WipeGraphNamespace(db, ns); ents+edges > 0 {
+		Log("[orchestrate.agents] dropped graph for deleted agent %s/%s (%d entities, %d edges)", owner, agentID, ents, edges)
+	}
 	db.Unset(knowledgeTopicsTable, key)
 
 	// Knowledge chunks live in AuthDB (the deployment-wide root)

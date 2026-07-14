@@ -19,7 +19,9 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // IngestRecallSpan folds a raw conversation span into the recall store under
@@ -30,15 +32,23 @@ import (
 // tags provenance ("phantom_convo", "lcm", …). Raw text, not distilled: the
 // recall target is what was literally said, and the store is private to the
 // conversation so there's no shared-corpus pollution risk.
-func IngestRecallSpan(ctx context.Context, db Database, source, reportID, title, body, kind string) {
+//
+// Returns an error when a non-empty span produced no stored chunks — callers
+// that later DROP the raw messages on the assumption they're archived (the
+// compaction cursor) must not advance past a failed archive. Nothing-to-do
+// (nil db, empty span, fully-redacted body) is nil, not an error.
+func IngestRecallSpan(ctx context.Context, db Database, source, reportID, title, body, kind string) error {
 	if db == nil || strings.TrimSpace(reportID) == "" {
-		return
+		return nil
 	}
 	body = RedactSecretLines(body)
 	if strings.TrimSpace(body) == "" {
-		return
+		return nil
 	}
-	IngestReportTitled(ctx, db, source, reportID, title, body, kind)
+	if rows := IngestReportTitled(ctx, db, source, reportID, title, body, kind); rows == 0 {
+		return fmt.Errorf("recall span %s: no chunks stored", reportID)
+	}
+	return nil
 }
 
 // RedactSecretLines replaces any line of s that contains a secret-shaped value
@@ -67,7 +77,12 @@ func SearchRecall(db Database, source, query string, k int) []SearchHit {
 	allow := func(c EmbeddedChunk) bool { return c.Source == source }
 	var vec []float32
 	if GetEmbeddingConfig().Enabled {
-		if v, err := Embed(context.Background(), query); err == nil && len(v) > 0 {
+		// Bounded like every other query-embed path (SearchMemoryFacts et al):
+		// a stalled embed server must degrade recall to keyword-only, not hang
+		// the turn indefinitely.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if v, err := Embed(ctx, query); err == nil && len(v) > 0 {
 			vec = v
 		}
 	}

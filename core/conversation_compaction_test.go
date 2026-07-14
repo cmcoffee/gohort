@@ -116,3 +116,47 @@ func TestCompactTrimsSummary(t *testing.T) {
 		t.Fatalf("expected trim marker prefix, got %q", st.Summary[:30])
 	}
 }
+
+// FoldSeq advances once per completed fold — the monotonic key archivers use
+// for span ids (message indices rebase on storage trims, so they recur).
+func TestCompactFoldSeqAdvances(t *testing.T) {
+	cfg := CompactionConfig{KeepRecent: 2, Trigger: 4}
+	var seen []int
+	st := CompactState{}
+	cfg.OnFold = func(folded []Message, firstIndex int) error {
+		seen = append(seen, st.FoldSeq) // what an archiver would key by
+		return nil
+	}
+	st1, _, changed, err := CompactConversation(context.Background(), mkMsgs(8), st, cfg, fakeFold)
+	if err != nil || !changed || st1.FoldSeq != 1 {
+		t.Fatalf("first fold: changed=%v FoldSeq=%d err=%v", changed, st1.FoldSeq, err)
+	}
+	st = st1
+	st2, _, changed, err := CompactConversation(context.Background(), mkMsgs(14), st, cfg, fakeFold)
+	if err != nil || !changed || st2.FoldSeq != 2 {
+		t.Fatalf("second fold: changed=%v FoldSeq=%d err=%v", changed, st2.FoldSeq, err)
+	}
+	if len(seen) != 2 || seen[0] != 0 || seen[1] != 1 {
+		t.Fatalf("OnFold should observe pre-fold seqs [0 1], got %v", seen)
+	}
+}
+
+// A failed archive aborts the fold: state (cursor, summary, seq) must not
+// advance, so trimStoredHistory can never drop messages that aren't archived.
+func TestCompactOnFoldErrorAbortsFold(t *testing.T) {
+	cfg := CompactionConfig{KeepRecent: 2, Trigger: 4}
+	cfg.OnFold = func(folded []Message, firstIndex int) error {
+		return fmt.Errorf("archive store down")
+	}
+	prior := CompactState{Summary: "old", SummarizedThrough: 0, FoldSeq: 3}
+	st, facts, changed, err := CompactConversation(context.Background(), mkMsgs(10), prior, cfg, fakeFold)
+	if err == nil {
+		t.Fatal("expected the archive error to surface")
+	}
+	if changed || facts != nil {
+		t.Fatalf("failed archive must not report a change: changed=%v facts=%v", changed, facts)
+	}
+	if st != prior {
+		t.Fatalf("state advanced past an unarchived span: %+v", st)
+	}
+}

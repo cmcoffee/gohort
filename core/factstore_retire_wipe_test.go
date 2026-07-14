@@ -1,0 +1,124 @@
+package core
+
+import (
+	"testing"
+	"time"
+)
+
+// TestSweepMergeDedupBackfillsSuccessor: when a sweep-merge's combined text
+// DEDUPES against an existing live fact (instead of storing fresh), the merged
+// sources' tombstones must still get a Successor pointer — to the live fact
+// they were absorbed into — or recall can never follow the merge.
+func TestSweepMergeDedupBackfillsSuccessor(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	now := time.Now()
+	seed := func(id, note string, age time.Duration) {
+		db.Set(MemoryFactsTable, factDBKey(ns, id), MemoryFact{
+			Namespace: ns, ID: id, Note: note, Created: now.Add(-age), Updated: now.Add(-age),
+		})
+	}
+	seed("a", "user likes espresso", 3*time.Hour)
+	seed("b", "user enjoys espresso drinks", 2*time.Hour)
+	seed("c", "user drinks espresso daily", time.Hour)
+
+	// Judge merges #1+#2 into text that tier-1 dedupes against live fact "c".
+	sweepFacts(db, ns, fakeChat(`{"drop": [], "merge": [{"keep": "user drinks espresso daily", "replace": [1, 2]}]}`, nil))
+
+	live := ListMemoryFacts(db, ns)
+	if len(live) != 1 || live[0].ID != "c" {
+		t.Fatalf("expected only fact c live, got %+v", live)
+	}
+	for _, id := range []string{"a", "b"} {
+		f, ok := GetMemoryFactByID(db, ns, id)
+		if !ok || f.Reason != RetireMerged {
+			t.Fatalf("expected %s retired as merged, got %+v (ok=%v)", id, f, ok)
+		}
+		if f.Successor != "c" {
+			t.Fatalf("expected %s Successor=c after dedup backfill, got %q", id, f.Successor)
+		}
+	}
+}
+
+// TestWipeMemoryFactNamespace: the scope-teardown wipe removes live rows AND
+// tombstones for exactly the given namespace — no prefix bleed into a sibling
+// namespace that happens to share leading characters.
+func TestWipeMemoryFactNamespace(t *testing.T) {
+	db := memDB(t)
+	now := time.Now()
+	db.Set(MemoryFactsTable, factDBKey("agent:x", "live"), MemoryFact{
+		Namespace: "agent:x", ID: "live", Note: "live note", Created: now,
+	})
+	db.Set(MemoryFactsTable, factDBKey("agent:x", "dead"), MemoryFact{
+		Namespace: "agent:x", ID: "dead", Note: "old note", Created: now,
+		MemoryProvenance: MemoryProvenance{Reason: RetireSuperseded, RetiredAt: now, Successor: "live"},
+	})
+	db.Set(MemoryFactsTable, factDBKey("agent:xy", "other"), MemoryFact{
+		Namespace: "agent:xy", ID: "other", Note: "sibling agent note", Created: now,
+	})
+
+	if n := WipeMemoryFactNamespace(db, "agent:x"); n != 2 {
+		t.Fatalf("expected 2 rows wiped, got %d", n)
+	}
+	if got := ListMemoryFacts(db, "agent:x"); len(got) != 0 {
+		t.Fatalf("live rows survived the wipe: %+v", got)
+	}
+	if got := ListRetiredFacts(db, "agent:x"); len(got) != 0 {
+		t.Fatalf("tombstones survived the wipe: %+v", got)
+	}
+	if got := ListMemoryFacts(db, "agent:xy"); len(got) != 1 {
+		t.Fatalf("sibling namespace was damaged: %+v", got)
+	}
+}
+
+// TestWipeGraphNamespace: entities and edges under the namespace go; a
+// sibling namespace is untouched.
+func TestWipeGraphNamespace(t *testing.T) {
+	db := memDB(t)
+	UpsertGraphEntity(db, "agent:x", "person", "Robin", nil, nil)
+	UpsertGraphEntity(db, "agent:x", "org", "Acme", nil, nil)
+	LinkGraphEdge(db, "agent:x", "person:robin", "works_at", "org:acme", "", false)
+	UpsertGraphEntity(db, "agent:y", "person", "Sam", nil, nil)
+
+	ents, edges := WipeGraphNamespace(db, "agent:x")
+	if ents != 2 || edges != 1 {
+		t.Fatalf("expected 2 entities + 1 edge wiped, got %d + %d", ents, edges)
+	}
+	if e, ed := GraphCounts(db, "agent:x"); e != 0 || ed != 0 {
+		t.Fatalf("graph survived the wipe: %d entities, %d edges", e, ed)
+	}
+	if e, _ := GraphCounts(db, "agent:y"); e != 1 {
+		t.Fatalf("sibling namespace was damaged")
+	}
+}
+
+// TestSearchRetiredFactsTermOverlap pins the embeddings-off tier: a natural-
+// language question must find a retired note that shares its significant
+// terms — the old full-query-substring test matched essentially never.
+func TestSearchRetiredFactsTermOverlap(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	now := time.Now()
+	db.Set(MemoryFactsTable, factDBKey(ns, "job"), MemoryFact{
+		Namespace: ns, ID: "job", Note: "works at Acme Corp", Created: now,
+		MemoryProvenance: MemoryProvenance{Reason: RetireSuperseded, RetiredAt: now},
+	})
+
+	// "where does the user work" → significant terms {user, work}; "works at
+	// Acme Corp" contains "work" — half the terms, so it matches.
+	if got := SearchRetiredFacts(db, ns, "where does the user work", 3); len(got) != 1 {
+		t.Fatalf("multi-word question found %d retired facts, want 1", len(got))
+	}
+	// Single distinctive term still matches by containment.
+	if got := SearchRetiredFacts(db, ns, "acme", 3); len(got) != 1 {
+		t.Fatalf("single-term query found %d retired facts, want 1", len(got))
+	}
+	// Unrelated query stays quiet.
+	if got := SearchRetiredFacts(db, ns, "favorite color preference", 3); len(got) != 0 {
+		t.Fatalf("unrelated query found %d retired facts, want 0", len(got))
+	}
+	// Stopword-only query can't match everything by accident.
+	if got := SearchRetiredFacts(db, ns, "what is it about", 3); len(got) != 0 {
+		t.Fatalf("stopword-only query found %d retired facts, want 0", len(got))
+	}
+}

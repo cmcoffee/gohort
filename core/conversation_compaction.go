@@ -35,8 +35,13 @@ type CompactionConfig struct {
 	// summary and the absolute index of its first message, right after a
 	// successful fold. Lets a caller ARCHIVE the aging content elsewhere — a
 	// searchable history index — so it stays recoverable after it leaves both
-	// the verbatim window and the (lossy) summary. Optional; nil = no archiving.
-	OnFold func(folded []Message, firstIndex int)
+	// the verbatim window and the (lossy) summary. A non-nil error aborts the
+	// fold: the state does not advance, so the same span is re-folded (and the
+	// archive retried) on a later turn. Without that, a failed archive would
+	// still advance the cursor and trimStoredHistory-style callers would later
+	// hard-drop messages that were never actually archived. Optional; nil = no
+	// archiving.
+	OnFold func(folded []Message, firstIndex int) error
 }
 
 func (c CompactionConfig) withDefaults() CompactionConfig {
@@ -60,6 +65,13 @@ func (c CompactionConfig) withDefaults() CompactionConfig {
 type CompactState struct {
 	Summary           string `json:"summary,omitempty"`
 	SummarizedThrough int    `json:"summarized_through,omitempty"` // count of leading messages already folded
+	// FoldSeq counts completed folds, monotonic for the life of the
+	// conversation. Archivers key folded spans by it rather than by message
+	// index: indices REBASE when the stored thread is trimmed, so an
+	// index-keyed span id recurs over a long-lived thread and (via the
+	// replace-on-reingest rule) would silently overwrite an older archived
+	// span.
+	FoldSeq int `json:"fold_seq,omitempty"`
 }
 
 // FoldFunc folds the aging span into the running summary and optionally
@@ -107,10 +119,14 @@ func CompactConversation(ctx context.Context, msgs []Message, st CompactState, c
 		summary = "[...older summary trimmed...]\n" + summary[len(summary)-cfg.MaxSummaryChars:]
 	}
 	// Hand the raw folded span to any archiver before it's lost to the summary.
+	// An archive failure aborts the fold (state unadvanced) so the span is
+	// retried rather than trimmed away unarchived.
 	if cfg.OnFold != nil {
-		cfg.OnFold(msgs[through:foldEnd], through)
+		if aerr := cfg.OnFold(msgs[through:foldEnd], through); aerr != nil {
+			return st, nil, false, aerr
+		}
 	}
-	return CompactState{Summary: summary, SummarizedThrough: foldEnd}, facts, true, nil
+	return CompactState{Summary: summary, SummarizedThrough: foldEnd, FoldSeq: st.FoldSeq + 1}, facts, true, nil
 }
 
 func clampThrough(through, n int) int {

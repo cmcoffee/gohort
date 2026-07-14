@@ -129,15 +129,24 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 		Trigger:    effectiveKeep * foldTriggerPct() / 100,
 		// Archive each folded span into a searchable history index so aged
 		// content stays recoverable via recall_history / expand_history,
-		// instead of surviving only as the lossy running summary.
-		OnFold: func(folded []Message, firstIndex int) {
-			T.archiveOperatorSpan(udb, agent.ID, sessID, folded, firstIndex)
+		// instead of surviving only as the lossy running summary. A failed
+		// archive aborts the fold (error return) so the cursor never advances
+		// past content that isn't actually in the index — trimStoredHistory
+		// would otherwise hard-drop it later on the strength of that cursor.
+		// Spans are keyed by the fold counter, not firstIndex: indices rebase
+		// when the stored thread is trimmed, and a recurring index would
+		// overwrite an older span on re-ingest.
+		OnFold: func(folded []Message, firstIndex int) error {
+			return T.archiveOperatorSpan(udb, agent.ID, sessID, st.FoldSeq, folded, firstIndex)
 		},
 	}
 	fold := func(ctx context.Context, aging []Message, prior string) (string, []string, error) {
 		return T.operatorFold(ctx, aging, prior)
 	}
 	newSt, facts, changed, err := CompactConversation(context.Background(), cm, st, cfg, fold)
+	if err != nil {
+		Log("[operator.compact] fold failed for %s:%s (cursor held, will retry): %v", agent.ID, sessID, err)
+	}
 	if err == nil && changed {
 		saveCompactState(udb, agent.ID, sessID, newSt)
 		// Fact extraction respects the agent's Reference Memory setting. A
@@ -322,9 +331,17 @@ func operatorLCMSource(agentID, sessID string) string {
 // and its facts. Messages that look like they carry a credential are redacted
 // before indexing (defense-in-depth — the thread is the owner's, but tool output
 // can contain secrets, mirroring the MaskDebugOutput posture).
-func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID string, folded []Message, firstIndex int) {
+//
+// foldSeq keys the span (reportID "<source>#f<seq>"): monotonic per thread, so
+// no two spans ever share an id. firstIndex is DISPLAY-only (the title's
+// message range) — it rebases when trimStoredHistory drops leading rows, and
+// keying by it made a later fold at a recurring index silently overwrite an
+// older archived span (IngestReportTitled replaces on same reportID). A
+// non-nil return means the span is NOT in the index; the caller must not
+// advance the fold cursor past it.
+func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID string, foldSeq int, folded []Message, firstIndex int) error {
 	if udb == nil || len(folded) == 0 {
-		return
+		return nil
 	}
 	var b strings.Builder
 	for _, m := range folded {
@@ -340,19 +357,23 @@ func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID strin
 	}
 	body := strings.TrimSpace(b.String())
 	if body == "" {
-		return
+		return nil
 	}
 	source := operatorLCMSource(agentID, sessID)
-	reportID := fmt.Sprintf("%s#%d", source, firstIndex)
+	reportID := fmt.Sprintf("%s#f%d", source, foldSeq)
 	title := fmt.Sprintf("operator history — messages %d–%d", firstIndex, firstIndex+len(folded)-1)
 	// Shared core primitive: redacts secret-shaped lines, then ingests.
-	IngestRecallSpan(context.Background(), udb, source, reportID, title, body, "lcm")
+	if err := IngestRecallSpan(context.Background(), udb, source, reportID, title, body, "lcm"); err != nil {
+		Log("[operator.lcm] archive FAILED for span %s: %v", reportID, err)
+		return err
+	}
 	Log("[operator.lcm] archived span %s (%d msgs)", reportID, len(folded))
 	// Batch entity extraction: the fold is the completeness backstop for graph
 	// population — every turn's stated relationships get extracted here when they
 	// age out, catching anything the per-turn pass skipped under its cooldown.
 	// Async + gated; idempotent with the per-turn writes.
 	extractGraphFromFold(udb, factsNamespace(agentID), folded, T.WorkerChat)
+	return nil
 }
 
 // splitSummaryAndFacts pulls the trailing "FACTS: a; b; c" line off the model

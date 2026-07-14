@@ -178,21 +178,22 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 }
 
 // explainRetiredHole builds a recall message for a query that matched no LIVE
-// fact but does match one or more retired (tombstoned) ones — so the model learns
-// it once knew this and why the note is gone, instead of silently answering from
-// a stale prior. Case-insensitive substring match, newest-retired first, capped
-// at three. Returns "" when no retired fact matches.
+// fact but is relevant to one or more retired (tombstoned) ones — so the model
+// learns it once knew this and why the note is gone, instead of silently
+// answering from a stale prior. Matching is semantic-first via
+// SearchRetiredFacts (tombstones keep their vectors) with a term-overlap
+// fallback — the old full-query-substring test required the entire question to
+// appear inside the note, which a multi-word query essentially never
+// satisfied, leaving the feature dead exactly where supersession had reworded
+// the fact. Capped at three. Returns "" when no retired fact is relevant.
 func explainRetiredHole(db Database, namespace, query string) string {
-	ql := strings.ToLower(query)
+	matches := SearchRetiredFacts(db, namespace, query, 3)
+	if len(matches) == 0 {
+		return ""
+	}
 	var b strings.Builder
-	shown := 0
-	for _, f := range ListRetiredFacts(db, namespace) {
-		if !strings.Contains(strings.ToLower(f.Note), ql) {
-			continue
-		}
-		if shown == 0 {
-			b.WriteString("No live fact matches, but you previously stored (now retired):\n")
-		}
+	b.WriteString("No live fact matches, but you previously stored (now retired):\n")
+	for _, f := range matches {
 		fmt.Fprintf(&b, "- %q — %s", f.Note, RetireReasonLabel(f.Reason))
 		if !f.RetiredAt.IsZero() {
 			fmt.Fprintf(&b, " on %s", f.RetiredAt.Format("2006-01-02"))
@@ -203,15 +204,56 @@ func explainRetiredHole(db Database, namespace, query string) string {
 			}
 		}
 		b.WriteString(".\n")
-		if shown++; shown >= 3 {
-			break
-		}
-	}
-	if shown == 0 {
-		return ""
 	}
 	b.WriteString("\nTreat retired notes as historical, not current — verify before relying on them.")
 	return b.String()
+}
+
+// applyFactListEdit reconciles the memory editor's POSTed list with the live
+// rows by DIFF — not wipe+restore. Re-storing an untouched row would (a)
+// promote a model-authored (Observed) note to user_stated just because the
+// user hit Save, silently licensing it as a grounding source; (b) reset
+// Created/AsOf/volatility, faking freshness; (c) run the supersession judge
+// between two notes the user deliberately KEPT, so a plain Save could
+// tombstone one of them; and (d) leave surviving tombstones pointing at
+// deleted successor IDs. The GET sent each Note verbatim, so an unedited row
+// round-trips byte-identical — exact match identifies the untouched set. An
+// edited row is a delete + add, which is the honest shape of that change.
+func applyFactListEdit(udb Database, ns string, notes []string, chat FactChatFunc) {
+	existing := ListMemoryFacts(udb, ns)
+	posted := make(map[string]bool, len(notes))
+	var added []string
+	for _, n := range notes {
+		n = strings.TrimSpace(n)
+		if n == "" || posted[n] {
+			continue
+		}
+		posted[n] = true
+		added = append(added, n)
+	}
+	for _, f := range existing {
+		note := strings.TrimSpace(f.Note)
+		if posted[note] {
+			// Round-tripped unchanged: keep the row as-is, provenance intact.
+			for i, n := range added {
+				if n == note {
+					added = append(added[:i], added[i+1:]...)
+					break
+				}
+			}
+			continue
+		}
+		// Absent from the POSTed list = deliberately removed in the editor.
+		ForgetMemoryFactByID(udb, ns, f.ID)
+	}
+	for _, n := range added {
+		// Pass the worker chat so the admin path resolves contradictions the
+		// same way the LLM's store_fact does — a corrected note supersedes the
+		// stale one it replaces instead of coexisting as a contradiction. These
+		// are human-entered, so Source = user_stated: they DO count as a
+		// grounding source (SourcedFactCorpus), unlike model-authored notes.
+		StoreMemoryFactP(udb, ns, n, FactWritePolicy{Chat: chat, Source: MemSourceUserStated})
+	}
 }
 
 // --- HTTP handler ---------------------------------------------------------
@@ -273,27 +315,7 @@ func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		// Replace = wipe + restore. Cheaper than a diff and matches the
-		// "what the user sees IS the state" mental model — anything not
-		// in the POSTed list is intentionally gone. Goes through the
-		// normal StoreMemoryFact path so dedup + sane IDs apply to any
-		// new manual entries the user added in the editor.
-		existing := ListMemoryFacts(udb, ns)
-		for _, f := range existing {
-			ForgetMemoryFactByID(udb, ns, f.ID)
-		}
-		for _, n := range body.Notes {
-			n = strings.TrimSpace(n)
-			if n == "" {
-				continue
-			}
-			// Pass the worker chat so the admin path resolves contradictions the
-			// same way the LLM's store_fact does — a corrected note supersedes the
-			// stale one it replaces instead of coexisting as a contradiction. These
-			// are human-entered, so Source = user_stated: they DO count as a
-			// grounding source (SourcedFactCorpus), unlike model-authored notes.
-			StoreMemoryFactP(udb, ns, n, FactWritePolicy{Chat: T.WorkerChat, Source: MemSourceUserStated})
-		}
+		applyFactListEdit(udb, ns, body.Notes, T.WorkerChat)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
