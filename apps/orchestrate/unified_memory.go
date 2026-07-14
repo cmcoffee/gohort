@@ -244,19 +244,21 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 	// no multi-layer framing, no `layer` knob — so what the model is told matches
 	// what recall can actually return. Every other agent gets the full four-layer
 	// verb plus an optional `layer` filter to narrow to one source on demand.
-	desc := "Look something up across ALL of your memory at once — no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted — verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only).\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything.\n\nA 'no matches' result means your memory genuinely has nothing on this — do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`."
+	desc := "Look something up across ALL of your memory at once — no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted — verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only).\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this — do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
 	params := map[string]ToolParam{
 		"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
 		"id":    {Type: "string", Description: "An id from a prior recall hit (e.g. `doc:…`, `span:…`, `mem:…`, `fact:…`). Returns the full item behind that id instead of searching."},
 		"k":     {Type: "number", Description: "Max hits in TOTAL, split across the layers searched (default 4 per layer; per-layer share capped by the knowledge ceiling). Leave default unless you want a wider or narrower net."},
 		"layer": {Type: "string", Enum: []string{"knowledge", "finding", "pinned", "history"}, Description: "Optional. Restrict the search to ONE source, named by the tag you see on hits: `knowledge` (authoritative docs), `finding` (your saved findings), `pinned` (always-in-prompt notes), or `history` (earlier conversation). Omit to search all four. Use `knowledge` when the answer must come strictly from the corpus."},
+		"topic": {Type: "string", Description: "Optional snake_case topic slug — narrows [finding] and [knowledge] hits to one subject bucket (pinned notes and history aren't topic-filed). Pass a slug from the \"Known topics\" block, e.g. the one you filed a finding under with remember. Omit to span all topics."},
 	}
 	if t.recallCorpusOnly() {
-		desc = "Look something up in your knowledge corpus — the authoritative uploaded/shared documents this agent answers from. Pass `query` to search; each hit carries a `doc:` id, and calling recall again with that id returns the full document.\n\nA 'no matches' result means the corpus genuinely has nothing on this — do NOT speculate from it or fall back to general knowledge. Required: `query` OR `id`. Optional: `k`."
+		desc = "Look something up in your knowledge corpus — the authoritative uploaded/shared documents this agent answers from. Pass `query` to search; each hit carries a `doc:` id, and calling recall again with that id returns the full document.\n\nA 'no matches' result means the corpus genuinely has nothing on this — do NOT speculate from it or fall back to general knowledge. Required: `query` OR `id`. Optional: `k`, `topic`."
 		params = map[string]ToolParam{
 			"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
 			"id":    {Type: "string", Description: "A `doc:…` id from a prior recall hit. Returns the full document behind it instead of searching."},
 			"k":     {Type: "number", Description: "Max hits (default 4, cap follows the knowledge ceiling). Leave default unless you want a wider net."},
+			"topic": {Type: "string", Description: "Optional snake_case topic slug to scope the search to one subject bucket (from the \"Known topics\" block). Omit to search across all topics (broadest)."},
 		}
 	}
 	return AgentToolDef{
@@ -293,25 +295,39 @@ func (t *chatTurn) recallCorpusOnly() bool {
 }
 
 // recallLayerSet resolves which layers a recall call searches: the caller's
-// optional `layer` arg (default = all four) capped by recallCorpusOnly. An
-// unrecognized value falls back to all rather than silently narrowing to a
-// wrong single layer. Keys match the [tag] prefixes recall stamps on hits.
+// optional `layer` arg (default = all four) capped by recallCorpusOnly, then
+// PRUNED to the layers this agent can actually serve this turn. Pruning
+// happens here — before the budget split — because k is a TOTAL divided
+// across the layers searched: counting a gated layer silently shrank every
+// live layer's share (k=8 over 4 requested but 2 live layers handed each
+// live layer 2 hits instead of 4). An unrecognized value falls back to all
+// rather than silently narrowing to a wrong single layer. Keys match the
+// [tag] prefixes recall stamps on hits. An empty result means the caller
+// named a layer this agent has disabled.
 func (t *chatTurn) recallLayerSet(args map[string]any) map[string]bool {
 	if t.recallCorpusOnly() {
 		return map[string]bool{"knowledge": true}
 	}
+	var layers map[string]bool
 	switch strings.ToLower(strings.TrimSpace(stringArg(args, "layer"))) {
 	case "knowledge":
-		return map[string]bool{"knowledge": true}
+		layers = map[string]bool{"knowledge": true}
 	case "finding", "findings":
-		return map[string]bool{"finding": true}
+		layers = map[string]bool{"finding": true}
 	case "pinned":
-		return map[string]bool{"pinned": true}
+		layers = map[string]bool{"pinned": true}
 	case "history":
-		return map[string]bool{"history": true}
+		layers = map[string]bool{"history": true}
 	default: // "", "all", or unrecognized → search everything
-		return map[string]bool{"pinned": true, "finding": true, "knowledge": true, "history": true}
+		layers = map[string]bool{"pinned": true, "finding": true, "knowledge": true, "history": true}
 	}
+	if t.explicitOff() {
+		delete(layers, "pinned")
+	}
+	if t.inferredOff() {
+		delete(layers, "finding")
+	}
+	return layers
 }
 
 // recallPerLayerBudget resolves the caller's k into a per-layer depth. k is
@@ -344,6 +360,12 @@ func recallPerLayerBudget(args map[string]any, layerCount int) int {
 // history run their own indexes.
 func (t *chatTurn) recallSearch(query string, args map[string]any) (string, error) {
 	layers := t.recallLayerSet(args)
+	if len(layers) == 0 {
+		// The caller named a layer this agent has disabled (e.g. layer=pinned
+		// with Explicit memory off). Say so instead of reporting a hollow
+		// "no matches" the model would read as a genuine miss.
+		return "", errors.New("that memory layer is disabled for this agent — omit `layer` to search the layers that are available")
+	}
 	perLayer := recallPerLayerBudget(args, len(layers))
 	now := time.Now()
 	var sections []string
@@ -356,7 +378,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	// RETIRED notes surfaces the tombstone explanation ("you had X; dropped on
 	// <date>") instead of a silent miss the model would paper over with a
 	// stale prior.
-	if layers["pinned"] && !t.explicitOff() {
+	if layers["pinned"] {
 		facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
 		if len(facts) > perLayer {
 			facts = facts[:perLayer]
@@ -375,21 +397,31 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	}
 
 	// [finding] + [knowledge] — one vector search over both, split by
-	// provenance. Skip the query entirely when neither layer is wanted.
-	// Reference is skipped when Inferred memory is off, but Knowledge (curated)
-	// is always readable.
+	// provenance. Skip the query entirely when neither layer is wanted. When
+	// only ONE of the two is live (layer= narrowing, or Inferred memory off),
+	// scope the search to that provenance so the other side's chunks don't
+	// occupy candidate slots that then get discarded — a layer=finding recall
+	// was otherwise starved by curated hits outranking findings in the pool,
+	// exactly the depth legacy memory_search (ChunkScopeDerivedOnly) had.
 	if layers["finding"] || layers["knowledge"] {
+		scope := recallChunkScope(layers)
+		// Optional topic narrowing, same semantics as legacy knowledge_search /
+		// memory_search: scopes the agent's own corpus to one bucket (uploads
+		// stay in scope). Facts and history aren't topic-partitioned, so the
+		// other layers ignore it. remember files findings by topic — without
+		// this, the model could file by topic but never narrow by it.
+		topic := normalizeTopic(stringArg(args, "topic"))
 		ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 		defer cancel()
-		hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, generalTopic, query, perLayer*2, t.skillsActive, t.agent.AttachedCollections, ChunkScopeAll)
+		hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
 		var findings, knowledge []SearchHit
 		for _, h := range hits {
 			if h.Score < manualSearchMinScore {
 				continue
 			}
 			if chunkProvenance(h.Source, h.ReportID) == "derived" {
-				if !layers["finding"] || t.inferredOff() {
-					continue // Reference layer not requested or suppressed this turn
+				if !layers["finding"] {
+					continue // Reference layer not searched this turn
 				}
 				findings = append(findings, h) // collect all; recency re-rank + cap below
 			} else if layers["knowledge"] && len(knowledge) < perLayer {
@@ -441,10 +473,25 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	return strings.Join(sections, "\n\n"), nil
 }
 
+// recallChunkScope maps the live layer set onto the vector search's provenance
+// scope: when only one of [finding]/[knowledge] is being searched, scope to
+// that provenance so the other side's chunks don't occupy candidate slots that
+// then get discarded. Only meaningful when at least one of the two is set.
+func recallChunkScope(layers map[string]bool) ChunkScope {
+	switch {
+	case !layers["knowledge"]:
+		return ChunkScopeDerivedOnly
+	case !layers["finding"]:
+		return ChunkScopeCuratedOnly
+	}
+	return ChunkScopeAll
+}
+
 // recallNoMatchMessage tailors the empty-result text to the layers that were
-// actually searched, so a scoped recall doesn't claim it swept everything. The
-// invariant across every variant: absence is not evidence — never infer an
-// answer from a miss.
+// actually searched, so a scoped recall doesn't claim it swept everything —
+// including when a layer was pruned by the agent's memory gates rather than
+// the caller's `layer` arg. The invariant across every variant: absence is
+// not evidence — never infer an answer from a miss.
 func recallNoMatchMessage(layers map[string]bool) string {
 	if len(layers) == 1 && layers["knowledge"] {
 		return "No matches in your knowledge corpus. Don't infer an answer from the absence or fall back to general knowledge — say the corpus had nothing on it."
@@ -456,7 +503,22 @@ func recallNoMatchMessage(layers map[string]bool) string {
 		}
 		return fmt.Sprintf("No matches in your %s memory. Don't infer an answer from the absence — either widen the search (omit `layer`) or say you found nothing.", only)
 	}
-	return "No matches anywhere in your memory (pinned notes, findings, knowledge, or conversation history). Don't infer an answer from the absence — either rephrase, or proceed and say your memory had nothing on it."
+	// Name exactly what was searched: with a gated layer pruned, claiming a
+	// sweep of "pinned notes" the agent doesn't have would be a false negative
+	// the model can't distinguish from a real one.
+	labels := []struct{ key, label string }{
+		{"pinned", "pinned notes"},
+		{"finding", "findings"},
+		{"knowledge", "knowledge"},
+		{"history", "conversation history"},
+	}
+	var searched []string
+	for _, l := range labels {
+		if layers[l.key] {
+			searched = append(searched, l.label)
+		}
+	}
+	return fmt.Sprintf("No matches anywhere in your memory (%s). Don't infer an answer from the absence — either rephrase, or proceed and say your memory had nothing on it.", strings.Join(searched, ", "))
 }
 
 // rerankFindingsByRecency re-orders finding hits by semantic score × recency, so
