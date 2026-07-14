@@ -1115,9 +1115,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Bound the run-view with the same rolling-summary compaction the Cortex
 	// thread uses, so a long-running channel / dispatch session doesn't load
 	// its entire history into the prompt (and eventually blow the window).
-	// Run-only — storage keeps the full thread. No-op until the thread grows
-	// past the fold trigger, so short dispatches are unaffected; fact
-	// extraction honors the agent's memory setting (see compactOperatorHistory).
+	// Storage is bounded separately at the save site below (trimStoredHistory,
+	// summary + generous tail; older content stays recoverable via recall).
+	// No-op until the thread grows past the fold trigger, so short dispatches
+	// are unaffected; fact extraction honors the agent's memory setting (see
+	// compactOperatorHistory).
 	bounded := T.compactOperatorHistory(runtimeDB, runtimeUser, target, subSessionID, priorSession.Messages)
 	llmMessages := make([]Message, 0, len(bounded)+1)
 	for _, m := range bounded {
@@ -1260,6 +1262,12 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			ChatMessage{Role: "user", Content: deliveredMessage, Created: now, Sender: run.MessageSender},
 			ChatMessage{Role: "assistant", Content: cleanReply, Created: now, Sender: assistantSender},
 		)
+		// Bound STORAGE the same way the Cortex home thread does (runner.go
+		// handleSend): drop leading messages already folded into the summary
+		// AND archived to recall, cursor kept consistent. Without this, a
+		// long-lived channel / phantom thread grew without limit and was
+		// loaded whole every turn.
+		priorSession.Messages = T.trimStoredHistory(runtimeDB, target, subSessionID, priorSession.Messages)
 		if _, serr := saveChatSession(runtimeDB, priorSession); serr != nil {
 			Log("[orchestrate.RunAgentSyncContinuing] WARN failed to persist sub-session %s: %v", subSessionID, serr)
 		}

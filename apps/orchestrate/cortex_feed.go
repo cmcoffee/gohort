@@ -65,6 +65,19 @@ func appendCortexObs(db Database, agentID, from, kind, text string) {
 		Content:    strings.TrimSpace(text),
 		Created:    now,
 	})
+	// Length backstop for observation-ONLY cortexes: a real turn runs the
+	// compaction + trim pipeline, but an agent that only receives
+	// observations never takes a turn, so this append grew the thread
+	// forever. Forget-old is correct here — observations are pointers by
+	// design ("cortex holds pointers, not bodies") — but ONLY while no fold
+	// cursor exists: once the thread has compaction state, dropping leading
+	// messages without decrementing the cursor desyncs it, so the turn
+	// pipeline's trimStoredHistory owns the bound instead.
+	if len(sess.Messages) > storedHistoryCap+storedHistorySlack {
+		if st := loadCompactState(db, agentID, sid); st.SummarizedThrough == 0 && strings.TrimSpace(st.Summary) == "" {
+			sess.Messages = sess.Messages[len(sess.Messages)-storedHistoryCap:]
+		}
+	}
 	sess.LastAt = now // mark unread (LastSeen untouched) — new cortex activity
 	if _, err := saveChatSession(db, sess); err != nil {
 		Log("[orchestrate.cortex] observation append failed for agent=%s: %v", agentID, err)

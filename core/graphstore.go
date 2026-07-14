@@ -43,6 +43,32 @@ const (
 	GraphEdgeTable   = "core_graph_edge"
 )
 
+// Graph-bounds tunables — the graph's parity with the fact store's hard cap.
+// Auto-extraction populates the graph continuously, so without a bound a
+// long-lived agent's namespace grows forever (and every name/alias probe and
+// recall_about scan walks it).
+const (
+	// TunableGraphEntityCap: max live entities per namespace; past it the
+	// least-recently-updated entities are evicted (their edges go with them).
+	// 0 disables.
+	TunableGraphEntityCap = "tune_graph_entity_cap"
+	// TunableGraphEdgeCap: max LIVE edges per namespace; past it the
+	// least-recently-updated live edges are evicted. Tombstoned (retired)
+	// edges are bounded separately by tombstone retention. 0 disables.
+	TunableGraphEdgeCap = "tune_graph_edge_cap"
+)
+
+func init() {
+	RegisterTunable(TunableSpec{Key: TunableGraphEntityCap, Category: "Limits",
+		Label: "Graph entity cap per agent (0 = off)",
+		Help:  "Max entities in one agent's memory graph. Past the cap, the least-recently-updated entities are evicted (edges included) so auto-extraction can't grow the graph without bound.",
+		Kind:  KindInt, Default: 500, Min: 0, Max: 10000})
+	RegisterTunable(TunableSpec{Key: TunableGraphEdgeCap, Category: "Limits",
+		Label: "Graph edge cap per agent (0 = off)",
+		Help:  "Max live relationships in one agent's memory graph. Past the cap, the least-recently-updated edges are evicted.",
+		Kind:  KindInt, Default: 2000, Min: 0, Max: 50000})
+}
+
 // GraphEntity is one node: a thing the agent knows about. Identity is the
 // slug ID ("person:robin-vale"); Aliases are the case-insensitive merge
 // keys, so "Robin", "@robin", and "Robin Vale" resolve to one node. Attrs
@@ -140,11 +166,22 @@ func graphKindOrDefault(kind string) string {
 // use to consolidate aliases onto one node.
 func FindGraphEntity(db Database, namespace, nameOrAlias string) (GraphEntity, bool) {
 	namespace = strings.TrimSpace(namespace)
-	want := strings.ToLower(strings.TrimSpace(nameOrAlias))
-	if db == nil || namespace == "" || want == "" {
+	if db == nil || namespace == "" {
 		return GraphEntity{}, false
 	}
-	for _, e := range ListGraphEntities(db, namespace) {
+	return matchGraphEntity(ListGraphEntities(db, namespace), nameOrAlias)
+}
+
+// matchGraphEntity resolves a name/alias against an already-loaded entity
+// list. Split from FindGraphEntity so multi-probe callers (UpsertGraphEntity
+// resolving name + every alias) scan the namespace ONCE instead of once per
+// probe — the O(probes × N) hot spot auto-extraction multiplied.
+func matchGraphEntity(ents []GraphEntity, nameOrAlias string) (GraphEntity, bool) {
+	want := strings.ToLower(strings.TrimSpace(nameOrAlias))
+	if want == "" {
+		return GraphEntity{}, false
+	}
+	for _, e := range ents {
 		if strings.ToLower(strings.TrimSpace(e.Name)) == want || strings.EqualFold(e.ID, nameOrAlias) {
 			return e, true
 		}
@@ -272,10 +309,12 @@ func UpsertGraphEntity(db Database, namespace, kind, name string, aliases []stri
 	kind = graphKindOrDefault(kind)
 
 	// Resolve against existing nodes by name first, then any alias — so a
-	// later mention under a different alias lands on the same node.
+	// later mention under a different alias lands on the same node. One
+	// namespace scan serves every probe.
+	ents := ListGraphEntities(db, namespace)
 	probes := append([]string{name}, aliases...)
 	for _, p := range probes {
-		if e, ok := FindGraphEntity(db, namespace, p); ok {
+		if e, ok := matchGraphEntity(ents, p); ok {
 			changed := mergeGraphEntity(&e, name, aliases, attrs)
 			if changed {
 				e.Updated = now
@@ -308,7 +347,73 @@ func UpsertGraphEntity(db Database, namespace, kind, name string, aliases []stri
 		Updated:   now,
 	}
 	db.Set(GraphEntityTable, graphEntityKey(namespace, id), e)
+	// A NEW node is the only event that can push the namespace past the
+	// entity cap (merges don't grow it), so the bound is enforced here.
+	enforceGraphEntityCap(db, namespace, append(ents, e))
 	return e, true
+}
+
+// enforceGraphEntityCap evicts least-recently-updated entities until the
+// namespace holds at most TunableGraphEntityCap. Eviction is a hard delete
+// (DeleteGraphEntity drops the node's edges with it): the graph deliberately
+// has no retirement for entities — a crowded-out node earns a log line, not a
+// tombstone, because recall_about on a deleted node reads as a clean miss
+// rather than resurfacing stale relationships. ents is the caller's
+// already-loaded live list (post-insert) so no second scan is needed. No-op
+// when the cap is 0 (disabled).
+func enforceGraphEntityCap(db Database, namespace string, ents []GraphEntity) {
+	limit := TuneInt(TunableGraphEntityCap)
+	if limit <= 0 || len(ents) <= limit {
+		return
+	}
+	sort.Slice(ents, func(i, j int) bool {
+		return graphStamp(ents[i].Updated, ents[i].Created).Before(graphStamp(ents[j].Updated, ents[j].Created))
+	})
+	evicted := 0
+	for i := 0; i < len(ents)-limit; i++ {
+		if DeleteGraphEntity(db, namespace, ents[i].ID) {
+			evicted++
+		}
+	}
+	if evicted > 0 {
+		Log("[graphstore] entity cap evicted %d least-recently-updated node(s) from %s (limit %d)", evicted, namespace, limit)
+	}
+}
+
+// enforceGraphEdgeCap evicts least-recently-updated LIVE edges until the
+// namespace holds at most TunableGraphEdgeCap. Retired edges are exempt here
+// (tombstone retention bounds them). Hard delete, logged — same rationale as
+// the entity cap. No-op when the cap is 0.
+func enforceGraphEdgeCap(db Database, namespace string) {
+	limit := TuneInt(TunableGraphEdgeCap)
+	if limit <= 0 {
+		return
+	}
+	edges := scanGraphEdges(db, namespace, func(e GraphEdge) bool { return !e.Retired() })
+	if len(edges) <= limit {
+		return
+	}
+	sort.Slice(edges, func(i, j int) bool {
+		return graphStamp(edges[i].Updated, edges[i].Created).Before(graphStamp(edges[j].Updated, edges[j].Created))
+	})
+	evicted := 0
+	for i := 0; i < len(edges)-limit; i++ {
+		e := edges[i]
+		db.Unset(GraphEdgeTable, graphEdgeKey(namespace, e.From, e.Rel, e.To))
+		evicted++
+	}
+	if evicted > 0 {
+		Log("[graphstore] edge cap evicted %d least-recently-updated edge(s) from %s (limit %d)", evicted, namespace, limit)
+	}
+}
+
+// graphStamp is the LRU ordering stamp: Updated, falling back to Created for
+// rows written before Updated existed.
+func graphStamp(updated, created time.Time) time.Time {
+	if !updated.IsZero() {
+		return updated
+	}
+	return created
 }
 
 // mergeGraphEntity folds new aliases + attrs into an existing node. Returns
@@ -414,10 +519,17 @@ func LinkGraphEdgeP(db Database, namespace, from, rel, to, note string, replace 
 	edge.AsOf = prov.AsOf
 	// Preserve Created if the exact triple already existed (this is an update).
 	var prior GraphEdge
+	isNew := true
 	if db.Get(GraphEdgeTable, key, &prior) && !prior.Created.IsZero() {
 		edge.Created = prior.Created
+		isNew = false
 	}
 	db.Set(GraphEdgeTable, key, edge)
+	// Only a NEW triple can push the namespace past the edge cap — rewrites
+	// and revivals reuse their key.
+	if isNew {
+		enforceGraphEdgeCap(db, namespace)
+	}
 	return edge
 }
 

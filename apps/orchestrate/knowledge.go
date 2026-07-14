@@ -39,7 +39,15 @@ import (
 
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_knowledge_ingest_timeout", Category: "Timeouts", Label: "Knowledge ingest timeout", Help: "Caps any embedding round-trip during knowledge ingest/search.", Kind: KindSeconds, Default: 45, Min: 5, Max: 300})
+	RegisterTunable(TunableSpec{Key: tuneFindingHardCap, Category: "Limits",
+		Label: "Findings hard cap per agent (0 = off)",
+		Help:  "Max self-saved findings (memory_save / remember) one agent keeps. Past the cap, the OLDEST findings are deleted — the fact store's hard-cap parity for the Reference layer, which otherwise grows without bound (every save is a new document). Uploaded/attached documents are never touched.",
+		Kind:  KindInt, Default: 300, Min: 0, Max: 10000})
 }
+
+// tuneFindingHardCap bounds the Reference-Memory layer the way
+// TunableFactHardCap bounds the Explicit layer.
+const tuneFindingHardCap = "tune_finding_hard_cap"
 
 // knowledgeIngestTimeout caps any embedding round-trip — long stalls
 // would hang the consolidation goroutine or the user-facing tool call.
@@ -813,6 +821,67 @@ func ingestAgentKnowledge(ctx context.Context, db Database, user, agentID, topic
 	if topic != "" {
 		recordAgentTopic(db, user, agentID, topic)
 	}
+	// Every save grows the corpus by one document (fresh reportID by design),
+	// so the bound is enforced at the single write choke point.
+	enforceFindingCap(user, agentID)
+}
+
+// enforceFindingCap bounds an agent's self-saved findings at
+// tuneFindingHardCap, deleting the OLDEST findings (by ingestion date) first —
+// the Reference-layer parity of the fact store's enforceFactHardCap. Scope is
+// deliberately narrow: the agent's own corpus (any topic bucket), reportID
+// prefix "orch-know-" (a saved finding), EXCLUDING the :attachments bucket —
+// chat-pasted documents ride the same ingest path and reportID shape, but
+// they're user-provided reference material, not model-saved findings, and a
+// cap must never silently discard something the user handed over. Eviction is
+// a hard delete (the vector layer has no retirement by design — a dropped
+// finding reads as a clean miss, never resurfaces), logged. No-op at cap 0.
+func enforceFindingCap(user, agentID string) {
+	limit := TuneInt(tuneFindingHardCap)
+	if limit <= 0 || VectorDB == nil {
+		return
+	}
+	agentPrefix := knowledgeSource(user, agentID, "")
+	attachments := knowledgeSource(user, agentID, "attachments")
+	type finding struct {
+		reportID string
+		date     time.Time
+	}
+	seen := map[string]int{} // reportID → index into findings
+	var findings []finding
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
+		var c EmbeddedChunk
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
+			continue
+		}
+		if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
+			continue
+		}
+		if c.Source == attachments || !strings.HasPrefix(c.ReportID, "orch-know-") {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339, c.Date)
+		if err != nil {
+			ts = time.Now() // undated legacy chunk: treat as fresh, never the first evicted
+		}
+		if i, ok := seen[c.ReportID]; ok {
+			if ts.Before(findings[i].date) {
+				findings[i].date = ts
+			}
+			continue
+		}
+		seen[c.ReportID] = len(findings)
+		findings = append(findings, finding{c.ReportID, ts})
+	}
+	if len(findings) <= limit {
+		return
+	}
+	sort.Slice(findings, func(i, j int) bool { return findings[i].date.Before(findings[j].date) })
+	for i := 0; i < len(findings)-limit; i++ {
+		DeleteReportChunks(VectorDB, findings[i].reportID)
+	}
+	Log("[orchestrate.knowledge] finding cap evicted %d oldest finding(s) for %s/%s (limit %d)",
+		len(findings)-limit, user, agentID, limit)
 }
 
 // searchAgentKnowledge returns up to k semantically relevant chunks
@@ -1191,9 +1260,11 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	// agent's OWN derived chunks (orch-know-*), across all topics, so a
 	// duplicate saved under a different topic slug is still caught.
 	var conflictNote string
+	semanticDedupRan := false
 	if VectorDB != nil {
 		if cfg := GetEmbeddingConfig(); cfg.Enabled {
 			if vec, err := Embed(ctx, content); err == nil && len(vec) > 0 {
+				semanticDedupRan = true
 				agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
 				allow := func(c EmbeddedChunk) bool {
 					if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
@@ -1214,9 +1285,56 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 			}
 		}
 	}
+	// Text-tier dedup backstop: with embeddings off (or the embed erroring),
+	// the semantic pass above never ran and saves previously proceeded with
+	// ZERO dedup, silently — the exact failure it catches is the model
+	// re-saving the same finding verbatim across a session. Whitespace/case-
+	// insensitive equality only; rephrasings need the semantic tier.
+	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicate(content) {
+		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping — retrieve it via %s.", memRecallPhrase()), nil
+	}
 	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
 	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.%s",
 		len(content), topic, memRecallPhrase(), conflictNote), nil
+}
+
+// findingExactDuplicate reports whether one of the agent's own saved findings
+// already carries content verbatim (whitespace/case-insensitive chunk-text
+// equality). The dedup tier for saves the semantic pass can't cover. Scoped
+// exactly like the semantic dedup: own corpus, orch-know- reports only. Long
+// findings that split into multiple chunks won't match whole — acceptable for
+// a backstop tier.
+func (t *chatTurn) findingExactDuplicate(content string) bool {
+	if VectorDB == nil {
+		return false
+	}
+	want := normalizeFindingText(content)
+	if want == "" {
+		return false
+	}
+	agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
+	for _, key := range VectorDB.Keys(EmbeddedChunks) {
+		var c EmbeddedChunk
+		if !VectorDB.Get(EmbeddedChunks, key, &c) {
+			continue
+		}
+		if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
+			continue
+		}
+		if !strings.HasPrefix(c.ReportID, "orch-know-") {
+			continue
+		}
+		if normalizeFindingText(c.Text) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeFindingText lowercases and collapses all whitespace so cosmetic
+// differences don't defeat the exact-text dedup tier.
+func normalizeFindingText(s string) string {
+	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 
 // searchKnowledgeToolDef builds the read-side tool over the
