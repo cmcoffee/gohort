@@ -322,8 +322,18 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 // (DashboardURL-based), so copying works even from the gohort-desktop client
 // (which reaches the server over 127.0.0.1). No backticks in this string — it is
 // embedded in a Go raw literal, and a backtick would terminate it.
+//
+// Injected via Page.ExtraHeadHTML, which renders in <head> — BEFORE /_ui/ui.js
+// (loaded at body end) has defined uiRegisterClientAction. So the registration
+// is deferred to DOMContentLoaded (by when ui.js has run), guarded by an
+// existence check — the same pattern as apps/techwriter/web_assets.go. Calling
+// uiRegisterClientAction directly at head-parse time throws and the Share button
+// silently does nothing.
 const shareModalScript = `<script>
-window.uiRegisterClientAction('customapps_share', function(ctx) {
+(function() {
+  function register() {
+    if (!window.uiRegisterClientAction) return;
+    window.uiRegisterClientAction('customapps_share', function(ctx) {
   var rec = ctx.record || {};
   var slug = rec.slug;
   function truthy(v){ return v === '1' || v === 1 || v === true; }
@@ -381,9 +391,20 @@ window.uiRegisterClientAction('customapps_share', function(ctx) {
         'Anonymous, read-only. Your data sources run with your credentials for anyone who has the link. Nothing is saved. Revoke anytime by turning this off.',
         truthy(rec.public),
         function(on, cb){
-          post('_app/public?slug=' + encodeURIComponent(slug) + '&on=' + on, cb, function(d){
-            if (on && d.url) { input.value = d.url; linkRow.style.display = 'flex'; }
-            else { linkRow.style.display = 'none'; }
+          if (!on) {
+            post('_app/public?slug=' + encodeURIComponent(slug) + '&on=false', cb, function(){ linkRow.style.display = 'none'; });
+            return;
+          }
+          // Enabling public exposes the app to anyone with the URL, running the
+          // owner's credentialed data sources with no login — confirm before it
+          // goes live. uiConfirm is the runtime's cross-host dialog (native
+          // confirm is broken in the gohort-desktop WKWebView).
+          var msg = 'Create a public link? Anyone who has the URL can open this app and run its data sources with YOUR credentials, with no login. Nothing is saved, and you can revoke the link anytime by turning this off.';
+          Promise.resolve(window.uiConfirm ? window.uiConfirm(msg) : window.confirm(msg)).then(function(ok){
+            if (!ok) { cb.checked = false; return; }
+            post('_app/public?slug=' + encodeURIComponent(slug) + '&on=true', cb, function(d){
+              if (d.url) { input.value = d.url; linkRow.style.display = 'flex'; }
+            });
           });
         }
       );
@@ -392,7 +413,14 @@ window.uiRegisterClientAction('customapps_share', function(ctx) {
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
-});
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', register);
+  } else {
+    register();
+  }
+})();
 </` + `script>`
 
 
