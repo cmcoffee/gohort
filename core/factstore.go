@@ -276,7 +276,7 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	wantNorm := normalizeFactNote(note)
 	for _, f := range existing {
 		if normalizeFactNote(f.Note) == wantNorm {
-			return FactWriteResult{Fact: f, Reason: FactDuplicate}
+			return FactWriteResult{Fact: reconfirmFact(db, f, p), Reason: FactDuplicate}
 		}
 	}
 	// Tier 2: semantic similarity, when embeddings are available and there's
@@ -297,7 +297,10 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 				}
 				sim := Cosine(newVec, existVec)
 				if sim >= factDedupSimThreshold {
-					return FactWriteResult{Fact: f, Reason: FactDuplicate}
+					// Carry factVector's lazy backfill onto the copy we may
+					// re-persist, or the reconfirm write would clobber it.
+					f.Vector = existVec
+					return FactWriteResult{Fact: reconfirmFact(db, f, p), Reason: FactDuplicate}
 				}
 				if sim >= factSupersedeBandFloor {
 					supersedeCandidates = append(supersedeCandidates, f)
@@ -355,6 +358,26 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	}
 
 	return FactWriteResult{Fact: f, Reason: FactStored, Superseded: superseded}
+}
+
+// reconfirmFact treats a duplicate save as a RE-VERIFICATION of the existing
+// fact: the caller just asserted the same content again, so AsOf (last
+// confirmed-true) bumps to now — the "re-verify bumps AsOf without rewriting
+// Note" writer the provenance design reserved. Without this, a volatile fact
+// the model re-confirms daily still rendered "STALE: last confirmed ~30d ago"
+// and kept getting recency-down-weighted. Two deliberate exclusions:
+//   - Updated is NOT touched — it tracks meaning changes and orders LRU
+//     eviction/retention; a re-confirmation changes neither.
+//   - An anonymous write (Source unknown: sweep merges, migrations, legacy
+//     callers) is internal reshuffling, not fresh evidence, and confirms
+//     nothing.
+func reconfirmFact(db Database, f MemoryFact, p FactWritePolicy) MemoryFact {
+	if p.Source == MemSourceUnknown {
+		return f
+	}
+	f.AsOf = time.Now()
+	db.Set(MemoryFactsTable, factDBKey(f.Namespace, f.ID), f)
+	return f
 }
 
 // retireFact moves one live fact into the history set with the given reason and

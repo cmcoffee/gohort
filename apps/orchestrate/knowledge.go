@@ -1539,7 +1539,12 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 		}
 		filtered = append(filtered, h)
 	}
-	hits = filtered
+	// THE recency pass for findings — the same one unified recall's [finding]
+	// layer applies, and the only one anywhere (core vector search ranks on
+	// relevance alone; see the design note in core/vector_store.go). Findings
+	// are self-saved reference material, so a fresher one outranks an
+	// equally-relevant stale one; strength rides tune_recency_weight.
+	hits = rerankFindingsByRecency(filtered, time.Now())
 	dropped := rawHits - len(hits)
 	if len(hits) == 0 {
 		if dropped > 0 {

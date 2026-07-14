@@ -122,3 +122,47 @@ func TestSearchRetiredFactsTermOverlap(t *testing.T) {
 		t.Fatalf("stopword-only query found %d retired facts, want 0", len(got))
 	}
 }
+
+// TestDuplicateSaveReconfirmsAsOf: a duplicate save from a live source is a
+// re-verification — AsOf bumps (so a daily-re-confirmed volatile fact stops
+// rendering STALE) while Updated stays put (it orders LRU eviction and tracks
+// meaning changes). Anonymous writers (Source unknown — sweep merges,
+// migrations) confirm nothing.
+func TestDuplicateSaveReconfirmsAsOf(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	db.Set(MemoryFactsTable, factDBKey(ns, "gpu"), MemoryFact{
+		Namespace: ns, ID: "gpu", Note: "the 5090 costs $1,600", Created: old, Updated: old,
+		MemoryProvenance: MemoryProvenance{AsOf: old, Volatility: VolVolatile, Source: MemSourceObserved},
+	})
+
+	// Sourced duplicate → AsOf bumps, Updated untouched.
+	res := StoreMemoryFactP(db, ns, "The 5090 costs $1,600", FactWritePolicy{Source: MemSourceObserved})
+	if res.Reason != FactDuplicate {
+		t.Fatalf("expected FactDuplicate, got %d", res.Reason)
+	}
+	got, _ := GetMemoryFactByID(db, ns, "gpu")
+	if time.Since(got.AsOf) > time.Minute {
+		t.Fatalf("AsOf not bumped by sourced duplicate: %v", got.AsOf)
+	}
+	if !got.Updated.Equal(old) {
+		t.Fatalf("Updated must not change on re-confirmation: %v", got.Updated)
+	}
+	if got.Staleness(time.Now()) != Fresh {
+		t.Fatalf("re-confirmed volatile fact should read Fresh, got %v", got.Staleness(time.Now()))
+	}
+
+	// Anonymous duplicate (zero policy — the sweep-merge shape) → no bump.
+	db.Set(MemoryFactsTable, factDBKey(ns, "gpu"), MemoryFact{
+		Namespace: ns, ID: "gpu", Note: "the 5090 costs $1,600", Created: old, Updated: old,
+		MemoryProvenance: MemoryProvenance{AsOf: old, Volatility: VolVolatile, Source: MemSourceObserved},
+	})
+	if res := StoreMemoryFactP(db, ns, "the 5090 costs $1,600", FactWritePolicy{}); res.Reason != FactDuplicate {
+		t.Fatalf("expected FactDuplicate, got %d", res.Reason)
+	}
+	got, _ = GetMemoryFactByID(db, ns, "gpu")
+	if !got.AsOf.Equal(old) {
+		t.Fatalf("anonymous duplicate must not bump AsOf: %v", got.AsOf)
+	}
+}

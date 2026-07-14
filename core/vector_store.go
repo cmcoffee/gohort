@@ -12,35 +12,17 @@ import (
 	"unicode/utf8"
 )
 
-// chunkAgeHalflifeDays is the soft half-life for temporal-decay
-// ranking: a chunk N days old has its raw cosine multiplied by
-// exp(-N / halflife). At halflife days the effective score is halved;
-// at 2x halflife it's a quarter. 180 days is a gentle decay — keeps
-// year-old reference content alive while letting fresh chunks edge
-// out stale ones on ties. Strong-match old chunks still surface for
-// niche queries (the multiplier is a tiebreaker, not a filter).
-const chunkAgeHalflifeDays = 180.0
-
-// applyTemporalDecay multiplies a raw cosine score by an exponential
-// decay factor based on chunk age. Chunks with an empty / unparseable
-// Date pass through with no decay — defensive against legacy rows.
-// Returns the adjusted score so the caller can sort + filter on the
-// same field downstream consumers see.
-func applyTemporalDecay(rawScore float32, date string) float32 {
-	if date == "" {
-		return rawScore
-	}
-	t, err := time.Parse(time.RFC3339, date)
-	if err != nil {
-		return rawScore
-	}
-	age := time.Since(t).Hours() / 24.0
-	if age <= 0 {
-		return rawScore
-	}
-	decay := math.Exp(-age / chunkAgeHalflifeDays)
-	return rawScore * float32(decay)
-}
+// DESIGN NOTE — no temporal decay in this store. An earlier version decayed
+// every chunk's sort key by age (180d half-life), which violated the
+// corpus-exempt principle: a year-old AUTHORITATIVE upload sorted at ~×0.25
+// and fell out of the candidate pool behind fresh derived chatter, and
+// self-saved findings then got decayed a SECOND time by the app layer's
+// recency re-rank. Recency is a memory-layer concern, not a corpus concern:
+// callers that want it apply MemoryProvenance.RecencyMultiplier to the
+// layers where age means drift (see rerankFindingsByRecency in
+// apps/orchestrate), governed by the tune_recency_weight tunable. Curated
+// knowledge, collections, skill corpora, and conversation history rank on
+// relevance alone — don't re-add a blanket decay here.
 
 // chunkCache holds snapshots of every EmbeddedChunk row, one per Database,
 // so SearchChunks/SearchChunksSubstring can scan a Go slice instead of
@@ -998,11 +980,7 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 		return nil
 	}
 	chunks := snapshotChunks(db)
-	type scored struct {
-		hit   SearchHit
-		score float32
-	}
-	var all []scored
+	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if len(c.Vector) != len(query) {
@@ -1012,36 +990,24 @@ func SearchChunks(db Database, query []float32, k int) []SearchHit {
 		if s <= 0 {
 			continue
 		}
-		// Temporal decay applies to the SORT KEY only — SearchHit.Score
-		// stays as the raw cosine so callers with similarity-floor
-		// filters (manualSearchMinScore, dedup thresholds) get
-		// predictable behavior. Recent chunks edge out stale ones on
-		// ties; strong-match old chunks still surface for niche queries.
-		all = append(all, scored{
-			hit: SearchHit{
-				ID:       c.ID,
-				Source:   c.Source,
-				ReportID: c.ReportID,
-				Title:    c.Title,
-				Section:  c.Section,
-				Text:     c.Text,
-				Score:    s,
-				Locator:  c.Locator,
-				Date:     c.Date,
-				Kind:     c.Kind,
-			},
-			score: applyTemporalDecay(s, c.Date),
+		all = append(all, SearchHit{
+			ID:       c.ID,
+			Source:   c.Source,
+			ReportID: c.ReportID,
+			Title:    c.Title,
+			Section:  c.Section,
+			Text:     c.Text,
+			Score:    s,
+			Locator:  c.Locator,
+			Date:     c.Date,
+			Kind:     c.Kind,
 		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if k > len(all) {
 		k = len(all)
 	}
-	out := make([]SearchHit, k)
-	for i := 0; i < k; i++ {
-		out[i] = all[i].hit
-	}
-	return out
+	return all[:k]
 }
 
 // SearchChunksByPredicate is the most flexible filtered search —
@@ -1060,11 +1026,7 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 		return nil
 	}
 	chunks := snapshotChunks(db)
-	type scored struct {
-		hit   SearchHit
-		score float32
-	}
-	var all []scored
+	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if !allow(*c) {
@@ -1077,36 +1039,24 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 		if s <= 0 {
 			continue
 		}
-		// Temporal decay applies to the SORT KEY only — SearchHit.Score
-		// stays as the raw cosine so callers with similarity-floor
-		// filters (manualSearchMinScore, dedup thresholds) get
-		// predictable behavior. Recent chunks edge out stale ones on
-		// ties; strong-match old chunks still surface for niche queries.
-		all = append(all, scored{
-			hit: SearchHit{
-				ID:       c.ID,
-				Source:   c.Source,
-				ReportID: c.ReportID,
-				Title:    c.Title,
-				Section:  c.Section,
-				Text:     c.Text,
-				Score:    s,
-				Locator:  c.Locator,
-				Date:     c.Date,
-				Kind:     c.Kind,
-			},
-			score: applyTemporalDecay(s, c.Date),
+		all = append(all, SearchHit{
+			ID:       c.ID,
+			Source:   c.Source,
+			ReportID: c.ReportID,
+			Title:    c.Title,
+			Section:  c.Section,
+			Text:     c.Text,
+			Score:    s,
+			Locator:  c.Locator,
+			Date:     c.Date,
+			Kind:     c.Kind,
 		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if k > len(all) {
 		k = len(all)
 	}
-	out := make([]SearchHit, k)
-	for i := 0; i < k; i++ {
-		out[i] = all[i].hit
-	}
-	return out
+	return all[:k]
 }
 
 // SearchChunksSubstringByPredicate is the substring fallback of
@@ -1244,11 +1194,7 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 	if totalW <= 0 {
 		return nil
 	}
-	type scored struct {
-		hit   SearchHit
-		score float32
-	}
-	all := make([]scored, 0, len(cands))
+	all := make([]SearchHit, 0, len(cands))
 	for _, cd := range cands {
 		var w float64
 		for j, m := range cd.matched {
@@ -1258,24 +1204,17 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 		}
 		c := &chunks[cd.idx]
 		s := float32(0.85 * w / totalW)
-		all = append(all, scored{
-			hit: SearchHit{
-				ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,
-				Section: c.Section, Text: c.Text, Score: s,
-				Locator: c.Locator, Date: c.Date, Kind: c.Kind,
-			},
-			score: applyTemporalDecay(s, c.Date),
+		all = append(all, SearchHit{
+			ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,
+			Section: c.Section, Text: c.Text, Score: s,
+			Locator: c.Locator, Date: c.Date, Kind: c.Kind,
 		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if k > len(all) {
 		k = len(all)
 	}
-	out := make([]SearchHit, k)
-	for i := 0; i < k; i++ {
-		out[i] = all[i].hit
-	}
-	return out
+	return all[:k]
 }
 
 // HybridSearchByPredicate fuses semantic (vector) and lexical (keyword) recall:
@@ -1351,11 +1290,7 @@ func SearchChunksInSources(db Database, allowed map[string]bool, query []float32
 		return nil
 	}
 	chunks := snapshotChunks(db)
-	type scored struct {
-		hit   SearchHit
-		score float32
-	}
-	var all []scored
+	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if !allowed[c.Source] {
@@ -1368,36 +1303,24 @@ func SearchChunksInSources(db Database, allowed map[string]bool, query []float32
 		if s <= 0 {
 			continue
 		}
-		// Temporal decay applies to the SORT KEY only — SearchHit.Score
-		// stays as the raw cosine so callers with similarity-floor
-		// filters (manualSearchMinScore, dedup thresholds) get
-		// predictable behavior. Recent chunks edge out stale ones on
-		// ties; strong-match old chunks still surface for niche queries.
-		all = append(all, scored{
-			hit: SearchHit{
-				ID:       c.ID,
-				Source:   c.Source,
-				ReportID: c.ReportID,
-				Title:    c.Title,
-				Section:  c.Section,
-				Text:     c.Text,
-				Score:    s,
-				Locator:  c.Locator,
-				Date:     c.Date,
-				Kind:     c.Kind,
-			},
-			score: applyTemporalDecay(s, c.Date),
+		all = append(all, SearchHit{
+			ID:       c.ID,
+			Source:   c.Source,
+			ReportID: c.ReportID,
+			Title:    c.Title,
+			Section:  c.Section,
+			Text:     c.Text,
+			Score:    s,
+			Locator:  c.Locator,
+			Date:     c.Date,
+			Kind:     c.Kind,
 		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if k > len(all) {
 		k = len(all)
 	}
-	out := make([]SearchHit, k)
-	for i := 0; i < k; i++ {
-		out[i] = all[i].hit
-	}
-	return out
+	return all[:k]
 }
 
 // SearchChunksSubstringInSources is the substring fallback for
@@ -1450,11 +1373,7 @@ func SearchChunksBySource(db Database, sourcePrefix string, query []float32, k i
 		return nil
 	}
 	chunks := snapshotChunks(db)
-	type scored struct {
-		hit   SearchHit
-		score float32
-	}
-	var all []scored
+	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if sourcePrefix != "" && !strings.HasPrefix(c.Source, sourcePrefix) {
@@ -1467,36 +1386,24 @@ func SearchChunksBySource(db Database, sourcePrefix string, query []float32, k i
 		if s <= 0 {
 			continue
 		}
-		// Temporal decay applies to the SORT KEY only — SearchHit.Score
-		// stays as the raw cosine so callers with similarity-floor
-		// filters (manualSearchMinScore, dedup thresholds) get
-		// predictable behavior. Recent chunks edge out stale ones on
-		// ties; strong-match old chunks still surface for niche queries.
-		all = append(all, scored{
-			hit: SearchHit{
-				ID:       c.ID,
-				Source:   c.Source,
-				ReportID: c.ReportID,
-				Title:    c.Title,
-				Section:  c.Section,
-				Text:     c.Text,
-				Score:    s,
-				Locator:  c.Locator,
-				Date:     c.Date,
-				Kind:     c.Kind,
-			},
-			score: applyTemporalDecay(s, c.Date),
+		all = append(all, SearchHit{
+			ID:       c.ID,
+			Source:   c.Source,
+			ReportID: c.ReportID,
+			Title:    c.Title,
+			Section:  c.Section,
+			Text:     c.Text,
+			Score:    s,
+			Locator:  c.Locator,
+			Date:     c.Date,
+			Kind:     c.Kind,
 		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].score > all[j].score })
+	sort.Slice(all, func(i, j int) bool { return all[i].Score > all[j].Score })
 	if k > len(all) {
 		k = len(all)
 	}
-	out := make([]SearchHit, k)
-	for i := 0; i < k; i++ {
-		out[i] = all[i].hit
-	}
-	return out
+	return all[:k]
 }
 
 // CountChunksBySource returns the number of chunks whose Source has
