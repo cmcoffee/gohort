@@ -845,33 +845,74 @@ func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, op
 	if !ok {
 		return T.WorkerChat(ctx, messages, opts...)
 	}
+	return chatToolLoop(ctx, T.WorkerChat, messages, calcKit(calc), 3, opts...)
+}
 
-	calcTool := Tool{
-		Name:        calc.Name(),
-		Description: calc.Desc(),
-		Parameters:  calc.Params(),
+// calcKit wraps the calculate chat tool as a one-tool kit for chatToolLoop.
+func calcKit(calc ChatTool) []AgentToolDef {
+	return []AgentToolDef{{
+		Tool: Tool{
+			Name:        calc.Name(),
+			Description: calc.Desc(),
+			Parameters:  calc.Params(),
+		},
+		Handler: calc.Run,
+	}}
+}
+
+// toolChatMaxRounds bounds the *WithTools loop. Reference-source tools can
+// chain (search -> facts -> investigate), so it's roomier than calc's 3.
+const toolChatMaxRounds = 6
+
+// WorkerChatWithTools runs WorkerChat with an app-supplied tool kit (e.g. the
+// per-item tools an attached reference source contributes — search, facts,
+// live investigate), executing tool calls in a bounded loop until the model
+// answers in text. An empty kit degrades to a plain WorkerChat.
+func (T *AppCore) WorkerChatWithTools(ctx context.Context, messages []Message, kit []AgentToolDef, opts ...ChatOption) (*Response, error) {
+	return chatToolLoop(ctx, T.WorkerChat, messages, kit, toolChatMaxRounds, opts...)
+}
+
+// LeadChatWithTools is WorkerChatWithTools on the lead LLM. Route config
+// (WithRouteKey) is respected — a stage routed to "worker" still redirects.
+func (T *AppCore) LeadChatWithTools(ctx context.Context, messages []Message, kit []AgentToolDef, opts ...ChatOption) (*Response, error) {
+	return chatToolLoop(ctx, T.LeadChat, messages, kit, toolChatMaxRounds, opts...)
+}
+
+// chatToolLoop is the shared bounded tool loop behind the *WithCalc and
+// *WithTools chat variants. call is the chat method used every round
+// (T.LeadChat or T.WorkerChat) so the caller keeps its routing / privacy
+// posture. Both dispatch styles are supported:
+// - Native: kit definitions ride via WithTools, ToolCall responses execute.
+// - Prompt-based: kit is described in the system prompt, <tool_call> tags parsed.
+func chatToolLoop(ctx context.Context, call func(context.Context, []Message, ...ChatOption) (*Response, error), messages []Message, kit []AgentToolDef, maxRounds int, opts ...ChatOption) (*Response, error) {
+	if len(kit) == 0 {
+		return call(ctx, messages, opts...)
 	}
-	calcDef := AgentToolDef{Tool: calcTool, Handler: calc.Run}
-	handlers := map[string]ToolHandlerFunc{calc.Name(): calc.Run}
+	tools := make([]Tool, 0, len(kit))
+	handlers := make(map[string]ToolHandlerFunc, len(kit))
+	for _, def := range kit {
+		tools = append(tools, def.Tool)
+		handlers[def.Tool.Name] = def.Handler
+	}
 
-	// Pass native tool definition -- the LLM layer will strip it if
+	// Pass native tool definitions -- the LLM layer will strip them if
 	// native tools are disabled, and the prompt-based fallback below
 	// will handle that case.
-	nativeOpts := append(append([]ChatOption{}, opts...), WithTools([]Tool{calcTool}))
+	nativeOpts := append(append([]ChatOption{}, opts...), WithTools(tools))
 
-	// Also inject the tool into the system prompt for models without
+	// Also inject the tools into the system prompt for models without
 	// native support. We append to whichever system prompt is already set.
-	promptToolText := BuildToolPrompt([]AgentToolDef{calcDef})
+	promptToolText := BuildToolPrompt(kit)
 
 	history := make([]Message, len(messages))
 	copy(history, messages)
 
-	// Accumulate token counts across all inner WorkerChat calls so the
-	// returned Response reflects total consumption — callers (and
+	// Accumulate token counts across all inner calls so the returned
+	// Response reflects total consumption — callers (and
 	// Session.ChatWithCalc) that attribute tokens to a session see the
 	// full tool-loop cost, not just the final turn.
 	var cumInput, cumOutput int
-	for round := 0; round < 3; round++ {
+	for round := 0; round < maxRounds; round++ {
 		callOpts := nativeOpts
 		// Inject prompt-based tool description into system prompt.
 		// This is additive -- models with native support will use
@@ -879,7 +920,7 @@ func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, op
 		// see the prompt and use <tool_call> tags.
 		callOpts = append(callOpts, appendSystemPrompt(promptToolText))
 
-		resp, err := T.WorkerChat(ctx, history, callOpts...)
+		resp, err := call(ctx, history, callOpts...)
 		if err != nil {
 			return resp, err
 		}
@@ -891,13 +932,18 @@ func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, op
 			history = append(history, Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
 			var results []ToolResult
 			for _, tc := range resp.ToolCalls {
-				result, runErr := calc.Run(tc.Args)
+				handler, ok := handlers[tc.Name]
+				if !ok {
+					results = append(results, ToolResult{ID: tc.ID, Content: "unknown tool: " + tc.Name, IsError: true})
+					continue
+				}
+				result, runErr := safeInvoke(tc.Name, handler, tc.Args)
 				if runErr != nil {
 					results = append(results, ToolResult{ID: tc.ID, Content: runErr.Error(), IsError: true})
 				} else {
 					results = append(results, ToolResult{ID: tc.ID, Content: result})
 				}
-				Debug("[calc] %s -> %s", tc.Args["expression"], result)
+				Debug("[chat-tool] %s -> %d bytes", tc.Name, len(result))
 			}
 			history = append(history, Message{Role: "tool", ToolResults: results})
 			continue
@@ -910,14 +956,14 @@ func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, op
 			resp.OutputTokens = cumOutput
 			return resp, nil
 		}
-		result, runErr := calc.Run(tc.Args)
+		result, runErr := safeInvoke(tc.Name, handlers[tc.Name], tc.Args)
 		var resultText string
 		if runErr != nil {
 			resultText = "Error: " + runErr.Error()
 		} else {
 			resultText = result
 		}
-		Debug("[calc] %s -> %s", tc.Args["expression"], resultText)
+		Debug("[chat-tool] %s -> %d bytes", tc.Name, len(resultText))
 
 		if preamble != "" {
 			history = append(history, Message{Role: "assistant", Content: preamble})
@@ -926,7 +972,7 @@ func (T *AppCore) WorkerChatWithCalc(ctx context.Context, messages []Message, op
 	}
 
 	// Max rounds hit, do a final call without tools to force a text response.
-	finalResp, finalErr := T.WorkerChat(ctx, history, opts...)
+	finalResp, finalErr := call(ctx, history, opts...)
 	if finalResp != nil {
 		finalResp.InputTokens += cumInput
 		finalResp.OutputTokens += cumOutput
@@ -942,75 +988,7 @@ func (T *AppCore) LeadChatWithCalc(ctx context.Context, messages []Message, opts
 	if !ok {
 		return T.LeadChat(ctx, messages, opts...)
 	}
-
-	calcTool := Tool{
-		Name:        calc.Name(),
-		Description: calc.Desc(),
-		Parameters:  calc.Params(),
-	}
-	calcDef := AgentToolDef{Tool: calcTool, Handler: calc.Run}
-	handlers := map[string]ToolHandlerFunc{calc.Name(): calc.Run}
-
-	nativeOpts := append(append([]ChatOption{}, opts...), WithTools([]Tool{calcTool}))
-	promptToolText := BuildToolPrompt([]AgentToolDef{calcDef})
-
-	history := make([]Message, len(messages))
-	copy(history, messages)
-
-	var cumInput, cumOutput int
-	for round := 0; round < 3; round++ {
-		callOpts := append(nativeOpts, appendSystemPrompt(promptToolText))
-
-		resp, err := T.LeadChat(ctx, history, callOpts...)
-		if err != nil {
-			return resp, err
-		}
-		cumInput += resp.InputTokens
-		cumOutput += resp.OutputTokens
-
-		if len(resp.ToolCalls) > 0 {
-			history = append(history, Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls})
-			var results []ToolResult
-			for _, tc := range resp.ToolCalls {
-				result, runErr := calc.Run(tc.Args)
-				if runErr != nil {
-					results = append(results, ToolResult{ID: tc.ID, Content: runErr.Error(), IsError: true})
-				} else {
-					results = append(results, ToolResult{ID: tc.ID, Content: result})
-				}
-				Debug("[calc] %s -> %s", tc.Args["expression"], result)
-			}
-			history = append(history, Message{Role: "tool", ToolResults: results})
-			continue
-		}
-
-		tc, preamble := ParsePromptToolCall(resp.Content, handlers)
-		if tc == nil {
-			resp.InputTokens = cumInput
-			resp.OutputTokens = cumOutput
-			return resp, nil
-		}
-		result, runErr := calc.Run(tc.Args)
-		var resultText string
-		if runErr != nil {
-			resultText = "Error: " + runErr.Error()
-		} else {
-			resultText = result
-		}
-		Debug("[calc] %s -> %s", tc.Args["expression"], resultText)
-
-		if preamble != "" {
-			history = append(history, Message{Role: "assistant", Content: preamble})
-		}
-		history = append(history, Message{Role: "user", Content: fmt.Sprintf("Tool result: %s\n\nContinue your response using this result.", resultText)})
-	}
-
-	finalResp, finalErr := T.LeadChat(ctx, history, opts...)
-	if finalResp != nil {
-		finalResp.InputTokens += cumInput
-		finalResp.OutputTokens += cumOutput
-	}
-	return finalResp, finalErr
+	return chatToolLoop(ctx, T.LeadChat, messages, calcKit(calc), 3, opts...)
 }
 
 // ChatWithCalc dispatches to LeadChatWithCalc or WorkerChatWithCalc based on
@@ -1039,18 +1017,65 @@ func appendSystemPrompt(extra string) ChatOption {
 
 // ChatStreamWithReport calls T.LLM.ChatStream and tallies token usage on T.Report.
 func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	// Honor routing config on the STREAMING path the same way LeadChat does
+	// on the non-streaming path. Without this, every streaming agent-loop
+	// round silently ran on the worker regardless of its route stage — the
+	// Builder-on-lead route (app.orchestrate.builder, Default "lead") was
+	// defeated purely because the Builder chat turn streams tokens to the UI.
+	// Decision mirrors RunAgentLoop's non-streaming branch: a route key that
+	// resolves to the lead tier + a distinct lead LLM wired → stream from lead.
+	var probe ChatConfig
+	for _, opt := range opts {
+		opt(&probe)
+	}
+	useLead := probe.RouteKey != "" && RouteToLead(probe.RouteKey) && T.HasDistinctLead()
+
+	llm := T.LLM
+	tier := WORKER
+	if useLead {
+		llm = T.LeadLLM
+		tier = LEAD
+	}
+
 	start := time.Now()
-	resp, err := T.LLM.ChatStream(ctx, messages, handler, opts...)
+	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
 	elapsed := time.Since(start)
+
+	// Lead fallback: if the lead stream produced NOTHING (errored before any
+	// output, or came back empty — e.g. a safety filter), retry once on the
+	// worker. Gated on "no output" so we never double-stream tokens the
+	// handler already delivered mid-stream — a lead stream that emitted then
+	// errored keeps its partial resp and surfaces the error below.
+	if useLead && (resp == nil || (resp.OutputTokens == 0 && resp.Content == "")) {
+		if err != nil {
+			Debug("[llm] %s lead stream failed after %s: %s — falling back to worker", probe.RouteKey, elapsed.Round(time.Millisecond), err)
+		} else {
+			Debug("[llm] %s lead stream returned empty after %s — falling back to worker", probe.RouteKey, elapsed.Round(time.Millisecond))
+		}
+		T.LeadFallback = true
+		tier = WORKER
+		start = time.Now()
+		resp, err = T.LLM.ChatStream(ctx, messages, handler, opts...)
+		elapsed = time.Since(start)
+	}
+
 	if err != nil {
 		Debug("[llm] stream failed after %s: %s", elapsed.Round(time.Millisecond), err)
 		return resp, err
 	}
 	if resp != nil {
-		resp.Tier = WORKER
+		resp.Tier = tier
 	}
-	Debug("[llm] stream completed in %s (input: %d, output: %d tokens)", elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
-	T.trackTokens(resp)
+	label := "worker"
+	if tier == LEAD {
+		label = "lead"
+	}
+	Debug("[llm] %s stream completed in %s (input: %d, output: %d tokens)", label, elapsed.Round(time.Millisecond), resp.InputTokens, resp.OutputTokens)
+	if tier == LEAD {
+		T.trackLeadTokens(resp)
+	} else {
+		T.trackTokens(resp)
+	}
 	return resp, nil
 }
 

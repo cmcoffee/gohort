@@ -879,6 +879,12 @@ func ServeDashboard(addr string) error {
 	// once here so every app can use ui.Page.ServeHTTP without touching
 	// the mux directly.
 	uiMountRuntime(mux)
+	// The runtime CSS/JS are static framework assets (no user data, identical for
+	// everyone, already visible in every browser) that EVERY page loads — mark
+	// them public so an anonymous surface (e.g. a public custom app served at a
+	// capability URL) can boot its page instead of getting bounced to /login.
+	RegisterPublicPath("/_ui/ui.css")
+	RegisterPublicPath("/_ui/ui.js")
 	// Wire the active-theme lookup to the stored deployment setting, so every
 	// un-pinned page renders in the admin-selected theme (falls back to the
 	// ui default when unset).

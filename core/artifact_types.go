@@ -927,6 +927,11 @@ func (customAppArtifact) ExportArtifact(_ Database, name, owner string) (json.Ra
 	spec.Created = ""
 	spec.Updated = ""
 	spec.Disabled = false
+	// Sharing is deployment-local and owner-scoped (a shared-slug registration /
+	// a live capability token in THIS deployment). It must never travel in a
+	// bundle: the importer re-shares on their own terms.
+	spec.Shared = false
+	spec.PublicToken = ""
 	return json.Marshal(spec)
 }
 
@@ -1030,6 +1035,11 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	spec.Created = ""
 	spec.Updated = ""
 	spec.Disabled = true
+	// An imported app is never pre-shared, even if a hand-crafted bundle set the
+	// flags — the importer shares on their own terms (and the token would be
+	// meaningless in this deployment's index anyway).
+	spec.Shared = false
+	spec.PublicToken = ""
 	SaveAppSpec(spec)
 	return slug, "", nil
 }

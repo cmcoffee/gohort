@@ -2500,7 +2500,34 @@
         href: 'data:' + mt + ';base64,' + (ev.data || ''),
         download: name,
       }, [label]);
-      agentMsgAttachmentBox(bubble).appendChild(link);
+      var box = agentMsgAttachmentBox(bubble);
+      // HTML deliveries also get a View button: decode the payload and
+      // open it in the shared artifact pane. Authored-HTML mode — the
+      // file is generated content, so it renders SANDBOXED (opaque
+      // origin), same trust as a show_html document, never with the
+      // app's own origin.
+      var isHTML = /text\/html/i.test(mt) || /\.html?$/i.test(name);
+      if (isHTML && window.uiOpenArtifactPane) {
+        var row = el('span', {class: 'ui-agent-msg-file-row'});
+        row.appendChild(link);
+        var viewBtn = el('button', {class: 'ui-row-btn', type: 'button',
+          title: 'Open in the viewer pane'}, ['View']);
+        viewBtn.addEventListener('click', function() {
+          var html = '';
+          try {
+            var bytes = atob(ev.data || '');
+            var arr = new Uint8Array(bytes.length);
+            for (var i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+            html = new TextDecoder('utf-8').decode(arr);
+          } catch (_) {}
+          if (!html) { showToast('Could not decode ' + name); return; }
+          window.uiOpenArtifactPane({id: 'file:' + name, title: name, html: html});
+        });
+        row.appendChild(viewBtn);
+        box.appendChild(row);
+        return;
+      }
+      box.appendChild(link);
     }
 
     // renderMessageStats appends a small footer ("12.3 tk/s · 230 out
@@ -4209,6 +4236,18 @@
                 });
               }
             }
+          });
+        }
+        // Replay persisted UI blocks — session-level artifacts (dashboards
+        // and other block-rendered surfaces) that a tool emitted live as
+        // {kind:"block"} SSE events and the server upserted onto the session
+        // record. They route through the same addBlock dispatcher as live
+        // blocks; the server strips any auto-open hint at persist time, so a
+        // reload shows the cards without popping panes unasked.
+        var uiBlocks = rec && (rec.ui_blocks || rec.UIBlocks);
+        if (Array.isArray(uiBlocks)) {
+          uiBlocks.forEach(function(b) {
+            if (b && b.type) addBlock(b);
           });
         }
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);

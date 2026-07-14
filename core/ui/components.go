@@ -2095,6 +2095,13 @@ type CodeWriterPanel struct {
 	// label, the "+ Add <noun>" button, the modal title). Host-supplied so
 	// core/ui names no specific app; defaults to a generic label when blank.
 	CollectionsNoun string `json:"collections_noun,omitempty"`
+	// ReferenceSourcesURL, when set, renders the generic reference picker in
+	// the chat header. GET → []core.ReferenceGroup
+	// ({kind, label, items:[{id, name, desc}]}). The selected item rides
+	// with each chat POST as `references` ([{kind, item_id}]); the app's
+	// ChatURL handler injects that source's text into the model context.
+	// Same wire shape as ArticleEditor's picker — see core.ReferenceSource.
+	ReferenceSourcesURL string `json:"reference_sources_url,omitempty"`
 
 	// Field name mapping — defaults match SnippetRecord.
 	IDField   string `json:"id_field,omitempty"`   // default "id"

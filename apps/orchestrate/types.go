@@ -603,6 +603,36 @@ type ChatSession struct {
 	// turns), so this is no longer read or written. Kept only so older
 	// stored sessions that have the JSON deserialize cleanly.
 	ActiveSkillIDs []string `json:"ActiveSkillIDs,omitempty"`
+
+	// UIBlocks are session-level UI artifacts (show_html panes and any
+	// future block-rendered surface) that a tool emitted live as a
+	// {kind:"block"} SSE event, upserted by block ID so an updated
+	// artifact stays ONE card rather than stacking. The panel replays
+	// them through the block-renderer dispatch after the transcript on
+	// session load, so an artifact survives reload. The live emission's
+	// auto-open hint is NOT persisted — reloading never pops a pane.
+	UIBlocks []UIBlock `json:"ui_blocks,omitempty"`
+}
+
+// UIBlock is one persisted UI artifact on a session — the durable half
+// of a {kind:"block"} SSE emission. Type names the client-side renderer
+// (e.g. "html_artifact"); ID is the block identity used for upserts;
+// Title plus ONE of HTML (authored document, sandboxed render) or URL
+// (same-origin page preview) are that renderer's payload.
+type UIBlock struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	HTML  string `json:"html,omitempty"`
+	URL   string `json:"url,omitempty"`
+	// Text is a short secondary line under the title — the link_hint
+	// block's note. Distinct from HTML (a full document body).
+	Text string `json:"text,omitempty"`
+	// DataURLs is the html mode's declared live-data allowlist: the
+	// same-origin GET paths the rendered document may fetch through the
+	// pane's postMessage bridge (gohort.fetch). Persisted so a replayed
+	// artifact keeps exactly the grants it was created with.
+	DataURLs []string `json:"data_urls,omitempty"`
 }
 
 // BuildPlanState is the persisted plan-card state for Builder's

@@ -72,7 +72,10 @@
       // Live-sessions pill — polls /api/live every 10s and shows a
       // running/queued count badge with a click-through popover. Lets
       // operators see at a glance from any framework page that
-      // background work is in flight, plus jump straight to it.
+      // background work is in flight, plus jump straight to it. Skipped on
+      // public pages (cfg.public): an anonymous surface has no session, so the
+      // poll would just 302 to login, and the cross-user view isn't for it.
+      if (!cfg.public) {
       var liveWrap = el('div', {class: 'ui-live-pill-wrap'});
       // Pill content matches legacy: glowing dot + "LIVE" label.
       // The dropdown lists each session with its app + state, which
@@ -136,6 +139,7 @@
       });
       refreshLive();
       setInterval(refreshLive, 10000);
+      } // end if(!cfg.public) — no live-sessions pill on public pages
       // Update the document title in case the rendered title differs.
       if (cfg.title) document.title = cfg.title;
       // Insert the header OUTSIDE #ui-root (a sibling above it) so the bar spans

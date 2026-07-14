@@ -79,6 +79,7 @@ func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/contexts", T.handleContexts)
 	sub.HandleFunc("/api/context/", T.handleContext)
 	sub.HandleFunc("/api/collections", T.handleCollectionsList)
+	sub.HandleFunc("/api/reference-sources", T.handleReferenceSources)
 	sub.HandleFunc("/api/revisions/", T.handleRevisions)
 	sub.HandleFunc("/api/revision/", T.handleRevision)
 	sub.HandleFunc("/api/suggest-name", T.handleSuggestName)
@@ -134,6 +135,14 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		// RAG-retrieved (best-effort) from each and injected as grounding
 		// alongside the manual Context block. Empty = no collection RAG.
 		Collections []string `json:"collections"`
+		// References are reference-source selections the user picked in
+		// the chat header ([{kind, item_id}]) — knowledge another gohort
+		// service gathered (servitor systems, MCP doc sources). Each
+		// source's cached text is injected into the system prompt, and
+		// its per-item tools (search / facts / live investigate) ride the
+		// chat so the LLM can dig deeper when the cached picture doesn't
+		// answer.
+		References []ReferenceSelection `json:"references"`
 		// History is the prior conversation, client-maintained.
 		// Allows Chat → Edit to carry discussion context so Edit can
 		// act on what was just discussed. File state (code/context)
@@ -209,6 +218,27 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		system_prompt += "\n\nDISCUSSION MODE: the user is chatting about the code, not asking for it to be changed. Do NOT write out a revised full script or propose an applyable change. Do NOT emit a fenced code block (```). Explain your thinking, ask clarifying questions, or describe the approach you'd take. Short inline snippets using single backticks are fine. If the user asks for the actual edit, tell them to click Edit instead of Chat."
 	}
 
+	// Reference sources — knowledge gathered by other gohort services
+	// (servitor systems, MCP doc sources) that the user attached in the
+	// chat header. Cached material is injected into the system prompt
+	// (closest to the user message), and each attached item's own tools
+	// ride the chat so the LLM can search deeper or run a live
+	// investigation when the cached picture doesn't answer.
+	var ref_tools []AgentToolDef
+	if len(req.References) > 0 {
+		if uid := AuthCurrentUser(r); uid != "" {
+			if ref := FetchReferences(r.Context(), uid, req.Message, req.References); ref != "" {
+				system_prompt += "\n\n" + ref
+			}
+			for _, sel := range req.References {
+				ref_tools = append(ref_tools, ReferenceItemTools(uid, sel.Kind, sel.ItemID)...)
+			}
+			if len(ref_tools) > 0 {
+				system_prompt += "\n\nThe attached reference source also provides tools. Use them when the reference context above doesn't answer the question, or when the user asks about the CURRENT state of the system — the investigate tool runs a live session when cached knowledge isn't enough."
+			}
+		}
+	}
+
 	agent := &AppCore{LLM: T.AppCore.LLM}
 
 	// Build messages: prior turns (capped) + current message with file
@@ -232,7 +262,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	messages = append(messages, Message{Role: "user", Content: prompt})
 
-	resp, err := agent.LeadChat(r.Context(), messages,
+	resp, err := agent.LeadChatWithTools(r.Context(), messages, ref_tools,
 		WithSystemPrompt(system_prompt), WithRouteKey("app.codewriter"))
 
 	if err != nil {
@@ -332,6 +362,24 @@ func (T *CodeWriterAgent) handleCollectionsList(w http.ResponseWriter, r *http.R
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// handleReferenceSources feeds the chat-header reference picker: every
+// registered reference source's items available to this user, grouped. The
+// data is generic (core.ReferenceGroup) — codewriter doesn't know or care
+// which services contributed (servitor systems, MCP doc sources, …).
+func (T *CodeWriterAgent) handleReferenceSources(w http.ResponseWriter, r *http.Request) {
+	uid := AuthCurrentUser(r)
+	if uid == "" {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	groups := ReferenceGroups(uid)
+	if groups == nil {
+		groups = []ReferenceGroup{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(groups)
 }
 
 // buildValuePrompt appends a note about placeholders to the system prompt.

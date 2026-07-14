@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,7 +45,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			Name:        "app_def",
 			Description: "Author and manage data-driven gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) composed from ui primitives and served at /custom/<slug>/. This is how you build a gohort app: describe it declaratively as a list of sections, and the framework renders it + gives it a generic per-app record store (a form section saves records, a table section lists them) with no hand-written HTML/CSS/JS.\n\nUse this when the user asks for \"an app\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent multi-panel surface inside gohort. Do NOT produce a standalone downloadable HTML file for these requests — that's not a gohort app.\n\nActions: create (author a new app), update (revise one), list (see the user's apps), get (read one's section definition), delete.\n\nGOOD DEFAULTS (reach for these so the app feels considered): a list/table section should always carry empty_text for its empty state; a creation form should use submit_label (a deliberate \"Add\" button) and modal=true so \"new\" opens a structured dialog rather than an always-visible form; pair a create FORM with a TABLE over the same records so new entries appear in the list, and mark that table editable so entries can be fixed in place. A standalone EMPTY section gives a \"nothing selected yet\" middle panel.",
 			Parameters: map[string]ToolParam{
-				"action": {Type: "string", Description: "One of: create | update | test | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors before telling the user the app is ready. Pass sample=[{...}] to test the full form→data-source→output chain with example form data even before any records exist."},
+				"action": {Type: "string", Description: "One of: create | update | test | verify | list | get | delete | help. After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
 				"sample": {
 					Type:        "array",
 					Description: "(test) Example form submissions to run the data sources/actions against, standing in for the live record store. Each item is an object keyed by the FORM's field names — exactly what a record looks like after the user submits the form (e.g. [{\"city\":\"Santa Cruz, CA\"}]). Use this to test end-to-end before the app has any real records: the scripts receive these as the `records` env var, so you see whether 'add a location → forecast' actually produces output. If a data source returns [] against a sample that clearly should match, the script isn't reading the records env var (or has the wrong field name).",
@@ -74,7 +75,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"sections": {
 					Type:        "array",
-					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute, link}; set `link` to the name of another field holding a URL to render THIS cell as a clickable link — e.g. a story row {title, url} uses column {field:\"title\", link:\"url\"}. NEVER put raw <a>…</a> HTML in a cell value; cells are escaped and it shows as literal markup — use the link field instead), `empty_text` (shown when there are no records — ALWAYS set this), `editable` (boolean — adds an Edit button per row that opens the record in a PREFILLED dialog; the user fixes a typo or updates a value and saves in place. Fields default to the create form's fields (same types/labels/selects), or pass `edit_fields` (same shape as form fields) to edit a different subset. Set this on any record-store table paired with a create form — records the user typed are records the user will want to fix. NOT for source_script tables: computed rows aren't stored records), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"chart\" — a bar / line / area / pie chart. Set `chart_type` (bar|line|area|pie; default bar). Data is EITHER inline — `labels`:[...] + `series`:[{name, points:[numbers]}] (one point per label; for pie use `series`:[{name, value}]) — OR computed: set `source_script` to a data_sources entry whose script PRINTS a JSON object {\"labels\":[...], \"series\":[...]} (optionally chart_type/title/options), i.e. a chart OF the app's records. Options (flat on the section): `stacked` (bars), `height`. The section title is the heading; the chart draws no duplicate title. Use this to VISUALIZE what a table lists — e.g. a form logging {day, amount} + a data source that buckets them, rendered as a bar chart.\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"html\" — a raw-HTML escape hatch. Field: `html` (the markup, rendered VERBATIM and unescaped; inline <script> runs). This is the ONLY way to put hand-written HTML/CSS/JS into a custom app, and it is a LAST RESORT — reach for a typed section (form/table/display/chart) first, because those give you the record store, editing, refresh, and styling for free. Use html only for a bespoke widget or layout the typed primitives genuinely can't express. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
+					Description: "(create/update) Ordered sections, each an object with a `kind` plus kind-specific fields. Every section may set `title` and `subtitle`.\n\nkind=\"form\" — a create form. Fields: `fields` (array of {field, label, type, placeholder, rows, help}; type is text|textarea|number|select|toggle|tags|password, default text; select needs `options`:[{value,label}]), `submit_label` (button text, default \"Add\"), `modal` (boolean — when true the form opens from a \"New\" button in a dialog; the signature structured-create pattern). The form saves a record to the app's store.\n\nkind=\"table\" — a list of the app's records. Fields: `columns` (array of {field, label, flex, mute, link}; set `link` to the name of another field holding a URL to render THIS cell as a clickable link — e.g. a story row {title, url} uses column {field:\"title\", link:\"url\"}. NEVER put raw <a>…</a> HTML in a cell value; cells are escaped and it shows as literal markup — use the link field instead), `empty_text` (shown when there are no records — ALWAYS set this), `editable` (boolean — adds an Edit button per row that opens the record in a PREFILLED dialog; the user fixes a typo or updates a value and saves in place. Fields default to the create form's fields (same types/labels/selects), or pass `edit_fields` (same shape as form fields) to edit a different subset. Set this on any record-store table paired with a create form — records the user typed are records the user will want to fix. NOT for source_script tables: computed rows aren't stored records), `deletable` (boolean — adds a Delete button per row), `auto_refresh_ms` (poll interval; 2000 keeps the list live as records are added), `source_script` (name of a data_sources entry — when set, the table's rows come from that SCRIPT instead of the record store; the script must print a JSON array).\n\nkind=\"display\" — a read-only labeled-value panel. Fields: `pairs` (array of {label, field}), `source_script` (name of a data_sources entry whose script prints a JSON object; defaults to the record store when omitted).\n\nkind=\"chart\" — a bar / line / area / pie chart. Set `chart_type` (bar|line|area|pie; default bar). Data is EITHER inline — `labels`:[...] + `series`:[{name, points:[numbers]}] (one point per label; for pie use `series`:[{name, value}]) — OR computed: set `source_script` to a data_sources entry whose script PRINTS a JSON object {\"labels\":[...], \"series\":[...]} (optionally chart_type/title/options), i.e. a chart OF the app's records. Options (flat on the section): `stacked` (bars), `height`. The section title is the heading; the chart draws no duplicate title. Use this to VISUALIZE what a table lists — e.g. a form logging {day, amount} + a data source that buckets them, rendered as a bar chart.\n\nkind=\"actions\" — a row of script-backed action buttons (one per entry in the app's top-level `actions`). Clicking a button runs its script and the framework persists what it returns + refreshes the tables. No fields needed; declare the scripts in `actions` (see the actions parameter). Use for app verbs (Sync, Generate, Refresh).\n\nkind=\"empty\" — a centered empty-state placeholder (for a 'nothing selected' panel). Fields: `icon` (an emoji), `title`, `hint`.\n\nkind=\"html\" — a raw-HTML escape hatch. Field: `html` (the markup, rendered VERBATIM and unescaped; inline <script> runs). This is the ONLY way to put hand-written HTML/CSS/JS into a custom app, and it is a LAST RESORT — reach for a typed section (form/table/display/chart) first, because those give you the record store, editing, refresh, and styling for free. Use html only for a bespoke widget or layout the typed primitives genuinely can't express. TO LOAD A DATA SOURCE FROM AN html SECTION'S SCRIPT: use a PLAIN RELATIVE fetch — `fetch('data/<name>').then(r => r.json())` — where <name> is the SLUGIFIED data_sources name (lowercase, hyphens; the endpoint is /custom/<slug>/data/<name>). There is NO client-side `gohort` object on app pages (the `from gohort import fetch_url` helper is PYTHON-side, inside the data-source script, not the browser) — calling `gohort.fetch(...)` in html throws \"gohort is not defined\". If a plain table renders your data, prefer a typed table with source_script over hand-rolling fetch in html. The blob is trusted (owner-authored, owner-served), so it is not sanitized — do not interpolate untrusted data into it.\n\nkind=\"chat\" — a live chat panel bound to the app's agent (REQUIRES agent_id on the app). Sessions + streaming reply are wired automatically to the bound agent; the user talks to it right inside the app. Fields: `list_title`, `empty_text`, `placeholder`. This is how you build a one-app assistant surface (e.g. sessions list + a viewer + a chat that drafts content) instead of sending the user off to a separate /chat URL.\n\nkind=\"workbench\" — the THREE-COLUMN document workbench: an item list (left), a rendered document VIEWER of the selected item (center), and a chat bound to the app's agent (right). REQUIRES agent_id. This is the right shape for 'a list of docs/guides/notes, a formatted reader in the middle, and an AI assistant that helps write them' — clicking a list item shows it; the chat drafts content; each chat reply has an 'Add to document' button that appends it into the open item, and the viewer re-renders. ONE workbench section IS the whole app (don't add other sections). Fields: `item_label` (record field for the list label, default title), `body_field` (the markdown field shown + appended-to in the viewer, default content), `item_noun` (e.g. 'guide' — used in the New button + 'Add to <noun>' label), `new_fields` (form fields for creating an item; defaults to a single title field), `list_title`, `empty_title`, `empty_hint`, `empty_icon`.\n\nThe document body is MARKDOWN, rendered as a formatted HTML-like document — '## Section' and '### Sub-section' headings, lists, code blocks, etc. The DATA LAYER IS THE APP. The workbench AUTOMATICALLY gives the bound agent an 'add_section(section_title, markdown)' tool that writes a section straight into the OPEN document's record (the store the viewer renders) — so 'add a section about hooks' appears in the guide with no button. You do NOT build that tool; it's provided. So a workbench agent should be told to call add_section to commit content, and must NOT be given its OWN storage tools (no file/python/JSON, no custom save) — those write to its workspace, never reaching the viewer. (A manual 'Add to document' button on each reply is also available as a fallback.)\n\nMinimal good app = a form (modal=true, submit_label) + a table (empty_text, deletable, auto_refresh_ms) over the same records. For an assistant app, add agent_id + a chat section. For a 'sessions | viewer | chat' three-panel app, use ONE workbench section.",
 					Items:       &ToolParam{Type: "object"},
 				},
 			},
@@ -91,12 +92,14 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				return t.appDefGet(args)
 			case "test":
 				return t.appDefTest(args)
+			case "verify":
+				return t.appDefVerify(args)
 			case "delete":
 				return t.appDefDelete(args)
 			case "help", "":
 				return appDefHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | test | list | get | delete | help", action)
+				return "", fmt.Errorf("unknown action %q — use create | update | test | verify | list | get | delete | help", action)
 			}
 		},
 	}
@@ -108,6 +111,7 @@ const appDefHelpText = `app_def actions:
 - list — your apps: [{slug, name, desc}].
 - get  {id(slug)} — one app's full section definition.
 - test {id(slug), sample?:[{...}], params?:{...}} — RUN every data_source + action script and report each one's output/errors (catches broken scripts before the user opens the app). Run this after authoring any app with scripts. Pass sample=[{field:value,...}] (example form submissions, keyed by the form's field names) to exercise the full form→record→data-source→output chain even before any real records exist — e.g. test that adding {"city":"Santa Cruz, CA"} actually yields a forecast.
+- verify {id(slug), sample?:[{...}]} — the FINAL gate before telling the user the app is ready: runs every script (like test) AND loads /custom/<slug>/ in a real headless browser as the user, reporting JS console errors, uncaught exceptions, failed requests, whether the sections actually rendered, and — per data source — whether the page really fetched its live endpoint (catches a working script no section is wired to). An app is NOT done until verify passes.
 - delete {id(slug)}.
 
 Section kinds: form (create form; set modal=true + submit_label for the structured-create look) | table (record list; always set empty_text; editable adds a per-row Edit dialog prefilled from the record, deletable + auto_refresh_ms keep it live) | display (read-only pairs) | chart (bar/line/area/pie from inline data or a source_script that prints {labels, series}) | empty (centered placeholder) | chat (live chat bound to the app's agent — requires agent_id) | workbench (three-column list|viewer|chat — the whole app; requires agent_id) | html (raw-HTML escape hatch — set the html field; last resort, prefer typed sections).
@@ -188,13 +192,18 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// Script-backed data sources (the "logic" seam): a table/display section can
 	// be backed by a python script instead of the record store. Passed wholesale
 	// replaces the stored set on update (omit to keep existing).
+	var parseNotes []string
 	if raw, ok := args["data_sources"]; ok && raw != nil {
-		spec.DataSources = appDataSources(raw)
+		var notes []string
+		spec.DataSources, notes = appDataSources(raw)
+		parseNotes = append(parseNotes, notes...)
 	}
 	// Script-backed actions (the write-side logic seam): buttons that run a
 	// script which returns records the framework persists.
 	if raw, ok := args["actions"]; ok && raw != nil {
-		spec.Actions = appActionDefs(raw)
+		var notes []string
+		spec.Actions, notes = appActionDefs(raw)
+		parseNotes = append(parseNotes, notes...)
 	}
 
 	// Build the Page from the declarative sections. On update with no sections
@@ -227,8 +236,16 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if isUpdate {
 		verb = "Updated"
 	}
-	msg := fmt.Sprintf("%s app %q at /custom/%s/ — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
-		verb, saved.Name, saved.Slug, saved.Slug)
+	msg := fmt.Sprintf("%s app %q at /custom/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
+		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug)
+
+	// Report any name-normalization or dropped entries up front — a
+	// slugified data-source name silently breaks a source_script/fetch
+	// reference the author spelled the original way, and a dropped entry
+	// reads as saved when it wasn't.
+	if len(parseNotes) > 0 {
+		msg += "\n\nHeads up — the framework adjusted your input:\n- " + strings.Join(parseNotes, "\n- ")
+	}
 
 	// Auto-verify the data sources: they fire when the page first opens (a table or
 	// display fetches them), so a script that crashes is exactly the "errors on
@@ -244,8 +261,9 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 				verb, saved.Name, strings.TrimSpace(report), saved.Slug), nil
 		}
 		msg += "\n\nData source check — all passed:\n" + strings.TrimSpace(report)
-		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output before telling the user it's ready."
+		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
 	}
+	msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\") — it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see."
 	return msg, nil
 }
 
@@ -662,21 +680,30 @@ func appSectionSource(m map[string]any) string {
 
 // appDataSources parses the declarative data_sources array into AppDataSource
 // records. Each needs a name + script; language defaults to python at dispatch.
-func appDataSources(raw any) []AppDataSource {
+// notes reports back anything the author must know that the parse changed or
+// dropped — a slugified name means every reference (source_script, an html
+// section's fetch path) must use the NEW spelling, and a silently skipped entry
+// reads as "saved" when it wasn't.
+func appDataSources(raw any) (out []AppDataSource, notes []string) {
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	var out []AppDataSource
-	for _, item := range arr {
+	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
+			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED — not an object", i+1))
 			continue
 		}
-		name := slugify(mapStr(m, "name"))
+		given := strings.TrimSpace(mapStr(m, "name"))
+		name := slugify(given)
 		script := mapStr(m, "script")
 		if name == "" || strings.TrimSpace(script) == "" {
+			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED — needs both a name and a script", i+1))
 			continue
+		}
+		if name != given {
+			notes = append(notes, fmt.Sprintf("data source %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\") — reference it by the slugified name in source_script and in any fetch of data/%s", given, name, name))
 		}
 		out = append(out, AppDataSource{
 			Name:         name,
@@ -685,25 +712,32 @@ func appDataSources(raw any) []AppDataSource {
 			Capabilities: appStringList(m["capabilities"]),
 		})
 	}
-	return out
+	return out, notes
 }
 
 // appActionDefs parses the declarative actions array into AppAction records.
-func appActionDefs(raw any) []AppAction {
+// notes mirrors appDataSources: renames and dropped entries are reported, not
+// swallowed.
+func appActionDefs(raw any) (out []AppAction, notes []string) {
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
-	var out []AppAction
-	for _, item := range arr {
+	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
+			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED — not an object", i+1))
 			continue
 		}
-		name := slugify(mapStr(m, "name"))
+		given := strings.TrimSpace(mapStr(m, "name"))
+		name := slugify(given)
 		script := mapStr(m, "script")
 		if name == "" || strings.TrimSpace(script) == "" {
+			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED — needs both a name and a script", i+1))
 			continue
+		}
+		if name != given {
+			notes = append(notes, fmt.Sprintf("action %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\") — its endpoint is action/%s", given, name, name))
 		}
 		out = append(out, AppAction{
 			Name:         name,
@@ -715,7 +749,7 @@ func appActionDefs(raw any) []AppAction {
 			Confirm:      strings.TrimSpace(mapStr(m, "confirm")),
 		})
 	}
-	return out
+	return out, notes
 }
 
 // appStringList coerces a declarative value to []string: a JSON array of
@@ -962,6 +996,170 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 		b.WriteString(" Fix the failing scripts with app_def action=update, then test again before telling the user the app is ready.")
 	}
 	return b.String(), nil
+}
+
+// appDefVerify is the start-to-finish gate an app must pass before
+// Builder may call it done. Two halves: the script checks action=test
+// runs (same engine), PLUS a real headless-browser load of the app's
+// page as this user — JavaScript executed, sections mounted, data
+// sources fetched live over HTTP. The browser half catches what a
+// script run can't see: a section wired to a missing source, runtime JS
+// errors, a data endpoint that 500s when served, a page that renders
+// blank.
+func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
+	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
+	spec, ok := LoadAppSpec(t.user, key)
+	if !ok {
+		return "", errors.New("no matching app to verify — check the slug (app_def action=list)")
+	}
+	var b strings.Builder
+	failures := 0
+	// The revision stamp ties this report to ONE saved spec: a verify
+	// issued alongside an update in the same round checks the OLD
+	// revision, and without the stamp its findings read as if the fix
+	// never landed.
+	fmt.Fprintf(&b, "Verified app %q end-to-end (spec revision saved %s — if you updated the app AFTER that, this report describes the OLD revision; verify again).\n\n", spec.Name, spec.Updated)
+
+	if len(spec.DataSources) > 0 || len(spec.Actions) > 0 {
+		report, _, _, fail := t.checkScripts(spec, true, appSampleRecords(args["sample"]), mapArg(args["params"]))
+		failures += fail
+		fmt.Fprintf(&b, "Script checks:\n%s\n", strings.TrimSpace(report))
+	}
+
+	// The DOM probe counts what the runtime actually mounted. Empty-state
+	// texts ride along as information — an empty table can be a fresh
+	// store (fine) or a data source printing [] (test's WARN covers that).
+	probe := `() => JSON.stringify({
+		sections: document.querySelectorAll('.ui-section').length,
+		tables: document.querySelectorAll('.ui-table-list').length,
+		empty_texts: Array.prototype.slice.call(document.querySelectorAll('.ui-table-empty'), 0, 8).map(function(e){ return e.textContent.trim(); }),
+		body_chars: (document.body && document.body.innerText || '').length
+	})`
+	rep, err := CheckPageAsUser(RootDB, t.user, "/custom/"+spec.Slug+"/", probe)
+	if err != nil {
+		failures++
+		fmt.Fprintf(&b, "Page check: COULD NOT RUN — %v\n", err)
+	} else {
+		b.WriteString("Page check (headless browser, JS executed):\n")
+		for _, e := range rep.PageErrors {
+			failures++
+			fmt.Fprintf(&b, "FAIL uncaught JS exception — %s\n", e)
+		}
+		for _, e := range rep.ConsoleErrors {
+			failures++
+			fmt.Fprintf(&b, "FAIL console error — %s\n", e)
+		}
+		for _, e := range rep.FailedRequests {
+			// A missing favicon is browser noise, not an app defect.
+			if strings.Contains(e, "/favicon.ico") {
+				continue
+			}
+			failures++
+			fmt.Fprintf(&b, "FAIL request — %s\n", e)
+		}
+		// Positive per-data-source confirmation: the page must have
+		// actually FETCHED each source's live endpoint and gotten a
+		// good status. A source that was never requested means no
+		// section references it (source_script) — the "script works
+		// but the page never calls it" disconnect the script checks
+		// can't see.
+		for _, ds := range spec.DataSources {
+			endpoint := "/custom/" + spec.Slug + "/data/" + ds.Name
+			status := 0
+			for _, req := range rep.Requests {
+				if pathOfURL(req.URL) == endpoint {
+					status = req.Status
+					break
+				}
+			}
+			requested := status != 0
+			if !requested {
+				for _, u := range rep.PendingRequests {
+					if pathOfURL(u) == endpoint {
+						requested = true
+						break
+					}
+				}
+			}
+			switch {
+			case status == 0 && requested:
+				// The wiring is proven (the page called the endpoint);
+				// the script just didn't answer inside the check window.
+				// A latency problem, not a structure problem — warn, but
+				// don't send the author chasing section config.
+				fmt.Fprintf(&b, "WARN data source %q — the page DID request %s but the response had not arrived when the check ended. The wiring is correct; the SCRIPT IS SLOW (a script that makes many sequential fetch_url calls takes that long on every page load). Reduce the calls or accept slow loads — do NOT change the section wiring.\n", ds.Name, endpoint)
+			case status == 0:
+				failures++
+				fmt.Fprintf(&b, "FAIL data source %q — the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or — from an html section's script — call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
+			case status >= 400:
+				// Already counted via FailedRequests above; this line
+				// just names the source for the fix.
+				fmt.Fprintf(&b, "     ^ that failing request is data source %q.\n", ds.Name)
+			default:
+				fmt.Fprintf(&b, "OK   data source %q — page fetched %s live (HTTP %d).\n", ds.Name, endpoint, status)
+			}
+		}
+		var pr struct {
+			Sections   int      `json:"sections"`
+			Tables     int      `json:"tables"`
+			EmptyTexts []string `json:"empty_texts"`
+			BodyChars  int      `json:"body_chars"`
+		}
+		if rep.ProbeJSON != "" && json.Unmarshal([]byte(rep.ProbeJSON), &pr) == nil {
+			expected := countSpecSections(spec)
+			switch {
+			case pr.Sections == 0:
+				failures++
+				b.WriteString("FAIL render — no sections mounted; the page is blank.\n")
+			case expected > 0 && pr.Sections < expected:
+				failures++
+				fmt.Fprintf(&b, "FAIL render — only %d of %d sections mounted; a section config is likely invalid.\n", pr.Sections, expected)
+			default:
+				fmt.Fprintf(&b, "OK   render — %d section(s) mounted (%d table(s)).\n", pr.Sections, pr.Tables)
+			}
+			if pr.BodyChars < 40 {
+				failures++
+				fmt.Fprintf(&b, "FAIL render — page body is nearly empty (%d chars of text).\n", pr.BodyChars)
+			}
+			for _, txt := range pr.EmptyTexts {
+				fmt.Fprintf(&b, "NOTE a table is showing its empty state: %q — fine for a fresh store; a problem if records/data should exist.\n", txt)
+			}
+		} else {
+			failures++
+			b.WriteString("FAIL render — the DOM probe returned nothing; the page runtime likely never booted.\n")
+		}
+	}
+
+	if failures > 0 {
+		fmt.Fprintf(&b, "\nVERDICT: FAIL — %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
+	} else {
+		b.WriteString("\nVERDICT: PASS — scripts run clean and the page renders in a real browser with no JS errors or failed fetches. Safe to tell the user it's ready.")
+	}
+	return b.String(), nil
+}
+
+// pathOfURL reduces a full URL to its path — scheme/host stripped,
+// query and fragment dropped — for endpoint matching against the
+// browser's request log.
+func pathOfURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	return u.Path
+}
+
+// countSpecSections reads the section count out of the stored pageConfig
+// JSON; -1 when the page bytes don't parse (never a verify failure by
+// itself — the browser probe judges the rendered result).
+func countSpecSections(spec AppSpec) int {
+	var pg struct {
+		Sections []json.RawMessage `json:"sections"`
+	}
+	if json.Unmarshal(spec.Page, &pg) != nil {
+		return -1
+	}
+	return len(pg.Sections)
 }
 
 // mapArg coerces an arg to a map[string]any (the test action's `params`),

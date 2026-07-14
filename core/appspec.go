@@ -65,9 +65,24 @@ type AppSpec struct {
 	// so an imported app lands disabled and nothing it brought can run before
 	// the owner has looked. A local mute, not part of the app's shape — export
 	// clears it.
-	Disabled bool   `json:"disabled,omitempty"`
-	Created  string `json:"created"`
-	Updated  string `json:"updated"`
+	Disabled bool `json:"disabled,omitempty"`
+	// Shared marks the app shared to every AUTHENTICATED user as a "per-user
+	// copy": the definition + scripts are shared (scripts run in the OWNER's
+	// sandbox), but each user gets their OWN record store — nobody sees anyone
+	// else's data. A global shared-slug index in the customapps store is the
+	// discovery source of truth; this bool mirrors it for the owner's list and
+	// export stripping. Deployment-local — cleared on export.
+	Shared bool `json:"shared,omitempty"`
+	// PublicToken, when non-empty, publishes the app at /custom/pub/<token>/ as a
+	// STATELESS, read/compute-only CAPABILITY URL: anyone with the (unguessable)
+	// link loads the page and runs its data sources — in the OWNER's sandbox,
+	// input via query params — but nothing is stored and every write endpoint is
+	// refused. The token IS the access control; unpublishing clears it and
+	// revokes the link. Regenerated on each publish. Deployment-local — cleared
+	// on export.
+	PublicToken string `json:"public_token,omitempty"`
+	Created     string `json:"created"`
+	Updated     string `json:"updated"`
 }
 
 // AppDataSource is a script-backed data endpoint for a custom app: a sandboxed

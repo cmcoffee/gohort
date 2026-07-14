@@ -503,6 +503,307 @@
     });
     return { dialog: m.dialog, body: m.body, close: m.close };
   };
+
+  // window.uiOpenArtifactPane — THE shared viewer/previewer pane. A fixed
+  // drawer that slides in from the right and renders an HTML surface
+  // beside whatever page is showing. Two content modes with distinct
+  // trust postures:
+  //
+  //   html — LLM/app-authored document, rendered via srcdoc in a
+  //          SANDBOXED iframe (allow-scripts only): scripts run but the
+  //          document has an opaque origin — no cookies, no parent DOM,
+  //          no direct same-origin fetches. Dashboards, reports, mockups.
+  //          Live data reaches it ONLY through the declared-allowlist
+  //          bridge below (data_urls + gohort.fetch).
+  //   url  — a SAME-ORIGIN relative path ("/custom/foo/"), rendered as a
+  //          normal iframe WITHOUT sandbox: it's this app's own page,
+  //          the same trust as the user opening it in a tab. Used to
+  //          preview real served surfaces (a just-authored custom app).
+  //          Anything not starting with a single "/" is refused.
+  //
+  // Singleton: opening while a pane is up replaces its content in place
+  // (keyed by opts.id).
+  //
+  // Options:
+  //   id        string — artifact identity; a repeat open with the same id
+  //             updates the existing pane instead of flashing a new one
+  //   title     string — header text
+  //   html      string — a complete, self-contained HTML document (srcdoc)
+  //   url       string — same-origin relative path to preview (wins over html)
+  //   data_urls array  — html mode only: same-origin GET paths the document
+  //             may fetch live through the postMessage bridge. The pane
+  //             injects a gohort.fetch(path) helper into the document; a
+  //             request for any path NOT on this list is refused up here
+  //             in the privileged side, so the artifact can only see the
+  //             endpoints it declared.
+  //
+  // Returns { update(opts), close, isOpen() }. Also exposed as
+  // window.__uiArtifactPane while open so block renderers can live-update
+  // a pane the user already has showing.
+  window.uiOpenArtifactPane = function(opts) {
+    opts = opts || {};
+    var cur = window.__uiArtifactPane;
+    if (cur && cur.isOpen()) { cur.update(opts); return cur; }
+    var pane = document.createElement('div');
+    pane.style.cssText = 'position:fixed;top:0;right:0;bottom:0;z-index:900;display:flex;flex-direction:column;' +
+      'width:min(92vw, max(430px, 46vw));background:var(--bg-1);color:var(--text);' +
+      'border-left:1px solid var(--border);box-shadow:-8px 0 24px rgba(0,0,0,0.25)';
+    // Header: title + open-in-tab + close.
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;gap:0.5rem;padding:0.5rem 0.8rem;border-bottom:1px solid var(--border);flex:0 0 auto';
+    var ttl = document.createElement('div');
+    ttl.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    var popBtn = document.createElement('button');
+    popBtn.type = 'button'; popBtn.className = 'ui-row-btn'; popBtn.textContent = '↗';
+    popBtn.title = 'Open in a new tab';
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button'; closeBtn.className = 'ui-row-btn'; closeBtn.textContent = '✕';
+    closeBtn.title = 'Close';
+    hdr.appendChild(ttl); hdr.appendChild(popBtn); hdr.appendChild(closeBtn);
+    pane.appendChild(hdr);
+    // Left-edge drag handle — resize by dragging toward/away from the chat.
+    var grip = document.createElement('div');
+    grip.style.cssText = 'position:absolute;left:-3px;top:0;bottom:0;width:7px;cursor:col-resize;z-index:1';
+    pane.appendChild(grip);
+    grip.addEventListener('mousedown', function(ev) {
+      ev.preventDefault();
+      var startX = ev.clientX, startW = pane.getBoundingClientRect().width;
+      function move(e) {
+        var w = Math.min(window.innerWidth * 0.92, Math.max(320, startW + (startX - e.clientX)));
+        pane.style.width = w + 'px';
+      }
+      function up() { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); }
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    var frame = document.createElement('iframe');
+    frame.style.cssText = 'flex:1 1 auto;min-height:0;width:100%;border:0;background:#fff';
+    pane.appendChild(frame);
+    // sameOriginPath accepts only a relative path on THIS origin: one
+    // leading "/" (not "//host"), no scheme. Everything else is refused —
+    // the url mode renders UNsandboxed, so it must never frame foreign
+    // content.
+    function sameOriginPath(u) {
+      return typeof u === 'string' && u.charAt(0) === '/' && u.charAt(1) !== '/';
+    }
+    var state = {id: '', html: '', url: '', dataUrls: [], dataKey: ''};
+    // gohort.fetch shim, injected into authored documents that declared
+    // data_urls. Child side of the bridge: postMessage the request up,
+    // resolve/reject on the reply. The parent side (onBridgeMsg below) is
+    // the privileged half that enforces the allowlist and does the real
+    // same-origin GET. The closing script tag is split so this string can
+    // never terminate an enclosing <script> block.
+    var BRIDGE_SHIM = '<script>(function(){var seq=0,pend={};' +
+      'window.addEventListener("message",function(ev){if(ev.source!==window.parent)return;' +
+      'var d=ev.data;if(!d||d.gohort_fetch_id==null||!pend[d.gohort_fetch_id])return;' +
+      'var p=pend[d.gohort_fetch_id];delete pend[d.gohort_fetch_id];' +
+      'if(d.ok)p.res({ok:true,status:d.status,body:d.body});' +
+      'else p.rej(new Error(d.body||("HTTP "+d.status)));});' +
+      'window.gohort={fetch:function(url){seq++;var id=seq;' +
+      'return new Promise(function(res,rej){pend[id]={res:res,rej:rej};' +
+      'window.parent.postMessage({gohort_fetch:url,gohort_fetch_id:id},"*");' +
+      'setTimeout(function(){if(pend[id]){delete pend[id];rej(new Error("gohort.fetch timeout"));}},20000);});}};' +
+      '})();<' + '/script>';
+    function withBridge(html, dataUrls) {
+      if (!dataUrls || !dataUrls.length) return html;
+      var m = html.match(/<head[^>]*>/i);
+      if (m) return html.replace(m[0], m[0] + BRIDGE_SHIM);
+      return BRIDGE_SHIM + html;
+    }
+    function update(o) {
+      o = o || {};
+      state.id = o.id || state.id;
+      if (o.title != null) ttl.textContent = o.title || 'Artifact';
+      if (o.url != null && o.url !== '' && sameOriginPath(o.url)) {
+        // Preview mode: our own served page, normal iframe (no sandbox —
+        // the app's page needs its own cookies/scripts to function, and
+        // it's the same trust as the user opening the path in a tab).
+        if (o.url !== state.url) {
+          state.url = o.url; state.html = '';
+          state.dataUrls = []; state.dataKey = '';
+          frame.removeAttribute('srcdoc');
+          frame.removeAttribute('sandbox');
+          frame.setAttribute('src', o.url);
+        }
+      } else if (o.html != null) {
+        // Authored-document mode: sandboxed srcdoc. allow-scripts WITHOUT
+        // allow-same-origin — opaque origin, no cookies/storage/parent
+        // DOM. Do not widen this. Sandbox must be in place before the
+        // content attribute so the new document loads under it.
+        var dataUrls = Array.isArray(o.data_urls) ? o.data_urls.filter(sameOriginPath) : [];
+        var dataKey = dataUrls.join('|');
+        if (o.html !== state.html || dataKey !== state.dataKey) {
+          state.html = o.html; state.url = '';
+          state.dataUrls = dataUrls; state.dataKey = dataKey;
+          frame.removeAttribute('src');
+          frame.setAttribute('sandbox', 'allow-scripts');
+          frame.setAttribute('srcdoc', withBridge(o.html, dataUrls));
+        }
+      }
+    }
+    // Parent half of the live-data bridge. Only answers the CURRENT
+    // frame's document, and only for GET paths on the artifact's declared
+    // allowlist (exact path match; query string free). The response text
+    // goes back into the sandboxed page — nothing else crosses.
+    function pathAllowed(u) {
+      if (!sameOriginPath(u)) return false;
+      var path = u.split('?')[0].split('#')[0];
+      for (var i = 0; i < state.dataUrls.length; i++) {
+        if (state.dataUrls[i] === path) return true;
+      }
+      return false;
+    }
+    function onBridgeMsg(ev) {
+      if (ev.source !== frame.contentWindow) return;
+      var d = ev.data;
+      if (!d || typeof d.gohort_fetch !== 'string' || d.gohort_fetch_id == null) return;
+      var url = d.gohort_fetch, id = d.gohort_fetch_id;
+      function reply(ok, status, body) {
+        try { frame.contentWindow.postMessage({gohort_fetch_id: id, ok: ok, status: status, body: body}, '*'); } catch (_) {}
+      }
+      if (!pathAllowed(url)) {
+        reply(false, 0, 'path not in this artifact\'s data_urls allowlist');
+        return;
+      }
+      fetch(url, {credentials: 'same-origin'})
+        .then(function(r) { return r.text().then(function(t) { reply(r.ok, r.status, t); }); })
+        .catch(function(e) { reply(false, 0, String(e && e.message || e)); });
+    }
+    window.addEventListener('message', onBridgeMsg);
+    function close() {
+      window.removeEventListener('message', onBridgeMsg);
+      pane.remove();
+      if (window.__uiArtifactPane === api) window.__uiArtifactPane = null;
+    }
+    popBtn.addEventListener('click', function() {
+      try {
+        if (state.url) { window.open(state.url, '_blank'); return; }
+        var blob = new Blob([state.html || ''], {type: 'text/html'});
+        window.open(URL.createObjectURL(blob), '_blank');
+      } catch (_) {}
+    });
+    closeBtn.addEventListener('click', close);
+    var api = {
+      update: update,
+      close: close,
+      isOpen: function() { return document.body.contains(pane); },
+      matches: function(id) { return !!id && id === state.id; },
+    };
+    document.body.appendChild(pane);
+    update(opts);
+    window.__uiArtifactPane = api;
+    return api;
+  };
+
+  // Default renderer for the generic "html_artifact" block — the server
+  // side of the viewer pane (e.g. a show_html tool call). Drops a compact
+  // card into the conversation with an Open button, and auto-opens the
+  // pane when the block arrives live with open:true (replayed blocks
+  // omit the flag, so reloading a session never pops the pane unasked).
+  // Re-emitting the same block id routes into onUpdate: the card retitles
+  // and an open pane showing this artifact refreshes in place. Payload is
+  // either {html} (authored document, sandboxed) or {url} (same-origin
+  // page preview) — see uiOpenArtifactPane for the trust postures.
+  window.uiRegisterBlockRenderer('html_artifact', function(d) {
+    var state = {id: d.id || '', title: d.title || 'Artifact', html: d.html || '', url: d.url || '',
+                 dataUrls: Array.isArray(d.data_urls) ? d.data_urls : []};
+    function paneOpts() {
+      return {id: state.id, title: state.title, html: state.html, url: state.url, data_urls: state.dataUrls};
+    }
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:0.6rem;margin:0.5rem 0;padding:0.55rem 0.8rem;' +
+      'border:1px solid var(--border);border-left:3px solid var(--accent, #6366f1);border-radius:6px;background:var(--bg-1)';
+    var icon = document.createElement('span');
+    var label = document.createElement('div');
+    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'ui-row-btn'; btn.textContent = 'Open';
+    btn.addEventListener('click', function() { window.uiOpenArtifactPane(paneOpts()); });
+    wrap.appendChild(icon); wrap.appendChild(label); wrap.appendChild(btn);
+    function refresh() {
+      icon.textContent = state.url ? '🖥️' : '📊';
+      label.textContent = state.title;
+    }
+    refresh();
+    if (d.open) window.uiOpenArtifactPane(paneOpts());
+    return {
+      wrap: wrap,
+      body: label,
+      onUpdate: function(nd) {
+        if (nd.title != null) state.title = nd.title;
+        if (nd.html != null) { state.html = nd.html; state.url = ''; }
+        if (nd.url != null && nd.url !== '') { state.url = nd.url; state.html = ''; }
+        if (Array.isArray(nd.data_urls)) state.dataUrls = nd.data_urls;
+        refresh();
+        var pane = window.__uiArtifactPane;
+        if (pane && pane.isOpen() && pane.matches(state.id)) {
+          pane.update(paneOpts());
+        } else if (nd.open) {
+          window.uiOpenArtifactPane(paneOpts());
+        }
+      },
+    };
+  });
+
+  // Default renderer for the generic "link_hint" block — a navigation
+  // card an agent emits to point the user at a page (e.g. a show_link
+  // tool call). Same trust rule as table link columns: same-origin
+  // paths ("/...", but not protocol-relative "//...") and http(s) URLs
+  // get a real anchor; anything else renders the card without one.
+  // Always a new tab — the conversation stays put.
+  window.uiRegisterBlockRenderer('link_hint', function(d) {
+    var state = {title: d.title || 'Link', url: d.url || '', text: d.text || ''};
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:0.6rem;margin:0.5rem 0;padding:0.55rem 0.8rem;' +
+      'border:1px solid var(--border);border-left:3px solid var(--accent, #6366f1);border-radius:6px;background:var(--bg-1)';
+    var icon = document.createElement('span');
+    icon.textContent = '🔗';
+    var label = document.createElement('div');
+    label.style.cssText = 'flex:1 1 auto;min-width:0;font-size:0.85rem;overflow:hidden';
+    var title = document.createElement('div');
+    title.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    var note = document.createElement('div');
+    note.style.cssText = 'font-size:0.78rem;color:var(--text-mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+    label.appendChild(title); label.appendChild(note);
+    var a = document.createElement('a');
+    a.className = 'ui-row-btn';
+    a.style.cssText = 'text-decoration:none;display:inline-flex;align-items:center';
+    a.textContent = 'Open';
+    wrap.appendChild(icon); wrap.appendChild(label); wrap.appendChild(a);
+    function safeHref(u) {
+      u = String(u || '');
+      if (/^https?:\/\//.test(u)) return u;
+      if (u.charAt(0) === '/' && u.charAt(1) !== '/') return u;
+      return '';
+    }
+    function refresh() {
+      title.textContent = state.title;
+      note.textContent = state.text;
+      note.style.display = state.text ? '' : 'none';
+      var href = safeHref(state.url);
+      if (href) {
+        a.setAttribute('href', href);
+        a.setAttribute('target', '_blank');
+        a.setAttribute('rel', 'noopener');
+        a.style.display = 'inline-flex';
+      } else {
+        a.removeAttribute('href');
+        a.style.display = 'none';
+      }
+    }
+    refresh();
+    return {
+      wrap: wrap,
+      body: title,
+      onUpdate: function(nd) {
+        if (nd.title != null) state.title = nd.title;
+        if (nd.url != null) state.url = nd.url;
+        if (nd.text != null) state.text = nd.text;
+        refresh();
+      },
+    };
+  });
+
   function fmt(value, format) {
     if (value == null) return '';
     if (format === 'reltime') return relTime(value);

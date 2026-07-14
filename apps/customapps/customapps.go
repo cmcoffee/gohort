@@ -24,12 +24,17 @@
 package customapps
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -70,18 +75,34 @@ func (T *CustomApps) WebPath() string { return "/custom" }
 func (T *CustomApps) WebName() string { return "Custom Apps" }
 func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." }
 
-func (T *CustomApps) Routes() { T.HandleFunc("/", T.route) }
+func (T *CustomApps) Routes() {
+	T.HandleFunc("/", T.route)
+	// The anonymous capability-URL surface (/custom/pub/<token>/…) authenticates
+	// via the unguessable token itself, so it must bypass the cookie-auth
+	// middleware. Prefix registration (trailing slash) covers every token + its
+	// sub-paths; handlePublic is then the sole access check for that subtree.
+	RegisterPublicPath(T.WebPath() + "/pub/")
+}
 
 // route parses "/<slug>/<rest>" off the (prefix-stripped) sub-mux and
 // dispatches. "_apps" is reserved for the index data feed so it can't collide
 // with a real slug.
 func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(r.URL.Path, "/")
+
+	// The public capability-URL surface is served BEFORE any auth check: the
+	// token in the path is its sole credential (this subtree is a registered
+	// public path, so the cookie middleware already let it through anonymously).
+	if path == "pub" || strings.HasPrefix(path, "pub/") {
+		T.handlePublic(w, r, strings.TrimPrefix(path, "pub"))
+		return
+	}
+
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
 
-	path := strings.Trim(r.URL.Path, "/")
 	switch path {
 	case "":
 		T.handleIndex(w, r)
@@ -98,6 +119,14 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// for bundle imports.
 		T.handleEnableApp(w, r, user)
 		return
+	case "_app/share":
+		// POST ?slug=&on=… toggles authenticated (per-user-copy) sharing.
+		T.handleShareApp(w, r, user)
+		return
+	case "_app/public":
+		// POST ?slug=&on=… mints / revokes the anonymous capability URL.
+		T.handlePublishApp(w, r, user)
+		return
 	}
 
 	parts := strings.SplitN(path, "/", 2)
@@ -106,7 +135,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		rest = parts[1]
 	}
-	spec, found := loadSpec(user, slug)
+	// Own-first resolution: the requester's own app shadows any shared one of the
+	// same slug; otherwise an app another user shared to all authenticated users.
+	// ownerUser is the app's owner (== user for owned apps) — the identity its
+	// sandboxed scripts run as.
+	spec, ownerUser, found := T.resolveSpec(user, slug)
 	if !found {
 		http.NotFound(w, r)
 		return
@@ -134,11 +167,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = ui.RenderPageJSON(w, spec.Page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case strings.HasPrefix(rest, "data/"):
-		T.handleData(w, r, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
+		T.handleData(w, r, ownerUser, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "actions":
 		T.handleActionsList(w, r, spec)
 	case strings.HasPrefix(rest, "action/"):
-		T.handleAction(w, r, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
+		T.handleAction(w, r, ownerUser, appdb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "records":
 		T.handleRecords(w, r, appdb, spec)
 	case rest == "record":
@@ -251,6 +284,11 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "900px",
+		// The Share button is a client action: it opens a modal to pick the
+		// sharing modes and copy the public link. App-specific behavior, so it
+		// lives here (the app's own page) via the client-action registry — never
+		// in core/ui.
+		ExtraHeadHTML: shareModalScript,
 		Sections: []ui.Section{{
 			Title:    "Your apps",
 			Subtitle: "Data-driven apps composed from ui primitives.",
@@ -267,13 +305,96 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "disabled"},
 					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
 						Confirm: "Enable this imported app? Review its data-source and action scripts first — they run in your sandbox once the app is live."},
-					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}",
+					// One Share button opens the sharing modal (customapps_share).
+					{Type: "button", Label: "Share", Method: "client", PostTo: "customapps_share", OnlyIf: "mine"},
+					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}", OnlyIf: "mine", Variant: "danger",
 						Confirm: "Delete this app and all its data? This can't be undone."},
 				},
 			},
 		}},
 	}.ServeHTTP(w, r)
 }
+
+// shareModalScript registers the "customapps_share" client action: a modal that
+// toggles the two sharing modes (each applied immediately via _app/share and
+// _app/public) and, when a public link exists, shows it in a read-only field
+// with a Copy button. The link is the ABSOLUTE server URL the endpoints return
+// (DashboardURL-based), so copying works even from the gohort-desktop client
+// (which reaches the server over 127.0.0.1). No backticks in this string — it is
+// embedded in a Go raw literal, and a backtick would terminate it.
+const shareModalScript = `<script>
+window.uiRegisterClientAction('customapps_share', function(ctx) {
+  var rec = ctx.record || {};
+  var slug = rec.slug;
+  function truthy(v){ return v === '1' || v === 1 || v === true; }
+  function makeToggle(label, help, checked, onChange) {
+    var wrap = document.createElement('label');
+    wrap.style.cssText = 'display:block;cursor:pointer';
+    var top = document.createElement('div');
+    top.style.cssText = 'display:flex;align-items:center;gap:0.5rem;font-weight:600';
+    var cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!checked;
+    top.appendChild(cb); top.appendChild(document.createTextNode(label));
+    var h = document.createElement('div');
+    h.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin:0.25rem 0 0 1.6rem;line-height:1.4';
+    h.textContent = help;
+    wrap.appendChild(top); wrap.appendChild(h);
+    cb.addEventListener('change', function(){ onChange(cb.checked, cb); });
+    return wrap;
+  }
+  function post(url, cb, onOk) {
+    fetch(url, {method:'POST'}).then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); });
+      return r.json();
+    }).then(function(d){ if (onOk) onOk(d || {}); }).catch(function(e){
+      if (cb) cb.checked = !cb.checked;
+      (window.uiAlert || window.alert)('Sharing failed: ' + e.message);
+    });
+  }
+  window.uiOpenModal({
+    title: 'Share "' + (rec.name || slug) + '"',
+    width: '520px',
+    mount: function(body) {
+      body.appendChild(makeToggle(
+        'Share with signed-in users',
+        'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.',
+        truthy(rec.shared),
+        function(on, cb){ post('_app/share?slug=' + encodeURIComponent(slug) + '&on=' + on, cb); }
+      ));
+      var linkRow = document.createElement('div');
+      linkRow.style.cssText = 'margin:0.4rem 0 0 1.6rem;gap:0.4rem;align-items:center';
+      linkRow.style.display = truthy(rec.public) ? 'flex' : 'none';
+      var input = document.createElement('input');
+      input.type = 'text'; input.readOnly = true; input.value = rec.public_url || '';
+      input.style.cssText = 'flex:1 1 auto;min-width:0;padding:0.35rem 0.5rem;font-size:0.8rem;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text)';
+      var copyBtn = document.createElement('button');
+      copyBtn.type = 'button'; copyBtn.className = 'ui-row-btn'; copyBtn.textContent = 'Copy';
+      copyBtn.addEventListener('click', function(){
+        var v = input.value; if (!v) return;
+        function done(){ copyBtn.textContent = 'Copied!'; setTimeout(function(){ copyBtn.textContent = 'Copy'; }, 1500); }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(v).then(done, function(){ input.select(); document.execCommand('copy'); done(); });
+        } else { input.select(); document.execCommand('copy'); done(); }
+      });
+      linkRow.appendChild(input); linkRow.appendChild(copyBtn);
+      var pub = makeToggle(
+        'Public link (anyone with the URL)',
+        'Anonymous, read-only. Your data sources run with your credentials for anyone who has the link. Nothing is saved. Revoke anytime by turning this off.',
+        truthy(rec.public),
+        function(on, cb){
+          post('_app/public?slug=' + encodeURIComponent(slug) + '&on=' + on, cb, function(d){
+            if (on && d.url) { input.value = d.url; linkRow.style.display = 'flex'; }
+            else { linkRow.style.display = 'none'; }
+          });
+        }
+      );
+      body.appendChild(pub);
+      body.appendChild(linkRow);
+    },
+    actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
+  });
+});
+</` + `script>`
+
 
 // handleDeleteApp removes a custom app: its spec, its per-app record store, and
 // any workbench active-selection state. The demo "notes" app re-seeds on next
@@ -293,6 +414,12 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 	// Loaded before deletion so PrivateDB is still known.
 	spec, _ := loadSpec(user, slug)
 	appdb := T.recordBase(spec, user)
+	// Clear any sharing this app carried so a deleted app leaves no dangling
+	// index entry (a stale shared slug, or a live capability URL).
+	SetSharedOwner(T.DB, sharedAppsIndex, slug, user, false)
+	if spec.PublicToken != "" {
+		T.DB.Unset(publicAppsIndex, spec.PublicToken)
+	}
 	DeleteAppSpec(user, slug)      // shared per-owner spec store
 	appdb.Drop(recTable(slug))     // this app's records
 	appdb.Unset(activeTable, slug) // workbench open-document marker
@@ -316,15 +443,48 @@ func (T *CustomApps) recordBase(spec AppSpec, uid string) Database {
 
 func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
 	out := []map[string]string{}
+	seen := map[string]bool{}
 	for _, s := range listSpecs(owner) {
-		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc}
-		if s.Disabled {
-			// "disabled" drives the index's OnlyIf/HideIf row actions (truthy =
-			// non-empty); "status" is the human-readable column.
-			row["disabled"] = "1"
-			row["status"] = "disabled — review, then Enable"
+		seen[s.Slug] = true
+		// "mine" gates the owner-only Share/Delete actions. shared/public/public_url
+		// carry the current sharing state into the Share modal (a client action)
+		// so it opens pre-filled and can show + copy the live public link.
+		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1"}
+		status := "private"
+		if s.Shared {
+			row["shared"] = "1"
+			status = "shared to users"
 		}
+		if s.PublicToken != "" {
+			row["public"] = "1"
+			row["public_url"] = T.publicURL(s.PublicToken) // absolute — copyable off 127.0.0.1
+			if s.Shared {
+				status = "shared to users + public link"
+			} else {
+				status = "public link"
+			}
+		}
+		if s.Disabled {
+			row["disabled"] = "1"
+			status = "disabled — review, then Enable"
+		}
+		row["status"] = status
 		out = append(out, row)
+	}
+	// Apps other users shared to all authenticated users — offered here as a
+	// per-user copy. Own apps shadow a same-slug shared one, so skip those.
+	for slug, ownerName := range ListSharedOwners(T.DB, sharedAppsIndex) {
+		if ownerName == owner || seen[slug] {
+			continue
+		}
+		s, ok := loadSpec(ownerName, slug)
+		if !ok || !s.Shared || s.Disabled {
+			continue
+		}
+		out = append(out, map[string]string{
+			"slug": s.Slug, "name": s.Name, "desc": s.Desc,
+			"status": "shared by " + ownerName,
+		})
 	}
 	writeJSON(w, out)
 }
@@ -359,14 +519,14 @@ func (T *CustomApps) handleEnableApp(w http.ResponseWriter, r *http.Request, use
 
 // handleData serves a table/display section's script-backed data endpoint:
 // GET /custom/<slug>/data/<name>. It runs the named AppDataSource script
-// (sandboxed) with the app's stored records + the request's query params as
-// input, and passes the script's JSON stdout straight through as the response.
-// Owner-only by construction — custom apps are per-owner, so only the owner ever
-// reaches this; the script runs in the owner's sandbox with the owner's network
-// gate. Read-only: a data source computes a view, it never writes the store
-// (which keeps the framework as the sole owner of persistence — no workspace-vs-
-// store divergence).
-func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, user string, udb Database, spec AppSpec, name string) {
+// (sandboxed) with the REQUESTER's stored records + the request's query params
+// as input, and passes the script's JSON stdout straight through. The script
+// runs in the OWNER's sandbox (owner param) with the owner's network gate and
+// credentials — so a SHARED app's trusted logic executes as the owner while
+// reading the opening user's own records (the per-user-copy model). For an
+// owned app owner == requester, so this is byte-identical to the old behavior.
+// Read-only: a data source computes a view, it never writes the store.
+func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner string, udb Database, spec AppSpec, name string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -383,7 +543,7 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, user str
 		return
 	}
 
-	// Gather the app's stored records to hand the script as input.
+	// Gather the REQUESTER's stored records (udb) to hand the script as input.
 	tbl := recTable(spec.Slug)
 	records := []map[string]any{}
 	for _, k := range udb.Keys(tbl) {
@@ -402,7 +562,9 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, user str
 		}
 	}
 
-	out, err := runDataSource(user, udb, spec.Slug, *ds, args)
+	// The script executes in the OWNER's context (sandbox identity + hook DB), so
+	// a shared app's data source reaches the owner's credentials/integrations.
+	out, err := cachedRunDataSource(owner, T.recordBase(spec, owner), spec.Slug, *ds, args)
 	if err != nil {
 		Log("[customapps] data source %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
@@ -421,6 +583,103 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, user str
 // runDataSource executes one data-source script and returns its stdout.
 func runDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any) (string, error) {
 	return runAppScript(user, db, slug, "data", ds.Name, ds.Language, ds.Script, ds.Capabilities, args)
+}
+
+// dataSourceCacheTTL is how long a data source's output is reused before it is
+// recomputed. Short on purpose: long enough to collapse a page's initial load,
+// its auto-refresh poll, and any parallel tab into one execution of a script
+// that may make many slow external fetches; short enough that a live dashboard
+// still feels current.
+const dataSourceCacheTTL = 8 * time.Second
+
+type dsCacheEntry struct {
+	out     string
+	expires time.Time
+}
+
+// dsInFlight is one execution other callers with the same key wait on instead
+// of launching their own — single-flight collapse.
+type dsInFlight struct {
+	done chan struct{}
+	out  string
+	err  error
+}
+
+var (
+	dsCacheMu    sync.Mutex
+	dsCache      = map[string]dsCacheEntry{}
+	dsInFlightCalls  = map[string]*dsInFlight{}
+)
+
+// dsCacheKey identifies one data-source computation by everything its output
+// depends on: the owner, the app, the source's NAME **and script/language/caps**
+// (so editing the script busts the cache — vital for the author's rapid
+// iterate→verify loop, which reuses the same records + params), plus the input
+// records and query params. Any change to any of these misses the cache and
+// recomputes; identical repeats within the TTL reuse the result.
+func dsCacheKey(user, slug string, ds AppDataSource, args map[string]any) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00", user, slug, ds.Name, ds.Language)
+	io.WriteString(h, ds.Script)
+	h.Write([]byte{0})
+	for _, c := range ds.Capabilities {
+		io.WriteString(h, c)
+		h.Write([]byte{0})
+	}
+	h.Write([]byte{0})
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(h, "%s=%v\x00", k, args[k])
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// cachedRunDataSource wraps runDataSource with a short-TTL output cache and
+// single-flight execution. It is used only on the LIVE serve path (handleData)
+// — the authoring test/verify path always runs scripts fresh. Errors are never
+// cached (so a transient failure retries immediately), though a burst of
+// concurrent identical failing calls still shares one execution.
+func cachedRunDataSource(user string, db Database, slug string, ds AppDataSource, args map[string]any) (string, error) {
+	key := dsCacheKey(user, slug, ds, args)
+	now := time.Now()
+
+	dsCacheMu.Lock()
+	if e, ok := dsCache[key]; ok && now.Before(e.expires) {
+		dsCacheMu.Unlock()
+		return e.out, nil
+	}
+	if call, ok := dsInFlightCalls[key]; ok {
+		// Someone is already computing this exact view — wait for it.
+		dsCacheMu.Unlock()
+		<-call.done
+		return call.out, call.err
+	}
+	call := &dsInFlight{done: make(chan struct{})}
+	dsInFlightCalls[key] = call
+	dsCacheMu.Unlock()
+
+	out, err := runDataSource(user, db, slug, ds, args)
+
+	dsCacheMu.Lock()
+	call.out, call.err = out, err
+	if err == nil {
+		dsCache[key] = dsCacheEntry{out: out, expires: time.Now().Add(dataSourceCacheTTL)}
+	}
+	delete(dsInFlightCalls, key)
+	// Opportunistic sweep: a record write changes the key, so churned entries
+	// would otherwise accumulate. Cheap at this cardinality.
+	for k, e := range dsCache {
+		if now.After(e.expires) {
+			delete(dsCache, k)
+		}
+	}
+	dsCacheMu.Unlock()
+	close(call.done)
+	return out, err
 }
 
 // runAppScript executes one custom-app script (a data source or an action) and
@@ -454,8 +713,12 @@ func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, s
 // The app's stored records + the request's params go in; the script prints a
 // JSON object {message?, records?}. The FRAMEWORK upserts any returned records
 // into the store (so they reach the viewer — the script never writes the store),
-// and returns {message} for the button. Owner-only (per-owner specs).
-func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, user string, udb Database, spec AppSpec, name string) {
+// and returns {message} for the button. The script runs in the OWNER's sandbox
+// (owner param), but any records it returns are upserted into the REQUESTER's
+// store (udb) — so on a shared app a user's action runs the owner's trusted
+// logic against, and saves into, that user's own copy. owner == requester for
+// an owned app.
+func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner string, udb Database, spec AppSpec, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -497,7 +760,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, user s
 		}
 	}
 
-	out, err := runAppScript(user, udb, spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
+	out, err := runAppScript(owner, T.recordBase(spec, owner), spec.Slug, "action", act.Name, act.Language, act.Script, act.Capabilities, args)
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
 		http.Error(w, "action failed: "+err.Error(), http.StatusInternalServerError)
@@ -615,6 +878,287 @@ func (T *CustomApps) handleRecord(w http.ResponseWriter, r *http.Request, udb Da
 
 func loadSpec(owner, slug string) (AppSpec, bool) { return LoadAppSpec(owner, slug) }
 func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
+
+// --- sharing (authenticated per-user copy + public capability URL) ------------
+//
+// Two independent, owner-controlled modes over the per-owner spec store:
+//   • Shared (authenticated): the app is offered to every logged-in user as a
+//     per-user COPY — shared definition + owner-run scripts, each user's own
+//     records. A global slug→owner index makes it discoverable; slugs are a
+//     single shared namespace (collisions rejected at share time).
+//   • Public (anonymous): the app is published at /custom/pub/<token>/ as a
+//     STATELESS, read/compute-only capability URL. A token→(owner,slug) index
+//     resolves it; the token is the sole credential; unpublishing revokes it.
+// Both indexes live in the customapps app-wide store (T.DB), NOT a per-user DB —
+// discovery must work regardless of who asks. Primitives come from core/sharing.go.
+
+const (
+	sharedAppsIndex = "shared_custom_apps" // slug -> owner username
+	publicAppsIndex = "public_custom_apps" // capability token -> publicRef
+)
+
+// publicRef is what a capability token resolves to: the owner + slug whose spec
+// the token publishes.
+type publicRef struct {
+	Owner string `json:"owner"`
+	Slug  string `json:"slug"`
+}
+
+// newPublicToken mints an unguessable capability token (128 bits, hex). The
+// token IS the access control for a public app, so it must not be enumerable.
+func newPublicToken() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// publicURL builds the ABSOLUTE capability URL for a token, using the
+// deployment's configured public base (DashboardURL) rather than the request
+// host. This is what makes a copied link shareable: the gohort-desktop client
+// reaches the server over loopback, so a host-relative link would copy as
+// 127.0.0.1 — useless to anyone else. DashboardURL resolves to the operator's
+// configured WebBaseURL (the real server name) when set.
+func (T *CustomApps) publicURL(token string) string {
+	return DashboardURL() + T.WebPath() + "/pub/" + token + "/"
+}
+
+// lookupPublicApp resolves a capability token to its owner+slug, if published.
+func lookupPublicApp(appDB Database, token string) (publicRef, bool) {
+	var ref publicRef
+	if appDB == nil || token == "" {
+		return ref, false
+	}
+	if appDB.Get(publicAppsIndex, token, &ref) && ref.Owner != "" && ref.Slug != "" {
+		return ref, true
+	}
+	return ref, false
+}
+
+// resolveSpec finds the app a request should serve: the requester's OWN app
+// first (an owned slug shadows any shared one), else an app another user has
+// shared to all authenticated users. ownerUser is the app's owner (== reqUser
+// for owned apps) — the identity its sandboxed scripts run as.
+func (T *CustomApps) resolveSpec(reqUser, slug string) (AppSpec, string, bool) {
+	if s, ok := loadSpec(reqUser, slug); ok {
+		return s, reqUser, true
+	}
+	if owner, ok := LookupSharedOwner(T.DB, sharedAppsIndex, slug); ok && owner != reqUser {
+		if s, ok := loadSpec(owner, slug); ok && s.Shared {
+			return s, owner, true
+		}
+	}
+	return AppSpec{}, "", false
+}
+
+// handleShareApp toggles authenticated (per-user-copy) sharing for an app the
+// requester owns: POST /custom/_app/share?slug=…&on=true|false. Owner-gated by
+// construction (the spec is looked up in the requester's own store). Sharing a
+// slug another user already shares is rejected — shared slugs are one global
+// namespace.
+func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	spec, ok := loadSpec(user, slug)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	on := r.URL.Query().Get("on") != "false" // default: turn sharing ON
+	if on {
+		if owner, shared := LookupSharedOwner(T.DB, sharedAppsIndex, slug); shared && owner != user {
+			http.Error(w, "another user already shares an app at this slug — rename yours to share it", http.StatusConflict)
+			return
+		}
+	}
+	spec.Shared = on
+	SaveAppSpec(spec)
+	SetSharedOwner(T.DB, sharedAppsIndex, slug, user, on)
+	writeJSON(w, map[string]any{"ok": true, "shared": on})
+}
+
+// handlePublishApp mints or revokes the anonymous capability URL for an app the
+// requester owns: POST /custom/_app/public?slug=…&on=true|false. Publishing
+// mints a fresh token (if none) and registers it; unpublishing deletes the
+// token from the index — instantly revoking any shared link — and clears it
+// from the spec. Returns the public URL on publish so the UI can surface it.
+func (T *CustomApps) handlePublishApp(w http.ResponseWriter, r *http.Request, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
+	spec, ok := loadSpec(user, slug)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	on := r.URL.Query().Get("on") != "false"
+	if on {
+		if spec.PublicToken == "" {
+			spec.PublicToken = newPublicToken()
+		}
+		SaveAppSpec(spec)
+		T.DB.Set(publicAppsIndex, spec.PublicToken, publicRef{Owner: user, Slug: slug})
+		writeJSON(w, map[string]any{"ok": true, "public": true, "url": T.publicURL(spec.PublicToken)})
+		return
+	}
+	if spec.PublicToken != "" {
+		T.DB.Unset(publicAppsIndex, spec.PublicToken) // revoke the link
+	}
+	spec.PublicToken = ""
+	SaveAppSpec(spec)
+	writeJSON(w, map[string]any{"ok": true, "public": false})
+}
+
+// handlePublic serves the anonymous capability-URL surface:
+// /custom/pub/<token>/… . The token (validated against the public index) is the
+// sole credential — this subtree is a registered public path, so the cookie
+// middleware already passed it through unauthenticated. STATELESS and
+// read/compute-only: the page renders, data sources RUN in the owner's sandbox
+// with query-param input, "records" is always empty (no anonymous store), and
+// every write / action-fire / chat endpoint is refused.
+func (T *CustomApps) handlePublic(w http.ResponseWriter, r *http.Request, rest string) {
+	rest = strings.Trim(rest, "/")
+	parts := strings.SplitN(rest, "/", 2)
+	token := parts[0]
+	sub := ""
+	if len(parts) > 1 {
+		sub = parts[1]
+	}
+	ref, ok := lookupPublicApp(T.DB, token)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	spec, ok := loadSpec(ref.Owner, ref.Slug)
+	// Defense in depth: the spec must still name THIS token and not be disabled;
+	// index/spec drift or an unpublished/disabled app reads as gone.
+	if !ok || spec.PublicToken != token || spec.Disabled {
+		http.NotFound(w, r)
+		return
+	}
+	switch {
+	case sub == "":
+		if !strings.HasSuffix(r.URL.Path, "/") {
+			http.Redirect(w, r, T.WebPath()+"/pub/"+token+"/", http.StatusFound)
+			return
+		}
+		// No record-invalidation bridge: nothing is stored on the public surface.
+		_ = ui.RenderPageJSON(w, T.publicPageBytes(spec, token), "", "", spec.Name)
+	case strings.HasPrefix(sub, "data/"):
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		T.handlePublicData(w, r, spec, strings.TrimPrefix(sub, "data/"))
+	case sub == "records":
+		// No public store: a record-backed section fetches this on load, so it
+		// must return valid (empty) JSON rather than 404 (which would error the
+		// page). Writes fall through to the refusal below.
+		if r.Method != http.MethodGet {
+			http.Error(w, "not available on a public app", http.StatusForbidden)
+			return
+		}
+		writeJSON(w, []map[string]any{})
+	case sub == "actions":
+		// A public app exposes no action buttons; return an empty list so an
+		// actions section renders (empty) instead of erroring.
+		writeJSON(w, []map[string]any{})
+	default:
+		// record write/delete, action fire, chat — none run for anonymous users.
+		http.Error(w, "not available on a public app", http.StatusForbidden)
+	}
+}
+
+// publicPageBytes adapts the owner's stored page for anonymous serving:
+//   - Rewrites the app's own AUTH-GATED mount prefix (/custom/<slug>/) to the
+//     public capability mount (/custom/pub/<token>/). The typed sections use
+//     RELATIVE sources ("data/<name>") that already resolve against the page
+//     URL, but a hand-written html section commonly fetches an ABSOLUTE path
+//     ("/custom/<slug>/data/<name>") — served verbatim that points back at the
+//     gated slug route and 302s to login (works for the owner, breaks for an
+//     anonymous visitor). The prefix rewrite makes those absolute self-refs hit
+//     the token-scoped endpoint instead.
+//   - Marks the page public so the runtime drops the live-sessions pill (which
+//     would poll the gated /api/live), and removes the Back link (it points at
+//     the owner's gated /custom/ index — meaningless to an anonymous visitor).
+func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
+	oldPrefix := []byte(T.WebPath() + "/" + spec.Slug + "/")
+	newPrefix := []byte(T.WebPath() + "/pub/" + token + "/")
+	var page map[string]any
+	if err := json.Unmarshal(spec.Page, &page); err != nil {
+		// Unparseable page: still rewrite the raw bytes so data fetches resolve.
+		return bytes.ReplaceAll(spec.Page, oldPrefix, newPrefix)
+	}
+	page["public"] = true    // runtime: suppress the live-sessions pill
+	delete(page, "back_url") // no Back link to the gated dashboard
+	out, err := json.Marshal(page)
+	if err != nil {
+		out = spec.Page
+	}
+	return bytes.ReplaceAll(out, oldPrefix, newPrefix)
+}
+
+// handlePublicData runs one data source for the public surface: in the OWNER's
+// sandbox, over the OWNER's stored records, with per-request input from query
+// params. A public app is the owner's app served anonymously — its data source
+// must see the config the owner set up (e.g. WHICH site to pull), so it reads
+// the owner's records exactly as it would for the owner logged in. Only anonymous
+// WRITES are withheld (records POST / actions 403 in handlePublic); the raw
+// record store is never dumped by the framework — it reaches the response only
+// if the owner's own script computes and emits it. Reuses the same cache +
+// single-flight as the authenticated path.
+func (T *CustomApps) handlePublicData(w http.ResponseWriter, r *http.Request, spec AppSpec, name string) {
+	var ds *AppDataSource
+	for i := range spec.DataSources {
+		if spec.DataSources[i].Name == name {
+			ds = &spec.DataSources[i]
+			break
+		}
+	}
+	if ds == nil || strings.TrimSpace(ds.Script) == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if spec.Owner == "" {
+		http.Error(w, "public app has no owner context", http.StatusInternalServerError)
+		return
+	}
+	ownerDB := T.recordBase(spec, spec.Owner)
+	// Feed the owner's stored records (their app config) plus each query param.
+	tbl := recTable(spec.Slug)
+	records := []map[string]any{}
+	for _, k := range ownerDB.Keys(tbl) {
+		var rec map[string]any
+		if ownerDB.Get(tbl, k, &rec) {
+			records = append(records, rec)
+		}
+	}
+	recJSON, _ := json.Marshal(records)
+	args := map[string]any{"records": string(recJSON)}
+	for k, vs := range r.URL.Query() {
+		if len(vs) > 0 {
+			args[k] = vs[0]
+		}
+	}
+	out, err := cachedRunDataSource(spec.Owner, ownerDB, spec.Slug, *ds, args)
+	if err != nil {
+		Log("[customapps] PUBLIC data source %q/%q failed: %v", spec.Slug, name, err)
+		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	trimmed := strings.TrimSpace(out)
+	if !json.Valid([]byte(trimmed)) {
+		Log("[customapps] PUBLIC data source %q/%q returned non-JSON (first 200B): %.200s", spec.Slug, name, trimmed)
+		http.Error(w, "the data source script must print a JSON value to stdout", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(trimmed))
+}
 
 // --- helpers -----------------------------------------------------------------
 

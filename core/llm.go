@@ -312,7 +312,138 @@ func parseToolArgs(raw map[string]interface{}) map[string]any {
 	for k, v := range raw {
 		args[k] = cleanArg(v)
 	}
+	salvageSwallowedParams(args)
 	return args
+}
+
+// salvageSwallowedParams repairs a provider-side XML tool-call parsing
+// failure observed with llama.cpp + Qwen: when the model glues a
+// parameter's closing tag to the value ("...Sound good?</parameter>"
+// instead of putting it on its own line), llama.cpp can terminate the
+// value at a LATER close tag, so one string argument arrives carrying
+// raw markup plus every parameter that followed it — and those
+// parameters are missing from the args map entirely:
+//
+//	question = "...Sound good?</parameter>\n<parameter=options>\n[\"yes\",\"edit\",\"no\"]"
+//
+// For each string value containing "</parameter>", if everything after
+// some occurrence parses as pure tool-call markup (parameter chunks and
+// wrapper closers only — ordinary prose never does), the value is cut
+// at that occurrence and the swallowed parameters are restored into the
+// args map. Existing keys are never overwritten: the provider's parse
+// wins wherever it succeeded. A value that merely mentions the tag
+// mid-prose is left alone (the tail fails the pure-markup parse).
+func salvageSwallowedParams(args map[string]any) {
+	const pClose = "</parameter>"
+	type patch struct {
+		key       string
+		val       string
+		recovered map[string]any
+	}
+	var patches []patch
+	for k, v := range args {
+		s, ok := v.(string)
+		if !ok || !strings.Contains(s, pClose) {
+			continue
+		}
+		// Try each occurrence: the first one whose tail is pure markup
+		// is the real boundary. Later occurrences matter when the value
+		// legitimately mentions the tag before the swallow point.
+		for from := 0; ; {
+			ci := strings.Index(s[from:], pClose)
+			if ci < 0 {
+				break
+			}
+			ci += from
+			if recovered, ok := parseSwallowedTail(s[ci+len(pClose):]); ok {
+				patches = append(patches, patch{key: k, val: strings.TrimSpace(s[:ci]), recovered: recovered})
+				break
+			}
+			from = ci + len(pClose)
+		}
+	}
+	for _, p := range patches {
+		args[p.key] = p.val
+		names := make([]string, 0, len(p.recovered))
+		for rk, rv := range p.recovered {
+			names = append(names, rk)
+			if _, exists := args[rk]; !exists {
+				args[rk] = rv
+			}
+		}
+		Debug("[llm] salvaged swallowed tool-call markup from arg %q (recovered params: %s)", p.key, strings.Join(names, ", "))
+	}
+}
+
+// parseSwallowedTail reports whether tail consists solely of tool-call
+// markup — zero or more <parameter=KEY>VALUE</parameter> chunks (the
+// last may be unclosed if the emission was truncated) followed by
+// optional </function> / </tool_call> wrapper closers — and returns the
+// parameters it carries. Any prose outside the markup fails the parse:
+// that's the guard that keeps salvage away from values which merely
+// talk about the format.
+func parseSwallowedTail(tail string) (map[string]any, bool) {
+	const (
+		pPrefix = "<parameter="
+		pClose  = "</parameter>"
+	)
+	body := strings.TrimSpace(tail)
+	// Wrapper closers come after the last parameter chunk; peel them
+	// off the end (outermost last) so the walk below only sees chunks.
+	for _, closer := range []string{"</tool_call>", "</function>"} {
+		body = strings.TrimSpace(strings.TrimSuffix(body, closer))
+	}
+	out := map[string]any{}
+	for body != "" {
+		if !strings.HasPrefix(body, pPrefix) {
+			return nil, false
+		}
+		body = body[len(pPrefix):]
+		gt := strings.IndexByte(body, '>')
+		if gt < 0 {
+			return nil, false
+		}
+		name := strings.TrimSpace(body[:gt])
+		if name == "" || strings.ContainsAny(name, " \t\n<") {
+			return nil, false
+		}
+		body = body[gt+1:]
+		var val string
+		if end := strings.Index(body, pClose); end >= 0 {
+			val = body[:end]
+			body = strings.TrimSpace(body[end+len(pClose):])
+		} else {
+			// Truncated emission — the stream ended before the close
+			// tag. The remainder is this parameter's value.
+			val = body
+			body = ""
+		}
+		out[name] = coerceSalvagedValue(strings.TrimSpace(val))
+	}
+	return out, true
+}
+
+// coerceSalvagedValue converts a salvaged parameter's raw text into the
+// type the JSON form would have carried: arrays, objects, and quoted
+// strings parse as JSON; bare booleans map to bool; everything else
+// stays a string (matching what the prompt-tools XML parser stores).
+func coerceSalvagedValue(s string) any {
+	if s == "" {
+		return s
+	}
+	if c := s[0]; c == '[' || c == '{' || c == '"' {
+		var v any
+		if json.Unmarshal([]byte(s), &v) == nil {
+			return v
+		}
+	}
+	if s == "true" {
+		return true
+	}
+	if s == "false" {
+		return false
+	}
+	return s
 }
 
 // cleanArg unwraps schema echoes but preserves native types.

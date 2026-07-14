@@ -264,6 +264,36 @@
     var chatPane = el('div', {class: 'ui-cw-chat'});
     var chatHdr  = el('div', {class: 'ui-cw-chat-h'});
     chatHdr.appendChild(el('span', {}, ['Chat']));
+
+    // Generic reference picker — when the host wires reference_sources_url,
+    // surface every registered reference source in one dropdown. The chosen
+    // item rides along with each chat POST as references ([{kind, item_id}]);
+    // the app's handler injects that source's text / tools into the model
+    // context. Domain-agnostic: core/ui knows only the shape. Same wire
+    // format as the ArticleEditor picker.
+    var selectedRef = null;
+    if (cfg.reference_sources_url) {
+      var refSelect = el('select', {class: 'ui-chat-mode', title: 'Ground replies in material gathered by another service',
+        onchange: function() {
+          var o = refSelect.options[refSelect.selectedIndex];
+          selectedRef = (o && o.value) ? {kind: o.getAttribute('data-kind'), item_id: o.value} : null;
+        }});
+      refSelect.appendChild(el('option', {value: ''}, ['Reference…']));
+      fetch(cfg.reference_sources_url, {credentials: 'same-origin'})
+        .then(function(r){ return r.json(); })
+        .then(function(groups) {
+          if (!groups || !groups.length) { refSelect.style.display = 'none'; return; }
+          groups.forEach(function(g) {
+            var og = el('optgroup', {label: g.label});
+            (g.items || []).forEach(function(it) {
+              og.appendChild(el('option', {value: it.id, 'data-kind': g.kind, title: it.desc || ''}, [it.name]));
+            });
+            refSelect.appendChild(og);
+          });
+        }).catch(function() { refSelect.style.display = 'none'; });
+      chatHdr.appendChild(refSelect);
+    }
+
     var chatClearBtn = el('button', {class: 'ui-row-btn', onclick: function(){ clearChat(); }}, ['Clear']);
     chatHdr.appendChild(chatClearBtn);
 
@@ -399,6 +429,7 @@
         code:    editor.value || '',
         context: ctxEditor.value || '',
         collections: pickedCollections(),
+        references: selectedRef ? [selectedRef] : [],
         message: text,
         mode:    mode,
         history: chatHistory.slice(0, -1),

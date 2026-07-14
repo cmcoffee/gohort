@@ -305,10 +305,20 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Reference context — knowledge gathered by other services (servitor
 	// systems, collections, …) that the user selected in the chat pane.
-	// Injected last so it sits closest to the user message.
+	// Injected last so it sits closest to the user message. Each attached
+	// item's own tools (search / facts / live investigate) also ride the
+	// chat so the LLM can dig deeper — or run a live investigation — when
+	// the cached picture doesn't answer.
+	var ref_tools []AgentToolDef
 	if len(req.References) > 0 {
 		if ref := FetchReferences(r.Context(), userID, req.Message, req.References); ref != "" {
 			system_prompt += "\n\n" + ref
+		}
+		for _, sel := range req.References {
+			ref_tools = append(ref_tools, ReferenceItemTools(userID, sel.Kind, sel.ItemID)...)
+		}
+		if len(ref_tools) > 0 {
+			system_prompt += "\n\nThe attached reference source also provides tools. Use them when the reference context above doesn't answer the question, or when the article needs the CURRENT state of the system — the investigate tool runs a live session when cached knowledge isn't enough."
 		}
 	}
 
@@ -402,7 +412,7 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	// through. Suggest-title already uses WORKER explicitly; this
 	// brings chat in line. Image generation is the only externally-
 	// reachable techwriter feature, opted into per click.
-	resp, err := T.AppCore.WorkerChat(chatCtx, messages,
+	resp, err := T.AppCore.WorkerChatWithTools(chatCtx, messages, ref_tools,
 		WithSystemPrompt(system_prompt),
 		WithRouteKey("app.techwriter"))
 	hbCancel()

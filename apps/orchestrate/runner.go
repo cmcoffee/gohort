@@ -4814,6 +4814,18 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},
 	})
+	// show_html — the viewer/previewer pane (preview_tool.go). Framework
+	// display tool, always available like compact_context: emits a generic
+	// html_artifact block the client renders in a slide-in side pane
+	// (authored HTML sandboxed, or a same-origin page preview by url), and
+	// upserts the artifact onto the session (UIBlocks) so it survives
+	// reload. No Caps — display-only, so it also survives private mode.
+	knowTools = append(knowTools, t.showHTMLToolDef())
+	// show_link — the navigation counterpart (preview_tool.go): a clickable
+	// link card in the transcript for "go here" moments — the app Builder
+	// just created, a settings page, an external console. Display-only
+	// like show_html, so it's ungated and always available.
+	knowTools = append(knowTools, t.showLinkToolDef())
 	// (skills + the memory layers now come from frameworkConversationalTools
 	// above; dispatch_to_worker stays unmounted — the LLM wasn't reaching for it
 	// reliably and the surface area diluted agent dispatch. Skills still
