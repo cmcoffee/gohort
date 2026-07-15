@@ -89,25 +89,47 @@ func digitsOnly(s string) string { return nonDigit.ReplaceAllString(s, "") }
 // gate targets. Comparison is on digits only, so a currency symbol, "%", a scale
 // word, or thousands separators never cause a spurious miss.
 func unsourcedFigures(answer, sourced string) []string {
-	var matches []string
-	for _, re := range figurePatterns {
-		matches = append(matches, re.FindAllString(answer, -1)...)
+	type fig struct {
+		text  string
+		start int
 	}
-	if len(matches) == 0 {
+	var figs []fig
+	for _, re := range figurePatterns {
+		for _, loc := range re.FindAllStringIndex(answer, -1) {
+			figs = append(figs, fig{answer[loc[0]:loc[1]], loc[0]})
+		}
+	}
+	if len(figs) == 0 {
 		return nil
 	}
 	sourcedDigits := digitsOnly(sourced)
 	seen := map[string]bool{}
 	var out []string
-	for _, m := range matches {
-		core := digitsOnly(m)
+	for _, f := range figs {
+		core := digitsOnly(f.text)
 		if len(core) < 2 {
 			continue
 		}
 		if strings.Contains(sourcedDigits, core) {
 			continue // the figure's digits appear in a real source
 		}
-		key := strings.TrimSpace(m)
+		// Skip PERCENT / MAGNITUDE figures the model already HEDGED ("about
+		// 80%", "~5%", "roughly a million"): an explicit estimate is the honest
+		// behavior the gate wants to encourage, not a fabrication to catch.
+		// MONEY is exempt — a hedged price ("about $300") is still a price the
+		// user may act on, so it stays gated. Only the short run of text right
+		// before the figure is inspected, so a hedge earlier in the sentence
+		// doesn't excuse a later precise claim.
+		if !figurePatterns[0].MatchString(f.text) {
+			lo := f.start - 28
+			if lo < 0 {
+				lo = 0
+			}
+			if figureHedgeRE.MatchString(answer[lo:f.start]) {
+				continue
+			}
+		}
+		key := strings.TrimSpace(f.text)
 		if seen[key] {
 			continue
 		}
@@ -116,6 +138,12 @@ func unsourcedFigures(answer, sourced string) []string {
 	}
 	return out
 }
+
+// figureHedgeRE matches an estimate marker sitting immediately before a figure
+// ("about ", "roughly ", "~", "up to ", "give or take "). When the model has
+// already flagged the number as approximate, that's the honest hedge the gate
+// wants to encourage, so the figure is left alone rather than re-prompted.
+var figureHedgeRE = regexp.MustCompile(`(?i)(?:about|around|roughly|approximately|approx\.?|nearly|almost|circa|up to|as (?:much|many) as|on the order of|order of|ballpark|give or take|somewhere (?:around|near|between)|~)\s*$`)
 
 // groundingCorpus concatenates every tool result and every user message in the
 // working history — the text the model was actually handed this conversation.

@@ -65,9 +65,21 @@ func TestUnsourcedFigures(t *testing.T) {
 		},
 		{
 			name:   "fabricated percentage is flagged",
-			answer: "Roughly 40% of users churn in month one.",
+			answer: "40% of users churn in month one.",
 			source: "",
 			want:   []string{"40%"},
+		},
+		{
+			name:   "hedged percentage is left alone (honest estimate)",
+			answer: "Roughly 40% churn, and about 15% never onboard.",
+			source: "",
+			want:   nil,
+		},
+		{
+			name:   "hedged money is still caught (a price is a price)",
+			answer: "A 24-port switch runs about $300.",
+			source: "",
+			want:   []string{"$300"},
 		},
 		{
 			name:   "sourced percentage is grounded",
