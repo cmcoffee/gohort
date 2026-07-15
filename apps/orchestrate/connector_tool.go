@@ -30,7 +30,7 @@ func connectorDefTool() ChatTool {
 	gt.SetSingleFirePerBatch(true)
 	gt.SetHelpPreamble(strings.TrimSpace(`
 A connector is a reusable "bridge type": a declared external capability that
-lives in one governed surface (Admin > Connectors). Two kinds ship:
+lives in one governed surface (Admin > Connectors). Five kinds ship:
 
   remote_mcp — a remote Model Context Protocol server. Many services publish one
   (calendars, ticketing, CRMs). Its tools register as <name>.<tool>. Created

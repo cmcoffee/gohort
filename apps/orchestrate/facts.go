@@ -1,4 +1,4 @@
-// store_fact / forget_fact / list_facts tools — the LLM-in-band
+// store_fact / forget_fact / search_facts tools — the LLM-in-band
 // memory layer for orchestrate agents. Flat-note model with dedup
 // at the save site (text normalize + semantic similarity); no key
 // dimension, so the LLM can't accidentally create duplicates by
@@ -29,11 +29,19 @@ func factsNamespace(agentID string) string {
 	return "agent:" + agentID
 }
 
+// factsBlockName is the header text (sans "## ") of the always-in-prompt
+// Explicit Memory block for this agent's memory mode, so tool descriptions
+// and results name the heading the model actually sees ("Lessons learned" /
+// "Saved notes" / "Shortcuts"), not a generic label that isn't there.
+func (t *chatTurn) factsBlockName() string {
+	return strings.TrimPrefix(memoryModeCopy(t.agent.MemoryMode).Header, "## ")
+}
+
 // storeFactToolDef lets the model record a discrete note it's
 // learned. Dedup is automatic — same or similar notes get folded
 // into the existing entry rather than accumulating.
 func (t *chatTurn) storeFactToolDef() AgentToolDef {
-	desc := "Record a SHORT note (Explicit Memory) that needs to be ACCOUNTED FOR EVERY TIME a new question is raised — instructions, preferences, durable user/context facts. Pre-injected into your system prompt on every future turn; the LLM sees them automatically without having to search.\n\n**Use store_fact when**: the note shapes how you should respond to ANY future question (user preferences, recurring constraints, identity facts, project context). Right examples: \"user prefers metric units\", \"all responses go to a vegetarian audience\", \"production API needs JWT in X-Auth header\".\n\n**Use memory_save instead when**: the finding is complicated reference material you MIGHT need to recall later for specific questions — API specs, website navigation steps, recipes, configuration details. Those are pull-only via memory_search, not always-in-prompt. If you're tempted to dump research findings into store_fact, use memory_save instead.\n\nThe framework dedupes automatically (same wording OR semantically similar = skipped). Quantity here costs prompt tokens forever (these inject on every turn), so keep total around a screen's worth.\n\nDistinct from `knowledge_search` (read-only over user-uploaded files) and `memory_search` (your own prior memory_save findings, pull-only)."
+	desc := "Record a SHORT note (Explicit Memory) that needs to be ACCOUNTED FOR EVERY TIME a new question is raised — instructions, preferences, durable user/context facts. Pre-injected into your system prompt on every future turn; the LLM sees them automatically without having to search.\n\n**Use store_fact when**: the note shapes how you should respond to ANY future question (user preferences, recurring constraints, identity facts, project context). Right examples: \"user prefers metric units\", \"all responses go to a vegetarian audience\", \"production API needs JWT in X-Auth header\".\n\n**Use memory(save) instead when**: the finding is complicated reference material you MIGHT need to recall later for specific questions — API specs, website navigation steps, recipes, configuration details. Those are pull-only via memory(search), not always-in-prompt. If you're tempted to dump research findings into store_fact, use memory(save) instead.\n\nThe framework dedupes automatically (same wording OR semantically similar = skipped). Quantity here costs prompt tokens forever (these inject on every turn), so keep total around a screen's worth.\n\nDistinct from `knowledge_search` (read-only over user-uploaded files) and `memory(search)` (your own prior memory(save) findings, pull-only)."
 	if suffix := memoryModeCopy(t.agent.MemoryMode).StoreToolSuffix; suffix != "" {
 		desc = desc + "\n\n" + suffix
 	}
@@ -84,7 +92,7 @@ func (t *chatTurn) storeFactNote(note string) (string, error) {
 	case FactRejected:
 		return "Not saved. That reads as a passing detail rather than a durable fact worth injecting into every future turn. If it's a lasting preference, identity fact, or standing instruction, rephrase it as one and try again.", nil
 	}
-	msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's \"Saved facts\" block.", res.Fact.Note)
+	msg := fmt.Sprintf("Stored: %q. Will appear in every future turn's %q block.", res.Fact.Note, t.factsBlockName())
 	if len(res.Superseded) > 0 {
 		dropped := make([]string, len(res.Superseded))
 		for i, s := range res.Superseded {
@@ -97,7 +105,7 @@ func (t *chatTurn) storeFactNote(note string) (string, error) {
 
 // forgetFactToolDef removes one fact by its 1-based index in the
 // rendered list. The LLM reads its numbered notes in the system
-// prompt's "Saved facts" block and references the matching index
+// prompt's always-in-prompt facts block and references the matching index
 // here, plus a verbatim quote from the note — the index alone can go
 // stale mid-turn (a store_fact can trigger supersession or a sweep
 // that shifts the list), and a stale index deletes the wrong note.
@@ -105,11 +113,11 @@ func (t *chatTurn) forgetFactToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget_fact",
-			Description: "Delete a previously-stored fact by its index in the \"Saved facts\" block in your system prompt. Use when a stored fact is OBSOLETE (no longer applies — user moved jobs, project changed names, preference flipped). Index is 1-based and matches the number you see in the prompt. ALWAYS also pass quote — a distinctive phrase copied verbatim from that note — so the right note is deleted even if the list shifted since you read it.",
+			Description: fmt.Sprintf("Delete a previously-stored fact by its index in the %q block in your system prompt. Use when a stored fact is OBSOLETE (no longer applies — user moved jobs, project changed names, preference flipped). Index is 1-based and matches the number you see in the prompt. ALWAYS also pass quote — a distinctive phrase copied verbatim from that note — so the right note is deleted even if the list shifted since you read it.", t.factsBlockName()),
 			Parameters: map[string]ToolParam{
 				"index": {
 					Type:        "integer",
-					Description: "1-based index of the note to delete, matching the number prefix in your \"Saved facts\" block.",
+					Description: fmt.Sprintf("1-based index of the note to delete, matching the number prefix in your %q block.", t.factsBlockName()),
 				},
 				"quote": {
 					Type:        "string",
@@ -143,7 +151,7 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "search_facts",
-			Description: "Search your stored Explicit Memory notes by meaning (\"what's the deploy header?\" finds \"production API needs JWT in X-Auth header\"), or omit the query to list every note. Returns numbered notes (1-based) matching the \"Saved facts\" block order for the full-list case. The always-in-prompt \"Saved facts\" block already shows recent notes; reach for this when that block has grown large and you want to pinpoint a specific note (e.g. before forget_fact) rather than re-reading the whole block.",
+			Description: fmt.Sprintf("Search your stored Explicit Memory notes by meaning (\"what's the deploy header?\" finds \"production API needs JWT in X-Auth header\"), or omit the query to list every note. Returns numbered notes (1-based) matching the %q block order for the full-list case. The always-in-prompt %q block already shows recent notes; reach for this when that block has grown large and you want to pinpoint a specific note (e.g. before forget_fact) rather than re-reading the whole block.", t.factsBlockName(), t.factsBlockName()),
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What to look for, in natural language. Omit or leave empty to list all stored notes."},
 			},

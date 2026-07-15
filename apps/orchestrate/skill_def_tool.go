@@ -5,8 +5,8 @@
 //
 // Actions: list (read), get (read one), create (upsert), delete,
 // help. Skills authored here land in the calling user's per-user
-// skill pool and become eligible for the global classifier to
-// activate on future turns.
+// skill pool; host agents activate them by reading the description
+// in their skill list (a trigger match adds a hint, nothing more).
 
 package orchestrate
 
@@ -26,29 +26,29 @@ type skillDefImpl struct{}
 
 func (skillDefImpl) Name() string { return "skill_def" }
 func (skillDefImpl) Desc() string {
-	return "Manage skills — saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a skill with description, triggers, instructions, optional allowed_tools), update (patch an existing skill — only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search) — so the description is the activation signal. Triggers, when set, are an optional deterministic fast-path (substring/glob match on the message/attachments) that injects a skill's instructions without the LLM deciding."
+	return "Manage skills — saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a skill with description, triggers, instructions, optional allowed_tools), update (patch an existing skill — only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search) — so the description is the activation signal. Triggers, when set, are an optional precision nudge (substring/glob match on the message/attachments): a match surfaces a 'likely relevant this turn' hint to the host LLM, which still decides whether to consult."
 }
 func (skillDefImpl) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"action": {Type: "string", Description: "list | get | create | update | delete | help"},
-		"name":   {Type: "string", Description: "(get / create / delete) Skill name. Human-readable; doubles as the lookup key for get / delete."},
+		"name":   {Type: "string", Description: "(get / create / update / delete) Skill name. Human-readable; doubles as the lookup key for get / update / delete."},
 		"description": {
 			Type:        "string",
-			Description: "(create) The activation cue: the host LLM reads this in its skill list and decides whether to consult the skill, so it's the primary activation signal. Write it as if completing \"Use when the user…\", naming the situations it should fire on. Specific descriptions get picked at the right time; generic ones get skipped or over-fire.",
+			Description: "(create / update) The activation cue: the host LLM reads this in its skill list and decides whether to consult the skill, so it's the primary activation signal. Write it as if completing \"Use when the user…\", naming the situations it should fire on. Specific descriptions get picked at the right time; generic ones get skipped or over-fire.",
 		},
 		"triggers": {
 			Type:        "array",
-			Description: "(create) Optional deterministic fast-path. Plain substrings, case-insensitive, matched against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match injects the skill's instructions WITHOUT the LLM deciding. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
+			Description: "(create / update) Optional precision nudge. Plain substrings, case-insensitive, matched against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match surfaces a 'likely relevant this turn' hint to the host LLM — it does NOT force injection; the LLM still decides. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"allowed_tools": {
 			Type:        "array",
-			Description: "(create) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill — it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that matches a source hook is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
+			Description: "(create / update) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill — it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that matches a source hook is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"attached_collections": {
 			Type:        "array",
-			Description: rewriteMemoryToolNames("(create) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list)."),
+			Description: rewriteMemoryToolNames("(create / update) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list)."),
 			Items:       &ToolParam{Type: "string"},
 		},
 		"create_collection": {
@@ -57,7 +57,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"instructions": {
 			Type:        "string",
-			Description: "(create) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance — \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
+			Description: "(create / update) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance — \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
 		},
 	}
 }
@@ -129,8 +129,8 @@ the host agent's prompt. The LLM reads that list and, when a skill's
 domain fits the task, consults it (read_skill / skill_knowledge_search)
 — activation is the model's call, and the description is what it judges
 against. If a skill has triggers, a substring/glob match on the message
-or an attachment filename ALSO injects its instructions deterministically
-(no LLM decision) — an optional precision fast-path, not a classifier.
+or an attachment filename surfaces a "likely relevant this turn" hint to
+the host LLM — a nudge toward consulting, not a forced injection.
 A consulted skill's BUNDLED tools (scripts snapshotted from allowed_tools at
 author time) join the catalog for that turn — its own executable code, callable
 without spending context tokens.
@@ -248,10 +248,6 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if hadPrior {
 		verb = "updated"
 	}
-	embedNote := ""
-	if len(saved.Embedding) == 0 {
-		embedNote = " (embedding unavailable — only trigger-match activation will fire until next re-save)"
-	}
 	collNote := ""
 	if mintedCollection != "" {
 		collNote = fmt.Sprintf(" Created and linked an empty knowledge collection %q Knowledge (id=%s) — it has no documents yet, so tell the user to populate it via the Knowledge surface (upload docs or Auto-fill) before the skill's knowledge_search returns anything.", saved.Name, mintedCollection)
@@ -260,7 +256,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if copiedTools > 0 {
 		toolNote = fmt.Sprintf(" Bundled %d tool(s) INTO the skill — they ship with it and become callable whenever the skill is consulted.", copiedTools)
 	}
-	return fmt.Sprintf("Skill %q %s%s.%s Active when triggers match OR the embedded description scores above 0.55 against the user message.%s", saved.Name, verb, embedNote, toolNote, collNote), nil
+	return fmt.Sprintf("Skill %q %s.%s Host agents activate it by reading its description in their skill list; a trigger match adds a \"likely relevant\" hint on matching turns.%s", saved.Name, verb, toolNote, collNote), nil
 }
 
 // autoCopySessionToolsForSkill snapshots any tool named in the skill's

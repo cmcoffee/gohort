@@ -561,7 +561,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		// accidentally publishing or rebranding itself.
 	}
 	if includeID {
-		params["id"] = ToolParam{Type: "string", Description: "Agent id (from list_agents)."}
+		params["id"] = ToolParam{Type: "string", Description: "Agent id (from agents(action=\"list\"))."}
 	}
 	return params
 }

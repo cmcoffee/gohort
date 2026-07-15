@@ -60,7 +60,7 @@ func (addToolTool) Desc() string {
 	if pipelineAuthoringDisabled {
 		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[…]) and attach it to the agent via attached_pipelines — it surfaces as a callable run_<pipeline> tool."
 	}
-	base += "\nRe-calling with the same name overwrites — that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call get_agent or create_agent first."
+	base += "\nRe-calling with the same name overwrites — that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call agents(action=\"get\") on the target agent or create_agent first."
 	return base
 }
 func (addToolTool) Params() map[string]ToolParam {
@@ -150,7 +150,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	// model clean.
 	focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)
 	if focusedID == "" {
-		return "", errors.New("add_tool: no agent in authoring focus — call get_agent (to modify an existing agent) or create_agent (to start a new one) first. The agent you act on becomes the implicit target for subsequent add_tool calls in this session")
+		return "", errors.New("add_tool: no agent in authoring focus — call agents(action=\"get\", ...) on the target agent (to modify an existing one) or create_agent (to start a new one) first. The agent you act on becomes the implicit target for subsequent add_tool calls in this session")
 	}
 	target, ok := loadAgent(sess.DB, focusedID)
 	if !ok {

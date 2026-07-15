@@ -114,7 +114,7 @@ func memLessonsLogPhrase() string { // the trio backing the per-user lessons log
 	if unifiedMemoryEnabled() {
 		return "remember (pin=true) / forget / recall"
 	}
-	return "store_fact / forget_fact / list_facts"
+	return "store_fact / forget_fact / search_facts"
 }
 
 func memRefMemToolsClause() string { // how the Reference-Memory layer is reached
@@ -691,9 +691,9 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget",
-			Description: "Delete something from your memory, by id or by search.\n\n  id — from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your \"Saved facts\" prompt block — then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query — no id in hand: deletes the findings matching the query (tightly capped, relevance-floored — same precision as recall). Use for \"drop what I saved about X\".\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.",
+			Description: fmt.Sprintf("Delete something from your memory, by id or by search.\n\n  id — from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your %q prompt block — then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query — no id in hand: deletes the findings matching the query (tightly capped, relevance-floored — same precision as recall). Use for \"drop what I saved about X\".\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.", t.factsBlockName()),
 			Parameters: map[string]ToolParam{
-				"id":    {Type: "string", Description: "The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your \"Saved facts\" block."},
+				"id":    {Type: "string", Description: fmt.Sprintf("The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your %q block.", t.factsBlockName())},
 				"quote": {Type: "string", Description: "With a bare-number id: a distinctive phrase copied verbatim from the note you're deleting, so the right note is dropped even if the numbered list shifted since you read it. Ignored for fact:/mem: ids (those are stable)."},
 				"query": {Type: "string", Description: "Without an id: natural-language description of the FINDINGS to delete. Only close matches above the relevance floor are removed, capped per call."},
 				"k":     {Type: "number", Description: "(query mode) max findings to delete in one call (default 3, hard-capped)."},

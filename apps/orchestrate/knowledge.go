@@ -1334,7 +1334,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "knowledge_search",
-			Description: "Search this agent's knowledge corpus (uploaded docs, attached collections, skill self-training). Returns hits with excerpts, source_doc, section, and a doc_id — pass the doc_id to `fetch_knowledge_doc` when an excerpt isn't enough. Below-floor matches are filtered; a 'no strong matches' result means the corpus has nothing confident, not license to speculate. Topic-scoped by default; pass explicit `topic` to query a different bucket. Distinct from `memory_search` (your own prior derived findings) and `list_facts` (Explicit Memory entries already in your prompt).",
+			Description: "Search this agent's knowledge corpus (uploaded docs, attached collections, skill self-training). Returns hits with excerpts, source_doc, section, and a doc_id — pass the doc_id to `fetch_knowledge_doc` when an excerpt isn't enough. Below-floor matches are filtered; a 'no strong matches' result means the corpus has nothing confident, not license to speculate. Topic-scoped by default; pass explicit `topic` to query a different bucket. Distinct from `memory(search)` (your own prior derived findings) and `search_facts` (Explicit Memory notes already in your prompt).",
 			Parameters: map[string]ToolParam{
 				"query": {
 					Type:        "string",
@@ -1386,7 +1386,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 				if dropped > 0 {
 					return fmt.Sprintf("No strong matches. Vector search returned %d chunk(s) but ALL scored below the relevance floor (%.2f) — they would have pulled tangentially-related content (different topic, surface-word matches only) into your context. Do NOT speculate from absent results. Either rephrase the query, widen by passing topic=\"\", or proceed without prior context and acknowledge that the Knowledge layer didn't have a confident answer.", dropped, manualSearchMinScore), nil
 				}
-				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that — try memory_search for the agent's own derived findings, or proceed without prior context.", nil
+				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that — try " + memRecallPhrase() + " for the agent's own derived findings, or proceed without prior context.", nil
 			}
 			// Mirror web_search's shape: "N. Title\n   URL\n   Snippet"
 			// blocks separated by blank lines. Plain text, no markdown
