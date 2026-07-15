@@ -643,15 +643,16 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// without em-dashes (house style).
 		systemPrompt += "\n\n[Disagreeing with the user: your training is not sufficient grounds to tell the user they are wrong. When they state or assume a fact and you think it is mistaken, treat your own prior knowledge as possibly stale or incomplete. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it (no tool fits, the tool fails or returns empty, or you are offline), do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask a clarifying question. This is about EMPIRICAL claims (dates, numbers, who or what or when, current state, how something works, what is true now). Reasoning, logic, math you can show step by step, and the user's own stated preferences you can still engage with directly and decisively. Do not manufacture a confident contradiction from priors; ground the disagreement or hold it as uncertain until you can.]"
 		systemPrompt += "\n\n[Numbers: when you state a figure, price, count, or measurement from a source, reproduce it exactly as written, keep its unit or currency attached, and keep it bound to the specific thing it describes (which item, which date, which place) so you never swap two values that appeared in the same source. Do not perform multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: if a calculation matters, show the steps so it can be checked, or use a tool. If two sources disagree on a number, say so rather than silently picking one. Prices and other time-sensitive figures go stale: when you quote a price, make sure it is current, note when it was observed if the source says, and never present an old or cached figure as today's price — if you cannot confirm it is current, say so or re-check rather than stating it as fact.]"
-		// False-precision prevention — emitted only when the grounding gate is
-		// on, since that's the deployment feeling its re-prompts. Most gate hits
-		// are the model inventing a percentage / fraction / dollar figure for
-		// rhetorical weight, not stating a real data point; stopping that at the
-		// source cuts the re-prompt volume at zero per-turn cost. Paired with the
-		// gate's hedge-aware skip so an honest "about 80%" is left alone.
-		if GroundingGateEnabled() {
-			systemPrompt += "\n\n[No false precision: do NOT manufacture a number for emphasis or to sound authoritative. If you do not have a real, sourced figure, do not invent a percentage, fraction, or dollar amount to stand in for one: say \"most\", \"a lot\", \"roughly half\", \"the majority\", \"a few thousand\", or describe the size in plain words. An invented \"80%\" or \"$5,000\" reads as precise and is worse than an honest \"most\" or \"a few thousand\". This is about figures conjured for rhetorical weight; a genuinely sourced number, stated exactly, is exactly right, and hedged estimates (\"about half\", \"roughly a third\") are fine.]"
-		}
+		// False-precision prevention — always on for tool-using agents,
+		// INDEPENDENT of the grounding gate. It's the behavioral half of the same
+		// concern the [Numbers] / [Grounding] blocks address: stop the model
+		// inventing a percentage / fraction / dollar figure for rhetorical weight.
+		// Kept decoupled from tune_grounding_gate so a deployment can run the
+		// prompt discipline WITHOUT the mechanical re-prompt gate — the gate's
+		// verbatim-corpus match can't tell a correctly COMPUTED figure ("$120
+		// over MSRP") from a fabricated one, so the prompt is the better default
+		// and the gate stays opt-in for anyone who wants the harder backstop.
+		systemPrompt += "\n\n[No false precision: do NOT manufacture a number for emphasis or to sound authoritative. If you do not have a real, sourced figure, do not invent a percentage, fraction, or dollar amount to stand in for one: say \"most\", \"a lot\", \"roughly half\", \"the majority\", \"a few thousand\", or describe the size in plain words. An invented \"80%\" or \"$5,000\" reads as precise and is worse than an honest \"most\" or \"a few thousand\". This is about figures conjured for rhetorical weight; a genuinely sourced number stated exactly is right, arithmetic you actually did on sourced numbers is right (show it), and hedged estimates (\"about half\", \"roughly a third\") are fine.]"
 		// Volatile facts — a blunt, standalone restatement of the Grounding rule
 		// aimed at the specifics the worker keeps fabricating. Already covered
 		// inside Grounding + Capability-first + Numbers, but buried in long
