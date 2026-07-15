@@ -375,6 +375,61 @@ func ScheduleEventMonitor(db Database, m EventMonitor) error {
 	return nil
 }
 
+// eventRearmGrace is how stale a NextCheck must be before the reconciler treats
+// a taskless active monitor as stranded rather than mid-tick or mid-create. A
+// poll's LLM checker can run for a minute or two; this stays comfortably above
+// that (a tick holds no queued task while it runs) and below any real cadence.
+const eventRearmGrace = 15 * time.Minute
+
+// RearmStrandedEventMonitors reschedules active (non-paused) scheduled monitors
+// that have no live poll task — the "tick fired, but the re-arm never
+// completed" state that freezes NextCheck and silently kills the monitor. It is
+// the ongoing (reconciler) counterpart to the one-shot boot self-heal in
+// StartEventMonitorScheduler, and mirrors RearmStrandedStandingAgents: it
+// re-arms ONLY stranded monitors, leaving healthy ones (which already hold a
+// live task) on their own cadence. Missed checks are not backfilled; each is
+// rescheduled from now. Returns the count revived.
+func RearmStrandedEventMonitors(db Database) int {
+	if db == nil {
+		return 0
+	}
+	live := map[string]bool{}
+	for _, t := range ListScheduledTasks(eventPollKind) {
+		var p eventPollPayload
+		if json.Unmarshal(t.Payload, &p) == nil {
+			live[p.Owner+":"+p.Name] = true
+		}
+	}
+	now := time.Now()
+	revived := 0
+	for _, k := range db.Keys(eventMonitorsTable) {
+		var m EventMonitor
+		if !db.Get(eventMonitorsTable, k, &m) {
+			continue
+		}
+		if m.Paused || !isScheduledKind(m.Kind) || live[m.Owner+":"+m.Name] {
+			continue
+		}
+		// Future or only-just-passed NextCheck: leave it to the normal path so
+		// we never cancel an imminent legitimate tick.
+		if !m.NextCheck.IsZero() && !m.NextCheck.Before(now.Add(-eventRearmGrace)) {
+			continue
+		}
+		frozen := m.NextCheck
+		if err := ScheduleEventMonitor(db, m); err != nil {
+			Log("[event] re-arm failed for %s/%s: %v", m.Owner, m.Name, err)
+			continue
+		}
+		revived++
+		Log("[event] re-armed stranded monitor %s/%s (NextCheck was frozen at %s)",
+			m.Owner, m.Name, frozen.Format(time.RFC3339))
+	}
+	if revived > 0 {
+		Log("[event] reconciler revived %d stranded monitor(s)", revived)
+	}
+	return revived
+}
+
 // RunEventMonitorNow fires a one-off poll check immediately (async), without
 // disturbing the recurring cadence. Webhook monitors have nothing to poll.
 func RunEventMonitorNow(db Database, owner, name string) error {
@@ -396,6 +451,17 @@ func StartEventMonitorScheduler() {
 	}
 	eventStarted = true
 	eventMu.Unlock()
+
+	// Ongoing self-heal, symmetric with standing agents: the boot pass below
+	// revives stranded monitors once at startup, but a monitor that strands
+	// while running (a tick that dies before its deferred re-arm) would sit
+	// dead until the next restart. This reconciler runs at scheduler start AND
+	// every 30 minutes, re-arming only genuinely stranded monitors so healthy
+	// ones keep their own cadence untouched.
+	RegisterReconciler("event_monitor_rearm", func(ctx context.Context) error {
+		RearmStrandedEventMonitors(RootDB)
+		return nil
+	})
 
 	RegisterScheduleHandler(eventPollKind, func(ctx context.Context, raw json.RawMessage) {
 		var p eventPollPayload
