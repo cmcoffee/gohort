@@ -32,6 +32,43 @@ func canonicalToolName(name string) string {
 	return name
 }
 
+// localChatTime reformats a message timestamp into the deployment's LOCAL zone
+// — the same zone the model sees in the [Current date & time] stamp — and
+// appends a coarse relative age. The bridge stores timestamps as RFC3339 UTC
+// ("2026-07-15T02:00:30Z"); handing those to the model alongside a local
+// current-time stamp forces it to convert UTC in its head, and a worker LLM is
+// bad at that ("an hour ago" when it was six). Rendering local + "(5h ago)"
+// removes the conversion entirely. Unparseable input is returned unchanged so a
+// timestamp is never silently dropped.
+func localChatTime(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	return t.Local().Format("Jan 2 3:04 PM MST") + " (" + relativeAge(time.Now(), t) + ")"
+}
+
+// relativeAge renders now-then as a short human span ("just now", "20m ago",
+// "5h ago", "3d ago"). A negative span (clock skew / future stamp) reads as
+// "just now" rather than a confusing negative.
+func relativeAge(now, then time.Time) string {
+	d := now.Sub(then)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
 // channelChatTools builds the CHANNEL-SCOPED messaging tools for an agent that
 // has channels — list_chats / read_chat / send_message. Scope is the agent's
 // bound channels: a whole-service binding (Address=="") widens to every thread
@@ -119,7 +156,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 					}
 					fmt.Fprintf(&b, " [%s, chat_id: %s]", ServiceDisplayName(t.Service), t.ChatID)
 					if t.LastAt != "" {
-						fmt.Fprintf(&b, " last %s", t.LastAt)
+						fmt.Fprintf(&b, " last %s", localChatTime(t.LastAt))
 					}
 					b.WriteString("\n")
 				}
@@ -182,7 +219,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 					}
 					ts := ""
 					if m.Timestamp != "" {
-						ts = "[" + m.Timestamp + "] "
+						ts = "[" + localChatTime(m.Timestamp) + "] "
 					}
 					fmt.Fprintf(&b, "%s%s: %s\n", ts, who, m.Text)
 				}
