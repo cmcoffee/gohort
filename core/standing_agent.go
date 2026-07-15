@@ -169,6 +169,63 @@ func DeleteStandingAgent(db Database, owner, name string) {
 
 // --- schedule + run ----------------------------------------------------------
 
+// standingRearmGrace is how stale a NextRun must be before the reconciler
+// treats a taskless active agent as stranded, rather than one that's just
+// mid-fire or mid-create. Comfortably above fire+re-arm latency (milliseconds)
+// and below any real schedule cadence.
+const standingRearmGrace = 10 * time.Minute
+
+// RearmStrandedStandingAgents reschedules active (non-paused) standing agents
+// that have no live scheduler task — the "fired, but the re-arm never
+// completed" state that freezes NextRun and silently kills the schedule (a
+// restart or panic between task-consumption and reschedule, or a binary that
+// predated the deferred re-arm). Each is rescheduled from now, advancing
+// NextRun to the next FUTURE occurrence; missed runs are not backfilled.
+// Returns the number revived. Safe to call repeatedly: it skips any agent that
+// already has a live task or whose next fire is imminent.
+func RearmStrandedStandingAgents(db Database) int {
+	if db == nil {
+		return 0
+	}
+	// Which schedules currently have a live task queued.
+	live := map[string]bool{}
+	for _, t := range ListScheduledTasks(standingRunKind) {
+		var p standingRunPayload
+		if json.Unmarshal(t.Payload, &p) == nil {
+			live[standingKey(p.Owner, p.Name)] = true
+		}
+	}
+	now := time.Now()
+	revived := 0
+	for _, k := range db.Keys(standingAgentsTable) {
+		var sa StandingAgent
+		if !db.Get(standingAgentsTable, k, &sa) {
+			continue
+		}
+		if sa.Paused || live[standingKey(sa.Owner, sa.Name)] {
+			continue
+		}
+		// Leave future or only-just-passed fires to the normal path — re-arming
+		// there could skip an imminent legitimate fire. Only a NextRun that's
+		// zero (never scheduled) or well in the past is genuinely stranded.
+		if !sa.NextRun.IsZero() && !sa.NextRun.Before(now.Add(-standingRearmGrace)) {
+			continue
+		}
+		frozen := sa.NextRun
+		if err := ScheduleStandingAgent(db, sa); err != nil {
+			Log("[standing] re-arm failed for %s/%s: %v", sa.Owner, sa.Name, err)
+			continue
+		}
+		revived++
+		Log("[standing] re-armed stranded schedule %s/%s (NextRun was frozen at %s)",
+			sa.Owner, sa.Name, frozen.Format(time.RFC3339))
+	}
+	if revived > 0 {
+		Log("[standing] reconciler revived %d stranded schedule(s)", revived)
+	}
+	return revived
+}
+
 // ScheduleStandingAgent (re)schedules the recurring task for a standing
 // agent: it cancels any existing task and creates the next cron occurrence,
 // storing the new task id and next-run time back on the record. Use on
@@ -271,6 +328,17 @@ func StartStandingScheduler() {
 	}
 	standingStarted = true
 	standingMu.Unlock()
+
+	// Self-heal stranded schedules. Reconcilers run once when the scheduler
+	// loop starts (revives anything that stranded before a restart) and every
+	// 30 minutes (revives anything that strands while running). This closes the
+	// "active but NextRun frozen, no live task" hole that the per-fire deferred
+	// re-arm can't cover, because that hole opens precisely when a fire dies
+	// BEFORE its re-arm (restart or panic mid-fire, or an older binary).
+	RegisterReconciler("standing_rearm", func(ctx context.Context) error {
+		RearmStrandedStandingAgents(RootDB)
+		return nil
+	})
 
 	RegisterScheduleHandler(standingRunKind, func(ctx context.Context, raw json.RawMessage) {
 		var p standingRunPayload
