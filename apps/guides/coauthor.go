@@ -150,13 +150,22 @@ func (T *Guides) coauthorTools(udb Database, orch *orchestrate.OrchestrateApp, u
 			}
 			// Deterministic grounded write: a single lead-LLM completion (no tools),
 			// strictly bounded to the gathered material.
-			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown — sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title)
+			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown — sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule
 			brief := instr
 			if brief == "" {
 				brief = "(no extra instructions — cover the topic from the material)"
 			}
 			userMsg := fmt.Sprintf("Section title: %s\n\nWhat to cover:\n%s\n\nGrounding material gathered from this guide's knowledge collections and attached Sources — write the section from THIS and nothing else:\n\n%s", title, brief, grounding)
-			resp, err := T.LeadChat(context.Background(), []Message{{Role: "user", Content: userMsg}}, WithSystemPrompt(sys), WithTemperature(0.3), WithThink(false))
+			// A Private guide's "stays off the wire" guarantee covers this
+			// completion too: the gathered grounding can carry servitor facts
+			// and private-collection text, so it must never reach the remote
+			// lead. The chat turn enforces this via ForcePrivate; this direct
+			// call has to make the same choice itself.
+			chat := T.LeadChat
+			if g.Private {
+				chat = T.WorkerChat
+			}
+			resp, err := chat(context.Background(), []Message{{Role: "user", Content: userMsg}}, WithSystemPrompt(sys), WithTemperature(0.3), WithThink(false))
 			if err != nil {
 				return "", fmt.Errorf("draft failed: %w", err)
 			}

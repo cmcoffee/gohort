@@ -345,7 +345,7 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	messages = append(messages, Message{
 		Role:    "user",
-		Content: fmt.Sprintf(`Today is %s.\n\n%s%s`, today, req.Message, article_context),
+		Content: fmt.Sprintf("Today is %s.\n\n%s%s", today, req.Message, article_context),
 	})
 	// Detach from r.Context() so that an upstream proxy or browser-fetch
 	// abort can't kill the LLM call mid-flight. Articles + history can
@@ -998,7 +998,10 @@ The merged article must preserve all important facts, data, and claims from both
 		article += "\n" + merged_sources
 	}
 
-	result := map[string]string{"content": article}
+	// The editor client only applies a merge when the response declares
+	// type=article — without it, merged output falls into the
+	// "conversational text" branch and is silently never applied.
+	result := map[string]string{"type": "article", "content": article}
 	if title != "" {
 		result["title"] = title
 	}

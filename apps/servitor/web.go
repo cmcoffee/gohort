@@ -4710,9 +4710,15 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if len(rawFindings) > 24000 {
 				rawFindings = rawFindings[:24000] + "\n... [truncated]"
 			}
-			verifyPrompt := "You are a fact-checker. Your only job is to verify that every specific identifier in a response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, and version strings — appears character-for-character in the raw worker findings below.\n\n" +
-				"If all identifiers match exactly: respond with only the word OK.\n\n" +
-				"If any identifier was altered (even one character — wrong underscore, wrong prefix, wrong suffix, wrong capitalization): respond with the corrected version of the full response, with all incorrect identifiers replaced by the exact strings from the findings. Do not change anything else.\n\n" +
+			// Targeted find/replace pairs instead of "regenerate the whole
+			// response": the old shape accepted ANY differing output as the
+			// corrected answer, so a 27B that reformatted prose (or invented
+			// a "fix") silently replaced a correct reply. Now the model can
+			// only name identifier swaps, each one is verified against the
+			// findings before applying, and a malformed verdict changes
+			// nothing.
+			verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings — that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
+				"Respond with ONLY a JSON array of corrections, each {\"wrong\": \"<exact string copied from the response>\", \"right\": \"<exact string copied from the findings>\"}. If every identifier matches exactly, respond with [].\n\n" +
 				"## Raw Worker Findings\n\n" + rawFindings
 			verifyResp, verifyErr := a.WorkerChat(ctx,
 				[]Message{
@@ -4723,10 +4729,29 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				WithThink(false),
 			)
 			if verifyErr == nil && verifyResp != nil {
-				corrected := strings.TrimSpace(verifyResp.Content)
-				if corrected != "OK" && corrected != "" && corrected != reply {
-					Debug("[servitor] verification corrected reply")
-					reply = corrected
+				var pairs []struct {
+					Wrong string `json:"wrong"`
+					Right string `json:"right"`
+				}
+				if derr := DecodeJSON(verifyResp.Content, &pairs); derr == nil {
+					applied := 0
+					for i, p := range pairs {
+						if i >= 20 {
+							break // runaway verdicts are noise, not corrections
+						}
+						// Both sides must check out: the wrong string has to
+						// actually be in the reply, and the replacement has to
+						// exist verbatim in the findings (no invented fixes).
+						if p.Wrong == "" || p.Wrong == p.Right ||
+							!strings.Contains(reply, p.Wrong) || !strings.Contains(rawFindings, p.Right) {
+							continue
+						}
+						reply = strings.ReplaceAll(reply, p.Wrong, p.Right)
+						applied++
+					}
+					if applied > 0 {
+						Debug("[servitor] verification corrected %d identifier(s)", applied)
+					}
 				}
 			}
 		}

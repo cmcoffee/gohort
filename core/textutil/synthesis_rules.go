@@ -1,15 +1,18 @@
 package textutil
 
 // BannedWordsRule is applied to LLM stages so AI-tell words never
-// appear in output.
+// appear in output. Written WITHOUT em-dashes: a rule that bans the
+// character must not model it.
 const BannedWordsRule = `
-BANNED WORDS — NEVER USE THESE:
-- "demonstrably" — state the evidence and let the reader judge
-- "underscores" / "highlights" / "reflects" — name the relationship directly
-- "it's worth noting" / "notably" — if it's worth noting, just state it
-- "landscape" (as metaphor) — say "market", "field", "situation", or be specific
-- "leverage" (as verb) — say "use"
-- "delve" / "delve into" — say "examine" or just do it
+BANNED WORDS AND MARKS, NEVER USE THESE:
+- the em-dash character (U+2014): where you would reach for one, use a comma, parentheses, a colon, or two sentences
+- "classic" as a generic intensifier for something ordinary: drop it unless literally accurate (a "classic car", a named "classic" edition)
+- "demonstrably": state the evidence and let the reader judge
+- "underscores" / "highlights" / "reflects": name the relationship directly
+- "it's worth noting" / "notably": if it's worth noting, just state it
+- "landscape" (as metaphor): say "market", "field", "situation", or be specific
+- "leverage" (as verb): say "use"
+- "delve" / "delve into": say "examine" or just do it
 `
 
 // TimeAwarenessRule guards against stale projections in LLM output.
@@ -18,5 +21,5 @@ TIME AWARENESS:
 - Check today's date at the top of this prompt. If a source says something "is forecast" or "will reach $X by YEAR" and YEAR has already passed, DO NOT repeat that phrasing. Rewrite in past tense ("was projected to reach", "earlier forecasts anticipated") or find a more current figure from another source.
 - Never present past-dated projections as if they were still future. "Will reach $1.5 trillion in 2025" written in 2026 is a tell that you copied from stale source material without checking the date.
 - For genuinely future years (current year + 1 or later), future tense is fine.
-- If a forecast period is more than 1 year in the past and no actual result is given, the figure is stale — soften the claim or omit it.
+- If a forecast period is more than 1 year in the past and no actual result is given, the figure is stale: soften the claim or omit it.
 ` + BannedWordsRule
