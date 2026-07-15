@@ -225,10 +225,14 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	// ride the chat so the LLM can search deeper or run a live
 	// investigation when the cached picture doesn't answer.
 	var ref_tools []AgentToolDef
+	var ref_context string
 	if len(req.References) > 0 {
 		if uid := AuthCurrentUser(r); uid != "" {
+			// Rides the current user message, not the system prompt — the
+			// retrieved text changes per query, and a per-turn system prompt
+			// re-prefills the whole thread on the worker every turn.
 			if ref := FetchReferences(r.Context(), uid, req.Message, req.References); ref != "" {
-				system_prompt += "\n\n" + ref
+				ref_context = "\n\n" + ref
 			}
 			for _, sel := range req.References {
 				ref_tools = append(ref_tools, ReferenceItemTools(uid, sel.Kind, sel.ItemID)...)
@@ -260,7 +264,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 		messages = append(messages, Message{Role: role, Content: h.Content})
 	}
-	messages = append(messages, Message{Role: "user", Content: prompt})
+	messages = append(messages, Message{Role: "user", Content: prompt + ref_context})
 
 	resp, err := agent.LeadChatWithTools(r.Context(), messages, ref_tools,
 		WithSystemPrompt(system_prompt), WithRouteKey("app.codewriter"))
@@ -735,7 +739,7 @@ func (T *CodeWriterAgent) handleSuggestName(w http.ResponseWriter, r *http.Reque
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), []Message{
 		{Role: "user", Content: fmt.Sprintf("Suggest a concise snake_case filename (max 5 words, no extension) for this %s script:\n\n```\n%s\n```", lang, preview)},
-	}, WithSystemPrompt("Reply with ONLY the name in snake_case. No extension. No quotes."), WithMaxTokens(16), WithThink(false))
+	}, WithSystemPrompt("Reply with ONLY the name in snake_case. No extension. No quotes."), WithMaxTokens(304), WorkerJudgeThink())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

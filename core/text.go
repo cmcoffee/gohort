@@ -216,18 +216,50 @@ func HeadingAnchor(s string) string {
 }
 
 // scanHeadingSlugs walks the input markdown once and assigns each
-// heading the canonical GitHub-flavored slug (lowercase, alphanumerics
-// preserved, all other chars become dashes, consecutive dashes
-// collapsed, leading/trailing dashes trimmed). Duplicates get a
-// "-N" disambiguator in document order — same as GitHub.
+// heading its renderer slug via HeadingAnchor (lowercase, spaces to
+// dashes, other punctuation dropped — consecutive dashes are KEPT, so
+// "A & B" slugs to "a--b"). Duplicates get a "-N" disambiguator in
+// document order — same as GitHub.
 //
-// This is the slug algorithm the LLM is told to use in the system
-// prompt, so a `[Section](#slug)` link the LLM writes lands on the
-// correctly-slugged heading without any post-process matching layer.
+// Prompts no longer teach this algorithm to the LLM: writer apps run
+// NormalizeHeadingLinks over article output, which recomputes every
+// internal anchor from its link text, so the model only has to copy
+// heading text exactly.
 type headingSlug struct {
 	Text string // cleaned heading text (no inline markdown)
 	Slug string // GitHub-style slug
 }
+
+// NormalizeHeadingLinks rewrites internal anchor links ([text](#anchor)) so
+// each anchor is the id the renderer actually assigns to the heading whose
+// text matches the link text. LLMs copy heading TEXT reliably but drift on
+// slug edge cases (punctuation, double dashes), so the link text is the
+// trusted signal and the anchor is recomputed from it. Links whose text
+// matches no heading — external anchors, hand-written ids — pass through
+// untouched. Lets prompts stop teaching a character-level slug algorithm.
+func NormalizeHeadingLinks(md string) string {
+	headings := scanHeadingSlugs(md)
+	if len(headings) == 0 {
+		return md
+	}
+	byText := make(map[string]string, len(headings))
+	for _, h := range headings {
+		byText[strings.ToLower(h.Text)] = h.Slug
+	}
+	return internalAnchorLinkRe.ReplaceAllStringFunc(md, func(link string) string {
+		m := internalAnchorLinkRe.FindStringSubmatch(link)
+		if m == nil {
+			return link
+		}
+		text := strings.TrimSpace(m[1])
+		if slug, ok := byText[strings.ToLower(text)]; ok {
+			return "[" + m[1] + "](#" + slug + ")"
+		}
+		return link
+	})
+}
+
+var internalAnchorLinkRe = regexp.MustCompile(`\[([^\]\n]+)\]\(#[^)\n]*\)`)
 
 func scanHeadingSlugs(md string) []headingSlug {
 	stripInline := regexp.MustCompile("[`*]")

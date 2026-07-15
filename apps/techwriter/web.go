@@ -32,29 +32,13 @@ FORMATTING RULES:
 - One idea per sentence. Do not chain multiple instructions with "and" or "then" in a single sentence.
 - Use line breaks between distinct steps or concepts. Dense paragraphs are harder to scan than spaced-out steps.
 - SECTION HEADINGS: Number every ## heading. Format is "## N. Section Title" — for example "## 1. Setup", "## 2. Configuration", "## 3. Deployment Steps". Start at 1 and increment by 1. Sub-sections (### …) and special sections (## Sources, ## References) are NOT numbered.
-- TABLE OF CONTENTS: After the introductory paragraph (and before "## 1. ..."), write a "## Table of Contents" section as a bulleted list of markdown anchor links — one bullet per numbered ## heading. Use the slug rules below. Do NOT include sub-sections or special sections (Sources, References).
-- ANCHOR SLUG ALGORITHM (standard GitHub-flavored markdown — use this exactly for both the TOC and any cross-reference link). Given the FULL heading text after "## ":
-  1. Lowercase.
-  2. Replace each space with a single dash.
-  3. Drop every character that is NOT a-z, 0-9, dash, or underscore.
-  4. Do NOT collapse consecutive dashes. Do NOT trim leading/trailing dashes.
-  Worked examples:
-    "1. Setup"                       → slug: 1-setup
-    "2. Distribution & Version"      → slug: 2-distribution--version    (yes, double dash — space-amp-space)
-    "3. API Keys (sensitive)"        → slug: 3-api-keys-sensitive
-    "4. Configuration: Secrets"      → slug: 4-configuration-secrets
-  TOC entry: "- [1. Setup](#1-setup)" / "- [2. Distribution & Version](#2-distribution--version)"
-- IN-PROSE CROSS-REFERENCES: link by full heading text using the same slug: "See [4. Rollback](#4-rollback) if something goes wrong." Do not say "see below" or "see the section above" — link directly by section title.
+- TABLE OF CONTENTS: After the introductory paragraph (and before "## 1. ..."), write a "## Table of Contents" section as a bulleted list of markdown anchor links — one bullet per numbered ## heading. Do NOT include sub-sections or special sections (Sources, References).
+- ANCHOR LINKS (TOC entries and cross-references): what matters is the LINK TEXT — copy the heading's full text EXACTLY (e.g. "- [2. Distribution & Version](#2-distribution-version)"). Write your best guess at the anchor after the #; the server recomputes every internal anchor from the link text, so an exact text match always produces a working link and slug fine print is not your problem.
+- IN-PROSE CROSS-REFERENCES: link by full heading text: "See [4. Rollback](#4-rollback) if something goes wrong." Do not say "see below" or "see the section above" — link directly by section title.
 
 IMPORTANT: If the article contains source citations like [1], [2], [N] or a ## Sources section, preserve ALL citations exactly as they appear. Keep every [N] reference in the text and keep the Sources section intact.
 
-ASCII DIAGRAMS — straighten any lines that drift. When the article contains an ASCII diagram (architecture, flow, network topology, etc.), inspect every line of it BEFORE returning your output and fix any line that deviates without reason:
-- Vertical lines (|) must hold the same column from top to bottom. If a "|" character shifts left or right between rows for no semantic reason (it's not a branch, not a corner), realign it to the column its neighbors use.
-- Horizontal lines (-, =) must be continuous within their span. No stray gaps in the middle of a line, no extra dashes that overshoot a corner.
-- Corner / junction characters (+, T, └, ┘, ├, ┤, etc.) must sit at the actual intersection. A "+" floating one column off where the lines meet is a defect — move it.
-- Box widths must be consistent. If a box has 20 dashes on its top edge and 18 on its bottom, the bottom is wrong (or the top is) — pad whichever is shorter.
-- Whitespace inside a box must not change column counts mid-flow. Padding spaces should be uniform so labels left-align with their box edges.
-Treat a wobbly diagram as a bug. The diagram represents a precise relationship; if the rendering doesn't, fix it. Use a fixed-width font mental model — every character is one column, every row is one line. Apply the diagram fix as part of normal "process this article" / rewrite flows; do not announce it, just deliver clean output.
+ASCII DIAGRAMS: when the article contains one (architecture, flow, topology), keep it aligned as you rewrite — vertical bars hold their column, box edges match in width, junction characters sit at the actual intersections. Treat a wobbly diagram as a bug and deliver it fixed, without announcing the fix.
 
 RENDERER CAPABILITIES (what survives the markdown → HTML export):
 The export pipeline supports a defined subset of markdown. Stick to it — anything outside this list will be rendered as plain text or stripped.
@@ -305,14 +289,17 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Reference context — knowledge gathered by other services (servitor
 	// systems, collections, …) that the user selected in the chat pane.
-	// Injected last so it sits closest to the user message. Each attached
+	// Rides the CURRENT USER MESSAGE, not the system prompt: the retrieved
+	// text changes with every query, and a per-turn system prompt re-prefills
+	// the whole conversation on the llama.cpp worker each turn. Each attached
 	// item's own tools (search / facts / live investigate) also ride the
 	// chat so the LLM can dig deeper — or run a live investigation — when
 	// the cached picture doesn't answer.
 	var ref_tools []AgentToolDef
+	var ref_context string
 	if len(req.References) > 0 {
 		if ref := FetchReferences(r.Context(), userID, req.Message, req.References); ref != "" {
-			system_prompt += "\n\n" + ref
+			ref_context = "\n\n" + ref
 		}
 		for _, sel := range req.References {
 			ref_tools = append(ref_tools, ReferenceItemTools(userID, sel.Kind, sel.ItemID)...)
@@ -345,7 +332,7 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	messages = append(messages, Message{
 		Role:    "user",
-		Content: fmt.Sprintf("Today is %s.\n\n%s%s", today, req.Message, article_context),
+		Content: fmt.Sprintf("Today is %s.\n\n%s%s%s", today, req.Message, article_context, ref_context),
 	})
 	// Detach from r.Context() so that an upstream proxy or browser-fetch
 	// abort can't kill the LLM call mid-flight. Articles + history can
@@ -447,6 +434,9 @@ func (T *TechWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 		if preserved_sources != "" {
 			article += "\n" + preserved_sources
 		}
+		// The server owns anchor slugs — TOC/cross-reference links are
+		// recomputed from their link text so LLM slug drift can't break them.
+		article = NormalizeHeadingLinks(article)
 		json.NewEncoder(w).Encode(map[string]string{"type": "article", "content": article})
 	} else {
 		// If chatOnly and the LLM ignored the rule and prefixed ARTICLE:
@@ -794,7 +784,7 @@ func (T *TechWriterAgent) handleSuggestTitle(w http.ResponseWriter, r *http.Requ
 	session := agent.CreateSession(WORKER)
 	resp, err := session.Chat(r.Context(), []Message{
 		{Role: "user", Content: "Suggest a concise title (max 8 words) for this article:\n\n" + preview},
-	}, WithSystemPrompt("Reply with ONLY the title. No quotes. No trailing punctuation."), WithMaxTokens(32), WithThink(false))
+	}, WithSystemPrompt("Reply with ONLY the title. No quotes. No trailing punctuation."), WithMaxTokens(320), WorkerJudgeThink())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1001,6 +991,7 @@ The merged article must preserve all important facts, data, and claims from both
 	// The editor client only applies a merge when the response declares
 	// type=article — without it, merged output falls into the
 	// "conversational text" branch and is silently never applied.
+	article = NormalizeHeadingLinks(article)
 	result := map[string]string{"type": "article", "content": article}
 	if title != "" {
 		result["title"] = title

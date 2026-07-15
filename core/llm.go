@@ -726,6 +726,18 @@ func WithThinkBudget(n int) ChatOption {
 	return func(c *ChatConfig) { c.ThinkBudget = &n }
 }
 
+// workerJudgeThinkBudget is the small thinking allowance for one-shot
+// worker-tier judge/suggest calls. Qwen3-class models degenerate in no-think
+// mode (repetition, format drift), so WithThink(false) is the wrong lever for
+// "keep it fast" — a small budget keeps the call quick AND coherent.
+const workerJudgeThinkBudget = 256
+
+// WorkerJudgeThink is the standard thinking shape for one-shot worker-tier
+// judge/suggest calls: thinking ON with a small budget. Callers that also cap
+// output with WithMaxTokens must leave headroom on top of this budget — the
+// completion cap covers the thinking span too.
+func WorkerJudgeThink() ChatOption { return WithThinkBudget(workerJudgeThinkBudget) }
+
 // WithRouteKey tags a LeadChat call with a routing stage key. If the stage
 // is configured for "worker" in the routing menu, LeadChat transparently
 // delegates to WorkerChat with the same options. Unknown/unset keys default

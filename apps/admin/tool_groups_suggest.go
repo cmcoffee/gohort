@@ -87,12 +87,11 @@ func (a *AdminApp) handleToolGroupSuggest(w http.ResponseWriter, r *http.Request
 		sysPrompt = toolGroupSuggestSystemPrompt
 	}
 
-	f := false
 	resp, err := core.LLM.Chat(ctx,
 		[]Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt(sysPrompt),
 		WithRouteKey("admin.tool_groups.suggest"),
-		WithThink(f),
+		WorkerJudgeThink(),
 	)
 	if err != nil {
 		http.Error(w, "suggest failed: "+err.Error(), http.StatusBadGateway)
@@ -359,12 +358,11 @@ func (a *AdminApp) handleToolGroupAutoCreate(w http.ResponseWriter, r *http.Requ
 	record := map[string]any{"members": stringSliceToAny(cleaned)}
 	prompt := buildToolGroupSuggestBothPrompt(req.Hint, record)
 
-	f := false
 	resp, err := core.LLM.Chat(ctx,
 		[]Message{{Role: "user", Content: prompt}},
 		WithSystemPrompt(toolGroupSuggestBothSystemPrompt),
 		WithRouteKey("admin.tool_groups.suggest"),
-		WithThink(f),
+		WorkerJudgeThink(),
 	)
 	if err != nil {
 		http.Error(w, "LLM call failed: "+err.Error(), http.StatusBadGateway)

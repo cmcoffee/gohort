@@ -154,7 +154,8 @@ const repoStaleDocBanner = "> **STALE — code refreshed since this was generate
 func buildRepoLeadPrompt(appliance Appliance, docs map[string]string, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string) string {
 	var b strings.Builder
 	writePersona(&b, appliance)
-	b.WriteString(fmt.Sprintf("Current time: %s\n\n", time.Now().Format("2006-01-02 15:04 MST")))
+	// No timestamp: the agent loop stamps date+time on the newest user
+	// message; a per-minute value here broke the prefix cache every turn.
 	b.WriteString(fmt.Sprintf(
 		"You are the Code Investigator for the repository **%s** (%s).\n\n"+
 			"Your job is to answer the user's questions about this codebase — how something works, where something lives, what produces a given output — with verified specifics drawn from the ACTUAL code, not training-knowledge guesses. "+

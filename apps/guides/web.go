@@ -522,7 +522,7 @@ func (T *Guides) handleReorganize(w http.ResponseWriter, r *http.Request, udb Da
 	}
 	resp, err := orch.LLM.Chat(r.Context(), []Message{{Role: "user", Content: "Current sections:\n\n" + b.String()}},
 		WithSystemPrompt(reorgSysPrompt), WithJSONMode(),
-		WithRouteKey("app.orchestrate.worker"), WithThink(false))
+		WithRouteKey("app.orchestrate.worker"), WorkerJudgeThink())
 	if err != nil {
 		http.Error(w, "reorganize failed: "+err.Error(), http.StatusInternalServerError)
 		return

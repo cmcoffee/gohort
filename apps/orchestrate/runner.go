@@ -4897,11 +4897,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Builder→Builder and Builder→Chat→Builder loops; everything
 		// else is fair game.
 		t.agentsGroupedToolDef(true),
-		// Explorer mode — LLM-triggered round-budget lift for
-		// API-mapping tasks. No-op unless AllowExplorer is set on
-		// the agent.
-		t.enterExplorerModeToolDef(),
 	)
+	// Explorer mode — LLM-triggered round-budget lift for API-mapping
+	// tasks. Mounted only when the agent can actually use it: for
+	// everyone else the ~450-word description was pure prefill cost in
+	// front of a handler that refuses.
+	if t.agent.AllowExplorer {
+		knowTools = append(knowTools, t.enterExplorerModeToolDef())
+	}
 	// Recurring per-session interval tasks — but NOT for Fleet agents. A Fleet
 	// agent schedules recurring work through create_standing_agent (real cron
 	// timing, and it surfaces in the Enabled-agents console where the user can
@@ -5800,7 +5803,9 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// per-session recurring scheduler — see runPlan's note.
 		tools = append(tools, t.recurringToolDef())
 	}
-	tools = append(tools, t.enterExplorerModeToolDef())
+	if t.agent.AllowExplorer {
+		tools = append(tools, t.enterExplorerModeToolDef())
+	}
 	// Include persistent temp tools in the static set so the group
 	// rewriter (called below) can collapse them when they're members
 	// of an admin-curated group. Without this, temp tools come in

@@ -2022,7 +2022,9 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	}
 	var b strings.Builder
 	writePersona(&b, appliance)
-	b.WriteString(fmt.Sprintf("Current time: %s\n\n", time.Now().Format("2006-01-02 15:04 MST")))
+	// No timestamp here: the agent loop stamps [Current date & time: …] on
+	// the newest user message. A per-minute value this early in the system
+	// prompt invalidated the llama.cpp prefix cache on every turn.
 	b.WriteString(fmt.Sprintf(
 		"You are the Knowledge Manager for **%s** (%s).\n\n"+
 			"Your job is to answer the user's questions with verified, specific facts — not estimates, not training knowledge, not guesses. "+
@@ -2046,7 +2048,14 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	if len(cliMaps) > 0 {
 		b.WriteString("## Mapped CLI Applications\n\n")
 		b.WriteString("The following CLI tools have been explored and mapped. Use `read_doc cli:<name>` to fetch the full command reference before dispatching the worker on tasks involving that tool:\n\n")
+		// Sorted: ranging the map directly reorders the list run-to-run,
+		// which breaks byte-identical prompts and the prefix cache.
+		cmds := make([]string, 0, len(cliMaps))
 		for cmd := range cliMaps {
+			cmds = append(cmds, cmd)
+		}
+		sort.Strings(cmds)
+		for _, cmd := range cmds {
 			b.WriteString(fmt.Sprintf("- **%s** — use `read_doc cli:%s`\n", cmd, cmd))
 		}
 		b.WriteString("\n")
@@ -3114,7 +3123,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	store_fact_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "store_fact",
-			Description: "Save an APPLIANCE-WIDE property — a fact about the WHOLE system, not any particular service or component: os, hostname, kernel version, CPU architecture, timezone, primary role. Key should be short (e.g. 'os', 'hostname', 'kernel', 'arch'). Facts overwrite on the same key. IMPORTANT: for a fact about a SPECIFIC component — a service's version or port, an app's config path, a database's auth command — do NOT use store_fact (it would pile everything onto the appliance node). Use `link_entities` instead, putting the detail in `subject_attrs` on that component's own entity (e.g. subject='nginx', subject_attrs={'version':'1.24','port':'443'}) so it lands on the right node. Set ttl='short' for volatile appliance-wide state, default 'long' for stable properties.",
+			Description: "Save an APPLIANCE-WIDE property (os, hostname, kernel, arch, timezone, primary role) under a short key; same key overwrites. Component-specific details — a service's version, port, or config path — go on that component's own entity via link_entities subject_attrs, NOT here. ttl='short' for volatile state, default 'long'. (The 'What to Record' section has the full routing guide.)",
 			Parameters: map[string]ToolParam{
 				"key":   {Type: "string", Description: "Short appliance-wide key, e.g. 'os', 'hostname', 'kernel', 'arch'. NOT a component-specific key like 'nginx_version' — that goes in link_entities subject_attrs."},
 				"value": {Type: "string", Description: "The fact value."},
@@ -3151,7 +3160,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	link_entities_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "link_entities",
-			Description: "Record a RELATIONSHIP between two named parts of this system — the structured graph map. State it subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080', or subject='app' relation='connects to' object='postgres'. Entities auto-merge by name. Use this whenever you learn how parts connect: a service to its port, an app to its database, a process to its config file, a service to the host. Put non-relational details (version, path, port) in subject_attrs. Use `store_fact` ONLY for appliance-wide properties (os, hostname, kernel); use `link_entities` for anything with structure or relationships.",
+			Description: "Record a RELATIONSHIP between two named parts of this system — the structured graph map. Subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080'. Entities auto-merge by name; put non-relational details (version, path, port) in subject_attrs. Call it whenever you learn how parts connect. (store_fact is only for appliance-wide properties; the 'What to Record' section has the full routing guide.)",
 			Parameters: map[string]ToolParam{
 				"subject":       {Type: "string", Description: "The subject entity's name, e.g. 'nginx', 'app', 'postgres'."},
 				"subject_kind":  {Type: "string", Description: "Subject type: service, app, database, host, file, process, port, or thing. Defaults to thing."},
