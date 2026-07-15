@@ -277,15 +277,8 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 	text := strings.TrimSpace(ResponseText(resp))
 
 	// Detect if the response contains a fenced code block.
+	// (The old CODE: sentinel strip is gone — no prompt ever requested it.)
 	code_content := ""
-	if strings.HasPrefix(text, "CODE:") {
-		lines := strings.SplitN(text, "\n", 2)
-		if len(lines) > 1 {
-			text = strings.TrimSpace(lines[1])
-		} else {
-			text = strings.TrimPrefix(text, "CODE:")
-		}
-	}
 
 	// Extract the first fenced code block as the applyable code.
 	if idx := strings.Index(text, "```"); idx >= 0 {

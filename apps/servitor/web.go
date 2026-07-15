@@ -1472,156 +1472,6 @@ func writePersona(b *strings.Builder, appliance Appliance) {
 	b.WriteString("\n\n")
 }
 
-// buildCommandChatSystemPrompt constructs the system prompt for command-type appliances.
-// The worker operates a specific local CLI tool instead of SSH.
-func buildCommandChatSystemPrompt(appliance Appliance, udb Database) string {
-	now := time.Now()
-	var b strings.Builder
-	writePersona(&b, appliance)
-	b.WriteString(fmt.Sprintf("Current time: %s\n\n", now.Format("2006-01-02 15:04 MST")))
-	b.WriteString(fmt.Sprintf("You are an agent operating `%s` locally", appliance.Command))
-	if appliance.WorkDir != "" {
-		b.WriteString(fmt.Sprintf(" from `%s`", appliance.WorkDir))
-	}
-	b.WriteString(fmt.Sprintf(
-		". Use `%s` subcommands and any supporting shell commands to accomplish the user's request.\n\n",
-		appliance.Command,
-	))
-	if appliance.Instructions != "" {
-		b.WriteString("## Instructions\n\n")
-		b.WriteString(appliance.Instructions)
-		b.WriteString("\n\n")
-	}
-	if udb != nil {
-		if maps := cliMapsForAppliance(udb, appliance.ID); len(maps) > 0 {
-			b.WriteString("## Command Reference\n\n")
-			b.WriteString("Use this reference to pick the correct subcommand and flags without guessing:\n\n")
-			for cmd, content := range maps {
-				b.WriteString(fmt.Sprintf("### %s\n\n%s\n\n", cmd, content))
-			}
-		}
-	}
-	b.WriteString("## Rules\n\n")
-	b.WriteString(fmt.Sprintf("1. Prefer the Command Reference above when available. If a subcommand is not covered, run `%s help <subcommand>` or `%s <subcommand> --help` to discover the correct syntax.\n", appliance.Command, appliance.Command))
-	b.WriteString("2. Never guess flags or argument order — check help output first.\n")
-	b.WriteString("3. Work to completion without pausing. The user cannot interact mid-run.\n")
-	b.WriteString("4. Call `store_fact` immediately after any command that returns a concrete value (resource name, config path, status, version).\n")
-	b.WriteString("5. Call `record_technique` when you figure out the correct non-obvious way to do something (working auth, right flag combination, correct resource name format).\n")
-	b.WriteString("6. Call `note_lesson` when a command fails due to a non-obvious quirk specific to this environment.\n")
-	b.WriteString("7. **Temporary file cleanup** — delete any scripts or temporary files you create (e.g. `/tmp/check.sh`, helper scripts) with `rm` before producing your final response. Do not leave artifacts behind.\n")
-	b.WriteString("8. **Saving work** — when the user asks to save a query or script for later, call `save_to_codewriter`. When the user asks to document findings, save a report, or create a runbook, call `save_to_techwriter`. When the user asks to add a finding into one of their guides (living multi-section docs), call `push_to_guide` — use `list_guides` first if unsure of the exact guide name. You can save AND run in the same response.\n\n")
-	b.WriteString("## Execution Protocol\n\n")
-	b.WriteString("Treat every command like an expect script: know what you're looking for, run it, read the output, branch on what you got.\n\n")
-	b.WriteString("- **Relevant output** → extract facts, call `store_fact`, proceed.\n")
-	b.WriteString("- **`[exit code N]`** → nonzero exit. Read the error carefully and apply the matching fix. Do not move on without resolving it.\n")
-	b.WriteString("- **`command not found`** → verify the command name and PATH, then retry.\n")
-	b.WriteString("- **`permission denied`** / **`forbidden`** → check required credentials or context, then retry.\n")
-	b.WriteString("- **Empty output** → do NOT stop. Try an alternative flag or different subcommand before concluding the resource is absent.\n\n")
-	b.WriteString("**Script self-correction** — when a script fails, read the exact error, fix the specific problem, re-run. Up to 3 fix attempts. If still failing: `note_lesson` and try a different approach.\n\n")
-	b.WriteString("**No-repeat rule**: never run the same command twice if it already returned the same output. A third identical call triggers LOOP DETECTED.\n\n")
-	b.WriteString("**Simplest path first**: always look for the most direct way to access a resource before attempting anything complex. If a credential is in a config or .env file, use it. If the app connects via a unix socket, use that socket. Do NOT attempt to reconstruct encryption, decode tokens, or reverse-engineer auth flows when a simpler path exists. The running application has already solved the access problem — find its method and reuse it.\n\n")
-	b.WriteString("**Completion gate**: do not produce a final response until the task goal is either answered with real output or confirmed impossible after at least 2 different approaches.\n\n")
-	b.WriteString("**Status envelope** — end every response with exactly this block:\n")
-	b.WriteString("```\n---\nSTATUS: found|partial|not_found\nFACTS_SAVED: N\n---\n```\n\n")
-	return b.String()
-}
-
-// buildChatSystemPrompt constructs the system prompt for interactive Q&A sessions.
-// It does NOT use the full recon base prompt — that is only for map mode. Chat mode
-// answers questions from the cached profile, only running commands when the cache
-// cannot answer or the user explicitly asks for live data.
-func buildChatSystemPrompt(appliance Appliance) string {
-	now := time.Now()
-	var b strings.Builder
-	writePersona(&b, appliance)
-	b.WriteString(fmt.Sprintf("Current time: %s\n\n", now.Format("2006-01-02 15:04 MST")))
-	if appliance.Profile != "" {
-		b.WriteString(fmt.Sprintf(
-			"You are a Linux systems assistant with SSH access to %s (%s). A full profile of this system is cached below — use it to answer questions directly without re-running commands. Only issue SSH commands when the cached data cannot answer the question, the user explicitly requests fresh data, or the fact is volatile (see rule 1).",
-			appliance.Name, appliance.Host,
-		))
-	} else {
-		b.WriteString(fmt.Sprintf(
-			"You are a Linux systems assistant with SSH access to %s (%s). No profile has been built yet — you can run SSH commands to investigate specific questions. For a complete system overview, suggest the user clicks 'Refresh'.",
-			appliance.Name, appliance.Host,
-		))
-	}
-	b.WriteString("\n\n")
-	writeInstructions(&b, appliance)
-	b.WriteString("## Rules\n\n")
-	b.WriteString("1. **Freshness awareness** — Not all facts age the same way:\n")
-	b.WriteString("   - **Always re-run** (changes every session): who is currently logged in, active SSH sessions.\n")
-	b.WriteString("   - **Short TTL — re-run if older than 30 minutes**: user accounts, running services, open ports, active connections, disk usage, recent security events.\n")
-	b.WriteString("   - **Long TTL — trust for 24 hours**: installed software versions, config file values, hardware specs, log file paths, network interface addresses.\n")
-	b.WriteString("   Facts in the 'What We Already Know' section are annotated with their age — use that to decide whether to re-verify.\n")
-	b.WriteString("2. Never guess or invent facts. If the cache doesn't have the answer and it matters, run a targeted SSH command to find out.\n")
-	b.WriteString("3. Report command errors and empty output exactly as observed — do not speculate.\n")
-	b.WriteString("4. Work to completion without pausing to ask permission to continue. The user cannot interact mid-run.\n")
-	b.WriteString("5. Use `run_pty` for anything requiring a TTY: password prompts (su, sudo, mysql -p), interactive programs (python3, psql, irb).\n")
-	b.WriteString("6. Call `note_lesson` when a command fails due to a non-obvious system quirk so future sessions avoid the same mistake.\n")
-	b.WriteString("7. Call `record_technique` when you figure out the correct way to do something non-obvious: working auth method, correct binary path, right command syntax for this system. Future sessions will use it directly without re-discovering.\n")
-	b.WriteString("8. **DATABASE ACCESS — check before every attempt**: Before running any database command (mysql, psql, mongosh, redis-cli, sqlite3, etc.), look in 'Known Techniques' and 'What We Already Know' for a stored connection method for that engine. If one exists, use it AS-IS as your FIRST and ONLY attempt — do not try alternative methods unless the stored one fails. Stored keys: `mysql_auth`, `postgres_auth`, `redis_auth`, `mongo_auth`, `sqlite_path`.\n")
-	b.WriteString("9. Before running any SSH command, check the 'Known Techniques' and 'What We Already Know' sections — if the answer is there and fresh enough, use it without running the command.\n")
-	b.WriteString("10. After every SSH command that returns a concrete value (version string, port number, file path, config value, service status), immediately call `store_fact` to save it. Do not wait until the end. One call per fact. This makes you smarter for every future session.\n")
-	b.WriteString("11. **Large output** — output is capped at 10,000 characters:\n")
-	b.WriteString("   - Filter first: pipe through `| grep KEYWORD` or `| awk '{print $field}'` to narrow before reading.\n")
-	b.WriteString("   - For files: use `count_lines` to check size, then `read_range` in chunks of up to 300 lines.\n")
-	b.WriteString("   - When output is truncated, the message includes the exact `sed -n` command for the next page — use it.\n")
-	b.WriteString("   - For user/group lists: `getent passwd | wc -l` first, then `awk -F: '$3>=1000'` to narrow.\n")
-	b.WriteString("12. **Temporary file cleanup** — delete any scripts or temporary files you created (e.g. `/tmp/check.sh`, `/tmp/probe.py`) with `rm` before producing your final response. Do not leave artifacts on the system.\n")
-	b.WriteString("13. **Saving work** — when the user asks to save a query or script for later reuse, call `save_to_codewriter`. When the user asks to document findings, save a report, or write a runbook, call `save_to_techwriter`. When the user asks to add a finding into one of their guides (living multi-section docs), call `push_to_guide` — use `list_guides` first if unsure of the exact guide name. You can save AND run in the same response.\n\n")
-	b.WriteString("## Execution Protocol\n\n")
-	b.WriteString("Treat every command like an expect script: know what you're looking for, run it, read the output, branch on what you got.\n\n")
-	b.WriteString("**After each command output, ask: did I get what I needed?**\n\n")
-	b.WriteString("- **Relevant output** → extract the facts, call `store_fact`, proceed to the next step.\n")
-	b.WriteString("- **Empty output** → do NOT stop. Possible causes: (a) thing doesn't exist — confirm with an alternative check; (b) wrong syntax — try the alternative form; (c) needs sudo — retry with `sudo`. Try at least 2 approaches before concluding something is absent.\n")
-	b.WriteString("- **`command not found`** → locate the binary: `which <cmd>` or `find /usr /opt /bin /sbin -name '<cmd>' 2>/dev/null | head -5`, then retry with the full path. If still not found after one search, accept it as absent and move on.\n")
-	b.WriteString("- **`permission denied`** → retry once with `sudo`. If that also fails, note it via `note_lesson` and move on — do not keep trying.\n")
-	b.WriteString("- **`no such file or directory`** → search for the correct path once, then retry. If the path cannot be found, accept it as absent.\n")
-	b.WriteString("- **`connection refused` / `can't connect`** → the service is likely down. Check `systemctl status <svc>` or `ss -tlnp` once, then report the status and move on.\n")
-	b.WriteString("- **`[exit code N]`** → read the error carefully and apply one targeted fix. If it fails again, pivot to a different approach or accept the result.\n")
-	b.WriteString("- **Truncated output** → always follow the sed hint or use `read_range` to get the rest. Never summarize from a truncated view.\n\n")
-	b.WriteString("**Script self-correction** — when you write a shell script (bash/python/etc.) and it fails:\n")
-	b.WriteString("1. Read the exact error line and message from the output.\n")
-	b.WriteString("2. Identify and fix the specific problem (syntax error, wrong path, missing dependency, wrong shell).\n")
-	b.WriteString("3. Write the corrected script and re-run it. Repeat up to 3 times.\n")
-	b.WriteString("4. If still failing after 3 fixes: note the blocker via `note_lesson`, then try a different approach (inline commands, different language, simpler logic).\n\n")
-	b.WriteString("**No-repeat rule**: Never run the same command twice if it already returned the same output. If you need different information, use a different command or different arguments. Running an identical command a third time will trigger a LOOP DETECTED error and waste a round.\n\n")
-	b.WriteString("**Pivot rule** — recognize a dead end and change direction:\n")
-	b.WriteString("- After **2 failures from the same binary** (e.g. `mysql`, `docker`, `systemctl`), stop using that binary. Switch to a completely different tool or investigation angle.\n")
-	b.WriteString("- After **3 failures** the binary will be automatically blocked — you will not be able to use it again this session.\n")
-	b.WriteString("- A real pivot means: different binary, different subsystem, or a different way of answering the question. Changing flags or adding sudo to something that already failed with sudo is NOT a pivot.\n")
-	b.WriteString("- When something is confirmed absent after 2 different approaches, stop trying and report `STATUS: not_found`. Continuing past that wastes budget.\n\n")
-	b.WriteString("**Indirect access** — if direct access to a resource fails, extrapolate how the running process itself accesses it and use that method instead. Look at config files, application source code, service unit files, compose files, and process environment variables to discover the credentials, socket path, or connection method the app already uses successfully. If the app can reach it, you can too — find out how.\n\n")
-	b.WriteString("**Completion gate** — do not produce a final response until:\n")
-	b.WriteString("1. At least one command returned relevant, non-empty output that directly addresses the task, OR\n")
-	b.WriteString("2. You tried 2 meaningfully different approaches and confirmed the thing is genuinely absent — that IS a valid result, report it.\n\n")
-	b.WriteString("**Status envelope** — end every response with exactly this block (no extra text after it):\n")
-	b.WriteString("```\n---\nSTATUS: found|partial|not_found\nFACTS_SAVED: N\n---\n```\n")
-	b.WriteString("- `found`: task goal answered with real command output\n")
-	b.WriteString("- `partial`: some goals answered, others blocked (permission, service down, etc.)\n")
-	b.WriteString("- `not_found`: confirmed absent after multiple approaches\n")
-	b.WriteString("- `FACTS_SAVED`: exact count of `store_fact` calls made this response\n\n")
-	b.WriteString("**PTY sessions (`run_pty`)** — always plan the full interaction before calling:\n")
-	b.WriteString("- Know the exact prompt string to expect (e.g. `mysql>`, `Password:`, `postgres=#`).\n")
-	b.WriteString("- Send all needed input lines in the `input` field (newline-separated) rather than making multiple calls.\n")
-	b.WriteString("- If the session produced an unexpected interactive prompt, note the exact text, then call `run_pty` again with the correct response.\n")
-	b.WriteString("- Always end interactive sessions cleanly: append `exit` or `\\q` or `\\c` as the last input line.\n")
-	b.WriteString("- Use `timeout_sec=30` for slow operations (DB queries, compilations). If timeout is hit, the agent sends Ctrl+C — check the partial output and retry with a lighter query.\n\n")
-	if appliance.Profile != "" {
-		b.WriteString("## Cached System Profile\n\n")
-		b.WriteString(appliance.Profile)
-		if len(appliance.LogMap) > 0 {
-			b.WriteString("\n\n## Known Log Files\n\n")
-			b.WriteString("Use `read_log` or `search_logs` directly with these paths — do not re-discover them.\n\n")
-			for _, e := range appliance.LogMap {
-				b.WriteString(fmt.Sprintf("- **%s** `%s` — %s\n", e.Service, e.Path, e.Desc))
-			}
-		}
-	}
-	return b.String()
-}
-
 // probeWorkerProtocol is injected into investigator-dispatched probes.
 // It is stricter than mapExecutionProtocol: one attempt per search path, then stop.
 // The investigator decides whether a different angle is worth a new probe.
@@ -1928,36 +1778,6 @@ func parseProbeOutcome(result string) string {
 		prefix += "\n[LEAD: " + lead + "]"
 	}
 	return prefix + "\n\n" + body
-}
-
-// buildMapSystemPrompt constructs the system prompt for a map/update run.
-// When a profile already exists the LLM is instructed to UPDATE it: run targeted
-// checks, merge new findings with previous knowledge, and produce a complete
-// refreshed document — not a diff and not a replacement that discards prior data.
-func buildMapSystemPrompt(base string, appliance Appliance) string {
-	// Every Map System run is a fresh, complete reconnaissance — the
-	// previous "update and extend" branch on re-runs left the
-	// investigator anchored to the prior profile (and often the prior
-	// plan), which produced incremental drift instead of the
-	// re-derivation the operator asked for. Facts + techniques +
-	// discoveries from prior runs live in their own tables and
-	// persist across re-maps; only the profile blob is rewritten.
-	var b strings.Builder
-	writePersona(&b, appliance)
-	b.WriteString(base)
-	b.WriteString("\n\n")
-	writeInstructions(&b, appliance)
-	b.WriteString("As you map this system, work through all ten investigation phases completely. " +
-		"Do not skip a phase because you think the system is simple — a minimal system with few services still deserves full log discovery, security posture review, and scheduled job enumeration. " +
-		"After every command that returns a concrete value, call `store_fact` immediately — one fact per call. " +
-		"Work autonomously to completion without pausing.\n\n" +
-		"DATABASE AUTH RULE (mandatory): The first time you successfully authenticate to any database engine, you MUST immediately call BOTH:\n" +
-		"  • `record_technique` — exact working command, e.g. 'MySQL root: mysql -u root (no password, unix socket)'\n" +
-		"  • `store_fact` — key: `mysql_auth` / `postgres_auth` / `redis_auth` / `mongo_auth`, value: exact working command\n" +
-		"This is not optional. These are consulted before every future database access attempt.\n\n" +
-		mapExecutionProtocol + "\n\n")
-	b.WriteString(asciiDiagramRule)
-	return b.String()
 }
 
 // buildLeadSystemPrompt constructs the prompt for the lead Knowledge Manager LLM.
@@ -3390,61 +3210,29 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
-	// Build the worker base prompt and inject what the worker needs directly.
-	workerPrompt := func() string {
-		if appliance.Type == "command" {
-			return buildCommandChatSystemPrompt(appliance, udb)
-		}
-		if appliance.Type == "repo" {
-			// Single-worker update pass (existing profile) reuses the repo
-			// investigator discipline; the probe-worker split uses its own
-			// prompt at the dispatch site.
-			return buildRepoInvestigatorPrompt(appliance)
-		}
-		if saveProfile {
-			return buildMapSystemPrompt(T.SystemPrompt(), appliance)
-		}
-		return buildChatSystemPrompt(appliance)
-	}()
-
+	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
+	// the investigator's first message; the old workerPrompt concatenation
+	// that used to interleave here was dead (never sent to any model) and
+	// was removed along with its three prompt builders.
 	var cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string
 	if udb != nil {
-		now := time.Now()
 		if disc := discoveriesFor(udb, appliance.ID); len(disc) > 0 {
 			cachedDiscoveries = formatDiscoveries(disc)
-			workerPrompt += "\n\n## Key Discoveries (pre-established — do not re-investigate)\n\n"
-			workerPrompt += cachedDiscoveries + "\n"
 		}
-		// Facts now come from the appliance's SCOPE (graph entity attrs), not
-		// ssh_facts. Graph attrs carry no per-fact age, so the prompt leans on
+		// Facts come from the appliance's SCOPE (graph entity attrs), not
+		// ssh_facts. Graph attrs carry no per-fact age, so the prompts lean on
 		// the standing "always re-probe live state" rule rather than age cutoffs.
-		if fb := scopedFactsBlock(udb, appliance); fb != "" {
-			cachedFacts = fb
-			workerPrompt += "\n\n## What We Already Know About This System\n\n"
-			workerPrompt += fmt.Sprintf("Current time: %s\n\n", now.Format("2006-01-02 15:04 MST"))
-			workerPrompt += "Verified facts recorded in prior sessions. For anything about LIVE state " +
-				"(running processes, logged-in users, open ports, current disk/memory usage) always re-probe; " +
-				"configuration, versions, hardware, and paths can be trusted.\n\n"
-			workerPrompt += cachedFacts
-		}
-		if gb := scopedGraphBlock(appliance); gb != "" {
-			workerPrompt += "\n\n## System Map (components and how they connect)\n\n" + gb + "\n"
-		}
+		cachedFacts = scopedFactsBlock(udb, appliance)
 		var notes string
 		if udb.Get(notesTable, appliance.ID, &notes) && strings.TrimSpace(notes) != "" {
 			cachedNotes = strings.TrimSpace(notes)
-			workerPrompt += "\n\n## Lessons Learned (do not repeat these)\n\n" + cachedNotes + "\n"
 		}
-		if t := techniquesFor(udb, appliance.ID); t != "" {
-			cachedTechniques = t
-			workerPrompt += "\n\n## Known Techniques (use directly — do not re-discover)\n\n" + cachedTechniques + "\n"
-		}
+		cachedTechniques = techniquesFor(udb, appliance.ID)
 		if rules := rulesForAppliance(ownerUDB, appliance.ID); len(rules) > 0 {
 			// Rules are the owner's operator directives for THIS appliance — read
 			// from the owner's store so a shared appliance applies the same
 			// standing instructions for everyone, not just the owner.
 			cachedRules = formatRules(rules)
-			workerPrompt += "\n\n## Standing Instructions (set by the user — always follow these)\n\n" + cachedRules + "\n"
 		}
 	}
 

@@ -915,16 +915,8 @@ Merge these two pieces of content into ONE cohesive article.
 === CONTENT 2 ===
 %s
 
-%s
-
 The merged article must preserve all important facts, data, and claims from both sources. Write it so the reader has no idea it came from two separate pieces.`,
-		today, guidance, body_a, body_b,
-		func() string {
-			if merged_sources != "" && req.Mode == "blog" {
-				return "\nSOURCE REFERENCE (use these to name sources naturally — do NOT reproduce this section):\n" + merged_sources
-			}
-			return ""
-		}())
+		today, guidance, body_a, body_b)
 
 	// Same privacy posture as handleChat — never escalate to lead.
 	// Article bodies stay on the local worker LLM.
@@ -939,42 +931,6 @@ The merged article must preserve all important facts, data, and claims from both
 	}
 
 	text := strings.TrimSpace(ResponseText(resp))
-
-	// Parse TITLES:/TITLE: and IMAGES:/IMAGE: prefix.
-	title := ""
-	merge_image_prompt := ""
-	if strings.HasPrefix(text, "TITLES:") {
-		lines := strings.SplitN(text, "\n", 2)
-		raw := strings.TrimSpace(strings.TrimPrefix(lines[0], "TITLES:"))
-		if parts := strings.SplitN(raw, "|", 2); len(parts) > 0 {
-			title = strings.TrimSpace(parts[0])
-		}
-		if len(lines) > 1 {
-			text = strings.TrimSpace(lines[1])
-		}
-	} else if strings.HasPrefix(text, "TITLE:") {
-		lines := strings.SplitN(text, "\n", 2)
-		title = strings.TrimSpace(strings.TrimPrefix(lines[0], "TITLE:"))
-		if len(lines) > 1 {
-			text = strings.TrimSpace(lines[1])
-		}
-	}
-	if strings.HasPrefix(text, "IMAGES:") {
-		lines := strings.SplitN(text, "\n", 2)
-		raw := strings.TrimSpace(strings.TrimPrefix(lines[0], "IMAGES:"))
-		if parts := strings.SplitN(raw, "|", 2); len(parts) > 0 {
-			merge_image_prompt = strings.TrimSpace(parts[0])
-		}
-		if len(lines) > 1 {
-			text = strings.TrimSpace(lines[1])
-		}
-	} else if strings.HasPrefix(text, "IMAGE:") {
-		lines := strings.SplitN(text, "\n", 2)
-		merge_image_prompt = strings.TrimSpace(strings.TrimPrefix(lines[0], "IMAGE:"))
-		if len(lines) > 1 {
-			text = strings.TrimSpace(lines[1])
-		}
-	}
 
 	article := text
 	if strings.HasPrefix(article, "ARTICLE:") {
@@ -993,12 +949,6 @@ The merged article must preserve all important facts, data, and claims from both
 	// "conversational text" branch and is silently never applied.
 	article = NormalizeHeadingLinks(article)
 	result := map[string]string{"type": "article", "content": article}
-	if title != "" {
-		result["title"] = title
-	}
-	if merge_image_prompt != "" {
-		result["image_prompt"] = merge_image_prompt
-	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
