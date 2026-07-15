@@ -73,6 +73,12 @@ type StepInfo struct {
 	ToolCalls  []ToolCall // Tool calls the LLM requested this round.
 	ToolErrors int        // Number of tool calls that returned errors.
 	Done       bool       // True if this is the final round (no more tool calls).
+	// Superseded marks a round whose Content the loop is REJECTING and about to
+	// regenerate (a grounding-gate re-prompt, or another correction re-loop).
+	// Streaming surfaces should wipe whatever this round painted into the bubble
+	// so the user sees only the corrected answer, not the guess plus a walk-back.
+	// Non-streaming handlers can ignore it.
+	Superseded bool
 }
 
 // StepCallback is called after each round of the agent loop for observability.
@@ -1566,6 +1572,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)+"\n"+cfg.GroundingSources); len(figs) > 0 {
 					Debug("[agent_loop] grounding gate: %d unsourced money figure(s) %v — re-prompting to look up or drop (correction %d/%d)",
 						len(figs), figs, groundingGateCorrections+1, maxGroundingGateCorrections)
+					// Tell streaming surfaces to wipe the answer that just
+					// streamed: the corrected one is coming, and the user
+					// should not see the guess followed by "my bad".
+					if cfg.OnStep != nil {
+						cfg.OnStep(StepInfo{Round: round, Content: resp.Content, Superseded: true})
+					}
 					history = append(history, Message{Role: "user", Content: groundingGatePrompt(figs)})
 					groundingGateCorrections++
 					continue

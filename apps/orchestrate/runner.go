@@ -5120,6 +5120,16 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		if id == "" {
 			return
 		}
+		// A rejected round (grounding gate or another correction re-loop) will
+		// regenerate — wipe what it streamed into the bubble so the user sees
+		// only the corrected answer, not the guess plus a walk-back. Same clear
+		// the mis-emitted-answer path uses; leave the bubble open so the retry
+		// streams into it.
+		if info.Superseded {
+			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+			streamedBuf.Reset()
+			return
+		}
 		// Models on llama.cpp sometimes emit <tool_call><function=…>
 		// XML as TEXT instead of native tool_calls — the agent loop
 		// catches it and dispatches via ParseTextToolCall, but the
