@@ -968,6 +968,26 @@ func RunMaintenanceFunc(ctx context.Context, key string) int {
 	return -1
 }
 
+// ChunksWhere returns every chunk the predicate keeps, served from the
+// in-process snapshot cache — the read-path replacement for raw Keys+Get
+// table walks (N random kvlite gets per call, the NFS cold-read pathology the
+// chunk cache exists to kill). Returned values are copies of cache rows;
+// mutate freely, but write back through the normal Set/Delete paths so the
+// cache invalidates.
+func ChunksWhere(db Database, keep func(c EmbeddedChunk) bool) []EmbeddedChunk {
+	if db == nil || keep == nil {
+		return nil
+	}
+	chunks := snapshotChunks(db)
+	var out []EmbeddedChunk
+	for i := range chunks {
+		if keep(chunks[i]) {
+			out = append(out, chunks[i])
+		}
+	}
+	return out
+}
+
 // SearchChunks returns the top-K chunks by cosine similarity to the
 // query vector. Backed by an in-process cache (chunkCache) so each
 // query is a slice scan, not a kvlite re-deserialize. Skips chunks

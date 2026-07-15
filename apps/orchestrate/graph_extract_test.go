@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 
@@ -119,4 +120,18 @@ func TestMaybeExtractGraphShortCircuits(t *testing.T) {
 		t.Fatalf("too-short text must write nothing, got %d entities", len(ents))
 	}
 	SetTunablesDB(nil)
+}
+
+// TestFoldUserTextRuneSafe: the fold-extraction cap must cut on a rune
+// boundary — a byte-index slice could split a UTF-8 sequence and hand the
+// worker prompt an invalid trailing byte.
+func TestFoldUserTextRuneSafe(t *testing.T) {
+	long := "a" + strings.Repeat("€", 4000) // 3-byte rune, misaligned by the leading ascii byte
+	out := foldUserText([]Message{{Role: "user", Content: long}})
+	if len(out) > foldExtractMaxChars {
+		t.Fatalf("cap not applied: %d bytes", len(out))
+	}
+	if !utf8.ValidString(out) {
+		t.Fatal("cap split a UTF-8 sequence")
+	}
 }

@@ -523,6 +523,19 @@ func LinkGraphEdgeP(db Database, namespace, from, rel, to, note string, replace 
 	if db.Get(GraphEdgeTable, key, &prior) && !prior.Created.IsZero() {
 		edge.Created = prior.Created
 		isNew = false
+		// A re-link must not DOWNGRADE what's already known: an extraction
+		// pass re-observing a hand-curated edge was overwriting its origin to
+		// observed (losing the trust distinction eviction/pruning keys on) and
+		// clobbering its Note with "". Keep the prior Note when the caller
+		// brings none, and the prior Source when it outranks the incoming one;
+		// AsOf still takes the incoming stamp (re-observation IS a
+		// re-confirmation).
+		if edge.Note == "" {
+			edge.Note = prior.Note
+		}
+		if sourceTrust(prior.Source) > sourceTrust(edge.Source) {
+			edge.Source = prior.Source
+		}
 	}
 	db.Set(GraphEdgeTable, key, edge)
 	// Only a NEW triple can push the namespace past the edge cap — rewrites

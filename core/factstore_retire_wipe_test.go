@@ -1,6 +1,7 @@
 package core
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -164,5 +165,113 @@ func TestDuplicateSaveReconfirmsAsOf(t *testing.T) {
 	got, _ = GetMemoryFactByID(db, ns, "gpu")
 	if !got.AsOf.Equal(old) {
 		t.Fatalf("anonymous duplicate must not bump AsOf: %v", got.AsOf)
+	}
+}
+
+// TestSweepMergeCarriesProvenance: the merged note is a rewording of its
+// sources, so it inherits their envelope — max-trust Source (a user_stated
+// component keeps its grounding license), EARLIEST AsOf (only as current as
+// the least-recently-confirmed component), max Volatility — instead of the
+// empty policy's Source=unknown / AsOf=now / re-classified volatility.
+func TestSweepMergeCarriesProvenance(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	now := time.Now()
+	oldest := now.Add(-40 * 24 * time.Hour)
+	db.Set(MemoryFactsTable, factDBKey(ns, "a"), MemoryFact{
+		Namespace: ns, ID: "a", Note: "budget is $800 per month", Created: now.Add(-3 * time.Hour), Updated: now.Add(-3 * time.Hour),
+		MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated, AsOf: oldest, Volatility: VolSlow},
+	})
+	db.Set(MemoryFactsTable, factDBKey(ns, "b"), MemoryFact{
+		Namespace: ns, ID: "b", Note: "monthly spend cap is eight hundred", Created: now.Add(-2 * time.Hour), Updated: now.Add(-2 * time.Hour),
+		MemoryProvenance: MemoryProvenance{Source: MemSourceObserved, AsOf: now.Add(-10 * 24 * time.Hour), Volatility: VolVolatile},
+	})
+
+	sweepFacts(db, ns, fakeChat(`{"drop": [], "merge": [{"keep": "user's monthly budget cap is $800", "replace": [1, 2]}]}`, nil))
+
+	live := ListMemoryFacts(db, ns)
+	if len(live) != 1 {
+		t.Fatalf("expected 1 merged fact, got %d", len(live))
+	}
+	m := live[0]
+	if m.Source != MemSourceUserStated {
+		t.Fatalf("merge laundered Source: got %d, want user_stated", m.Source)
+	}
+	if !m.AsOf.Equal(oldest) {
+		t.Fatalf("merge should carry the EARLIEST source AsOf, got %v", m.AsOf)
+	}
+	if m.Volatility != VolVolatile {
+		t.Fatalf("merge should carry max volatility, got %d", m.Volatility)
+	}
+}
+
+// TestPruneExpiredFactTombstones: the startup pass removes expired tombstones
+// across every namespace in one walk; fresh tombstones and live rows stay.
+func TestPruneExpiredFactTombstones(t *testing.T) {
+	db := memDB(t)
+	now := time.Now()
+	for _, ns := range []string{"agent:x", "agent:y"} {
+		db.Set(MemoryFactsTable, factDBKey(ns, "stale"), MemoryFact{Namespace: ns, ID: "stale", Note: "old",
+			MemoryProvenance: MemoryProvenance{Reason: RetireEvicted, RetiredAt: now.AddDate(0, 0, -40)}})
+		db.Set(MemoryFactsTable, factDBKey(ns, "fresh"), MemoryFact{Namespace: ns, ID: "fresh", Note: "recent",
+			MemoryProvenance: MemoryProvenance{Reason: RetireEvicted, RetiredAt: now}})
+		db.Set(MemoryFactsTable, factDBKey(ns, "live"), MemoryFact{Namespace: ns, ID: "live", Note: "current", Created: now})
+	}
+	if pruned := PruneExpiredFactTombstones(db); pruned != 2 {
+		t.Fatalf("expected 2 expired tombstones pruned (one per namespace), got %d", pruned)
+	}
+	for _, ns := range []string{"agent:x", "agent:y"} {
+		if got := ListRetiredFacts(db, ns); len(got) != 1 || got[0].ID != "fresh" {
+			t.Fatalf("%s: expected only the fresh tombstone to survive, got %+v", ns, got)
+		}
+		if got := ListMemoryFacts(db, ns); len(got) != 1 {
+			t.Fatalf("%s: live row must survive the prune", ns)
+		}
+	}
+}
+
+// TestConcurrentSameSaveWritesOnce: the per-namespace save lock closes the
+// read-check-write race — N concurrent saves of the same note (a tool call and
+// an async fold landing together) must produce exactly one live fact.
+func TestConcurrentSameSaveWritesOnce(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			StoreMemoryFactP(db, ns, "user prefers metric units", FactWritePolicy{Source: MemSourceObserved})
+		}()
+	}
+	wg.Wait()
+	if got := ListMemoryFacts(db, ns); len(got) != 1 {
+		t.Fatalf("concurrent duplicate saves wrote %d facts, want 1", len(got))
+	}
+}
+
+// TestSearchMemoryFactsVecUsesCallerVector: a caller-supplied query embedding
+// drives the semantic ranking with NO embed call of its own — the single-
+// embed-per-recall contract.
+func TestSearchMemoryFactsVecUsesCallerVector(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	now := time.Now()
+	db.Set(MemoryFactsTable, factDBKey(ns, "hit"), MemoryFact{
+		Namespace: ns, ID: "hit", Note: "deploy header is X-Auth", Created: now, Vector: []float32{1, 0},
+	})
+	db.Set(MemoryFactsTable, factDBKey(ns, "miss"), MemoryFact{
+		Namespace: ns, ID: "miss", Note: "favorite tea is oolong", Created: now, Vector: []float32{0, 1},
+	})
+	// Enabled config with an unreachable endpoint: if the function tried to
+	// embed for itself it would find nothing (Embed fails), so a semantic hit
+	// proves the caller's vector was used.
+	old := GetEmbeddingConfig()
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: "http://127.0.0.1:1"})
+	defer SetEmbeddingConfig(old)
+
+	got := SearchMemoryFactsVec(db, ns, "what's the deploy header?", []float32{1, 0})
+	if len(got) != 1 || got[0].ID != "hit" {
+		t.Fatalf("expected the vector-matched fact only, got %+v", got)
 	}
 }

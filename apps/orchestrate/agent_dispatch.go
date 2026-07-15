@@ -204,7 +204,12 @@ func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string)
 		if note == "" {
 			continue
 		}
-		if _, isNew, _ := StoreMemoryFact(udb, ns, note); isNew {
+		// Bulk-loaded from another app's store → imported: recorded on the
+		// envelope so these rows are distinguishable from in-session writes
+		// (and stay out of the grounding corpus). No worker chat by design —
+		// imports are mechanical, not a supersession event.
+		res := StoreMemoryFactP(udb, ns, note, FactWritePolicy{Source: MemSourceImported})
+		if res.Reason == FactStored {
 			added++
 		}
 	}

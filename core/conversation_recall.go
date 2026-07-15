@@ -71,12 +71,8 @@ func RedactSecretLines(s string) string {
 // semantic when embeddings are enabled (with substring fallback if it returns
 // nothing), substring otherwise. Returns up to k hits.
 func SearchRecall(db Database, source, query string, k int) []SearchHit {
-	if db == nil || strings.TrimSpace(source) == "" || strings.TrimSpace(query) == "" || k <= 0 {
-		return nil
-	}
-	allow := func(c EmbeddedChunk) bool { return c.Source == source }
 	var vec []float32
-	if GetEmbeddingConfig().Enabled {
+	if GetEmbeddingConfig().Enabled && strings.TrimSpace(query) != "" {
 		// Bounded like every other query-embed path (SearchMemoryFacts et al):
 		// a stalled embed server must degrade recall to keyword-only, not hang
 		// the turn indefinitely.
@@ -86,6 +82,17 @@ func SearchRecall(db Database, source, query string, k int) []SearchHit {
 			vec = v
 		}
 	}
+	return SearchRecallVec(db, source, query, vec, k)
+}
+
+// SearchRecallVec is SearchRecall with a caller-supplied query embedding, so a
+// multi-layer caller embeds once for facts + chunks + history instead of one
+// serial GPU round-trip per layer. Empty vec = keyword-only (hybrid handles it).
+func SearchRecallVec(db Database, source, query string, vec []float32, k int) []SearchHit {
+	if db == nil || strings.TrimSpace(source) == "" || strings.TrimSpace(query) == "" || k <= 0 {
+		return nil
+	}
+	allow := func(c EmbeddedChunk) bool { return c.Source == source }
 	// Hybrid: vector + keyword, merged — so an exact term the embedding misses
 	// still surfaces. Hybrid handles the no-embedding case (keyword only).
 	return HybridSearchByPredicate(db, allow, query, vec, k)
@@ -98,15 +105,7 @@ func FetchRecallSpanChunks(db Database, source, reportID string) []EmbeddedChunk
 	if db == nil || source == "" || reportID == "" {
 		return nil
 	}
-	var out []EmbeddedChunk
-	for _, k := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, k, &c) {
-			continue
-		}
-		if c.Source == source && c.ReportID == reportID {
-			out = append(out, c)
-		}
-	}
-	return out
+	return ChunksWhere(db, func(c EmbeddedChunk) bool {
+		return c.Source == source && c.ReportID == reportID
+	})
 }

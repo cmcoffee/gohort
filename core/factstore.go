@@ -172,10 +172,16 @@ func FactGateApplies(mode string) bool {
 // (prices, live status, versions, standings). Category-based, NOT confidence-
 // based: the model is most certain of exactly these stale priors (the "$1,600
 // 5090" case), so the note's SUBJECT, not the model's sureness, sets volatility.
+// Bare "$", "currently", "current ", "latest", " usd", "dollar" were removed:
+// they classified stable notes as volatile ("prefers products under $50",
+// "user currently prefers dark mode") — a $-sign in a PREFERENCE is not a
+// price quote. Price detection now needs a price-shaped context ("costs $",
+// "is $", price/msrp/etc.), and recency words need their bigram ("latest
+// version", "right now").
 var volatileFactSignals = []string{
-	"price", "cost", "costs ", "$", " usd", "dollar", "msrp", "how much",
+	"price", "cost", "costs ", "costs$", "costs $", "is $", " at $", "priced", "msrp", "how much",
 	"in stock", "out of stock", "sold out", "availability", "available now",
-	"currently", "current ", "latest", "right now", "as of ", "this week", "this month",
+	"right now", "as of ", "this week", "this month",
 	"score", "standings", "ranked", "ranking", "leaderboard",
 	"latest version", "version is", "current version",
 	"stock price", "share price", "market cap",
@@ -271,6 +277,13 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	if db == nil || namespace == "" || note == "" {
 		return FactWriteResult{Reason: FactRejected}
 	}
+	// Serialize saves per namespace: the whole path is read-check-write, and
+	// two concurrent saves of the same note (a turn's tool call + an async
+	// compaction fold landing together) could both pass dedup and double-
+	// write. The lock spans any judge call, so a same-namespace save may wait
+	// on a worker round-trip — correctness over latency for memory writes.
+	unlock := lockFactNamespace(namespace)
+	defer unlock()
 	existing := ListMemoryFacts(db, namespace)
 	// Tier 1: normalized text match.
 	wantNorm := normalizeFactNote(note)
@@ -525,6 +538,26 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use 
 	return relevant, out
 }
 
+// factSaveMu serializes StoreMemoryFactP per namespace (see the lock note
+// there). Entries are tiny and namespaces are few per deployment, so the map
+// is never pruned.
+var (
+	factSaveMuMu sync.Mutex
+	factSaveMu   = map[string]*sync.Mutex{}
+)
+
+func lockFactNamespace(namespace string) func() {
+	factSaveMuMu.Lock()
+	mu, ok := factSaveMu[namespace]
+	if !ok {
+		mu = &sync.Mutex{}
+		factSaveMu[namespace] = mu
+	}
+	factSaveMuMu.Unlock()
+	mu.Lock()
+	return mu.Unlock
+}
+
 // factSweepCooldown rate-limits how often one namespace is swept. Without it a
 // store that legitimately sits above the threshold (nothing to prune) would fire a
 // worker call on every subsequent write. The cheap hard-cap backstop runs on the
@@ -612,6 +645,28 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 			for _, s := range srcs {
 				retireFact(db, s, RetireMerged, res.Fact.ID, now)
 			}
+		}
+		// The combined note is a REWORDING of its sources, not new evidence —
+		// storing it under the empty policy laundered provenance (Source reset
+		// to unknown, AsOf to now, volatility re-classified from the merged
+		// text: a user_stated fact merged with an observed one lost its
+		// grounding license and faked freshness). Carry the sources' envelope
+		// instead: max-trust Source, EARLIEST AsOf (the note is only as
+		// current as its least-recently-confirmed component), max volatility.
+		if res.Reason == FactStored {
+			m := res.Fact
+			for _, s := range srcs {
+				if sourceTrust(s.Source) > sourceTrust(m.Source) {
+					m.Source = s.Source
+				}
+				if !s.AsOf.IsZero() && (m.AsOf.IsZero() || s.AsOf.Before(m.AsOf)) {
+					m.AsOf = s.AsOf
+				}
+				if s.Volatility > m.Volatility {
+					m.Volatility = s.Volatility
+				}
+			}
+			db.Set(MemoryFactsTable, factDBKey(namespace, m.ID), m)
 		}
 		mergedGroups++
 	}
@@ -711,6 +766,11 @@ func enforceFactHardCap(db Database, namespace string) {
 	if evicted > 0 {
 		Log("[factstore] hard cap evicted %d least-recently-updated fact(s) from %s (limit %d)", evicted, namespace, limit)
 	}
+	// Retention otherwise runs only inside the async sweep — a namespace busy
+	// enough to hit the cap but below the sweep threshold (or with no worker
+	// chat) accumulated tombstones indefinitely. Cheap here: the cap path
+	// already walked the namespace, and it only fires when over the limit.
+	enforceTombstoneRetention(db, namespace)
 }
 
 // enforceTombstoneRetention permanently deletes retired facts whose RetiredAt is
@@ -743,6 +803,34 @@ func enforceTombstoneRetention(db Database, namespace string) {
 	if pruned > 0 {
 		Debug("[factstore] tombstone retention pruned %d retired fact(s) from %s (window %dd)", pruned, namespace, days)
 	}
+}
+
+// PruneExpiredFactTombstones removes retired facts past the retention window
+// across EVERY namespace in one table walk — the startup backstop for
+// namespaces too small or quiet to ever trigger the sweep or the hard cap,
+// which are otherwise the only places retention runs (their tombstones from
+// ordinary supersession accumulated indefinitely). Returns rows removed.
+func PruneExpiredFactTombstones(db Database) int {
+	if db == nil {
+		return 0
+	}
+	days := TuneInt(TunableFactTombstoneDays)
+	cutoff := time.Now().AddDate(0, 0, -days)
+	pruned := 0
+	for _, k := range db.Keys(MemoryFactsTable) {
+		var f MemoryFact
+		if !db.Get(MemoryFactsTable, k, &f) || !f.Retired() {
+			continue
+		}
+		if days <= 0 || f.RetiredAt.Before(cutoff) {
+			db.Unset(MemoryFactsTable, k)
+			pruned++
+		}
+	}
+	if pruned > 0 {
+		Log("[factstore] startup tombstone pass pruned %d expired retired fact(s)", pruned)
+	}
+	return pruned
 }
 
 // ListRetiredFacts returns the namespace's retired (tombstoned) facts, most
@@ -1044,6 +1132,15 @@ const factSearchTopK = 8
 // O(1) embed calls, not one per fact. Legacy facts without a vector are
 // backfilled on first touch by factVector.
 func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
+	return SearchMemoryFactsVec(db, namespace, query, nil)
+}
+
+// SearchMemoryFactsVec is SearchMemoryFacts with an optional caller-supplied
+// query embedding. Multi-layer callers (unified recall spans facts + chunks +
+// history) embed the query ONCE and hand the vector to every layer — three
+// serial round-trips to the single embed GPU per recall otherwise. nil qVec
+// keeps the embed-here behavior.
+func SearchMemoryFactsVec(db Database, namespace, query string, qVec []float32) []MemoryFact {
 	all := ListMemoryFacts(db, namespace)
 	q := strings.TrimSpace(query)
 	if q == "" {
@@ -1052,7 +1149,12 @@ func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
 	if cfg := GetEmbeddingConfig(); cfg.Enabled && len(all) > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if qVec, err := Embed(ctx, q); err == nil && len(qVec) > 0 {
+		if len(qVec) == 0 {
+			if v, err := Embed(ctx, q); err == nil {
+				qVec = v
+			}
+		}
+		if len(qVec) > 0 {
 			type scored struct {
 				fact  MemoryFact
 				score float32
@@ -1091,6 +1193,11 @@ func SearchMemoryFacts(db Database, namespace, query string) []MemoryFact {
 	for _, f := range all {
 		if strings.Contains(strings.ToLower(f.Note), ql) {
 			out = append(out, f)
+			// Same cap as the semantic tier — a common-word query was
+			// otherwise a full namespace dump.
+			if len(out) >= factSearchTopK {
+				break
+			}
 		}
 	}
 	return out
@@ -1291,29 +1398,33 @@ func MigrateLegacyFactStore(db Database) {
 		g.notes = append(g.notes, note)
 		g.oldKeys = append(g.oldKeys, k)
 	}
-	if len(groups) == 0 {
-		return
-	}
-	migrated, dedup := 0, 0
-	for ns, g := range groups {
-		// Delete old rows BEFORE re-storing so the new StoreMemoryFact
-		// dedup pass sees a clean slate per namespace.
-		for _, k := range g.oldKeys {
-			db.Unset(MemoryFactsTable, k)
-		}
-		for _, note := range g.notes {
-			_, isNew, _ := StoreMemoryFact(db, ns, note)
-			if isNew {
-				migrated++
-			} else {
-				dedup++
+	// The tombstone conversion + retention pass below must run on EVERY
+	// startup, not only when legacy keyed rows exist — the old early-return on
+	// an empty group set silently skipped them on steady-state boots (exactly
+	// when the retention backstop matters).
+	if len(groups) > 0 {
+		migrated, dedup := 0, 0
+		for ns, g := range groups {
+			// Delete old rows BEFORE re-storing so the new StoreMemoryFact
+			// dedup pass sees a clean slate per namespace.
+			for _, k := range g.oldKeys {
+				db.Unset(MemoryFactsTable, k)
+			}
+			for _, note := range g.notes {
+				_, isNew, _ := StoreMemoryFact(db, ns, note)
+				if isNew {
+					migrated++
+				} else {
+					dedup++
+				}
 			}
 		}
-	}
-	if migrated+dedup > 0 {
-		Log("[factstore] migrated %d legacy fact(s) to flat shape (deduped %d on the way through)", migrated, dedup)
+		if migrated+dedup > 0 {
+			Log("[factstore] migrated %d legacy fact(s) to flat shape (deduped %d on the way through)", migrated, dedup)
+		}
 	}
 	migrateSupersededTombstones(db)
+	PruneExpiredFactTombstones(db)
 }
 
 // migrateSupersededTombstones converts rows written under the old supersession

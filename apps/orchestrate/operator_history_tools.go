@@ -51,6 +51,16 @@ func operatorHistoryTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return "", fmt.Errorf("history index unavailable")
 				}
 				hits := SearchRecall(db, source, q, 6)
+				// Same relevance floor the unified [history] layer applies
+				// (0.5.180) — unfloored, any weak match injected tangential
+				// old conversation into the Operator's context.
+				floored := hits[:0]
+				for _, h := range hits {
+					if h.Score >= manualSearchMinScore {
+						floored = append(floored, h)
+					}
+				}
+				hits = floored
 				facts := SearchMemoryFacts(db, factsNamespace(agentID), q)
 
 				if len(hits) == 0 && len(facts) == 0 {

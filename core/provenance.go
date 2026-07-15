@@ -31,6 +31,28 @@ const (
 	MemSourceImported                    // bulk-loaded from an external store
 )
 
+// sourceTrust ranks origins for "which provenance wins" decisions: a sweep
+// merging a user_stated fact with an observed one must not launder both to
+// unknown, and a machine re-link must not downgrade a hand-curated edge.
+// Higher = more trustworthy. The grounding split (SourcedFactCorpus) is the
+// authority on WHICH sources license grounding; this only orders them.
+func sourceTrust(s MemSource) int {
+	switch s {
+	case MemSourceUserStated:
+		return 5
+	case MemSourceRetrieved:
+		return 4
+	case MemSourceObserved:
+		return 3
+	case MemSourceImported:
+		return 2
+	case MemSourceInferred:
+		return 1
+	default:
+		return 0
+	}
+}
+
 // Volatility is how fast a claim's CONTENT (not the row) goes stale. Set at
 // write time from the claim's category, NOT from the model's confidence — the
 // facts a model is most sure of are exactly the stale priors it should trust

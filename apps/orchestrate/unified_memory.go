@@ -368,7 +368,23 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	}
 	perLayer := recallPerLayerBudget(args, len(layers))
 	now := time.Now()
+	// ONE query embed serves every layer below (facts, chunks, history) —
+	// each previously embedded independently: three serial round-trips to the
+	// single embed GPU per recall. Best-effort: on failure each layer falls
+	// back to its own non-vector path (keyword/substring), same as before.
+	var qVec []float32
+	if GetEmbeddingConfig().Enabled {
+		ectx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if v, err := Embed(ectx, query); err == nil {
+			qVec = v
+		}
+		cancel()
+	}
 	var sections []string
+	// pinnedNotes collects the [pinned] notes served this call so the
+	// [finding] layer can drop a verbatim duplicate (same content saved as
+	// both a fact and a finding injected twice).
+	var pinnedNotes []string
 
 	// [pinned] — Explicit Memory. Tagged with fact:<id> so forget can target
 	// the exact note regardless of its position in the prompt block. An aging or
@@ -379,7 +395,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	// <date>") instead of a silent miss the model would paper over with a
 	// stale prior.
 	if layers["pinned"] {
-		facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
+		facts := SearchMemoryFactsVec(t.udb, factsNamespace(t.agent.ID), query, qVec)
 		if len(facts) > perLayer {
 			facts = facts[:perLayer]
 		}
@@ -387,6 +403,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
 			var b strings.Builder
 			for _, f := range facts {
+				pinnedNotes = append(pinnedNotes, f.Note)
 				fmt.Fprintf(&b, "- [pinned] %s%s%s\n  id: fact:%s\n",
 					strings.TrimSpace(f.Note), factEntityNudge(ents, f.Note), FactStalenessNote(f, now), f.ID)
 			}
@@ -413,7 +430,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		topic := normalizeTopic(stringArg(args, "topic"))
 		ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 		defer cancel()
-		hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
+		hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, qVec, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
 		var findings, knowledge []SearchHit
 		for _, h := range hits {
 			if h.Score < manualSearchMinScore {
@@ -422,6 +439,12 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 			if chunkProvenance(h.Source, h.ReportID) == "derived" {
 				if !layers["finding"] {
 					continue // Reference layer not searched this turn
+				}
+				// Cross-layer dedup: content saved as BOTH a pinned fact and a
+				// finding otherwise injects twice in one recall. The pinned
+				// copy wins (it carries the fact id + staleness affordances).
+				if findingMatchesPinned(h.Text, pinnedNotes) {
+					continue
 				}
 				findings = append(findings, h) // collect all; recency re-rank + cap below
 			} else if layers["knowledge"] && len(knowledge) < perLayer {
@@ -450,7 +473,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 	// conversation on any weak match.
 	if layers["history"] {
 		source := operatorLCMSource(t.agent.ID, cortexSessionID(t.agent.ID))
-		hh := SearchRecall(t.udb, source, query, perLayer)
+		hh := SearchRecallVec(t.udb, source, query, qVec, perLayer)
 		var b strings.Builder
 		for _, h := range hh {
 			if h.Score < manualSearchMinScore {
@@ -485,6 +508,27 @@ func recallChunkScope(layers map[string]bool) ChunkScope {
 		return ChunkScopeCuratedOnly
 	}
 	return ChunkScopeAll
+}
+
+// findingMatchesPinned reports whether a finding's chunk text is a verbatim
+// (whitespace/case-insensitive) duplicate of one of the pinned notes already
+// rendered in this recall — the read-time cross-layer dedup. Equality only:
+// a finding that merely OVERLAPS a fact usually carries extra context worth
+// showing.
+func findingMatchesPinned(text string, pinnedNotes []string) bool {
+	if len(pinnedNotes) == 0 {
+		return false
+	}
+	want := normalizeFindingText(text)
+	if want == "" {
+		return false
+	}
+	for _, n := range pinnedNotes {
+		if normalizeFindingText(n) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // recallNoMatchMessage tailors the empty-result text to the layers that were
@@ -718,14 +762,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 	}
 	agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
 	var ids []string
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if c.ReportID != reportID {
-			continue
-		}
+	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool { return c.ReportID == reportID }) {
 		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":")
 		if !inScope || chunkProvenance(c.Source, c.ReportID) != "derived" {
 			return fmt.Sprintf("id mem:%s doesn't point at one of your own findings (it may be knowledge, already deleted, or from another context). Only findings you saved with remember can be forgotten.", reportID), nil

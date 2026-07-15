@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -62,7 +63,29 @@ var (
 	graphExtractMu       sync.Mutex
 	graphExtractInFlight = map[string]bool{}
 	graphExtractLast     = map[string]time.Time{}
+	// graphExtractSerial serializes the WRITE half per namespace across both
+	// triggers. The per-turn path already single-flights via
+	// graphExtractInFlight, but the fold path deliberately has no such drop
+	// (a skipped fold's spans would be permanently missed), so rapid folds —
+	// or a fold landing beside a per-turn pass — could run UpsertGraphEntity
+	// merges concurrently and race aliases away. Serializing (rather than
+	// dropping) keeps the fold's completeness guarantee.
+	graphExtractSerialMu sync.Mutex
+	graphExtractSerial   = map[string]*sync.Mutex{}
 )
+
+// graphExtractNSLock returns the per-namespace serialization mutex, minting it
+// on first use.
+func graphExtractNSLock(namespace string) *sync.Mutex {
+	graphExtractSerialMu.Lock()
+	defer graphExtractSerialMu.Unlock()
+	mu, ok := graphExtractSerial[namespace]
+	if !ok {
+		mu = &sync.Mutex{}
+		graphExtractSerial[namespace] = mu
+	}
+	return mu
+}
 
 // maybeExtractGraph fires a background entity-extraction pass over text, subject
 // to the gate, a length floor, and single-flight + cooldown per namespace. It
@@ -144,7 +167,13 @@ func foldUserText(folded []Message) string {
 	}
 	s := strings.TrimSpace(b.String())
 	if len(s) > foldExtractMaxChars {
-		s = s[:foldExtractMaxChars]
+		// Cut on a rune boundary — a byte slice can split a UTF-8 sequence
+		// and hand the worker prompt an invalid trailing byte.
+		cut := foldExtractMaxChars
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut]
 	}
 	return s
 }
@@ -164,6 +193,13 @@ type graphTriple struct {
 // edges are stamped observed. Returns the number of edges written (for tests /
 // logging).
 func extractGraphFromText(db Database, namespace, text string, chat FactChatFunc) int {
+	// One extraction writes at a time per namespace (see graphExtractSerial).
+	// Taken here, below the judge call sites' goroutines, so BOTH triggers
+	// inherit it. The worker call runs inside the lock — serializing the LLM
+	// round-trips is the point (concurrent extractions were the alias race).
+	mu := graphExtractNSLock(namespace)
+	mu.Lock()
+	defer mu.Unlock()
 	now := time.Now()
 	prov := MemoryProvenance{Source: MemSourceObserved, AsOf: now}
 	written := 0

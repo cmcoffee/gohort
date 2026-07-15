@@ -135,12 +135,17 @@ func TestClassifyVolatility(t *testing.T) {
 		{"RTX 5090 price is $1999", VolVolatile},
 		{"the latest version is 2.3.1", VolVolatile},
 		{"team is currently ranked 4th", VolVolatile},
+		{"the 5090 costs $1,600", VolVolatile},
 		{"user works at Acme on the platform team", VolSlow},
 		{"user lives in Denver", VolSlow},
 		{"the CEO is Jane Roe", VolSlow},
 		{"user prefers metric units", VolStable},
 		{"water boils at 100C at sea level", VolStable},
 		{"the project is named Atlas", VolStable},
+		// A $-sign or "currently" inside a PREFERENCE is not a price quote /
+		// live status — the bare tokens used to flag these volatile.
+		{"user prefers products under $50", VolStable},
+		{"user currently prefers dark mode for the dashboard", VolStable},
 	}
 	for _, c := range cases {
 		if got := classifyVolatility(c.note); got != c.want {

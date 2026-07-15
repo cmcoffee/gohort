@@ -110,6 +110,25 @@ func renderFindingConflictNote(conflicts []SearchHit) string {
 	return b.String()
 }
 
+// conflictJudgeExcerptMaxChars sizes the excerpt each candidate finding gets
+// in the conflict judge's prompt. Wider than the 300-char UI excerpt — the
+// judge must actually read the claim it's asked to refute.
+const conflictJudgeExcerptMaxChars = 900
+
+// conflictJudgeExcerpt trims a finding for the judge prompt, cutting at a word
+// boundary like knowledgeSearchExcerpt but at the judge's wider cap.
+func conflictJudgeExcerpt(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) <= conflictJudgeExcerptMaxChars {
+		return text
+	}
+	cut := text[:conflictJudgeExcerptMaxChars]
+	if idx := strings.LastIndex(cut, " "); idx > conflictJudgeExcerptMaxChars/2 {
+		cut = cut[:idx]
+	}
+	return strings.TrimRight(cut, " \t\n") + "…"
+}
+
 // judgeFindingConflicts asks the worker which candidate findings the new finding
 // CONTRADICTS (incompatible claims about the same thing, cannot both be true).
 // Mirrors the fact layer's judgeSupersedes: a plain JSON array of indices, worker
@@ -121,7 +140,11 @@ func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []Se
 	}
 	var list strings.Builder
 	for i, h := range candidates {
-		fmt.Fprintf(&list, "%d. %s\n", i+1, strings.ReplaceAll(knowledgeSearchExcerpt(h.Text), "\n", " "))
+		// A judge-specific excerpt, wider than the UI's search excerpt: a
+		// contradiction past a 300-char display cap was invisible to the
+		// judge, and the note shown to the user then named a finding the
+		// judge only partially read.
+		fmt.Fprintf(&list, "%d. %s\n", i+1, strings.ReplaceAll(conflictJudgeExcerpt(h.Text), "\n", " "))
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()

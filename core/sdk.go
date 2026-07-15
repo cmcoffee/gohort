@@ -61,8 +61,11 @@ func (T *AppCore) Remember(namespace, fact string) (bool, error) {
 	if T == nil || T.DB == nil {
 		return false, fmt.Errorf("no store configured (set AppCore.DB before Remember)")
 	}
-	_, saved, _ := StoreMemoryFact(T.DB, namespace, fact)
-	return saved, nil
+	// SDK callers load facts programmatically from their own data → imported
+	// on the provenance envelope (distinguishable from in-session writes;
+	// excluded from the grounding corpus).
+	res := StoreMemoryFactP(T.DB, namespace, fact, FactWritePolicy{Source: MemSourceImported})
+	return res.Reason == FactStored, nil
 }
 
 // Recall returns the facts stored under a namespace, for injection into a system

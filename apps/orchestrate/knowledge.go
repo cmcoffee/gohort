@@ -756,17 +756,7 @@ func countReportChunks(db Database, reportID string) int {
 	if db == nil || reportID == "" {
 		return 0
 	}
-	n := 0
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if c.ReportID == reportID {
-			n++
-		}
-	}
-	return n
+	return len(ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == reportID }))
 }
 
 // countAgentKnowledgeChunks returns how many EmbeddedChunks belong to
@@ -779,17 +769,7 @@ func countAgentKnowledgeChunks(appDB Database, user, agentID string) int {
 		return 0
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
-	n := 0
-	for _, key := range appDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !appDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if strings.HasPrefix(c.Source, prefix) {
-			n++
-		}
-	}
-	return n
+	return len(ChunksWhere(appDB, func(c EmbeddedChunk) bool { return strings.HasPrefix(c.Source, prefix) }))
 }
 
 // ingestAgentKnowledge persists a free-form note under the agent's
@@ -849,17 +829,12 @@ func enforceFindingCap(user, agentID string) {
 	}
 	seen := map[string]int{} // reportID → index into findings
 	var findings []finding
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
+	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool {
 		if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
-			continue
+			return false
 		}
-		if c.Source == attachments || !strings.HasPrefix(c.ReportID, "orch-know-") {
-			continue
-		}
+		return c.Source != attachments && strings.HasPrefix(c.ReportID, "orch-know-")
+	}) {
 		ts, err := time.Parse(time.RFC3339, c.Date)
 		if err != nil {
 			ts = time.Now() // undated legacy chunk: treat as fresh, never the first evicted
@@ -933,6 +908,14 @@ const (
 // knowledge ALONGSIDE what it gathered itself. Empty/equal ⇒ instance-only (the
 // normal single-scope behavior).
 func searchAgentKnowledge(ctx context.Context, db Database, user, baseUser, agentID, topic, query string, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
+	return searchAgentKnowledgeVec(ctx, db, user, baseUser, agentID, topic, query, nil, k, activeSkills, agentAttachedCollections, scope)
+}
+
+// searchAgentKnowledgeVec is searchAgentKnowledge with an optional caller-
+// supplied query embedding (qVec), so a multi-layer caller (unified recall)
+// embeds the query once instead of once per layer. nil/empty qVec keeps the
+// embed-here behavior.
+func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, agentID, topic, query string, qVec []float32, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
 	// db is kept in the signature for caller compatibility and acts as
 	// the system-readiness gate. The chunk search itself runs against
 	// VectorDB now (the dedicated shared store, partitioned by Source
@@ -1059,8 +1042,8 @@ func searchAgentKnowledge(ctx context.Context, db Database, user, baseUser, agen
 	}
 
 	cfg := GetEmbeddingConfig()
-	var vec []float32
-	if cfg.Enabled {
+	vec := qVec
+	if len(vec) == 0 && cfg.Enabled {
 		if v, err := Embed(ctx, query); err == nil && len(v) > 0 {
 			vec = v
 		}
@@ -1313,17 +1296,12 @@ func (t *chatTurn) findingExactDuplicate(content string) bool {
 		return false
 	}
 	agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
+	for _, c := range ChunksWhere(VectorDB, func(c EmbeddedChunk) bool {
 		if c.Source != agentPrefix && !strings.HasPrefix(c.Source, agentPrefix+":") {
-			continue
+			return false
 		}
-		if !strings.HasPrefix(c.ReportID, "orch-know-") {
-			continue
-		}
+		return strings.HasPrefix(c.ReportID, "orch-know-")
+	}) {
 		if normalizeFindingText(c.Text) == want {
 			return true
 		}
@@ -1563,20 +1541,9 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			if VectorDB == nil {
 				return "", errors.New("vector store unavailable")
 			}
-			var chunks []EmbeddedChunk
-			for _, key := range VectorDB.Keys(EmbeddedChunks) {
-				var c EmbeddedChunk
-				if !VectorDB.Get(EmbeddedChunks, key, &c) {
-					continue
-				}
-				if c.ReportID != docID {
-					continue
-				}
-				if !allowSource(c.Source) {
-					continue
-				}
-				chunks = append(chunks, c)
-			}
+			chunks := ChunksWhere(VectorDB, func(c EmbeddedChunk) bool {
+				return c.ReportID == docID && allowSource(c.Source)
+			})
 			if len(chunks) == 0 {
 				return fmt.Sprintf("No document found with doc_id=%q in your accessible knowledge corpus. The doc_id either doesn't exist, has been deleted, or belongs to a corpus you can't access. If you got the doc_id from a recent %s call and the document was deleted between turns, re-run the search.", docID, memKnowledgePhrase()), nil
 			}

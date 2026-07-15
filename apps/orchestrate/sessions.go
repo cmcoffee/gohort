@@ -241,7 +241,17 @@ func dropChatSessionBucket(db Database, agentID string) {
 	}
 	tbl := sessionTable(agentID)
 	for _, k := range db.Keys(tbl) {
+		// Per-session side tables go with each session — the same set
+		// deleteChatSession clears (authoring-in-progress rows, session temp
+		// tools, the compact state's summary + fold cursor). Unsetting only
+		// the session row orphaned all three on agent delete. The chunk
+		// archive is NOT wiped per session here — the bucket-level prefix
+		// sweep below reclaims every session's archive in one pass instead
+		// of one table walk per session.
 		db.Unset(tbl, k)
+		clearAuthoringInProgress(db, k)
+		DeleteSessionTempTools(db, k)
+		deleteCompactState(db, agentID, k)
 	}
 	// Every session's continuity archive shares the lcm:<agent>: source
 	// prefix — one sweep reclaims them all (operatorLCMSource with an empty

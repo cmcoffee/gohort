@@ -330,8 +330,7 @@ func (T *OrchestrateApp) PublicHandleChannelClear(w http.ResponseWriter, r *http
 		return
 	}
 	sid := cortexSessionID(agentID)
-	deleteChatSession(udb, agentID, sid)
-	deleteCompactState(udb, agentID, sid)
+	deleteChatSession(udb, agentID, sid) // includes the compact state
 	w.WriteHeader(http.StatusNoContent)
 }
 

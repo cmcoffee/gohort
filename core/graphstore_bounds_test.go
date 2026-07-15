@@ -86,3 +86,45 @@ func TestGraphEdgeCapEvictsLRU(t *testing.T) {
 		t.Fatal("retired tombstone must be exempt from the live-edge cap")
 	}
 }
+
+// TestRelinkPreservesCuratedEdge: a machine re-link (extraction re-observing a
+// relationship) must not downgrade a hand-curated edge — the prior Note stays
+// when the incoming one is empty, the higher-trust Source wins in both
+// directions, and AsOf takes the incoming stamp (re-observation confirms).
+func TestRelinkPreservesCuratedEdge(t *testing.T) {
+	db := memDB(t)
+	ns := "agent:x"
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	LinkGraphEdgeP(db, ns, "person:robin", "works_at", "org:acme", "confirmed by user", false,
+		MemoryProvenance{Source: MemSourceUserStated, AsOf: old})
+
+	// Machine pass re-observes the same triple with no note.
+	now := time.Now()
+	LinkGraphEdgeP(db, ns, "person:robin", "works_at", "org:acme", "", false,
+		MemoryProvenance{Source: MemSourceObserved, AsOf: now})
+
+	edges := GraphEdgesFrom(db, ns, "person:robin")
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(edges))
+	}
+	e := edges[0]
+	if e.Note != "confirmed by user" {
+		t.Fatalf("re-link clobbered the curated note: %q", e.Note)
+	}
+	if e.Source != MemSourceUserStated {
+		t.Fatalf("re-link downgraded the curated source: %d", e.Source)
+	}
+	if !e.AsOf.Equal(now) {
+		t.Fatalf("re-observation should bump AsOf, got %v", e.AsOf)
+	}
+
+	// And the upgrade direction: a user confirming an observed edge wins.
+	LinkGraphEdgeP(db, ns, "person:sam", "lives_in", "place:denver", "", false,
+		MemoryProvenance{Source: MemSourceObserved, AsOf: old})
+	LinkGraphEdgeP(db, ns, "person:sam", "lives_in", "place:denver", "user confirmed", false,
+		MemoryProvenance{Source: MemSourceUserStated, AsOf: now})
+	e = GraphEdgesFrom(db, ns, "person:sam")[0]
+	if e.Source != MemSourceUserStated || e.Note != "user confirmed" {
+		t.Fatalf("user confirmation should upgrade the edge, got source=%d note=%q", e.Source, e.Note)
+	}
+}

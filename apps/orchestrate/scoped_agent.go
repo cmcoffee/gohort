@@ -118,7 +118,10 @@ func (T *OrchestrateApp) SeedScopedMemory(scope AgentScope, notes ...string) err
 		if strings.TrimSpace(note) == "" {
 			continue
 		}
-		StoreMemoryFact(db, ns, note, T.WorkerChat)
+		// App-seeded instance facts → imported on the envelope (machine-
+		// loaded from the app's own records, not stated in-session). Worker
+		// chat kept: re-seeding a changed fact should supersede the stale one.
+		StoreMemoryFactP(db, ns, note, FactWritePolicy{Chat: T.WorkerChat, Source: MemSourceImported})
 	}
 	return nil
 }

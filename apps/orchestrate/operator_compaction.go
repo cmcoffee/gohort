@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -127,52 +128,24 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	cfg := CompactionConfig{
 		KeepRecent: keepRecent, // 0 → withDefaults applies 12
 		Trigger:    effectiveKeep * foldTriggerPct() / 100,
-		// Archive each folded span into a searchable history index so aged
-		// content stays recoverable via recall_history / expand_history,
-		// instead of surviving only as the lossy running summary. A failed
-		// archive aborts the fold (error return) so the cursor never advances
-		// past content that isn't actually in the index — trimStoredHistory
-		// would otherwise hard-drop it later on the strength of that cursor.
-		// Spans are keyed by the fold counter, not firstIndex: indices rebase
-		// when the stored thread is trimmed, and a recurring index would
-		// overwrite an older span on re-ingest.
-		OnFold: func(folded []Message, firstIndex int) error {
-			return T.archiveOperatorSpan(udb, agent.ID, sessID, st.FoldSeq, folded, firstIndex)
-		},
 	}
-	fold := func(ctx context.Context, aging []Message, prior string) (string, []string, error) {
-		return T.operatorFold(ctx, aging, prior)
-	}
-	newSt, facts, changed, err := CompactConversation(context.Background(), cm, st, cfg, fold)
-	if err != nil {
-		Log("[operator.compact] fold failed for %s:%s (cursor held, will retry): %v", agent.ID, sessID, err)
-	}
-	if err == nil && changed {
-		saveCompactState(udb, agent.ID, sessID, newSt)
-		// Fact extraction respects the agent's Reference Memory setting. A
-		// memory-disabled run (e.g. a phantom: dispatch with DisableInferred
-		// forced on) still gets its history BOUNDED — folding the aging span
-		// into a summary — but the folded span doesn't seed facts. Without
-		// this gate, generalizing compaction to the dispatch path would
-		// silently revive fact storage on memory-off agents.
-		if !agent.DisableInferred {
-			for _, f := range facts {
-				if f = strings.TrimSpace(f); f != "" {
-					// Worker chat enables supersession: a fact distilled from a
-					// folded span that updates an earlier one replaces it rather
-					// than coexisting as a contradiction.
-					StoreMemoryFact(udb, factsNamespace(agent.ID), f, T.WorkerChat)
-				}
-			}
-		}
-		st = newSt
-	}
-
-	block, _ := CompactedView(cm, st, cfg)
+	// Fold OFF the hot path: when the unsummarized tail has outgrown the
+	// trigger, the fold pipeline (worker summarize + span archive + fact
+	// stores) runs in the BACKGROUND and this turn renders off the pre-fold
+	// view — previously it all ran synchronously before the turn's first
+	// token, so the fold turn ate seconds of latency. The prompt floats one
+	// fold-cycle higher until the fold lands (the next turn picks up the new
+	// summary); single-flight per thread, so a busy session schedules at most
+	// one.
 	through := st.SummarizedThrough
 	if through < 0 {
 		through = 0
 	}
+	if len(cm)-through > cfg.Trigger {
+		T.maybeFoldOperatorHistory(udb, agent, sessID, cfg)
+	}
+
+	block, _ := CompactedView(cm, st, cfg)
 	if through > len(msgs) {
 		through = len(msgs)
 	}
@@ -183,6 +156,116 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	}
 	out = append(out, tail...)
 	return out
+}
+
+// operatorFoldInFlight single-flights the background fold per (agent, session).
+// trimStoredHistory also consults it: a fold computes its cursor against the
+// thread it reloaded, so a concurrent trim rebasing indices under it would
+// leave the saved cursor too high — and messages the cursor claims are folded
+// (but aren't) eventually get trimmed away UN-archived. Trim defers instead
+// (it batches anyway; next turn retries).
+var (
+	operatorFoldMu       sync.Mutex
+	operatorFoldInFlight = map[string]bool{}
+)
+
+func operatorFoldKey(agentID, sessID string) string { return agentID + ":" + sessID }
+
+func operatorFoldBusy(agentID, sessID string) bool {
+	operatorFoldMu.Lock()
+	defer operatorFoldMu.Unlock()
+	return operatorFoldInFlight[operatorFoldKey(agentID, sessID)]
+}
+
+// maybeFoldOperatorHistory launches the background fold for one thread,
+// single-flight. Mirrors maybeSweepFacts / maybeExtractGraph: best-effort,
+// never blocks the caller, panics contained.
+func (T *OrchestrateApp) maybeFoldOperatorHistory(udb Database, agent AgentRecord, sessID string, cfg CompactionConfig) {
+	key := operatorFoldKey(agent.ID, sessID)
+	operatorFoldMu.Lock()
+	if operatorFoldInFlight[key] {
+		operatorFoldMu.Unlock()
+		return
+	}
+	operatorFoldInFlight[key] = true
+	operatorFoldMu.Unlock()
+	go func() {
+		defer func() {
+			operatorFoldMu.Lock()
+			delete(operatorFoldInFlight, key)
+			operatorFoldMu.Unlock()
+			if r := recover(); r != nil {
+				Log("[operator.compact] background fold panic for %s: %v", key, r)
+			}
+		}()
+		T.foldOperatorHistory(udb, agent, sessID, cfg)
+	}()
+}
+
+// foldOperatorHistory runs one fold cycle for a thread: reload the stored
+// messages FRESH (the turn that scheduled this is still appending — appended
+// tail messages sit beyond the fold window and are harmless; leading indices
+// can't move because trim defers while this runs), summarize the aging span,
+// archive it, persist the new cursor, and store the surfaced facts.
+func (T *OrchestrateApp) foldOperatorHistory(udb Database, agent AgentRecord, sessID string, cfg CompactionConfig) {
+	sess, ok := loadChatSession(udb, agent.ID, sessID)
+	if !ok || len(sess.Messages) == 0 {
+		return
+	}
+	cm := make([]Message, len(sess.Messages))
+	for i, m := range sess.Messages {
+		cm[i] = Message{Role: m.Role, Content: m.Content}
+	}
+	st := loadCompactState(udb, agent.ID, sessID)
+	if st.SummarizedThrough > len(cm) {
+		st.SummarizedThrough = 0 // same corrupted-state recovery as the view path
+	}
+	// Archive each folded span into a searchable history index so aged
+	// content stays recoverable via recall_history / expand_history,
+	// instead of surviving only as the lossy running summary. A failed
+	// archive aborts the fold (error return) so the cursor never advances
+	// past content that isn't actually in the index — trimStoredHistory
+	// would otherwise hard-drop it later on the strength of that cursor.
+	// Spans are keyed by the fold counter, not firstIndex: indices rebase
+	// when the stored thread is trimmed, and a recurring index would
+	// overwrite an older span on re-ingest.
+	cfg.OnFold = func(folded []Message, firstIndex int) error {
+		return T.archiveOperatorSpan(udb, agent.ID, sessID, st.FoldSeq, folded, firstIndex)
+	}
+	fold := func(ctx context.Context, aging []Message, prior string) (string, []string, error) {
+		return T.operatorFold(ctx, aging, prior)
+	}
+	newSt, facts, changed, err := CompactConversation(context.Background(), cm, st, cfg, fold)
+	if err != nil {
+		Log("[operator.compact] fold failed for %s:%s (cursor held, will retry): %v", agent.ID, sessID, err)
+		return
+	}
+	if !changed {
+		return
+	}
+	saveCompactState(udb, agent.ID, sessID, newSt)
+	// Fact extraction respects BOTH memory toggles: DisableInferred (the
+	// fold facts are model-inferred — a phantom: dispatch with it forced
+	// on still gets its history bounded, just no fact seeding) AND
+	// DisableExplicit (the write lands in the always-in-prompt Explicit
+	// store, which this gate previously ignored — the least-governed
+	// writer into the most expensive store).
+	if !agent.DisableInferred && !agent.DisableExplicit {
+		for _, f := range facts {
+			if f = strings.TrimSpace(f); f != "" {
+				// Full policy, same as the model's own store_fact: worker
+				// chat enables supersession (a distilled fact that updates
+				// an earlier one replaces it), Mode engages the relevance
+				// gate in chatbot mode, and Source=observed keeps these
+				// model-authored notes OUT of the grounding corpus.
+				StoreMemoryFactP(udb, factsNamespace(agent.ID), f, FactWritePolicy{
+					Mode:   agent.MemoryMode,
+					Chat:   T.WorkerChat,
+					Source: MemSourceObserved,
+				})
+			}
+		}
+	}
 }
 
 // Stored-thread caps. compactOperatorHistory bounds the RUN view; these bound
@@ -214,6 +297,13 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 	if agent.DisableCompaction {
 		Log("[operator.compact] %s:%s storage capped to %d (compaction off; older forgotten)", agent.ID, sessID, keep)
 		return msgs[len(msgs)-keep:]
+	}
+	if operatorFoldBusy(agent.ID, sessID) {
+		// A background fold is computing its cursor against the thread as it
+		// reloaded it — rebasing indices under it would desync the cursor and
+		// eventually trim UN-archived messages. Trim batches anyway; defer to
+		// a later turn.
+		return msgs
 	}
 	st := loadCompactState(udb, agent.ID, sessID)
 	if st.SummarizedThrough <= 0 {
