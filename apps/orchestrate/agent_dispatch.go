@@ -1355,12 +1355,47 @@ func findAgentByNameOrID(udb Database, owner, key string) (AgentRecord, bool) {
 		return a, true
 	}
 	low := strings.ToLower(key)
-	for _, a := range listAgents(udb, owner) {
+	agents := listAgents(udb, owner)
+	for _, a := range agents {
 		if strings.ToLower(a.Name) == low {
 			return a, true
 		}
 	}
+	// Slug-tolerant fallback: a target stored as "wiwee-summary" must still
+	// resolve to an agent named "WiWee Summary" or "wiwee_summary". Standing
+	// agents store the raw name string typed at creation, so any separator or
+	// case drift between that string and the agent's Name would otherwise
+	// orphan the schedule while the agent still lists fine. Matched last so an
+	// exact name always wins over a normalized collision.
+	keyNorm := normalizeAgentKey(key)
+	for _, a := range agents {
+		if normalizeAgentKey(a.Name) == keyNorm {
+			return a, true
+		}
+	}
 	return AgentRecord{}, false
+}
+
+// normalizeAgentKey lowercases and collapses separator runs (- _ and
+// whitespace) to a single space, so display-name vs slug drift doesn't
+// break name resolution. "WiWee Summary", "wiwee-summary", and
+// "wiwee_summary" all normalize to "wiwee summary".
+func normalizeAgentKey(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	prevSep := false
+	for _, r := range s {
+		if r == '-' || r == '_' || r == ' ' || r == '\t' {
+			if !prevSep && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			prevSep = true
+			continue
+		}
+		b.WriteRune(r)
+		prevSep = false
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // dispatchToAgentToolDef removed — the LLM-facing dispatch surface

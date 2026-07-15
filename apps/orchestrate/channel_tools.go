@@ -8,6 +8,30 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// renamedToolAliases maps retired tool names to their current equivalents.
+// Agent AllowedTools lists persist verbatim in each user's store, so an agent
+// authored before a rename keeps the dead name forever — it silently drops out
+// of the catalog (intersects to nothing) and the agent loses that capability
+// without any error. The phantom-scoped chat tools were renamed to the
+// channel-scoped ones; a standing summary agent whose allowlist still says
+// read_phantom_chat would fire but be unable to read the chat. Resolving the
+// alias when the allow-set is built self-heals every such agent in place.
+var renamedToolAliases = map[string]string{
+	"read_phantom_chat":  "read_chat",
+	"list_phantom_chats": "list_chats",
+	"get_local_time":     "time_in_zone",
+}
+
+// canonicalToolName maps a possibly-retired tool name to the live name, or
+// returns it unchanged. Used when intersecting an agent's AllowedTools with the
+// live catalog so a renamed tool in an old allowlist still resolves.
+func canonicalToolName(name string) string {
+	if live, ok := renamedToolAliases[name]; ok {
+		return live
+	}
+	return name
+}
+
 // channelChatTools builds the CHANNEL-SCOPED messaging tools for an agent that
 // has channels — list_chats / read_chat / send_message. Scope is the agent's
 // bound channels: a whole-service binding (Address=="") widens to every thread

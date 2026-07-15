@@ -1207,7 +1207,7 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if !isSeed && !noTools && len(t.agent.AllowedTools) > 0 {
 		allowPersistent = make(map[string]bool, len(t.agent.AllowedTools))
 		for _, n := range t.agent.AllowedTools {
-			allowPersistent[n] = true
+			allowPersistent[canonicalToolName(n)] = true
 		}
 	}
 	// Builder authors fresh — hide the user's pre-existing custom tools from its
@@ -1763,7 +1763,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	case len(t.agent.AllowedTools) > 0:
 		allow := make(map[string]bool, len(t.agent.AllowedTools))
 		for _, n := range t.agent.AllowedTools {
-			allow[n] = true
+			allow[canonicalToolName(n)] = true
 		}
 		matched := 0
 		for _, n := range defaultNames {

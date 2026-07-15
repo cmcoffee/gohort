@@ -466,6 +466,18 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if name == "" || agentID == "" {
 					return "", fmt.Errorf("name and agent_id are required")
 				}
+				// Resolve the target to its STABLE record id now, and store that.
+				// Agent ids are UUIDs; agent_id here is usually a name/slug. If we
+				// stored the raw string, a later rename (Name changes, id doesn't)
+				// would silently orphan this schedule. Resolving up front also
+				// fails loudly at setup instead of quietly at fire time.
+				if sess != nil && sess.DB != nil {
+					if target, ok := findAgentByNameOrID(sess.DB, owner, agentID); ok {
+						agentID = target.ID
+					} else {
+						return "", fmt.Errorf("no agent named %q found — create it first, or check the name (agents action=list shows the exact names)", agentID)
+					}
+				}
 				sa := StandingAgent{
 					Name: name, Owner: owner, AgentID: agentID,
 					Mission: strings.TrimSpace(oArgStr(args, "mission")), Created: time.Now(),
