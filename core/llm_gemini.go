@@ -248,10 +248,57 @@ func buildGeminiTools(tools []Tool) []gemTool {
 		decls = append(decls, gemFunctionDecl{
 			Name:        t.Name,
 			Description: t.Description,
-			Parameters:  buildToolParamsSchema(t),
+			Parameters:  sanitizeGeminiSchema(buildToolParamsSchema(t)),
 		})
 	}
 	return []gemTool{{FunctionDeclarations: decls}}
+}
+
+// sanitizeGeminiSchema fixes the one way our shared JSON schema is invalid to
+// Gemini specifically: Gemini REQUIRES every "array" to declare "items", and
+// rejects the whole request (400 "…items: missing field") when one doesn't.
+// Anthropic and OpenAI infer array element shape from the description and never
+// complain, so buildToolParamsSchema omits items when a ToolParam has no Items.
+// Rather than force every array param across the codebase to spell out Items
+// (easy to forget, and it would change what Claude/OpenAI receive), we patch it
+// here, on the Gemini path only: any array missing items gets a permissive
+// string-items default. The param description still carries the real element
+// shape, so object-arrays keep working; this just satisfies Gemini's validator.
+func sanitizeGeminiSchema(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return raw
+	}
+	var node map[string]interface{}
+	if err := json.Unmarshal(raw, &node); err != nil {
+		return raw // leave malformed schema as-is; not our failure to mask
+	}
+	fixGeminiArrayItems(node)
+	out, err := json.Marshal(node)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// fixGeminiArrayItems walks a JSON-schema node tree and gives every array that
+// lacks "items" a permissive {"type":"string"} default, recursing through
+// items, properties, and nested arrays so deep object/array params are covered.
+func fixGeminiArrayItems(node map[string]interface{}) {
+	if t, _ := node["type"].(string); t == "array" {
+		if _, ok := node["items"]; !ok {
+			node["items"] = map[string]interface{}{"type": "string"}
+		}
+	}
+	if items, ok := node["items"].(map[string]interface{}); ok {
+		fixGeminiArrayItems(items)
+	}
+	if props, ok := node["properties"].(map[string]interface{}); ok {
+		for _, v := range props {
+			if sub, ok := v.(map[string]interface{}); ok {
+				fixGeminiArrayItems(sub)
+			}
+		}
+	}
 }
 
 // parseGeminiResponse extracts text content, thinking, and tool calls from a Gemini response.
