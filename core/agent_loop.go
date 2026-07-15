@@ -73,12 +73,6 @@ type StepInfo struct {
 	ToolCalls  []ToolCall // Tool calls the LLM requested this round.
 	ToolErrors int        // Number of tool calls that returned errors.
 	Done       bool       // True if this is the final round (no more tool calls).
-	// Superseded marks a round whose Content the loop is REJECTING and about to
-	// regenerate (a grounding-gate re-prompt, or another correction re-loop).
-	// Streaming surfaces should wipe whatever this round painted into the bubble
-	// so the user sees only the corrected answer, not the guess plus a walk-back.
-	// Non-streaming handlers can ignore it.
-	Superseded bool
 }
 
 // StepCallback is called after each round of the agent loop for observability.
@@ -350,13 +344,6 @@ type AgentLoopConfig struct {
 	// from chat. Tools with empty Caps (unannotated) pass through unfiltered
 	// during the migration period.
 	AllowedCaps []Capability
-	// GroundingSources is extra text the grounding gate treats as a legitimate
-	// source alongside this conversation's tool results and user messages — so a
-	// figure that legitimately came from provably-sourced memory (a user-entered
-	// or tool-retrieved fact, via SourcedFactCorpus) isn't false-flagged as an
-	// unsourced guess. Empty (the default) preserves the memory-excluded behavior,
-	// so callers that don't set it are unaffected.
-	GroundingSources string
 }
 
 // defaultConfirm prompts the user in the terminal with a Claude Code-style
@@ -643,15 +630,13 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// without em-dashes (house style).
 		systemPrompt += "\n\n[Disagreeing with the user: your training is not sufficient grounds to tell the user they are wrong. When they state or assume a fact and you think it is mistaken, treat your own prior knowledge as possibly stale or incomplete. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it (no tool fits, the tool fails or returns empty, or you are offline), do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask a clarifying question. This is about EMPIRICAL claims (dates, numbers, who or what or when, current state, how something works, what is true now). Reasoning, logic, math you can show step by step, and the user's own stated preferences you can still engage with directly and decisively. Do not manufacture a confident contradiction from priors; ground the disagreement or hold it as uncertain until you can.]"
 		systemPrompt += "\n\n[Numbers: when you state a figure, price, count, or measurement from a source, reproduce it exactly as written, keep its unit or currency attached, and keep it bound to the specific thing it describes (which item, which date, which place) so you never swap two values that appeared in the same source. Do not perform multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: if a calculation matters, show the steps so it can be checked, or use a tool. If two sources disagree on a number, say so rather than silently picking one. Prices and other time-sensitive figures go stale: when you quote a price, make sure it is current, note when it was observed if the source says, and never present an old or cached figure as today's price — if you cannot confirm it is current, say so or re-check rather than stating it as fact.]"
-		// False-precision prevention — always on for tool-using agents,
-		// INDEPENDENT of the grounding gate. It's the behavioral half of the same
-		// concern the [Numbers] / [Grounding] blocks address: stop the model
-		// inventing a percentage / fraction / dollar figure for rhetorical weight.
-		// Kept decoupled from tune_grounding_gate so a deployment can run the
-		// prompt discipline WITHOUT the mechanical re-prompt gate — the gate's
-		// verbatim-corpus match can't tell a correctly COMPUTED figure ("$120
-		// over MSRP") from a fabricated one, so the prompt is the better default
-		// and the gate stays opt-in for anyone who wants the harder backstop.
+		// False-precision prevention — the behavioral half of the same concern
+		// the [Numbers] / [Grounding] blocks address: stop the model inventing a
+		// percentage / fraction / dollar figure for rhetorical weight. This is
+		// prompt-only by design; the mechanical re-prompt gate that used to back
+		// it was removed because its verbatim-corpus match couldn't tell a
+		// correctly COMPUTED figure ("$120 over MSRP") from a fabricated one and
+		// false-flagged the model's own arithmetic.
 		systemPrompt += "\n\n[No false precision: do NOT manufacture a number for emphasis or to sound authoritative. If you do not have a real, sourced figure, do not invent a percentage, fraction, or dollar amount to stand in for one: say \"most\", \"a lot\", \"roughly half\", \"the majority\", \"a few thousand\", or describe the size in plain words. An invented \"80%\" or \"$5,000\" reads as precise and is worse than an honest \"most\" or \"a few thousand\". This is about figures conjured for rhetorical weight; a genuinely sourced number stated exactly is right, arithmetic you actually did on sourced numbers is right (show it), and hedged estimates (\"about half\", \"roughly a third\") are fine.]"
 		// Volatile facts — a blunt, standalone restatement of the Grounding rule
 		// aimed at the specifics the worker keeps fabricating. Already covered
@@ -711,18 +696,6 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// rounds without progress.
 	promiseCorrectionsTotal := 0
 	const maxPromiseCorrections = 2
-
-	// Grounding gate — conditional re-prompt budget (opt-in, tune_grounding_gate).
-	// Capped so an unsourced money figure the model keeps restating can't nag
-	// forever: after this many corrections the loop returns the answer as-is.
-	groundingGateCorrections := 0
-	const maxGroundingGateCorrections = 2
-	// lastGateFigs holds the figures flagged on the previous correction. If a
-	// re-prompt produces the SAME set, the model has decided the figure belongs
-	// (it may be a false positive, or a number it computed / insists on) and
-	// nagging again just burns a round to land at the same answer — so we stop
-	// and accept it, rather than running the full 2/2.
-	var lastGateFigs []string
 
 	// toolFiredThisTurn tracks whether ANY tool dispatched at any
 	// point in this turn (any round). The action-promise correction
@@ -1573,33 +1546,6 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 				}
 			}
 
-			// Grounding gate (conditional, opt-in via tune_grounding_gate).
-			// NOT an always-on self-verify pass: it fires ONLY when the final
-			// answer states a money figure absent from this conversation's tool
-			// results and user messages, i.e. one the model supplied from its
-			// weights. It then re-prompts once to look it up or drop it and
-			// re-loops (so the model can web_search). Guarded on len(tools) > 0
-			// so it never fires on a no-tool agent (where "look it up" is
-			// impossible), and budget-capped so a model that keeps restating a
-			// number can't nag forever. See core/grounding_gate.go.
-			if GroundingGateEnabled() && len(tools) > 0 &&
-				groundingGateCorrections < maxGroundingGateCorrections &&
-				round < maxRounds {
-				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)+"\n"+cfg.GroundingSources); len(figs) > 0 && !sameFigureSet(figs, lastGateFigs) {
-					Debug("[agent_loop] grounding gate: %d unsourced money figure(s) %v — re-prompting to look up or drop (correction %d/%d)",
-						len(figs), figs, groundingGateCorrections+1, maxGroundingGateCorrections)
-					lastGateFigs = figs
-					// Tell streaming surfaces to wipe the answer that just
-					// streamed: the corrected one is coming, and the user
-					// should not see the guess followed by "my bad".
-					if cfg.OnStep != nil {
-						cfg.OnStep(StepInfo{Round: round, Content: resp.Content, Superseded: true})
-					}
-					history = append(history, Message{Role: "user", Content: groundingGatePrompt(figs)})
-					groundingGateCorrections++
-					continue
-				}
-			}
 			if cfg.OnStep != nil {
 				cfg.OnStep(StepInfo{
 					Round:   round,

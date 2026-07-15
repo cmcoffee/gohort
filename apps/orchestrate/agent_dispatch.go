@@ -573,9 +573,6 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(target),
 		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		// Provably-sourced memory (user-entered / tool-retrieved facts) counts as a
-		// grounding source so the gate doesn't false-flag a figure that came from it.
-		GroundingSources: SourcedFactCorpus(subFacts),
 		OnStep:       func(info StepInfo) { telem.record(info) },
 		Confirm:      confirm,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback

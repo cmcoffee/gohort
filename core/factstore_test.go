@@ -92,9 +92,8 @@ func TestSourcePopulation(t *testing.T) {
 	}
 }
 
-// TestSourcedFactCorpus: only user_stated and retrieved facts are surfaced to
-// the grounding gate; observed and inferred (ambiguous, possibly stale priors)
-// are excluded.
+// TestSourcedFactCorpus: only user_stated and retrieved facts are grounding
+// sources; observed and inferred (ambiguous, possibly stale priors) are excluded.
 func TestSourcedFactCorpus(t *testing.T) {
 	facts := []MemoryFact{
 		{Note: "budget is $800", MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated}},
@@ -108,20 +107,6 @@ func TestSourcedFactCorpus(t *testing.T) {
 	}
 	if strings.Contains(corpus, "1600") || strings.Contains(corpus, "Q3") {
 		t.Errorf("observed/inferred facts must be excluded from grounds: %q", corpus)
-	}
-}
-
-// TestGroundingGateHonorsSources: the grounding gate stops flagging a figure once
-// it appears in the sourced corpus (which now includes provably-sourced memory).
-func TestGroundingGateHonorsSources(t *testing.T) {
-	answer := "Your monthly budget is $800."
-	if figs := unsourcedFigures(answer, ""); len(figs) == 0 {
-		t.Fatal("precondition: $800 with an empty corpus should be flagged as unsourced")
-	}
-	if figs := unsourcedFigures(answer, SourcedFactCorpus([]MemoryFact{
-		{Note: "budget is $800", MemoryProvenance: MemoryProvenance{Source: MemSourceUserStated}},
-	})); len(figs) != 0 {
-		t.Fatalf("a figure from a user_stated fact should be treated as sourced, got %v", figs)
 	}
 }
 

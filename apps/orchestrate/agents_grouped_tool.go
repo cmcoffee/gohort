@@ -592,9 +592,6 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// calls)" snapshots between rounds. Cheap; one SSE event per
 	// round at most.
 	stepNotice := func(step StepInfo) {
-		if step.Superseded {
-			return // a rejected/regenerating round isn't a real step
-		}
 		text := fmt.Sprintf("[%s] round %d", target.Name, step.Round)
 		if n := len(step.ToolCalls); n > 0 {
 			text += fmt.Sprintf(" (%d tool call%s)", n, plural(n))

@@ -136,9 +136,9 @@ type FactWritePolicy struct {
 	Chat FactChatFunc
 	// Source records HOW this note entered memory, stored on the fact's
 	// provenance envelope. It drives the grounding split: user_stated and
-	// retrieved facts are legitimate grounds (SourcedFactCorpus surfaces them to
-	// the grounding gate), while observed/inferred/unknown are not. Zero
-	// (MemSourceUnknown) leaves the origin unrecorded.
+	// retrieved facts are legitimate grounds (surfaced via SourcedFactCorpus),
+	// while observed/inferred/unknown are not. Zero (MemSourceUnknown) leaves
+	// the origin unrecorded.
 	Source MemSource
 }
 
@@ -1281,11 +1281,13 @@ func FactStalenessNote(f MemoryFact, now time.Time) string {
 
 // SourcedFactCorpus returns the notes of facts whose Source makes them a
 // legitimate grounding source — user_stated (a human entered it) or retrieved
-// (pulled from a tool at save time) — joined by newlines, for feeding the
-// grounding gate's "sourced" corpus. Observed and inferred facts are excluded:
-// an LLM-recorded note is ambiguous (it may be a stale prior, like the "$1,600
-// 5090"), so it must not license a specific the model couldn't otherwise source.
-// Empty when no fact qualifies, so callers can append it unconditionally.
+// (pulled from a tool at save time) — joined by newlines. Observed and inferred
+// facts are excluded: an LLM-recorded note is ambiguous (it may be a stale
+// prior, like the "$1,600 5090"), so it must not license a specific the model
+// couldn't otherwise source. This is the materialized form of the provenance
+// grounding split; it currently has no in-tree consumer (the grounding gate
+// that used it was removed) but is kept as the canonical way to surface
+// grounding-eligible facts. Empty when no fact qualifies.
 func SourcedFactCorpus(facts []MemoryFact) string {
 	var b strings.Builder
 	for _, f := range facts {

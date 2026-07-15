@@ -259,7 +259,7 @@ func applyFactListEdit(udb Database, ns string, notes []string, chat FactChatFun
 		// same way the LLM's store_fact does — a corrected note supersedes the
 		// stale one it replaces instead of coexisting as a contradiction. These
 		// are human-entered, so Source = user_stated: they DO count as a
-		// grounding source (SourcedFactCorpus), unlike model-authored notes.
+		// grounding-eligible source (SourcedFactCorpus), unlike model-authored notes.
 		StoreMemoryFactP(udb, ns, n, FactWritePolicy{Chat: chat, Source: MemSourceUserStated})
 	}
 }
