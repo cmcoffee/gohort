@@ -84,27 +84,14 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"params": {
 			Type:        "object",
-			Description: "Optional JSON object of {param_name: {type, description}}. Placeholders {name} in pipeline_prompt / command_template / url_template are substituted from caller args.",
+			Description: "Optional JSON object of {param_name: {type, description}}. Placeholders {name} in command_template / url_template are substituted from caller args.",
 		},
-		// Pipeline-mode fields.
-		"pipeline_prompt": {
-			Type:        "string",
-			Description: "(pipeline mode, ADAPTIVE variant) System prompt for an LLM sub-agent that runs the chain with reasoning between steps. Use when steps need judgment (\"if step 1 returned nothing, try a different angle\"). Mutually exclusive with pipeline_steps. Be DIRECTIVE about sequencing; reference inner tools by name. {param_name} placeholders get filled from caller args via plain string substitution — write them BARE (e.g. `for the topic {query}`), NEVER wrap them in quotes (`'{query}'` becomes `'AI 2026'` and the sub-agent will pass the literal quoted string to web_search).",
-		},
-		"pipeline_steps": {
-			Type:        "array",
-			Description: "(pipeline mode, DETERMINISTIC variant) Ordered list of step objects {tool, args, name?}, executed in sequence with no inner LLM. Args undergo template substitution: {param_name} → caller arg, $N → output of step N (1-indexed), $N.field.path → JSON field path into step N. Use for linear chains where no reasoning is needed between steps. Cheaper + faster than pipeline_prompt. Mutually exclusive with pipeline_prompt. Example: [{\"tool\":\"web_search\",\"args\":{\"query\":\"{topic}\"},\"name\":\"hits\"},{\"tool\":\"fetch_url\",\"args\":{\"url\":\"$hits.top_url\"}}]",
-			Items:       &ToolParam{Type: "object"},
-		},
-		"pipeline_tools": {
-			Type:        "array",
-			Description: "(pipeline mode) Names of tools the sub-agent (adaptive) or step executor (deterministic) may call. Step tools must appear here.",
-			Items:       &ToolParam{Type: "string"},
-		},
-		"pipeline_max_rounds": {
-			Type:        "integer",
-			Description: "(pipeline mode, adaptive only) Cap on sub-agent LLM rounds. Default 6. Ignored when pipeline_steps is set.",
-		},
+		// Pipeline-mode fields (pipeline_prompt / pipeline_steps /
+		// pipeline_tools / pipeline_max_rounds) were dropped from the schema
+		// when pipelineAuthoringDisabled retired the mode: emitting four dead
+		// params on every catalog contradicted the "retired" note in the mode
+		// description and cost prefill tokens. The handler still refuses the
+		// mode explicitly, and existing mode="pipeline" tools keep dispatching.
 		// Shell-mode fields.
 		"command_template": {
 			Type:        "string",
@@ -125,7 +112,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"credential": {
 			Type:        "string",
-			Description: "(api mode) OPTIONAL. For AUTHENTICATED APIs (internal services, paid APIs): name of a registered credential (admin sets these up). The credential supplies the auth header and constrains the URL pattern. For PUBLIC APIs that need no authentication (Reddit JSON, Wikipedia, public data feeds): OMIT this field entirely. Do not pass placeholder strings like \"none\" / \"public\" / \"n/a\" — the framework rejects those. Empty = public HTTP call; named = authenticated via that credential.",
+			Description: "(api mode) OPTIONAL. For AUTHENTICATED APIs (internal services, paid APIs): name of a registered credential (admin sets these up). The credential supplies the auth header and constrains the URL pattern. For PUBLIC APIs that need no authentication (Reddit JSON, Wikipedia, public data feeds): OMIT this field entirely, or pass \"no_auth\" — the ONE accepted no-auth spelling (same rule as tool_def). Do not pass placeholder strings like \"none\" / \"public\" / \"n/a\" — the framework rejects those. Empty/no_auth = public HTTP call; any other name = authenticated via that credential.",
 		},
 		"response_pipe": {
 			Type:        "string",
@@ -220,6 +207,12 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 			return "", errors.New("url_template is required for mode=\"api\"")
 		}
 		credential := strings.TrimSpace(stringArg(args, "credential"))
+		// "no_auth" is tool_def's canonical public-API spelling; treat it as
+		// "omitted" here so the two authoring surfaces accept the same rule
+		// (public API => omit or no_auth) instead of near-miss rejecting.
+		if strings.EqualFold(credential, "no_auth") {
+			credential = ""
+		}
 		// Reject placeholder credential strings — Builder kept reaching
 		// for "none" / "n/a" / "public" as a stand-in when no auth was
 		// needed, which then failed at dispatch. For public APIs the

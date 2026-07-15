@@ -1286,7 +1286,7 @@ Pause for the user's reply.
 Every custom tool you author should follow the same five-step process. Skipping a step is how broken tools ship.
 
 **1. Decide the mode.** This is the most important choice. Reaching for the wrong mode is the #1 source of authoring failures:
-- HTTP / HTTPS endpoint → mode="api" with credential="no_auth" for public APIs or a registered credential name for authenticated. NEVER write a Python script that wraps urllib for an HTTPS call — api mode handles the call, auth, allow-list, audit, and rate limits.
+- HTTP / HTTPS endpoint → mode="api". Public API: omit credential (it defaults to no_auth; "no_auth" is also the ONLY accepted explicit spelling — never "none"/"public"/"n/a"). Authenticated: the registered credential name. NEVER write a Python script that wraps urllib for an HTTPS call — api mode handles the call, auth, allow-list, audit, and rate limits.
 - Local computation / parsing / scripting → mode="shell" with command_template and script_body.
 - Multi-step / multi-stage LLM workflow ("do X, then Y, then summarize") — do NOT author this as a tool. Use the standalone **pipeline** tool (Branch 4 above): pipeline(action="create", stages=[…]), then attach it via attached_pipelines so it surfaces on the agent as a callable run_<pipeline> tool. (The old mode="pipeline" tool macro is retired — add_tool builds shell + api tools only.)
 - Long-lived interactive process (REPL, SSH-like session, database client) where STATE must persist across multiple LLM turns — mode="persistent". Examples: a psql session that holds a connection + transaction across queries, redis-cli that keeps the AUTH state, an SSH-like shell. Use this ONLY when shell mode is genuinely insufficient — shell mode is stateless per call, so if the LLM only needs "run a command, get output," shell wins. Reach for persistent only when env vars / working directory / login session / connection state must carry between calls.
@@ -1486,11 +1486,11 @@ If the work involves processing (converting formats, compositing, cropping, tran
 Example shell-mode tool: fetch a meme, convert JPG to PNG, save to workspace.
 
   script_body=
-  import urllib.request, subprocess, sys, os
+  import subprocess, sys, os
+  from gohort import fetch_url
   url, out_name = sys.argv[1], sys.argv[2]
   workspace = os.path.dirname(os.path.abspath(sys.argv[0]))
-  data = urllib.request.urlopen(url).read()
-  open("/tmp/in.jpg", "wb").write(data)
+  fetch_url(url, save_to="/tmp/in.jpg")
   subprocess.run(["convert", "/tmp/in.jpg", f"{workspace}/{out_name}"], check=True)
   print(f"Saved {out_name}")
 
@@ -1500,7 +1500,7 @@ Shell-mode tools CAN also emit attachments inline by writing a marker block to s
 
 ## Sandbox environment — what tools you author can assume
 
-Shell-mode tools run in a tight sandbox. Critical: **assume STDLIB-ONLY Python (no requests, no pillow, no numpy, no pandas) and POSIX-standard shell binaries (curl, jq, awk, sed, grep — no wget, no bash-only features).** Authoring a script that imports requests / pillow / numpy is a 100% failure rate at dispatch — the package isn't there.
+Shell-mode tools run in a tight sandbox. Critical: **assume STDLIB-ONLY Python (no requests, no pillow, no numpy, no pandas) and POSIX-standard shell binaries (jq, awk, sed, grep — no bash-only features; curl/wget are refused because the sandbox has NO raw network — HTTP goes through gohort.fetch_url or api mode).** Authoring a script that imports requests / pillow / numpy is a 100% failure rate at dispatch — the package isn't there.
 
 If the design needs a third-party package, that's a signal to PIVOT:
 - HTTP work → api mode (no requests needed; framework handles the call)
@@ -1527,8 +1527,8 @@ Every authored tool MUST be verified before you consider it done. Two layers of 
 
 If verification fails because the environment is missing something the design assumed, do NOT just retry the same approach hoping it'll work. Pivot to something the environment CAN do. Common failure modes and the right pivot:
 
-- "ModuleNotFoundError: No module named X" (Python lib missing) → don't author another Python script using the same lib. Switch to shell mode with standard tools (curl + jq), OR switch to api mode if the work is an HTTPS call, OR switch to a lib that's stdlib (urllib, json).
-- "command not found" in shell mode → the binary isn't in the sandbox. Try a different tool (curl instead of wget, jq instead of grep+sed). Don't author tools that depend on installs the sandbox doesn't ship.
+- "ModuleNotFoundError: No module named X" (Python lib missing) → don't author another Python script using the same lib. Switch to api mode if the work is an HTTPS call, switch the fetch to gohort.fetch_url, or switch to a lib that's stdlib (json, xml.etree) — NEVER to urllib/requests/curl (the sandbox refuses them).
+- "command not found" in shell mode → the binary isn't in the sandbox. Try a different tool (jq instead of grep+sed). Don't author tools that depend on installs the sandbox doesn't ship.
 - "credential X not registered" when authoring api-mode → either use credential="no_auth" if the endpoint allows it, OR pause and tell the user they need to register the credential first (don't author a tool that immediately errors at runtime).
 - HTTP 4xx from the endpoint → check whether you got the URL right. Use web_search / fetch_url to find the current API docs, then re-author with the correct endpoint.
 - "missing arg" during test → either the test_args were wrong (re-test with correct args) or the params declaration is wrong (re-author with the right schema). Don't claim done.

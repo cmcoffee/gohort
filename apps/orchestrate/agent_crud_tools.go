@@ -517,7 +517,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"rules":               {Type: "string", Description: "Optional standing rules, one per line, applied to every turn."},
 		"allowed_tools": {
 			Type:        "array",
-			Description: "Optional explicit allowlist of worker tool names. Empty = default pool (read + network).",
+			Description: "Explicit allowlist of worker tool names. REQUIRED on create (pick a deliberate 4-10 tool set, or [\"*\"] for everything); on update, omit to leave the existing allowlist unchanged. An agent whose stored list is empty runs the default pool (read + network).",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"max_plan_steps":           {Type: "integer", Description: "Optional 1-12. Default 5."},

@@ -650,8 +650,18 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// the underlying test so it generalizes past the list rather than
 		// treating "not listed" as safe to recall. Kept short on purpose: a long
 		// enumeration re-buries the rule and loses the salience that makes it
-		// work. Written without em-dashes.
-		systemPrompt += "\n\n[Volatile facts: some facts change over time, and you do NOT know their current value no matter how confident it feels. PRICES are the clearest case: any price, rate, fee, cost, or money figure is volatile, so NEVER state one from memory, not even a rough number or a range; a remembered price is always a guess. The same rule covers stock and availability, the CURRENT holder of a changing role or record (who runs a company now, the latest version of something, the current champion or office-holder), and live status, scores, or counts. The test for any specific: could this have changed since your training, and does the user expect today's value? If yes, it is volatile — call web_search or fetch_url FIRST and quote what the result returns (with what it applies to and when observed), or, if you cannot look it up right now, say plainly you don't have a current figure and offer to check. Do not fill the gap with a plausible-sounding value. This is not a closed list: any fact that fails the test is volatile even if it is not named here.]"
+		// work. Written without em-dashes. The lookup clause names the web tools
+		// only when the catalog actually has one; a private/offline agent gets
+		// the say-you-can't-confirm branch instead of being told to call a tool
+		// another layer stripped.
+		lookupClause := "look it up FIRST with whatever search or fetch tool you have and quote what the result returns (with what it applies to and when observed); if you have no way to look it up right now, say plainly you don't have a current figure and offer to check"
+		for _, td := range tools {
+			if n := td.Tool.Name; n == "web_search" || n == "fetch_url" || n == "browse_page" {
+				lookupClause = "call web_search or fetch_url FIRST and quote what the result returns (with what it applies to and when observed), or, if you cannot look it up right now, say plainly you don't have a current figure and offer to check"
+				break
+			}
+		}
+		systemPrompt += "\n\n[Volatile facts: some facts change over time, and you do NOT know their current value no matter how confident it feels. PRICES are the clearest case: any price, rate, fee, cost, or money figure is volatile, so NEVER state one from memory, not even a rough number or a range; a remembered price is always a guess. The same rule covers stock and availability, the CURRENT holder of a changing role or record (who runs a company now, the latest version of something, the current champion or office-holder), and live status, scores, or counts. The test for any specific: could this have changed since your training, and does the user expect today's value? If yes, it is volatile: " + lookupClause + ". Do not fill the gap with a plausible-sounding value. This is not a closed list: any fact that fails the test is volatile even if it is not named here.]"
 	}
 	// Output style — universal (every reply, with or without tools).
 	// Suppresses persistent LLM lexical/punctuation tics the user flagged.

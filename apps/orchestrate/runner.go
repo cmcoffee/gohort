@@ -83,7 +83,7 @@ func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBl
 	// thinning out. Without this, an agent reached over a channel (e.g. an
 	// iMessage bridge) ran on a materially thinner prompt than in web chat —
 	// the "works in the web UI but not over a channel" drift.
-	sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user)
+	sysPrompt = appendAgentCapabilityBlocks(sysPrompt, target, runtimeDB, user, false)
 	return sysPrompt
 }
 
@@ -97,7 +97,7 @@ func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBl
 // plain chat agent that lacks a capability gets nothing extra. Message-dependent
 // content (triggered-skill instructions, per-turn trigger hints) is deliberately
 // NOT here — it rides the user message for prompt-cache stability.
-func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string) string {
+func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string, hasPlanSet bool) string {
 	if g := strings.TrimSpace(agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g
 	}
@@ -110,7 +110,9 @@ func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, us
 	// scopes to GOALS, so a Cortex agent still handles casual chat directly — the
 	// default costs nothing on ordinary messages.
 	if agent.PreMortem || agent.Cortex {
-		sys += "\n\n" + preMortemPlanningBlock
+		// await_result only mounts for Fleet agents; plan_set only exists on
+		// the web runPlan surface (the caller knows which surface it is).
+		sys += "\n\n" + preMortemPlanningBlock(hasPlanSet, agent.Fleet)
 	}
 	// The guidance blocks appended above (search-order guidance, plan/pre-mortem,
 	// skills) also hardcode legacy tool names in prose. Re-run the mode-aware
@@ -4485,7 +4487,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// reaches the channel/dispatch path too (see appendAgentCapabilityBlocks).
 	// Each block self-gates on agent config; kept here (after the other blocks)
 	// so it's the single source both surfaces share.
-	sys = appendAgentCapabilityBlocks(sys, t.agent, t.udb, t.user)
+	sys = appendAgentCapabilityBlocks(sys, t.agent, t.udb, t.user, true)
 	// (Authoring-in-progress banner removed. It referenced legacy
 	// tool names (create_pipeline_tool / create_temp_tool /
 	// create_api_tool) replaced by tool_def + add_tool, and the
@@ -4657,6 +4659,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 						Steps: planSteps,
 					}
 					emitBuildPlanBlock(t.sse, t.session.BuildPlan)
+					// Same execution-budget grant present_build_plan gives:
+					// this path is the canonical one-call Phase-2 shape, and
+					// without the grant the build competes with whatever
+					// exploration already spent the round cap.
+					if grant := t.currentRound + buildPlanRoundsPerStep*len(planSteps); grant > t.planBudgetCap {
+						t.planBudgetCap = grant
+						Log("[orchestrate.build_plan] plan presented via ask_user: %d step(s), round budget lifted to %d (at round %d)",
+							len(planSteps), t.planBudgetCap, t.currentRound)
+					}
 				}
 			}
 			cancelOrch()

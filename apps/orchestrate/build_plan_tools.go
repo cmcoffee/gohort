@@ -39,7 +39,7 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "present_build_plan",
-			Description: "Show the user a visible checklist of your build plan as a card. Call this at the END of Phase 2 alongside ask_user — the card renders with all steps in \"pending\" status; subsequent mark_step_done calls update individual rows to \"done\" as you execute. Each step is {title, detail?}: title is the one-line summary (\"Create Reddit Researcher shell\"), detail is the brief tool-call info (\"create_agent\"). Re-call to update the plan (e.g. user requested edits) — same id, replaces the visible card in place.",
+			Description: "Show the user a visible checklist of your build plan as a card. The PREFERRED Phase-2 shape is passing `plan` on ask_user (one call paints the checklist AND asks for approval) — reach for present_build_plan only when there's no question to ask (plan already approved) or to UPDATE the plan mid-build (user requested edits; re-call with the full step list — same id, replaces the visible card in place). The card renders with all steps \"pending\"; subsequent mark_step_done calls flip individual rows to \"done\" as you execute. Each step is {title, detail?}: title is the one-line summary (\"Create Reddit Researcher shell\"), detail is the brief tool-call info (\"create_agent\").",
 			Parameters: map[string]ToolParam{
 				"steps": {
 					Type:        "array",

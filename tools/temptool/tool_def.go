@@ -46,16 +46,16 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. Admin approval for cross-session persistence is a SEPARATE downstream gate the framework queues automatically in the background — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor), or with pipeline_prompt + pipeline_tools for adaptive multi-step LLM reasoning. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus either pipeline_prompt (adaptive) or pipeline_steps (deterministic). Tools you create here are immediately callable in this session. The framework auto-queues them for admin review in the background — admin approval governs cross-session persistence ONLY, not whether you can create or call the tool. Call action=\"help\" for the full spec including examples.",
+		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. Admin approval for cross-session persistence is a SEPARATE downstream gate the framework queues automatically in the background — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow, do NOT author a tool at all — use the standalone pipeline tool (action=\"create\") and attach it to the agent. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus pipeline_steps (deterministic chain). Tools you create here are immediately callable in this session. The framework auto-queues them for admin review in the background — admin approval governs cross-session persistence ONLY, not whether you can create or call the tool. Call action=\"help\" for the full spec including examples.",
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":       {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
-			"mode":              {Type: "string", Description: "\"api\" for a single HTTPS endpoint. \"toolbox\" for multiple related endpoints bundled under one tool name (e.g. wrapping a whole API surface — GitHub, Stripe — with several actions sharing one credential). \"shell\" for local computation, parsing, or stateful scripts. \"pipeline\" for multi-step LLM-driven flows. Pick by the work, not by familiarity — a Python urllib wrapper around an HTTPS endpoint is the wrong answer."},
+			"mode":              {Type: "string", Description: "\"api\" for a single HTTPS endpoint. \"toolbox\" for multiple related endpoints bundled under one tool name (e.g. wrapping a whole API surface — GitHub, Stripe — with several actions sharing one credential). \"shell\" for local computation, parsing, or stateful scripts. \"pipeline\" for a deterministic chain of existing tools (pipeline_steps); adaptive multi-step LLM workflows are NOT tools — use the standalone pipeline tool. Pick by the work, not by familiarity — a Python urllib wrapper around an HTTPS endpoint is the wrong answer."},
 			"params":            {Type: "object", Description: "Object describing the tool's parameters. Each key is a param name, value is {type, description}. **Use the correct type:** \"integer\" for whole-number args (counts, indexes, ports), \"number\" for floats (rates, percentages), \"boolean\" for flags, \"string\" for text and identifiers. The dispatcher uses type to decide whether to shell-quote the value — a `count` typed as \"string\" gets passed to the script as `'1'` (with quotes) and any downstream int()/atoi() call fails. Default to \"string\" only when the value is genuinely free-form text."},
 			"command_template":  {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch. {workspace_dir} resolves to the tool's sandbox path. **SHORTCUT**: when you pass script_body with a recognized extension (.py / .sh / .bash / .js / .jq / .rb / .pl) OR a shebang on line 1, you may OMIT command_template entirely — the framework auto-infers `python3 {workspace_dir}/script.py` (no positional args). **Declared params reach the script as ENVIRONMENT VARIABLES, NOT positional argv.** Read them in your script with `os.environ['name']` (Python), `$name` (bash), `process.env.name` (node). This means ordering is a non-question — params are looked up by NAME on both sides. You only need positional args if you're shelling out to a third-party tool that strictly expects argv; in that case supply your own command_template with explicit {placeholders}."},
 			"script_body":       {Type: "string", Description: "(shell mode, optional) Full source of a script to ship with the tool (Python, Bash, awk, jq, etc.). Written into the sandbox at registration as `script_name` (default \"script.py\"). Read declared params with `os.environ['name']` (Python) / `$name` (bash) — they're injected as env vars, not positional argv. Auto-mints a sandbox; no setup required."},
 			"script_name":       {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\") — the extension drives interpreter selection when command_template is omitted."},
-			"credential":        {Type: "string", Description: "(api / toolbox mode, optional) Name of the registered secure-API credential to dispatch through. Defaults to \"no_auth\" when omitted — the bootstrapped open-pattern credential that applies gohort's allow-list/audit/rate-limit but injects no auth header. For authenticated APIs, name the credential the admin registered (\"github\", \"openweather\", etc.); the secret stays server-side and gohort injects the header (Bearer / custom / etc.) at dispatch."},
+			"credential":        {Type: "string", Description: "(api / toolbox mode, optional) Name of the registered secure-API credential to dispatch through. For public no-auth APIs, OMIT it — it defaults to \"no_auth\", the bootstrapped open-pattern credential that applies gohort's allow-list/audit/rate-limit but injects no auth header. If you name the no-auth case explicitly, \"no_auth\" is the ONLY accepted spelling — never placeholders like \"none\" / \"public\" / \"n/a\". For authenticated APIs, name the credential the admin registered (\"github\", \"openweather\", etc.); the secret stays server-side and gohort injects the header (Bearer / custom / etc.) at dispatch."},
 			"url_template":      {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":            {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":     {Type: "string", Description: "(api mode) JSON body template with {param} placeholders (JSON-encoded at dispatch). Optional for GET; usually required for POST/PUT/PATCH."},
@@ -689,29 +689,39 @@ PYTHON
   * python3 is available
   * STDLIB ONLY. There is NO pip, NO requests, NO pillow (PIL),
     NO numpy, NO pandas, NO beautifulsoup4, NO lxml, NO opencv.
-  * Safe imports: json, re, csv, sqlite3, urllib.request,
-    urllib.parse, hashlib, hmac, datetime, collections, itertools,
-    functools, os, sys, subprocess, pathlib, base64, html,
-    xml.etree.ElementTree, statistics, math, random.
-  * Need a third-party package? PIVOT — usually a shell tool
-    (curl, jq) or api mode reaches the same outcome.
+  * Safe imports: json, re, csv, sqlite3, urllib.parse, hashlib,
+    hmac, datetime, collections, itertools, functools, os, sys,
+    subprocess, pathlib, base64, html, xml.etree.ElementTree,
+    statistics, math, random. (urllib.request is NOT on this list —
+    it is a network call and tool_def REFUSES scripts that use it;
+    see NETWORK.)
+  * Need a third-party package? PIVOT — jq/awk for parsing,
+    gohort.fetch_url for HTTP, or api mode usually reaches the
+    same outcome.
 
 SHELL
   * Interpreter is sh (POSIX), not bash. No arrays, no [[ ]],
     no <(...). Use plain sh-compatible syntax.
-  * Reliably available binaries: curl, jq, awk, sed, grep, head,
+  * Reliably available binaries: jq, awk, sed, grep, head,
     tail, sort, uniq, tr, cut, wc, basename, dirname, date, cat,
     echo, printf, tee, xargs, find.
-  * NOT available: wget (use curl), bash-only features.
+  * NOT available: bash-only features. curl/wget are NOT usable —
+    the sandbox has no network (see NETWORK), and tool_def
+    REFUSES scripts that call them.
 
 NETWORK
-  * Network IS available. curl, wget, urllib.request etc. work
-    inside shell-mode tools.
-  * But: api mode is usually the better fit for HTTPS work even
-    so. It handles credentials, allow-listed URLs, audit logs,
-    and rate limits — none of which a curl-in-shell script gets.
-    Pick api mode for any work that hits an HTTPS endpoint
-    you'd otherwise wrap with curl.
+  * The shell sandbox is NETWORK-ISOLATED (bwrap --unshare-net).
+    curl, wget, urllib.request, socket — they ALL FAIL inside a
+    shell-mode tool, and tool_def refuses a script_body that uses
+    any of them at authoring time.
+  * HTTP from a script goes through the gohort bridge instead:
+    "from gohort import fetch_url" then fetch_url(url) — granted
+    by default, no declaration needed. Authenticated or scoped
+    endpoints: hook_capabilities=["fetch_via:<credential>"].
+  * api mode is usually the better fit for HTTPS work anyway. It
+    handles credentials, allow-listed URLs, audit logs, and rate
+    limits — none of which a script gets on its own. Pick api
+    mode for any work that just hits an HTTPS endpoint.
 
 FILESYSTEM
   * Writable paths:
@@ -1003,10 +1013,11 @@ the tool record:
            description="Current weather for a US city via wttr.in.",
            script_name="weather.py",
            script_body="""
-             import os, sys, urllib.request
+             import sys
+             from gohort import fetch_url
              city = sys.argv[1]; state = sys.argv[2]
              url = f"https://wttr.in/{city},{state}?format=j1"
-             print(urllib.request.urlopen(url).read().decode())
+             print(fetch_url(url)["body"])
            """,
            command_template="python3 {workspace_dir}/weather.py {city} {state}",
            params={
@@ -1044,18 +1055,20 @@ NETWORK POLICY — shell sandbox is network-isolated by default
 
 Shell-mode tools run in a bwrap sandbox with --unshare-net. That
 means: urllib.request, socket.connect, curl, wget — ALL FAIL from
-inside the sandbox unless you opt the tool into network access.
+inside the sandbox, and tool_def REFUSES a script_body that uses
+any of them at authoring time.
 
-For HTTP work (the common case), declare hook_capabilities:
+HTTP goes through the gohort bridge instead. The bare hooks —
+fetch_url, browse_page, log — are granted BY DEFAULT for any
+shell-mode tool with script_body; no declaration needed:
 
   tool_def(action=create, mode="shell",
            name="get_weather_by_city",
-           hook_capabilities=["fetch"],     ← grants gohort.fetch()
            script_body="""
-             from gohort import fetch
+             from gohort import fetch_url
              import sys, json
              city, state = sys.argv[1], sys.argv[2]
-             data = fetch(f"https://wttr.in/{city},{state}?format=j1")
+             data = fetch_url(f"https://wttr.in/{city},{state}?format=j1")
              print(data["body"])
            """,
            command_template="python3 {workspace_dir}/weather.py {city} {state}",
@@ -1064,23 +1077,31 @@ For HTTP work (the common case), declare hook_capabilities:
 
 Why this shape (vs raw network):
   - Every outbound call is logged in gohort's audit trail
-  - Secrets stay in the credential store via gohort.secret("name")
+  - Secrets stay in the credential store, out of the script's hands
   - Same posture across sessions — no surprises on a fresh workspace
 
-For credentials (API keys), declare them per-credential:
+For authenticated endpoints, declare the credential and route the
+request THROUGH it (allow-list enforced, auth injected server-side,
+the script never sees the secret):
 
-  hook_capabilities=["fetch", "secret:openweather"]
+  hook_capabilities=["fetch_via:openweather"]
 
 Then in the script:
 
-  key = gohort.secret("openweather")
-  data = gohort.fetch(f"https://api.openweathermap.org/...&appid={key}")
+  from gohort import fetch_via
+  data = fetch_via("openweather",
+                   "https://api.openweathermap.org/data/2.5/weather?q=Seattle")
+  print(data["body"])
+
+(secret:<name> exists for the rare API that can't be reached that
+way — the script gets the decrypted value and injects it itself.
+Prefer fetch_via.)
 
 The escape hatch (raw_network=true) is RESERVED for narrow cases:
   - persistent-mode REPLs over non-HTTP (psql, redis-cli, ssh-like)
   - shell tools that NEED raw TCP/UDP and can't use the hook
 
-For ordinary HTTP-shaped work, hook_capabilities=["fetch"] is the
+For ordinary HTTP-shaped work, the default fetch_url hook is the
 right answer. raw_network=true should be a deliberate exception
 flagged in the description, not a default.
 
