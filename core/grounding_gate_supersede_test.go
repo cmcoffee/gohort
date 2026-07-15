@@ -87,3 +87,46 @@ func TestGroundingGateEmitsSupersede(t *testing.T) {
 		t.Errorf("final Done step should be the corrected answer, got %q", finalStep)
 	}
 }
+
+// TestGroundingGateStopsOnRepeat: when the model restates the SAME unsourced
+// figure after a correction, the gate accepts it (one re-prompt) instead of
+// nagging to the 2/2 cap and landing at the same answer anyway — the likely
+// false-positive / model-insists case.
+func TestGroundingGateStopsOnRepeat(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(WebTable, tuneGroundingGate, float64(1))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+
+	llm := &seqLLM{replies: []string{
+		"It runs about $5,000.", // money figure, unsourced -> gate fires
+		"It runs about $5,000.", // model insists on the same figure
+	}}
+	app := &AppCore{LLM: llm}
+
+	supersedes := 0
+	cfg := AgentLoopConfig{
+		MaxRounds: 6,
+		Tools: []AgentToolDef{{
+			Tool:    Tool{Name: "noop", Description: "placeholder", Caps: []Capability{CapRead}},
+			Handler: func(map[string]any) (string, error) { return "", nil },
+		}},
+		OnStep: func(s StepInfo) {
+			if s.Superseded {
+				supersedes++
+			}
+		},
+	}
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "how much is it?"}}, cfg)
+	if err != nil {
+		t.Fatalf("loop error: %v", err)
+	}
+	// Exactly one re-prompt, not the full 2/2.
+	if supersedes != 1 {
+		t.Fatalf("expected 1 re-prompt then accept, got %d", supersedes)
+	}
+	// The insisted-on figure is accepted as the final answer.
+	if !strings.Contains(resp.Content, "5,000") {
+		t.Errorf("final answer should be the insisted figure, got %q", resp.Content)
+	}
+}

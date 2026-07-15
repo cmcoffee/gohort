@@ -716,6 +716,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// forever: after this many corrections the loop returns the answer as-is.
 	groundingGateCorrections := 0
 	const maxGroundingGateCorrections = 2
+	// lastGateFigs holds the figures flagged on the previous correction. If a
+	// re-prompt produces the SAME set, the model has decided the figure belongs
+	// (it may be a false positive, or a number it computed / insists on) and
+	// nagging again just burns a round to land at the same answer — so we stop
+	// and accept it, rather than running the full 2/2.
+	var lastGateFigs []string
 
 	// toolFiredThisTurn tracks whether ANY tool dispatched at any
 	// point in this turn (any round). The action-promise correction
@@ -1578,9 +1584,10 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			if GroundingGateEnabled() && len(tools) > 0 &&
 				groundingGateCorrections < maxGroundingGateCorrections &&
 				round < maxRounds {
-				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)+"\n"+cfg.GroundingSources); len(figs) > 0 {
+				if figs := unsourcedFigures(resp.Content, groundingCorpus(history)+"\n"+cfg.GroundingSources); len(figs) > 0 && !sameFigureSet(figs, lastGateFigs) {
 					Debug("[agent_loop] grounding gate: %d unsourced money figure(s) %v — re-prompting to look up or drop (correction %d/%d)",
 						len(figs), figs, groundingGateCorrections+1, maxGroundingGateCorrections)
+					lastGateFigs = figs
 					// Tell streaming surfaces to wipe the answer that just
 					// streamed: the corrected one is coming, and the user
 					// should not see the guess followed by "my bad".

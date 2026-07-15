@@ -139,6 +139,27 @@ func unsourcedFigures(answer, sourced string) []string {
 	return out
 }
 
+// sameFigureSet reports whether two flagged-figure lists contain the same
+// figures (order-independent). The gate uses it to detect that a correction
+// re-prompt changed nothing — the model restated the exact same figure — and
+// stop rather than nag again to the same result.
+func sameFigureSet(a, b []string) bool {
+	if len(a) != len(b) || len(a) == 0 {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, s := range a {
+		seen[s]++
+	}
+	for _, s := range b {
+		if seen[s] == 0 {
+			return false
+		}
+		seen[s]--
+	}
+	return true
+}
+
 // figureHedgeRE matches an estimate marker sitting immediately before a figure
 // ("about ", "roughly ", "~", "up to ", "give or take "). When the model has
 // already flagged the number as approximate, that's the honest hedge the gate
