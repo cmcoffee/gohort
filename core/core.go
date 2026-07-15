@@ -76,6 +76,7 @@ var (
 const (
 	BannedWordsRule   = textutil.BannedWordsRule
 	TimeAwarenessRule = textutil.TimeAwarenessRule
+	UntrustedDataRule = textutil.UntrustedDataRule
 )
 
 var (
@@ -85,6 +86,8 @@ var (
 	StripEmDashes               = textutil.StripEmDashes
 	StripPromptSectionsForTools = textutil.StripPromptSectionsForTools
 	SnakeFromDisplay            = textutil.SnakeFromDisplay
+	UntrustedData               = textutil.UntrustedData
+	UntrustedFence              = textutil.UntrustedFence
 )
 
 // --- factcheck ---------------------------------------------------------------

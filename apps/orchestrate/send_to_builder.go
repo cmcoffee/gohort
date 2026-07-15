@@ -129,14 +129,17 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession) string {
 	b.WriteString("1. Pull this agent's current configuration (agents tool, action \"get\", full true) so you can see its prompt, rules, and tools before changing anything.\n")
 	b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted — the spots where I had to correct, redirect, or repeat myself.\n")
 	b.WriteString("3. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n\n")
-	b.WriteString("---\n\n")
 
 	transcript := renderSessionMarkdown(agent, sess)
 	if len(transcript) > maxBriefTranscript {
 		transcript = "_[Earlier turns omitted — showing the most recent part of the session.]_\n\n" +
 			transcript[len(transcript)-maxBriefTranscript:]
 	}
-	b.WriteString(transcript)
+	// The transcript is another session's content — user text, the agent's
+	// replies, tool output — landing in front of an agent holding
+	// update/delete rights. Fence it so nothing inside can read as a
+	// directive to Builder.
+	b.WriteString(UntrustedData("session transcript to analyze", transcript))
 	return b.String()
 }
 
