@@ -4786,57 +4786,40 @@
       function refreshAgentDropdown() {
         var sel = document.querySelector('.ui-agent-extras select');
         if (!sel) return;
-        fetch('api/agents').then(function(r) {
+        fetch('api/agent-options').then(function(r) {
           return r.ok ? r.json() : null;
-        }).then(function(list) {
-          if (!list) return;
+        }).then(function(data) {
+          if (!data || !Array.isArray(data.options)) return;
           var prev = sel.value;
-          // Rebuild WITH the Built-in / Custom optgroups, mirroring the
-          // server-side initial render in page_chat.go. A flat rebuild
-          // here dropped the divisions whenever an agents_changed event
-          // fired (create / clone / delete / Builder authoring), so the
-          // categories "sometimes went away." Keep the same builtInOrder
-          // partition + sort so the rebuilt dropdown matches the first
-          // paint exactly. (listAgents server-side already merges seeds
-          // with per-user shadows, so each agent appears once.)
-          //
-          // Sub-agents (owned_by set) are excluded — they appear in the
-          // secondary specialist picker, not the main dropdown.
-          // ORCH_SUB_AGENTS is rebuilt here so a newly-authored sub-agent
-          // shows up in the specialist picker without a page reload.
-          var builtInOrder = {'seed-builder': 0, 'seed-chat': 1, 'seed-research': 2, 'seed-kb': 3};
-          var builtIns = [], customs = [];
-          var subMap = {};
-          list.forEach(function(a) {
-            if (a.owned_by) {
-              if (!subMap[a.owned_by]) subMap[a.owned_by] = [];
-              subMap[a.owned_by].push({id: a.id, name: a.name});
-              return;
-            }
-            // Hidden=true scopes to FLEET visibility, not the Agency
-            // picker — matches the server-side page_chat.go rule.
-            // Filtering Hidden here used to silently flip the user
-            // off Builder onto seed-chat after every save / refresh
-            // event, because Builder is permanently Hidden now.
-            // Only sub-agents (handled by the owned_by branch above)
-            // are picker-suppressed.
-            if (a.id in builtInOrder) { builtIns.push(a); }
-            else { customs.push(a); }
-          });
+          // Rebuild from the SERVER's grouped options — the SAME 4-way grouping
+          // the initial paint uses (Built-in / Conversation Agents / Specialized
+          // Agents / one group per owning app). Previously this rebuilt from a
+          // group-less /api/agents and could only re-derive Built-in/Custom, so
+          // every agents_changed event (create / clone / delete / any authoring
+          // action, Builder OR a regular agent) collapsed the separators. Now it
+          // consumes /api/agent-options (agent_options.go) so the rebuilt
+          // dropdown matches the first paint exactly. sub_agents rides along so a
+          // newly-authored sub-agent shows in the specialist picker.
+          var subMap = data.sub_agents || {};
           window.ORCH_SUB_AGENTS = subMap;
-          builtIns.sort(function(a, b) { return builtInOrder[a.id] - builtInOrder[b.id]; });
-          customs.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
           sel.innerHTML = '';
           sel.appendChild(new Option('— select agent —', ''));
-          function addAgentGroup(label, rows) {
-            if (!rows.length) return;
+          // Group by the option's group field, preserving source order across
+          // groups and within (bare/no-group options first). Mirrors the runtime
+          // initial optgroup render in 30_agent_loop_panel.js.
+          var groupOrder = [], groups = {};
+          data.options.forEach(function(o) {
+            var g = o.group || '';
+            if (!g) { sel.appendChild(new Option(o.label || o.value, o.value)); return; }
+            if (!groups[g]) { groups[g] = []; groupOrder.push(g); }
+            groups[g].push(o);
+          });
+          groupOrder.forEach(function(g) {
             var og = document.createElement('optgroup');
-            og.label = label;
-            rows.forEach(function(a) { og.appendChild(new Option(a.name, a.id)); });
+            og.label = g;
+            groups[g].forEach(function(o) { og.appendChild(new Option(o.label || o.value, o.value)); });
             sel.appendChild(og);
-          }
-          addAgentGroup('Built-in', builtIns);
-          addAgentGroup('Custom', customs);
+          });
           // If the previously-active value is a sub-agent, find the
           // parent's option and rewrite its value in-place to the
           // sub-agent ID (preserving the parent's label). This keeps

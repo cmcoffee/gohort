@@ -3,11 +3,9 @@ package orchestrate
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -34,120 +32,13 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		{Value: "", Label: "— select agent —"},
 	}
 	agents := listAgents(udb, user)
-	builtInOrder := map[string]int{
-		"seed-chat":     0,
-		"seed-builder":  1,
-		"seed-research": 2,
-		// seed-kb is intentionally absent: it's a clone-only TEMPLATE (Builder
-		// clones it into real KB agents), skipped from the picker below so it's
-		// never selectable/runnable directly.
-	}
-	// cortexAgents maps each channel agent's id (a.Cortex) to its home-thread
-	// session id, so the client both knows which agents get the channel nav AND
-	// what session to pin them to — without core/ui hardcoding the id scheme.
-	// A present key = channel agent; the value = its pinned session.
-	cortexAgents := map[string]string{}
-	type pickerRow struct {
-		ID    string
-		Name  string
-		Order int
-		App   string // owning app, for App Agents grouping/sort
-	}
-	// subAgentsByParent groups every owned sub-agent under its parent
-	// ID so the chat UI can render a contextual secondary picker. The
-	// main dropdown only shows top-level agents (Hidden/OwnedBy filtered
-	// out); the secondary picker appears only when the selected parent
-	// has children. The secondary picker is what lets you chat directly
-	// with a sub-agent for testing without needing to dispatch from the
-	// parent.
-	subAgentsByParent := map[string][]map[string]string{}
-	// Three picker groups: the seeds (Built-in), the user's cortex-enabled
-	// conversation agents (a standing brain — carved out so they're easy to
-	// find), and everything else custom.
-	var builtIns, conversation, customs, appAgents []pickerRow
-	for _, a := range agents {
-		if a.Cortex {
-			cortexAgents[a.ID] = cortexSessionID(a.ID)
-		}
-		// Sub-agents (OwnedBy set → Hidden=true via enforceSubAgentPosture)
-		// stay out of the main picker — they appear in the secondary
-		// picker keyed by parent ID.
-		if a.OwnedBy != "" {
-			subAgentsByParent[a.OwnedBy] = append(subAgentsByParent[a.OwnedBy], map[string]string{
-				"id":   a.ID,
-				"name": a.Name,
-			})
-			continue
-		}
-		// Clone-only template seeds (e.g. seed-kb) are Builder's raw material,
-		// not something a user runs directly — keep them out of the picker
-		// entirely (all groups). Builder still clones them by ID.
-		if isCloneOnlySeed(a.ID) {
-			continue
-		}
-		// Hidden=true used to filter the agent out of THIS picker too —
-		// which conflated two audiences. The flag's intent is "hide from
-		// the fleet so other agents can't dispatch to me" (the runner's
-		// renderAvailableAgentsBlock honors it; agents(action="run")
-		// refuses it absent an AllowedDispatchTargets carve-out). The
-		// user's own Agency picker is their home for managing their
-		// agents — they need every top-level agent they own visible
-		// here, Hidden or not. Filtering Hidden here just made KB agents
-		// (published to /agents/ but marked Hidden to keep them out of
-		// the fleet) silently disappear from Agency. Don't.
-		// App agents (registered by an app via appagents.RegisterAppAgent) get
-		// their own group, separate from the user's own agents — checked
-		// first so a Cortex-enabled app agent still lands here, not in
-		// Conversation Agents.
-		if spec, isApp := appagents.AppAgentByID(a.ID); isApp {
-			// App agents aren't the user's own to manage, so — unlike user
-			// agents, which stay visible in their own Agency picker even when
-			// Hidden — a Hidden app agent stays OUT of the picker. Lets a
-			// secret-sauce or demo app agent register without cluttering the
-			// menu (Hidden still also drops it from fleet dispatch).
-			if a.Hidden {
-				continue
-			}
-			appAgents = append(appAgents, pickerRow{ID: a.ID, Name: a.Name, App: spec.OwningApp})
-		} else if ord, ok := builtInOrder[a.ID]; ok {
-			builtIns = append(builtIns, pickerRow{ID: a.ID, Name: a.Name, Order: ord})
-		} else if a.Cortex {
-			conversation = append(conversation, pickerRow{ID: a.ID, Name: a.Name})
-		} else {
-			customs = append(customs, pickerRow{ID: a.ID, Name: a.Name})
-		}
-	}
-	sort.Slice(builtIns, func(i, j int) bool { return builtIns[i].Order < builtIns[j].Order })
-	sort.Slice(conversation, func(i, j int) bool { return conversation[i].Name < conversation[j].Name })
-	sort.Slice(customs, func(i, j int) bool { return customs[i].Name < customs[j].Name })
-	// App agents sort by owning app, then name — so a deployment with several
-	// app-registered agents reads grouped-by-app within the one optgroup.
-	sort.Slice(appAgents, func(i, j int) bool {
-		if appAgents[i].App != appAgents[j].App {
-			return appAgents[i].App < appAgents[j].App
-		}
-		return appAgents[i].Name < appAgents[j].Name
-	})
-	for _, a := range builtIns {
-		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Built-in"})
-	}
-	for _, a := range conversation {
-		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Conversation Agents"})
-	}
-	for _, a := range customs {
-		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: "Specialized Agents"})
-	}
-	// App Agents last — framework/app-provided, below the user's own agents.
-	// Each app gets its OWN optgroup named after the app, so the menu reads
-	// "<App> → its agents" rather than a flat "App Agents" bucket. Falls back
-	// to "App Agents" when an app didn't supply a label.
-	for _, a := range appAgents {
-		group := a.App
-		if group == "" {
-			group = "App Agents"
-		}
-		agentOpts = append(agentOpts, ui.SelectOption{Value: a.ID, Label: a.Name, Group: group})
-	}
+	// Grouped picker options (Built-in / Conversation Agents / Specialized
+	// Agents / per-app) + the cortex-session and sub-agent maps. Built by the
+	// shared agentPickerOptions so the client-side refreshAgentDropdown can
+	// rebuild the SAME grouping from /api/agent-options instead of collapsing it
+	// to Built-in/Custom after a Builder action. See agent_options.go.
+	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(agents)
+	agentOpts = append(agentOpts, grouped...)
 
 	// Default the dropdown to the requested agent if the URL carries
 	// `?agent=<id>` AND the user can see it — used by the editor's

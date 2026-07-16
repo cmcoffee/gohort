@@ -337,6 +337,11 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/agent/", g(T.handleAgentPage))
 
 	T.HandleFunc("/api/agents", g(T.handleAgentList))
+	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized
+	// Agents / per-app) so the client rebuilds the dropdown with the SAME
+	// separators the initial paint used — a group-less /api/agents rebuild
+	// collapsed them to Built-in/Custom after every Builder action.
+	T.HandleFunc("/api/agent-options", g(T.handleAgentPickerOptions))
 	T.HandleFunc("/api/capabilities", g(T.handleAgentCapabilities))
 	T.HandleFunc("/api/channels", g(T.handleChannels))
 	T.HandleFunc("/api/agents/import", g(T.handleAgentImport))
