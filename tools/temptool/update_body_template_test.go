@@ -8,12 +8,13 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// TestCreateRejectsUnsentWriteParam is the primary defense for the live
-// moltbook failure: a POST comment action with content required but no
-// body_template sends content nowhere. Authoring it must be REJECTED with a
-// specific error — not silently created, then 400 at run time (which fed a
-// retry loop the model never escaped).
-func TestCreateRejectsUnsentWriteParam(t *testing.T) {
+// TestCreateAutoScaffoldsUnsentWriteParam is the fix for the live moltbook
+// failure: a POST comment action with content required but no body_template
+// used to be REJECTED, which sent small local models into an unescapable retry
+// loop (they never hand-wrote body_template, then hallucinated success). Now the
+// framework AUTO-SCAFFOLDS a flat JSON body_template carrying the unsent params,
+// so the write actually works and the loop never starts.
+func TestCreateAutoScaffoldsUnsentWriteParam(t *testing.T) {
 	sess := &ToolSession{
 		Username:      "alice",
 		ChatSessionID: "s1",
@@ -36,17 +37,35 @@ func TestCreateRejectsUnsentWriteParam(t *testing.T) {
 					"post_id": map[string]any{"type": "string"},
 					"content": map[string]any{"type": "string"},
 				},
-				"required": []any{"post_id", "content"}, // content sent nowhere
+				"required": []any{"post_id", "content"}, // content lands nowhere → scaffold
 			},
 		},
 	}
-	_, err := createGrouped(create, sess)
-	if err == nil {
-		t.Fatalf("expected create to be REJECTED for the unsent 'content' param")
+	res, err := createGrouped(create, sess)
+	if err != nil {
+		t.Fatalf("create should auto-scaffold, not reject: %v", err)
 	}
-	if !strings.Contains(err.Error(), "content") || !strings.Contains(err.Error(), "body_template") {
-		t.Fatalf("rejection must name the unsent param and body_template; got: %v", err)
+	if !strings.Contains(res, "body_template") {
+		t.Fatalf("success message should note the auto-added body_template; got: %s", res)
 	}
+	got, ok := loadExistingToolRecord(sess, "moltbook")
+	if !ok {
+		t.Fatalf("tool missing after create")
+	}
+	for _, a := range got.Actions {
+		if a.Name != "comment" {
+			continue
+		}
+		if !strings.Contains(a.BodyTemplate, "content") {
+			t.Fatalf("auto-scaffold must carry the unsent 'content' param; body_template = %q", a.BodyTemplate)
+		}
+		// post_id already rides in the URL — it must NOT be duplicated into the body.
+		if strings.Contains(a.BodyTemplate, "post_id") {
+			t.Fatalf("URL param 'post_id' must not be scaffolded into the body; body_template = %q", a.BodyTemplate)
+		}
+		return
+	}
+	t.Fatalf("comment action missing after create")
 }
 
 // TestCreateAllowsWiredWriteAndUpdatePersists confirms the gate passes a

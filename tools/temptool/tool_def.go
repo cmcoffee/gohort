@@ -505,6 +505,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	}
 	actions := make([]TempToolAction, 0, len(actionsList))
 	seen := make(map[string]bool, len(actionsList))
+	var scaffoldedActions []string // write actions we auto-gave a body_template
 	for i, raw := range actionsList {
 		m, ok := raw.(map[string]any)
 		if !ok {
@@ -555,14 +556,23 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			method = "GET"
 		}
 		bodyTpl := strings.TrimSpace(StringArg(m, "body_template"))
-		// Hard authoring gate: a write action whose required param lands in
-		// neither the url_template nor the body_template sends it NOWHERE —
-		// the API 400s with "field must be a string" at RUN time, and the
-		// author (often looping) never sees why. Reject it at create/update
-		// so the failure is a specific, actionable error here instead of a
-		// silent "Updated in place" that feeds a retry loop.
+		// Write action whose required param lands in neither url_template nor
+		// body_template would send it NOWHERE — the API 400s at RUN time. The
+		// old behavior REJECTED this, but models (esp. small local workers) then
+		// loop re-submitting the same POST without ever hand-writing a
+		// body_template (observed: a whole conversation burned, then a false
+		// "Done, I fixed it"). Instead:
+		//   - no body_template at all → AUTO-SCAFFOLD one carrying the unsent
+		//     params as a flat JSON body ({"p": {p}}). The obvious right shape;
+		//     ends the loop and the write actually works.
+		//   - a body_template exists but still misses them → a real key mismatch;
+		//     keep the actionable error so the author fixes the keys.
 		if unsent := unsentWriteParams(method, urlTpl, bodyTpl, actRequired); len(unsent) > 0 {
-			return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE — this %s action references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", i, actName, unsent, method)
+			if bodyTpl != "" {
+				return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE — this %s action's body_template doesn't reference them, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add them to the body_template, e.g. {\"content\": {content}}", i, actName, unsent, method)
+			}
+			bodyTpl = scaffoldBodyTemplate(unsent)
+			scaffoldedActions = append(scaffoldedActions, actName)
 		}
 		actions = append(actions, TempToolAction{
 			Name:         actName,
@@ -592,8 +602,28 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		}
 	}
 	_ = BoolArg(args, "persist") // ignored — same as other modes
-	return fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...). Available in this session; admin promotes to permanent via the Tools modal.",
-		name, len(actions), actionNames(actions), name), nil
+	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...). Available in this session; admin promotes to permanent via the Tools modal.",
+		name, len(actions), actionNames(actions), name)
+	if len(scaffoldedActions) > 0 {
+		msg += fmt.Sprintf(" NOTE: auto-added a body_template for write action(s) %v so their required params POST as a JSON body — no need to hand-write it. If the API expects different field names, refine via action=\"update\".", scaffoldedActions)
+	}
+	return msg, nil
+}
+
+// scaffoldBodyTemplate builds a flat JSON body template carrying each param as
+// {"name": {name}} — the obvious shape for a write action whose params are just
+// a JSON body. Auto-generated when a POST/PUT/PATCH action declares required
+// params but no body_template, so the fields reach the API instead of the author
+// looping. Empty in → "" (nothing to carry).
+func scaffoldBodyTemplate(params []string) string {
+	if len(params) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(params))
+	for _, p := range params {
+		parts = append(parts, fmt.Sprintf("%q: {%s}", p, p))
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
 }
 
 // actionNames returns the sub-action names of a toolbox for log /
