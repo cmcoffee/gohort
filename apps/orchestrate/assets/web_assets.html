@@ -403,6 +403,51 @@
 }
 .ui-orch-list-add:hover { color: var(--accent); border-color: var(--accent); }
 
+/* Security & access modal — blast-radius toggles + dispatch allowlist. */
+.ui-orch-sec-toggle {
+  display: flex; gap: 0.6rem; align-items: flex-start;
+  padding: 0.6rem 0.7rem; margin-bottom: 0.5rem;
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 6px; cursor: pointer;
+}
+.ui-orch-sec-toggle input { margin-top: 0.15rem; flex-shrink: 0; }
+.ui-orch-sec-toggle-name { font-size: 0.85rem; font-weight: 600; color: var(--text); }
+.ui-orch-sec-toggle-help { font-size: 0.75rem; color: var(--text-mute); margin-top: 0.15rem; line-height: 1.4; }
+.ui-orch-sec-h {
+  font-size: 0.8rem; font-weight: 600; color: var(--text);
+  margin: 1rem 0 0.3rem;
+}
+.ui-orch-sec-filter {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-2); border: 1px solid var(--border);
+  color: var(--text); font-family: inherit; font-size: 0.82rem;
+  padding: 0.35rem 0.5rem; border-radius: 4px; margin-bottom: 0.4rem; outline: none;
+}
+.ui-orch-sec-filter:focus { border-color: var(--accent); }
+.ui-orch-sec-picklist {
+  max-height: 15rem; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-1);
+}
+.ui-orch-sec-pick {
+  display: flex; gap: 0.55rem; align-items: flex-start;
+  padding: 0.4rem 0.6rem; border-top: 1px solid var(--border); cursor: pointer;
+}
+.ui-orch-sec-pick:first-child { border-top: none; }
+.ui-orch-sec-pick input { margin-top: 0.15rem; flex-shrink: 0; }
+.ui-orch-sec-pick-name { font-size: 0.83rem; color: var(--text); font-weight: 600; }
+.ui-orch-sec-pick-desc { font-size: 0.74rem; color: var(--text-mute); margin-top: 0.1rem; line-height: 1.35; }
+.ui-orch-sec-badge {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-mute); border: 1px solid var(--border); border-radius: 3px;
+  padding: 0 0.25rem; margin-left: 0.4rem; vertical-align: middle;
+}
+.ui-orch-sec-count { font-size: 0.74rem; color: var(--text-mute); margin-top: 0.35rem; }
+.ui-orch-sec-empty { font-size: 0.78rem; color: var(--text-mute); padding: 0.6rem; text-align: center; }
+.ui-orch-sec-dim-note {
+  font-size: 0.74rem; color: var(--danger); margin-top: 0.4rem; line-height: 1.4; display: none;
+}
+
 .ui-orch-interject-edit-row {
   display: flex; gap: 0.3rem; margin-top: 0.3rem; justify-content: flex-end;
 }
@@ -3501,6 +3546,208 @@
             });
           };
           m.footer.appendChild(cancelBtn);
+          m.footer.appendChild(saveBtn);
+        }).catch(function(err) {
+          window.uiAlert('Failed to load agent: ' + (err && err.message || err));
+        });
+      });
+
+      // Security & access — the in-chat quick surface for an agent's
+      // injection blast-radius controls. Same three AgentRecord fields the
+      // full editor's "Access & visibility" section carries (force_private,
+      // hidden, allowed_dispatch_targets), here so an owner can tighten a
+      // reach without leaving chat. Posts the whole record back to
+      // /api/agents (handleAgentList preserves Locked), matching the Tools /
+      // Rules modals — no dedicated endpoint.
+      window.uiRegisterClientAction('orchestrate_security_modal', function() {
+        var id = getAgentID();
+        if (!id) { window.uiAlert('Pick an agent first.'); return; }
+        // Load the agent record + the fleet in parallel: the record gives
+        // current settings, the fleet (minus this agent itself) populates
+        // the dispatch-target picker — the same source the editor's
+        // ChipPicker reads (OptionsSource: ../api/agents).
+        Promise.all([
+          fetchAgent(id),
+          fetch('api/agents').then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+          })
+        ]).then(function(res) {
+          var agent = res[0];
+          var fleet = (res[1] || []).filter(function(a) { return a.id !== id; });
+          var m = openOrchModal('Security & access — ' + (agent.name || id));
+
+          var help = document.createElement('div');
+          help.className = 'ui-orch-modal-help';
+          help.textContent = 'Blast-radius controls — limit what this agent can reach if a prompt-injection attempt rides in on fetched or inbound content. These are the same settings as the agent editor’s Access & visibility section, surfaced here for quick access.';
+          m.body.appendChild(help);
+
+          var state = {
+            force_private: !!agent.force_private,
+            hidden: !!agent.hidden
+          };
+          var selected = {};
+          (agent.allowed_dispatch_targets || []).forEach(function(t) { selected[t] = true; });
+
+          function locked() { return state.force_private; }
+
+          // --- Toggle rows ---------------------------------------------
+          function toggleRow(labelText, helpText, checked, onChange) {
+            var row = document.createElement('label');
+            row.className = 'ui-orch-sec-toggle';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.checked = !!checked;
+            cb.addEventListener('change', function() { onChange(cb.checked); });
+            row.appendChild(cb);
+            var txt = document.createElement('div');
+            var nm = document.createElement('div');
+            nm.className = 'ui-orch-sec-toggle-name';
+            nm.textContent = labelText;
+            txt.appendChild(nm);
+            var hp = document.createElement('div');
+            hp.className = 'ui-orch-sec-toggle-help';
+            hp.textContent = helpText;
+            txt.appendChild(hp);
+            row.appendChild(txt);
+            m.body.appendChild(row);
+          }
+
+          toggleRow(
+            'Force Private mode (network locked off)',
+            'Permanently drops network + sub-agent dispatch tools every turn — nothing this agent handles can leave the deployment. For compliance / confidential / family-facing agents.',
+            state.force_private,
+            function(v) { state.force_private = v; syncDispatchLock(); });
+
+          toggleRow(
+            'Hide from agent fleet',
+            'Drops this agent from every other agent’s Available Agents block and refuses inbound dispatch — unless a caller lists it explicitly. Affects fleet routing only; it stays in your Agency picker and its published URL.',
+            state.hidden,
+            function(v) { state.hidden = v; });
+
+          // --- Dispatch allowlist --------------------------------------
+          var dh = document.createElement('div');
+          dh.className = 'ui-orch-sec-h';
+          dh.textContent = 'Dispatch allowlist — who this agent may call';
+          m.body.appendChild(dh);
+          var di = document.createElement('div');
+          di.className = 'ui-orch-modal-help';
+          di.textContent = 'Empty = may dispatch to any non-hidden agent in the fleet (default). Pick one or more to restrict it to ONLY those (also reaches Hidden agents you pick).';
+          m.body.appendChild(di);
+
+          var filter = document.createElement('input');
+          filter.type = 'text';
+          filter.className = 'ui-orch-sec-filter';
+          filter.placeholder = 'Filter agents…';
+          m.body.appendChild(filter);
+
+          var pickList = document.createElement('div');
+          pickList.className = 'ui-orch-sec-picklist';
+          m.body.appendChild(pickList);
+
+          var count = document.createElement('div');
+          count.className = 'ui-orch-sec-count';
+          m.body.appendChild(count);
+
+          var dimNote = document.createElement('div');
+          dimNote.className = 'ui-orch-sec-dim-note';
+          dimNote.textContent = 'Force Private is on — sub-agent dispatch tools are dropped, so this allowlist has no effect until you turn it off.';
+          m.body.appendChild(dimNote);
+
+          function renderCount() {
+            var n = Object.keys(selected).length;
+            count.textContent = (n === 0)
+              ? 'No restriction — any non-hidden agent.'
+              : (n + ' agent' + (n === 1 ? '' : 's') + ' allowed (restricted mode).');
+          }
+
+          function renderPicks() {
+            pickList.innerHTML = '';
+            if (!fleet.length) {
+              var none = document.createElement('div');
+              none.className = 'ui-orch-sec-empty';
+              none.textContent = 'No other agents in the fleet yet.';
+              pickList.appendChild(none);
+              return;
+            }
+            var q = filter.value.trim().toLowerCase();
+            fleet.forEach(function(a) {
+              var name = a.name || a.id;
+              if (q && name.toLowerCase().indexOf(q) === -1 &&
+                  (a.description || '').toLowerCase().indexOf(q) === -1) return;
+              var row = document.createElement('label');
+              row.className = 'ui-orch-sec-pick';
+              var cb = document.createElement('input');
+              cb.type = 'checkbox';
+              cb.checked = !!selected[a.id];
+              cb.disabled = locked();
+              cb.addEventListener('change', function() {
+                if (cb.checked) selected[a.id] = true; else delete selected[a.id];
+                renderCount();
+              });
+              row.appendChild(cb);
+              var txt = document.createElement('div');
+              var nm = document.createElement('div');
+              nm.className = 'ui-orch-sec-pick-name';
+              nm.textContent = name;
+              if (a.hidden) {
+                var badge = document.createElement('span');
+                badge.className = 'ui-orch-sec-badge';
+                badge.textContent = 'hidden';
+                nm.appendChild(badge);
+              }
+              txt.appendChild(nm);
+              if (a.description) {
+                var d = document.createElement('div');
+                d.className = 'ui-orch-sec-pick-desc';
+                d.textContent = a.description;
+                txt.appendChild(d);
+              }
+              row.appendChild(txt);
+              pickList.appendChild(row);
+            });
+          }
+
+          function syncDispatchLock() {
+            var off = locked();
+            dimNote.style.display = off ? 'block' : 'none';
+            filter.disabled = off;
+            [filter, pickList, count].forEach(function(el) { el.style.opacity = off ? '0.5' : ''; });
+            renderPicks();
+          }
+
+          filter.addEventListener('input', renderPicks);
+          renderCount();
+          syncDispatchLock();
+
+          // --- Footer --------------------------------------------------
+          var cancelBtn = document.createElement('button');
+          cancelBtn.className = 'ui-orch-modal-btn';
+          cancelBtn.textContent = 'Cancel';
+          cancelBtn.onclick = m.close;
+          m.footer.appendChild(cancelBtn);
+
+          var saveBtn = document.createElement('button');
+          saveBtn.className = 'ui-orch-modal-btn primary';
+          saveBtn.textContent = 'Save';
+          saveBtn.onclick = function() {
+            agent.force_private = state.force_private;
+            agent.hidden = state.hidden;
+            agent.allowed_dispatch_targets = Object.keys(selected);
+            saveBtn.disabled = true;
+            fetch('api/agents', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(agent)
+            }).then(function(r) {
+              if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+              m.close();
+              refreshAgentCounts();
+            }).catch(function(err) {
+              saveBtn.disabled = false;
+              window.uiAlert('Save failed: ' + (err && err.message || err));
+            });
+          };
           m.footer.appendChild(saveBtn);
         }).catch(function(err) {
           window.uiAlert('Failed to load agent: ' + (err && err.message || err));
