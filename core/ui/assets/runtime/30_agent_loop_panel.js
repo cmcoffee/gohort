@@ -3654,6 +3654,17 @@
               [(s.paused ? 'paused · ' : '') + (s.detail || '')])
           ]);
           var row = el('div', {class: 'ui-chat-side-item ui-channels-item'}, [main]);
+          // Optional per-row edit: when the server tags a row with edit_action,
+          // clicking its body invokes that app-registered client action with the
+          // row id (+ a reload cb). Stays domain-agnostic — core/ui doesn't know
+          // what the action does; the app registers it (e.g. an edit modal).
+          if (s.edit_action && window.UIClientActions && window.UIClientActions[s.edit_action]) {
+            main.style.cursor = 'pointer';
+            main.title = 'Edit';
+            main.addEventListener('click', function() {
+              window.UIClientActions[s.edit_action]({id: s.id, reload: loadSchedules});
+            });
+          }
           var toggleUrl = s.paused ? s.resume_url : s.pause_url;
           if (toggleUrl) {
             row.appendChild(el('button', {class: 'ui-chat-side-ren', title: s.paused ? 'Resume' : 'Pause',

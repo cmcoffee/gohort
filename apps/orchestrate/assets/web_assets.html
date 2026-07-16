@@ -3787,6 +3787,130 @@
         });
       });
 
+      // Edit a recurring task from the Schedules rail (row click → this action).
+      // Loads the task's editable timing and posts changes to the update route,
+      // which reschedules in place (prompt/agent/session preserved).
+      window.uiRegisterClientAction('orchestrate_edit_schedule', function(ctx) {
+        var id = ctx && ctx.id;
+        if (!id) return;
+        fetch('api/console/recurring/get?id=' + encodeURIComponent(id))
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(task) {
+            var m = openOrchModal('Recurring task');
+            var help = document.createElement('div');
+            help.className = 'ui-orch-modal-help';
+            help.textContent = 'This task runs ' + (task.cadence || '') + ' · fired ' + (task.fire_count || 0) + ' time(s). Edit its timing below.';
+            m.body.appendChild(help);
+
+            var ph = document.createElement('div');
+            ph.className = 'ui-orch-sec-h';
+            ph.textContent = 'Directive (run each fire)';
+            m.body.appendChild(ph);
+            var pv = document.createElement('div');
+            pv.className = 'ui-orch-sec-pick-desc';
+            pv.style.cssText = 'white-space:pre-wrap;margin-bottom:0.6rem';
+            pv.textContent = task.prompt || '';
+            m.body.appendChild(pv);
+
+            function labeled(labelText, inputEl) {
+              var wrap = document.createElement('label');
+              wrap.style.cssText = 'display:block;margin:0.4rem 0';
+              var lb = document.createElement('div');
+              lb.className = 'ui-orch-sec-toggle-help';
+              lb.textContent = labelText;
+              wrap.appendChild(lb);
+              wrap.appendChild(inputEl);
+              return wrap;
+            }
+            function num(val) {
+              var i = document.createElement('input');
+              i.type = 'number'; i.min = '0';
+              i.className = 'ui-orch-sec-filter';
+              i.value = (val ? String(val) : '');
+              return i;
+            }
+            function txt(val, phold) {
+              var i = document.createElement('input');
+              i.type = 'text'; i.className = 'ui-orch-sec-filter';
+              i.value = val || ''; i.placeholder = phold || '';
+              return i;
+            }
+
+            var patternSel = document.createElement('select');
+            patternSel.className = 'ui-orch-sec-filter';
+            [['fixed', 'Fixed — every N minutes'], ['random', 'Random']].forEach(function(o) {
+              var opt = document.createElement('option');
+              opt.value = o[0]; opt.textContent = o[1];
+              if (o[0] === task.pattern) opt.selected = true;
+              patternSel.appendChild(opt);
+            });
+            m.body.appendChild(labeled('Pattern', patternSel));
+
+            var interval = num(task.interval_minutes);
+            var timesPerDay = num(task.times_per_day);
+            var minGap = num(task.min_gap_minutes);
+            var maxGap = num(task.max_gap_minutes);
+            var fromI = txt(task.has_window ? task.active_from : '', 'e.g. 09:00');
+            var toI = txt(task.has_window ? task.active_to : '', 'e.g. 17:30');
+            var maxFires = num(task.max_fires);
+
+            var fixedRow = labeled('Every N minutes', interval);
+            var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
+            var minGapRow = labeled('Min minutes between fires', minGap);
+            var maxGapRow = labeled('Max minutes between fires (unlimited random)', maxGap);
+            [fixedRow, timesRow, minGapRow, maxGapRow].forEach(function(x) { m.body.appendChild(x); });
+            m.body.appendChild(labeled('Active window from (HH:MM, optional)', fromI));
+            m.body.appendChild(labeled('Active window to (HH:MM, optional)', toI));
+            m.body.appendChild(labeled('Max total fires (blank = default)', maxFires));
+
+            function syncPattern() {
+              var isRandom = patternSel.value === 'random';
+              fixedRow.style.display = isRandom ? 'none' : '';
+              timesRow.style.display = isRandom ? '' : 'none';
+              minGapRow.style.display = isRandom ? '' : 'none';
+              maxGapRow.style.display = isRandom ? '' : 'none';
+            }
+            patternSel.addEventListener('change', syncPattern);
+            syncPattern();
+
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'ui-orch-modal-btn';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = m.close;
+            m.footer.appendChild(cancelBtn);
+
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'ui-orch-modal-btn primary';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = function() {
+              function iv(x) { var n = parseInt(x.value, 10); return isNaN(n) ? 0 : n; }
+              var body = {
+                pattern: patternSel.value,
+                interval_minutes: iv(interval),
+                times_per_day: iv(timesPerDay),
+                min_gap_minutes: iv(minGap),
+                max_gap_minutes: iv(maxGap),
+                active_from: fromI.value.trim(),
+                active_to: toI.value.trim(),
+                max_fires: iv(maxFires)
+              };
+              saveBtn.disabled = true;
+              fetch('api/console/recurring/update?id=' + encodeURIComponent(id), {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+              }).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+                m.close();
+                if (ctx.reload) ctx.reload();
+              }).catch(function(err) {
+                saveBtn.disabled = false;
+                window.uiAlert('Update failed: ' + (err && err.message || err));
+              });
+            };
+            m.footer.appendChild(saveBtn);
+          })
+          .catch(function(err) { window.uiAlert('Could not load task: ' + (err && err.message || err)); });
+      });
+
       // --- Per-agent count refresh on the Tools / Memory / Rules buttons ---
       // Find the toolbar buttons by their visible label text and append
       // a "(N)" suffix that reflects the active agent's state. Refresh

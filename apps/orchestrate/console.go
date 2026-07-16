@@ -99,6 +99,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
+	// Get one recurring task's editable fields (for the rail's edit modal) and
+	// update its schedule in place (re-validate + reschedule, prompt preserved).
+	T.HandleFunc("/api/console/recurring/get", g(T.handleConsoleRecurringGet))
+	T.HandleFunc("/api/console/recurring/update", gw(T.handleConsoleRecurringUpdate))
 }
 
 // handleSchedules returns an agent's scheduled runs + event monitors for the
@@ -160,10 +164,12 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			label = "recurring task"
 		}
 		rows = append(rows, map[string]any{
-			"name":       label,
-			"detail":     recurringDetail(rt.Payload),
-			"paused":     false,
-			"delete_url": "api/console/recurring/delete?id=" + url.QueryEscape(rt.TaskID),
+			"name":        label,
+			"detail":      recurringDetail(rt.Payload),
+			"paused":      false,
+			"delete_url":  "api/console/recurring/delete?id=" + url.QueryEscape(rt.TaskID),
+			"id":          rt.TaskID,
+			"edit_action": "orchestrate_edit_schedule",
 		})
 	}
 	writeJSON(w, rows)
@@ -192,6 +198,134 @@ func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *
 		}
 	}
 	http.Error(w, "recurring task not found", http.StatusNotFound)
+}
+
+// handleConsoleRecurringGet returns one recurring task's editable fields for the
+// rail's edit modal. Owner-checked via listAgentRecurringTasks. GET ?id=<id>.
+func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID != id {
+			continue
+		}
+		p := rt.Payload
+		pattern := p.Pattern
+		if pattern == "" {
+			pattern = RecurringFixed
+		}
+		writeJSON(w, map[string]any{
+			"id":               rt.TaskID,
+			"prompt":           p.Prompt,
+			"pattern":          pattern,
+			"interval_minutes": p.IntervalSeconds / 60,
+			"times_per_day":    p.TimesPerDay,
+			"min_gap_minutes":  p.MinGapSeconds / 60,
+			"max_gap_minutes":  p.MaxGapSeconds / 60,
+			"has_window":       p.HasWindow,
+			"active_from":      fmtHHMM(p.WindowFromMin),
+			"active_to":        fmtHHMM(p.WindowToMin),
+			"max_fires":        p.MaxFires,
+			"fire_count":       p.FireCount,
+			"cadence":          recurringDetail(p),
+		})
+		return
+	}
+	http.Error(w, "recurring task not found", http.StatusNotFound)
+}
+
+// handleConsoleRecurringUpdate edits a recurring task's schedule in place: rebuild
+// the spec from the stored task (session / agent / prompt preserved) with the
+// posted timing, unschedule the old, schedule the edited one. On a validation
+// error the original is restored so a bad edit never destroys the task. POST
+// ?id=<id> with a JSON timing body.
+func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	var found *orchUpdatePayload
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID == id {
+			p := rt.Payload
+			found = &p
+			break
+		}
+	}
+	if found == nil {
+		http.Error(w, "recurring task not found", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Pattern         string `json:"pattern"`
+		IntervalMinutes int    `json:"interval_minutes"`
+		TimesPerDay     int    `json:"times_per_day"`
+		MinGapMinutes   int    `json:"min_gap_minutes"`
+		MaxGapMinutes   int    `json:"max_gap_minutes"`
+		ActiveFrom      string `json:"active_from"`
+		ActiveTo        string `json:"active_to"`
+		MaxFires        int    `json:"max_fires"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	spec := RecurringSpec{
+		SessionID:       found.SessionID,
+		AgentID:         found.AgentID,
+		Username:        found.Username,
+		Prompt:          found.Prompt,
+		Pattern:         strings.ToLower(strings.TrimSpace(body.Pattern)),
+		IntervalSeconds: body.IntervalMinutes * 60,
+		TimesPerDay:     body.TimesPerDay,
+		MinGapSeconds:   body.MinGapMinutes * 60,
+		MaxGapSeconds:   body.MaxGapMinutes * 60,
+		MaxFires:        body.MaxFires,
+	}
+	if spec.Pattern == "" {
+		spec.Pattern = RecurringFixed
+	}
+	from := strings.TrimSpace(body.ActiveFrom)
+	to := strings.TrimSpace(body.ActiveTo)
+	if (from == "") != (to == "") {
+		http.Error(w, "active_from and active_to must be set together", http.StatusBadRequest)
+		return
+	}
+	if from != "" {
+		fMin, ferr := parseHHMM(from)
+		if ferr != nil {
+			http.Error(w, ferr.Error(), http.StatusBadRequest)
+			return
+		}
+		tMin, terr := parseHHMM(to)
+		if terr != nil {
+			http.Error(w, terr.Error(), http.StatusBadRequest)
+			return
+		}
+		spec.HasWindow = true
+		spec.WindowFromMin = fMin
+		spec.WindowToMin = tMin
+	}
+	// Remove the old first (so the per-session cap has room for the replacement).
+	UnscheduleTask(id)
+	newID, err := ScheduleOrchestrateUpdate(spec)
+	if err != nil {
+		// Restore the original so a rejected edit doesn't destroy the task.
+		if next, cerr := computeNextFire(found, time.Now()); cerr == nil {
+			_, _ = ScheduleTask(OrchestrateScheduledUpdateKind, *found, next)
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"id": newID})
 }
 
 // channelLabelForRow returns the friendly name of a bridge's target channel
