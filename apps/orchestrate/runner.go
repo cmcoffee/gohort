@@ -4046,9 +4046,10 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 		return
 	}
 	if directReply != "" {
-		// runPlan already emitted the bubble (streamed during the
-		// agent loop) + message_done + stats. Just persist + run
-		// background consolidation + title generation.
+		// runPlan already emitted the bubble live — either streamed inline during
+		// the agent loop, or promoted post-loop via emitCapturedAsBubble (which
+		// suppresses only a true near-duplicate of the last streamed bubble). Just
+		// persist + run background consolidation + title generation.
 		turn.emitStatus("Direct response.")
 		orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), directReply)
 		finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
@@ -5904,17 +5905,18 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// per-round finalizer already finalized that bubble; we
 		// just need a clean copy for the persisted history.
 		clean := strings.TrimSpace(StripToolCallMarkup(resp.Content))
-		// Forced-final-answer rescue safety net: the rescue calls
-		// T.LLM.Chat NON-streaming (core/agent_loop.go:1534), so no
-		// per-round finalizer fires and the page never gets an SSE
-		// frame for the rescue's content. Detect by checking whether
-		// any bubble was finalized this turn — if not, emit one now
-		// so the user actually sees what the LLM produced.
-		// emitCapturedAsBubble's near-duplicate dedup keeps the
-		// streamed-then-rescued path from double-showing.
-		if lastFinalizedID == "" && strings.TrimSpace(lastFinalizedText) == "" {
-			emitCapturedAsBubble(clean)
-		}
+		// Emit unconditionally and let emitCapturedAsBubble's near-duplicate
+		// check decide whether to actually show it. The old guard ("nothing was
+		// finalized this turn") was too coarse: the forced-final-answer rescue
+		// calls T.LLM.Chat NON-streaming (core/agent_loop.go), so its content was
+		// never streamed — but if ANY mid-turn narration bubble rendered first,
+		// lastFinalizedText was non-empty and the guard dropped a brand-new final
+		// synthesis from the LIVE path while still persisting it (visible in
+		// history, blank on screen). emitCapturedAsBubble already suppresses only
+		// a TRUE near-duplicate of the last streamed bubble, so the normal
+		// streamed-then-rescued repeat is still deduped, and a genuinely different
+		// final answer now renders as its own bubble.
+		emitCapturedAsBubble(clean)
 		return nil, "", clean, nil
 	}
 	// No content anywhere. If the loop ran out of its round budget (rather
@@ -5926,9 +5928,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// agents that exhaust rounds mid-investigation).
 	if resp != nil && resp.HitRoundCap {
 		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."
-		if lastFinalizedID == "" && strings.TrimSpace(lastFinalizedText) == "" {
-			emitCapturedAsBubble(msg)
-		}
+		// Same as the resp.Content path above: gate on the near-duplicate check,
+		// not a coarse "already rendered something" boolean, so this shows even
+		// after a mid-turn narration bubble.
+		emitCapturedAsBubble(msg)
 		return nil, "", msg, nil
 	}
 	return nil, "", "", nil
