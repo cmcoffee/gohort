@@ -92,9 +92,12 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// expand on the /bridges/ poll table.
 	T.HandleFunc("/api/console/bridge-thread", g(T.handleConsoleBridgeThread))
 	// Per-agent schedules rail — the agent's own event monitors + scheduled
-	// runs, so a schedule is visible within the agent it fires (any agent, not
-	// just controllers).
+	// runs + recurring tasks, so a schedule is visible within the agent it fires
+	// (any agent, not just controllers).
 	T.HandleFunc("/api/schedules", g(T.handleSchedules))
+	// Delete a recurring task (the `recurring` tool's session updates) from the
+	// schedules rail. Owner-checked against the task payload before unscheduling.
+	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
 }
 
 // handleSchedules returns an agent's scheduled runs + event monitors for the
@@ -145,7 +148,49 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			"delete_url": "api/console/agents/delete?id=" + id,
 		})
 	}
+	// Recurring tasks (the `recurring` tool → per-session scheduled updates).
+	// Delete-only: these have no pause concept, so the row omits pause/resume
+	// URLs and the rail renders just name + detail + ×. The label is the prompt's
+	// first line (they carry no user-set name). Scoped to the agent that runs
+	// them (AgentID), matching the monitor / standing-run scoping above.
+	for _, rt := range listAgentRecurringTasks(user, agentID) {
+		label := firstLineLabel(rt.Payload.Prompt)
+		if label == "" {
+			label = "recurring task"
+		}
+		rows = append(rows, map[string]any{
+			"name":       label,
+			"detail":     recurringDetail(rt.Payload),
+			"paused":     false,
+			"delete_url": "api/console/recurring/delete?id=" + url.QueryEscape(rt.TaskID),
+		})
+	}
 	writeJSON(w, rows)
+}
+
+// handleConsoleRecurringDelete removes a recurring task by scheduler id from the
+// per-agent schedules rail. The scheduler bucket is global and keyed by opaque
+// UUID, so ownership is enforced by matching the task's payload username (via
+// listAgentRecurringTasks) before unscheduling — a user can't cancel another
+// user's task by guessing its id.
+func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID == id {
+			UnscheduleTask(id)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	http.Error(w, "recurring task not found", http.StatusNotFound)
 }
 
 // channelLabelForRow returns the friendly name of a bridge's target channel

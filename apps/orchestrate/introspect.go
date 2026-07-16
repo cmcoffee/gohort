@@ -207,8 +207,21 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				if runCount == 0 {
 					b.WriteString("- No scheduled runs (standing agents) run as you.\n")
 				}
-				if monCount > 0 || runCount > 0 {
-					b.WriteString("- Before creating a new bridge/monitor/scheduled run, check this list so you don't duplicate one that already exists.\n")
+				// Recurring tasks (the `recurring` tool) that post back into your
+				// own sessions on an interval. Distinct from monitors (wake-on-change)
+				// and standing runs (scheduled) — this is the third scheduling surface,
+				// scoped by the agent that runs it.
+				recCount := 0
+				for _, rt := range listAgentRecurringTasks(t.user, a.ID) {
+					recCount++
+					fmt.Fprintf(&b, "- recurring task — %s, %d fire(s) so far: %s\n",
+						recurringDetail(rt.Payload), rt.Payload.FireCount, firstLineLabel(rt.Payload.Prompt))
+				}
+				if recCount == 0 {
+					b.WriteString("- No recurring tasks post into your sessions.\n")
+				}
+				if monCount > 0 || runCount > 0 || recCount > 0 {
+					b.WriteString("- Before creating a new bridge/monitor/scheduled run/recurring task, check this list so you don't duplicate one that already exists.\n")
 				}
 				b.WriteString("\n")
 			}

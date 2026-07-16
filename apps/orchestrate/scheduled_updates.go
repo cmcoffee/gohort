@@ -59,6 +59,20 @@ type orchUpdatePayload struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`
+
+	// Pattern modifiers (empty Pattern == fixed, the original every-N-minutes
+	// behavior). See recurring_pattern.go for the scheduling math.
+	Pattern       string `json:"pattern,omitempty"`         // "" | "fixed" | "random"
+	TimesPerDay   int    `json:"times_per_day,omitempty"`   // random: fires per active window
+	MinGapSeconds int    `json:"min_gap_seconds,omitempty"` // random: minimum spacing between fires
+	HasWindow     bool   `json:"has_window,omitempty"`      // whether the daily window applies
+	WindowFromMin int    `json:"window_from_min,omitempty"` // window start, minutes since local midnight
+	WindowToMin   int    `json:"window_to_min,omitempty"`   // window end, minutes since local midnight
+	MaxFires      int    `json:"max_fires,omitempty"`       // per-task total cap; 0 = deployment default
+	// RemainingToday holds the random pattern's still-pending fire times for the
+	// current day (RFC3339), so the plan survives restarts and each fire just
+	// pops the next. Empty for fixed, or when a fresh day needs planning.
+	RemainingToday []string `json:"remaining_today,omitempty"`
 }
 
 // orchRef points at the running OrchestrateApp so scheduler callbacks
@@ -76,6 +90,64 @@ func registerOrchestrateScheduledUpdates(o *OrchestrateApp) {
 	orchRef = o
 	orchRefMu.Unlock()
 	RegisterScheduleHandler(OrchestrateScheduledUpdateKind, handleOrchestrateScheduledUpdate)
+	// Label recurring-update tasks in the admin scheduler view + logs with the
+	// owning agent + interval + prompt snippet, instead of a bare kind + uuid.
+	// Registered here (not in core) because resolving the agent id to a friendly
+	// name needs the orchestrate agent store; core stays generic.
+	RegisterTaskDescriber(OrchestrateScheduledUpdateKind, func(payload json.RawMessage) string {
+		var p orchUpdatePayload
+		if json.Unmarshal(payload, &p) != nil {
+			return ""
+		}
+		agent := p.AgentID
+		if a, ok := loadAgent(UserDB(o.DB, p.Username), p.AgentID); ok && strings.TrimSpace(a.Name) != "" {
+			agent = a.Name
+		}
+		return fmt.Sprintf("%s — %s (agent: %s)", recurringDetail(p), firstLineLabel(p.Prompt), agent)
+	})
+}
+
+// recurringTaskRow pairs a recurring update's scheduler task id (the cancel
+// key, needed for delete URLs) with its decoded payload.
+type recurringTaskRow struct {
+	TaskID  string
+	Payload orchUpdatePayload
+}
+
+// listAgentRecurringTasks returns the recurring orchestrate updates owned by
+// user that run as agentID (empty agentID = all of the user's). It filters the
+// GLOBAL scheduler bucket by payload — unlike event monitors / standing agents,
+// these tasks carry no <owner>:<name> storage key, so the Username filter is
+// what prevents cross-user leakage and MUST NOT be dropped.
+func listAgentRecurringTasks(user, agentID string) []recurringTaskRow {
+	var out []recurringTaskRow
+	for _, task := range ListScheduledTasks(OrchestrateScheduledUpdateKind) {
+		var p orchUpdatePayload
+		if json.Unmarshal(task.Payload, &p) != nil {
+			continue
+		}
+		if p.Username != user {
+			continue
+		}
+		if agentID != "" && p.AgentID != agentID {
+			continue
+		}
+		out = append(out, recurringTaskRow{TaskID: task.ID, Payload: p})
+	}
+	return out
+}
+
+// firstLineLabel condenses a recurring task's prompt to a single short line for
+// schedule rows / admin labels (first line, trimmed, rune-safe cap).
+func firstLineLabel(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if r := []rune(s); len(r) > 60 {
+		s = string(r[:59]) + "…"
+	}
+	return s
 }
 
 // handleOrchestrateScheduledUpdate is the scheduler callback. Loads
@@ -106,8 +178,8 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 		Log("[orchestrate/scheduled] not initialized, dropping task for session %s", p.SessionID)
 		return
 	}
-	if p.FireCount >= orchUpdateMaxFires() {
-		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, orchUpdateMaxFires())
+	if p.FireCount >= p.effectiveMaxFires() {
+		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
 		return
 	}
 
@@ -140,8 +212,8 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 	msgs = append(msgs, Message{
 		Role: "user",
 		Content: fmt.Sprintf(
-			"[SCHEDULED UPDATE — fire %d, every %ds] %s",
-			p.FireCount+1, p.IntervalSeconds, p.Prompt),
+			"[SCHEDULED UPDATE — fire %d, %s] %s",
+			p.FireCount+1, recurringDetail(p), p.Prompt),
 	})
 
 	// Build system prompt the same way runPlan would for this agent:
@@ -210,13 +282,19 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 	reschedule(p)
 }
 
-// reschedule emits the next fire of a recurring orchestrate update.
+// reschedule emits the next fire of a recurring orchestrate update. The next
+// time — and, for the random pattern, the mutation of p.RemainingToday — is
+// computed by computeNextFire so the fixed/random branch lives in one place.
 func reschedule(p orchUpdatePayload) {
 	p.FireCount++
-	if p.FireCount >= orchUpdateMaxFires() {
+	if p.FireCount >= p.effectiveMaxFires() {
 		return
 	}
-	next := time.Now().Add(time.Duration(p.IntervalSeconds) * time.Second)
+	next, err := computeNextFire(&p, time.Now())
+	if err != nil {
+		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v — stopping", p.SessionID, err)
+		return
+	}
 	if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
 		Log("[orchestrate/scheduled] reschedule failed for session %s: %v", p.SessionID, err)
 	}
@@ -236,31 +314,75 @@ func ListOrchestrateUpdates(sessionID string) []orchUpdatePayload {
 	return out
 }
 
-// ScheduleOrchestrateUpdate is the public helper the recurring(schedule)
-// tool calls. Validates input, enforces guardrails, schedules.
-func ScheduleOrchestrateUpdate(sessionID, agentID, username, prompt string, intervalSeconds int) (string, error) {
-	if sessionID == "" || agentID == "" || username == "" {
+// ScheduleOrchestrateUpdate is the public helper the recurring(schedule) tool
+// calls. Validates the spec (per-pattern), enforces guardrails, and schedules
+// the first fire (which for the random pattern also seeds the day's plan).
+func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
+	if spec.SessionID == "" || spec.AgentID == "" || spec.Username == "" {
 		return "", errors.New("recurring(schedule) needs session, agent, and user")
 	}
-	if strings.TrimSpace(prompt) == "" {
+	if strings.TrimSpace(spec.Prompt) == "" {
 		return "", errors.New("recurring(schedule) requires a prompt")
 	}
-	if time.Duration(intervalSeconds)*time.Second < orchUpdateMinInterval() {
-		return "", fmt.Errorf("interval too small — minimum %s", orchUpdateMinInterval())
+	if spec.Pattern == "" {
+		spec.Pattern = RecurringFixed
 	}
-	active := ListOrchestrateUpdates(sessionID)
+	if spec.HasWindow {
+		if spec.WindowFromMin < 0 || spec.WindowToMin > 24*60 || spec.WindowFromMin >= spec.WindowToMin {
+			return "", errors.New("active window must be a same-day range with from < to (00:00–24:00)")
+		}
+	}
+	minInterval := orchUpdateMinInterval()
+	switch spec.Pattern {
+	case RecurringFixed:
+		if time.Duration(spec.IntervalSeconds)*time.Second < minInterval {
+			return "", fmt.Errorf("interval too small — minimum %s", minInterval)
+		}
+	case RecurringRandom:
+		if !spec.HasWindow {
+			return "", errors.New("random pattern needs an active window (active_from / active_to) to place fires within")
+		}
+		if spec.TimesPerDay < 1 {
+			return "", errors.New("random pattern needs times_per_day >= 1")
+		}
+		if spec.TimesPerDay > 48 {
+			return "", errors.New("times_per_day is capped at 48")
+		}
+		// Default and floor the gap to the deployment minimum interval.
+		if time.Duration(spec.MinGapSeconds)*time.Second < minInterval {
+			spec.MinGapSeconds = int(minInterval / time.Second)
+		}
+		windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
+		if need := spec.MinGapSeconds * (spec.TimesPerDay - 1); windowSec < need {
+			return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart — widen the window, lower the count, or shorten the gap",
+				fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.TimesPerDay, spec.MinGapSeconds/60)
+		}
+	default:
+		return "", fmt.Errorf("unknown pattern %q — use fixed or random", spec.Pattern)
+	}
+	active := ListOrchestrateUpdates(spec.SessionID)
 	if len(active) >= orchUpdateMaxPerSession() {
-		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d) — cancel one first", sessionID, len(active), orchUpdateMaxPerSession())
+		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d) — cancel one first", spec.SessionID, len(active), orchUpdateMaxPerSession())
 	}
 	p := orchUpdatePayload{
-		SessionID:       sessionID,
-		AgentID:         agentID,
-		Username:        username,
-		Prompt:          prompt,
-		IntervalSeconds: intervalSeconds,
+		SessionID:       spec.SessionID,
+		AgentID:         spec.AgentID,
+		Username:        spec.Username,
+		Prompt:          spec.Prompt,
+		Pattern:         spec.Pattern,
+		IntervalSeconds: spec.IntervalSeconds,
+		TimesPerDay:     spec.TimesPerDay,
+		MinGapSeconds:   spec.MinGapSeconds,
+		HasWindow:       spec.HasWindow,
+		WindowFromMin:   spec.WindowFromMin,
+		WindowToMin:     spec.WindowToMin,
+		MaxFires:        spec.MaxFires,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
 	}
-	next := time.Now().Add(time.Duration(intervalSeconds) * time.Second)
+	next, err := computeNextFire(&p, time.Now())
+	if err != nil {
+		return "", err
+	}
 	id, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next)
 	if err != nil {
 		return "", err
