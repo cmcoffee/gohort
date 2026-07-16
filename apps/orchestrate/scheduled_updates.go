@@ -65,6 +65,7 @@ type orchUpdatePayload struct {
 	Pattern       string `json:"pattern,omitempty"`         // "" | "fixed" | "random"
 	TimesPerDay   int    `json:"times_per_day,omitempty"`   // random: fires per active window
 	MinGapSeconds int    `json:"min_gap_seconds,omitempty"` // random: minimum spacing between fires
+	MaxGapSeconds int    `json:"max_gap_seconds,omitempty"` // random (continuous): maximum spacing
 	HasWindow     bool   `json:"has_window,omitempty"`      // whether the daily window applies
 	WindowFromMin int    `json:"window_from_min,omitempty"` // window start, minutes since local midnight
 	WindowToMin   int    `json:"window_to_min,omitempty"`   // window end, minutes since local midnight
@@ -339,23 +340,38 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 			return "", fmt.Errorf("interval too small — minimum %s", minInterval)
 		}
 	case RecurringRandom:
-		if !spec.HasWindow {
-			return "", errors.New("random pattern needs an active window (active_from / active_to) to place fires within")
-		}
-		if spec.TimesPerDay < 1 {
-			return "", errors.New("random pattern needs times_per_day >= 1")
-		}
-		if spec.TimesPerDay > 48 {
-			return "", errors.New("times_per_day is capped at 48")
-		}
 		// Default and floor the gap to the deployment minimum interval.
 		if time.Duration(spec.MinGapSeconds)*time.Second < minInterval {
 			spec.MinGapSeconds = int(minInterval / time.Second)
 		}
-		windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
-		if need := spec.MinGapSeconds * (spec.TimesPerDay - 1); windowSec < need {
-			return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart — widen the window, lower the count, or shorten the gap",
-				fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.TimesPerDay, spec.MinGapSeconds/60)
+		if spec.TimesPerDay > 0 {
+			// N random times inside a daily window.
+			if !spec.HasWindow {
+				return "", errors.New("random pattern with times_per_day needs an active window (active_from / active_to) to place the fires within")
+			}
+			if spec.TimesPerDay > 48 {
+				return "", errors.New("times_per_day is capped at 48")
+			}
+			windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
+			if need := spec.MinGapSeconds * (spec.TimesPerDay - 1); windowSec < need {
+				return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart — widen the window, lower the count, or shorten the gap",
+					fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.TimesPerDay, spec.MinGapSeconds/60)
+			}
+		} else {
+			// Continuous spaced-random: unlimited fires at random gaps in
+			// [min, max]; default max to 2× min so the spacing actually varies.
+			// The window is optional here (fires outside it defer to the next
+			// open); the min gap is the throttle.
+			if spec.MaxGapSeconds <= spec.MinGapSeconds {
+				spec.MaxGapSeconds = spec.MinGapSeconds * 2
+			}
+			if spec.HasWindow {
+				windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
+				if windowSec < spec.MinGapSeconds {
+					return "", fmt.Errorf("active window %s–%s is shorter than the minimum gap (%dm) — widen it or lower the gap",
+						fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.MinGapSeconds/60)
+				}
+			}
 		}
 	default:
 		return "", fmt.Errorf("unknown pattern %q — use fixed or random", spec.Pattern)
@@ -373,6 +389,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		IntervalSeconds: spec.IntervalSeconds,
 		TimesPerDay:     spec.TimesPerDay,
 		MinGapSeconds:   spec.MinGapSeconds,
+		MaxGapSeconds:   spec.MaxGapSeconds,
 		HasWindow:       spec.HasWindow,
 		WindowFromMin:   spec.WindowFromMin,
 		WindowToMin:     spec.WindowToMin,

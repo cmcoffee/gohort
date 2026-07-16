@@ -18,6 +18,7 @@ package orchestrate
 import (
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strings"
@@ -40,8 +41,9 @@ type RecurringSpec struct {
 
 	Pattern         string // RecurringFixed (default) | RecurringRandom
 	IntervalSeconds int    // fixed: gap between fires
-	TimesPerDay     int    // random: fires per active window
+	TimesPerDay     int    // random: fires per active window (0 = continuous/unlimited)
 	MinGapSeconds   int    // random: minimum spacing between fires
+	MaxGapSeconds   int    // random (continuous): maximum spacing; 0 → 2× min
 
 	HasWindow     bool // whether the daily active window applies
 	WindowFromMin int  // window start, minutes since local midnight
@@ -50,10 +52,26 @@ type RecurringSpec struct {
 	MaxFires int // per-task total cap; 0 = deployment default
 }
 
+// isContinuousRandom reports the unbounded spaced-random shape: pattern=random
+// with no times_per_day — fire at random gaps in [MinGap, MaxGap] indefinitely
+// rather than N fixed times per window.
+func (p orchUpdatePayload) isContinuousRandom() bool {
+	return p.Pattern == RecurringRandom && p.TimesPerDay <= 0
+}
+
 // effectiveMaxFires resolves a payload's total-fire cap: the per-task MaxFires
 // when set and below the deployment ceiling, otherwise the ceiling. A per-task
-// value can only LOWER the cap, never raise it past the global guardrail.
+// value can only LOWER the cap, never raise it past the global guardrail —
+// EXCEPT continuous spaced-random, whose whole point is "unlimited times per
+// day": there MaxFires>0 is honored verbatim and 0 means no cap (run until
+// cancelled). The MinGap floor is the real throttle for that mode.
 func (p orchUpdatePayload) effectiveMaxFires() int {
+	if p.isContinuousRandom() {
+		if p.MaxFires > 0 {
+			return p.MaxFires
+		}
+		return math.MaxInt32
+	}
 	ceiling := orchUpdateMaxFires()
 	if p.MaxFires > 0 && p.MaxFires < ceiling {
 		return p.MaxFires
@@ -170,6 +188,9 @@ func formatTimes(ts []time.Time) []string {
 // empty. Returns an error only when a random plan can't be built (bad window).
 func computeNextFire(p *orchUpdatePayload, now time.Time) (time.Time, error) {
 	if p.Pattern == RecurringRandom {
+		if p.isContinuousRandom() {
+			return nextSpacedRandomFire(p, now, rand.Float64), nil
+		}
 		return nextRandomFire(p, now, rand.Float64)
 	}
 	next := now.Add(time.Duration(p.IntervalSeconds) * time.Second)
@@ -177,6 +198,24 @@ func computeNextFire(p *orchUpdatePayload, now time.Time) (time.Time, error) {
 		next = nextWindowOpen(next, p.WindowFromMin, p.WindowToMin)
 	}
 	return next, nil
+}
+
+// nextSpacedRandomFire schedules the next fire a random gap in [MinGap, MaxGap]
+// from now, clamped into the daily window when one is set. Count is unbounded —
+// the min gap is the throttle. Never errors: with no window it's always a valid
+// future time; with a window it defers to the next open.
+func nextSpacedRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() float64) time.Time {
+	minGap := time.Duration(p.MinGapSeconds) * time.Second
+	maxGap := time.Duration(p.MaxGapSeconds) * time.Second
+	if maxGap < minGap {
+		maxGap = minGap
+	}
+	gap := minGap + time.Duration(randFloat()*float64(maxGap-minGap))
+	next := now.Add(gap)
+	if p.HasWindow {
+		next = nextWindowOpen(next, p.WindowFromMin, p.WindowToMin)
+	}
+	return next
 }
 
 // nextRandomFire pops the next fire from the current day's plan, re-planning the
@@ -206,6 +245,9 @@ func recurringDetail(p orchUpdatePayload) string {
 		win = fmt.Sprintf(" · %s–%s", fmtHHMM(p.WindowFromMin), fmtHHMM(p.WindowToMin))
 	}
 	if p.Pattern == RecurringRandom {
+		if p.isContinuousRandom() {
+			return fmt.Sprintf("random · every %d–%dm%s", p.MinGapSeconds/60, effectiveMaxGapMin(p.MinGapSeconds, p.MaxGapSeconds), win)
+		}
 		gap := ""
 		if p.MinGapSeconds > 0 {
 			gap = fmt.Sprintf(" (≥%dm apart)", p.MinGapSeconds/60)
@@ -213,6 +255,15 @@ func recurringDetail(p orchUpdatePayload) string {
 		return fmt.Sprintf("random · %d×/day%s%s", p.TimesPerDay, win, gap)
 	}
 	return fmt.Sprintf("recurring · every %dm%s", p.IntervalSeconds/60, win)
+}
+
+// effectiveMaxGapMin returns the continuous-mode max gap in minutes, applying
+// the "2× min when unset" default so labels match what the scheduler will use.
+func effectiveMaxGapMin(minSec, maxSec int) int {
+	if maxSec <= minSec {
+		maxSec = minSec * 2
+	}
+	return maxSec / 60
 }
 
 // specCadence renders a RecurringSpec's cadence as a natural phrase for the
@@ -224,6 +275,9 @@ func specCadence(s RecurringSpec) string {
 		win = fmt.Sprintf(" between %s and %s", fmtHHMM(s.WindowFromMin), fmtHHMM(s.WindowToMin))
 	}
 	if s.Pattern == RecurringRandom {
+		if s.TimesPerDay <= 0 {
+			return fmt.Sprintf("at random times %d–%dm apart%s, unlimited per day", s.MinGapSeconds/60, effectiveMaxGapMin(s.MinGapSeconds, s.MaxGapSeconds), win)
+		}
 		gap := ""
 		if s.MinGapSeconds > 0 {
 			gap = fmt.Sprintf(", at least %dm apart", s.MinGapSeconds/60)

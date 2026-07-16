@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 	"time"
@@ -128,6 +129,45 @@ func TestNextRandomFire_PopsQueueThenReplans(t *testing.T) {
 	}
 	if len(p.RemainingToday) != 1 {
 		t.Fatalf("after second pop, RemainingToday = %d, want 1", len(p.RemainingToday))
+	}
+}
+
+func TestNextSpacedRandomFire_GapBounds(t *testing.T) {
+	p := &orchUpdatePayload{
+		Pattern:       RecurringRandom,
+		MinGapSeconds: 20 * 60, // 20m
+		MaxGapSeconds: 60 * 60, // 60m
+	}
+	rng := rand.New(rand.NewSource(7))
+	prev := refDay(10, 0)
+	for i := 0; i < 500; i++ {
+		next := nextSpacedRandomFire(p, prev, rng.Float64)
+		gap := next.Sub(prev)
+		if gap < 20*time.Minute-time.Second || gap > 60*time.Minute+time.Second {
+			t.Fatalf("iter %d: gap %v out of [20m, 60m]", i, gap)
+		}
+		if !next.After(prev) {
+			t.Fatalf("iter %d: next %v not after prev %v", i, next, prev)
+		}
+		prev = next
+	}
+}
+
+func TestContinuousRandom_UnlimitedFires(t *testing.T) {
+	cont := orchUpdatePayload{Pattern: RecurringRandom, TimesPerDay: 0}
+	if !cont.isContinuousRandom() {
+		t.Fatal("times_per_day=0 random should be continuous")
+	}
+	if got := cont.effectiveMaxFires(); got != math.MaxInt32 {
+		t.Errorf("continuous, no MaxFires → %d, want MaxInt32 (unlimited)", got)
+	}
+	cont.MaxFires = 10
+	if got := cont.effectiveMaxFires(); got != 10 {
+		t.Errorf("continuous, MaxFires=10 → %d, want 10 (honored verbatim, above nothing)", got)
+	}
+	nPerDay := orchUpdatePayload{Pattern: RecurringRandom, TimesPerDay: 5}
+	if nPerDay.isContinuousRandom() {
+		t.Fatal("N-per-day random must NOT be continuous")
 	}
 }
 

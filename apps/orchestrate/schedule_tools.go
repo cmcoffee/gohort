@@ -31,8 +31,9 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"Pick the action:\n" +
 				"  action=\"schedule\" — set one up. Always: prompt (the directive run each fire, e.g. \"check the build, post if red\" — don't put timing in it). Then pick a pattern:\n" +
 				"     pattern=\"fixed\" (default) — fires every interval_minutes (>=1).\n" +
-				"     pattern=\"random\" — fires times_per_day at random moments inside a daily window (needs active_from + active_to), each at least min_gap_minutes apart. Use this to make polling feel organic instead of clockwork.\n" +
-				"   Optional modifiers (either pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session, max 50 fires total before auto-cancel.\n" +
+				"     pattern=\"random\" — random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
+				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Fixed and N-per-day random auto-cancel after 50 fires; UNLIMITED random has no auto-stop unless you set max_fires.\n" +
+				"  To CHANGE an existing task's timing, re-issue action=\"schedule\" with the SAME prompt and the new timing — it REPLACES the matching task in place instead of creating a duplicate. Keep the prompt identical when you mean to edit.\n" +
 				"  action=\"list\" — show active tasks for this session (id, cadence, fire count, prompt). Call before scheduling to avoid duplicates.\n" +
 				"  action=\"cancel\" — stop one. Required: id (from schedule or list).\n" +
 				"Use this for periodic polling / checks the agent runs itself. NOT for one-shot work, and NOT for dispatching to other agents.",
@@ -41,9 +42,10 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"prompt":           {Type: "string", Description: "(schedule) The recurring task as a directive the agent follows each fire. Don't include timing — that's the pattern params."},
 				"pattern":          {Type: "string", Enum: []string{"fixed", "random"}, Description: "(schedule) fixed = every interval_minutes (default); random = times_per_day random moments inside the active window."},
 				"interval_minutes": {Type: "integer", Description: "(schedule, fixed) How often the task fires, in minutes. Minimum 1."},
-				"times_per_day":    {Type: "integer", Description: "(schedule, random) How many times to fire within the daily active window. 1–48."},
-				"min_gap_minutes":  {Type: "integer", Description: "(schedule, random) Minimum minutes between consecutive fires. Defaults to the deployment minimum (1) if omitted."},
-				"active_from":      {Type: "string", Description: "(schedule, optional) Daily window start, 24-hour HH:MM local time (e.g. 09:00). Set together with active_to. Required for random."},
+				"times_per_day":    {Type: "integer", Description: "(schedule, random) Fire this many random times inside the daily window (1–48). OMIT for UNLIMITED firing at random gaps — see max_gap_minutes."},
+				"min_gap_minutes":  {Type: "integer", Description: "(schedule, random) Minimum minutes between consecutive fires — the throttle. Defaults to the deployment minimum (1) if omitted."},
+				"max_gap_minutes":  {Type: "integer", Description: "(schedule, unlimited random) Maximum minutes between fires; each gap is random in [min_gap, max_gap]. Defaults to 2× min_gap. Ignored when times_per_day is set."},
+				"active_from":      {Type: "string", Description: "(schedule, optional) Daily window start, 24-hour HH:MM local time (e.g. 09:00). Set together with active_to. Required for random WITH times_per_day; optional otherwise."},
 				"active_to":        {Type: "string", Description: "(schedule, optional) Daily window end, 24-hour HH:MM local time (e.g. 17:30). Must be after active_from."},
 				"max_fires":        {Type: "integer", Description: "(schedule, optional) Auto-stop after this many total fires. Capped at the deployment ceiling (50)."},
 				"id":               {Type: "string", Description: "(cancel) Scheduler task id of the recurring task to cancel (from schedule or list)."},
@@ -106,14 +108,33 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	case RecurringRandom:
 		spec.TimesPerDay = intFromArgs(args, "times_per_day")
 		spec.MinGapSeconds = intFromArgs(args, "min_gap_minutes") * 60
+		spec.MaxGapSeconds = intFromArgs(args, "max_gap_minutes") * 60
 	default:
 		spec.IntervalSeconds = intFromArgs(args, "interval_minutes") * 60
+	}
+	// Update, don't duplicate: if this session already runs a task with the SAME
+	// directive, remove it first so re-issuing a schedule for that directive with
+	// new timing edits it in place instead of stacking a second copy.
+	replaced := false
+	for _, task := range ListScheduledTasks(OrchestrateScheduledUpdateKind) {
+		var p orchUpdatePayload
+		if json.Unmarshal(task.Payload, &p) != nil {
+			continue
+		}
+		if p.SessionID == t.session.ID && strings.TrimSpace(p.Prompt) == spec.Prompt {
+			UnscheduleTask(task.ID)
+			replaced = true
+		}
 	}
 	id, err := ScheduleOrchestrateUpdate(spec)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("SCHEDULED_OK id=%s — a recurring TASK now runs %s, appending its reply into this session each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor) and don't send them to the Bridges app. Manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", id, specCadence(spec), id), nil
+	verb, note := "SCHEDULED_OK", ""
+	if replaced {
+		verb, note = "UPDATED_OK", " (replaced the existing task with this same directive — no duplicate created)"
+	}
+	return fmt.Sprintf("%s id=%s%s — a recurring TASK now runs %s, appending its reply into this session each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor) and don't send them to the Bridges app. Manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), id), nil
 }
 
 func (t *chatTurn) recurringList() (string, error) {
