@@ -4268,6 +4268,18 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 			"text": "Build plan still has pending steps but no authoring tool fired this turn — the reply may be describing work that didn't actually happen. Next turn will be re-prompted.",
 		})
 	}
+	// The other half of hallucinated authoring: an authoring tool DID fire but
+	// every call errored, yet the reply claims success (the live moltbook case —
+	// no BuildPlan, so the check above misses it).
+	if injectFailedAuthoringWarning(&sess, turnToolCalls, reply) {
+		_, _ = saveChatSession(udb, sess)
+		sse.Send(map[string]any{
+			"kind": "activity",
+			"type": "error",
+			"id":   activityCheapID(),
+			"text": "Every authoring call this turn failed, but the reply claims it's done — the tool/agent was NOT saved. Next turn is re-prompted to actually fix it.",
+		})
+	}
 
 	turn.titleAfterFirstTurn()
 
@@ -4285,6 +4297,7 @@ var agentAuthoringToolNames = map[string]bool{
 	"clone_agent":  true,
 	"delete_agent": true,
 	"add_tool":     true,
+	"tool_def":     true,
 }
 
 // injectAuthoringMismatchWarning detects the "claimed but didn't fire"
@@ -4327,6 +4340,70 @@ func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []Persisted
 		Hidden:  true,
 	})
 	return true
+}
+
+// injectFailedAuthoringWarning catches the OTHER half of the hallucinated-
+// authoring pattern: an authoring tool DID fire this turn but EVERY such call
+// errored, yet the reply reads as a success claim. Unlike the build-plan check
+// above it needs no BuildPlan, so it also covers a regular agent (the live
+// moltbook case: tool_def create/update errored repeatedly, then the agent said
+// "Done! I've rebuilt the toolbox"). Injects a hidden corrective note so the
+// next turn stops claiming success and actually fixes the call.
+func injectFailedAuthoringWarning(sess *ChatSession, turnToolCalls []PersistedToolCall, reply string) bool {
+	if sess == nil || strings.TrimSpace(reply) == "" {
+		return false
+	}
+	fired, errored, ok := 0, 0, 0
+	for _, tc := range turnToolCalls {
+		if !agentAuthoringToolNames[tc.Name] {
+			continue
+		}
+		fired++
+		if strings.TrimSpace(tc.Err) != "" {
+			errored++
+		} else {
+			ok++
+		}
+	}
+	// Only when authoring was attempted, ALL of it errored, and the reply claims
+	// success without acknowledging the failure.
+	if fired == 0 || ok > 0 || errored == 0 || !claimsSuccessWithoutAck(reply) {
+		return false
+	}
+	sess.Messages = append(sess.Messages, ChatMessage{
+		Role:    "user",
+		Content: "FRAMEWORK NOTICE: your reply says a tool or agent was created, updated, or fixed — but EVERY authoring call this turn returned an error, so nothing was saved. Do NOT tell the user it's done. Read the error text, correct the arguments, and make ONE fixed authoring call (prefer action=\"update\" over delete+recreate).",
+		Created: time.Now(),
+		Hidden:  true,
+	})
+	return true
+}
+
+// claimsSuccessWithoutAck reports whether reply asserts authoring success while
+// NOT acknowledging a failure — the heuristic separating a false "it's done"
+// from an honest "it didn't work." Conservative: any failure-acknowledging word
+// suppresses it, so it errs toward NOT firing (a missed catch over a false one).
+func claimsSuccessWithoutAck(reply string) bool {
+	r := strings.ToLower(reply)
+	for _, neg := range []string{
+		"error", "fail", "couldn't", "could not", "didn't", "did not", "wasn't able",
+		"was not able", "unable", "not able", "still broken", "isn't working", "not working",
+		"went wrong", "try again", "reject", "no luck", "hasn't worked", "won't",
+	} {
+		if strings.Contains(r, neg) {
+			return false
+		}
+	}
+	for _, pos := range []string{
+		"done", "created", "rebuilt", "rebuild", "fixed", "i've ", "i have ", "is live",
+		"now live", "ready to use", "all set", "up and running", "successfully",
+		"is working now", "it's working", "built the", "set up",
+	} {
+		if strings.Contains(r, pos) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleCancel aborts an in-flight runner by session ID. The runner
