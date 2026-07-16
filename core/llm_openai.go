@@ -61,6 +61,16 @@ func fmtThink(p *bool) string {
 	return "false"
 }
 
+// fmtThinkBudget renders the resolved reasoning budget for the request-debug
+// line. "omitted" means the field is NOT in the body (nil) — so llama.cpp
+// applies no per-request cap — which is the tell when reasoning runs unbounded.
+func fmtThinkBudget(p *int) string {
+	if p == nil {
+		return "omitted"
+	}
+	return fmt.Sprintf("%d", *p)
+}
+
 // thinkBlockRE matches <think>...</think> blocks that thinking models
 // embed in content when using the OpenAI-compatible endpoint.
 var thinkBlockRE = regexp.MustCompile(`(?s)<think>.*?</think>\s*`)
@@ -1726,7 +1736,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 
 	c.snoopRequest(body, false)
 
-	Debug("[%s]: Sending request (body=%d bytes, think=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode)
+	Debug("[%s]: Sending request (body=%d bytes, think=%s, thinking_budget=%s, json=%v)", c.provider(), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode)
 	// Non-streaming: the whole body arrives as one read, so the
 	// operator's RequestTimeout (the header-wait / response budget)
 	// applies directly.
@@ -1954,8 +1964,8 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	if d, ok := ctx.Deadline(); ok {
 		ctxDeadline = time.Until(d).Round(time.Millisecond).String()
 	}
-	Debug("[%s]: Sending stream request (body=%d bytes, think=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
-		c.provider(), len(body), fmtThink(cfg.Think), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
+	Debug("[%s]: Sending stream request (body=%d bytes, think=%s, thinking_budget=%s, json=%v, per_read=%s watchdog=%s req_timeout=%s ctx_deadline=%s)",
+		c.provider(), len(body), fmtThink(cfg.Think), fmtThinkBudget(payload.ThinkingBudgetTokens), cfg.JSONMode, streamRead, watchdogTimeout, c.api.RequestTimeout, ctxDeadline)
 	resp, err := c.doRequest(ctx, body, streamRead)
 	if err != nil {
 		return nil, err
