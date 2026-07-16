@@ -863,6 +863,142 @@
       return {wrap: wrap, body: null};
     });
 
+    // Credential setup card — emitted when Builder drafts a DISABLED
+    // API credential (draft_api_credential / draft_oauth_credential).
+    // The Set up button opens a modal whose form POSTs the secret
+    // DIRECTLY to the admin endpoint (/admin/api/secure-api): the
+    // value travels browser→server and never enters the conversation
+    // or the LLM's context. The endpoint enforces the admin role — a
+    // non-admin clicker gets a "hand this to your admin" message, so
+    // the card is a shortcut to the same governed record Admin > APIs
+    // edits, not a new authority.
+    window.uiRegisterBlockRenderer('credential_setup', function(d) {
+      var name = String(d.title || '');
+      var data = d.data || {};
+      var grant = String(data.grant || '');
+      var secretLabel = String(d.text || 'the secret value');
+      var wrap = el('div', {class: 'ui-orch-connect'});
+      wrap.appendChild(el('div', {class: 'ui-orch-connect-icon'}, ['🔐']));
+      var msg = el('div', {class: 'ui-orch-connect-body'});
+      msg.appendChild(el('div', {class: 'ui-orch-connect-title'},
+        ['API credential "' + name + '" needs its secret']));
+      var sub = el('div', {class: 'ui-orch-connect-sub'},
+        ['An admin pastes ' + secretLabel + ' to finish setup — right here, or in Admin > APIs.']);
+      msg.appendChild(sub);
+      wrap.appendChild(msg);
+      var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Set up']);
+      wrap.appendChild(btn);
+      function markDone(text) {
+        wrap.classList.add('connected');
+        btn.textContent = 'Configured';
+        btn.disabled = true;
+        sub.textContent = text;
+      }
+      btn.addEventListener('click', function() {
+        fetch('/admin/api/secure-api?name=' + encodeURIComponent(name))
+          .then(function(r) {
+            if (r.status === 401 || r.status === 403) {
+              throw new Error('Admin access is required to set this up here — ask your admin to open this chat, or to finish it in Admin > APIs.');
+            }
+            if (r.status === 404) { throw new Error('Credential "' + name + '" no longer exists — ask the assistant to re-draft it.'); }
+            if (!r.ok) { throw new Error('HTTP ' + r.status); }
+            return r.json();
+          })
+          .then(function(rec) { openCredSecretModal(rec); })
+          .catch(function(err) { window.uiAlert(String(err && err.message || err)); });
+      });
+      function openCredSecretModal(rec) {
+        var m = openOrchModal('Set up credential — ' + name);
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        var typeLine = rec.type + (rec.grant ? ' / ' + rec.grant : '');
+        help.textContent = 'Type: ' + typeLine + '. Base URL: ' + (rec.base_url || '(none)') +
+          '. The secret is sent straight to the server — it never enters the conversation.';
+        m.body.appendChild(help);
+        function field(labelText, mono) {
+          var lbl = document.createElement('div');
+          lbl.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin:0.6rem 0 0.2rem';
+          lbl.textContent = labelText;
+          m.body.appendChild(lbl);
+          var ta = document.createElement('textarea');
+          ta.rows = 2;
+          ta.style.cssText = 'width:100%;resize:vertical;background:var(--bg-0);color:var(--text);' +
+            'border:1px solid var(--border);border-radius:4px;padding:0.4rem 0.55rem' +
+            (mono ? ';font-family:var(--mono,monospace);font-size:0.8rem' : '');
+          ta.setAttribute('autocomplete', 'off');
+          ta.setAttribute('spellcheck', 'false');
+          m.body.appendChild(ta);
+          return ta;
+        }
+        var secretTa = field('Secret — paste ' + secretLabel, true);
+        var pwTa = null;
+        if (grant === 'password') {
+          pwTa = field("The user's password (password grant needs both)", true);
+        }
+        var enableRow = document.createElement('label');
+        enableRow.style.cssText = 'display:flex;align-items:center;gap:0.45rem;margin:0.7rem 0 0;font-size:0.85rem;cursor:pointer';
+        var enableCb = document.createElement('input');
+        enableCb.type = 'checkbox';
+        enableCb.checked = true;
+        enableRow.appendChild(enableCb);
+        enableRow.appendChild(document.createTextNode('Enable the credential after saving'));
+        m.body.appendChild(enableRow);
+        var status = document.createElement('div');
+        status.style.cssText = 'margin-top:0.6rem;font-size:0.8rem;color:var(--text-mute);white-space:pre-wrap';
+        m.body.appendChild(status);
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'ui-row-btn';
+        cancelBtn.type = 'button';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', m.close);
+        m.footer.appendChild(cancelBtn);
+        var saveBtn = document.createElement('button');
+        saveBtn.className = 'ui-row-btn';
+        saveBtn.type = 'button';
+        saveBtn.textContent = 'Save';
+        saveBtn.addEventListener('click', function() {
+          var secret = secretTa.value.trim();
+          if (!secret) { window.uiAlert('Paste the secret first.'); return; }
+          saveBtn.disabled = true;
+          status.textContent = 'Saving…';
+          var payload = Object.assign({}, rec, {secret: secret});
+          if (pwTa && pwTa.value.trim()) { payload.password = pwTa.value.trim(); }
+          fetch('/admin/api/secure-api', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+          }).then(function(r) {
+            if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
+            if (!enableCb.checked) { return null; }
+            return fetch('/admin/api/secure-api?action=enable&name=' + encodeURIComponent(name), {method: 'POST'});
+          }).then(function(r) {
+            if (r && !r.ok) { return r.text().then(function(t) { throw new Error('enable failed: ' + (t || r.status)); }); }
+            // OAuth configs get a free round-trip test so a bad secret
+            // surfaces NOW, on this screen, not three tool calls later.
+            if (rec.type === 'oauth2') {
+              status.textContent = 'Saved. Testing token mint…';
+              return fetch('/admin/api/secure-api?action=test&name=' + encodeURIComponent(name), {method: 'POST'})
+                .then(function(tr) { return tr.ok ? tr.json() : null; })
+                .then(function(res) {
+                  if (res && res.ok === false) { throw new Error('Saved, but the test call failed: ' + res.message); }
+                });
+            }
+            return null;
+          }).then(function() {
+            m.close();
+            markDone('Secret saved' + (enableCb.checked ? ' and enabled' : '') +
+              '. Tell the assistant to continue — it will verify with check_credential.');
+          }).catch(function(err) {
+            saveBtn.disabled = false;
+            status.textContent = String(err && err.message || err);
+          });
+        });
+        m.footer.appendChild(saveBtn);
+        secretTa.focus();
+      }
+      return {wrap: wrap, body: null};
+    });
+
     // Multi-step form — orchestrator's ask_user_form. Renders one
     // question at a time with Next / Back navigation; final step
     // shows Submit. Each step's selections + free-text feed into a
@@ -2075,7 +2211,7 @@
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
           if (isBuilder) {
-            help.textContent = "Builder's tool catalog is fixed by the framework — the per-agent checklist doesn't apply here. Use the Session tools panel below to review and prune the drafts Builder's workers authored mid-conversation.";
+            help.textContent = "Builder's tool catalog is fixed by the framework — the list below shows what it runs with, but there's no per-agent knob here. The Session tools panel is the actionable part: review and prune the drafts Builder's workers authored mid-conversation.";
           } else {
             help.textContent = "Pick which tools this agent's worker may call. Uncheck everything to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
           }
@@ -2391,15 +2527,46 @@
           var list = document.createElement('div');
           list.className = 'ui-checklist';
           var checkboxes = [];
-          // Skip the catalog checklist entirely for Builder — its
-          // tool set is code-driven, the checklist has no effect, and
-          // showing it next to the actionable Session tools panel
-          // misleads the admin into thinking they have a knob there.
-          // Custom-tools (agent-bundled) + Session-tools sections
-          // already rendered above this point are the actionable
-          // surfaces for Builder.
+          // Builder gets a READ-ONLY catalog listing instead of the
+          // checklist — its tool set is code-driven, so checkboxes
+          // would be a knob that does nothing, but rendering NOTHING
+          // (the old behavior) read as "Builder has no tools", which
+          // is worse: the runtime catalog is full (the seed's
+          // allowed_tools plus the authoring set appended at
+          // catalog-assembly time). List what it actually runs with.
           if (isBuilder) {
-            // Skip group-building entirely. Fall through to footer.
+            var fixedSection = document.createElement('div');
+            fixedSection.className = 'ui-orch-custom-tools';
+            var fh = document.createElement('div');
+            fh.className = 'ui-orch-custom-tools-h';
+            fh.textContent = 'Framework-fixed catalog (read-only)';
+            fixedSection.appendChild(fh);
+            var catalogHelp = {};
+            catalog.forEach(function(o) { catalogHelp[o.value] = o.help || ''; });
+            (agent.allowed_tools || []).forEach(function(n) {
+              var row = document.createElement('div');
+              row.className = 'ui-orch-custom-tool';
+              var meta = document.createElement('div');
+              meta.className = 'ui-orch-custom-tool-meta';
+              var nm = document.createElement('div');
+              nm.className = 'ui-orch-custom-tool-name';
+              nm.textContent = n;
+              meta.appendChild(nm);
+              if (catalogHelp[n]) {
+                var desc = document.createElement('div');
+                desc.className = 'ui-orch-custom-tool-desc';
+                desc.textContent = catalogHelp[n];
+                meta.appendChild(desc);
+              }
+              row.appendChild(meta);
+              fixedSection.appendChild(row);
+            });
+            var fnote = document.createElement('div');
+            fnote.className = 'ui-orch-custom-tools-help';
+            fnote.textContent = 'Plus the authoring set appended at runtime: create_agent / update_agent / clone_agent / delete_agent, tool_def, add_tool, skill_def, app_def, pipeline, credential drafting, agents (list / get / run), and the build-plan cards.';
+            fixedSection.appendChild(fnote);
+            list.appendChild(fixedSection);
+            m.body.appendChild(list);
           } else {
           // Bucket the tools by group so each section can be rendered
           // as a collapsible block with its own master checkbox. Order

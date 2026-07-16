@@ -220,13 +220,18 @@ func credentialFormFields() []ui.FormField {
 		{Field: "safety", Type: "header", Label: "Safety + limits"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://192.168.0.1", Help: "The server this credential talks to. Requests are allowed only under this host (and the endpoints below). This is where you change which server it reaches."},
 		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call. e.g. /api/* allows everything under /api/ ; /api/core/* scopes to one module. Add/remove entries. Leave empty to allow ANY path under the Base URL."},
-		{Field: "allowed_url_pattern", Label: "Allowed URL pattern (legacy)", Placeholder: "https://api.github.com/**", Help: "Legacy single-glob alternative to Base URL + Allowed Endpoints. Leave blank when using those; one of the two is required. Requests not matching are rejected before the secret is attached."},
+		// (The legacy "Allowed URL pattern" single-glob field is retired
+		// from the form: two overlapping scoping fields kept misleading
+		// admins and LLMs about which applied. Old records that still
+		// carry a pattern keep working — simple prefix globs are
+		// auto-migrated onto Base URL at startup, complex ones are
+		// honored by the runtime fallback.)
 		{Field: "insecure_skip_tls", Label: "Allow self-signed / skip TLS verification", Type: "toggle", Help: "Turn ON only for LAN appliances with self-signed certs or hosts addressed by IP (e.g. an OPNsense box at https://192.168.0.1, where no cert can validate). Disables certificate checking for THIS credential's requests only. Leave OFF for public internet APIs."},
 		{Field: "denied_url_patterns", Label: "Denied URL patterns", Type: "tags", Help: "Optional explicit denies, checked before the allow pattern."},
 		{Field: "allowed_methods", Label: "Allowed methods", Type: "tags", Help: "e.g. GET, POST. Blank = all methods allowed."},
 		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},
 		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one dispatched call through this credential, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
-		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle"},
+		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "The escalation tier. ON: every agent call through this credential renders an Allow once / Deny card in the chat and waits for the session owner; headless runs (channel wakes, schedules) are denied outright. Use for services that reach real people (messaging) or spend money. OFF: calls dispatch silently — right for an agent's own low-stakes accounts."},
 		{Field: "cred_scope", Label: "Whose credentials", Type: "select",
 			Options: []ui.SelectOption{
 				{Value: "shared", Label: "Shared — one key for everyone (you set it here)"},
@@ -1251,6 +1256,42 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							EmptyText: "No app MCP tools registered. Apps register them via core.RegisterMCPTool (see apps/guides).",
 						},
 					},
+				},
+			},
+			{
+				Title:    "Bridges",
+				Subtitle: "Credential-polling bridges agents have created (poll an API on a schedule via a registered credential, wake an agent when the response changes) — across ALL users. Pause is the kill switch: a paused bridge stops polling and agents cannot resume it themselves; only this table and the owner's console can. Which SERVICES a bridge may call is governed separately, per credential, under APIs (\"Require confirm before each call\" escalates every call to an in-chat approval).",
+				Body: ui.Table{
+					Source: "/orchestrate/api/console/bridges",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Flex: 1},
+						{Field: "owner", Mute: true},
+						{Field: "credential", Mute: true},
+						{Field: "detail", Mute: true, Flex: 2},
+						{
+							Field: "state", Type: "badge",
+							Badges: []ui.BadgeMapping{
+								{Value: "active", Label: "Active", Color: "success"},
+								{Value: "paused", Label: "Paused", Color: "warning"},
+							},
+						},
+						{Field: "last_fired", Label: "Last fired", Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Pause",
+							PostTo: "/orchestrate/api/console/bridges/pause?owner={owner}&name={name}",
+							Method: "POST", HideIf: "_paused"},
+						{Type: "button", Label: "Resume",
+							PostTo: "/orchestrate/api/console/bridges/resume?owner={owner}&name={name}",
+							Method: "POST", OnlyIf: "_paused", Variant: "primary"},
+						{Type: "button", Label: "Delete",
+							PostTo:  "/orchestrate/api/console/bridges/delete?owner={owner}&name={name}",
+							Method:  "POST",
+							Confirm: "Delete this bridge? Its schedule is cancelled; the agent and credential it used are untouched.",
+							Variant: "danger"},
+					},
+					EmptyText: "No bridges yet. Agents create these (via the bridge tool) to watch an API and wake an agent on change; they appear here for enable/disable the moment one exists.",
 				},
 			},
 			{

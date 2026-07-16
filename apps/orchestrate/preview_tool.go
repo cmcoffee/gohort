@@ -22,6 +22,32 @@ import (
 // balloon the session record or the SSE stream.
 const maxArtifactHTML = 300 * 1024
 
+// upsert_ui_block replaces the first persisted block whose ID matches
+// blk (or that same_surface says is the same destination — e.g. a link
+// card to the same URL, an artifact with the same title) and drops any
+// later blocks matching either, so repeated emissions stay ONE card
+// instead of stacking at the bottom of a replayed session. Appends when
+// nothing matches. Caller holds the session lock.
+func (s *ChatSession) upsert_ui_block(blk UIBlock, same_surface func(*UIBlock) bool) {
+	out := s.UIBlocks[:0]
+	placed := false
+	for i := range s.UIBlocks {
+		b := s.UIBlocks[i]
+		if b.Type == blk.Type && (b.ID == blk.ID || (same_surface != nil && same_surface(&b))) {
+			if placed {
+				continue
+			}
+			b = blk
+			placed = true
+		}
+		out = append(out, b)
+	}
+	if !placed {
+		out = append(out, blk)
+	}
+	s.UIBlocks = out
+}
+
 // showHTMLToolDef builds the per-turn show_html tool. Framework display
 // tool — always in the catalog (like compact_context): it has no side
 // effects beyond the user's own screen and session record, so it isn't
@@ -92,8 +118,32 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			if title == "" {
 				title = "Artifact"
 			}
+			// Same-surface rule: a url preview matches on the url; an
+			// authored document matches on the title. Both feed the
+			// dedupe below AND id adoption — the model routinely forgets
+			// to pass the id back on an update, and without adoption
+			// each revision minted a fresh block, stacking duplicate
+			// cards (each carrying a full HTML copy) on the session.
+			same_surface := func(b *UIBlock) bool {
+				if url != "" {
+					return b.URL == url
+				}
+				return b.URL == "" && strings.EqualFold(strings.TrimSpace(b.Title), title)
+			}
 			id := strings.TrimSpace(stringArg(args, "id"))
 			isUpdate := id != ""
+			if id == "" && t.session != nil {
+				t.toolMu.Lock()
+				for i := range t.session.UIBlocks {
+					b := &t.session.UIBlocks[i]
+					if b.Type == "html_artifact" && same_surface(b) {
+						id = b.ID
+						isUpdate = true
+						break
+					}
+				}
+				t.toolMu.Unlock()
+			}
 			if id == "" {
 				id = "artifact-" + UUIDv4()[:8]
 			}
@@ -123,17 +173,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 					blk.DataURLs = dataURLs
 				}
 				t.toolMu.Lock()
-				replaced := false
-				for i := range t.session.UIBlocks {
-					if t.session.UIBlocks[i].ID == id {
-						t.session.UIBlocks[i] = blk
-						replaced = true
-						break
-					}
-				}
-				if !replaced {
-					t.session.UIBlocks = append(t.session.UIBlocks, blk)
-				}
+				t.session.upsert_ui_block(blk, same_surface)
 				t.toolMu.Unlock()
 			}
 			// The document already lives on the session artifact; don't
@@ -194,22 +234,50 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 			if title == "" {
 				title = url
 			}
-			id := "link-" + UUIDv4()[:8]
+			// One card per destination: agents re-announce the same page
+			// across turns (an app after every update, a settings page on
+			// every mention), and appending each time stacked duplicate
+			// link cards on the replayed session. Reusing the existing
+			// block's id makes the live card retitle in place (addBlock
+			// routes a repeated id into onUpdate) and the upsert below
+			// keeps the persisted record at one card, sweeping any
+			// duplicates the old append-always path left behind.
+			same_surface := func(b *UIBlock) bool { return b.URL == url }
+			id := ""
+			if t.session != nil {
+				t.toolMu.Lock()
+				for i := range t.session.UIBlocks {
+					b := &t.session.UIBlocks[i]
+					if b.Type == "link_hint" && same_surface(b) {
+						id = b.ID
+						break
+					}
+				}
+				t.toolMu.Unlock()
+			}
+			isUpdate := id != ""
+			if id == "" {
+				id = "link-" + UUIDv4()[:8]
+			}
 			payload := map[string]any{
 				"kind":  "block",
 				"type":  "link_hint",
 				"id":    id,
 				"title": title,
 				"url":   url,
-			}
-			if note != "" {
-				payload["text"] = note
+				// Always present (even empty): a repeated id routes into the
+				// renderer's onUpdate, which only overwrites fields that are
+				// non-null — an omitted text would leave a stale note behind.
+				"text": note,
 			}
 			t.sse.Send(payload)
 			if t.session != nil {
 				t.toolMu.Lock()
-				t.session.UIBlocks = append(t.session.UIBlocks, UIBlock{Type: "link_hint", ID: id, Title: title, URL: url, Text: note})
+				t.session.upsert_ui_block(UIBlock{Type: "link_hint", ID: id, Title: title, URL: url, Text: note}, same_surface)
 				t.toolMu.Unlock()
+			}
+			if isUpdate {
+				return fmt.Sprintf("Link card %q → %s refreshed in place (one card per destination). Don't repeat the raw URL in your reply — the card carries it.", title, url), nil
 			}
 			return fmt.Sprintf("Link card %q → %s is now showing in the chat. Don't repeat the raw URL in your reply — the card carries it.", title, url), nil
 		},

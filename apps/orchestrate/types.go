@@ -282,6 +282,20 @@ type AgentRecord struct {
 	// No-op when DisableExplicit is true.
 	MemoryMode string `json:"memory_mode,omitempty"`
 
+	// EnableNotes opts this agent into the Working-notes layer — a single
+	// bounded, agent-rewritable block of RUNNING STATE injected always-in-
+	// prompt (distinct from the append-list Explicit Memory facts). Off by
+	// default; most task agents don't need running state. Surfaces the
+	// update_notes tool and the "## Working notes" prompt block. See
+	// core/notesstore.go.
+	EnableNotes bool `json:"enable_notes,omitempty"`
+
+	// SeedNotes is Builder's initial text for the Working-notes block. It
+	// renders (and the agent can rewrite it) until the (user, agent) store
+	// gets its first update_notes; the record's seed stays the durable
+	// fallback. No-op when EnableNotes is false.
+	SeedNotes string `json:"seed_notes,omitempty"`
+
 	// IngestAttachments turns ON the "attachments become Knowledge"
 	// path for this agent. On each turn that has extracted
 	// attachment text (PDF / DOCX / plain text uploads), the text is
@@ -633,6 +647,11 @@ type UIBlock struct {
 	// pane's postMessage bridge (gohort.fetch). Persisted so a replayed
 	// artifact keeps exactly the grants it was created with.
 	DataURLs []string `json:"data_urls,omitempty"`
+	// Data carries renderer-specific string fields that don't warrant
+	// their own column (e.g. a credential_setup card's cred_type/grant).
+	// Live SSE emissions mirror the same keys under "data" so a replayed
+	// block and a live block present identically to the renderer.
+	Data map[string]string `json:"data,omitempty"`
 }
 
 // BuildPlanState is the persisted plan-card state for Builder's

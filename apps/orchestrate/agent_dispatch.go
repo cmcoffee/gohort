@@ -35,13 +35,56 @@ import (
 // letting a misconfigured fleet thrash.
 const maxDispatchDepth = 3
 
-// maxSameTargetDispatch caps how many times ONE user turn may dispatch to the
-// SAME target agent. Legitimate back-and-forth with a sub-agent (e.g. a chat
-// agent iterating with Builder to build an app) happens ACROSS user turns — the
-// user answers between rounds. Within a SINGLE turn, re-dispatching the same
-// agent past this is a loop: the model "answers and runs the app" over and over.
-// Enforced in agentsRunAction via chatTurn.dispatchCounts.
+// maxSameTargetDispatch caps how many times ONE user turn may dispatch the
+// IDENTICAL call — same target agent AND same message — before it's treated as
+// a loop: the model "answers and runs the app" over and over with no new input.
+// It is keyed on target+message, NOT target alone: dispatching one agent with
+// several DIFFERENT messages in a turn (e.g. the Builder verifying an agent by
+// exercising each of its tools — profile, then post, then feed) is real
+// progress, not a loop, and must not trip this. Enforced in agentsRunAction.
 const maxSameTargetDispatch = 3
+
+// maxTotalTargetDispatch is the anti-thrash ceiling on the TOTAL number of
+// dispatches to one target in a single turn, across varying messages. It sits
+// well above maxSameTargetDispatch because exercising several of a sub-agent's
+// tools in one turn is legitimate; only an outsized volume signals a runaway.
+const maxTotalTargetDispatch = 12
+
+// maxBuilderTargetDispatch is the anti-thrash ceiling when the DISPATCHER is the
+// Builder. Verifying an authored agent means driving each of its tools/actions
+// (often with a retry or two), so Builder needs generous headroom — a full
+// toolbox sweep can easily be 8-20 distinct dispatches — before the ceiling
+// bites. The identical-call loop cap above still applies unchanged.
+const maxBuilderTargetDispatch = 40
+
+// dispatchCapDecision applies the two per-turn dispatch caps against the
+// running per-turn counts and returns a non-empty block message when one is
+// hit (empty string = allowed). It mutates counts (incrementing the loop and
+// total counters) and is pure over its inputs otherwise, so the cap contract
+// can be unit-tested without a live sub-agent dispatch:
+//   - LOOP: the IDENTICAL call (same target AND same message) past
+//     maxSameTargetDispatch. Keyed on target+message so distinct messages to
+//     one target — legitimate verification — never collide.
+//   - THRASH: the TOTAL dispatches to one target past the ceiling
+//     (maxBuilderTargetDispatch when the dispatcher is Builder, else
+//     maxTotalTargetDispatch), regardless of message.
+func dispatchCapDecision(counts map[string]int, targetID, targetName, msg string, isBuilder bool) string {
+	loopKey := "call\x00" + targetID + "\x00" + msg
+	counts[loopKey]++
+	if counts[loopKey] > maxSameTargetDispatch {
+		return fmt.Sprintf("STOP — you have already dispatched %q with the SAME message %d times this turn; re-running the identical call won't produce a new result. Use what it already returned, or dispatch a DIFFERENT message (e.g. exercise another tool/action). If you're done verifying, reply to the user directly with what you found.", targetName, maxSameTargetDispatch)
+	}
+	totalCeiling := maxTotalTargetDispatch
+	if isBuilder {
+		totalCeiling = maxBuilderTargetDispatch
+	}
+	totalKey := "total\x00" + targetID
+	counts[totalKey]++
+	if counts[totalKey] > totalCeiling {
+		return fmt.Sprintf("STOP — you've dispatched %q %d times this turn across varying messages, past the per-turn ceiling. Summarize what you've verified so far and continue any remaining checks on the user's NEXT message.", targetName, totalCeiling)
+	}
+	return ""
+}
 
 // AgentsForUser returns the agent records visible to the given user
 // (their own customizations + un-shadowed seeds). Exposed for other
@@ -487,7 +530,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// the sync-dispatch path. Identity-gated against the Builder
 	// seed ID — a non-Builder target never receives the appendage.
 	if isBuilderAgent(target.ID) {
-		tools = append(tools, builderAuthoringTools(subSess)...)
+		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 	}
 	// Fleet targets get their exclusive fleet-management + delegation +
 	// event-monitor catalog here too, so a dispatched/woken fleet agent
@@ -972,7 +1015,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		}
 	}
 	if isBuilderAgent(target.ID) {
-		tools = append(tools, builderAuthoringTools(subSess)...)
+		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 	}
 	// Fleet targets get their fleet-management + delegation + event-monitor
 	// catalog here too — this is the WAKE path (event monitors run the

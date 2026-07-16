@@ -446,5 +446,9 @@ func (s *SecureAPI) TestMintToken(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("OK — minted an access token via %s (valid ~%s). Ready to use as fetch_url_%s against %s.", c.Grant, ttl.Round(time.Second), c.Name, c.AllowedURLPattern), nil
+	scope := strings.TrimSpace(c.BaseURL)
+	if scope == "" {
+		scope = c.AllowedURLPattern
+	}
+	return fmt.Sprintf("OK — minted an access token via %s (valid ~%s). Ready to use as fetch_url_%s against %s.", c.Grant, ttl.Round(time.Second), c.Name, scope), nil
 }

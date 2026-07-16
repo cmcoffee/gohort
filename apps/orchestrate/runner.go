@@ -72,7 +72,7 @@ func resolveMaxWorkerRounds(a AgentRecord) int {
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
 func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
-	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts)
+	sysPrompt := prependAgentContext(target.OrchestratorPrompt, target, subFacts, agentOperatingNotes(runtimeDB, target))
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
 	if target.Cortex && sessID != cortexSessionID(target.ID) {
@@ -1283,6 +1283,57 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if n := len(t.agentOwnTools); n > 0 {
 		Log("[orchestrate.tools] attached %d uniquely-agent-scoped tool(s) for agent=%s", n, t.agent.ID)
 	}
+	// Expose the bundled set + an unbundle path to tool_def so a
+	// record-attached tool is legible as such (list/get tag it) and
+	// actually removable (delete routes through the agent record). Every
+	// tool in agent.Tools is bundled, even the ones already covered by
+	// the persistent pool — the point is that tool_def's delete must
+	// reach the RECORD, not just the session copy. Scope the callback to
+	// this agent + owner so a delete can't touch another agent's kit.
+	if len(t.agent.Tools) > 0 {
+		bundled := make(map[string]bool, len(t.agent.Tools))
+		for i := range t.agent.Tools {
+			bundled[t.agent.Tools[i].Name] = true
+		}
+		sess.BundledToolNames = bundled
+		agentID, owner, poolDBRef := t.agent.ID, poolUser, poolDB
+		sess.UnbundleTool = func(name string) error {
+			return unbundleAgentTool(poolDBRef, owner, agentID, name)
+		}
+	}
+}
+
+// unbundleAgentTool removes a tool from an agent's record-attached kit
+// (AgentRecord.Tools) and persists — the durable half of tool_def's
+// delete for an agent-bundled ("zombie") tool. Without it, delete drops
+// only the session copy and the record reconstitutes the tool next
+// turn. Owner-scoped through the same load/save path the editor uses.
+func unbundleAgentTool(db Database, owner, agentID, name string) error {
+	if db == nil {
+		return fmt.Errorf("no db")
+	}
+	rec, ok := loadAgent(db, agentID)
+	if !ok {
+		return fmt.Errorf("agent %q not found", agentID)
+	}
+	if rec.Owner != "" && owner != "" && rec.Owner != owner {
+		return fmt.Errorf("not your agent")
+	}
+	kept := rec.Tools[:0]
+	found := false
+	for _, tl := range rec.Tools {
+		if tl.Name == name {
+			found = true
+			continue
+		}
+		kept = append(kept, tl)
+	}
+	if !found {
+		return fmt.Errorf("tool %q is not bundled on agent %q", name, rec.Name)
+	}
+	rec.Tools = kept
+	_, err := saveAgent(db, rec)
+	return err
 }
 
 // wireLiveCallbacks attaches the mid-turn user-facing hooks (send_status and the
@@ -1496,7 +1547,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 // load_tool fetches a named custom tool's full schema, marks it loaded
 // (so the DynamicTools feed surfaces it next round), and returns the
 // parameter spec so the LLM can call it correctly.
-func (t *chatTurn) loadToolToolDef() AgentToolDef {
+func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "load_tool",
@@ -1534,10 +1585,22 @@ func (t *chatTurn) loadToolToolDef() AgentToolDef {
 				if !ok {
 					if t.staticTempToolNames[n] {
 						already = append(already, n)
+						continue
+					}
+					// On-demand from the persistent pool. Builder skips loading
+					// user-authored persistent tools at session setup ("authors
+					// fresh"), so a tool the "approved but not loaded" list shows
+					// (and that tool_def get can read) isn't in lazyCustomToolDefs
+					// — without this branch load_tool would reject the very tool
+					// that list told the model to load, an observed dead-end loop.
+					if def, ok := t.loadPersistentToolOnDemand(sess, n); ok {
+						t.lazyCustomToolDefs[n] = def
+						t.lazyCustomToolNames[n] = true
+						td = def
 					} else {
 						unknown = append(unknown, n)
+						continue
 					}
-					continue
 				}
 				t.loadedCustomTools[n] = true
 				loaded = append(loaded, n)
@@ -1562,6 +1625,49 @@ func (t *chatTurn) loadToolToolDef() AgentToolDef {
 			return strings.TrimSpace(b.String()), nil
 		},
 	}
+}
+
+// loadPersistentToolOnDemand pulls a tool from the user's persistent pool
+// into the live session on request, so load_tool can resolve a tool that
+// wasn't pre-loaded at session setup (the Builder case: it deliberately
+// doesn't auto-load user tools, but MUST be able to load one explicitly to
+// inspect or test it). Appends it to sess.TempTools (so dynamicNewTempTools
+// surfaces the wrapped, callable version next round) and returns the
+// activity-wrapped def for the same-round lazyToolFallback path. Returns
+// false when no persistent tool of that name exists.
+func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (AgentToolDef, bool) {
+	if sess == nil || t.udb == nil || t.user == "" {
+		return AgentToolDef{}, false
+	}
+	var found *TempTool
+	for _, p := range LoadPersistentTempTools(t.udb, t.user) {
+		if p.Tool.Name == name {
+			tt := p.Tool
+			found = &tt
+			break
+		}
+	}
+	if found == nil {
+		return AgentToolDef{}, false
+	}
+	if !sess.HasTempTool(name) {
+		if err := sess.AppendTempTool(found); err != nil {
+			Log("[orchestrate.tools] load_tool on-demand append %q failed: %v", name, err)
+			return AgentToolDef{}, false
+		}
+	}
+	// Build + activity-wrap the single def for the immediate fallback path;
+	// the next round's dynamicNewTempTools rebuilds it the same way.
+	for _, td := range temptool.BuildAgentToolDefs(sess) {
+		if td.Tool.Name == name {
+			wrapped := t.wrapToolsForActivity(sess, []AgentToolDef{td})
+			if len(wrapped) > 0 {
+				return wrapped[0], true
+			}
+			return td, true
+		}
+	}
+	return AgentToolDef{}, false
 }
 
 // lazyToolFallback resolves a direct call to a lazy custom tool that
@@ -1793,7 +1899,22 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			}
 		}
 	default:
+		// No explicit allow-list — the agent runs the full default pool.
+		// defaultNames is the REGISTERED worker pool and never contains the
+		// per-session credential tools (fetch_url_<cred>) synthesized by
+		// Secure().BuildTools, so "allow everything" would paradoxically be
+		// LESS capable than a hand-picked list that named a credential tool:
+		// the model can't see fetch_url_<cred> and falls back to the generic,
+		// unauthenticated fetch_url. Append every enabled credential tool so
+		// the most permissive setting genuinely means everything. These carry
+		// CapNetwork, so the Private-mode filter below still drops them per
+		// turn when the agent is running network-restricted.
 		toolNames = defaultNames
+		for _, td := range Secure().BuildTools(sess) {
+			if n := td.Tool.Name; !slices.Contains(toolNames, n) {
+				toolNames = append(toolNames, n)
+			}
+		}
 	}
 	// Always include `workspace` regardless of cap filtering. Workspace
 	// owns the delivery primitive (action="attach") that every producer
@@ -1887,9 +2008,9 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	if isBuilderAgent(t.agent.ID) {
 		var extra []AgentToolDef
 		if forOrchestrator {
-			extra = builderAuthoringTools(sess)
+			extra = builderAuthoringTools(sess, t)
 		} else {
-			extra = builderWorkerResearchTools(sess)
+			extra = builderWorkerResearchTools(sess, t)
 		}
 		tools = append(tools, extra...)
 		for _, td := range extra {
@@ -4194,7 +4315,7 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))
 		}
 	}
-	out = append(out, t.loadToolToolDef())  // gateway for the agent's lazy custom tools
+	out = append(out, t.loadToolToolDef(sess)) // gateway for the agent's lazy custom tools
 	out = append(out, t.skillToolDefs()...) // read_skill / skill_knowledge_*; nil when skills off
 	if unifiedMemoryEnabled() {
 		// Collapsed surface: remember / recall / forget replace the six
@@ -4215,6 +4336,11 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 			// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
 			out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 		}
+	}
+	// Working notes (rewritable running-state block) — its own opt-in layer,
+	// independent of the Explicit/Reference memory toggles.
+	if t.agent.EnableNotes {
+		out = append(out, t.updateNotesToolDef())
 	}
 	out = append(out, cortexDeliverableTools(t.udb, t.agent.ID)...) // file_deliverable + note_to_cortex; nil for non-cortex
 	// (send_to_builder removed — agents reach Builder by DIRECT dispatch
@@ -4368,7 +4494,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if incognito {
 		facts = nil
 	}
-	sys := prependAgentContext(persona, t.agent, facts)
+	notes := t.operatingNotes()
+	if incognito {
+		notes = OperatingNotes{}
+	}
+	sys := prependAgentContext(persona, t.agent, facts, notes)
 	// Cortex awareness injection — recent STANDING context (received channel
 	// messages, monitor fires) as read-only background so the agent greets you
 	// already aware. Concise live-read; empty when nothing's recent. Cross-session
@@ -4928,7 +5058,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// self-serve authoring agent gets them here. The matching
 		// credentialFirstGuidance is injected into the system prompt above under
 		// the same !isBuilderAgent condition.
-		knowTools = append(knowTools, draftOAuthCredentialToolDef(), draftAPICredentialToolDef(), checkCredentialToolDef())
+		knowTools = append(knowTools, draftOAuthCredentialToolDef(t), draftAPICredentialToolDef(t), storeCredentialSecretToolDef(), checkCredentialToolDef())
 	}
 	// create_pipeline_tool is NOT added to the catalog — add_tool with
 	// mode="pipeline" covers the same use case via a unified surface.
@@ -5438,11 +5568,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			}
 			return orchRoundsUsed > cap
 		},
-		// Auto-confirm any NeedsConfirm tool (delete_agent) so the
-		// orchestrator can act without a stdin prompt hanging the
-		// stream. Higher-level approval gates would live at the
-		// app layer, not in the loop.
-		Confirm: func(name, args string) bool { return true },
+		// Escalation policy hook (confirm.go): calls through a
+		// credential flagged "Require confirm" park on an in-chat
+		// approval card; every other NeedsConfirm tool (delete_agent
+		// etc.) auto-approves as before so nothing hangs on stdin.
+		Confirm: t.confirmFuncFor(sess),
 		// Control tools end the round immediately. If the LLM bundles
 		// ask_user with create_agent in the same response, only ask_user
 		// fires and the turn pauses for the user's actual answer.
@@ -5784,6 +5914,12 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 				t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 		}
 	}
+	// Working notes (rewritable running-state block) — its own opt-in layer,
+	// independent of the Explicit/Reference memory toggles.
+	if t.agent.EnableNotes {
+		tools = append(tools, t.updateNotesToolDef())
+		toolNames = append(toolNames, "update_notes")
+	}
 	// create_pipeline_tool intentionally NOT added — add_tool with
 	// mode="pipeline" is the single pipeline-authoring surface.
 	// See the matching note in runPlan above.
@@ -5930,7 +6066,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 			strings.TrimSpace(cur.Intent),
 		)
 	}
-	sysPrompt := prependAgentContext(t.gatedPersona(brief), t.agent, t.facts())
+	sysPrompt := prependAgentContext(t.gatedPersona(brief), t.agent, t.facts(), t.operatingNotes())
 	if len(tools) > 0 {
 		sysPrompt += "\n\n" + buildToolUseDirective(tools)
 	}
@@ -5990,11 +6126,11 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 			}
 			return roundsUsed > softCap
 		},
-		// Auto-confirm any NeedsConfirm tool that survives the cap
-		// filter. Without this RunAgentLoop falls back to a stdin
-		// y/n prompt that hangs the HTTP request indefinitely —
-		// gohort runs as a service, nobody is reading stdin.
-		Confirm: func(name, args string) bool { return true },
+		// Escalation policy hook (confirm.go) — same policy as the
+		// orchestrator loop: flagged-credential calls park on the
+		// in-chat approval card; everything else auto-approves (no
+		// stdin fallback — gohort runs as a service).
+		Confirm: t.confirmFuncFor(sess),
 		// (No SingleFireGroups for image/video producers — same
 		// rationale as the orchestrator round above. Multi-fire is
 		// intentional under the write-to-workspace + workspace(attach)
@@ -6111,7 +6247,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	// history; synthesis builds a fresh system prompt and re-injects
 	// here so a skill that prescribed a tone or reference convention
 	// governs both planning and reply. No-op when no skills active.
-	synthSys := prependAgentContext(t.gatedPersona(t.agent.OrchestratorPrompt), t.agent, t.facts())
+	synthSys := prependAgentContext(t.gatedPersona(t.agent.OrchestratorPrompt), t.agent, t.facts(), t.operatingNotes())
 	// Re-inject any trigger-matched skill instructions so a skill that
 	// prescribed a tone/convention governs the synthesis reply too.
 	// Re-inject the full instructions of any skill the LLM consulted this

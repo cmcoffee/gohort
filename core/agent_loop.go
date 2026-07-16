@@ -814,6 +814,18 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	const guardBlockedBreakLimit = 2
 	forceFinal := false
 
+	// keep_going spin guard. keep_going is a pure "run another round" signal
+	// with no side effect — meant for "I'm about to act, give me one more
+	// round." Because it IS a tool call, it sets toolFiredThisTurn and thereby
+	// SUPPRESSES the action-promise correction below, so a model can promise
+	// "I'll call the real tool next" every round and never act. Counting
+	// consecutive rounds whose ONLY tool call(s) were keep_going, we escalate
+	// the nudge and then force a clean final answer rather than let it spin.
+	// (Observed live: 8+ keep_going calls across two turns, ~2.5 min, the
+	// actual tool never called.)
+	keepGoingStreak := 0
+	const keepGoingSpinLimit = 3
+
 	for round := 1; round <= maxRounds+graceRounds; round++ {
 		// Bail immediately on cancellation so the loop doesn't burn another
 		// LLM call (or tool execution) after the session was aborted. Tool
@@ -1949,6 +1961,34 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			}
 		} else {
 			guardBlockedStreak = 0
+		}
+
+		// keep_going spin guard (declared above). A round whose ONLY tool
+		// call(s) were keep_going is a promise-to-act with no action. First
+		// repeat gets a firm corrective injected; a further repeat forces the
+		// final answer so the model can't burn the budget re-promising.
+		keepGoingOnly := len(resp.ToolCalls) > 0
+		for _, tc := range resp.ToolCalls {
+			if tc.Name != "keep_going" {
+				keepGoingOnly = false
+				break
+			}
+		}
+		if keepGoingOnly {
+			keepGoingStreak++
+			if keepGoingStreak >= keepGoingSpinLimit {
+				Debug("[agent_loop] keep_going spin: %d consecutive keep_going-only rounds — forcing final answer", keepGoingStreak)
+				forceFinal = true
+				break
+			}
+			// One firm nudge before the force-final: keep_going fired but no
+			// real tool, so the promise-correction path never ran.
+			history = append(history, Message{
+				Role: "user",
+				Content: "You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
+			})
+		} else {
+			keepGoingStreak = 0
 		}
 
 		if cfg.OnStep != nil {

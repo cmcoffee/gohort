@@ -1333,6 +1333,25 @@ type ToolSession struct {
 	// nil-safe.
 	TempTools []*TempTool
 
+	// BundledToolNames is the set of tool names attached DIRECTLY to the
+	// running agent's record (AgentRecord.Tools) rather than authored as
+	// session drafts or approved into the user pool. The app wires it at
+	// session setup. tool_def uses it to TAG these in list/get and to
+	// route delete through UnbundleTool — otherwise an agent-bundled tool
+	// looks identical to a session draft in the catalog but silently
+	// reloads every turn, so a plain delete removes only the session copy
+	// and the "zombie" keeps firing. Nil ⇒ no agent-bundled tools.
+	BundledToolNames map[string]bool
+
+	// UnbundleTool, when set, removes a tool from the running agent's
+	// record (AgentRecord.Tools) and persists — the ONLY way to actually
+	// kill an agent-bundled tool, since it's reconstituted from the record
+	// on every turn. tool_def's delete calls it for a name in
+	// BundledToolNames. The app owns agent persistence, so this lives as a
+	// callback rather than temptool reaching into agent storage. Nil ⇒
+	// delete reports the tool as unremovable and points at the editor.
+	UnbundleTool func(name string) error
+
 	// Network is the framework-managed network-access gate for this
 	// session and every descendant spawned from it. Top-level turns
 	// build it from privacy mode; sub-agent dispatches

@@ -51,8 +51,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}},
 			},
 			{
-				Title:    "Bridges",
-				Subtitle: "Each connector for a messaging service. iMessage runs as the gohort-desktop daemon; others (Telegram, Slack) are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
+				Title:    "Message bridges",
+				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel. iMessage runs as the gohort-desktop daemon; others (Telegram, Slack) are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
 				Body: ui.Table{
 					Source: "/bridges/api/bridges",
 					RowKey: "id",
@@ -69,7 +69,75 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							PostTo:  "/bridges/api/keys/{id}",
 							Confirm: "Revoke this bridge key? Its connector will stop authenticating.", Compact: true},
 					},
-					EmptyText: "No bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
+					EmptyText: "No message bridges yet. The gohort-desktop daemon registers itself automatically the first time it connects to /bridges/api/hook.",
+				},
+			},
+			{
+				// Stage A of the unified-bridge model: a POLL source is the
+				// same bridge concept as a message (push) bridge — one source
+				// feeding an agent — so it belongs here, not only in the
+				// orchestrate `bridge` tool + Admin. Data + actions come from
+				// the shared console endpoints (owner-global, admin-gated),
+				// so this view stays a thin projection with no duplicated
+				// storage. (Poll → CHANNEL target and unified creation are
+				// Stages B/C; today a poll bridge wakes its agent's thread.)
+				Title:    "Polling bridges",
+				Subtitle: "POLL sources: gohort calls an API on a schedule (through a saved credential) and, when the response changes, delivers into the target — a channel (its agent reacts in that conversation) or an agent's own thread. Agents create these with the bridge tool; pause or delete one here. Zero LLM cost until something changes.",
+				Body: ui.Table{
+					Source: "/orchestrate/api/console/bridges",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Label: "Bridge", Flex: 1},
+						{Field: "credential", Label: "Credential", Mute: true},
+						{Field: "detail", Label: "Source → destination", Mute: true, Flex: 2},
+						{Field: "state", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "active", Label: "Active", Color: "success"},
+							{Value: "paused", Label: "Paused", Color: "warning"},
+						}},
+						{Field: "last_fired", Label: "Last fired", Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						// Hook this bridge to a channel — the change is delivered into
+						// that conversation and its bound agent reacts there. Offered
+						// while UNhooked; once connected, Detach takes over. A bridge
+						// can target any channel (delivery target, not an exclusive
+						// binding), so the picker lists them all.
+						ui.ExpandIf("🔗 Connect channel", "", "_connected", ui.ActionList{
+							Source:     "/orchestrate/api/console/bridge-channels?owner={owner}",
+							LabelField: "label",
+							DescField:  "desc",
+							ButtonText: "Connect",
+							Method:     "POST",
+							PostTo:     "/orchestrate/api/console/bridges/set-channel?owner={owner}&name={name}&channel_id={id}",
+							Confirm:    "Deliver this bridge's changes into this channel? Its bound agent will react there.",
+							EmptyText:  "No channels yet — create one in Agency, then connect it here.",
+						}),
+						// Channel activity — the recent messages that have landed in the
+						// connected channel's conversation. Only when hooked (a poll
+						// bridge with no channel wakes the agent's own thread instead).
+						ui.ExpandIf("💬 Channel activity", "_connected", "", ui.HistoryPanel{
+							Source:    "/orchestrate/api/console/bridge-thread?owner={owner}&name={name}",
+							Header:    "Recent activity in the connected channel",
+							WhoField:  "sender",
+							EmptyText: "Nothing delivered into this channel yet.",
+						}),
+						// Detach — revert to waking the agent's own thread. Only when hooked.
+						{Type: "button", Label: "Detach", Method: "POST",
+							PostTo:  "/orchestrate/api/console/bridges/set-channel?owner={owner}&name={name}&channel_id=",
+							OnlyIf:  "_connected",
+							Confirm: "Detach this bridge from its channel? Changes will wake the agent's own thread instead.", Compact: true},
+						{Type: "button", Label: "Pause", Method: "POST",
+							PostTo: "/orchestrate/api/console/bridges/pause?owner={owner}&name={name}",
+							HideIf: "_paused", Compact: true},
+						{Type: "button", Label: "Resume", Method: "POST",
+							PostTo: "/orchestrate/api/console/bridges/resume?owner={owner}&name={name}",
+							OnlyIf: "_paused", Variant: "primary", Compact: true},
+						{Type: "button", Label: "Delete", Method: "POST",
+							PostTo:  "/orchestrate/api/console/bridges/delete?owner={owner}&name={name}",
+							Confirm: "Delete this polling bridge? Its schedule is cancelled; the agent and credential it used are untouched.",
+							Compact: true},
+					},
+					EmptyText: "No polling bridges yet. Ask an agent to \"bridge\" an API (e.g. watch a feed and wake me on new items) — it drafts the credential and creates the poll here.",
 				},
 			},
 			{

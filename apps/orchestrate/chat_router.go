@@ -440,11 +440,12 @@ func (T *OrchestrateApp) handleCancelRouter(w http.ResponseWriter, r *http.Reque
 	T.handleCancel(w, r, agent)
 }
 
-// handleConfirmRouter is the Phase 1 no-op confirm endpoint. Plans
-// auto-confirm so there's nothing to wait on; the route still exists
-// so AgentLoopPanel's runtime can POST without 404ing.
+// handleConfirmRouter resolves in-flight tool-call escalations (see
+// confirm.go). Posts that don't match a pending escalation (plan-card
+// confirms, stale cards) answer 204 harmlessly, preserving the old
+// no-op contract for everything that isn't an escalation.
 func (T *OrchestrateApp) handleConfirmRouter(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusNoContent)
+	T.resolveToolConfirm(w, r)
 }
 
 // readAndRestoreBody slurps r.Body into memory and replaces r.Body

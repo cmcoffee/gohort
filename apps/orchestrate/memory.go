@@ -50,8 +50,14 @@ func renderRulesPromptSection(rules string) string {
 // drift. Facts are loaded from the core MemoryFact store (the LLM-
 // in-band store_fact tool); the block's header + intro copy is
 // driven by the agent's MemoryMode (agent / chatbot).
-func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact) string {
+func prependAgentContext(base string, agent AgentRecord, facts []MemoryFact, notes OperatingNotes) string {
 	out := base
+	// Working notes sit just below the facts block (weaker than durable facts,
+	// stronger than nothing) and above the persona — running state the agent
+	// maintains for itself. Advisory framing lives in the block copy.
+	if n := RenderOperatingNotesBlock(notes); n != "" {
+		out = n + out
+	}
 	c := memoryModeCopy(agent.MemoryMode)
 	if f := RenderMemoryFactsBlockWith(facts, c.Header, c.Intro); f != "" {
 		out = f + out

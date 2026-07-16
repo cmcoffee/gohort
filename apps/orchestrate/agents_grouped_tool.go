@@ -27,6 +27,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
 // agentsGroupedToolDef builds the per-turn `agents` AgentToolDef. The
@@ -81,6 +82,63 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		// Private-mode filter. Only relevant when run is permitted.
 		caps = append(caps, CapNetwork)
 	}
+	// run_tool — a Builder-only allowance. Lets Builder execute ONE of a
+	// target agent's attached tools directly, with explicit args, WITHOUT
+	// dispatching a natural-language message and hoping the sub-agent's LLM
+	// picks the right tool and formats the args. That indirect path costs a
+	// full sub-agent turn per check, burns the dispatch cap, and conflates
+	// "does the TOOL work" with "did the AGENT choose correctly" — exactly
+	// the friction seen verifying the moltbook toolbox. Builder is the
+	// authoring/verification agent, so it gets the direct seam; ordinary
+	// fleet agents do not (they'd be reaching into another agent's kit).
+	allowRunTool := isBuilderAgent(t.agent.ID)
+	if allowRunTool {
+		desc += " You (Builder) also have action=\"run_tool\": execute one of a target agent's attached tools directly with explicit args (tool + tool_args) to verify it works, without an LLM dispatch — the fast path for checking an authored agent's tools one by one."
+		if _, ok := params["agent"]; !ok {
+			params["agent"] = ToolParam{
+				Type:        "string",
+				Description: "(run/run_tool) Name or id of the target agent.",
+			}
+		}
+		params["tool"] = ToolParam{
+			Type:        "string",
+			Description: "(run_tool) Name of the tool on the target agent to execute directly. For a toolbox, this is the toolbox name (e.g. \"moltbook\") and you pass the sub-action inside tool_args as {\"action\":\"<sub>\", ...}.",
+		}
+		params["tool_args"] = ToolParam{
+			Type:        "object",
+			Description: "(run_tool) Arguments to pass to the tool, as a JSON object keyed by the tool's param names. For a toolbox include \"action\". Runs the tool exactly as the target agent would, against its real credential/endpoint — a mutating action (POST, etc.) has real side effects, so verify with a read action first when unsure.",
+		}
+		// run_tool dispatches into the tool's own execution path (secure-API
+		// / sandbox), so it may make network calls — tag it like run does so
+		// Private mode strips it consistently.
+		hasNet := false
+		for _, c := range caps {
+			if c == CapNetwork {
+				hasNet = true
+				break
+			}
+		}
+		if !hasNet {
+			caps = append(caps, CapNetwork)
+		}
+	}
+	// Set the action enum description once, from whatever is actually
+	// enabled for this agent, so the schema never advertises an action the
+	// handler will refuse.
+	{
+		acts := []string{"list", "get"}
+		if allowRun {
+			acts = append(acts, "run")
+		}
+		if allowRunTool {
+			acts = append(acts, "run_tool")
+		}
+		acts = append(acts, "help")
+		params["action"] = ToolParam{
+			Type:        "string",
+			Description: "One of: " + strings.Join(acts, " | ") + ".",
+		}
+	}
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "agents",
@@ -93,7 +151,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			action := strings.TrimSpace(stringArg(args, "action"))
 			switch action {
 			case "", "help":
-				return agentsToolHelp(allowRun), nil
+				return agentsToolHelp(allowRun, allowRunTool), nil
 			case "list":
 				return t.agentsListAction()
 			case "get":
@@ -103,18 +161,27 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 					return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
 				}
 				return t.agentsRunAction(args)
-			default:
-				validActions := "list, get, help"
-				if allowRun {
-					validActions = "list, get, run, help"
+			case "run_tool":
+				if !allowRunTool {
+					return "", fmt.Errorf("agents(run_tool) is not available to this agent — it's a Builder-only allowance for verifying an agent's tools directly")
 				}
-				return "", fmt.Errorf("unknown action %q for agents tool. valid: %s", action, validActions)
+				return t.agentsRunToolAction(args)
+			default:
+				acts := []string{"list", "get"}
+				if allowRun {
+					acts = append(acts, "run")
+				}
+				if allowRunTool {
+					acts = append(acts, "run_tool")
+				}
+				acts = append(acts, "help")
+				return "", fmt.Errorf("unknown action %q for agents tool. valid: %s", action, strings.Join(acts, ", "))
 			}
 		},
 	}
 }
 
-func agentsToolHelp(allowRun bool) string {
+func agentsToolHelp(allowRun, allowRunTool bool) string {
 	base := `agents — usage:
 
   action="list"   — return the user's orchestrate agents as a JSON
@@ -138,6 +205,21 @@ func agentsToolHelp(allowRun bool) string {
   (action="run" is intentionally disabled for this agent — use
    plan_set with worker steps to execute, or with web_search /
    fetch_url to consult specialist knowledge during authoring.)
+`
+	}
+	if allowRunTool {
+		base += `
+  action="run_tool" — (Builder only) execute ONE of a target
+                    agent's attached tools directly, with explicit
+                    args, and get its raw output. Skips the sub-
+                    agent LLM turn that action="run" costs — use it
+                    to verify a tool works without relying on the
+                    agent to pick and call it. Required: agent,
+                    tool, plus tool_args={...} (for a toolbox,
+                    tool is the toolbox name and tool_args carries
+                    {"action":"<sub>", ...}). Runs against the real
+                    credential/endpoint — a write action has real
+                    effects, so exercise read actions first.
 `
 	}
 	base += `
@@ -228,6 +310,67 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 		return string(full), nil
 	}
 	return string(slimAgentJSON(a)), nil
+}
+
+// agentsRunToolAction executes ONE of a target agent's attached tools
+// directly, with caller-supplied args, and returns its raw output. This
+// is the Builder-only verification seam: it skips the sub-agent LLM turn
+// (and the dispatch cap) that agents(run) incurs, so Builder can drive an
+// agent's tools one by one — profile, then post, then feed — and see
+// exactly what each returns. The tool runs through the same execution path
+// (secure-API allow-list, sandbox, response_pipe) the agent itself would
+// use, so credentials stay server-side and a mutating call has real
+// effects — Builder is expected to test read actions before writes.
+func (t *chatTurn) agentsRunToolAction(args map[string]any) (string, error) {
+	if !isBuilderAgent(t.agent.ID) {
+		return "", errors.New("agents(run_tool) is Builder-only")
+	}
+	key := strings.TrimSpace(stringArg(args, "agent"))
+	toolName := strings.TrimSpace(stringArg(args, "tool"))
+	if key == "" || toolName == "" {
+		return "", errors.New("agent and tool are required for action=run_tool")
+	}
+	fleetDB, fleetUser := t.fleetView()
+	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
+	if !ok {
+		return "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
+	}
+	// Locate the named tool in the target agent's attached kit.
+	var found *TempTool
+	for i := range target.Tools {
+		if target.Tools[i].Name == toolName {
+			found = &target.Tools[i]
+			break
+		}
+	}
+	if found == nil {
+		names := make([]string, 0, len(target.Tools))
+		for i := range target.Tools {
+			names = append(names, target.Tools[i].Name)
+		}
+		if len(names) == 0 {
+			return "", fmt.Errorf("agent %q has no attached tools to run", target.Name)
+		}
+		return "", fmt.Errorf("agent %q has no attached tool named %q. Its tools: %s", target.Name, toolName, strings.Join(names, ", "))
+	}
+	toolArgs := testArgsFromArgs(args, "tool_args")
+	if toolArgs == nil {
+		toolArgs = map[string]any{}
+	}
+	// Execute directly on a fresh tool session (same DB/user/network/ctx as
+	// this turn). No dispatch-cap accounting — this is a single tool call,
+	// not an agent dispatch.
+	sess := t.newToolSession()
+	toolCopy := *found
+	out, err := temptool.DispatchTempToolDirect(sess, &toolCopy, toolArgs)
+	if err != nil {
+		return fmt.Sprintf("Ran %q on agent %q — FAILED: %v. The tool's own definition (params / url_template / body_template / credential) is the thing to fix; edit it with tool_def(action=\"update\", name=%q, ...) for a toolbox, or add_tool for a single shell/api tool, then run_tool again.", toolName, target.Name, err, toolName), nil
+	}
+	trimmed := strings.TrimSpace(out)
+	if len(trimmed) > 2000 {
+		trimmed = trimmed[:2000] + "\n... [truncated]"
+	}
+	return fmt.Sprintf("Ran %q on agent %q — result:\n\n%s", toolName, target.Name, trimmed), nil
 }
 
 // slimAgentJSON renders an AgentRecord for the agents(get) tool result:
@@ -407,20 +550,29 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	} else if target.Hidden {
 		return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or add it to this agent's allowed_dispatch_targets", target.Name, target.Name)
 	}
-	// Per-turn same-target cap — the hard stop for a chat agent that re-fires
+	// Per-turn dispatch caps — the hard stop for a chat agent that re-fires
 	// agents(run, X) round after round in ONE turn. dispatchDepth (recursion)
 	// and dispatchChain (cycles) both miss it: depth resets as each sub-run
 	// returns and there's no cycle. A prompt "don't dispatch again" is a soft
 	// guard the worker ignores; this is code-enforced. Counts only dispatches
 	// that pass the gates above (a refused one shouldn't burn the budget).
+	//
+	// Two distinct pathologies, two counters:
+	//   (1) LOOP — the SAME call (target + message) fired over and over with
+	//       no new input. Keyed on target+message so it trips ONLY on true
+	//       repeats. This is the one the Builder kept false-positiving: it
+	//       drives one agent with a DIFFERENT message per tool (profile, then
+	//       post, then feed…), which is real verification progress, not a loop.
+	//   (2) THRASH — an outsized TOTAL volume of (possibly distinct) dispatches
+	//       to one target in a turn. Ceiling is generous, and higher still when
+	//       the dispatcher is the Builder, whose job is to sweep an agent's
+	//       whole toolset.
 	if t.agentDispatchCounts == nil {
 		t.agentDispatchCounts = map[string]int{}
 	}
-	t.agentDispatchCounts[target.ID]++
-	if t.agentDispatchCounts[target.ID] > maxSameTargetDispatch {
-		Log("[orchestrate.agents.run] per-turn dispatch cap: %s → %s hit %d× this turn — blocking further dispatch",
-			t.agent.ID, target.ID, t.agentDispatchCounts[target.ID])
-		return fmt.Sprintf("STOP — you have already dispatched %q %d times in this single turn; running it again will not make new progress. Do NOT dispatch it again now. Reply to the user directly: summarize what %q produced, or state plainly what is blocked and what you need from them. Any further work happens on the user's NEXT message, not by re-running now.", target.Name, maxSameTargetDispatch, target.Name), nil
+	if block := dispatchCapDecision(t.agentDispatchCounts, target.ID, target.Name, msg, isBuilderAgent(t.agent.ID)); block != "" {
+		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → %s — blocking further dispatch", t.agent.ID, target.ID)
+		return block, nil
 	}
 	t.dispatchDepth++
 	defer func() { t.dispatchDepth-- }()
@@ -475,7 +627,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		}
 	}
 	if isBuilderAgent(target.ID) {
-		tools = append(tools, builderAuthoringTools(subSess)...)
+		tools = append(tools, builderAuthoringTools(subSess, nil)...)
 		// Dispatched Builder reaches here only from a Fleet parent (guarded at
 		// the top of this function). Inherit that parent's non-consequential
 		// catalog so Builder can inspect the parent's world while authoring —
@@ -559,7 +711,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	subFacts := ListMemoryFacts(t.udb, factsNamespace(target.ID))
 	sysPrompt := prependAgentContext(
 		t.gatedPersona(target.OrchestratorPrompt),
-		target, subFacts,
+		target, subFacts, agentOperatingNotes(t.udb, target),
 	)
 	sysPrompt += customToolPrompt // "Your custom tools (load before use)" section
 

@@ -44,6 +44,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		wakeAgent := defaultConsoleAgent
 		wakeSession := ""
 		chatTarget := ""
+		wakeChannel := ""
 		notify := EventNotifyChannel
 		if m, ok := GetEventMonitor(RootDB, owner, monitorName); ok {
 			if strings.TrimSpace(m.WakeBrief) != "" {
@@ -54,8 +55,36 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 			wakeSession = strings.TrimSpace(m.WakeSession)
 			chatTarget = strings.TrimSpace(m.DeliverChatID)
+			wakeChannel = strings.TrimSpace(m.WakeChannel)
 			if m.Notify != "" {
 				notify = m.Notify
+			}
+		}
+
+		// Channel target (Stage B, unified source→channel): deliver the change
+		// INTO the bound channel — its agent reacts in the channel's thread, and
+		// if the channel has a live transport (iMessage/etc) the reaction flows
+		// back out it. This REPLACES the default cortex-thread wake (an explicit
+		// destination was chosen); text/direct fan-out below still applies if the
+		// monitor also asked for them.
+		channelTargetDelivered := false
+		if wakeChannel != "" {
+			if ch, ok := GetChannel(RootDB, owner, wakeChannel); ok {
+				text := fmt.Sprintf("[EVENT — bridge %q fired]\n%s%s", monitorName, summary, brief)
+				if _, err := RunChannelAgent(ctx, ChannelInbound{
+					Owner:            owner,
+					AgentID:          ch.AgentID,
+					SessionID:        ChannelSessionKey(ch, "bridge:"+monitorName),
+					Text:             text,
+					SenderName:       "bridge:" + monitorName,
+					ConversationName: ch.Name,
+				}); err == nil {
+					channelTargetDelivered = true
+				} else {
+					Log("[operator.wake] %s/%s channel target %q delivery failed: %v", owner, monitorName, wakeChannel, err)
+				}
+			} else {
+				Log("[operator.wake] %s/%s channel target %q not found — falling back to agent thread", owner, monitorName, wakeChannel)
 			}
 		}
 		if wakeSession == "" {
@@ -71,6 +100,14 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 		delivered := false
+		// A successful channel-target delivery IS the wake: it consumes the
+		// default "channel" mode (so the cortex thread isn't also woken) and
+		// counts as delivered (so the never-drop fallback doesn't double-fire).
+		// An explicit text/direct on the same monitor still fans out below.
+		if channelTargetDelivered {
+			delete(modes, EventNotifyChannel)
+			delivered = true
+		}
 
 		// text: deliver the event straight to the owner's phone, no LLM.
 		if modes[EventNotifyText] {

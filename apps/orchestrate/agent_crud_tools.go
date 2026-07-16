@@ -528,6 +528,8 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"disable_explicit":         {Type: "boolean", Description: rewriteMemoryToolNames("Optional. When true, turn off the Explicit Memory layer — the always-in-prompt structured facts (store_fact / list_facts / forget_fact + the prompt block). Set for impersonal agents that shouldn't accumulate any always-in-prompt state (KB readers, one-shot transformers, stateless tools). Composes orthogonally with disable_inferred. Default false.")},
 		"disable_inferred":         {Type: "boolean", Description: rewriteMemoryToolNames("Optional. When true, turn off the Reference Memory layer — the vector-grown store the LLM writes to via memory_save. memory_save / memory_search / memory_forget stripped from catalog; derived chunks excluded from recall. Use for agents that should answer from authoritative sources only and never grow their own fuzzy recall (KB readers, compliance bots). The per-turn Clean toggle on the chat surface is the same switch scoped to a single turn. Default false.")},
 		"memory_mode":              {Type: "string", Description: rewriteMemoryToolNames("Optional. Selects the Explicit Memory framing: \"agent\" (default, narrow) or \"chatbot\" (broader). agent mode = store_fact for generalized lessons only (design principles, recurring gotchas, \"X fails do Y\" rules); specific API details + working approaches go in Reference Memory via memory_save. chatbot mode = same lessons PLUS user personalization (name, preferences, recurring details) PLUS conversation-coherence notes. Use chatbot mode for general-purpose conversational agents; agent mode for task-focused agents (Builder, KB readers, research bots). No-op when disable_explicit is true.")},
+		"enable_notes":             {Type: "boolean", Description: "Optional. Turn ON the Working-notes layer — a single bounded, agent-REWRITABLE block of RUNNING STATE injected always-in-prompt, plus the update_notes tool. Distinct from Explicit Memory (store_fact = append DURABLE rules): notes are a compact scratchpad the agent rewrites wholesale as its current task state changes (\"drafting section 3\", \"user wants terse replies\", \"waiting on export\"). Opt-in — leave off for stateless/task agents; turn on for long-running conversational or project agents that benefit from carrying working context across turns. Default false."},
+		"seed_notes":               {Type: "string", Description: "Optional initial text for the Working-notes block (requires enable_notes). It renders and the agent can rewrite it from the first turn; the record's seed stays the durable fallback until the (user, agent) store gets its first update_notes. Keep it under 1500 characters. Use for a starting operating brief (\"You maintain the ACME status page; note the current incident here\"). No-op when enable_notes is false."},
 		"allow_private_mode":       {Type: "boolean", Description: "Optional. When true, the public /agents/<slug>/ surface exposes a Private toggle that drops internet-capability tools per turn. Off by default — only opt in for agents where local-only operation is meaningful."},
 		"force_private":            {Type: "boolean", Description: "Optional. When true, the agent is LOCKED into Private mode permanently: every turn drops network-capability tools (web_search, fetch_url, browse_page, agents-dispatch, etc.) regardless of the user toggle, and the public Private toggle is hidden from the UI. Use for compliance bots, confidential-doc assistants, family-facing agents — anywhere the agent should NEVER reach the network. Overrides allow_private_mode when both are true."},
 		"disable_skills":           {Type: "boolean", Description: "Optional. When true, the skills classifier is fully suppressed for this agent — no skill ever activates, no skill addendum is appended to the prompt, no skill_knowledge corpus chunks are injected, no skill-attached tools enter the catalog. Set for agents whose job is to faithfully report a specific source (KB readers, doc-Q&A, compliance look-ups). The per-turn Clean toggle also suppresses skills regardless of this flag. Default false (skills auto-activate)."},
@@ -595,6 +597,12 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
+	}
+	if v, ok := args["enable_notes"].(bool); ok {
+		rec.EnableNotes = v
+	}
+	if _, ok := args["seed_notes"]; ok {
+		rec.SeedNotes = strings.TrimSpace(stringArg(args, "seed_notes"))
 	}
 	if v, ok := args["allow_private_mode"].(bool); ok {
 		rec.AllowPrivateMode = v
@@ -721,6 +729,12 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v := strings.TrimSpace(stringArg(args, "memory_mode")); v != "" {
 		rec.MemoryMode = v
+	}
+	if v, ok := args["enable_notes"].(bool); ok {
+		rec.EnableNotes = v
+	}
+	if _, ok := args["seed_notes"]; ok {
+		rec.SeedNotes = strings.TrimSpace(stringArg(args, "seed_notes"))
 	}
 	if v, ok := args["allow_private_mode"].(bool); ok {
 		rec.AllowPrivateMode = v

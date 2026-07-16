@@ -474,6 +474,13 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 	if hh, ok := params["headers"].(map[string]interface{}); ok {
+		// Same raw-auth-header guard as the LLM-callable fetch_url
+		// (tool/shell symmetry): a script inlining a key to a
+		// credential-covered host must go through fetch_via instead.
+		if gerr := CredentialAuthGuard(url, hh); gerr != nil {
+			writeHookError(conn, gerr.Error())
+			return
+		}
 		for k, v := range hh {
 			if vs, ok := v.(string); ok {
 				req.Header.Set(k, vs)

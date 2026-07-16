@@ -85,7 +85,7 @@ func (T *OrchestrateApp) RunAgentEvals(ctx context.Context, udb Database, user s
 		}
 	}
 
-	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts)
+	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts, agentOperatingNotes(udb, agent))
 	sysPrompt = StripPromptSectionsForTools(sysPrompt, nil)
 
 	for _, c := range agent.Evals {

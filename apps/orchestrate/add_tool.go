@@ -51,7 +51,7 @@ func (addToolTool) Name() string             { return "add_tool" }
 func (addToolTool) Caps() []Capability       { return []Capability{CapWrite} }
 func (addToolTool) SingleFirePerBatch() bool { return true }
 func (addToolTool) Desc() string {
-	base := "Attach a tool to the agent currently in authoring focus (set by your most recent get_agent or create_agent call). Pick the mode that fits the work:\n"
+	base := "Attach ONE single-action tool to the agent currently in authoring focus (set by your most recent get_agent or create_agent call). This builds a single shell OR api tool — it does NOT build or edit toolboxes. If you need MULTIPLE related endpoints under one tool name (a whole API surface sharing one credential, e.g. the `moltbook` or a GitHub toolbox), or you need to change one action of an existing toolbox, use the `tool_def` tool instead (mode=\"toolbox\" to create, action=\"update\" to edit one action) — not this. Pick the mode that fits the work:\n"
 	if !pipelineAuthoringDisabled {
 		base += "  - mode=\"pipeline\": a multi-step sub-agent flow with its own prompt + inner tools. Use for \"do X, then Y, then summarize\" patterns.\n"
 	}
@@ -73,9 +73,9 @@ func (addToolTool) Params() map[string]ToolParam {
 			Type: "string",
 			Description: func() string {
 				if pipelineAuthoringDisabled {
-					return "One of \"shell\", \"api\". Each branch validates the required fields for that mode. (Pipeline mode is retired — use the `pipeline` tool for multi-stage workflows.)"
+					return "One of \"shell\", \"api\" — a single-action tool. There is NO \"toolbox\" mode here: multi-action toolboxes are authored and edited via the `tool_def` tool. Each branch validates the required fields for that mode. (Pipeline mode is retired — use the `pipeline` tool for multi-stage workflows.)"
 				}
-				return "One of \"pipeline\", \"shell\", \"api\". Each branch validates the required fields for that mode."
+				return "One of \"pipeline\", \"shell\", \"api\" — a single-action tool. There is NO \"toolbox\" mode here: multi-action toolboxes are authored and edited via the `tool_def` tool. Each branch validates the required fields for that mode."
 			}(),
 		},
 		"description": {
@@ -230,8 +230,16 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		tt.BodyTemplate = stringArg(args, "body_template")
 		tt.Credential = credential
 		tt.ResponsePipe = stringArg(args, "response_pipe")
+	case "toolbox":
+		// add_tool only builds single shell/api tools; toolboxes (multi-
+		// action tools sharing one credential) are authored and EDITED via
+		// the `tool_def` tool. Without this redirect the model hit the bare
+		// "unknown mode" error, concluded add_tool "can't inspect or update
+		// the sub-actions", and abandoned a real fix it had already
+		// diagnosed. Point it straight at the update path it needed.
+		return "", fmt.Errorf("add_tool does not build toolboxes — use the `tool_def` tool for that. To EDIT one action of the existing %q toolbox without recreating it, call tool_def(action=\"update\", name=%q, actions=[{name:\"<action>\", ...just the fields you're changing}]) — other actions are preserved. To create a new toolbox, tool_def(action=\"create\", mode=\"toolbox\", credential=…, actions=[…]). Call tool_def(action=\"help\") for the full spec", name, name)
 	default:
-		return "", fmt.Errorf("unknown mode %q — must be \"shell\" or \"api\" (pipeline mode is retired; use the `pipeline` tool for multi-stage workflows)", mode)
+		return "", fmt.Errorf("unknown mode %q — add_tool supports \"shell\" and \"api\". For a MULTI-action toolbox, use the `tool_def` tool (mode=\"toolbox\"); for a multi-stage workflow, use the `pipeline` tool", mode)
 	}
 
 	// Attach to the focused agent's tools[]. Idempotent replace by name.

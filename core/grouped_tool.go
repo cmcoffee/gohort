@@ -48,6 +48,66 @@ type GroupedToolAction struct {
 	Handler      func(args map[string]any, sess *ToolSession) (string, error)
 }
 
+// typoHint scans supplied args for keys that are NOT known params of this
+// action and, when one is an obvious misspelling of a real param, returns
+// a directive naming both the wrong key and the intended one. Empty when
+// nothing is close enough. This is what breaks the required-param typo
+// loop: without it a misspelled required param surfaces only as "requires
+// param X", the model never sees it sent "Xa", and it re-emits the same
+// wrong call.
+func (def *GroupedToolAction) typoHint(args map[string]any) string {
+	known := map[string]bool{"action": true, "_": true}
+	for k := range def.Params {
+		known[strings.ToLower(k)] = true
+	}
+	var unknown []string
+	for k := range args {
+		if !known[strings.ToLower(k)] {
+			unknown = append(unknown, k)
+		}
+	}
+	sort.Strings(unknown) // deterministic message across identical calls
+	var hints []string
+	for _, k := range unknown {
+		if near := def.nearestParamName(k); near != "" {
+			hints = append(hints, fmt.Sprintf("you supplied %q — did you mean %q?", k, near))
+		}
+	}
+	return strings.Join(hints, " ")
+}
+
+// nearestParamName returns the action's known param whose name most
+// closely matches the (unknown) supplied key, or "" when nothing is close
+// enough to be a confident typo. Reuses the same bigram-overlap heuristic
+// as nearestToolName, scoped to one action's param set.
+func (def *GroupedToolAction) nearestParamName(key string) string {
+	k := strings.ToLower(strings.TrimSpace(key))
+	if len(k) < 3 {
+		return "" // too short for bigram matching to be meaningful
+	}
+	names := make([]string, 0, len(def.Params))
+	for name := range def.Params {
+		names = append(names, name)
+	}
+	sort.Strings(names) // stable winner on ties → stable message
+	best := ""
+	bestScore := 0
+	for _, name := range names {
+		if score := bigramOverlap(k, strings.ToLower(name)); score > bestScore {
+			bestScore = score
+			best = name
+		}
+	}
+	// Require a strong overlap — at least 2 shared bigrams AND at least
+	// half the supplied key's bigrams landing in the candidate — so we
+	// only suggest on genuine near-misses, not on any param that happens
+	// to share a fragment.
+	if bestScore < 2 || bestScore*2 < len(k)-1 {
+		return ""
+	}
+	return best
+}
+
 // GroupedTool implements ChatTool + SessionChatTool. Build via
 // NewGroupedTool + AddAction; register normally via RegisterChatTool.
 type GroupedTool struct {
@@ -223,6 +283,16 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	for _, r := range def.Required {
 		v, ok := args[r]
 		if !ok || v == nil {
+			// A missing required param is often a TYPO on that very param
+			// (submolt_name → submolta_name), not an omission. The bare
+			// "requires param X" message never names the wrong key the
+			// model actually sent, so the model can't see its mistake and
+			// re-emits the identical misspelled call — observed as three
+			// byte-identical submolta_name calls in a row before it gave
+			// up. Name the near-miss so the correction is unmistakable.
+			if hint := def.typoHint(args); hint != "" {
+				return "", fmt.Errorf("action %q requires param %q — %s (call %q with action=\"help\" for the full param list)", action, r, hint, g.name)
+			}
 			return "", fmt.Errorf("action %q requires param %q (call %q with action=\"help\" for the full param list)", action, r, g.name)
 		}
 		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {

@@ -166,7 +166,7 @@ func (t *CreateTempToolTool) Params() map[string]ToolParam {
 		},
 		"params": {
 			Type:        "object",
-			Description: "Object describing the tool's parameters. Each key is a param name and its value is an object {type, description, [required]}. Type must be \"string\", \"integer\", \"number\", or \"boolean\". E.g. {\"input\": {\"type\": \"string\", \"description\": \"Input file path\"}, \"size\": {\"type\": \"string\", \"description\": \"Target dimensions like 800x600\"}}.",
+			Description: "Object describing the tool's parameters. Each key is a param name and its value is an object {type, description, [required]}. Type must be \"string\", \"integer\", \"number\", or \"boolean\". E.g. {\"input\": {\"type\": \"string\", \"description\": \"Input file path\"}, \"size\": {\"type\": \"string\", \"description\": \"Target dimensions like 800x600\"}}. OPTIONAL — omit for a tool that takes no params; don't invent a dummy placeholder.",
 		},
 		"command_template": {
 			Type:        "string",
@@ -348,7 +348,9 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	}
 
 	required := stringSliceArg(args["required"])
-	if len(required) == 0 {
+	// Omitted required → default all params required; an EXPLICIT [] → make
+	// all optional. Distinguish by presence (see the toolbox path).
+	if raw, present := args["required"]; !present || raw == nil {
 		// Default to all params required.
 		for k := range params {
 			required = append(required, k)
@@ -1526,14 +1528,25 @@ func validToolName(s string) bool {
 // our typed ToolParam map. Tolerates two shapes the LLM commonly emits:
 // a real JSON object, or a JSON-encoded string of one.
 func parseParamsArg(v any) (map[string]ToolParam, error) {
+	out := map[string]ToolParam{}
+	// A no-param tool/action is legitimate — a GET with no query string, a
+	// shell command like "date", or an endpoint like /home or /list_submolts.
+	// Treat absent OR empty params as a valid empty set instead of forcing the
+	// author to invent a dummy "_ (Unused, required by API)" placeholder just
+	// to pass validation. buildToolParamsSchema emits a valid {"type":"object"}
+	// for an empty set and the dispatcher then requires nothing, so the tool is
+	// callable with no args (a toolbox sub-action with just action="home").
 	if v == nil {
-		return nil, fmt.Errorf("required")
+		return out, nil
 	}
 	// Re-marshal whatever we got and unmarshal into our typed map. This
 	// handles both the native object form and the stringified form the
 	// LLM might produce when it emits a JSON blob.
 	var raw any
 	if s, ok := v.(string); ok {
+		if strings.TrimSpace(s) == "" {
+			return out, nil
+		}
 		if err := json.Unmarshal([]byte(s), &raw); err != nil {
 			return nil, fmt.Errorf("could not parse params JSON: %w", err)
 		}
@@ -1544,12 +1557,8 @@ func parseParamsArg(v any) (map[string]ToolParam, error) {
 	if err != nil {
 		return nil, fmt.Errorf("re-marshal failed: %w", err)
 	}
-	out := map[string]ToolParam{}
 	if err := json.Unmarshal(b, &out); err != nil {
 		return nil, fmt.Errorf("must be an object of {name: {type, description}}: %w", err)
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("at least one param is required")
 	}
 	for k, p := range out {
 		if !validToolName(k) {
@@ -2167,7 +2176,7 @@ func (t *CreateAPIToolTool) Params() map[string]ToolParam {
 		},
 		"params": {
 			Type:        "object",
-			Description: "Object describing the tool's parameters. Same shape as create_temp_tool. Each key matches a {placeholder} in url_template or body_template.",
+			Description: "Object describing the tool's parameters. Same shape as create_temp_tool. Each key matches a {placeholder} in url_template or body_template. OPTIONAL — omit for a no-param endpoint (a GET with no query string); don't invent a dummy placeholder.",
 		},
 		"required": {
 			Type:        "array",
@@ -2250,7 +2259,9 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	}
 
 	required := stringSliceArg(args["required"])
-	if len(required) == 0 {
+	// Omitted required → default all params required; an EXPLICIT [] → make
+	// all optional. Distinguish by presence (see the toolbox path).
+	if raw, present := args["required"]; !present || raw == nil {
 		for k := range params {
 			required = append(required, k)
 		}
@@ -2260,6 +2271,12 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 				return "", fmt.Errorf("required lists %q which is not in params", r)
 			}
 		}
+	}
+	// Hard authoring gate (mirrors the toolbox path): a write action whose
+	// required param appears in neither the url_template nor the body_template
+	// sends it nowhere → a live 400 the author can't diagnose. Reject here.
+	if unsent := unsentWriteParams(method, urlTpl, bodyTpl, required); len(unsent) > 0 {
+		return "", fmt.Errorf("required param(s) %v are sent NOWHERE — this %s tool references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", unsent, method)
 	}
 
 	tool := &TempTool{
@@ -2638,7 +2655,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	if !sess.NetworkAllowed() {
 		return "", fmt.Errorf("api tool %q refused: network is blocked for this turn (private mode is on)", tt.Name)
 	}
-	urlStr, err := substituteURL(tt.CommandTemplate, tt.Params, args)
+	urlStr, err := substituteURL(tt.CommandTemplate, tt.Params, tt.Required, args)
 	if err != nil {
 		return "", fmt.Errorf("url template: %w", err)
 	}
@@ -2648,7 +2665,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	}
 	var body string
 	if tt.BodyTemplate != "" {
-		body, err = substituteJSON(tt.BodyTemplate, tt.Params, args)
+		body, err = substituteJSON(tt.BodyTemplate, tt.Params, tt.Required, args)
 		if err != nil {
 			return "", fmt.Errorf("body template: %w", err)
 		}
@@ -2723,10 +2740,36 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// the error plus whatever output landed so the LLM can fix the
 		// pipe via delete + recreate. Don't fall through to raw — the
 		// whole point is to keep the raw response out of the LLM context.
-		if piped == "" {
-			return fmt.Sprintf("[response_pipe failed: %v — no output. Pipe: %s]", pres.Err, tt.ResponsePipe), nil
+		hint := ""
+		// jq prints a red-herring "Unix shell quoting issues?" on a
+		// compile error; the real culprit is almost always the `//`
+		// alternative operator used bare in object construction, which
+		// jq requires parenthesized. Say so directly.
+		if strings.Contains(tt.ResponsePipe, "//") && strings.Contains(fmt.Sprint(pres.Err), "//") {
+			hint = " HINT: jq requires the `//` alternative operator to be PARENTHESIZED inside object construction — write `{k: (.a // .b)}`, not `{k: .a // .b}`. Fix the response_pipe (delete + recreate the tool)."
 		}
-		return piped + fmt.Sprintf("\n[response_pipe exit: %v]", pres.Err), nil
+		if piped == "" {
+			// The pipe produced nothing usable — but the HTTP call ALREADY
+			// SUCCEEDED here (2xx; non-2xx returned raw above). Returning only
+			// the pipe error HIDES that success: for a mutating call (POST) the
+			// model reads "failed", retries, and double-submits — observed live,
+			// a successful moltbook post reported as failed, retried into a 429,
+			// then the model flailed reading the feed. Fall back to the raw body
+			// (truncated) with an explicit do-not-retry directive so the model
+			// sees the call worked and can read the result despite the broken
+			// projection. The truncation bounds the context cost the pipe was
+			// meant to avoid.
+			rawBody := strings.TrimSpace(body)
+			if len(rawBody) > maxOutput {
+				rawBody = rawBody[:maxOutput] + "\n... [truncated]"
+			}
+			header := statusLine
+			if header == "" {
+				header = "HTTP 2xx"
+			}
+			return fmt.Sprintf("%s\n[response_pipe failed: %v — the HTTP call SUCCEEDED; showing the RAW response below. Do NOT retry the call (a repeat POST would double-submit). Fix the pipe later via delete + recreate. Pipe: %s]%s\n%s", header, pres.Err, tt.ResponsePipe, hint, rawBody), nil
+		}
+		return piped + fmt.Sprintf("\n[response_pipe exit: %v]%s", pres.Err, hint), nil
 	}
 	if len(piped) > maxOutput {
 		totalLines := strings.Count(piped, "\n") + 1
@@ -2830,7 +2873,18 @@ func isStatus2xx(statusLine string) bool {
 // substituteURL replaces {param} placeholders in a URL template with
 // URL-path-encoded arg values. Different from shell quoting —
 // placeholders inside path segments must be %-encoded.
-func substituteURL(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
+func substituteURL(tmpl string, params map[string]ToolParam, required []string, args map[string]any) (string, error) {
+	// An OPTIONAL query param whose value wasn't provided should drop out of
+	// the URL entirely — otherwise a template like "?sort={sort}&limit={limit}"
+	// can never be called without every param, defeating the point of making
+	// them optional (observed live: feed's limit/sort couldn't be omitted).
+	// Strip whole "[?&]key={name}" segments for a known, NON-required param
+	// with no arg; a required or path-position placeholder still errors below.
+	reqSet := make(map[string]bool, len(required))
+	for _, r := range required {
+		reqSet[r] = true
+	}
+	tmpl = dropAbsentOptionalQuery(tmpl, params, reqSet, args)
 	var b strings.Builder
 	for i := 0; i < len(tmpl); i++ {
 		if tmpl[i] != '{' {
@@ -2855,6 +2909,41 @@ func substituteURL(tmpl string, params map[string]ToolParam, args map[string]any
 		i = i + 1 + end
 	}
 	return b.String(), nil
+}
+
+// dropAbsentOptionalQuery removes "key={name}" query segments whose {name} is a
+// known, non-required param with no provided arg, so an omitted optional query
+// param yields a clean URL rather than a "missing arg" error or a literal
+// "?limit={limit}". Only touches the query string (after the first "?"), and
+// only segments whose value is a single bare "{placeholder}"; anything mixed or
+// required is left for the normal substitution/validation to handle.
+func dropAbsentOptionalQuery(tmpl string, params map[string]ToolParam, reqSet map[string]bool, args map[string]any) string {
+	q := strings.IndexByte(tmpl, '?')
+	if q < 0 {
+		return tmpl
+	}
+	path, query := tmpl[:q], tmpl[q+1:]
+	segs := strings.Split(query, "&")
+	kept := segs[:0]
+	for _, seg := range segs {
+		if eq := strings.IndexByte(seg, '='); eq >= 0 {
+			val := seg[eq+1:]
+			if len(val) >= 2 && val[0] == '{' && val[len(val)-1] == '}' &&
+				strings.IndexByte(val, '}') == len(val)-1 {
+				name := val[1 : len(val)-1]
+				if _, known := params[name]; known && !reqSet[name] {
+					if _, provided := args[name]; !provided {
+						continue // drop this optional, unprovided segment
+					}
+				}
+			}
+		}
+		kept = append(kept, seg)
+	}
+	if len(kept) == 0 {
+		return path
+	}
+	return path + "?" + strings.Join(kept, "&")
 }
 
 // urlEscape percent-encodes a value for safe inclusion in a URL path
@@ -2891,7 +2980,20 @@ func urlEscape(s string) string {
 // values (numbers, booleans, objects, arrays) the wrap is also
 // incorrect on the input side, so we treat the strip as the
 // authoritative shape and let json.Marshal produce the right form.
-func substituteJSON(tmpl string, params map[string]ToolParam, args map[string]any) (string, error) {
+func substituteJSON(tmpl string, params map[string]ToolParam, required []string, args map[string]any) (string, error) {
+	// An OPTIONAL body field whose value wasn't provided should drop out of
+	// the JSON entirely — the same guarantee substituteURL gives query params.
+	// Without this, a body template like {"title":{title},"url":{url}} can
+	// never be posted without a url, so a plain text post fails with a cryptic
+	// "body template: missing arg url" (observed live: moltbook's post action,
+	// where url is only for link posts). Strip whole "key":{name} properties
+	// for a known, NON-required param with no arg; required placeholders still
+	// error below.
+	reqSet := make(map[string]bool, len(required))
+	for _, r := range required {
+		reqSet[r] = true
+	}
+	tmpl = dropAbsentOptionalJSONFields(tmpl, params, reqSet, args)
 	var b strings.Builder
 	out := []byte{}
 	for i := 0; i < len(tmpl); i++ {
@@ -2937,6 +3039,35 @@ func substituteJSON(tmpl string, params map[string]ToolParam, args map[string]an
 	}
 	b.Write(out)
 	return b.String(), nil
+}
+
+// dropAbsentOptionalJSONFields removes whole "key": {name} object properties
+// from a JSON body template when {name} is a known, non-required param with no
+// provided arg — so an omitted optional body field yields clean, valid JSON
+// rather than a "missing arg" error. It handles the property's adjacent comma
+// (whether the field sits first, middle, or last in the object) and tolerates
+// a quote-wrapped placeholder ("key": "{name}"). Required params and provided
+// optionals are left for normal substitution/validation. Only exact
+// "key": {name} shapes are touched; anything else is left intact.
+func dropAbsentOptionalJSONFields(tmpl string, params map[string]ToolParam, reqSet map[string]bool, args map[string]any) string {
+	for name := range params {
+		if reqSet[name] {
+			continue
+		}
+		if _, provided := args[name]; provided {
+			continue
+		}
+		ph := regexp.QuoteMeta("{" + name + "}")
+		// The property value is the bare placeholder or a quote-wrapped one.
+		prop := `"[A-Za-z0-9_]+"\s*:\s*"?` + ph + `"?`
+		// Order matters: consume a trailing comma first (field is first or
+		// middle), then a leading comma (field is last), then the lone field
+		// (only property in the object).
+		tmpl = regexp.MustCompile(prop+`\s*,\s*`).ReplaceAllString(tmpl, "")
+		tmpl = regexp.MustCompile(`\s*,\s*`+prop).ReplaceAllString(tmpl, "")
+		tmpl = regexp.MustCompile(prop).ReplaceAllString(tmpl, "")
+	}
+	return tmpl
 }
 
 // jsonMarshal is a wrapper around json.Marshal that returns the

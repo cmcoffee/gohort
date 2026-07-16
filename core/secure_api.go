@@ -313,8 +313,42 @@ func Secure() *SecureAPI {
 		// involved), so any vestigial rows from prior versions are
 		// dead weight in the admin UI. Remove them on first attach.
 		secureAPIInstance.cleanupLegacyNoAuth()
+		secureAPIInstance.migrateLegacyURLPatterns()
 	}
 	return secureAPIInstance
+}
+
+// migrateLegacyURLPatterns retires the legacy single-glob
+// AllowedURLPattern from records where its meaning is exactly
+// preservable as Base URL + (empty) Allowed Endpoints — i.e. plain
+// prefix globs like "https://api.github.com/**". Two overlapping
+// scoping fields on one record kept misleading both LLMs and admins
+// about which one applied; the admin form no longer offers the legacy
+// field, and this converges old records onto the one model. Patterns
+// with mid-string globs are left untouched — the runtime fallback
+// still honors them. Best-effort, idempotent, runs on first attach.
+func (s *SecureAPI) migrateLegacyURLPatterns() {
+	if s == nil || s.db == nil {
+		return
+	}
+	for _, c := range s.List() {
+		if strings.TrimSpace(c.BaseURL) != "" {
+			continue
+		}
+		p := strings.TrimSpace(c.AllowedURLPattern)
+		base := strings.TrimSuffix(p, "/**")
+		if base == p || base == "" {
+			continue // not a plain prefix glob
+		}
+		if strings.Contains(base, "*") ||
+			(!strings.HasPrefix(base, "https://") && !strings.HasPrefix(base, "http://")) {
+			continue
+		}
+		c.BaseURL = base
+		c.AllowedURLPattern = ""
+		s.db.Set(secureAPITable, c.Name, c)
+		Log("[secure_api] migrated credential %q: legacy allowed_url_pattern %q → base_url %q (empty Allowed Endpoints = every path under it)", c.Name, p, base)
+	}
 }
 
 // ensureNoAuthCredential installs a credential literally named
@@ -913,6 +947,22 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	if rawURL == "" {
 		return "", fmt.Errorf("url is required")
 	}
+	// Resolve a path-only URL against the credential's Base URL. LLMs
+	// routinely author api-mode tools with url_template "/v1/posts"
+	// (natural, since the credential already names the host) — but the
+	// allowlist below matches raw strings, so a relative path could
+	// NEVER pass it, and the resulting refusal blamed the credential's
+	// config. The admin then chased base_url/endpoint "fixes" that
+	// couldn't help (observed: a four-round misconfiguration spiral).
+	// Joining here makes the natural authoring shape work and keeps
+	// the allowlist semantics unchanged for absolute URLs.
+	if strings.HasPrefix(rawURL, "/") && !strings.HasPrefix(rawURL, "//") {
+		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
+			rawURL = base + rawURL
+		} else {
+			return "", fmt.Errorf("url %q is a path with no host, and credential %q has no Base URL to resolve it against — author the tool with an absolute https:// URL, or set the credential's Base URL", rawURL, c.Name)
+		}
+	}
 	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
 	if method == "" {
 		method = "GET"
@@ -954,7 +1004,32 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// produces a URL outside the allowed pattern, we refuse — no
 	// header is ever attached.
 	if !urlAllowedByCredential(c, rawURL) {
-		baseErr := fmt.Sprintf("url %q is not allowed for credential %q (base_url=%q, pattern=%q, endpoints=%v)", rawURL, c.Name, c.BaseURL, c.AllowedURLPattern, c.AllowedEndpoints)
+		// Render the SEMANTICS of an empty endpoint list, not the bare
+		// "[]" — models (and admins) reliably misread "endpoints=[]"
+		// as "nothing is allowed" when empty actually means everything
+		// under base_url. Show the resolved meaning inline, where it's
+		// read, instead of hoping a rule sentence elsewhere wins.
+		eps := "(empty — every path under base_url is allowed; the endpoint list is NOT the problem)"
+		if len(c.AllowedEndpoints) > 0 {
+			eps = fmt.Sprintf("%v", c.AllowedEndpoints)
+		}
+		baseErr := fmt.Sprintf("url %q is not allowed for credential %q (base_url=%q, endpoints=%s", rawURL, c.Name, c.BaseURL, eps)
+		if p := strings.TrimSpace(c.AllowedURLPattern); p != "" {
+			baseErr += fmt.Sprintf(", legacy_pattern=%q", p)
+		}
+		baseErr += ")"
+		// Say WHICH check failed. The raw config dump alone has sent
+		// both LLMs and admins down the wrong path — "endpoints=[]"
+		// reads as "nothing is allowed" when empty actually means
+		// EVERYTHING under base_url, and a www-vs-bare-host mismatch
+		// is invisible unless someone diffs the strings by eye.
+		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
+			if rawURL != base && !strings.HasPrefix(rawURL, base+"/") {
+				baseErr += fmt.Sprintf(". DIAGNOSIS: the request's scheme+host does not match Base URL %q — they must match EXACTLY (https vs http, and www.host vs bare host count as DIFFERENT hosts). The Allowed Endpoints list is NOT the problem. Fix: correct the Base URL, or author the tool with a path-only url so it inherits the credential's host", c.BaseURL)
+			} else {
+				baseErr += fmt.Sprintf(". DIAGNOSIS: the host matches; the PATH is outside Allowed Endpoints %v. An EMPTY list allows every path under Base URL; a non-empty list allows ONLY the listed patterns — add the missing pattern or clear the list", c.AllowedEndpoints)
+			}
+		}
 		return "", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name))
 	}
 
@@ -1276,6 +1351,16 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "HTTP %d %s\n", resp.StatusCode, http.StatusText(resp.StatusCode))
+	// An HTML body on an error status is a web PAGE, not an API
+	// response — the URL path missed the API entirely (wrong prefix,
+	// SPA catch-all route). Dumping kilobytes of <script> tags buries
+	// that signal and floods the context; say it outright instead.
+	if resp.StatusCode >= 400 {
+		if b := strings.TrimSpace(string(bodyBytes)); strings.HasPrefix(b, "<!DOCTYPE") || strings.HasPrefix(b, "<!doctype") || strings.HasPrefix(b, "<html") {
+			fmt.Fprintf(&sb, "[HTML error page suppressed — the server returned a web PAGE, not an API response. The URL path is almost certainly wrong for this API (missing prefix like /api, or a route the API doesn't serve). Re-check the endpoint path against the provider's docs; do NOT retry the same URL.]")
+			return sb.String(), nil
+		}
+	}
 	if strings.Contains(ct, "json") {
 		var anyVal interface{}
 		if json.Unmarshal(bodyBytes, &anyVal) == nil {
@@ -1293,6 +1378,69 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		sb.WriteString("\n... [TRUNCATED — response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
 	}
 	return sb.String(), nil
+}
+
+// CredentialAuthGuard refuses a raw auth header aimed at a host that a
+// registered credential already covers. LLMs that hold a key in
+// context (a self-registration response, a value quoted in chat) will
+// otherwise keep sending it inline via fetch_url forever — which (a)
+// leaks the key into every transcript and (b) goes stale the moment
+// the admin rotates the stored secret, producing 401 loops the model
+// misdiagnoses as "the key was rotated upstream". Observed: a 2-hour
+// spiral where the agent hardcoded its registration key while the
+// user had already rotated it into the credential. Dispatching
+// through the credential is always correct; this guard makes it the
+// only path once a credential covers the host.
+func CredentialAuthGuard(rawURL string, headers map[string]any) error {
+	hasAuth := false
+	for k := range headers {
+		switch strings.ToLower(strings.TrimSpace(k)) {
+		case "authorization", "x-api-key", "api-key", "x-auth-token":
+			hasAuth = true
+		}
+	}
+	if !hasAuth {
+		return nil
+	}
+	s := Secure()
+	if s == nil || !s.ready() {
+		return nil
+	}
+	for _, c := range s.List() {
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		if base == "" {
+			continue
+		}
+		if rawURL == base || strings.HasPrefix(rawURL, base+"/") {
+			return fmt.Errorf("refusing to send a raw auth header to %s — registered credential %q covers this host. Dispatch through the credential instead (the fetch_url_%s tool, or fetch_via(%q, url) in a script): the server injects the CURRENT stored secret, so calls keep working after a key rotation, and the key stays out of the conversation. If you hold a NEWER key than the stored one, save it with store_credential_secret(%q, <key>) first — never keep using an inline key", rawURL, c.Name, c.Name, c.Name, c.Name)
+		}
+	}
+	return nil
+}
+
+// SetCredentialSecret stores (or overwrites) the encrypted secret of
+// an existing credential without touching its config or enablement.
+// This is the write-only vault path for keys an agent legitimately
+// RECEIVES mid-flow (a self-registration response, a rotation): the
+// key goes straight into the store instead of being echoed into the
+// chat for a human to copy-paste into Admin > APIs. Enablement stays
+// an admin decision.
+func (s *SecureAPI) SetCredentialSecret(name, secret string) error {
+	if !s.ready() {
+		return fmt.Errorf("secure-api store not initialized")
+	}
+	name = strings.TrimSpace(name)
+	if _, ok := s.Load(name); !ok {
+		return fmt.Errorf("credential %q not registered — draft it first", name)
+	}
+	if strings.TrimSpace(secret) == "" {
+		return fmt.Errorf("refusing to store an empty secret")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.CryptSet(secureAPITable, secureCredSecretKey(name), secret)
+	Log("[secure_api] credential %q secret updated via SetCredentialSecret", name)
+	return nil
 }
 
 // ----------------------------------------------------------------------

@@ -149,7 +149,7 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 	// use here (no chatTurn for a scheduled fire), so call the
 	// underlying helper directly.
 	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
-	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts)
+	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts, agentOperatingNotes(udb, agent))
 	sysPrompt = StripPromptSectionsForTools(sysPrompt, nil) // no allowlist gate for scheduled
 
 	// Resolve the agent's tool set the same way runWorkerStep does.

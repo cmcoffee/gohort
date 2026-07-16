@@ -9,8 +9,10 @@
 package temptool
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -46,12 +48,12 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. Admin approval for cross-session persistence is a SEPARATE downstream gate the framework queues automatically in the background — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow, do NOT author a tool at all — use the standalone pipeline tool (action=\"create\") and attach it to the agent. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus pipeline_steps (deterministic chain). Tools you create here are immediately callable in this session. The framework auto-queues them for admin review in the background — admin approval governs cross-session persistence ONLY, not whether you can create or call the tool. Call action=\"help\" for the full spec including examples.",
+		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. Admin approval for cross-session persistence is a SEPARATE downstream gate the framework queues automatically in the background — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions. Toolboxes live ONLY here — `add_tool` cannot build one, and to change a SINGLE action of an existing toolbox you use action=\"update\" (actions=[{name, ...just the changed fields}]) rather than recreating the whole thing; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow, do NOT author a tool at all — use the standalone pipeline tool (action=\"create\") and attach it to the agent. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus pipeline_steps (deterministic chain). Tools you create here are immediately callable in this session. The framework auto-queues them for admin review in the background — admin approval governs cross-session persistence ONLY, not whether you can create or call the tool. Call action=\"help\" for the full spec including examples.",
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":       {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
 			"mode":              {Type: "string", Description: "\"api\" for a single HTTPS endpoint. \"toolbox\" for multiple related endpoints bundled under one tool name (e.g. wrapping a whole API surface — GitHub, Stripe — with several actions sharing one credential). \"shell\" for local computation, parsing, or stateful scripts. \"pipeline\" for a deterministic chain of existing tools (pipeline_steps); adaptive multi-step LLM workflows are NOT tools — use the standalone pipeline tool. Pick by the work, not by familiarity — a Python urllib wrapper around an HTTPS endpoint is the wrong answer."},
-			"params":            {Type: "object", Description: "Object describing the tool's parameters. Each key is a param name, value is {type, description}. **Use the correct type:** \"integer\" for whole-number args (counts, indexes, ports), \"number\" for floats (rates, percentages), \"boolean\" for flags, \"string\" for text and identifiers. The dispatcher uses type to decide whether to shell-quote the value — a `count` typed as \"string\" gets passed to the script as `'1'` (with quotes) and any downstream int()/atoi() call fails. Default to \"string\" only when the value is genuinely free-form text."},
+			"params":            {Type: "object", Description: "Object describing the tool's parameters. Each key is a param name, value is {type, description}. OPTIONAL — omit entirely for a tool that takes no params (a GET with no query string, or a fixed shell command); don't invent a dummy placeholder. **Use the correct type:** \"integer\" for whole-number args (counts, indexes, ports), \"number\" for floats (rates, percentages), \"boolean\" for flags, \"string\" for text and identifiers. The dispatcher uses type to decide whether to shell-quote the value — a `count` typed as \"string\" gets passed to the script as `'1'` (with quotes) and any downstream int()/atoi() call fails. Default to \"string\" only when the value is genuinely free-form text."},
 			"command_template":  {Type: "string", Description: "(shell mode) Shell command with {param} placeholders, shell-quoted at dispatch. {workspace_dir} resolves to the tool's sandbox path. **SHORTCUT**: when you pass script_body with a recognized extension (.py / .sh / .bash / .js / .jq / .rb / .pl) OR a shebang on line 1, you may OMIT command_template entirely — the framework auto-infers `python3 {workspace_dir}/script.py` (no positional args). **Declared params reach the script as ENVIRONMENT VARIABLES, NOT positional argv.** Read them in your script with `os.environ['name']` (Python), `$name` (bash), `process.env.name` (node). This means ordering is a non-question — params are looked up by NAME on both sides. You only need positional args if you're shelling out to a third-party tool that strictly expects argv; in that case supply your own command_template with explicit {placeholders}."},
 			"script_body":       {Type: "string", Description: "(shell mode, optional) Full source of a script to ship with the tool (Python, Bash, awk, jq, etc.). Written into the sandbox at registration as `script_name` (default \"script.py\"). Read declared params with `os.environ['name']` (Python) / `$name` (bash) — they're injected as env vars, not positional argv. Auto-mints a sandbox; no setup required."},
 			"script_name":       {Type: "string", Description: "(shell mode, optional) Filename for script_body. Defaults to \"script.py\". Match the script's language (e.g. \"run.sh\") — the extension drives interpreter selection when command_template is omitted."},
@@ -59,8 +61,8 @@ func BuildToolDef() *GroupedTool {
 			"url_template":      {Type: "string", Description: "(api mode) URL template with {param} placeholders, URL-encoded at dispatch."},
 			"method":            {Type: "string", Description: "(api mode) HTTP method. Default GET."},
 			"body_template":     {Type: "string", Description: "(api mode) JSON body template with {param} placeholders (JSON-encoded at dispatch). Optional for GET; usually required for POST/PUT/PATCH."},
-			"response_pipe":     {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
-			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Optional list of param names that must be provided by callers. Defaults to all params."},
+			"response_pipe":     {Type: "string", Description: "(api mode, optional) Shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to your output, so just write `jq` against the JSON body — no need for `tail -n +2`. Pipe is skipped on non-2xx responses (you'll see the raw error). Use to keep noisy responses out of your context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" to project only the fields you care about, or \"jq -c '.[:20]'\" to cap a list. **jq gotcha:** the `//` alternative operator MUST be parenthesized inside object construction — write `{k: (.a // .b)}`, NOT `{k: .a // .b}` (the bare form is a jq syntax error). Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) — jq, awk, sed, grep, head, tr available. Leave empty to see the raw response."},
+			"required":          {Type: "array", Items: &ToolParam{Type: "string"}, Description: "List of param names callers MUST provide. OMIT this field entirely to default ALL params to required; pass an explicit empty array [] to make ALL params optional; or list a subset. An optional param that appears in url_template as a query segment (\"?key={name}\") is dropped from the URL when the caller omits it."},
 			"state_path":        {Type: "string", Description: "Optional. Relative subdirectory inside the workspace whose contents persist between invocations. Use ONLY for tools that legitimately need runtime state (counters, accumulating logs, lookup DBs) — most tools don't and should leave this unset. Example: state_path=\"state\" with command_template=\"python3 {workspace_dir}/run.py --db {workspace_dir}/state/log.db\"."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell mode, OPTIONAL for HTTP; REQUIRED for credentialed access) Grant the script extra callbacks back into gohort. **The bare capabilities — \"fetch\", \"log\", \"browse_page\" — are GRANTED BY DEFAULT for any shell-mode tool with script_body.** You don't need to declare them. Just `from gohort import fetch_url, browse_page, log` and call them — works out of the box. Declare ONLY when you need credentialed access: \"secret:<credential_name>\" (return the decrypted value of a credential registered via the admin UI — script then injects it itself); \"fetch_via:<credential_name>\" (PREFERRED for credentialed or scoped endpoints — gohort routes the request through that credential's Secure.Dispatch: URL allowlist enforced, auth injected server-side, audit logged, script NEVER sees the secret). Example: hook_capabilities=[\"fetch_via:openweather\"]. Usage in script: `from gohort import fetch_via; data = fetch_via(\"openweather\", \"https://api.openweathermap.org/data/2.5/weather?q=Seattle\"); body = data[\"body\"]`. For unauth public endpoints, register a no_auth credential (with the URL pattern scoping reachable endpoints) and use fetch_via:no_auth — same audit + allowlist benefits, no auth header injected. **Prefer fetch_via:<name> over fetch_url + secret:<name>** — the credential machinery does the right thing automatically and the secret stays out of the script's hands."},
 			"raw_network":       {Type: "boolean", Description: "(shell / persistent mode, advanced) When true, the sandbox keeps the host network namespace — raw TCP / UDP / any protocol works from inside. Default false (sandbox runs with --unshare-net). RESERVED for persistent-mode REPLs that connect to non-HTTP protocols (psql, redis-cli, ssh-like sessions) and the small set of legacy tools that haven't been migrated to hook_capabilities. For anything doing HTTP, use hook_capabilities=[\"fetch\"] instead — same outcome (your script can reach the web) but every call goes through gohort's audit log. Setting raw_network=true should be a deliberate exception, not a default."},
@@ -86,8 +88,8 @@ func BuildToolDef() *GroupedTool {
 						"description":   {Type: "string", Description: "What this sub-action does."},
 						"url_template":  {Type: "string", Description: "Endpoint URL with {param} placeholders."},
 						"method":        {Type: "string", Description: "HTTP method. Default GET."},
-						"params":        {Type: "object", Description: "Param definitions for this sub-action, shape {name: {type, description}}."},
-						"required":      {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Names of this action's params that callers must supply."},
+						"params":        {Type: "object", Description: "Param definitions for this sub-action, shape {name: {type, description}}. OPTIONAL — omit entirely for a no-param sub-action (a plain GET like list_submolts or home); do NOT invent a dummy placeholder param, the sub-action is callable with just action=\"<name>\"."},
+						"required":      {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Names of this action's params callers MUST supply. OMIT to default all required; pass [] to make all optional; or list a subset. An optional query-param placeholder (\"?key={name}\") drops from the URL when omitted."},
 						"body_template": {Type: "string", Description: "Optional request body template; {param} placeholders are JSON-encoded."},
 						"response_pipe": {Type: "string", Description: "Optional shell post-processor (jq, awk, ...) for the raw response."},
 					},
@@ -125,8 +127,36 @@ func BuildToolDef() *GroupedTool {
 		},
 	})
 
+	gt.AddAction("update", &GroupedToolAction{
+		Description: "PARTIALLY edit an existing tool WITHOUT recreating it whole. Pass name plus only the fields you're changing. For a TOOLBOX: pass actions=[{name, ...}] to upsert (an action name that already exists is replaced, a new one is added) — the OTHER actions are preserved untouched; pass remove_actions=[\"x\"] to drop actions. For an api/shell tool: pass any of description / params / required / url_template / command_template / method / body_template / response_pipe / script_body to change just those. Use this instead of re-sending an entire toolbox to tweak one action.",
+		Params: map[string]ToolParam{
+			"name":             {Type: "string", Description: "The tool to update."},
+			"description":      {Type: "string", Description: "(optional) New top-level description."},
+			"credential":       {Type: "string", Description: "(optional) New credential name (api/toolbox)."},
+			"actions":          {Type: "array", Description: "(toolbox) Action objects to UPSERT by name — same shape as create's actions. Existing actions not listed here are kept as-is."},
+			"remove_actions":   {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Names of actions to remove."},
+			"params":           {Type: "object", Description: "(api/shell) Replacement params object."},
+			"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(api/shell) Replacement required list. [] = all optional; omit to leave unchanged."},
+			"url_template":     {Type: "string", Description: "(api) New URL template."},
+			"command_template": {Type: "string", Description: "(shell) New command template."},
+			"method":           {Type: "string", Description: "(api) New HTTP method."},
+			"body_template":    {Type: "string", Description: "(api) New request body template."},
+			"response_pipe":    {Type: "string", Description: "(api) New response_pipe (jq/awk post-processor)."},
+			"script_body":      {Type: "string", Description: "(shell) New script body."},
+		},
+		Required:     []string{"name"},
+		Caps:         nil,
+		NeedsConfirm: false,
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			if sess == nil {
+				return "", fmt.Errorf("requires a session")
+			}
+			return updateGrouped(args, sess)
+		},
+	})
+
 	gt.AddAction("delete", &GroupedToolAction{
-		Description: "Remove a tool by name. Removes from this session AND from your persistent pool if applicable.",
+		Description: "Remove a tool by name. Removes it from this session AND from your persistent pool if applicable. For an [agent-bundled] tool (one attached to the running agent's record — these reload every turn, so deleting just the session copy leaves it firing), this also unbundles it from the agent record so it does NOT come back next turn.",
 		Params: map[string]ToolParam{
 			"name": {Type: "string", Description: "Name of the tool to remove."},
 		},
@@ -142,6 +172,25 @@ func BuildToolDef() *GroupedTool {
 		},
 	})
 
+	gt.AddAction("test", &GroupedToolAction{
+		Description: "VERIFY an api/toolbox tool actually works BEFORE you call it done or hand it to a user. For every endpoint it: (1) renders the URL + body template with your sample args and checks the body is valid JSON — catches a body field that never lands (the #1 cause of a live 400 like \"content must be a string\"); (2) compile-checks the response_pipe — catches a broken jq/awk filter before it fails live; (3) for READ endpoints (GET) it makes a real call and asserts a 2xx, then runs the response_pipe against the REAL response body — catches shape mismatches a syntax check can't. WRITE endpoints (POST/PUT/PATCH/DELETE) are NOT auto-fired (that would spam the live service): their body is render-validated only, and the report tells you to make one manual call and confirm a 2xx yourself. Pass `cases` with representative inputs per action so read probes and body renders have real values to work with (e.g. a real post_id for get_post). Returns a per-endpoint PASS/FAIL table. Run this, fix every FAIL by action=\"update\", and re-run until green — an unexercised toolbox action is a live grenade.",
+		Params: map[string]ToolParam{
+			"name": {Type: "string", Description: "Name of the api or toolbox tool to verify."},
+			"cases": {Type: "array", Description: "Sample inputs to exercise. Array of objects: {action?: \"<sub-action>\" (toolbox only — omit for a single api tool), args: {param: value, ...}}. Provide one per endpoint you want live-probed or body-validated; give real values (a genuine id, a valid query) so read probes hit 2xx. Endpoints with no case still get offline checks (pipe compile-check, and body render when they need no required args).", Items: &ToolParam{Type: "object"}},
+		},
+		Required: []string{"name"},
+		// Live read-probes reach the network; response_pipe compile-checks
+		// run in the exec sandbox. Same caps an api/toolbox dispatch needs.
+		Caps:         []Capability{CapNetwork, CapExecute},
+		NeedsConfirm: false,
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			if sess == nil {
+				return "", fmt.Errorf("requires a session")
+			}
+			return testGrouped(args, sess)
+		},
+	})
+
 	return gt
 }
 
@@ -150,12 +199,16 @@ func BuildToolDef() *GroupedTool {
 // so reproduce the formatting inline.
 func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	persistentByName := map[string]bool{}
+	persistentDescByName := map[string]string{}
+	persistentModeByName := map[string]string{}
 	pendingByName := map[string]bool{}
 	pendingDescByName := map[string]string{}
 	pendingModeByName := map[string]string{}
 	if sess.DB != nil && sess.Username != "" {
 		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 			persistentByName[p.Tool.Name] = true
+			persistentDescByName[p.Tool.Name] = p.Tool.Description
+			persistentModeByName[p.Tool.Name] = p.Tool.Mode
 		}
 		for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
 			pendingByName[p.Tool.Name] = true
@@ -164,7 +217,7 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 	}
 	tools := sess.CopyTempTools()
-	if len(tools) == 0 && len(pendingByName) == 0 {
+	if len(tools) == 0 && len(pendingByName) == 0 && len(persistentByName) == 0 {
 		return "No temp tools defined in this session.", nil
 	}
 	var b strings.Builder
@@ -173,6 +226,12 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		inSession[t.Name] = true
 		var tag string
 		switch {
+		// Agent-bundled wins the tag: a tool can be BOTH bundled and in
+		// the persistent pool, and "bundled" is the fact that explains
+		// why deleting the session copy doesn't stick (the record
+		// reloads it each turn). Say so, and say how to remove it.
+		case sess.BundledToolNames[t.Name]:
+			tag = " [agent-bundled — attached to this agent's record; delete removes it from the record too]"
 		case persistentByName[t.Name]:
 			tag = " [persistent]"
 		case pendingByName[t.Name]:
@@ -204,14 +263,45 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			fmt.Fprintf(&b, "  - %s [%s] — %s\n", name, modeLabel(mode), pendingDescByName[name])
 		}
 	}
+	// Approved-but-not-loaded: tools in the user's persistent pool that
+	// aren't in THIS session's executable catalog. The common case is
+	// Builder, which deliberately doesn't load user-authored persistent
+	// tools ("authors fresh") — so without this footer an APPROVED tool
+	// the user is asking about (e.g. "the moltbook toolbox") is invisible
+	// to Builder, which then insists the only such tool is a pending
+	// draft of a different name. Surface them read-only so the model can
+	// SEE (and tool_def get / delete) them, and knows they already exist.
+	var orphanPersistent []string
+	for name := range persistentByName {
+		if !inSession[name] && !pendingByName[name] {
+			orphanPersistent = append(orphanPersistent, name)
+		}
+	}
+	sort.Strings(orphanPersistent)
+	if len(orphanPersistent) > 0 {
+		b.WriteString("\nApproved & in your tool pool, but NOT loaded in this session (exists already — inspect with tool_def get, or load_tool it to call/test it; don't re-author a duplicate):\n")
+		for _, name := range orphanPersistent {
+			mode := persistentModeByName[name]
+			if mode == "" {
+				mode = "shell"
+			}
+			fmt.Fprintf(&b, "  - %s [%s] — %s\n", name, modeLabel(mode), persistentDescByName[name])
+		}
+	}
 	return b.String(), nil
 }
 
 func modeLabel(mode string) string {
-	if mode == TempToolModeAPI {
+	switch mode {
+	case TempToolModeAPI:
 		return "api"
+	case TempToolModeToolbox:
+		return "toolbox"
+	case TempToolModePipeline:
+		return "pipeline"
+	default:
+		return "shell"
 	}
-	return "shell"
 }
 
 // queueForReview routes the named session draft to the right pool
@@ -441,11 +531,15 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			return "", fmt.Errorf("actions[%d] (%q): params: %w", i, actName, err)
 		}
 		actRequired := stringSliceArg(m["required"])
-		if len(actRequired) == 0 {
-			// Default to every declared param being required, same as
-			// shell/api mode tools. Order is normalized at the wire
-			// serialization boundary (buildToolParamsSchema), so no sort
-			// is needed here.
+		// Distinguish "required omitted" (default all params required) from
+		// an EXPLICIT empty array (make ALL params optional). Both yield
+		// len==0 after stringSliceArg, so check presence: a non-nil value
+		// under "required" means the author specified it — honor even [].
+		// Without this, `required: []` silently became "all required", which
+		// made optional params impossible (observed: a full 100-second thrash
+		// trying to make feed's limit/sort optional).
+		raw, present := m["required"]
+		if !present || raw == nil {
 			for k := range actParams {
 				actRequired = append(actRequired, k)
 			}
@@ -460,6 +554,16 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		if method == "" {
 			method = "GET"
 		}
+		bodyTpl := strings.TrimSpace(StringArg(m, "body_template"))
+		// Hard authoring gate: a write action whose required param lands in
+		// neither the url_template nor the body_template sends it NOWHERE —
+		// the API 400s with "field must be a string" at RUN time, and the
+		// author (often looping) never sees why. Reject it at create/update
+		// so the failure is a specific, actionable error here instead of a
+		// silent "Updated in place" that feeds a retry loop.
+		if unsent := unsentWriteParams(method, urlTpl, bodyTpl, actRequired); len(unsent) > 0 {
+			return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE — this %s action references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", i, actName, unsent, method)
+		}
 		actions = append(actions, TempToolAction{
 			Name:         actName,
 			Description:  actDesc,
@@ -467,7 +571,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			Required:     actRequired,
 			URLTemplate:  urlTpl,
 			Method:       method,
-			BodyTemplate: strings.TrimSpace(StringArg(m, "body_template")),
+			BodyTemplate: bodyTpl,
 			ResponsePipe: strings.TrimSpace(StringArg(m, "response_pipe")),
 		})
 	}
@@ -673,19 +777,568 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, and session drafts)", name)
+	// Live session tools — the only place an agent-bundled tool appears
+	// (it's reconstituted from the agent record each turn, never written
+	// to the draft/pending/persistent pools). Without this branch, get
+	// erroring on a tool that's plainly firing was itself a source of the
+	// "zombie" confusion.
+	for _, t := range sess.CopyTempTools() {
+		if t.Name == name {
+			body, err := json.MarshalIndent(t, "", "  ")
+			if err != nil {
+				return "", fmt.Errorf("marshal tool %q: %w", name, err)
+			}
+			src := "session (live)"
+			if sess.BundledToolNames[name] {
+				src = "agent-bundled (attached to this agent's record — delete removes it from the record)"
+			}
+			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
+		}
+	}
+	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, and live session tools)", name)
+}
+
+// loadExistingToolRecord resolves a tool by name to its full TempTool record,
+// checking the same layers get does (active pool → pending → session draft →
+// live session). Used by update to load-merge-save.
+func loadExistingToolRecord(sess *ToolSession, name string) (TempTool, bool) {
+	if sess == nil {
+		return TempTool{}, false
+	}
+	if sess.DB != nil && sess.Username != "" {
+		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+			if p.Tool.Name == name {
+				return p.Tool, true
+			}
+		}
+		for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
+			if p.Tool.Name == name {
+				return p.Tool, true
+			}
+		}
+	}
+	if sess.DB != nil && sess.ChatSessionID != "" {
+		for _, t := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
+			if t.Name == name {
+				return t, true
+			}
+		}
+	}
+	for _, t := range sess.CopyTempTools() {
+		if t.Name == name {
+			return *t, true
+		}
+	}
+	return TempTool{}, false
+}
+
+// actionToArgs serializes one toolbox action back to the create-arg map shape
+// (the same keys createToolboxGrouped reads), so update can rebuild the actions
+// array. required is emitted explicitly (present) so the presence-honoring
+// parse keeps the action's exact optional/required split instead of defaulting.
+func actionToArgs(a TempToolAction) map[string]any {
+	m := map[string]any{
+		"name":         a.Name,
+		"description":  a.Description,
+		"url_template": a.URLTemplate,
+		"params":       a.Params,
+		"required":     append([]string{}, a.Required...), // present even when empty
+		"method":       a.Method,
+	}
+	if a.BodyTemplate != "" {
+		m["body_template"] = a.BodyTemplate
+	}
+	if a.ResponsePipe != "" {
+		m["response_pipe"] = a.ResponsePipe
+	}
+	return m
+}
+
+// tempToolToCreateArgs serializes a stored tool back into the create-arg shape
+// so update can patch it and re-run it through createGrouped (reusing all of
+// create's validation + persistence + active-overwrite semantics).
+func tempToolToCreateArgs(tt TempTool) map[string]any {
+	mode := tt.Mode
+	if mode == "" {
+		mode = TempToolModeShell
+	}
+	out := map[string]any{
+		"name":        tt.Name,
+		"description": tt.Description,
+		"mode":        mode,
+	}
+	if tt.Credential != "" {
+		out["credential"] = tt.Credential
+	}
+	switch mode {
+	case TempToolModeToolbox:
+		acts := make([]any, 0, len(tt.Actions))
+		for _, a := range tt.Actions {
+			acts = append(acts, actionToArgs(a))
+		}
+		out["actions"] = acts
+	default:
+		// api / shell share the same scalar fields; empty ones are simply
+		// absent, which the create path tolerates per mode.
+		if len(tt.Params) > 0 {
+			out["params"] = tt.Params
+			out["required"] = append([]string{}, tt.Required...)
+		}
+		if tt.CommandTemplate != "" {
+			out["command_template"] = tt.CommandTemplate
+			out["url_template"] = tt.CommandTemplate // api mode reads url_template
+		}
+		if tt.Method != "" {
+			out["method"] = tt.Method
+		}
+		if tt.BodyTemplate != "" {
+			out["body_template"] = tt.BodyTemplate
+		}
+		if tt.ResponsePipe != "" {
+			out["response_pipe"] = tt.ResponsePipe
+		}
+		if tt.ScriptBody != "" {
+			out["script_body"] = tt.ScriptBody
+		}
+		if tt.ScriptName != "" {
+			out["script_name"] = tt.ScriptName
+		}
+	}
+	return out
+}
+
+// updateGrouped applies a PARTIAL edit to an existing tool without recreating
+// it whole — the fix for the recreate-everything pain (a one-action change
+// meant resupplying all N actions, inviting copy-paste errors). It loads the
+// record, patches the provided fields (for a toolbox: upserts the given
+// actions by name and applies remove_actions), then routes the merged result
+// through createGrouped so persistence is identical to create.
+func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("requires a session")
+	}
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required")
+	}
+	existing, ok := loadExistingToolRecord(sess, name)
+	if !ok {
+		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
+	}
+	merged := tempToolToCreateArgs(existing)
+
+	// Patch top-level scalar fields when provided (present = intent to change).
+	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name"} {
+		if v, present := args[f]; present {
+			merged[f] = v
+		}
+	}
+	if v, present := args["params"]; present {
+		merged["params"] = v
+	}
+	if v, present := args["required"]; present {
+		merged["required"] = v
+	}
+
+	// Toolbox: upsert the given actions by name, then apply remove_actions.
+	if existing.Mode == TempToolModeToolbox {
+		cur, _ := merged["actions"].([]any)
+		byName := map[string]int{}
+		for i, a := range cur {
+			if am, ok := a.(map[string]any); ok {
+				byName[strings.TrimSpace(StringArg(am, "name"))] = i
+			}
+		}
+		if inc, present := args["actions"]; present {
+			incList, ok := inc.([]any)
+			if !ok {
+				return "", fmt.Errorf("actions must be an array of action objects to upsert")
+			}
+			for _, a := range incList {
+				am, ok := a.(map[string]any)
+				if !ok {
+					return "", fmt.Errorf("each entry in actions must be an object")
+				}
+				an := strings.TrimSpace(StringArg(am, "name"))
+				if an == "" {
+					return "", fmt.Errorf("each action to upsert needs a name")
+				}
+				if idx, found := byName[an]; found {
+					cur[idx] = am // replace in place
+				} else {
+					cur = append(cur, am) // add new
+					byName[an] = len(cur) - 1
+				}
+			}
+		}
+		if rem := stringSliceArg(args["remove_actions"]); len(rem) > 0 {
+			remSet := map[string]bool{}
+			for _, r := range rem {
+				remSet[strings.TrimSpace(r)] = true
+			}
+			kept := make([]any, 0, len(cur))
+			for _, a := range cur {
+				am, _ := a.(map[string]any)
+				if am != nil && remSet[strings.TrimSpace(StringArg(am, "name"))] {
+					continue
+				}
+				kept = append(kept, a)
+			}
+			cur = kept
+		}
+		if len(cur) == 0 {
+			return "", fmt.Errorf("that would leave the toolbox with no actions — delete the tool instead if you mean to remove it")
+		}
+		merged["actions"] = cur
+	}
+
+	res, err := createGrouped(merged, sess)
+	if err != nil {
+		return "", err
+	}
+	return "Updated " + name + " in place. " + res, nil
 }
 
 func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(StringArg(args, "name"))
+	// Agent-bundled tool: the durable copy lives on the agent RECORD and
+	// is reconstituted every turn, so removing only the session/pool copy
+	// leaves a "zombie" that keeps firing. Route through the app's
+	// unbundle callback to remove it from the record, THEN evict the live
+	// session copy so it can't dispatch again this turn either.
+	if sess != nil && sess.BundledToolNames[name] {
+		if sess.UnbundleTool == nil {
+			return "", fmt.Errorf("tool %q is bundled onto this agent's record; this surface can't unbundle it — remove it from the agent in its editor (Tools modal → Remove), or ask Builder to update the agent", name)
+		}
+		if err := sess.UnbundleTool(name); err != nil {
+			return "", fmt.Errorf("unbundle %q from the agent record: %w", name, err)
+		}
+		sess.RemoveTempTool(name)
+		// Also clear any lingering session-draft / pending shadows of the
+		// same name so it doesn't reappear from a different pool.
+		if sess.DB != nil && sess.ChatSessionID != "" {
+			RemoveSessionTempTool(sess.DB, sess.ChatSessionID, name)
+		}
+		if sess.DB != nil && sess.Username != "" {
+			DequeuePendingTempTool(sess.DB, sess.Username, name)
+		}
+		return fmt.Sprintf("Unbundled %q from this agent's record and dropped it from the session — it will not reload next turn.", name), nil
+	}
 	t := &DeleteTempToolTool{}
 	res, err := t.RunWithSession(args, sess)
 	if err == nil && sess != nil && sess.DB != nil && sess.Username != "" {
 		// Dequeue from pending-review pool too. If the LLM cancels a
 		// tool it just authored, the admin shouldn't still see it in
 		// their review queue — that'd be stale work that won't fire.
-		DequeuePendingTempTool(sess.DB, sess.Username, strings.TrimSpace(StringArg(args, "name")))
+		DequeuePendingTempTool(sess.DB, sess.Username, name)
 	}
 	return res, err
+}
+
+// testGrouped verifies an api/toolbox tool end-to-end BEFORE it ships:
+// it render- and JSON-validates every endpoint's body, checks that every
+// required param is actually SENT somewhere (the #1 authoring bug —
+// a POST param that lands in neither url_template nor body_template, so
+// the API 400s with "field must be a string"), compile-checks every
+// response_pipe, live-probes READ endpoints for a 2xx (running the pipe
+// against the REAL body), and render-validates WRITE endpoints without
+// firing them. Returns a per-endpoint PASS/FAIL report the author acts on.
+func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(StringArg(args, "name"))
+	if name == "" {
+		return "", fmt.Errorf("name is required — the api/toolbox tool to verify")
+	}
+	tt, ok := loadExistingToolRecord(sess, name)
+	if !ok {
+		return "", fmt.Errorf("no tool named %q — use action=\"list\" to see what exists", name)
+	}
+
+	// Flatten to a uniform endpoint list. A single api tool becomes one
+	// synthetic endpoint; a toolbox contributes each of its actions.
+	var endpoints []TempToolAction
+	switch tt.Mode {
+	case TempToolModeToolbox:
+		endpoints = tt.Actions
+	case TempToolModeAPI, "":
+		if strings.TrimSpace(tt.CommandTemplate) == "" {
+			return "", fmt.Errorf("tool %q has no url_template — nothing to probe", name)
+		}
+		endpoints = []TempToolAction{{
+			Name: name, Params: tt.Params, Required: tt.Required,
+			URLTemplate: tt.CommandTemplate, Method: tt.Method,
+			BodyTemplate: tt.BodyTemplate, ResponsePipe: tt.ResponsePipe,
+		}}
+	default:
+		return "", fmt.Errorf("tool %q is mode=%q — test verifies api/toolbox tools (the ones that call live endpoints). For shell/script tools, exercise the script with local(run) instead", name, tt.Mode)
+	}
+	if len(endpoints) == 0 {
+		return "", fmt.Errorf("tool %q has no endpoints to test", name)
+	}
+
+	cases := parseTestCases(args["cases"])
+
+	// Private mode / a blocked network connector means the offline checks
+	// (param wiring, body render, pipe compile) still run, but live read
+	// probes can't — degrade gracefully to offline-only rather than
+	// reporting a spurious "live probe errored" on every read endpoint.
+	netOK := sess.NetworkAllowed()
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Verification report for %q (%d endpoint(s)):\n\n", name, len(endpoints))
+	if !netOK {
+		b.WriteString("(network is blocked this turn — running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
+	}
+	failCount, writeManual := 0, 0
+
+	for _, ep := range endpoints {
+		method := strings.ToUpper(strings.TrimSpace(ep.Method))
+		if method == "" {
+			method = "GET"
+		}
+		isRead := method == "GET" || method == "HEAD"
+		sample := cases[strings.ToLower(ep.Name)]
+		if sample == nil {
+			sample = cases[""] // single-api-tool convenience: unlabeled case
+		}
+
+		var lines []string
+		epFail := false
+		fail := func(f string, a ...any) { lines = append(lines, "FAIL  "+fmt.Sprintf(f, a...)); epFail = true }
+		pass := func(f string, a ...any) { lines = append(lines, "ok    "+fmt.Sprintf(f, a...)) }
+		note := func(f string, a ...any) { lines = append(lines, "note  "+fmt.Sprintf(f, a...)) }
+
+		// A. Every required param must be SENT somewhere. This is the
+		//    deterministic, offline catch for the "content must be a
+		//    string" class: a required param referenced in neither the
+		//    url_template nor the body_template never reaches the API.
+		var unref []string
+		for _, r := range ep.Required {
+			if !strings.Contains(ep.URLTemplate, "{"+r+"}") && !strings.Contains(ep.BodyTemplate, "{"+r+"}") {
+				unref = append(unref, r)
+			}
+		}
+		if len(unref) > 0 {
+			if ep.BodyTemplate == "" && !isRead {
+				fail("required param(s) %v are sent NOWHERE — this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, method)
+			} else {
+				fail("required param(s) %v appear in neither url_template nor body_template — the API will never receive them.", unref)
+			}
+		} else {
+			pass("all required params are wired into the url/body templates")
+		}
+
+		// B. Body template renders to valid JSON with the sample args.
+		if ep.BodyTemplate != "" {
+			if coversRequired(sample, ep.Required) {
+				body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample)
+				if err != nil {
+					fail("body_template render failed: %v", err)
+				} else if jerr := json.Unmarshal([]byte(body), new(any)); jerr != nil {
+					fail("body_template produced INVALID JSON: %v — rendered body: %s", jerr, oneLine(body, 200))
+				} else {
+					pass("body_template renders valid JSON")
+				}
+			} else {
+				note("body_template not render-checked — no sample args covering required %v (pass a case)", ep.Required)
+			}
+		}
+
+		// C. response_pipe compiles (catches a broken jq/awk filter).
+		if ep.ResponsePipe != "" {
+			if serr := pipeCompileError(ep.ResponsePipe); serr != "" {
+				fail("response_pipe has a syntax/compile error: %s", serr)
+			} else {
+				pass("response_pipe compiles")
+			}
+		}
+
+		// D. READ endpoints: real call + assert 2xx + run pipe on the
+		//    real body. WRITE endpoints are never auto-fired.
+		if isRead {
+			switch {
+			case !netOK:
+				note("read endpoint NOT live-probed — network is blocked this turn (private mode); offline checks only")
+			case coversRequired(sample, ep.Required):
+				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
+				switch {
+				case derr != nil:
+					fail("live probe errored: %v", derr)
+				case !isStatus2xx(status):
+					fail("live call returned %q (want 2xx) — body: %s", status, oneLine(body, 200))
+				default:
+					pass("live %s returned %q", method, status)
+					if ep.ResponsePipe != "" {
+						if perr := runPipeAgainst(ep.ResponsePipe, body); perr != "" {
+							fail("response_pipe failed on the REAL response body (shape mismatch — e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
+						} else {
+							pass("response_pipe runs clean on the real response")
+						}
+					}
+				}
+			default:
+				note("read endpoint NOT live-probed — no sample args for required %v (pass a case with real values to hit the live API)", ep.Required)
+			}
+		} else {
+			note("write endpoint NOT auto-fired — make ONE manual %s call and confirm a 2xx before calling this done", method)
+			writeManual++
+		}
+
+		verdict := "PASS"
+		if epFail {
+			verdict = "FAIL"
+			failCount++
+		}
+		fmt.Fprintf(&b, "[%s] %s (%s)\n", verdict, ep.Name, method)
+		for _, l := range lines {
+			fmt.Fprintf(&b, "   %s\n", l)
+		}
+		b.WriteByte('\n')
+	}
+
+	switch {
+	case failCount > 0:
+		fmt.Fprintf(&b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", failCount, len(endpoints))
+	case writeManual > 0:
+		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each — fire one, confirm a 2xx, then it's done.", writeManual)
+	default:
+		b.WriteString("RESULT: all endpoints passed. Tool verified.")
+	}
+	return b.String(), nil
+}
+
+// parseTestCases normalizes the `cases` arg into action-name → args.
+// Each case is {action?: "<sub>", args: {...}}; a case with no action
+// is stored under "" for the single-api-tool convenience path.
+func parseTestCases(v any) map[string]map[string]any {
+	out := map[string]map[string]any{}
+	list, ok := v.([]any)
+	if !ok {
+		return out
+	}
+	for _, raw := range list {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(StringArg(m, "action")))
+		a, _ := m["args"].(map[string]any)
+		if a == nil {
+			a = map[string]any{}
+		}
+		out[key] = a
+	}
+	return out
+}
+
+// coversRequired reports whether sample supplies a non-empty value for
+// every required param — the precondition for a body render or a live
+// probe that would otherwise error on a missing arg (which is not an
+// authoring bug, just an absent sample).
+func coversRequired(sample map[string]any, required []string) bool {
+	for _, r := range required {
+		v, ok := lookupArgCI(sample, r)
+		if !ok || v == nil {
+			return false
+		}
+		if s, isStr := v.(string); isStr && strings.TrimSpace(s) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// liveProbe dispatches an endpoint for real with its response_pipe
+// CLEARED, so the raw "HTTP <code>\n<body>" comes back for status
+// classification and for running the pipe separately against the true
+// body. Reuses the production api dispatch path end-to-end.
+func liveProbe(sess *ToolSession, cred string, ep TempToolAction, sample map[string]any) (status, body string, err error) {
+	syn := TempTool{
+		Name: "test." + ep.Name, Params: ep.Params, Required: ep.Required,
+		Mode: TempToolModeAPI, CommandTemplate: ep.URLTemplate, Credential: cred,
+		Method: ep.Method, BodyTemplate: ep.BodyTemplate, ResponsePipe: "",
+	}
+	inner := canonicalizeArgKeys(cloneArgs(sample), ep.Required, ep.Params)
+	raw, derr := dispatchAPIModeTempTool(sess, &syn, inner)
+	if derr != nil {
+		return "", raw, derr
+	}
+	status, body = splitStatusLine(raw)
+	return status, body, nil
+}
+
+// pipeCompileError runs a response_pipe against a trivial JSON doc and
+// returns a non-empty message ONLY for a syntax/compile error — those
+// fire regardless of input shape and are true authoring bugs. A runtime
+// error against the dummy input (null iteration, missing field) is not a
+// compile bug and yields "" (the real shape is checked live for reads).
+func pipeCompileError(pipe string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	res := RunSandboxedShellPipe(ctx, pipe, "{}")
+	if res.Err == nil {
+		return ""
+	}
+	msg := strings.ToLower(fmt.Sprint(res.Err) + " " + res.Output)
+	if strings.Contains(msg, "syntax error") || strings.Contains(msg, "compile error") || strings.Contains(msg, "unexpected") {
+		return oneLine(res.Output, 200)
+	}
+	return ""
+}
+
+// runPipeAgainst runs a response_pipe against a real response body and
+// returns a non-empty message if it failed (bad filter, shape mismatch).
+func runPipeAgainst(pipe, body string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	res := RunSandboxedShellPipe(ctx, pipe, body)
+	if res.TimedOut {
+		return "timed out"
+	}
+	if res.Err != nil {
+		return oneLine(res.Output, 200)
+	}
+	return ""
+}
+
+// unsentWriteParams returns the required params of a WRITE action (POST/PUT/
+// PATCH/DELETE) that appear in neither the url_template nor the body_template
+// — meaning the API never receives them. Scoped to write methods so it never
+// blocks the legitimate GET "_"-placeholder pattern (a dummy required param
+// that satisfies an API demanding some query arg). Reads rarely carry a
+// required body field, so the risk there isn't worth the false-positive.
+func unsentWriteParams(method, urlTpl, bodyTpl string, required []string) []string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "POST", "PUT", "PATCH", "DELETE":
+	default:
+		return nil
+	}
+	var out []string
+	for _, r := range required {
+		if !strings.Contains(urlTpl, "{"+r+"}") && !strings.Contains(bodyTpl, "{"+r+"}") {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// cloneArgs returns a shallow copy so dispatch-side canonicalization can
+// rewrite keys without mutating the caller's sample map.
+func cloneArgs(in map[string]any) map[string]any {
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+// oneLine collapses whitespace/newlines and truncates for a compact,
+// single-line report cell.
+func oneLine(s string, max int) string {
+	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
 }
 
 // suppress unused import — json is used by future expansions; keep
@@ -1269,6 +1922,44 @@ When NOT to use toolbox:
   * The "actions" would have wildly different params with no
     semantic relation — that's usually a sign the work isn't really
     a wrapper around one API.
+
+================================================================
+verify — action="test" (DO THIS BEFORE YOU CALL AN API TOOL DONE)
+================================================================
+
+Authoring an api/toolbox tool and NOT exercising it is how a broken
+tool reaches a user: a POST action with no body_template (so a required
+field is never sent → live 400 "content must be a string"), a jq
+response_pipe with a syntax error, a URL that 404s. action="test"
+catches these BEFORE the tool ships.
+
+    tool_def(action="test",
+             name="moltbook",
+             cases=[
+               {action: "feed",     args: {limit: 5, sort: "new"}},
+               {action: "get_post", args: {post_id: "<a real id>"}},
+               {action: "comment",  args: {post_id: "<real id>", content: "test"}}
+             ])
+
+What it does per endpoint:
+  * Checks every REQUIRED param is actually sent — referenced in the
+    url_template or the body_template. An unreferenced required param
+    is the #1 bug (the "must be a string" 400). Fails offline, no
+    network needed.
+  * Renders the body_template with your sample args and confirms it is
+    valid JSON.
+  * Compile-checks the response_pipe (a broken jq filter fails here,
+    not live).
+  * READ endpoints (GET): makes a REAL call, asserts a 2xx, and runs
+    the response_pipe against the real body (catches shape mismatches).
+  * WRITE endpoints (POST/PUT/PATCH/DELETE): body-validated but NOT
+    auto-fired — the report tells you to make one manual call and
+    confirm a 2xx yourself (so test never spams the live service).
+
+Pass a cases entry per endpoint with REAL values so reads hit 2xx.
+Returns a PASS/FAIL table. Fix every FAIL with action="update" and
+re-run until green. Treat a tool as done only when test is clean and
+each write endpoint has had one confirmed live call.
 
 ================================================================
 persist

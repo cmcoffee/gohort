@@ -3598,13 +3598,14 @@
             rowKids.push(el('span', {class: 'ui-channels-inert', title: 'No source hooked in — inert'}, ['inert']));
           }
           // manage_only: the channel relays into its agent's cortex (no thread of
-          // its own — the conversation is the cortex hero above), so clicking it
-          // MANAGES the relay (opens the edit dialog) instead of opening an empty
-          // thread. Other channels (per-room) still open their own thread.
+          // its own — the conversation lives in the cortex home thread). Clicking
+          // the row opens THAT conversation (what the user expects: "show what's
+          // happened in this channel"), not the edit dialog — edit stays on the ✎
+          // button below. Other channels (per-room) open their own thread.
           var manageOnly = !!ch.manage_only;
           var row = el('div', {class: 'ui-chat-side-item ui-channels-item ui-chat-side-item-renable' + (!manageOnly && sid === activeSessionId ? ' active' : '')}, rowKids);
           row.addEventListener('click', function() {
-            if (manageOnly) { if (cfg.channel_save_url) channelForm(ch); return; }
+            if (manageOnly) { openHomeThread(); closeDrawer(); return; }
             openSession(sid); closeDrawer();
           });
           if (cfg.channel_save_url) {
@@ -4246,9 +4247,21 @@
         // reload shows the cards without popping panes unasked.
         var uiBlocks = rec && (rec.ui_blocks || rec.UIBlocks);
         if (Array.isArray(uiBlocks)) {
-          uiBlocks.forEach(function(b) {
-            if (b && b.type) addBlock(b);
+          // Collapse duplicate cards for the same surface before rendering.
+          // The UIBlocks contract is one card per artifact, but sessions
+          // persisted before the server upserted by destination carry one
+          // block per emission (a link card re-announced every turn, an
+          // artifact update the agent forgot to pass the id for). Identity
+          // is the renderer payload's destination — url when present, else
+          // title — scoped by type; newest content wins, first position kept.
+          var byKey = {}, keyOrder = [];
+          uiBlocks.forEach(function(b, i) {
+            if (!b || !b.type) return;
+            var key = b.type + ' ' + (b.url || b.title || b.id || i);
+            if (!(key in byKey)) keyOrder.push(key);
+            byKey[key] = b;
           });
+          keyOrder.forEach(function(k) { addBlock(byKey[k]); });
         }
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);
         loadSessions();

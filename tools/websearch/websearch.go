@@ -306,6 +306,14 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	}
 	bodyStr := StringArg(args, "body")
 	customHeaders, hasHeaders := args["request_headers"].(map[string]any)
+	if hasHeaders {
+		// A raw auth header to a credential-covered host is always the
+		// wrong path (stale-key 401 loops + key leaked into context) —
+		// the guard redirects to the credential dispatch instead.
+		if err := CredentialAuthGuard(target, customHeaders); err != nil {
+			return "", err
+		}
+	}
 	if method != "GET" || bodyStr != "" || hasHeaders {
 		return fetchURLDirect(sess, target, method, bodyStr, customHeaders, StringArg(args, "save_to"))
 	}

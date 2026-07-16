@@ -51,7 +51,10 @@ import (
 // uses these to probe an API before deciding on the right tool shape).
 // Other agents have to use admin-wrapped api-mode temp tools; raw
 // access is Builder-exclusive.
-func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
+// t carries the live chat-turn so the credential-draft tools can drop
+// a setup card into the conversation (SSE block + session UIBlock);
+// nil is fine — drafting still works, the card just doesn't render.
+func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 	tools := []AgentToolDef{
 		ChatToolToAgentToolDefWithSession(&createAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&updateAgentTool{}, sess),
@@ -79,11 +82,15 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 		ChatToolToAgentToolDefWithSession(collectionsListTool(), sess),
 		// draft_oauth_credential — Builder scaffolds an OAuth2 credential
 		// config from the API's docs; the admin pastes the secret + enables
-		// it in the admin UI.
-		draftOAuthCredentialToolDef(),
+		// it via the in-chat setup card or the admin UI.
+		draftOAuthCredentialToolDef(t),
 		// draft_api_credential — the non-oauth sibling: plain API key /
 		// bearer / header / basic_auth (OPNsense, X-API-Key services, etc.).
-		draftAPICredentialToolDef(),
+		draftAPICredentialToolDef(t),
+		// store_credential_secret — write-only vault landing for keys
+		// received mid-flow (self-registration, rotation), so they go
+		// into the credential instead of into the chat.
+		storeCredentialSecretToolDef(),
 	}
 	// Per-credential fetch_url_<name> tools — Builder uses these for
 	// authoring-time discovery (probe an endpoint, confirm shape)
@@ -93,13 +100,47 @@ func builderAuthoringTools(sess *ToolSession) []AgentToolDef {
 	return tools
 }
 
+// emitCredentialSetupCard drops a credential_setup block into the chat
+// after a draft_* tool creates a DISABLED credential: a card with a
+// "Set up" button that opens a modal POSTing the secret DIRECTLY to the
+// admin endpoint (/admin/api/secure-api) — browser to server, never
+// through the conversation, so the no-secrets-in-chat invariant holds
+// and the LLM only ever learns the outcome via check_credential. The
+// endpoint enforces the admin role; non-admin clickers get told to
+// hand off. Upserts by credential name so a re-draft refreshes the
+// existing card instead of stacking a new one.
+func (t *chatTurn) emitCredentialSetupCard(name, credType, grant, secretLabel string) {
+	if t == nil || t.sse == nil {
+		return
+	}
+	id := "credsetup-" + name
+	data := map[string]string{"cred_type": credType}
+	if grant != "" {
+		data["grant"] = grant
+	}
+	t.sse.Send(map[string]any{
+		"kind":  "block",
+		"type":  "credential_setup",
+		"id":    id,
+		"title": name,
+		"text":  secretLabel,
+		"data":  data,
+	})
+	if t.session != nil {
+		blk := UIBlock{Type: "credential_setup", ID: id, Title: name, Text: secretLabel, Data: data}
+		t.toolMu.Lock()
+		t.session.upsert_ui_block(blk, func(b *UIBlock) bool { return b.Title == name })
+		t.toolMu.Unlock()
+	}
+}
+
 // draftOAuthCredentialToolDef lets Builder scaffold an OAuth2 API
 // credential ("Builder builds out, admin fills in"). Builder researches
 // the API's OAuth flow (grant, token endpoint, scopes, allowed URLs) and
 // fills the config; the credential is created DISABLED with no secret, and
-// the admin pastes the secret + enables it in Admin > APIs. Builder never
-// handles the secret.
-func draftOAuthCredentialToolDef() AgentToolDef {
+// the admin pastes the secret + enables it via the in-chat setup card or
+// Admin > APIs. Builder never handles the secret.
+func draftOAuthCredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_oauth_credential",
@@ -145,8 +186,9 @@ func draftOAuthCredentialToolDef() AgentToolDef {
 				OAuthGrantRefreshToken:      "the refresh token",
 				OAuthGrantPassword:          "the client secret AND the user's password (two separate fields)",
 			}[c.Grant]
-			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. To finish: in Admin > APIs open %q, paste %s into the secret field, add the client/app ID if it's not set, enable it, then hit Test. It goes live as fetch_url_%s.",
-				c.Name, c.Grant, c.Name, secretNeeded, c.Name), nil
+			t.emitCredentialSetupCard(c.Name, SecureCredOAuth2, c.Grant, secretNeeded)
+			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. A setup card is now showing in the chat — an admin can paste %s and enable it right there (Admin > APIs works too), then hit Test. It goes live as fetch_url_%s.",
+				c.Name, c.Grant, secretNeeded, c.Name), nil
 		},
 	}
 }
@@ -159,9 +201,12 @@ func draftOAuthCredentialToolDef() AgentToolDef {
 // carries the equivalent in its own persona. No backticks inside (raw string).
 const credentialFirstGuidance = `**Wiring an authenticated API is credential-first, and the auth must WORK before you build anything against it.** Do it strictly in this order, do NOT skip ahead:
 1. CREATE the gohort credential FIRST. OAuth2 uses draft_oauth_credential; a plain API key, bearer token, custom header, or HTTP basic-auth (e.g. OPNsense) uses draft_api_credential. Set its base_url to the host (e.g. https://192.168.0.1); the admin manages which endpoints under it are allowed.
-2. STOP and hand off, then END THE TURN. The credential is created DISABLED. Tell the user exactly which secret the admin pastes in Admin > APIs, to enable it, and for a LAN appliance or any self-signed or IP-addressed host to also turn on "Allow self-signed / skip TLS verification". Do NOT write the tool or agent yet. You cannot author a correct tool against auth that does not exist and that you cannot call.
-3. VERIFY before building. When the user says it is set up, FIRST call check_credential(name): if it reports NOT READY (still disabled, or no secret pasted), tell the user exactly what is left, ask them to finish it in Admin > APIs, and STOP — do not probe or build against an unconfigured credential. Only when it reports READY, make ONE probe call through the credential (the auto-generated fetch_url_<name>, or fetch_via in a script) to a simple endpoint. If the probe errors (bad auth, a cert error, or a connection timeout meaning the server cannot reach the host), report the EXACT error and stop. That is a setup problem to fix with the user, not something to code around or retry blindly. Only check_credential READY plus a clean probe means the auth works.
-4. THEN build the tool, and only then, now that you can actually probe the API to learn its real endpoints and shapes. Prefer tool_def(mode="api", credential="<name>") over a hand-written shell script; api mode handles the call, the auth, the allow-list, and retries for you.
+2. STOP and hand off, then END THE TURN. The credential is created DISABLED and a SETUP CARD appears in the chat. Tell the user which secret it needs — an admin can paste it right on the card (Admin > APIs works too), enable it, and for a LAN appliance or any self-signed or IP-addressed host also turn on "Allow self-signed / skip TLS verification". Do NOT write the tool or agent yet. You cannot author a correct tool against auth that does not exist and that you cannot call.
+3. VERIFY before building. When the user says it is set up, FIRST call check_credential(name): if it reports NOT READY (still disabled, or no secret pasted), tell the user exactly what is left, ask them to finish it, and STOP — do not probe or build against an unconfigured credential. Only when it reports READY, make ONE probe call through the credential (the auto-generated fetch_url_<name>, or fetch_via in a script) to a simple endpoint. If the probe errors (bad auth, a cert error, or a connection timeout meaning the server cannot reach the host), report the EXACT error and stop. That is a setup problem to fix with the user, not something to code around or retry blindly. Only check_credential READY plus a clean probe means the auth works.
+4. THEN build the tool, and only then, now that you can actually probe the API to learn its real endpoints and shapes. Prefer tool_def(mode="api", credential="<name>") over a hand-written shell script; api mode handles the call, the auth, the allow-list, and retries for you. Author url_template as a PATH ("/api/v1/posts") — it resolves against the credential's Base URL, so the host can never drift from the admin's config.
+5. If a dispatch is ever refused with "url not allowed", call check_credential(name) and read its Config line — that is what the credential ACTUALLY enforces. Reconcile YOUR urls to it. Do not instruct the admin to change Base URL to match your research notes; the admin's config wins until you have re-verified the provider's real host from the provider's own site. An empty Allowed Endpoints list already allows every path under Base URL — never ask the admin to "add endpoints" to fix a host mismatch.
+6. Security questions get EVIDENCE, not reassurance. If the user suspects a leak or asks where the secret went, call check_credential(name) and read its Recent dispatches ledger — every row there was ACTUALLY SENT with auth attached, including standing bridge/monitor polls you are not watching. A row whose host is not the provider's real domain means the secret reached that host: say so plainly, tell the user to rotate the key NOW, and pause or delete anything still pointed there. When the ledger leaves any doubt, recommend rotation anyway — rotating is cheap. Never argue from theory that the framework "must have" blocked a send.
+7. When a flow YOU run returns a key/token (a self-registration response, a rotation reply): call store_credential_secret(name, secret) IMMEDIATELY — do not print the value in your reply, do not ask the user to copy it into Admin > APIs, and do not keep using it inline as a fetch_url header (the framework refuses raw auth headers to credential-covered hosts anyway). From that moment on, ALL calls to that API go through the credential — that is what keeps working when the key rotates, because the server always injects the currently stored secret.
 NEVER take an api key, secret, token, password, or host as a tool PARAMETER, and NEVER ask the user to paste a secret into the chat: the credential injects auth server-side. If you build an AGENT around the API, do not write its prompt to collect login details either. You draft the credential; the admin only pastes the secret in Admin > APIs.`
 
 // draftAPICredentialToolDef is the non-oauth sibling of
@@ -170,7 +215,7 @@ NEVER take an api key, secret, token, password, or host as a tool PARAMETER, and
 // secret + enables it. This is how authenticated NON-oauth APIs (OPNsense,
 // X-API-Key services, etc.) get wired without ever putting a secret into a
 // tool parameter.
-func draftAPICredentialToolDef() AgentToolDef {
+func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_api_credential",
@@ -204,8 +249,47 @@ func draftAPICredentialToolDef() AgentToolDef {
 			if secretNeeded == "" {
 				secretNeeded = "the secret value"
 			}
-			return fmt.Sprintf("Drafted %s credential %q, created DISABLED. To finish: in Admin > APIs open %q, paste %s into the secret field, enable it. It goes live as fetch_url_%s. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params.",
-				c.Type, c.Name, c.Name, secretNeeded, c.Name, c.Name), nil
+			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded)
+			return fmt.Sprintf("Drafted %s credential %q, created DISABLED. A setup card is now showing in the chat — an admin can paste %s and enable it right there (Admin > APIs works too). It goes live as fetch_url_%s. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift from the admin's config.",
+				c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
+		},
+	}
+}
+
+// storeCredentialSecretToolDef is the write-only vault path for keys
+// an agent legitimately RECEIVES mid-flow — a self-registration
+// response, a provider's rotation reply. Without it the observed
+// behavior is the worst of both worlds: the model echoes the key into
+// the chat ("paste this in Admin > APIs: <key>") AND keeps using its
+// in-context copy inline via fetch_url until it goes stale
+// (CredentialAuthGuard now blocks that second half; this tool is the
+// sanctioned landing for the first). Storing is write-only and never
+// enables anything — enablement stays with the admin.
+func storeCredentialSecretToolDef() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "store_credential_secret",
+			Description: "Store an API key/token you just RECEIVED during a flow (a self-registration response, a key rotation) straight into an existing credential's encrypted vault — INSTEAD of printing it in chat or asking the user to copy-paste it. Overwrites any previously stored secret (that is how a rotation lands). Does NOT enable the credential; a new one still needs the admin to enable it. After storing: verify with check_credential, then dispatch through the credential (fetch_url_<name> / fetch_via) — never keep using the raw key inline, and NEVER echo the value into your reply.",
+			Parameters: map[string]ToolParam{
+				"name":   {Type: "string", Description: "The credential to store into (must already exist — draft_api_credential / draft_oauth_credential first)."},
+				"secret": {Type: "string", Description: "The secret value exactly as received. Stored encrypted, write-only — it cannot be read back."},
+			},
+			Required: []string{"name", "secret"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			name := strings.TrimSpace(stringArg(args, "name"))
+			if err := Secure().SetCredentialSecret(name, stringArg(args, "secret")); err != nil {
+				return "", err
+			}
+			// Keep the raw value out of the persisted tool-call record
+			// (args are recorded after the handler runs).
+			args["secret"] = "(stored server-side — write-only)"
+			_, enabled, _ := Secure().CredentialStatus(name)
+			status := "The credential still needs the admin to ENABLE it (setup card / Admin > APIs) before dispatch works."
+			if enabled {
+				status = "The credential is enabled — dispatch through it now (fetch_url_" + name + " or your wrapped tool)."
+			}
+			return fmt.Sprintf("Secret stored encrypted on credential %q — do NOT repeat the value in chat. %s Verify with check_credential(%q).", name, status, name), nil
 		},
 	}
 }
@@ -219,7 +303,7 @@ func checkCredentialToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "check_credential",
-			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done. Returns whether it exists, is ENABLED, and has its SECRET set — never the secret itself. Call this after telling the user to paste the secret in Admin > APIs. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left, ask them to complete it and come back, and do NOT declare success or wire a tool/agent to it yet.",
+			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
 			Parameters: map[string]ToolParam{
 				"name": {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
 			},
@@ -234,8 +318,60 @@ func checkCredentialToolDef() AgentToolDef {
 			if !exists {
 				return fmt.Sprintf("Credential %q does not exist — draft it first (draft_api_credential / draft_oauth_credential). NOT READY.", name), nil
 			}
+			// Sanitized config readout — never the secret. This is what the
+			// credential ACTUALLY enforces, so Builder can reconcile a
+			// refused dispatch against reality instead of guessing config
+			// from error strings and sending the admin on fix-it loops.
+			cfg := ""
+			if c, ok := Secure().Load(name); ok {
+				cfg = fmt.Sprintf("\nConfig (authoritative): type=%s", c.Type)
+				// Grant only means something on oauth2 — a leftover grant
+				// value on a bearer credential misled the model into
+				// diagnosing "token exchange issues" that don't exist.
+				if c.Type == SecureCredOAuth2 && c.Grant != "" {
+					cfg += " grant=" + c.Grant
+				}
+				// Render empty-list SEMANTICS inline — "allowed_endpoints=[]"
+				// reliably gets misread as "nothing is allowed" no matter
+				// what a rules sentence elsewhere says.
+				eps := "(empty — every path under base_url is ALLOWED)"
+				if len(c.AllowedEndpoints) > 0 {
+					eps = fmt.Sprintf("%v (ONLY these paths)", c.AllowedEndpoints)
+				}
+				cfg += fmt.Sprintf(" base_url=%q allowed_endpoints=%s", c.BaseURL, eps)
+				if c.AllowedURLPattern != "" {
+					cfg += fmt.Sprintf(" legacy_url_pattern=%q", c.AllowedURLPattern)
+				}
+				if len(c.AllowedMethods) > 0 {
+					cfg += fmt.Sprintf(" allowed_methods=%v", c.AllowedMethods)
+				}
+				cfg += "\nRules: a path-only tool url_template (e.g. \"/v1/posts\") is resolved against base_url; empty allowed_endpoints = everything under base_url is allowed. If base_url disagrees with the host YOUR research produced, re-verify the provider's real domain from its own site — the admin's config wins until you have proof, so do not ask them to change it to match your notes."
+			}
+			// Recent dispatch ledger — what was ACTUALLY sent through this
+			// credential (auth attached), newest first. This is the ground
+			// truth for "did the secret go somewhere?": answer leak/security
+			// questions from THESE rows, never from reasoning about what the
+			// allowlist should have blocked. A row whose URL host isn't the
+			// provider's real domain means the secret reached that host —
+			// treat it as exposed and tell the user to ROTATE the key.
+			if audit := Secure().LoadAudit(name); len(audit) > 0 {
+				n := len(audit)
+				if n > 5 {
+					n = 5
+				}
+				cfg += fmt.Sprintf("\nRecent dispatches (newest first, %d of %d recorded — every row was SENT with auth attached):", n, len(audit))
+				for _, e := range audit[:n] {
+					line := fmt.Sprintf("\n  %s %s %s → %d", e.Timestamp.Local().Format("Jan 2 15:04"), e.Method, e.URL, e.Status)
+					if e.Error != "" {
+						line += " (" + e.Error + ")"
+					}
+					cfg += line
+				}
+			} else if cfg != "" {
+				cfg += "\nRecent dispatches: none recorded — nothing has been sent through this credential yet."
+			}
 			if enabled && hasSecret {
-				return fmt.Sprintf("Credential %q is READY — enabled and its secret is set. Safe to wire the tool/agent to it and finish.", name), nil
+				return fmt.Sprintf("Credential %q is READY — enabled and its secret is set. Safe to wire the tool/agent to it and finish.%s", name, cfg), nil
 			}
 			var missing []string
 			if !hasSecret {
@@ -244,7 +380,7 @@ func checkCredentialToolDef() AgentToolDef {
 			if !enabled {
 				missing = append(missing, "still disabled")
 			}
-			return fmt.Sprintf("Credential %q is NOT READY (%s). Tell the user to open Admin > APIs, finish it (paste the secret, enable it), then come back — do NOT declare the build complete or wire anything to it yet.", name, strings.Join(missing, "; ")), nil
+			return fmt.Sprintf("Credential %q is NOT READY (%s). Tell the user to open Admin > APIs, finish it (paste the secret, enable it), then come back — do NOT declare the build complete or wire anything to it yet.%s", name, strings.Join(missing, "; "), cfg), nil
 		},
 	}
 }
@@ -270,8 +406,8 @@ func checkCredentialToolDef() AgentToolDef {
 // LLM reaches for naturally. Without this, the model kept trying to
 // dispatch back to Builder when its brief asked it to "create" — it
 // had the verb but not the tool.
-func builderWorkerResearchTools(sess *ToolSession) []AgentToolDef {
-	return append(Secure().BuildTools(sess), builderAuthoringTools(sess)...)
+func builderWorkerResearchTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
+	return append(Secure().BuildTools(sess), builderAuthoringTools(sess, t)...)
 }
 
 // isBuilderAgent reports whether the given agent ID corresponds to

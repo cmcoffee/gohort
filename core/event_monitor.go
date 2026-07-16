@@ -92,6 +92,15 @@ type EventMonitor struct {
 	// created in the Agency console, where direct posts to the channel thread.
 	DeliverChatID string `json:"deliver_chat_id,omitempty"`
 
+	// WakeChannel is the CHANNEL a bridge/monitor delivers into (Stage B of the
+	// unified-bridge model: a source → a channel). When set, the fire runs the
+	// channel's BOUND agent on the channel's thread with the change as an inbound
+	// — so the alert lands in that conversation and, if the channel has a live
+	// transport (iMessage/etc), the agent's reaction flows back out it. Takes
+	// precedence over the default cortex-thread wake. Empty = wake the agent's
+	// own home thread as before.
+	WakeChannel string `json:"wake_channel,omitempty"`
+
 	// poll kind
 	CheckAgent      string `json:"check_agent,omitempty"`    // agent run each interval to check the condition
 	Check           string `json:"check,omitempty"`          // the brief/question given to the checker
@@ -275,6 +284,23 @@ func ListEventMonitors(db Database, owner string) []EventMonitor {
 		if len(k) < len(prefix) || k[:len(prefix)] != prefix {
 			continue
 		}
+		var m EventMonitor
+		if db.Get(eventMonitorsTable, k, &m) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// ListAllEventMonitors returns every owner's monitors — the admin
+// management surface's view (enable/disable any user's bridge or
+// watcher). Per-user surfaces use ListEventMonitors.
+func ListAllEventMonitors(db Database) []EventMonitor {
+	if db == nil {
+		return nil
+	}
+	var out []EventMonitor
+	for _, k := range db.Keys(eventMonitorsTable) {
 		var m EventMonitor
 		if db.Get(eventMonitorsTable, k, &m) {
 			out = append(out, m)
