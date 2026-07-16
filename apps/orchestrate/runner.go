@@ -3339,6 +3339,29 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 	return orphanedCalls
 }
 
+// persistIncompleteTurnTrace saves a fallback assistant record when a turn ends
+// WITHOUT a final reply — a plan/synthesis error or timeout — but tools already
+// fired this turn. Without it the handler returns having saved only the user
+// message, so the thread reloads blank even though real side effects happened:
+// the "schedule created in Cortex but wiped from history" report is exactly this
+// — recurring(schedule) ran, then synthesis timed out on runaway reasoning and
+// the confirmation was never persisted. No-op when nothing actually ran.
+func persistIncompleteTurnTrace(sess *ChatSession, udb Database, turn *chatTurn, reason string) {
+	orphanCalls := appendMidTurnBubbles(sess, turn.drainMidTurnBubbles(), "")
+	finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
+	if len(finalCalls) == 0 {
+		return
+	}
+	sess.Messages = append(sess.Messages, ChatMessage{
+		Role:      "assistant",
+		Content:   "_(This reply didn't finish — " + reason + " — but the tool actions this turn did run and are recorded above.)_",
+		Created:   time.Now(),
+		Usage:     turn.drainLastUsage(),
+		ToolCalls: finalCalls,
+	})
+	_, _ = saveChatSession(udb, *sess)
+}
+
 // isNearDuplicate returns true when two strings share substantial
 // LEADING content even if they diverge at the end. Used to dedup mid-
 // turn bubbles against the final reply when the orchestrator emitted
@@ -4018,6 +4041,7 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	turn.emitStatus("Thinking…")
 	steps, question, directReply, planErr := turn.runPlan(planMsgs)
 	if planErr != nil {
+		persistIncompleteTurnTrace(&sess, udb, turn, planErr.Error())
 		sse.Send(map[string]any{"kind": "error", "text": "plan: " + planErr.Error()})
 		return
 	}
@@ -4195,6 +4219,7 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	turn.emitStatus("Composing reply…")
 	reply, synthErr := turn.runSynthesis(req.Message, steps, synthNotes)
 	if synthErr != nil {
+		persistIncompleteTurnTrace(&sess, udb, turn, synthErr.Error())
 		sse.Send(map[string]any{"kind": "error", "text": "synthesis: " + synthErr.Error()})
 		return
 	}
@@ -4208,6 +4233,12 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 	turnToolCalls := turn.persistedToolCalls()
 	orphanCalls := appendMidTurnBubbles(&sess, turn.drainMidTurnBubbles(), reply)
 	finalCalls := append(orphanCalls, turnToolCalls...)
+	// The model did the work (tools fired) but wrote no summary — a blank bubble
+	// renders as nothing, so the turn looks like it vanished. Mark it so the tool
+	// trace stays reachable in history.
+	if strings.TrimSpace(reply) == "" && len(finalCalls) > 0 {
+		reply = "_(No written reply this turn — see the tool actions above.)_"
+	}
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
