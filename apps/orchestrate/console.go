@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -90,6 +91,61 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Recent activity in a poll bridge's connected channel — the HistoryPanel
 	// expand on the /bridges/ poll table.
 	T.HandleFunc("/api/console/bridge-thread", g(T.handleConsoleBridgeThread))
+	// Per-agent schedules rail — the agent's own event monitors + scheduled
+	// runs, so a schedule is visible within the agent it fires (any agent, not
+	// just controllers).
+	T.HandleFunc("/api/schedules", g(T.handleSchedules))
+}
+
+// handleSchedules returns an agent's scheduled runs + event monitors for the
+// per-agent Schedules rail. Scoped "where it fires": monitors by WakeAgent,
+// standing runs by AgentID (the agent that runs on the schedule) — matching
+// introspect(section="schedules"). Each row embeds its own pause/resume/delete
+// URLs so the rail JS stays generic across the two record types.
+func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	rows := []map[string]any{}
+	for _, m := range ListEventMonitors(RootDB, user) {
+		wake := m.WakeAgent
+		if wake == "" {
+			wake = "seed-chat"
+		}
+		if agentID != "" && wake != agentID {
+			continue
+		}
+		kind := string(m.Kind)
+		if isBridgeMonitor(m) {
+			kind = "bridge"
+		}
+		id := url.QueryEscape(m.Name)
+		rows = append(rows, map[string]any{
+			"name":       m.Name,
+			"detail":     fmt.Sprintf("%s · every %ds", kind, m.IntervalSeconds),
+			"paused":     m.Paused,
+			"pause_url":  "api/console/monitors/pause?id=" + id,
+			"resume_url": "api/console/monitors/resume?id=" + id,
+			"delete_url": "api/console/monitors/delete?id=" + id,
+		})
+	}
+	for _, sa := range ListStandingAgents(RootDB, user) {
+		if agentID != "" && sa.AgentID != agentID {
+			continue
+		}
+		id := url.QueryEscape(sa.Name)
+		rows = append(rows, map[string]any{
+			"name":       sa.Name,
+			"detail":     "scheduled run · " + StandingScheduleLabel(sa),
+			"paused":     sa.Paused,
+			"pause_url":  "api/console/agents/pause?id=" + id,
+			"resume_url": "api/console/agents/resume?id=" + id,
+			"delete_url": "api/console/agents/delete?id=" + id,
+		})
+	}
+	writeJSON(w, rows)
 }
 
 // channelLabelForRow returns the friendly name of a bridge's target channel

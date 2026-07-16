@@ -1624,6 +1624,14 @@ type AgentLoopPanel struct {
 	ChannelsURL      string `json:"channels_url,omitempty"`
 	ChannelSaveURL   string `json:"channel_save_url,omitempty"`
 	ChannelDeleteURL string `json:"channel_delete_url,omitempty"`
+	// Schedules rail section — optional. When SchedulesURL is set, a DISTINCT
+	// read-with-actions region lists the agent's scheduled runs + event monitors
+	// so a schedule is visible within the agent it fires (shown for ANY agent,
+	// unlike the operator-only OrchestratorNav). Hidden when the agent has none.
+	//   SchedulesURL GET → []{name, detail, paused, pause_url, resume_url, delete_url}
+	// Each row carries its own action URLs (the two record types — monitors and
+	// standing runs — have different endpoints), so the rail JS stays generic.
+	SchedulesURL string `json:"schedules_url,omitempty"`
 	// ChannelAgentsURL — optional GET → [{id, name}] of the agents a channel
 	// may be bound to, so the channel editor can re-point a channel at a
 	// different agent. Omit to hide the agent picker.

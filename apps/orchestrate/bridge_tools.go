@@ -24,6 +24,7 @@ package orchestrate
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -51,32 +52,50 @@ secrets: the credential must already exist (draft it first with
 draft_api_credential or draft_oauth_credential; the admin pastes the secret and
 enables it in Admin > APIs). The bridge references the credential by name.
 
-How it fires: every interval the framework calls the credential's URL, hashes
-the response, and wakes the target agent in its own thread ONLY when the
-response differs from the last poll — the cheap "tell me when X changes" path,
-zero LLM cost until something actually changes. The first poll just records the
-baseline (no wake).
+A bridge's SOURCE (how the watched info is generated) is one of:
+  - source_kind="tool"     — run a named, TESTABLE api/toolbox tool each interval
+                             (preferred: a reusable, verifiable artifact). Author
+                             + verify it with tool_def (action="test") first, then
+                             point the bridge at it with tool= + tool_args=.
+  - source_kind="url"       — a raw call through a credential (credential= + url=).
+                             The simple path; the default when source_kind is omitted.
+  - source_kind="pipeline"  — a declarative pipeline (not wired yet).
+
+VERIFY-BEFORE-STANDING (hard gate): the source is EXERCISED once at create time
+and the bridge is REFUSED if it doesn't return a 2xx — a standing poll on a
+broken source (stale key, wrong URL) would 401/404-loop in the background where
+nobody sees it. Fix the source, then create.
+
+How it fires: every interval the framework runs the source, hashes the output,
+and wakes the target agent ONLY when the output differs from the last poll — the
+cheap "tell me when X changes" path, zero LLM cost until something changes. The
+source must return STABLE output for identical inputs (a value that always
+changes fires every cycle). The first poll records the baseline (no wake).
 
 Typical flow when wiring a new service:
   1. draft_api_credential (or draft_oauth_credential) for the service.
   2. (admin enables it + pastes the secret in Admin > APIs)
-  3. bridge(action="create", name=..., credential=..., url=..., wake_agent=...,
-     interval_minutes=..., wake_brief="what changed and what to do about it").`))
+  3. Either point the bridge at a tested tool (source_kind="tool", tool=...), or
+     use source_kind="url" with credential= + url=. Plus wake_agent=,
+     interval_minutes=, wake_brief="what changed and what to do about it".`))
 
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Create a bridge: poll credential's url every interval_minutes; wake wake_agent on change.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "Unique short name for this bridge (per user)."},
-			"credential":       {Type: "string", Description: "Name of a registered SecureAPI credential (the one that becomes fetch_url_<name>). The bridge calls the API through it for auth + URL allow-list. Draft it first if it doesn't exist yet."},
-			"url":              {Type: "string", Description: "The URL to poll each interval. PREFER a path-only URL (e.g. \"/api/v1/notifications\") — it resolves against the credential's Base URL at poll time, so the host can never disagree with the admin's config. A full https:// URL also works but must match the credential's Base URL host EXACTLY (www vs bare host count as different)."},
+			"source_kind":      {Type: "string", Description: "How the watched info is generated: \"tool\" (a named, TESTABLE api/toolbox tool — preferred: it's a reusable, verifiable artifact), \"url\" (a raw call through a credential — the simple path), or \"pipeline\" (a declarative pipeline for multi-step/aggregate sources). Defaults to \"url\" when omitted (back-compat). A tool/pipeline source is exercised before the bridge is created; the url source is hard-probed. Whatever the kind, the bridge fires only when the source's output CHANGES, so the source must return STABLE output for identical inputs (a value that always changes — a timestamp/nonce — fires every cycle)."},
+			"tool":             {Type: "string", Description: "(source_kind=tool) Name of an existing api/toolbox tool to run each interval; its output is hashed and the bridge wakes on change. Author + test it first with tool_def (action=\"test\"). Pass its inputs via tool_args."},
+			"tool_args":        {Type: "object", Description: "(source_kind=tool) Arguments passed to `tool` on every invocation, as a {name: value} object. Keep them CONSTANT — the bridge sends the same args each cycle and watches for the response changing."},
+			"credential":       {Type: "string", Description: "(source_kind=url) Name of a registered SecureAPI credential. The bridge calls the API through it for auth + URL allow-list. Draft it first if it doesn't exist yet."},
+			"url":              {Type: "string", Description: "(source_kind=url) The URL to poll each interval. PREFER a path-only URL (e.g. \"/api/v1/notifications\") — it resolves against the credential's Base URL at poll time, so the host can never disagree with the admin's config. A full https:// URL also works but must match the credential's Base URL host EXACTLY (www vs bare host count as different)."},
 			"wake_agent":       {Type: "string", Description: "Name or id of the agent to wake when the response changes; its OWN home thread receives the change-alert. Omit to wake the agent creating the bridge (self-monitoring). Ignored when `channel` is set (the channel's bound agent is used instead)."},
 			"channel":          {Type: "string", Description: "(optional) Deliver the change INTO this channel instead of the agent's home thread — name or id of one of the user's channels. The channel's bound agent reacts in the channel's conversation, and if the channel has a live transport (iMessage/etc) the reaction flows out it. This is the \"source → channel\" shape. When set, wake_agent is derived from the channel."},
 			"interval_minutes": {Type: "number", Description: "How often to poll, in minutes (minimum 1; 15 = every 15 min, 60 = hourly)."},
 			"wake_brief":       {Type: "string", Description: "Guidance handed to the woken agent on each change — what the data means and what to do about it."},
-			"method":           {Type: "string", Description: "(optional) HTTP method; defaults to GET."},
-			"body":             {Type: "string", Description: "(optional) request body for POST/PUT etc."},
+			"method":           {Type: "string", Description: "(source_kind=url, optional) HTTP method; defaults to GET."},
+			"body":             {Type: "string", Description: "(source_kind=url, optional) request body for POST/PUT etc."},
 		},
-		Required: []string{"name", "credential", "url", "interval_minutes"},
+		Required: []string{"name", "interval_minutes"},
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			return bridgeCreate(args, sess, defaultWakeAgent)
 		},
@@ -135,9 +154,44 @@ func bridgeOwner(sess *ToolSession) string {
 }
 
 // isBridgeMonitor reports whether an EventMonitor was created as a bridge: a
-// watch monitor whose captured tool is call_<credential>.
+// watch monitor whose captured tool is call_<credential>, OR any watch monitor
+// with a non-empty SourceKind (tool/pipeline bridges don't use the call_ prefix).
 func isBridgeMonitor(m EventMonitor) bool {
-	return m.Kind == EventKindWatch && strings.HasPrefix(m.ToolName, bridgeCredToolPrefix)
+	if m.Kind != EventKindWatch {
+		return false
+	}
+	return strings.HasPrefix(m.ToolName, bridgeCredToolPrefix) || strings.TrimSpace(m.SourceKind) != ""
+}
+
+// watchProbeHTTPError returns "HTTP <code>" when a bridge source's probe output
+// carries a >=400 status line, else "". The underlying credential/api dispatch
+// returns "HTTP <code> <text>\n<body>" as a NORMAL result even on 4xx/5xx (the
+// transport succeeded), so the hard-fail verify must inspect the body, not just
+// the Go error — this is what catches the 401/404 class the bug loops on.
+func watchProbeHTTPError(out string) string {
+	out = strings.TrimSpace(out)
+	if !strings.HasPrefix(out, "HTTP ") {
+		return ""
+	}
+	line := out
+	if nl := strings.IndexByte(out, '\n'); nl >= 0 {
+		line = out[:nl]
+	}
+	if f := strings.Fields(line); len(f) >= 2 {
+		if code, err := strconv.Atoi(f[1]); err == nil && code >= 400 {
+			return "HTTP " + strconv.Itoa(code)
+		}
+	}
+	return ""
+}
+
+// truncateForError caps a probe body for inclusion in a create-time error.
+func truncateForError(s string, max int) string {
+	s = strings.TrimSpace(strings.Join(strings.Fields(s), " "))
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
 }
 
 func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent string) (string, error) {
@@ -146,8 +200,6 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		return "", fmt.Errorf("bridge requires an authenticated session")
 	}
 	name := strings.TrimSpace(stringArg(args, "name"))
-	cred := strings.TrimSpace(stringArg(args, "credential"))
-	url := strings.TrimSpace(stringArg(args, "url"))
 	wantAgent := strings.TrimSpace(stringArg(args, "wake_agent"))
 	// Channel target (Stage B, unified source→channel): when set, the bridge
 	// delivers into this channel and its BOUND agent is the wake target, so
@@ -173,48 +225,15 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		// there falls through to the required-target error below.
 		wantAgent = strings.TrimSpace(defaultWakeAgent)
 	}
-	method := strings.TrimSpace(stringArg(args, "method"))
-	body := stringArg(args, "body")
 	mins := oArgInt(args, "interval_minutes")
-
 	if mins < 1 {
 		mins = 1
 	}
 	if _, exists := GetEventMonitor(RootDB, owner, name); exists {
 		return "", fmt.Errorf("a bridge (or monitor) named %q already exists", name)
 	}
-
-	// Credential must exist. Surface its readiness so the user knows whether an
-	// admin still has to finish it before the bridge can authenticate.
-	exists, enabled, hasSecret := Secure().CredentialStatus(cred)
-	if !exists {
-		return "", fmt.Errorf("no API credential named %q — draft one first with draft_api_credential or draft_oauth_credential, then have the admin enable it in Admin > APIs", cred)
-	}
-	credWarn := ""
-	if !enabled || !hasSecret {
-		credWarn = fmt.Sprintf(" NOTE: credential %q isn't fully live yet (enabled=%v, secret set=%v) — an admin must finish it in Admin > APIs before the bridge can authenticate.", cred, enabled, hasSecret)
-	}
-
-	// Host-mismatch tripwire. A bridge is a STANDING dispatch: once the
-	// credential's config later lines up with this absolute URL, the poll
-	// sends the credential's auth to this host every interval, forever,
-	// with nobody watching. An absolute URL whose scheme+host disagrees
-	// with the credential's Base URL is therefore refused at CREATE time
-	// — observed failure: a bridge aimed at a lookalike docs domain kept
-	// polling after an admin config change made it pass the allowlist,
-	// shipping the bearer token to a third party every 5 minutes. A
-	// path-only URL is immune (it inherits the credential's host).
-	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
-		if c, ok := Secure().Load(cred); ok {
-			if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" &&
-				url != base && !strings.HasPrefix(url, base+"/") {
-				return "", fmt.Errorf("bridge url %q is outside credential %q's Base URL (%s) — refusing to create a standing poll that would send this credential's auth to a different host. Pass a PATH-ONLY url (e.g. \"/api/v1/notifications\") so the bridge always inherits the credential's host; if the host itself is wrong, that's a credential fix for the admin, not a bridge parameter", url, cred, c.BaseURL)
-			}
-		}
-	}
-
 	if wantAgent == "" {
-		return "", fmt.Errorf("wake_agent is required — name the agent to wake when the API changes")
+		return "", fmt.Errorf("wake_agent is required — name the agent to wake when the source changes")
 	}
 	// Resolve the agent the bridge feeds. Empty fallback → hard error rather
 	// than silently waking the wrong agent.
@@ -223,21 +242,82 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		return "", fmt.Errorf("no agent named %q to wake — pass a real agent name or id for wake_agent", wantAgent)
 	}
 
-	toolArgs := map[string]any{"url": url}
-	if method != "" {
-		toolArgs["method"] = method
+	// Resolve the SOURCE — how the watched info is generated. Each kind sets the
+	// underlying watch monitor's ToolName + ToolArgs. "url" is the back-compat
+	// default (a raw call through a credential); "tool" points at a first-class,
+	// testable api/toolbox tool.
+	sourceKind := strings.ToLower(strings.TrimSpace(stringArg(args, "source_kind")))
+	if sourceKind == "" {
+		sourceKind = "url"
 	}
-	if strings.TrimSpace(body) != "" {
-		toolArgs["body"] = body
+	var toolName, sourceDesc string
+	var toolArgs map[string]any
+	switch sourceKind {
+	case "url":
+		cred := strings.TrimSpace(stringArg(args, "credential"))
+		url := strings.TrimSpace(stringArg(args, "url"))
+		if cred == "" || url == "" {
+			return "", fmt.Errorf("source_kind=url needs both credential and url")
+		}
+		// Credential must exist AND be ready. A bridge is only created once its
+		// source verifiably works (hard-fail), so a disabled/secretless credential
+		// is a precondition to finish first — not a pending bridge that silently
+		// fails on a schedule.
+		exists, enabled, hasSecret := Secure().CredentialStatus(cred)
+		if !exists {
+			return "", fmt.Errorf("no API credential named %q — draft one first with draft_api_credential or draft_oauth_credential, then have the admin enable it in Admin > APIs", cred)
+		}
+		if !enabled || !hasSecret {
+			return "", fmt.Errorf("credential %q isn't live yet (enabled=%v, secret set=%v) — a bridge is only created once its source verifiably works. Have the admin finish it in Admin > APIs, then create the bridge", cred, enabled, hasSecret)
+		}
+		// Host-mismatch tripwire. A bridge is a STANDING dispatch: an absolute URL
+		// whose scheme+host disagrees with the credential's Base URL is refused at
+		// CREATE time — observed failure: a bridge aimed at a lookalike domain kept
+		// shipping the bearer token to a third party every 5 minutes. A path-only
+		// URL is immune (it inherits the credential's host).
+		if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+			if c, ok := Secure().Load(cred); ok {
+				if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" &&
+					url != base && !strings.HasPrefix(url, base+"/") {
+					return "", fmt.Errorf("bridge url %q is outside credential %q's Base URL (%s) — refusing to create a standing poll that would send this credential's auth to a different host. Pass a PATH-ONLY url (e.g. \"/api/v1/notifications\") so the bridge always inherits the credential's host; if the host itself is wrong, that's a credential fix for the admin, not a bridge parameter", url, cred, c.BaseURL)
+				}
+			}
+		}
+		toolName = bridgeCredToolPrefix + cred
+		toolArgs = map[string]any{"url": url}
+		if method := strings.TrimSpace(stringArg(args, "method")); method != "" {
+			toolArgs["method"] = method
+		}
+		if body := stringArg(args, "body"); strings.TrimSpace(body) != "" {
+			toolArgs["body"] = body
+		}
+		sourceDesc = fmt.Sprintf("call %s (via credential %q)", url, cred)
+	case "tool":
+		tool := strings.TrimSpace(stringArg(args, "tool"))
+		if tool == "" {
+			return "", fmt.Errorf("source_kind=tool needs a `tool` (name of an existing, PERSISTENT api/toolbox tool — author it with tool_def and verify it with tool_def action=\"test\" first)")
+		}
+		toolName = tool
+		if ta, ok := args["tool_args"].(map[string]any); ok {
+			toolArgs = ta
+		} else {
+			toolArgs = map[string]any{}
+		}
+		sourceDesc = fmt.Sprintf("run tool %q", tool)
+	case "pipeline":
+		return "", fmt.Errorf("source_kind=pipeline isn't wired yet — for now use source_kind=\"tool\" (point the bridge at an api/toolbox tool, which can itself chain calls) or source_kind=\"url\"")
+	default:
+		return "", fmt.Errorf("unknown source_kind %q — use \"tool\", \"url\", or \"pipeline\"", sourceKind)
 	}
 
 	m := EventMonitor{
-		Name:     name,
-		Owner:    owner,
-		Kind:     EventKindWatch,
-		Notify:   EventNotifyChannel,
-		ToolName: bridgeCredToolPrefix + cred,
-		ToolArgs: toolArgs,
+		Name:       name,
+		Owner:      owner,
+		Kind:       EventKindWatch,
+		Notify:     EventNotifyChannel,
+		SourceKind: sourceKind,
+		ToolName:   toolName,
+		ToolArgs:   toolArgs,
 		// Wake the TARGET agent in its OWN home thread (WakeSession empty), not
 		// this authoring session — the bridge feeds the agent it was built for.
 		WakeAgent:       wakeAgent,
@@ -246,17 +326,20 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		IntervalSeconds: mins * 60,
 	}
 
-	// Seed the change-baseline from a known-good probe so the first poll detects
-	// a REAL change instead of firing on the initial content. Best-effort: if
-	// the probe fails (credential not enabled yet, URL outside the allow-list),
-	// save anyway — the first successful poll seeds the baseline.
-	probeNote := ""
-	if probe, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs); perr == nil {
-		m.LastHash = HashWatcherBody(probe)
-		probeNote = " Verified: the API responded and the change-baseline is seeded."
-	} else {
-		probeNote = fmt.Sprintf(" The initial probe didn't succeed (%v); the bridge will seed its baseline on the first successful poll.", perr)
+	// HARD-FAIL verify: exercise the source ONCE before it goes on a schedule.
+	// A bridge whose source errors would 401/404-loop in the background where
+	// nobody sees it — the verify-gate discipline (interactive tools) applied to
+	// the standing case. A transport error fails the probe; an HTTP error body
+	// (401/404 — which the underlying dispatch returns as a normal result, not an
+	// error) is caught by the status check. On either, refuse to create.
+	probe, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs)
+	if perr != nil {
+		return "", fmt.Errorf("bridge source verification FAILED — not creating the bridge (its source must work before it goes on a schedule). Error: %v", perr)
 	}
+	if status := watchProbeHTTPError(probe); status != "" {
+		return "", fmt.Errorf("bridge source returned %s — not creating the bridge (a standing poll on a failing source is worse than none). Fix the source (auth, URL, params) and retry. Response: %s", status, truncateForError(probe, 300))
+	}
+	m.LastHash = HashWatcherBody(probe)
 
 	SaveEventMonitor(RootDB, m)
 	if err := ScheduleEventMonitor(RootDB, m); err != nil {
@@ -264,9 +347,9 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	}
 	got, _ := GetEventMonitor(RootDB, owner, name)
 	return fmt.Sprintf(
-		"Bridge %q created: every %d min I call %s (via credential %q) and wake agent %q only when the response changes. Next check: %s.%s%s%s",
-		name, mins, url, cred, wakeAgent,
-		got.NextCheck.Local().Format("Mon Jan 2 3:04 PM"), channelNote, credWarn, probeNote) + dupMonitorWarning(m) + bridgeWhereToManage, nil
+		"Bridge %q created: every %d min I %s and wake agent %q only when the output changes. Next check: %s.%s Verified: the source responded (2xx) and the change-baseline is seeded.",
+		name, mins, sourceDesc, wakeAgent,
+		got.NextCheck.Local().Format("Mon Jan 2 3:04 PM"), channelNote) + dupMonitorWarning(m) + bridgeWhereToManage, nil
 }
 
 // setBridgeChannel hooks an EXISTING poll bridge to a channel (or detaches it
@@ -386,13 +469,25 @@ func bridgeGet(args map[string]any, sess *ToolSession) (string, error) {
 	if !ok || !isBridgeMonitor(m) {
 		return "", fmt.Errorf("no bridge named %q", name)
 	}
-	cred := strings.TrimPrefix(m.ToolName, bridgeCredToolPrefix)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Bridge %q:\n", m.Name)
-	fmt.Fprintf(&b, "  credential:  %s\n", cred)
-	fmt.Fprintf(&b, "  url:         %v\n", m.ToolArgs["url"])
-	if v, ok := m.ToolArgs["method"]; ok {
-		fmt.Fprintf(&b, "  method:      %v\n", v)
+	kind := strings.TrimSpace(m.SourceKind)
+	if kind == "" {
+		kind = "url"
+	}
+	fmt.Fprintf(&b, "  source kind: %s\n", kind)
+	switch kind {
+	case "tool":
+		fmt.Fprintf(&b, "  tool:        %s\n", m.ToolName)
+		if len(m.ToolArgs) > 0 {
+			fmt.Fprintf(&b, "  tool args:   %v\n", m.ToolArgs)
+		}
+	default: // url
+		fmt.Fprintf(&b, "  credential:  %s\n", strings.TrimPrefix(m.ToolName, bridgeCredToolPrefix))
+		fmt.Fprintf(&b, "  url:         %v\n", m.ToolArgs["url"])
+		if v, ok := m.ToolArgs["method"]; ok {
+			fmt.Fprintf(&b, "  method:      %v\n", v)
+		}
 	}
 	fmt.Fprintf(&b, "  interval:    %ds\n", m.IntervalSeconds)
 	if ch := strings.TrimSpace(m.WakeChannel); ch != "" {

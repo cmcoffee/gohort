@@ -294,6 +294,25 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 		}
 	}
 
+	// Auto-route: when a registered credential covers this host, dispatch
+	// THROUGH it (auth injected server-side) instead of sending an anonymous
+	// request that just 401s. The model reaches for the always-live fetch_url
+	// even on credentialed hosts — routing it makes that Just Work rather than
+	// a 401 loop the model misreads. Multiple-covering / disabled / secretless
+	// hosts return a precise error instead of guessing. Only fires when a
+	// session is present (dispatch needs it for save_to + audit scope).
+	if sess != nil {
+		if credName, rerr := Secure().AutoRouteCredential(target); rerr != nil {
+			return "", rerr
+		} else if credName != "" {
+			out, derr := Secure().DispatchToolCallArgs(sess, credName, args)
+			if derr != nil {
+				return out, derr
+			}
+			return fmt.Sprintf("[Sent through the %q credential — authenticated for you automatically.]\n\n%s", credName, out), nil
+		}
+	}
+
 	// Non-GET / body-bearing / custom-header path: send the request
 	// directly via NewBoundedHTTPClient. No credential machinery, no
 	// hidden "no_auth" record — fetch_url IS the no-auth path. The

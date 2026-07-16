@@ -188,14 +188,14 @@ func buildPlanStepsFromArg(raw any) []BuildPlanStep {
 	}
 	out := make([]BuildPlanStep, 0, len(input))
 	for i, s := range input {
-		title := strings.TrimSpace(s.Title)
+		title := sanitizePlanText(s.Title)
 		if title == "" {
 			continue
 		}
 		out = append(out, BuildPlanStep{
 			Number:     i + 1,
 			Title:      title,
-			WhatToFind: strings.TrimSpace(s.Detail),
+			WhatToFind: sanitizePlanText(s.Detail),
 			Status:     "pending",
 		})
 	}

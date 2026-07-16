@@ -117,6 +117,16 @@ type EventMonitor struct {
 	// watch kind — capture a tool call, hash its output, wake on change.
 	ToolName string         `json:"tool_name,omitempty"` // tool invoked each interval; its output is hashed
 	ToolArgs map[string]any `json:"tool_args,omitempty"` // args passed to the tool every invocation
+	// SourceKind labels HOW a bridge's watched info is generated, so the UI and
+	// list/get can show it and future logic can branch without parsing ToolName:
+	//   "url"      — a raw call through a credential (ToolName = bridge_cred_<cred>,
+	//                ToolArgs = {url, method, body}). The legacy default; empty
+	//                also reads as "url" for back-compat.
+	//   "tool"     — a named, testable api/toolbox tool (ToolName = that tool).
+	//   "pipeline" — a declarative pipeline (ToolName = run_<pipeline>).
+	// A tool/pipeline source is a first-class, verifiable artifact; the raw-url
+	// source is verified at create time by a hard probe (see bridgeCreate).
+	SourceKind string `json:"source_kind,omitempty"`
 	LastHash string         `json:"last_hash,omitempty"` // sha256 of the last output (the change baseline)
 	LastBody string         `json:"last_body,omitempty"` // prior output (capped) — diffed against the new output to show WHAT changed
 	// FormatScript (watch kind, optional) is sandboxed python that shapes the

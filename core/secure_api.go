@@ -1418,6 +1418,69 @@ func CredentialAuthGuard(rawURL string, headers map[string]any) error {
 	return nil
 }
 
+// AutoRouteCredential inspects rawURL for the fetch_url auto-route path: a
+// plain fetch to a credential-covered host should be dispatched THROUGH that
+// credential (auth injected server-side) instead of sent unauthenticated — the
+// model reaches for the always-live fetch_url even on credentialed hosts, and
+// an anonymous send just 401s and teaches it nothing. Returns:
+//
+//   - (name, nil): exactly ONE enabled, ready credential covers the host —
+//     route through it.
+//   - ("", err): coverage exists but routing can't be done unambiguously — the
+//     host is covered by multiple credentials, or the only cover is disabled /
+//     has no secret. The caller surfaces err instead of guessing.
+//   - ("", nil): no credential covers the host — a genuine anonymous fetch.
+//
+// Host matching mirrors CredentialAuthGuard (BaseURL prefix).
+func (s *SecureAPI) AutoRouteCredential(rawURL string) (string, error) {
+	if s == nil || !s.ready() {
+		return "", nil
+	}
+	var covering []string
+	for _, c := range s.List() {
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		if base == "" {
+			continue
+		}
+		if rawURL == base || strings.HasPrefix(rawURL, base+"/") {
+			covering = append(covering, c.Name)
+		}
+	}
+	switch len(covering) {
+	case 0:
+		return "", nil
+	case 1:
+		name := covering[0]
+		_, enabled, hasSecret := s.CredentialStatus(name)
+		if !enabled {
+			return "", fmt.Errorf("this host is covered by credential %q, but it's DISABLED — fetch_url will not send unauthenticated to a credential-covered host. An admin enables it in Admin > APIs; then retry", name)
+		}
+		if !hasSecret {
+			return "", fmt.Errorf("this host is covered by credential %q, but no secret is set — an admin must paste the key in Admin > APIs, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)
+		}
+		return name, nil
+	default:
+		return "", fmt.Errorf("this host is covered by MULTIPLE credentials %v — fetch_url can't auto-pick one. Call the specific credential tool directly (fetch_url_<name>) so the right auth is used", covering)
+	}
+}
+
+// DispatchToolCallArgs dispatches a full request-arg map (url / method / body /
+// request_headers / save_to) through a named credential — the args-preserving
+// entry point the fetch_url auto-route uses so a routed call keeps the caller's
+// save_to and extra headers (DispatchToolCall carries only method + body). The
+// credential still injects auth server-side and overrides any caller auth
+// header.
+func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, args map[string]any) (string, error) {
+	if !s.ready() {
+		return "", fmt.Errorf("secure-api store not initialized")
+	}
+	c, ok := s.Load(credName)
+	if !ok {
+		return "", fmt.Errorf("credential %q not registered", credName)
+	}
+	return s.dispatch(c, args, sess)
+}
+
 // SetCredentialSecret stores (or overwrites) the encrypted secret of
 // an existing credential without touching its config or enablement.
 // This is the write-only vault path for keys an agent legitimately

@@ -20,7 +20,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 			Name:        "introspect",
 			Description: "Get accurate, CURRENT details about YOURSELF and your gohort setup — configuration, capabilities (tools/skills/knowledge), channels + cortex, and memory state — read straight from the framework. Use it to answer \"what can you do?\" / \"how are you set up?\" / \"what are you connected to?\" from FACT instead of guessing, and to check your own config before acting. Read-only.",
 			Parameters: map[string]ToolParam{
-				"section": {Type: "string", Description: "Optional. Which slice to report: \"identity\", \"capabilities\", \"channels\", \"memory\", or \"all\" (default). Omit for the full picture."},
+				"section": {Type: "string", Description: "Optional. Which slice to report: \"identity\", \"capabilities\", \"channels\", \"memory\", \"schedules\", or \"all\" (default). Omit for the full picture."},
 			},
 			Caps: []Capability{CapRead},
 		},
@@ -166,9 +166,56 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				b.WriteString("\n")
 			}
 
+			if want("schedules") {
+				b.WriteString("## Scheduled runs & monitors\n")
+				// Event monitors / bridges that WAKE this agent — WakeAgent scoping
+				// (empty WakeAgent = the default chat agent), matching the per-agent
+				// console pane. These are the recurring watches feeding you.
+				monCount := 0
+				for _, m := range ListEventMonitors(RootDB, t.user) {
+					wake := m.WakeAgent
+					if wake == "" {
+						wake = "seed-chat"
+					}
+					if wake != a.ID {
+						continue
+					}
+					monCount++
+					state := "active"
+					if m.Paused {
+						state = "paused"
+					}
+					fmt.Fprintf(&b, "- monitor %q — %s, every %ds, %s\n", m.Name, m.Kind, m.IntervalSeconds, state)
+				}
+				if monCount == 0 {
+					b.WriteString("- No event monitors / bridges wake you.\n")
+				}
+				// Standing agents that RUN as this agent on a schedule (AgentID) —
+				// your scheduled runs.
+				runCount := 0
+				for _, sa := range ListStandingAgents(RootDB, t.user) {
+					if sa.AgentID != a.ID {
+						continue
+					}
+					runCount++
+					state := "active"
+					if sa.Paused {
+						state = "paused"
+					}
+					fmt.Fprintf(&b, "- scheduled run %q — %s, %s\n", sa.Name, StandingScheduleLabel(sa), state)
+				}
+				if runCount == 0 {
+					b.WriteString("- No scheduled runs (standing agents) run as you.\n")
+				}
+				if monCount > 0 || runCount > 0 {
+					b.WriteString("- Before creating a new bridge/monitor/scheduled run, check this list so you don't duplicate one that already exists.\n")
+				}
+				b.WriteString("\n")
+			}
+
 			out := strings.TrimSpace(b.String())
 			if out == "" {
-				return "Unknown section — use one of: identity, capabilities, channels, memory, all.", nil
+				return "Unknown section — use one of: identity, capabilities, channels, memory, schedules, all.", nil
 			}
 			return out, nil
 		},

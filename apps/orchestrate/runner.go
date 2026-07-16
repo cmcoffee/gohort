@@ -6440,17 +6440,36 @@ func looksLikeVacuousPlan(steps []PlanStep) string {
 	return "every step is a 'just respond' / no-op step"
 }
 
+// sanitizePlanText cleans a plan-step title/intent a model handed over
+// JSON-ENCODED instead of as plain text — the "messed-up plan" symptom: literal
+// \n / \t / \" escape sequences plus a stray closing quote+comma leaked from an
+// adjacent JSON field (e.g. a malformed ask_user payload dropped into a step).
+// The framework stores tool args verbatim, so it decodes them here at the parse
+// boundary — the one place every plan-card surface (live + replayed) funnels
+// through. Conservative: only unescapes when literal escapes are present, only
+// strips the exact quote / quote-comma leak signature.
+func sanitizePlanText(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(strings.TrimSuffix(s, `",`))
+	s = strings.TrimSpace(strings.TrimSuffix(s, `"`))
+	s = strings.TrimPrefix(s, `"`)
+	if strings.Contains(s, `\n`) || strings.Contains(s, `\t`) || strings.Contains(s, `\"`) {
+		s = strings.NewReplacer(`\n`, "\n", `\t`, "\t", `\r`, "\r", `\"`, `"`, `\\`, `\`).Replace(s)
+	}
+	return strings.TrimSpace(s)
+}
+
 func parsePlanSteps(raw any, maxSteps int) []PlanStep {
 	var out []PlanStep
 	add := func(title, intent, brief string, tools []string) {
-		title = strings.TrimSpace(title)
+		title = sanitizePlanText(title)
 		if title == "" {
 			return
 		}
 		out = append(out, PlanStep{
 			ID:          len(out) + 1,
 			Title:       title,
-			Intent:      strings.TrimSpace(intent),
+			Intent:      sanitizePlanText(intent),
 			WorkerBrief: strings.TrimSpace(brief),
 			Tools:       tools,
 			Status:      StepPending,

@@ -226,6 +226,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					ChannelSaveURL:   "api/channels?agent_id={agent_id}",
 					ChannelDeleteURL: "api/channels?id={id}",
 					ChannelAgentsURL: "api/agents",
+					// Schedules rail — the agent's own monitors + scheduled runs.
+					// Shown for any agent that has them (hidden when empty).
+					SchedulesURL: "api/schedules?agent={agent_id}",
 					// Canonical default wake rule, so the channel editor can offer
 					// "Reset to default" on the gatekeeper rules (source of truth is Go).
 					DefaultGatekeeperRule: DefaultDMGatekeeperRule,

@@ -228,6 +228,11 @@
       // hidden when the app didn't opt in (no channels_url).
       var channelsEl = el('div', {class: 'ui-channels-rail', style: 'display:none'});
       side.insertBefore(channelsEl, sideHdrEl);
+      // schedulesEl — the Schedules rail SECTION: the agent's own event monitors
+      // + scheduled runs, listed above the session list. Filled by loadSchedules;
+      // hidden when the app didn't opt in (no schedules_url) or the agent has none.
+      var schedulesEl = el('div', {class: 'ui-channels-rail', style: 'display:none'});
+      side.insertBefore(schedulesEl, sideHdrEl);
       var orchBtns = [];
       var orchBadges = [];
       function renderOrchTable(rows, item, reload) {
@@ -3630,6 +3635,51 @@
       }).catch(function() { /* leave the section as-is on error */ });
     }
 
+    // loadSchedules — render the agent's own event monitors + scheduled runs
+    // (from cfg.schedules_url) as a labeled rail section. Each row carries its
+    // own pause/resume/delete URLs from the server, so this stays generic over
+    // the two record types. Hidden when the agent has none.
+    function loadSchedules() {
+      if (!cfg.schedules_url || !schedulesEl) return;
+      fetchJSON(substituteExtras(cfg.schedules_url)).then(function(list) {
+        if (!Array.isArray(list)) list = [];
+        schedulesEl.innerHTML = '';
+        if (!list.length) { schedulesEl.style.display = 'none'; return; }
+        schedulesEl.appendChild(el('div', {class: 'ui-channels-h'},
+          [el('span', {class: 'ui-channels-h-title'}, ['Schedules'])]));
+        list.forEach(function(s) {
+          var main = el('div', {style: 'flex:1;min-width:0;overflow:hidden'}, [
+            el('div', {style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'}, [s.name || 'schedule']),
+            el('div', {style: 'font-size:0.75em;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},
+              [(s.paused ? 'paused · ' : '') + (s.detail || '')])
+          ]);
+          var row = el('div', {class: 'ui-chat-side-item ui-channels-item'}, [main]);
+          var toggleUrl = s.paused ? s.resume_url : s.pause_url;
+          if (toggleUrl) {
+            row.appendChild(el('button', {class: 'ui-chat-side-ren', title: s.paused ? 'Resume' : 'Pause',
+              onclick: function(ev) {
+                ev.stopPropagation();
+                fetchJSON(substituteExtras(toggleUrl), {method: 'POST'})
+                  .then(function() { loadSchedules(); })
+                  .catch(function(err) { showToast('Failed: ' + (err && err.message || err)); });
+              }}, [s.paused ? '▶' : '⏸']));
+          }
+          if (s.delete_url) {
+            row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete schedule',
+              onclick: async function(ev) {
+                ev.stopPropagation();
+                if (!(await window.uiConfirm('Delete this schedule? It stops running.'))) return;
+                fetchJSON(substituteExtras(s.delete_url), {method: 'DELETE'})
+                  .then(function() { loadSchedules(); })
+                  .catch(function(err) { showToast('Delete failed: ' + (err && err.message || err)); });
+              }}, ['×']));
+          }
+          schedulesEl.appendChild(row);
+        });
+        schedulesEl.style.display = '';
+      }).catch(function() { schedulesEl.style.display = 'none'; });
+    }
+
     // appendChannelMessage — render one newly-arrived channel message (live
     // poll). Mirrors the replay's per-message render minus the edit/scrub/tool
     // plumbing (channel threads are read-only and append-only).
@@ -3711,6 +3761,7 @@
     function loadSessions() {
       if (!hasList) return;
       loadChannels();
+      loadSchedules();
       var activeID = cfg.list_is_context ? activeContextId : activeSessionId;
       fetchJSON(substituteExtras(cfg.list_url)).then(function(items) {
         sideList.innerHTML = '';

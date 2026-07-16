@@ -38,6 +38,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -400,6 +401,57 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			return
 		}
 	}
+	// Credential auto-route — symmetry with the LLM-callable fetch_url
+	// (tools/websearch): a plain fetch to a credential-covered host dispatches
+	// THROUGH the credential (auth injected server-side) instead of going out
+	// anonymous and 401'ing. Lets a script rely on gohort.fetch / fetch_url for
+	// covered APIs without declaring fetch_via — the common case just works.
+	// NOTE: this intentionally does NOT require a fetch_via:<cred> capability
+	// (matching the LLM tool, which has no per-credential gate); the credential
+	// still bounds sends to its own host + AllowedURLPattern and logs to its
+	// audit ledger. Precedes the JS-heavy browse route: auth correctness first.
+	if h != nil && h.Sess != nil {
+		if credName, rerr := Secure().AutoRouteCredential(rawURL); rerr != nil {
+			writeHookError(conn, rerr.Error())
+			return
+		} else if credName != "" {
+			method := "GET"
+			if m, ok := params["method"].(string); ok && m != "" {
+				method = strings.ToUpper(strings.TrimSpace(m))
+			}
+			args := map[string]interface{}{"url": rawURL, "method": method}
+			if b, ok := params["body"].(string); ok && b != "" {
+				args["body"] = b
+			}
+			Log("[hook/fetch] auto-routing credential-covered URL via %q: %s", credName, rawURL)
+			out, derr := Secure().DispatchToolCallArgs(h.Sess, credName, args)
+			if derr != nil {
+				writeHookError(conn, "fetch (credential "+credName+"): "+derr.Error())
+				return
+			}
+			// DispatchToolCallArgs returns "HTTP <code> <text>\n<body>". Parse the
+			// numeric code so the script keeps the plain-fetch {status:int} shape.
+			status, respBody := 200, out
+			if strings.HasPrefix(out, "HTTP ") {
+				line := out
+				if nl := strings.IndexByte(out, '\n'); nl >= 0 {
+					line, respBody = out[:nl], out[nl+1:]
+				}
+				if f := strings.Fields(line); len(f) >= 2 {
+					if code, err := strconv.Atoi(f[1]); err == nil {
+						status = code
+					}
+				}
+			}
+			writeHookResult(conn, map[string]interface{}{
+				"status":  status,
+				"headers": map[string]string{"X-Gohort-Fetched-Via": "credential:" + credName},
+				"body":    respBody,
+			})
+			return
+		}
+	}
+
 	// JS-heavy auto-route — match fetch_url's behavior so a URL that
 	// works there also works in a script. When the host needs a real
 	// browser (Reddit, Twitter/X, etc. — see core/js_domains.go),
