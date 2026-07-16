@@ -113,6 +113,11 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	agentLocked := false
+	// Dispatch policy to surface first in the editor's select. Ordering the
+	// effective mode first means a legacy record (no stored dispatch_mode) seeds
+	// that value on save instead of the form's first-option fallback silently
+	// converting a legacy allowlist into allow-all. Recomputed from rec below.
+	dispatchModeFirst := dispatchAll
 	// ForcePrivate agents can't escalate to the remote lead model (gate 2),
 	// so the "Use Lead model" toggle is hidden for them.
 	leadModelLocked := false
@@ -127,6 +132,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		if rec, ok := loadAgent(udb, id); ok {
 			agentLocked = rec.Locked
 			leadModelLocked = rec.ForcePrivate
+			dispatchModeFirst = effectiveDispatchMode(rec)
 			if rec.OwnedBy != "" {
 				subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
@@ -272,6 +278,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
 				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agency picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
+			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
+				Options: dispatchModeOptions(dispatchModeFirst),
+				Help:    "Which OTHER agents this one may call via agents(action=\"run\"). Allow all = any non-hidden agent (default). Only allow / Allow all except use the target list in the \"Dispatch target list\" section below. Allow none blocks all dispatch. Same control as the in-chat Configure → Security & Access modal."},
 			// (Lock moved to the 🔒/🔓 icon in the top-right of the editor —
 			// toggled live via handleAgentLock, preserved across form saves.)
 
@@ -340,8 +349,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// the routing decisions.
 	if id != "" && !subAgent {
 		sections = append(sections, ui.Section{
-			Title:    "Sub-agent dispatch allowlist",
-			Subtitle: "Restrict which agents THIS agent can call via agents(action=\"run\"). Empty = any non-hidden agent (default). Any picks = ONLY those (restricted mode; also wires through to Hidden agents you pick).",
+			Title:    "Dispatch target list",
+			Subtitle: "The agents referenced by the Dispatch policy above: in \"Only allow\" mode these are the ONLY agents this one may call (also reaching Hidden agents you pick); in \"Allow all except\" mode these are the BLOCKED agents. Ignored when the policy is Allow all or Allow none.",
 			Body: ui.ChipPicker{
 				OptionsSource: "../api/agents",
 				RecordSource:  source,
@@ -453,4 +462,31 @@ func agentLockIconHTML(id string, locked bool) string {
   mount();
 })();
 </script>`, locked, id)
+}
+
+// dispatchModeOptions builds the "Dispatch policy" select options with `first`
+// listed first, then the remaining modes in canonical order. Ordering the
+// record's effective mode first is deliberate: the form seeds a select with no
+// stored value from its FIRST option, so a legacy record (dispatch_mode never
+// saved) would otherwise be silently rewritten to allow-all on the next save.
+// Putting the effective mode first makes that seed preserve current behavior.
+func dispatchModeOptions(first string) []ui.SelectOption {
+	all := []ui.SelectOption{
+		{Value: dispatchAll, Label: "Allow all — any non-hidden agent (default)"},
+		{Value: dispatchOnly, Label: "Only allow selected (target list below)"},
+		{Value: dispatchExcept, Label: "Allow all except selected (target list below)"},
+		{Value: dispatchNone, Label: "Allow none — no dispatch at all"},
+	}
+	out := make([]ui.SelectOption, 0, len(all))
+	for _, o := range all {
+		if o.Value == first {
+			out = append(out, o)
+		}
+	}
+	for _, o := range all {
+		if o.Value != first {
+			out = append(out, o)
+		}
+	}
+	return out
 }
