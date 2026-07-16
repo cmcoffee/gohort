@@ -42,6 +42,24 @@ import (
 // run_local — long-running commands get killed.
 const commandTimeout = 90 * time.Second
 
+// Pipeline-mode custom tools run a nested sub-agent, which — unlike the shell
+// (commandTimeout) and api (SecureAPI 30s) paths — had NO wall-clock ceiling
+// (it ran on context.Background(), bounded only by max_rounds). A stalled or
+// looping nested agent then hangs the parent turn indefinitely, since the agent
+// loop invokes tool handlers without a timeout. This tunable caps it.
+func init() {
+	RegisterTunable(TunableSpec{
+		Key:      "tune_pipeline_tool_timeout",
+		Category: "Timeouts",
+		Label:    "Pipeline tool wall-clock timeout",
+		Help:     "Max wall-clock time a pipeline-mode custom tool's nested sub-agent may run before it is cancelled. Bounds a runaway or stalled pipeline so it fails cleanly instead of hanging the turn.",
+		Kind:     KindSeconds,
+		Default:  300,
+		Min:      30,
+		Max:      1800,
+	})
+}
+
 // maxOutput is the per-call output cap for shell-mode temp tools and
 // for response_pipe filtered output on api-mode temp tools. Bumped
 // from 10000 (run_local-compatible) to 50000 (~12K tokens) to give
@@ -2370,7 +2388,13 @@ func dispatchPipelineModeTempTool(sess *ToolSession, tt *TempTool, args map[stri
 		debugSys = debugSys[:600] + "...[truncated]"
 	}
 	Debug("[temptool.pipeline] tool=%q substituted system prompt: %s", tt.Name, debugSys)
-	out, err := sess.SubAgentRunner(context.Background(), sys, userMsg, tt.PipelineTools, maxRounds)
+	// Wall-clock ceiling: without this the nested agent ran on
+	// context.Background() (bounded only by max_rounds), so a stalled or looping
+	// pipeline hung the parent turn with no recovery. The deadline propagates
+	// into the sub-agent's LLM calls, which cancel at the boundary.
+	pctx, cancel := context.WithTimeout(context.Background(), TuneDuration("tune_pipeline_tool_timeout"))
+	defer cancel()
+	out, err := sess.SubAgentRunner(pctx, sys, userMsg, tt.PipelineTools, maxRounds)
 	if err != nil {
 		Log("[temptool.pipeline] tool=%q FAILED: %v", tt.Name, err)
 		return "", fmt.Errorf("pipeline tool %q: %v", tt.Name, err)
