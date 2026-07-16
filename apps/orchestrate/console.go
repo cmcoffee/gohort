@@ -69,6 +69,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/approvals/always", gw(T.handleApprovalAlways))
 	T.HandleFunc("/api/console/approvals/deny", gw(T.handleApprovalDeny))
 	T.HandleFunc("/api/console/channel/clear", g(T.handleChannelClear))
+	T.HandleFunc("/api/console/channel/compact", g(T.handleChannelCompact))
 	T.HandleFunc("/api/console/channel/decommission", g(T.handleChannelDecommission))
 	T.HandleFunc("/api/console/grants", g(T.handleConsoleGrants))
 	T.HandleFunc("/api/console/grants/revoke", g(T.handleGrantRevoke))
@@ -460,7 +461,7 @@ func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleChannelClear wipes a channel agent's home-thread conversation and its
+// handleChannelClear wipes an agent's Cortex home-thread conversation and its
 // rolling summary / fold cursor — the cheap fix for a crystallized thread.
 // Operational state (monitors, standing agents, approvals) is left untouched;
 // that's Decommission's job. POST ?agent=<id>.
@@ -479,10 +480,46 @@ func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleChannelCompact force-folds an agent's Cortex home thread now: messages
+// older than the verbatim recent tail collapse into the rolling summary (and are
+// archived to searchable history), rather than being wiped. The gentle middle
+// ground between doing nothing and Clear Cortex. The fold runs in the background
+// (single-flight per thread), so this returns immediately. POST ?agent=<id>.
+func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Request) {
+	_, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	agentID := consoleAgentID(r)
+	agent, ok := loadAgent(udb, agentID)
+	if !ok {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	// Nothing to fold into when the rolling summary is turned off — the thread
+	// bounds by forgetting old messages instead, so there's no summary to build.
+	if agent.DisableCompaction {
+		http.Error(w, "compaction is disabled for this agent — nothing to compact", http.StatusBadRequest)
+		return
+	}
+	keepRecent := agent.ContextDepth
+	if keepRecent <= 0 {
+		keepRecent = 12
+	}
+	// Trigger=1 forces a fold regardless of how short the unsummarized tail is:
+	// everything older than the KeepRecent verbatim tail folds now.
+	T.maybeFoldOperatorHistory(udb, agent, cortexSessionID(agentID), CompactionConfig{KeepRecent: keepRecent, Trigger: 1})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // handleChannelDecommission tears down the owner's standing fleet — every event
 // monitor, standing agent, and pending authorization. Destructive and explicit
-// (confirm-gated client-side); the channel conversation itself is left intact
-// (use Clear channel for that). POST ?agent=<id>.
+// (confirm-gated client-side); the Cortex thread itself is left intact
+// (use Clear Cortex for that). POST ?agent=<id>.
 func (T *OrchestrateApp) handleChannelDecommission(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {

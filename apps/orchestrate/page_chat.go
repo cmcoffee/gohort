@@ -313,10 +313,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Always allow", Method: "POST", URL: "api/console/approvals/always", Variant: "success", OnlyIf: "_pending", Confirm: "Approve, run, and always allow this in future?"},
 								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
 							}},
-						{Label: "Clear channel", ActionURL: "api/console/channel/clear", Variant: "warning",
-							Confirm: "Clear this channel's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
+						{Label: "Compact Cortex", ActionURL: "api/console/channel/compact",
+							Confirm: "Compact this Cortex thread now? Older messages fold into its rolling summary (still searchable via history recall); the recent tail is kept verbatim. Runs in the background — reopen the thread to see the shorter view."},
+						{Label: "Clear Cortex", ActionURL: "api/console/channel/clear", Variant: "warning",
+							Confirm: "Clear this Cortex thread's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
 						{Label: "Decommission", ActionURL: "api/console/channel/decommission", Variant: "danger",
-							Confirm: "Decommission: permanently delete this channel's event monitors and standing agents, and cancel all pending approvals? This cannot be undone."},
+							Confirm: "Decommission: permanently delete ALL your event monitors and standing agents, and cancel every pending approval and standing grant? This cannot be undone."},
 					},
 					// core/ui is domain-agnostic: it reads the opt-in agent set
 					// from the named window-global this app sets — an agentId→
