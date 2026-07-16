@@ -480,6 +480,42 @@ func isNoToolsSentinel(allowed []string) bool {
 	return len(allowed) == 1 && allowed[0] == noToolsSentinel
 }
 
+// Dispatch policy modes — how an agent's AllowedDispatchTargets list is read.
+// See AgentRecord.DispatchMode. Resolve with effectiveDispatchMode, never the
+// raw field, so back-compat inference + the deleted-target self-heal apply.
+const (
+	dispatchAll    = "all"    // any non-hidden agent (default)
+	dispatchOnly   = "only"   // allowlist: only the listed agents
+	dispatchExcept = "except" // denylist: any non-hidden agent EXCEPT the listed
+	dispatchNone   = "none"   // no dispatch at all
+)
+
+// effectiveDispatchMode resolves an agent's dispatch policy, applying back-
+// compat: a blank DispatchMode with a non-empty AllowedDispatchTargets is the
+// legacy allowlist ("only"); blank with an empty list is "all". An unrecognized
+// value degrades to "all" (fail-open to the default, never a silent hard block).
+func effectiveDispatchMode(a AgentRecord) string {
+	switch a.DispatchMode {
+	case dispatchAll, dispatchOnly, dispatchExcept, dispatchNone:
+		return a.DispatchMode
+	default:
+		if len(a.AllowedDispatchTargets) > 0 {
+			return dispatchOnly
+		}
+		return dispatchAll
+	}
+}
+
+// dispatchListContains reports whether id is in the agent's dispatch target list.
+func dispatchListContains(a AgentRecord, id string) bool {
+	for _, x := range a.AllowedDispatchTargets {
+		if x == id {
+			return true
+		}
+	}
+	return false
+}
+
 // selfHealAllowedTools strips entries from AllowedTools that no
 // longer resolve — either because the registered tool was removed
 // (post-blocklist update / migration) or because a persistent temp

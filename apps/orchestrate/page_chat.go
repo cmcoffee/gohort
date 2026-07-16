@@ -410,7 +410,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_skills_modal"},
 						{Group: "Configure", Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
 							Method: "client", URL: "orchestrate_pipelines_modal"},
-						{Group: "Configure", Label: "Security & access", Title: "Blast-radius controls — Force Private (network off), hide from the fleet, and restrict which agents this one may dispatch to.",
+						{Group: "Configure", Label: "Security & Access", Title: "Blast-radius controls — Force Private (network off), hide from the fleet, and set the dispatch policy (allow all / only / all-except / none).",
 							Method: "client", URL: "orchestrate_security_modal"},
 						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session"},

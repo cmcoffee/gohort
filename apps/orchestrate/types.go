@@ -404,7 +404,23 @@ type AgentRecord struct {
 	//     wins both ways, so you can also use it to reach a Hidden
 	//     specialist without exposing it globally). The "Available
 	//     agents" block is filtered to just these entries.
+	// The DispatchMode field below generalizes this; when DispatchMode is
+	// empty a non-empty list is still read as "only" for back-compat.
 	AllowedDispatchTargets []string `json:"allowed_dispatch_targets,omitempty"`
+
+	// DispatchMode selects how AllowedDispatchTargets is interpreted, so the
+	// list can express a denylist or a hard block, not just an allowlist:
+	//   "" / "all" — dispatch to any non-Hidden agent (the default). When
+	//                empty AND AllowedDispatchTargets is non-empty, it is read
+	//                as "only" (back-compat with pre-DispatchMode allowlists).
+	//   "only"     — allowlist: dispatch ONLY to the listed agents (Hidden
+	//                ignored; the explicit pick wins).
+	//   "except"   — denylist: dispatch to any non-Hidden agent EXCEPT the
+	//                listed ones.
+	//   "none"     — dispatch to NO agent at all (hard block).
+	// Resolve via effectiveDispatchMode, never read raw — that helper applies
+	// the back-compat inference and the deleted-target self-heal.
+	DispatchMode string `json:"dispatch_mode,omitempty"`
 
 	// OwnedBy names a parent agent that owns this one as a sub-agent.
 	// Two effects:

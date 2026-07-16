@@ -3575,21 +3575,26 @@
         ]).then(function(res) {
           var agent = res[0];
           var fleet = (res[1] || []).filter(function(a) { return a.id !== id; });
-          var m = openOrchModal('Security & access — ' + (agent.name || id));
+          var m = openOrchModal('Security & Access — ' + (agent.name || id));
 
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
           help.textContent = 'Blast-radius controls — limit what this agent can reach if a prompt-injection attempt rides in on fetched or inbound content. These are the same settings as the agent editor’s Access & visibility section, surfaced here for quick access.';
           m.body.appendChild(help);
 
-          var state = {
-            force_private: !!agent.force_private,
-            hidden: !!agent.hidden
-          };
           var selected = {};
           (agent.allowed_dispatch_targets || []).forEach(function(t) { selected[t] = true; });
-
-          function locked() { return state.force_private; }
+          // Resolve the stored dispatch policy (mirrors effectiveDispatchMode on
+          // the server): a blank mode with picks is the legacy allowlist ("only").
+          var initialMode = agent.dispatch_mode;
+          if (['all', 'only', 'except', 'none'].indexOf(initialMode) === -1) {
+            initialMode = (Object.keys(selected).length > 0) ? 'only' : 'all';
+          }
+          var state = {
+            force_private: !!agent.force_private,
+            hidden: !!agent.hidden,
+            dispatch_mode: initialMode
+          };
 
           // --- Toggle rows ---------------------------------------------
           function toggleRow(labelText, helpText, checked, onChange) {
@@ -3617,7 +3622,7 @@
             'Force Private mode (network locked off)',
             'Permanently drops network + sub-agent dispatch tools every turn — nothing this agent handles can leave the deployment. For compliance / confidential / family-facing agents.',
             state.force_private,
-            function(v) { state.force_private = v; syncDispatchLock(); });
+            function(v) { state.force_private = v; syncDispatch(); });
 
           toggleRow(
             'Hide from agent fleet',
@@ -3625,15 +3630,33 @@
             state.hidden,
             function(v) { state.hidden = v; });
 
-          // --- Dispatch allowlist --------------------------------------
+          // --- Dispatch policy -----------------------------------------
           var dh = document.createElement('div');
           dh.className = 'ui-orch-sec-h';
-          dh.textContent = 'Dispatch allowlist — who this agent may call';
+          dh.textContent = 'Dispatch policy — which agents this one may call';
           m.body.appendChild(dh);
           var di = document.createElement('div');
           di.className = 'ui-orch-modal-help';
-          di.textContent = 'Empty = may dispatch to any non-hidden agent in the fleet (default). Pick one or more to restrict it to ONLY those (also reaches Hidden agents you pick).';
+          di.textContent = 'Which fleet agents this agent may dispatch to via agents(run). Pick a policy; the list modes then let you choose the agents.';
           m.body.appendChild(di);
+
+          var modeSelect = document.createElement('select');
+          modeSelect.className = 'ui-orch-sec-filter';
+          [['all', 'Allow all — any non-hidden agent (default)'],
+           ['only', 'Only allow selected agents'],
+           ['except', 'Allow all except selected agents'],
+           ['none', 'Allow none — no dispatch at all']].forEach(function(o) {
+            var opt = document.createElement('option');
+            opt.value = o[0];
+            opt.textContent = o[1];
+            if (o[0] === state.dispatch_mode) opt.selected = true;
+            modeSelect.appendChild(opt);
+          });
+          modeSelect.addEventListener('change', function() {
+            state.dispatch_mode = modeSelect.value;
+            syncDispatch();
+          });
+          m.body.appendChild(modeSelect);
 
           var filter = document.createElement('input');
           filter.type = 'text';
@@ -3651,14 +3674,17 @@
 
           var dimNote = document.createElement('div');
           dimNote.className = 'ui-orch-sec-dim-note';
-          dimNote.textContent = 'Force Private is on — sub-agent dispatch tools are dropped, so this allowlist has no effect until you turn it off.';
+          dimNote.textContent = 'Force Private is on — sub-agent dispatch tools are dropped, so this dispatch policy has no effect until you turn it off.';
           m.body.appendChild(dimNote);
 
           function renderCount() {
             var n = Object.keys(selected).length;
-            count.textContent = (n === 0)
-              ? 'No restriction — any non-hidden agent.'
-              : (n + ' agent' + (n === 1 ? '' : 's') + ' allowed (restricted mode).');
+            switch (state.dispatch_mode) {
+              case 'all':    count.textContent = 'Can dispatch to any non-hidden agent.'; break;
+              case 'none':   count.textContent = 'Cannot dispatch to any agent.'; break;
+              case 'only':   count.textContent = n === 0 ? 'Pick the agents this one may call.' : ('Allowed: ' + n + ' agent' + (n === 1 ? '' : 's') + ' — only these.'); break;
+              case 'except': count.textContent = n === 0 ? 'Pick the agents to block.' : ('Blocked: ' + n + ' agent' + (n === 1 ? '' : 's') + ' — all other non-hidden agents allowed.'); break;
+            }
           }
 
           function renderPicks() {
@@ -3680,7 +3706,6 @@
               var cb = document.createElement('input');
               cb.type = 'checkbox';
               cb.checked = !!selected[a.id];
-              cb.disabled = locked();
               cb.addEventListener('change', function() {
                 if (cb.checked) selected[a.id] = true; else delete selected[a.id];
                 renderCount();
@@ -3708,17 +3733,24 @@
             });
           }
 
-          function syncDispatchLock() {
-            var off = locked();
-            dimNote.style.display = off ? 'block' : 'none';
-            filter.disabled = off;
-            [filter, pickList, count].forEach(function(el) { el.style.opacity = off ? '0.5' : ''; });
-            renderPicks();
+          // Show the agent picker only for the list-based policies (only/except),
+          // and dim the whole section when Force Private has already dropped the
+          // dispatch tools entirely.
+          function syncDispatch() {
+            var fp = state.force_private;
+            var listMode = (state.dispatch_mode === 'only' || state.dispatch_mode === 'except');
+            modeSelect.disabled = fp;
+            modeSelect.style.opacity = fp ? '0.5' : '';
+            dimNote.style.display = fp ? 'block' : 'none';
+            var showPicker = listMode && !fp;
+            filter.style.display = showPicker ? '' : 'none';
+            pickList.style.display = showPicker ? '' : 'none';
+            if (showPicker) renderPicks();
+            renderCount();
           }
 
           filter.addEventListener('input', renderPicks);
-          renderCount();
-          syncDispatchLock();
+          syncDispatch();
 
           // --- Footer --------------------------------------------------
           var cancelBtn = document.createElement('button');
@@ -3733,6 +3765,7 @@
           saveBtn.onclick = function() {
             agent.force_private = state.force_private;
             agent.hidden = state.hidden;
+            agent.dispatch_mode = state.dispatch_mode;
             agent.allowed_dispatch_targets = Object.keys(selected);
             saveBtn.disabled = true;
             fetch('api/agents', {

@@ -766,35 +766,49 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 		Debug("[orchestrate] available-agents: suppressed for agent=%q — no-tools sentinel (admin set zero tools)", t.agent.ID)
 		return nil
 	}
-	// AllowedDispatchTargets: empty = allow all (hide Hidden); non-empty
-	// = allowlist (explicit pick wins, even over Hidden). Only count targets
-	// that STILL EXIST — a stale (deleted) id must not keep the agent in
-	// restrict-mode, which would silently hide every other agent (including a
-	// freshly added/imported one). Self-heals an allowlist whose members were
-	// deleted: if all its entries are gone, it falls back to "show all".
+	// Dispatch policy (see AgentRecord.DispatchMode / effectiveDispatchMode):
+	// all = any non-hidden; only = allowlist (explicit pick wins over Hidden);
+	// except = any non-hidden minus the list; none = nothing. Only count targets
+	// that STILL EXIST — a stale (deleted) id must not keep an allowlist in
+	// restrict-mode, which would silently hide every other agent. Self-heals a
+	// legacy "only" list whose members were all deleted by falling back to all.
 	all := listAgents(fleetDB, fleetUser)
 	exists := make(map[string]bool, len(all))
 	for _, a := range all {
 		exists[a.ID] = true
 	}
-	linked := map[string]bool{}
+	mode := effectiveDispatchMode(t.agent)
+	if mode == dispatchNone {
+		Debug("[orchestrate] available-agents: suppressed for agent=%q — dispatch policy is Allow none", t.agent.ID)
+		return nil
+	}
+	listed := map[string]bool{}
 	for _, id := range t.agent.AllowedDispatchTargets {
 		if exists[id] {
-			linked[id] = true
+			listed[id] = true
 		}
 	}
-	restrictMode := len(linked) > 0
+	if mode == dispatchOnly && len(listed) == 0 {
+		mode = dispatchAll // self-heal: every allowlisted target was deleted
+	}
 	var available []AgentRecord
 	for _, a := range all {
 		if a.ID == t.agent.ID || isBuilderAgent(a.ID) {
 			continue
 		}
-		if restrictMode {
-			if !linked[a.ID] {
+		switch mode {
+		case dispatchOnly:
+			if !listed[a.ID] {
 				continue
 			}
-		} else if a.Hidden {
-			continue
+		case dispatchExcept:
+			if listed[a.ID] || a.Hidden {
+				continue
+			}
+		default: // dispatchAll
+			if a.Hidden {
+				continue
+			}
 		}
 		available = append(available, a)
 	}

@@ -536,19 +536,26 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// Builder override — allow dispatch to any sub-agent for
 		// post-authoring verification. Logged for audit visibility.
 		Log("[orchestrate.agents.run] Builder override — dispatching to sub-agent %q (owned_by=%q)", target.Name, target.OwnedBy)
-	} else if len(t.agent.AllowedDispatchTargets) > 0 {
-		linked := false
-		for _, id := range t.agent.AllowedDispatchTargets {
-			if id == target.ID {
-				linked = true
-				break
+	} else {
+		switch effectiveDispatchMode(t.agent) {
+		case dispatchNone:
+			return "", fmt.Errorf("agents(run): this agent is set to dispatch to NO other agents (Security & Access → Allow none); ask the user to change its dispatch policy before it can reach %q", target.Name)
+		case dispatchOnly:
+			if !dispatchListContains(t.agent, target.ID) {
+				return "", fmt.Errorf("agents(run): agent %q is not on this agent's dispatch allow list; ask the user to add it (Security & Access) or change the policy to Allow all", target.Name)
+			}
+		case dispatchExcept:
+			if dispatchListContains(t.agent, target.ID) {
+				return "", fmt.Errorf("agents(run): agent %q is on this agent's dispatch block list; ask the user to remove it (Security & Access) to reach it", target.Name)
+			}
+			if target.Hidden {
+				return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or switch this agent to Only-allow and add it", target.Name, target.Name)
+			}
+		default: // dispatchAll
+			if target.Hidden {
+				return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or add it to this agent's dispatch allow list", target.Name, target.Name)
 			}
 		}
-		if !linked {
-			return "", fmt.Errorf("agents(run): agent %q is not on this agent's allowed_dispatch_targets list; ask the user to add it or clear the allowlist", target.Name)
-		}
-	} else if target.Hidden {
-		return "", fmt.Errorf("agents(run): agent %q is hidden from the fleet; ask the user to toggle Hidden off on %q, or add it to this agent's allowed_dispatch_targets", target.Name, target.Name)
 	}
 	// Per-turn dispatch caps — the hard stop for a chat agent that re-fires
 	// agents(run, X) round after round in ONE turn. dispatchDepth (recursion)
