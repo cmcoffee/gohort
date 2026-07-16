@@ -52,6 +52,26 @@ func (T *OrchestrateApp) resolveAgent(w http.ResponseWriter, r *http.Request, ud
 	return agent, true
 }
 
+// hasAgentID reports whether an agent_id is present in the request — the query
+// string, or (for POSTs) the JSON body — WITHOUT consuming the body (it's
+// restored for the real handler, same as resolveAgent). Lets a handler treat
+// agent resolution as OPTIONAL instead of hard-failing when it's absent.
+func hasAgentID(r *http.Request) bool {
+	if strings.TrimSpace(r.URL.Query().Get("agent_id")) != "" {
+		return true
+	}
+	if r.Method == http.MethodPost {
+		var head struct {
+			AgentID string `json:"agent_id"`
+		}
+		if raw, err := readAndRestoreBody(r); err == nil && len(raw) > 0 {
+			_ = json.Unmarshal(raw, &head)
+			return strings.TrimSpace(head.AgentID) != ""
+		}
+	}
+	return false
+}
+
 // sessionListItem is the wire shape returned by handleSessionList.
 // Embeds ChatSession for the native rows; the optional Source +
 // ChatID fields carry tagging contributed by external sources (see
@@ -433,11 +453,24 @@ func (T *OrchestrateApp) handleCancelRouter(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	agent, ok := T.resolveAgent(w, r, udb, user)
-	if !ok {
+	// Cancel keys purely off the session id — handleCancel ignores the agent
+	// arg. The Agency chat panel's cancel POSTs only ?id=<session> (no agent_id
+	// in query or body), so hard-requiring agent_id here 400'd the request
+	// before it reached handleCancel: the button aborted the client stream, but
+	// the run loop (detached from the HTTP request for EVERY session) kept
+	// going — most visibly on long Cortex/Operator turns, which re-attach on
+	// nav-back so the user sees them still working. Make agent resolution
+	// OPTIONAL: authorize against the agent when one is supplied, otherwise
+	// cancel by session id directly (mirrors PublicHandleCancel).
+	if hasAgentID(r) {
+		agent, ok := T.resolveAgent(w, r, udb, user)
+		if !ok {
+			return
+		}
+		T.handleCancel(w, r, agent)
 		return
 	}
-	T.handleCancel(w, r, agent)
+	T.handleCancel(w, r, AgentRecord{})
 }
 
 // handleConfirmRouter resolves in-flight tool-call escalations (see

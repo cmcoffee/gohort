@@ -201,7 +201,7 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/api/sessions              — list (agent_id query param)
 //	/api/sessions/{sid}        — load / delete (agent_id query param)
 //	/api/send                  — SSE send (agent_id in body)
-//	/api/cancel                — abort in-flight round (agent_id in body)
+//	/api/cancel                — abort in-flight round (by ?id=<session>; agent_id optional)
 //	/api/confirm               — operator confirm (Phase 1 no-op stub)
 //	/api/inject                — POST/PATCH/DELETE: mid-flight note queue
 func (T *OrchestrateApp) Routes() {
