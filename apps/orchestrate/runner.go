@@ -445,6 +445,21 @@ type chatTurn struct {
 	// when propagated to a sub-turn.
 	dispatchChain []string
 
+	// dispatchOrigin carries the dispatch authority of the agent that
+	// ORIGINATED this chain, when this turn is itself a sub-run. nil means this
+	// turn IS the origin (a human-driven turn, a scheduled fire, a monitor wake).
+	//
+	// It exists because a dispatch allow-list was only ever a ONE-HOP fence:
+	// every check ran against the immediate caller, so A(allow:[B]) → B, then
+	// B(allow:[C]) → C, and A reached C while its list said "B and nothing
+	// else". Depth and cycle guards both miss this — the chain is short and
+	// acyclic; what grows is AUTHORITY. Carried unchanged down every hop and
+	// never widened, so a chain can only ever narrow.
+	//
+	// Same principle the network connector already enforces one field up: a
+	// sub-agent can never be more permissive than its host.
+	dispatchOrigin *dispatchAuthority
+
 	// agentDispatchCounts caps repeated agents(action="run") dispatches to the
 	// SAME target within one user turn (keyed by target agent ID). Distinct from
 	// dispatchCounts above (that one keys on (name,args) and only caps cacheable

@@ -191,6 +191,59 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 	}
 }
 
+// dispatchAuthority is a snapshot of one agent's dispatch policy, carried down
+// a dispatch chain as the ORIGINATOR's standing authority. Snapshotted rather
+// than re-read per hop so a mid-chain edit to the originator's record can't
+// widen a chain that's already running.
+type dispatchAuthority struct {
+	AgentID   string
+	AgentName string
+	Mode      string
+	Targets   []string
+}
+
+// allows reports whether this authority permits reaching target. Mirrors the
+// immediate-caller switch in agentsRunAction; dispatchAll is deliberately
+// permissive, so an unrestricted originator constrains nothing and the check
+// costs nothing.
+func (a dispatchAuthority) allows(target AgentRecord) bool {
+	switch a.Mode {
+	case dispatchNone:
+		return false
+	case dispatchOnly:
+		for _, x := range a.Targets {
+			if x == target.ID {
+				return true
+			}
+		}
+		return false
+	case dispatchExcept:
+		for _, x := range a.Targets {
+			if x == target.ID {
+				return false
+			}
+		}
+		return true
+	default: // dispatchAll
+		return true
+	}
+}
+
+// originAuthority returns the authority that bounds any dispatch this turn
+// makes. A sub-run reports the ORIGINATOR's authority, carried unchanged; a
+// root turn reports its own, which is what gets stamped onto the first hop.
+func (t *chatTurn) originAuthority() *dispatchAuthority {
+	if t.dispatchOrigin != nil {
+		return t.dispatchOrigin
+	}
+	return &dispatchAuthority{
+		AgentID:   t.agent.ID,
+		AgentName: t.agent.Name,
+		Mode:      effectiveDispatchMode(t.agent),
+		Targets:   append([]string(nil), t.agent.AllowedDispatchTargets...),
+	}
+}
+
 // fenceAgentsOutput wraps a dispatch result in the untrusted-content fence —
 // the per-action half of the agents tool's TrustedOutput opt-out (see the Tool
 // literal in agentsGroupedToolDef). run / run_tool hand back whatever a
@@ -597,6 +650,24 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 			}
 		}
 	}
+	// Transitive authority. Everything above checks the IMMEDIATE caller, which
+	// makes an allow-list a one-hop fence: A(allow:[B]) → B → C reaches C even
+	// though A could only reach B. Authority must never GROW along a chain, so a
+	// sub-run is additionally bound by whoever originated it.
+	//
+	// Owned sub-agents are exempt: dispatching to your OWN sub-agent isn't
+	// reaching a new principal, it's internal composition — an investigator
+	// calling its own specialists is that agent doing its job, and authorizing
+	// the parent authorized exactly that. Bounding those by the originator's
+	// list would leave a dispatched specialist unable to function.
+	if origin := t.dispatchOrigin; origin != nil && target.OwnedBy != t.agent.ID {
+		if !origin.allows(target) {
+			Log("[orchestrate.agents.run] blocked transitive dispatch %s → %s: not permitted by originator %s",
+				t.agent.ID, target.ID, origin.AgentID)
+			return "", fmt.Errorf("agents(run): %q is not reachable on this dispatch. You are running on behalf of %q, whose dispatch policy does not permit %q — a delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted",
+				target.Name, origin.AgentName, target.Name, target.Name)
+		}
+	}
 	// Per-turn dispatch caps — the hard stop for a chat agent that re-fires
 	// agents(run, X) round after round in ONE turn. dispatchDepth (recursion)
 	// and dispatchChain (cycles) both miss it: depth resets as each sub-run
@@ -707,6 +778,11 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		// The cycle guard above runs against this slice on every
 		// further agents(run) the sub-turn makes.
 		dispatchChain: append(append([]string(nil), t.dispatchChain...), t.agent.ID),
+		// Carry the ORIGINATOR's dispatch authority forward, unchanged. On the
+		// first hop this snapshots the caller (it IS the origin); on every hop
+		// after, originAuthority returns the inherited value, so the authority
+		// bounding the chain is always the one at its root and can only narrow.
+		dispatchOrigin: t.originAuthority(),
 	}
 	// Shared sub-agent dispatch catalog — framework conversational tools
 	// (knowledge, find_tools, send_status, stay_silent, load_tool, skills, the
