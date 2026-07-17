@@ -162,9 +162,20 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies (the agent will keep working past this session).", copied)
 	}
 	verifyHint += toolWarn
+	// Announce the focus move. Creating an agent silently re-points the
+	// authoring-focus slot (above), which is the implicit target of a later
+	// add_tool. When the new agent is a HELPER for something else — the
+	// create-two-sub-agents-then-tool-up-the-parent flow — that silent move
+	// sends the parent's tool onto the last sub-agent instead, with no error.
+	// Say where focus landed and how to override it, so the next add_tool is a
+	// deliberate choice rather than a guess about hidden state.
+	focusNote := fmt.Sprintf(
+		" Authoring focus is now %q — a subsequent add_tool with no `agent` argument attaches THERE. To tool up a different agent (e.g. the parent this was built for), pass agent=\"<name or id>\" explicitly.",
+		saved.Name,
+	)
 	return fmt.Sprintf(
-		"AGENT_CREATED ok. id=%s name=%q.%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
-		saved.ID, saved.Name, verifyHint, string(b),
+		"AGENT_CREATED ok. id=%s name=%q.%s%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
+		saved.ID, saved.Name, verifyHint, focusNote, string(b),
 	), nil
 }
 

@@ -51,7 +51,7 @@ func (addToolTool) Name() string             { return "add_tool" }
 func (addToolTool) Caps() []Capability       { return []Capability{CapWrite} }
 func (addToolTool) SingleFirePerBatch() bool { return true }
 func (addToolTool) Desc() string {
-	base := "Attach ONE single-action tool to the agent currently in authoring focus (set by your most recent get_agent or create_agent call). This builds a single shell OR api tool — it does NOT build or edit toolboxes. If you need MULTIPLE related endpoints under one tool name (a whole API surface sharing one credential, e.g. the `moltbook` or a GitHub toolbox), or you need to change one action of an existing toolbox, use the `tool_def` tool instead (mode=\"toolbox\" to create, action=\"update\" to edit one action) — not this. Pick the mode that fits the work:\n"
+	base := "Attach ONE single-action tool to an agent — either the one named in the `agent` argument, or (when omitted) the agent currently in authoring focus, set by your most recent get_agent or create_agent call. Note that create_agent MOVES the focus to the agent it just created, so if you've made sub-agents since you started on your intended target, pass `agent` explicitly rather than trusting focus. This builds a single shell OR api tool — it does NOT build or edit toolboxes. If you need MULTIPLE related endpoints under one tool name (a whole API surface sharing one credential, e.g. the `moltbook` or a GitHub toolbox), or you need to change one action of an existing toolbox, use the `tool_def` tool instead (mode=\"toolbox\" to create, action=\"update\" to edit one action) — not this. Pick the mode that fits the work:\n"
 	if !pipelineAuthoringDisabled {
 		base += "  - mode=\"pipeline\": a multi-step sub-agent flow with its own prompt + inner tools. Use for \"do X, then Y, then summarize\" patterns.\n"
 	}
@@ -68,6 +68,18 @@ func (addToolTool) Params() map[string]ToolParam {
 		"name": {
 			Type:        "string",
 			Description: "Snake_case tool name. Must be unique within the agent's tool set; re-using a name overwrites.",
+		},
+		"script_body": {
+			Type:        "string",
+			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export — the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name']. Network calls: use `from gohort import fetch_url` — urllib/requests/curl/wget are blocked in the sandbox.",
+		},
+		"script_name": {
+			Type:        "string",
+			Description: "(shell) Optional filename for script_body. Defaults to \"script.py\". Pick an extension matching the language (e.g. \"run.sh\") so the inferred command_template uses the right interpreter.",
+		},
+		"agent": {
+			Type:        "string",
+			Description: "Optional. Name or id of the agent to attach this tool to. Omit to use the agent currently in authoring focus (your most recent get_agent / create_agent). PASS IT EXPLICITLY whenever you've created another agent since you started working on the intended target — create_agent moves the focus, so building helper sub-agents for a parent and then calling add_tool would otherwise attach the tool to the last helper instead of the parent.",
 		},
 		"mode": {
 			Type: "string",
@@ -95,7 +107,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		// Shell-mode fields.
 		"command_template": {
 			Type:        "string",
-			Description: "(shell mode) Shell command template. {param_name} placeholders are shell-quoted at dispatch time. Runs in a workspace sandbox.",
+			Description: "(shell mode) Shell command template. {param_name} placeholders are shell-quoted at dispatch time. Runs in a workspace sandbox. Optional when you pass script_body with a recognized extension — the framework infers the template from it; state it explicitly for stdin / kwargs / non-positional shapes.",
 		},
 		// API-mode fields.
 		"url_template": {
@@ -131,20 +143,39 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	if sess == nil || sess.Username == "" || sess.DB == nil || sess.ChatSessionID == "" {
 		return "", errors.New("add_tool requires an authenticated chat session")
 	}
-	// Resolve focus from the side-channel slot — set by get_agent /
-	// create_agent on successful return. No fallback / no for_agent
-	// argument; the single-source-of-truth keeps the LLM's mental
-	// model clean.
-	focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)
-	if focusedID == "" {
-		return "", errors.New("add_tool: no agent in authoring focus — call agents(action=\"get\", ...) on the target agent (to modify an existing one) or create_agent (to start a new one) first. The agent you act on becomes the implicit target for subsequent add_tool calls in this session")
-	}
-	target, ok := loadAgent(sess.DB, focusedID)
-	if !ok {
-		return "", fmt.Errorf("add_tool: focused agent %q is gone from storage — re-call get_agent on a valid agent to reset focus", focusedID)
+	// Target resolution: an explicit `agent` argument wins; otherwise fall back
+	// to the authoring-focus slot (set by get_agent / create_agent).
+	//
+	// The explicit argument deliberately reverses an earlier "focus is the
+	// single source of truth, no for_agent argument" decision. That model holds
+	// only while focus moves where the LLM expects — and it doesn't: create_agent
+	// STAMPS focus, so authoring a parent, then creating two helper sub-agents
+	// for it, silently retargets the next add_tool onto the last helper. Observed
+	// in the wild: a tool meant for an OSINT parent landed on its sub-agent, with
+	// no error and no signal, and the model then mis-diagnosed the failure.
+	// Implicit state that silently changes under you isn't a clean mental model,
+	// it's a trap. Focus stays as the ergonomic default for the common
+	// single-agent flow; `agent` is the escape hatch when it isn't.
+	var target AgentRecord
+	if key := strings.TrimSpace(stringArg(args, "agent")); key != "" {
+		found, ok := findAgentByNameOrID(sess.DB, sess.Username, key)
+		if !ok {
+			return "", fmt.Errorf("add_tool: no agent named or id'd %q in your fleet — call agents(action=\"list\") to see the exact names", key)
+		}
+		target = found
+	} else {
+		focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)
+		if focusedID == "" {
+			return "", errors.New("add_tool: no agent in authoring focus and no agent argument — either pass agent=\"<name or id>\" to name the target explicitly, or call agents(action=\"get\", ...) / create_agent first to set focus")
+		}
+		found, ok := loadAgent(sess.DB, focusedID)
+		if !ok {
+			return "", fmt.Errorf("add_tool: focused agent %q is gone from storage — re-call get_agent on a valid agent to reset focus, or pass agent=\"<name or id>\"", focusedID)
+		}
+		target = found
 	}
 	if target.Owner != sess.Username {
-		return "", fmt.Errorf("add_tool: focused agent %q is a read-only seed — call clone_agent to make an editable copy, then continue", target.Name)
+		return "", fmt.Errorf("add_tool: agent %q is a read-only seed — call clone_agent to make an editable copy, then continue", target.Name)
 	}
 	name := strings.TrimSpace(stringArg(args, "name"))
 	if name == "" {
@@ -196,11 +227,28 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		tt.PipelineMaxRounds = intFromArgs(args, "pipeline_max_rounds")
 	case "shell":
 		cmd := strings.TrimSpace(stringArg(args, "command_template"))
+		// script_body was previously accepted-and-dropped here: the record kept
+		// a command_template pointing at a file nothing ever wrote, so the first
+		// dispatch died on a missing script and the error blamed a "legacy
+		// tool". Route through the same seam tool_def uses — it infers the
+		// template when omitted, ships the script into the workspace, and
+		// returns the names to persist so the tool travels with its code.
+		scriptBody := stringArg(args, "script_body")
+		outCmd, scriptName, canonical, serr := temptool.PrepareScriptBody(
+			sess, name, cmd, scriptBody, strings.TrimSpace(stringArg(args, "script_name")), args["params"],
+		)
+		if serr != nil {
+			return "", serr
+		}
+		cmd = outCmd
 		if cmd == "" {
-			return "", errors.New("command_template is required for mode=\"shell\"")
+			return "", errors.New("command_template is required for mode=\"shell\" (or pass script_body with a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer it)")
 		}
 		tt.Mode = "" // legacy shell mode key is empty string per common.go
 		tt.CommandTemplate = cmd
+		tt.ScriptBody = scriptBody
+		tt.ScriptName = scriptName
+		tt.CanonicalScriptName = canonical
 	case "api":
 		url := strings.TrimSpace(stringArg(args, "url_template"))
 		if url == "" {

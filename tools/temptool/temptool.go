@@ -241,70 +241,22 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	scriptBody := StringArg(args, "script_body")
 	scriptName := strings.TrimSpace(StringArg(args, "script_name"))
 
-	// Auto-infer command_template when omitted but a script_body was
-	// supplied. Builder commonly forgets command_template on first try
-	// because "I gave you the script, just run it" is the natural mental
-	// model; we satisfy that intent rather than bouncing them. Inferred
-	// template is `<interpreter> {workspace_dir}/<script> {p1} {p2}…`
-	// with params in alphabetical order (deterministic; the LLM can
-	// always supply an explicit command_template for non-positional
-	// shapes like JSON-on-stdin or kwargs). Logged so the inference is
-	// auditable + the LLM can see what was assumed.
-	if cmd == "" && scriptBody != "" {
-		paramOrder, err := paramNamesInDefinitionOrder(args["params"])
-		if err == nil {
-			effective := scriptName
-			if effective == "" {
-				effective = "script.py"
-			}
-			cmd = inferCommandTemplate(effective, scriptBody, paramOrder)
-			if cmd != "" {
-				Log("[temptool] auto-inferred command_template=%q (script=%s, params=%v) — supply command_template explicitly for kwargs / stdin / non-positional shapes",
-					cmd, effective, paramOrder)
-			}
-		}
+	// script_body shortcut: infer command_template when omitted, auto-mint a
+	// sandbox, and write the script into it so command_template can reference
+	// it via {workspace_dir}/<script_name> — workspace-create + file-write +
+	// tool-create collapsed into one call, so the LLM never has to think about
+	// workspaces. Shared with orchestrate's add_tool via PrepareScriptBody:
+	// both authoring surfaces MUST behave identically here, and they didn't —
+	// add_tool silently dropped script_body entirely. No-op when scriptBody is
+	// blank, which leaves the else-branch below to handle the local(write) case.
+	cmd, scriptName, canonicalName, err := PrepareScriptBody(sess, name, cmd, scriptBody, scriptName, args["params"])
+	if err != nil {
+		return "", err
 	}
 	if cmd == "" {
 		return "", fmt.Errorf("command_template is required (or supply script_body for a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer python3 {workspace_dir}/script.py; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name'])")
 	}
-
-	// script_body shortcut: auto-mint a sandbox, write the script
-	// into it, and let command_template reference it via
-	// {workspace_dir}/<script_name>. Collapses workspace-create +
-	// file-write + tool-create into one call. The LLM never has to
-	// think about workspaces.
-	canonicalName := ""
-	if scriptBody != "" {
-		// Keep the LLM's chosen script_name as-is in the tool record
-		// (the LLM-facing name) but ALSO compute a framework-assigned
-		// canonical name for on-disk storage. Names + content hash
-		// guarantee no collision across tools. The dispatcher
-		// translates references at dispatch time, so the LLM never
-		// sees the canonical name in its view of the tool record.
-		if scriptName == "" {
-			scriptName = "script.py"
-		}
-		if strings.ContainsAny(scriptName, "/\\") {
-			return "", fmt.Errorf("script_name must be a single filename (no path separators)")
-		}
-		canonicalName = canonicalScriptName(name, scriptName, scriptBody)
-		if _, err := EnsureSessionWorkspace(sess); err != nil {
-			return "", fmt.Errorf("auto-mint workspace: %w", err)
-		}
-		// Write to disk under the canonical name. The command_template
-		// still references the LLM's preferred name — dispatch will
-		// translate.
-		scriptPath := filepath.Join(sess.WorkspaceDir, canonicalName)
-		if err := os.MkdirAll(filepath.Dir(scriptPath), 0700); err != nil {
-			return "", fmt.Errorf("create parent dir for script %q: %w", canonicalName, err)
-		}
-		if err := os.WriteFile(scriptPath, []byte(scriptBody), 0700); err != nil {
-			return "", fmt.Errorf("write script %q: %w", canonicalName, err)
-		}
-		if !strings.Contains(cmd, scriptName) && !strings.Contains(cmd, "{workspace_dir}") {
-			return "", fmt.Errorf("script_body=%q was written to %s (canonical %s) but command_template doesn't reference it — add {workspace_dir}/%s to the template", scriptName, scriptPath, canonicalName, scriptName)
-		}
-	} else if strings.Contains(cmd, "{workspace_dir}") {
+	if scriptBody == "" && strings.Contains(cmd, "{workspace_dir}") {
 		// command_template references {workspace_dir} but no script_body
 		// was supplied. Auto-mint a sandbox so the placeholder resolves;
 		// the LLM is presumably writing the script itself via local(write).
@@ -1479,9 +1431,17 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// final cmd is translated to its name at line ~957.
 	if tt.ScriptBody == "" {
 		missing := missingWorkspaceScriptRefs(tt.CommandTemplate, workspaceDir)
-		Debug("[temptool] %q legacy-script validation: missing=%v", tt.Name, missing)
+		Debug("[temptool] %q missing-script validation: missing=%v", tt.Name, missing)
 		if len(missing) > 0 {
-			return "", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that don't exist on disk. This is a legacy tool authored before deploy-time validation existed. Re-author it: pass script_body to ship the script with the tool record (preferred — survives workspace wipes), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename that matches what command_template expects before each dispatch", tt.Name, missing)
+			// State the CONDITION, not a guess at the cause. This used to assert
+			// "a legacy tool authored before deploy-time validation existed",
+			// which is a claim the check can't support: it fires for any record
+			// with no script_body, including one authored seconds ago (an
+			// authoring surface that dropped script_body) and the framework's own
+			// documented local(write) path after a workspace wipe. A confidently
+			// wrong diagnosis is worse than none — it sent an authoring model
+			// chasing the wrong fix instead of the real one.
+			return "", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that aren't on disk, and the tool record carries no script_body to redeploy them. Either the script was written into the workspace separately and the workspace has since been wiped, or the tool was authored without shipping its script. Fix: re-author with script_body=\"...\" so the script travels WITH the tool record (preferred — survives workspace wipes and export/import), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename matching what command_template expects before each dispatch", tt.Name, missing)
 		}
 	}
 
@@ -1542,7 +1502,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// connector application / etc. between them. If you see this
 	// "enter" but never the next "exit", the hang is inside the
 	// sandbox call itself; if you don't see this "enter", the hang
-	// is upstream (redeploy or legacy-script validation).
+	// is upstream (redeploy or missing-script validation).
 	Debug("[temptool] %q sandbox enter (envArgs=%d hook=%v)", tt.Name, len(envArgs), hook != nil)
 	tExec := time.Now()
 	res := RunSandboxedShellWithEnv(ctx, cmd, workspaceDir, envArgs)
@@ -3299,6 +3259,63 @@ func jsonMarshal(v any) (string, error) {
 // that take strict argv shapes), they supply an explicit
 // command_template — the inference only fires when command_template
 // is omitted.
+// PrepareScriptBody is the shared implementation of the script_body authoring
+// shortcut: infer command_template when the author omitted it, materialize the
+// script into the session workspace under a collision-proof canonical name, and
+// hand back the fields to stamp onto the TempTool record.
+//
+// It exists so the two authoring surfaces can't drift. tool_def grew this
+// behavior inline; add_tool never had it, and silently DROPPED a script_body it
+// was handed — the tool record kept a command_template pointing at a file that
+// was never written, so the first dispatch failed with a "script doesn't exist"
+// error that blamed a "legacy tool". Any surface that accepts script_body must
+// route through here.
+//
+// cmd is the caller's command_template ("" to infer). Returns the effective
+// template plus the LLM-facing and canonical script names. A blank scriptBody
+// is a no-op that echoes cmd back, so callers can call it unconditionally.
+func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName string, params any) (outCmd, outScriptName, outCanonical string, err error) {
+	if strings.TrimSpace(scriptBody) == "" {
+		return cmd, "", "", nil
+	}
+	if scriptName == "" {
+		scriptName = "script.py"
+	}
+	if strings.ContainsAny(scriptName, "/\\") {
+		return "", "", "", fmt.Errorf("script_name must be a single filename (no path separators)")
+	}
+	if strings.TrimSpace(cmd) == "" {
+		paramOrder, perr := paramNamesInDefinitionOrder(params)
+		if perr == nil {
+			cmd = inferCommandTemplate(scriptName, scriptBody, paramOrder)
+			if cmd != "" {
+				Log("[temptool] auto-inferred command_template=%q (script=%s, params=%v) — supply command_template explicitly for kwargs / stdin / non-positional shapes",
+					cmd, scriptName, paramOrder)
+			}
+		}
+	}
+	if strings.TrimSpace(cmd) == "" {
+		return "", "", "", fmt.Errorf("command_template is required (or supply script_body with a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer it; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name'])")
+	}
+	canonical := canonicalScriptName(toolName, scriptName, scriptBody)
+	if _, werr := EnsureSessionWorkspace(sess); werr != nil {
+		return "", "", "", fmt.Errorf("auto-mint workspace: %w", werr)
+	}
+	scriptPath := filepath.Join(sess.WorkspaceDir, canonical)
+	if mkerr := os.MkdirAll(filepath.Dir(scriptPath), 0700); mkerr != nil {
+		return "", "", "", fmt.Errorf("create parent dir for script %q: %w", canonical, mkerr)
+	}
+	if werr := os.WriteFile(scriptPath, []byte(scriptBody), 0700); werr != nil {
+		return "", "", "", fmt.Errorf("write script %q: %w", canonical, werr)
+	}
+	// The template must actually reference the script, or the tool is born
+	// broken — the exact failure this helper exists to prevent.
+	if !strings.Contains(cmd, scriptName) && !strings.Contains(cmd, "{workspace_dir}") {
+		return "", "", "", fmt.Errorf("script_body was written to %s (canonical %s) but command_template %q doesn't reference it — add {workspace_dir}/%s to the template", scriptPath, canonical, cmd, scriptName)
+	}
+	return cmd, scriptName, canonical, nil
+}
+
 func inferCommandTemplate(scriptName, scriptBody string, paramOrder []string) string {
 	if scriptName == "" {
 		return ""
