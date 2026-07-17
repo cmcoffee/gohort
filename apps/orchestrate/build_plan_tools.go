@@ -463,13 +463,21 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 // blocked or still pending. Returns a structured summary that the
 // model must address in its Phase 5 synthesis (either explicitly
 // surfacing the gap to the user, or revising the plan to fill it).
-// Sets BuildPlanState.GapsReported so the prompt-level gate knows
+// Sets BuildPlanState.GapsReported (currently advisory — nothing reads it;
+// the prompt is what compels the call) so a future gate knows
 // the call happened.
+//
+// Grades TWO independent things, deliberately. Step status is the model's OWN
+// claim — it calls mark_step_done itself — so it cannot stand in for evidence:
+// a step read "done" over a tool whose verification had FAILED, this tool
+// answered "All steps completed successfully", and the model told the user
+// everything was implemented. The verification ledger supplies the second,
+// independent signal (see tool_verify_ledger.go).
 func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "report_build_gaps",
-			Description: "BEFORE your final reply, call this to surface every blocked or still-pending step in the build plan. Returns a structured summary you MUST address in the reply — either explain the gap to the user, or call revise_build_plan to fill it (if within the revision cap). When the plan is fully complete (all steps done) this returns an empty summary and no gap section is needed in the reply. Takes no arguments.",
+			Description: "BEFORE your final reply, call this to surface every gap in the build: blocked or still-pending steps, AND any tool you authored that does not currently stand verified (never tested, failed its test, or edited since it last passed). Returns a structured summary you MUST address in the reply — either explain the gap to the user, or fix it (verify the tool, or call revise_build_plan within the revision cap) and re-call this. Marking a step done is your OWN claim and does not make its tool verified; only a passing test does. When every step is done and every authored tool is verified, this reports no gaps and you may write the reply. Takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 			Caps:        []Capability{CapRead},
 		},
@@ -484,9 +492,14 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 				Title  string `json:"title"`
 				Reason string `json:"reason"`
 			}
+			type unverifiedEntry struct {
+				Tool   string `json:"tool"`
+				Reason string `json:"reason"`
+			}
 			type gapReport struct {
-				Blocked []gapEntry `json:"blocked,omitempty"`
-				Skipped []gapEntry `json:"skipped,omitempty"`
+				Blocked    []gapEntry        `json:"blocked,omitempty"`
+				Skipped    []gapEntry        `json:"skipped,omitempty"`
+				Unverified []unverifiedEntry `json:"unverified,omitempty"`
 			}
 			rep := gapReport{}
 			for _, s := range plan.Steps {
@@ -497,15 +510,30 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 					rep.Skipped = append(rep.Skipped, gapEntry{Step: s.Number, Title: s.Title, Reason: "step never completed"})
 				}
 			}
+			// Step status is SELF-REPORTED: the model calls mark_step_done itself,
+			// so a step can read "done" over a tool whose verification failed —
+			// which is precisely what happened, and this gate said "All steps
+			// completed successfully" on top of it. Grade the tools too, from the
+			// verification ledger, which records the outcome where it was actually
+			// known instead of leaving it as prose in a scrolled-past result.
+			if t.session != nil {
+				for _, u := range unverifiedTools(t.udb, t.session.ID) {
+					rep.Unverified = append(rep.Unverified, unverifiedEntry{Tool: u.Tool, Reason: u.Reason})
+				}
+			}
 			emitBuildPlanBlock(t.sse, plan)
-			if len(rep.Blocked) == 0 && len(rep.Skipped) == 0 {
-				return "All steps completed successfully — no gaps to report. You may write the final reply.", nil
+			if len(rep.Blocked) == 0 && len(rep.Skipped) == 0 && len(rep.Unverified) == 0 {
+				return "All steps completed and every authored tool verified — no gaps to report. You may write the final reply.", nil
 			}
 			data, err := json.Marshal(rep)
 			if err != nil {
 				return "", fmt.Errorf("report_build_gaps: marshal: %v", err)
 			}
-			return string(data) + "\n\nIncorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap).", nil
+			msg := string(data) + "\n\nIncorporate each gap into your final reply: explain what couldn't be built and why, OR call revise_build_plan to address it (within the revision cap)."
+			if len(rep.Unverified) > 0 {
+				msg += "\n\nThe `unverified` tools above were authored but do NOT currently stand verified. Do NOT tell the user they are working. Either verify each one now (add_tool with test_args, or tool_def(action=\"test\")) and re-call this, or state plainly in your reply which tools are unverified and why."
+			}
+			return msg, nil
 		},
 	}
 }

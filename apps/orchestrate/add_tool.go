@@ -330,13 +330,20 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	// LLM, given both `call_<credential>` and the new named tool in its
 	// catalog on the next round, picks the wrong one and produces
 	// "url is required" against a perfectly-good named wrapper.
+	// Every exit below records the tool's verification standing to the session
+	// ledger, so the build-plan done-gate grades on what was VERIFIED rather
+	// than on the model's own "step done" claim. Prose alone wasn't enough: a
+	// FAILED verify here scrolled past, the model marked its step done anyway,
+	// and report_build_gaps cheerfully signed off.
 	testArgs := testArgsFromArgs(args, "test_args")
 	if len(testArgs) > 0 {
 		copy := tt
 		out, dispatchErr := temptool.DispatchTempToolDirect(sess, &copy, testArgs)
 		if dispatchErr != nil {
+			RecordToolVerification(sess, tt.Name, false, fmt.Sprintf("verification call failed: %v", dispatchErr))
 			return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args FAILED: %v. Re-call add_tool with the same name to fix the template (re-state every field — partial updates aren't supported). Once it returns a sensible result you're done.", tt.Name, mode, verb, target.Name, dispatchErr), nil
 		}
+		RecordToolVerification(sess, tt.Name, true, "")
 		trimmed := strings.TrimSpace(out)
 		if len(trimmed) > 1200 {
 			trimmed = trimmed[:1200] + "\n... [truncated]"
@@ -344,6 +351,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args succeeded:\n\n%s\n\nIf the result looks right, you're done — END THE TURN with a one-line summary. If the shape is off, re-call add_tool with the same name and a corrected template.", tt.Name, mode, verb, target.Name, trimmed), nil
 	}
 
+	RecordToolVerification(sess, tt.Name, false, "never tested — authored without test_args")
 	return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. NO test_args were provided so the tool was not verified — re-call add_tool with the same fields PLUS test_args={...} to confirm the template works against the real endpoint. (Skip only if the tool has no params or you intend to test from a follow-up round.)", tt.Name, mode, verb, target.Name), nil
 }
 

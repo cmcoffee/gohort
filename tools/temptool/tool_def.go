@@ -118,7 +118,14 @@ func BuildToolDef() *GroupedTool {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
-			return createGrouped(args, sess)
+			out, err := createGrouped(args, sess)
+			if err == nil {
+				// A freshly authored tool is UNVERIFIED until something proves
+				// otherwise. Recorded so the build-plan done-gate can't sign off
+				// on a tool nobody ever ran.
+				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "authored but never tested — run tool_def(action=\"test\")")
+			}
+			return out, err
 		},
 	})
 
@@ -163,7 +170,15 @@ func BuildToolDef() *GroupedTool {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
-			return updateGrouped(args, sess)
+			out, err := updateGrouped(args, sess)
+			if err == nil {
+				// An edit INVALIDATES any earlier pass: the tool that was tested
+				// is not the tool that now exists. This is the exact hole that
+				// let a failed verify get "fixed" by an update and then reported
+				// as done without anyone re-running it.
+				RecordToolVerification(sess, strings.TrimSpace(StringArg(args, "name")), false, "edited since it was last tested — re-run tool_def(action=\"test\")")
+			}
+			return out, err
 		},
 	})
 
@@ -1285,12 +1300,20 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		b.WriteByte('\n')
 	}
 
+	// Record the verdict where it's actually known, rather than leaving
+	// downstream to parse this prose. Only a clean sweep counts as verified:
+	// a FAIL obviously doesn't, and neither does "all automated checks passed
+	// but N write endpoints still need a manual call" — an unfired write
+	// endpoint is exactly the untested grenade this action exists to catch.
 	switch {
 	case failCount > 0:
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", failCount, len(endpoints)))
 		fmt.Fprintf(&b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", failCount, len(endpoints))
 	case writeManual > 0:
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired — needs one manual live call each to confirm a 2xx", writeManual))
 		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each — fire one, confirm a 2xx, then it's done.", writeManual)
 	default:
+		RecordToolVerification(sess, name, true, "")
 		b.WriteString("RESULT: all endpoints passed. Tool verified.")
 	}
 	return b.String(), nil

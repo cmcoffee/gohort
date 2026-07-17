@@ -16,6 +16,7 @@ package core
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -79,6 +80,34 @@ var AdminToolScopeState func(db Database, owner, toolName string) (ToolScopeStat
 //   target=<agent>, on=true  → enable (global: un-deny / allow; scoped: add copy)
 //   target=<agent>, on=false → disable (global: deny/de-allow; scoped: drop copy)
 var AdminSetToolScope func(db Database, owner, toolName, target string, on bool) error
+
+// ToolVerifyRecorder, when set, records whether an authored tool currently
+// stands VERIFIED for the calling chat session. Set by the app that owns the
+// authoring plan (orchestrate); called by every surface that can change a
+// tool's verification standing, wherever that outcome is actually known:
+//
+//   - a verification that passed        → passed=true
+//   - one that failed                   → passed=false, reason = why
+//   - a create/update                   → passed=false, reason = "edited"
+//     (a write invalidates any earlier pass — the tool is not the tool that
+//     was tested)
+//
+// It exists because verification outcomes were pure prose in a tool result:
+// they scrolled by and nothing downstream could see them. The build-plan gate
+// therefore graded on self-reported step completion, and a model that marked
+// its own step done after a FAILED verify was told "All steps completed
+// successfully — no gaps to report", then reported success to the user.
+//
+// nil is a no-op, so tools work normally outside an authoring session.
+var ToolVerifyRecorder func(sess *ToolSession, toolName string, passed bool, reason string)
+
+// RecordToolVerification is the nil-safe way to call ToolVerifyRecorder.
+func RecordToolVerification(sess *ToolSession, toolName string, passed bool, reason string) {
+	if ToolVerifyRecorder == nil || sess == nil || strings.TrimSpace(toolName) == "" {
+		return
+	}
+	ToolVerifyRecorder(sess, toolName, passed, reason)
+}
 
 // AdminRehomeOrphanTool, when set, re-homes an orphaned tool and removes it
 // from the orphan store. target is "global" (into the user-wide pool) or an

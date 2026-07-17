@@ -217,6 +217,7 @@ func deleteChatSession(db Database, agentID, sessionID string) {
 	}
 	db.Unset(sessionTable(agentID), sessionID)
 	clearAuthoringInProgress(db, sessionID)
+	clearToolVerifications(db, sessionID)
 	DeleteSessionTempTools(db, sessionID)
 	// Also drop the rolling-summary / fold cursor for this session, so
 	// clearing an orchestrator thread is a COMPLETE wipe. Otherwise the
@@ -250,6 +251,7 @@ func dropChatSessionBucket(db Database, agentID string) {
 		// of one table walk per session.
 		db.Unset(tbl, k)
 		clearAuthoringInProgress(db, k)
+		clearToolVerifications(db, k)
 		DeleteSessionTempTools(db, k)
 		deleteCompactState(db, agentID, k)
 	}
