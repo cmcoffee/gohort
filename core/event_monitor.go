@@ -364,6 +364,11 @@ func isScheduledKind(kind string) bool {
 	return kind == EventKindPoll || kind == EventKindHTTP || kind == EventKindWatch
 }
 
+// IsScheduledEventKind is the exported predicate for the above — a webhook
+// monitor is push-triggered and has no interval to edit, so the Scheduler UI
+// uses this to decide whether a monitor's schedule is editable.
+func IsScheduledEventKind(kind string) bool { return isScheduledKind(kind) }
+
 func nextPoll(m EventMonitor, from time.Time) time.Time {
 	iv := m.IntervalSeconds
 	if iv < minPollInterval {
@@ -570,6 +575,35 @@ func StartEventMonitorScheduler() {
 	if rearmed > 0 {
 		Log("[event] startup self-heal: re-armed %d active scheduled monitor(s)", rearmed)
 	}
+}
+
+// RunEventMonitorCheck runs one check of a scheduled monitor immediately — the
+// same work a scheduled tick does (record liveness, then execute the kind's
+// check, firing the wake/notify if the condition matches) — off the normal
+// cadence. It backs the console "Test" action so a monitor can be exercised on
+// demand without waiting for its next poll. It does NOT re-arm or alter the
+// monitor's schedule: the recurring chain keeps its own cadence untouched. A
+// paused monitor still runs (a manual test is explicit intent). Returns an error
+// for a missing monitor or a push-only (webhook) kind, which has no check to run.
+func RunEventMonitorCheck(ctx context.Context, db Database, owner, name string) error {
+	m, ok := GetEventMonitor(db, owner, name)
+	if !ok {
+		return fmt.Errorf("no such event monitor")
+	}
+	if !isScheduledKind(m.Kind) {
+		return fmt.Errorf("this monitor is push-triggered — it has no check to run")
+	}
+	m.LastChecked = time.Now()
+	SaveEventMonitor(db, m)
+	switch m.Kind {
+	case EventKindPoll:
+		executeEventPoll(ctx, db, m)
+	case EventKindHTTP:
+		executeHTTPPoll(ctx, db, m)
+	case EventKindWatch:
+		executeWatchPoll(ctx, db, m)
+	}
+	return nil
 }
 
 // executeEventPoll runs the checker agent and, when its answer matches and

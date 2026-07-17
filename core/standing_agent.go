@@ -382,6 +382,21 @@ func StartStandingScheduler() {
 	})
 }
 
+// RunStandingAgentNow fires a standing agent's run immediately, off its normal
+// schedule, as a one-off. It backs the console "Run now" action so an agent can
+// be exercised on demand. The run is stamped with the "manual" trigger, which
+// (unlike "schedule") does NOT re-arm the cadence — the recurring schedule keeps
+// firing on its own timer, undisturbed. A paused agent still runs (a manual test
+// is explicit intent). Returns an error if no such agent exists; otherwise the
+// stored ledger record for the run.
+func RunStandingAgentNow(ctx context.Context, db Database, owner, name string) (RunRecord, error) {
+	sa, ok := GetStandingAgent(db, owner, name)
+	if !ok {
+		return RunRecord{}, fmt.Errorf("no such standing agent")
+	}
+	return executeStandingRun(ctx, db, sa, "manual"), nil
+}
+
 // executeStandingRun runs a standing agent via the registered runner and
 // records the outcome to the run-ledger. With no runner registered it
 // records a non-fatal "attention" entry rather than doing anything. Returns

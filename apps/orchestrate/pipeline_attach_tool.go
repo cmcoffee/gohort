@@ -38,12 +38,34 @@ import (
 // def belongs to someone else). Tool names are de-duplicated so two
 // pipelines that sanitize to the same handle don't shadow each other.
 func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
-	if t == nil || len(t.agent.AttachedPipelines) == 0 {
+	if t == nil {
 		return nil
 	}
-	out := make([]AgentToolDef, 0, len(t.agent.AttachedPipelines))
-	usedNames := make(map[string]bool, len(t.agent.AttachedPipelines))
+	// Effective set = this agent's explicit attachments UNION the owner's
+	// GLOBAL pipelines, minus this agent's opt-outs (DisabledPipelines). The
+	// global scope is the pipeline analogue of a user-wide tool pool: a
+	// pipeline marked Global reaches every agent that hasn't denied it.
+	ids := make([]string, 0, len(t.agent.AttachedPipelines))
+	seenID := make(map[string]bool, len(t.agent.AttachedPipelines))
 	for _, pid := range t.agent.AttachedPipelines {
+		if !seenID[pid] {
+			seenID[pid] = true
+			ids = append(ids, pid)
+		}
+	}
+	for _, d := range ListPipelineDefs(t.udb, t.user) {
+		if !d.Global || seenID[d.ID] || containsString(t.agent.DisabledPipelines, d.ID) {
+			continue
+		}
+		seenID[d.ID] = true
+		ids = append(ids, d.ID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make([]AgentToolDef, 0, len(ids))
+	usedNames := make(map[string]bool, len(ids))
+	for _, pid := range ids {
 		def, ok := LoadPipelineDef(t.udb, t.user, pid)
 		if !ok {
 			continue

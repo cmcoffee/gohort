@@ -484,6 +484,9 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		Username:      runtimeUser,
 		DB:            runtimeDB,
 		ChatSessionID: subSessID,
+		// Credential scope travels with the agent — a dispatched run can
+		// fetch_url too, so enforce the same deny-set here.
+		DeniedCredentials: credentialDenySet(target),
 	}
 	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
 		subSess.WorkspaceDir = ws
@@ -966,6 +969,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		DB:                 runtimeDB,
 		ChatSessionID:      subSessionID,
 		ReplyAuthorizedKey: run.ReplyAuthorizedKey, // in-thread reply skips the send approval gate
+		DeniedCredentials:  credentialDenySet(target),
 	}
 	if ws, werr := EnsureWorkspaceDir(runtimeUser); werr == nil {
 		subSess.WorkspaceDir = ws

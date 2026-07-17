@@ -1275,6 +1275,16 @@ type SingleFireTool interface {
 	SingleFirePerBatch() bool
 }
 
+// TrustedOutputTool is an optional interface a ChatTool implements to declare
+// its result is framework-generated control / authoring text, not raw external
+// content — so the untrusted-content fence should be suppressed even when the
+// tool declares CapNetwork for a sub-capability (e.g. tool_def's "test"
+// action). Maps to Tool.TrustedOutput at conversion time. A tool whose PURPOSE
+// is fetching external content must NOT implement this as true.
+type TrustedOutputTool interface {
+	TrustedOutput() bool
+}
+
 // ToolSession carries mutable per-session state shared between the caller
 // and session-aware tools. Pass a *ToolSession when building agent tools via
 // GetAgentToolsWithSession; read results back from it after the loop completes.
@@ -1333,6 +1343,15 @@ type ToolSession struct {
 	// nil-safe.
 	TempTools []*TempTool
 
+	// DeniedCredentials is the set of SecureAPI credential names the running
+	// agent may NOT dispatch through (mirrors AgentRecord.DisabledCredentials).
+	// The app populates it at session setup for an agent turn. Enforced at the
+	// fetch_url auto-route (LLM tool + script gohort.fetch_url): a covered host
+	// whose credential is denied is BLOCKED rather than routed, so credential
+	// scope can't be bypassed by fetching the host directly. Empty = no
+	// restriction. nil-safe via CredentialDenied.
+	DeniedCredentials map[string]bool
+
 	// BundledToolNames is the set of tool names attached DIRECTLY to the
 	// running agent's record (AgentRecord.Tools) rather than authored as
 	// session drafts or approved into the user pool. The app wires it at
@@ -1351,6 +1370,24 @@ type ToolSession struct {
 	// callback rather than temptool reaching into agent storage. Nil ⇒
 	// delete reports the tool as unremovable and points at the editor.
 	UnbundleTool func(name string) error
+
+	// BundleTool, when set, attaches (or replaces by name) an authored
+	// tool on the CALLING agent's OWN record (AgentRecord.Tools) — the
+	// agent-scoped authoring target. tool_def(create) routes here for
+	// every non-Builder agent so a self-serve agent grows only its own
+	// kit and never writes to the user-wide pool. The app wires it at
+	// session setup, capturing the running agent's identity, so temptool
+	// never reaches into agent storage. Nil ⇒ agent scope degrades to a
+	// session-only draft (no durable record write).
+	BundleTool func(t TempTool) error
+
+	// CanScopeGlobal reports whether THIS caller may author a tool into
+	// the user-wide persistent pool. True only for the Builder agent —
+	// the trusted authoring surface. Every other agent is forced to
+	// agent scope (its own record) regardless, so it can never grow the
+	// shared capability surface. tool_def(create) reads this to choose
+	// between AdminPersistTempTool (global) and BundleTool (agent).
+	CanScopeGlobal bool
 
 	// Network is the framework-managed network-access gate for this
 	// session and every descendant spawned from it. Top-level turns
@@ -1570,6 +1607,13 @@ type TempToolAction struct {
 	Method       string               `json:"method,omitempty"`
 	BodyTemplate string               `json:"body_template,omitempty"`
 	ResponsePipe string               `json:"response_pipe,omitempty"`
+	// Disabled quarantines a single action without touching the rest of
+	// the toolbox: the renderer drops it from the catalog (collapsed OR
+	// expanded) and the dispatcher refuses to run it. Set it when one
+	// action is broken so the other actions keep serving live instead of
+	// the record being all-or-nothing. Re-enable via tool_def update
+	// (actions=[{name, disabled:false}]).
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // TempTool is a runtime-defined tool created via create_temp_tool or
@@ -1618,6 +1662,15 @@ type TempTool struct {
 	// Adding a pipe upgrades the wrapper tool's required caps to
 	// include CapExecute.
 	ResponsePipe string `json:"response_pipe,omitempty"`
+	// Expand (toolbox mode only) surfaces each action as its own
+	// top-level `<toolbox>_<action>` tool instead of one collapsed
+	// action="<sub>" catalog entry. The record, credential, artifact,
+	// and governance stay a single entity — expansion is purely how the
+	// tool is PRESENTED to the LLM. Off by default (collapsed group);
+	// opt in per tool via tool_def update(name, expand:true). Expanded,
+	// a broken action fixes/quarantines as one named tool instead of an
+	// opaque bundle. Ignored for non-toolbox modes.
+	Expand bool `json:"expand,omitempty"`
 	// Recipe is a declarative manifest of files that get deployed
 	// into a fresh sandbox dir on every dispatch. Replaces the older
 	// tar.gz-snapshot model: the recipe is human-readable, diffable,
@@ -1903,6 +1956,36 @@ func (s *ToolSession) HasTempTool(name string) bool {
 		}
 	}
 	return false
+}
+
+// LookupTempTool returns the LIVE temp-tool record registered on the
+// session under name, or nil when absent. Returns the actual pointer (not
+// a copy) so a caller dispatching a tool sees mutations applied mid-turn by
+// tool_def update/recreate — the fix for a stale, frozen turn-start
+// snapshot continuing to dispatch after the record changed. Read-only use
+// only; do not mutate the returned record without holding the session lock.
+func (s *ToolSession) LookupTempTool(name string) *TempTool {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.TempTools {
+		if t.Name == name {
+			return t
+		}
+	}
+	return nil
+}
+
+// CredentialDenied reports whether the running agent is barred from
+// dispatching through the named SecureAPI credential (its scope pill turned
+// this credential OFF for the agent). nil-safe; false when unrestricted.
+func (s *ToolSession) CredentialDenied(name string) bool {
+	if s == nil || len(s.DeniedCredentials) == 0 {
+		return false
+	}
+	return s.DeniedCredentials[name]
 }
 
 // RemoveTempTool deletes a temp tool from the session by name. Returns

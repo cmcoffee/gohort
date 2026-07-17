@@ -218,19 +218,56 @@ func nextSpacedRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() 
 	return next
 }
 
+// futureTimes keeps only the times strictly after now. The input is already
+// sorted ascending (planRandomFireTimes guarantees it), so the first future
+// entry marks the start of the tail.
+func futureTimes(ts []time.Time, now time.Time) []time.Time {
+	for i, t := range ts {
+		if t.After(now) {
+			return ts[i:]
+		}
+	}
+	return nil
+}
+
 // nextRandomFire pops the next fire from the current day's plan, re-planning the
 // next window occurrence when the queue is exhausted. randFloat is injected so
 // the logic is testable; production passes rand.Float64.
+//
+// The day's plan is drawn across the FULL active window [from, to] — the window
+// DURATION is the planning variable — and only the fires still ahead of `now`
+// are kept. Earlier code planned from `now` to the window end, which (a) crammed
+// the whole day's fires into whatever sliver of the window was left when a task
+// was created/edited mid-window, skewing the spacing, and (b) ERRORED when that
+// sliver couldn't hold TimesPerDay fires — even though ScheduleOrchestrateUpdate
+// had already validated the count against the full window. That erroring path is
+// what rejected mid-window schedule edits ("can't hold N fires"). Planning the
+// full window and dropping the past slots means a task started at 16:30 in a
+// 09:00–17:00 window simply gets the fire(s) that happened to fall after 16:30,
+// with the same day-wide density — not all N jammed into 30 minutes.
 func nextRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() float64) (time.Time, error) {
 	future := parseFutureTimes(p.RemainingToday, now)
 	if len(future) == 0 {
-		open := nextWindowOpen(now, p.WindowFromMin, p.WindowToMin)
-		end := startOfLocalDay(open).Add(time.Duration(p.WindowToMin) * time.Minute)
-		times, err := planRandomFireTimes(open, end, p.TimesPerDay, time.Duration(p.MinGapSeconds)*time.Second, randFloat)
+		planDay := func(day time.Time) ([]time.Time, error) {
+			start := day.Add(time.Duration(p.WindowFromMin) * time.Minute)
+			end := day.Add(time.Duration(p.WindowToMin) * time.Minute)
+			return planRandomFireTimes(start, end, p.TimesPerDay, time.Duration(p.MinGapSeconds)*time.Second, randFloat)
+		}
+		day := startOfLocalDay(nextWindowOpen(now, p.WindowFromMin, p.WindowToMin))
+		times, err := planDay(day)
 		if err != nil {
 			return time.Time{}, err
 		}
-		future = times
+		future = futureTimes(times, now)
+		if len(future) == 0 {
+			// Every slot planned for today's window already passed (we're near
+			// its close) — roll to tomorrow's full window, all of which is ahead.
+			times, err = planDay(day.AddDate(0, 0, 1))
+			if err != nil {
+				return time.Time{}, err
+			}
+			future = times
+		}
 	}
 	next := future[0]
 	p.RemainingToday = formatTimes(future[1:])

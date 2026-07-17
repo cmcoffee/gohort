@@ -337,6 +337,8 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/agent/", g(T.handleAgentPage))
 
 	T.HandleFunc("/api/agents", g(T.handleAgentList))
+	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
+	T.HandleFunc("/api/tool-scope", g(T.handleToolScope))
 	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized
 	// Agents / per-app) so the client rebuilds the dropdown with the SAME
 	// separators the initial paint used — a group-less /api/agents rebuild

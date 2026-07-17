@@ -389,6 +389,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("connectors_export_all", connectorsExportAllAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
+			ClientAction("tool_scope_manage", toolScopeManageAction).
+			ClientAction("pipeline_scope_manage", pipelineScopeManageAction).
+			ClientAction("credential_scope_manage", credentialScopeManageAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
 			ClientAction("skills_export", skillsExportAction).
@@ -1079,6 +1082,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									SubmitLabel: "Save changes",
 									Fields:      credentialFormFields(),
 								}),
+								// Scope pill — per-agent revoke of this credential
+								// (global by default). Denying it on an agent drops
+								// every tool that dispatches through it from that
+								// agent's kit.
+								{Type: "button", Label: "Manage scope", Method: "client",
+									PostTo: "credential_scope_manage"},
 								// Enable/Disable pair — only one renders depending on
 								// current state. Left NEUTRAL (no variant): the button
 								// color used to encode action-severity (green Enable /
@@ -1509,6 +1518,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									{Field: "name", Mono: true},
 									{Label: "method", Field: "method", Mono: true},
 									{Label: "url", Field: "url_template", Mono: true},
+									{Label: "body", Field: "body_template", Mono: true, Block: true},
+									{Label: "response_pipe", Field: "response_pipe", Mono: true},
+									{Label: "disabled", Field: "disabled"},
 									{Label: "desc", Field: "description"},
 								}},
 								{Label: "Requested at", Field: "requested_at", Format: "reltime"},
@@ -1529,8 +1541,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
-				Title:    "Persistent Tools (Active)",
-				Subtitle: "Approved tools the LLM gets in every session. Description shows what each one does. Share publishes a tool to ALL users (it loads for everyone's agents, on top of their own pool); Unshare pulls it back to its owner. Delete to revoke immediately. Export a tool (or all tools) as a portable bundle — with dependencies on, the tool's API credential travels with it (as a disabled draft) so it installs cleanly elsewhere.",
+				Title:    "Global Tools",
+				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Manage scope\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes to every USER (loads on top of their own pool); Unshare pulls it back. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 				Body: ui.Stack{Children: []ui.Component{
 					ui.Table{
 						Source:       "api/persistent-tools",
@@ -1539,6 +1551,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						Columns: []ui.Col{
 							{Field: "tool.name", Flex: 1},
 							{Field: "owner", Flex: 0, Mute: true},
+							{Field: "has_missing", Flex: 0, Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+								{Value: true, Label: "⚠ missing", Color: "danger"},
+							}},
 							{Field: "shared", Flex: 0, Label: "Shared", Type: "badge", Badges: []ui.BadgeMapping{
 								{Value: true, Label: "Shared", Color: "success"},
 							}},
@@ -1574,6 +1589,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 										{Field: "name", Mono: true},
 										{Label: "method", Field: "method", Mono: true},
 										{Label: "url", Field: "url_template", Mono: true},
+										{Label: "body", Field: "body_template", Mono: true, Block: true},
+										{Label: "response_pipe", Field: "response_pipe", Mono: true},
+										{Label: "disabled", Field: "disabled"},
 										{Label: "desc", Field: "description"},
 									}},
 									{Label: "Approved at", Field: "approved_at", Format: "reltime"},
@@ -1595,6 +1613,12 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								Optimistic: true},
 							{Type: "button", Label: "Export", Method: "client",
 								PostTo: "tools_export", Compact: true},
+							// Manage scope — the pill editor (Global pill + one pill per
+							// agent). Replaces the old one-shot "Attach to agent" form:
+							// from here you descope to specific agents, disable per agent,
+							// or leave it global.
+							{Type: "button", Label: "Manage scope", Method: "client",
+								PostTo: "tool_scope_manage"},
 							{Type: "button", Label: "Delete",
 								PostTo:     "api/persistent-tools?name={tool.name}&owner={owner}",
 								Method:     "DELETE",
@@ -1611,6 +1635,94 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						},
 					},
 				}},
+			},
+			{
+				Title:    "Agent-Scoped Tools",
+				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the one agent shown; they don't appear in the shared pool. \"Manage scope\" opens the pill editor to promote a tool to global (all your agents) or add it to other agents. A ⚠ badge marks a missing credential dependency.",
+				Body: ui.Table{
+					Source:       "api/persistent-tools",
+					RecordsField: "bundled",
+					RowKey:       "tool.name",
+					Columns: []ui.Col{
+						{Field: "tool.name", Flex: 1},
+						{Field: "agent", Flex: 1, Label: "Agent", Mute: true},
+						{Field: "owner", Flex: 0, Mute: true},
+						{Field: "has_missing", Flex: 0, Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "⚠ missing", Color: "danger"},
+						}},
+						{Field: "tool.description", Flex: 2, Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						ui.Expand("View", ui.RecordView{
+							Pairs: []ui.DisplayPair{
+								{Label: "Name", Field: "tool.name", Mono: true},
+								{Label: "Agent", Field: "agent"},
+								{Label: "Owner", Field: "owner"},
+								{Label: "Description", Field: "tool.description"},
+								{Label: "Mode", Field: "tool.mode"},
+								{Label: "Method", Field: "tool.method", Mono: true},
+								{Label: "Command / URL template", Field: "tool.command_template", Mono: true, Block: true},
+								{Label: "Body template", Field: "tool.body_template", Mono: true, Block: true},
+								{Label: "Script name", Field: "tool.script_name", Mono: true},
+								{Label: "Script body", Field: "tool.script_body", Block: true},
+								{Label: "Credential", Field: "tool.credential", Mono: true},
+								{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
+							},
+						}),
+						// Manage scope — the pill editor. Promoting to global and
+						// attaching to other agents both happen here now (Global pill
+						// on = promote; agent pills add copies).
+						{Type: "button", Label: "Manage scope", Method: "client",
+							PostTo: "tool_scope_manage"},
+					},
+					EmptyText: "No agent-scoped tools.",
+				},
+			},
+			{
+				Title:    "Orphaned Tools",
+				Subtitle: "Formerly agent-scoped tools whose owning agent was deleted. They were captured so they aren't silently lost. Promote one to your user-wide pool to keep it (then use \"Manage scope\" on Global Tools to place it), or Delete to discard. A ⚠ badge marks a missing credential dependency.",
+				Body: ui.Table{
+					Source:       "api/persistent-tools",
+					RecordsField: "orphaned",
+					RowKey:       "tool.name",
+					Columns: []ui.Col{
+						{Field: "tool.name", Flex: 1},
+						{Field: "former_agent_name", Flex: 1, Label: "Former agent", Mute: true},
+						{Field: "owner", Flex: 0, Mute: true},
+						{Field: "has_missing", Flex: 0, Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "⚠ missing", Color: "danger"},
+						}},
+						{Field: "orphaned_at", Format: "reltime", Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						ui.Expand("View", ui.RecordView{
+							Pairs: []ui.DisplayPair{
+								{Label: "Name", Field: "tool.name", Mono: true},
+								{Label: "Former agent", Field: "former_agent_name"},
+								{Label: "Owner", Field: "owner"},
+								{Label: "Description", Field: "tool.description"},
+								{Label: "Mode", Field: "tool.mode"},
+								{Label: "Command / URL template", Field: "tool.command_template", Mono: true, Block: true},
+								{Label: "Script body", Field: "tool.script_body", Block: true},
+								{Label: "Credential", Field: "tool.credential", Mono: true},
+								{Label: "Orphaned at", Field: "orphaned_at", Format: "reltime"},
+							},
+						}),
+						{Type: "button", Label: "Promote to global",
+							PostTo:     "api/persistent-tools?action=orphan_promote&name={tool.name}&owner={owner}",
+							Method:     "POST",
+							Variant:    "success",
+							Confirm:    "Adopt this orphaned tool into your user-wide pool?",
+							Optimistic: true},
+						{Type: "button", Label: "Delete",
+							PostTo:     "api/persistent-tools?action=orphan_delete&name={tool.name}&owner={owner}",
+							Method:     "POST",
+							Variant:    "danger",
+							Confirm:    "Discard this orphaned tool permanently?",
+							Optimistic: true},
+					},
+					EmptyText: "No orphaned tools.",
+				},
 			},
 			{
 				Title:    "Tool Groups",
@@ -1870,6 +1982,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 					},
 					RowActions: []ui.RowAction{
 						ui.Expand("View", ui.JSONView{Field: "detail", Title: "Definition"}),
+						// Scope pill — Global (all agents run it) + per-agent
+						// attach, mirroring the tool scope control.
+						{Type: "button", Label: "Manage scope", Method: "client",
+							PostTo: "pipeline_scope_manage"},
 						{Type: "button", Label: "Delete",
 							PostTo:     "api/pipelines?id={id}",
 							Method:     "DELETE",
@@ -1996,8 +2112,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 
 		"API Credentials": "Tools", "MCP Servers": "Tools", "Connectors": "Tools",
 		"Source Hooks": "Tools", "Persistent Tools (Pending)": "Tools",
-		"Persistent Tools (Active)": "Tools", "Tool Groups": "Tools",
-		"Skills": "Tools", "Pipelines": "Tools", "Catalog": "Tools",
+		"Global Tools": "Tools", "Agent-Scoped Tools": "Tools", "Orphaned Tools": "Tools",
+		"Tool Groups": "Tools",
+		"Skills":     "Tools", "Pipelines": "Tools", "Catalog": "Tools",
 
 		"Agent Capabilities — Outward & Spending": "Agents",
 
@@ -2009,7 +2126,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"System Status": true, "Users": true, "LLM Routing": true,
 		"Cost History (Last 30 Days)": true, "Cost by source": true, "Scheduled Tasks": true,
 		"API Credentials": true, "MCP Servers": true, "Connectors": true, "Source Hooks": true,
-		"Persistent Tools (Pending)": true, "Persistent Tools (Active)": true,
+		"Persistent Tools (Pending)": true, "Global Tools": true,
+		"Agent-Scoped Tools": true, "Orphaned Tools": true,
 		"Tool Groups": true, "Skills": true, "Pipelines": true, "App Groups": true,
 		"Catalog":    true,
 		"Migrations": true, "Database Browser": true,
@@ -2273,6 +2391,89 @@ const toolsExportAction = `function(ctx){
 const toolsExportAllAction = `function(){
   __artifactExport('?all=tool', 'tools.gohort.json');
 }`
+
+// scopeManageActionJS builds a scope-pill client action for one KIND
+// (tool | pipeline | credential). All three share the same fetch/post glue
+// against api/tool-scope?kind=<kind> and the generic pill renderer
+// (window.uiRenderScopePills in core/ui) — only the record-identifier
+// expression, the modal title label, and the decorate(st)→{primary,items,note}
+// copy differ. Generalized from the original tool-only action so pipelines
+// and credentials scope through identical UI with no new plumbing.
+//
+//	idExpr    — JS reading the backend identifier off the row record
+//	labelExpr — JS reading the human label for the modal title
+//	decorate  — JS function expression: function(st){ return {primary?,items,note}; }
+func scopeManageActionJS(kind, idExpr, labelExpr, decorate string) string {
+	return `function(ctx){
+  var r = (ctx && ctx.record) || {};
+  var id = ` + idExpr + `;
+  var label = ` + labelExpr + `;
+  var owner = r.owner || '';
+  var reload = ctx && ctx.reload;
+  if(!id){ window.uiAlert && window.uiAlert('Nothing selected.'); return; }
+  var qs = 'name=' + encodeURIComponent(id) + '&owner=' + encodeURIComponent(owner) + '&kind=` + kind + `';
+  window.uiOpenSimpleModal({
+    title: 'Scope: ' + (label || id),
+    width: '560px',
+    mount: function(body){
+      var host = document.createElement('div');
+      body.appendChild(host);
+      window.uiRenderScopePills(host, {
+        load: function(){
+          return fetch('api/tool-scope?' + qs, {cache:'no-store'}).then(function(res){
+            if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+            return res.json();
+          }).then(` + decorate + `);
+        },
+        toggle: function(key, on){
+          var target = (key === '__primary__') ? 'global' : key;
+          return fetch('api/tool-scope?' + qs, {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ target: target, on: on })
+          }).then(function(res){
+            if(!res.ok) return res.text().then(function(t){ throw new Error(t || ('HTTP ' + res.status)); });
+            if(reload) reload();
+          });
+        }
+      });
+    }
+  });
+}`
+}
+
+// mapAgentsPillsJS is the shared items mapper: st.agents → per-agent pills.
+const mapAgentsPillsJS = `(st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on }; })`
+
+// toolScopeManageAction — Global pill (user-wide pool) + one pill per agent.
+var toolScopeManageAction = scopeManageActionJS("tool",
+	`(r.tool && r.tool.name) || r.name`, `(r.tool && r.tool.name) || r.name`,
+	`function(st){
+    var note = (st.missing && st.missing.length) ? ('⚠ Missing dependency: ' + st.missing.join(', ') + '. ') : '';
+    note += st.global
+      ? 'Global: every agent gets this tool. Turn an agent off to deny it there; turn Global off to descope it down to the agents left on.'
+      : 'Agent-scoped: available only on the agents shown. Turn Global on to share it with all your agents.';
+    return { primary: { label: 'Global (all agents)', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
+  }`)
+
+// pipelineScopeManageAction — Global (all agents run it) + per-agent attach.
+var pipelineScopeManageAction = scopeManageActionJS("pipeline",
+	`r.id || r.name`, `r.name || r.id`,
+	`function(st){
+    var note = st.global
+      ? 'Global: every agent can run this pipeline. Turn an agent off to deny it there; turn Global off to scope it down to the agents left on.'
+      : 'Agent-scoped: runnable only on the agents shown. Turn Global on to give it to all your agents.';
+    return { primary: { label: 'Global (all agents)', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
+  }`)
+
+// credentialScopeManageAction — per-agent revoke of a credential (global by
+// default). "All agents" primary is a revoke-everywhere convenience.
+var credentialScopeManageAction = scopeManageActionJS("credential",
+	`r.name`, `r.name`,
+	`function(st){
+    var note = 'Every agent can use this credential by default. Turn an agent off to revoke it there; turn All agents off to revoke it everywhere. Any tool that dispatches through this credential is dropped from a denied agent\'s kit.';
+    return { primary: { label: 'All agents', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
+  }`)
 
 // artifactsExportAllAction downloads EVERYTHING — connectors + tools +
 // credentials + agents + skills + any future registered type — as one

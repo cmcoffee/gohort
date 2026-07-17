@@ -157,6 +157,16 @@ type Tool struct {
 	// Not serialized — it drives the kwargs name list, and llama.cpp strips
 	// unknown fields off the tool object anyway.
 	RenderLate bool `json:"-"`
+
+	// TrustedOutput marks a tool whose result is framework-generated control
+	// or authoring text (e.g. tool_def / add_tool confirmations), NOT raw
+	// content fetched from outside. Such a tool may still declare CapNetwork
+	// for one sub-capability — tool_def's "test" action makes real calls, so
+	// the grouped tool's union Caps() include network — without its everyday
+	// output being untrusted. When set, the untrusted-content fence is
+	// suppressed. Tools whose PURPOSE is fetching external content (fetch_url,
+	// browse_page, api/toolbox temp tools) must NOT set this. Not serialized.
+	TrustedOutput bool `json:"-"`
 }
 
 // RenderToolPromptFragments concatenates the Prompt fields of every

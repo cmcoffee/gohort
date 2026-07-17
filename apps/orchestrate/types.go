@@ -382,6 +382,20 @@ type AgentRecord struct {
 	// the same way attached_collections bolt on reference corpora.
 	AttachedPipelines []string `json:"attached_pipelines,omitempty"`
 
+	// DisabledPipelines is a DENY-LIST of GLOBAL pipeline IDs this agent
+	// opts out of — the pipeline analogue of DisabledPersistentTools. A
+	// global pipeline (PipelineDef.Global) reaches every agent except those
+	// listing its ID here. Ignored for non-global pipelines (those are
+	// gated by AttachedPipelines instead). Managed via the scope pill.
+	DisabledPipelines []string `json:"disabled_pipelines,omitempty"`
+
+	// DisabledCredentials is a DENY-LIST of SecureAPI credential names this
+	// agent may NOT dispatch through. Credentials are global (all agents)
+	// by default; listing one here revokes it for this agent — any tool
+	// whose .Credential matches is dropped from the agent's kit. Managed
+	// via the scope pill on the admin Credentials section.
+	DisabledCredentials []string `json:"disabled_credentials,omitempty"`
+
 	// Hidden controls whether this agent is discoverable / callable
 	// by OTHER agents in the fleet. Default false = public: appears
 	// in every other agent's "Available agents" prompt block and is

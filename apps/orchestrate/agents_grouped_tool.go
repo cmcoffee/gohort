@@ -595,12 +595,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// async promotion, which orchestrate doesn't do (dispatch is sync).
 	subSessID := "dispatch:" + parentSessID + ":" + target.ID
 	subSess := &ToolSession{
-		LLM:            t.app.LLM,
-		LeadLLM:        t.app.LeadLLM,
-		Username:       t.user,
-		DB:             t.udb,
-		ChatSessionID:  subSessID,
-		SubAgentRunner: t.runPipelineSubAgent,
+		LLM:               t.app.LLM,
+		LeadLLM:           t.app.LeadLLM,
+		Username:          t.user,
+		DB:                t.udb,
+		ChatSessionID:     subSessID,
+		DeniedCredentials: credentialDenySet(target),
+		SubAgentRunner:    t.runPipelineSubAgent,
 		// Carry the dispatching parent so authoring tools (Builder's
 		// create_agent) can stamp creations OwnedBy=<parent> and route them to
 		// the parent owner's approval queue.

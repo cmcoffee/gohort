@@ -109,9 +109,12 @@ func registerOrchestrateScheduledUpdates(o *OrchestrateApp) {
 }
 
 // recurringTaskRow pairs a recurring update's scheduler task id (the cancel
-// key, needed for delete URLs) with its decoded payload.
+// key, needed for delete URLs) with its decoded payload. RunAt carries the
+// scheduler's next-fire time (RFC3339 UTC) so status surfaces can show when the
+// task fires next without re-deriving it.
 type recurringTaskRow struct {
 	TaskID  string
+	RunAt   string
 	Payload orchUpdatePayload
 }
 
@@ -133,7 +136,7 @@ func listAgentRecurringTasks(user, agentID string) []recurringTaskRow {
 		if agentID != "" && p.AgentID != agentID {
 			continue
 		}
-		out = append(out, recurringTaskRow{TaskID: task.ID, Payload: p})
+		out = append(out, recurringTaskRow{TaskID: task.ID, RunAt: task.RunAt, Payload: p})
 	}
 	return out
 }
@@ -172,32 +175,51 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 			reschedule(p)
 		}
 	}()
+	if err := fireOrchestrateUpdate(ctx, p, true); err != nil {
+		Log("[orchestrate/scheduled] %v", err)
+	}
+}
+
+// fireOrchestrateUpdate runs one recurring fire: load the session, assemble the
+// full agent toolkit, run the loop, append the reply to the thread, and record
+// the run in the ledger. When reArm is true (the scheduler-driven chain) it
+// schedules the next tick on every normal exit path; when false (the console
+// "Run now" test) it fires exactly once and leaves the schedule untouched — no
+// reschedule, no FireCount increment, and the per-task fire cap is ignored so a
+// test always runs. Returns a descriptive error only when the fire can't happen
+// at all (app not ready, or the agent/session has been deleted); the scheduled
+// caller logs it, the manual caller surfaces it.
+func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool) error {
 	orchRefMu.Lock()
 	app := orchRef
 	orchRefMu.Unlock()
 	if app == nil {
-		Log("[orchestrate/scheduled] not initialized, dropping task for session %s", p.SessionID)
-		return
+		return fmt.Errorf("not initialized, dropping task for session %s", p.SessionID)
 	}
-	if p.FireCount >= p.effectiveMaxFires() {
+	if reArm && p.FireCount >= p.effectiveMaxFires() {
 		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
-		return
+		return nil
 	}
 
 	udb := UserDB(app.DB, p.Username)
 	if udb == nil {
-		Log("[orchestrate/scheduled] no udb for user %s, dropping task", p.Username)
-		return
+		return fmt.Errorf("no udb for user %s, dropping task", p.Username)
 	}
 	agent, ok := loadAgent(udb, p.AgentID)
 	if !ok {
-		Log("[orchestrate/scheduled] agent %s missing for user %s, dropping task", p.AgentID, p.Username)
-		return
+		return fmt.Errorf("agent %s missing for user %s, dropping task", p.AgentID, p.Username)
 	}
 	sess, ok := loadChatSession(udb, p.AgentID, p.SessionID)
 	if !ok {
-		Log("[orchestrate/scheduled] session %s missing, dropping task", p.SessionID)
-		return
+		// The target thread doesn't exist yet — synthesize it rather than
+		// dropping the task. A channel agent's Cortex home thread
+		// (channel:<agentID>) is created lazily and won't exist until its first
+		// turn, and a recurring task can be scheduled against a session before
+		// any human posts to it; in both cases a missing session is expected,
+		// not a failure. Start a fresh thread with the scheduled id (parity with
+		// the chat GET path, which returns an empty session on a miss); the
+		// fire's reply is what materializes it via saveChatSession below.
+		sess = ChatSession{ID: p.SessionID, AgentID: p.AgentID}
 	}
 
 	// Cap message history so a long-running tracker doesn't accumulate
@@ -217,70 +239,185 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 			p.FireCount+1, recurringDetail(p), p.Prompt),
 	})
 
-	// Build system prompt the same way runPlan would for this agent:
-	// gated persona + facts. facts() is a chatTurn method we can't
-	// use here (no chatTurn for a scheduled fire), so call the
-	// underlying helper directly.
-	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
-	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts, agentOperatingNotes(udb, agent))
-	sysPrompt = StripPromptSectionsForTools(sysPrompt, nil) // no allowlist gate for scheduled
-
-	// Resolve the agent's tool set the same way runWorkerStep does.
-	toolNames := agent.AllowedTools
+	// Assemble the SAME toolkit a live turn / standing-agent fire gets, so a
+	// recurring task can actually DO its job: call its authored api / toolbox /
+	// shell tools, dispatch through SecureAPI credentials, reach its attached
+	// pipelines, knowledge, and memory. The prior implementation ran the loop
+	// with only GetAgentTools(agent.AllowedTools…) = the STATIC built-in chat
+	// tools and NO ToolSession, so the per-credential call_/fetch_url_ tools,
+	// the persistent temp-tool pool, and the agent-scoped kit were all invisible
+	// — the fire behaved as a disconnected scheduler that couldn't perform the
+	// task. Mirror the dispatch path (runAgentSyncConfirm) via its shared seams:
+	// GetAgentToolsWithSession (built-ins + credentials) plus
+	// buildDispatchTurnExtrasWithOwner (conversational closures + agents grouped
+	// tool + attached pipelines + hydrated custom tools). A DISTINCT sub-session
+	// id keeps this fire's ephemeral load_tool state off the user's interactive
+	// session (we still append the reply into the real session below).
+	schedSessID := "scheduled:" + p.SessionID
+	subSess := &ToolSession{
+		LLM:               app.LLM,
+		LeadLLM:           app.LeadLLM,
+		Username:          p.Username,
+		DB:                udb,
+		ChatSessionID:     schedSessID,
+		DeniedCredentials: credentialDenySet(agent),
+	}
+	if ws, werr := EnsureWorkspaceDir(p.Username); werr == nil {
+		subSess.WorkspaceDir = ws
+	}
+	defer DeleteSessionTempTools(udb, schedSessID)
+	// Clone AllowedTools; force-add the always-on delivery + utility tools the
+	// interactive turn includes so a tightly-scoped agent can still deliver an
+	// attachment / tell the time (parity with the dispatch path).
+	toolNames := append([]string(nil), agent.AllowedTools...)
 	if len(toolNames) == 0 {
 		for _, td := range RegisteredChatTools() {
 			toolNames = append(toolNames, td.Name())
 		}
+	} else if !isNoToolsSentinel(toolNames) {
+		has := func(n string) bool {
+			for _, x := range toolNames {
+				if x == n {
+					return true
+				}
+			}
+			return false
+		}
+		for _, n := range append([]string{"workspace"}, frameworkUtilityTools...) {
+			if !has(n) {
+				toolNames = append(toolNames, n)
+			}
+		}
 	}
-	tools, err := GetAgentTools(toolNames...)
+	tools, err := GetAgentToolsWithSession(subSess, toolNames...)
 	if err != nil {
 		tools = nil
 		for _, n := range toolNames {
-			if td, terr := GetAgentTools(n); terr == nil && len(td) > 0 {
+			if td, terr := GetAgentToolsWithSession(subSess, n); terr == nil && len(td) > 0 {
 				tools = append(tools, td[0])
 			}
 		}
 	}
+	extraTools, availableBlock, customToolPrompt, subTurn := app.buildDispatchTurnExtrasWithOwner(ctx, agent, p.Username, udb, subSess, p.Username, udb)
+	tools = append(tools, extraTools...)
 
+	// Full dispatch persona: gated prompt + facts + available blocks +
+	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
+	// tools) + per-agent capability guidance.
+	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
+	sysPrompt := dispatchSystemPrompt(agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
+
+	started := time.Now()
 	f := false
-	resp, _, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
+	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
 		SystemPrompt: sysPrompt,
 		Tools:        tools,
 		MaxRounds:    resolveMaxWorkerRounds(agent),
+		ThinkBudget:  agent.ThinkBudget,
 		Confirm:      func(name, args string) bool { return true },
+		// Custom-tool resolution, same as the dispatch path: resolve a direct
+		// call to a has-args custom tool and surface tools loaded via load_tool.
+		ToolFallbackResolver: subTurn.lazyToolFallback,
+		DynamicTools:         subTurn.dynamicNewTempTools(subSess),
+		DrainViewImages:      subSess.DrainViewImages,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
 			WithThink(f),
 		},
 	})
+
+	// Record every fire in the run-ledger — the same store standing agents and
+	// event monitors write to (RootDB, owner=username), so recurring fires show
+	// up in list_runs / inspect_run / the Activity feed instead of only in a
+	// bespoke log line. A scheduled fire is badged "schedule"; a manual "Run now"
+	// test is badged "manual" (parity with standing-agent run-now) so the two are
+	// distinguishable in the ledger. The prompt is the brief and the reply is kept
+	// (encrypted) as Raw.
+	trigger := "schedule"
+	if !reArm {
+		trigger = "manual"
+	}
+	agentLabel := agent.Name
+	if strings.TrimSpace(agentLabel) == "" {
+		agentLabel = agent.ID
+	}
+	record := func(status RunStatus, summary, raw, errStr string) {
+		RecordRun(RootDB, RunRecord{
+			Owner:   p.Username,
+			Agent:   agentLabel,
+			Trigger: trigger,
+			Brief:   p.Prompt,
+			Status:  status,
+			Summary: summary,
+			Raw:     raw,
+			Started: started,
+			Ended:   time.Now(),
+			Err:     errStr,
+		})
+	}
+
 	if runErr != nil {
-		Log("[orchestrate/scheduled] LLM error for session %s: %v", p.SessionID, runErr)
-		reschedule(p)
-		return
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", agentLabel, p.SessionID, p.FireCount+1, runErr)
+		record(RunFailed, "Recurring fire errored before it could post.", "", runErr.Error())
+		if reArm {
+			reschedule(p)
+		}
+		return nil
 	}
 	reply := ""
 	if resp != nil {
 		reply = strings.TrimSpace(resp.Content)
 	}
 	if reply == "" {
-		Log("[orchestrate/scheduled] empty reply for session %s, skipping append", p.SessionID)
-		reschedule(p)
-		return
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", agentLabel, p.SessionID, p.FireCount+1)
+		record(RunOK, "(no output — nothing to post this cycle)", "", "")
+		if reArm {
+			reschedule(p)
+		}
+		return nil
 	}
 
+	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the
+	// same distinct-bubble treatment standing-agent reports and monitor wakes
+	// get — a bare assistant bubble hid that the message was an automated fire.
+	// Carry the full tool trace too (extracted from the loop transcript, since a
+	// scheduled fire has no live chatTurn to snapshot from) so the export and the
+	// session UI show WHAT the agent did to produce the reply, not just the text.
 	sess.Messages = append(sess.Messages, ChatMessage{
-		Role:    "assistant",
-		Content: reply,
-		Created: time.Now(),
+		Role:       "assistant",
+		Content:    reply,
+		Created:    time.Now(),
+		ReportFrom: agentLabel,
+		ReportKind: cortexKindScheduled,
+		ToolCalls:  persistedToolCallsFromTranscript(transcript),
 	})
 	sess.LastAt = time.Now()
 	if _, err := saveChatSession(udb, sess); err != nil {
 		Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 	}
-	Log("[orchestrate/scheduled] posted update to agent=%s session=%s (fire %d, %d chars)",
-		agent.ID, p.SessionID, p.FireCount+1, len(reply))
+	record(RunOK, standingSummary(reply), reply, "")
+	Log("[orchestrate/scheduled] agent=%s session=%s posted fire %d (%d chars)",
+		agentLabel, p.SessionID, p.FireCount+1, len(reply))
 
-	reschedule(p)
+	if reArm {
+		reschedule(p)
+	}
+	return nil
+}
+
+// RunOrchestrateUpdateNow fires one recurring task immediately by its scheduler
+// task id — a one-off manual test that does NOT touch the schedule (no
+// reschedule, no FireCount increment); the recurring chain keeps firing on its
+// own timer. Ownership is enforced by matching the task's payload username via
+// listAgentRecurringTasks, so a user can't fire another user's task by guessing
+// its id. Backs the console "Run now" action.
+func RunOrchestrateUpdateNow(ctx context.Context, user, taskID string) error {
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID == taskID {
+			return fireOrchestrateUpdate(ctx, rt.Payload, false)
+		}
+	}
+	return fmt.Errorf("recurring task not found")
 }
 
 // reschedule emits the next fire of a recurring orchestrate update. The next
@@ -426,4 +563,40 @@ func CancelOrchestrateUpdate(sessionID, taskID string) error {
 		return nil
 	}
 	return errors.New("task not found")
+}
+
+// persistedToolCallsFromTranscript reconstructs the per-message tool trace from
+// a completed RunAgentLoop transcript. The live chat path snapshots calls off a
+// chatTurn as they fire; a scheduled fire has no chatTurn, so we recover the
+// same [ ]PersistedToolCall shape from the returned messages instead: each
+// assistant message carries its ToolCalls, and the following tool-role message
+// carries the matching ToolResults keyed by call ID. Order is preserved so the
+// export reads top-to-bottom like a live turn.
+func persistedToolCallsFromTranscript(transcript []Message) []PersistedToolCall {
+	if len(transcript) == 0 {
+		return nil
+	}
+	// Index every tool result by its call ID across the whole transcript — a
+	// result can land in any later message, not strictly the next one.
+	results := map[string]ToolResult{}
+	for _, m := range transcript {
+		for _, tr := range m.ToolResults {
+			results[tr.ID] = tr
+		}
+	}
+	var out []PersistedToolCall
+	for _, m := range transcript {
+		for _, tc := range m.ToolCalls {
+			pc := PersistedToolCall{Name: tc.Name, Args: tc.Args}
+			if tr, ok := results[tc.ID]; ok {
+				if tr.IsError {
+					pc.Err = tr.Content
+				} else {
+					pc.Result = tr.Content
+				}
+			}
+			out = append(out, pc)
+		}
+	}
+	return out
 }

@@ -2008,12 +2008,27 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			if store == nil {
 				store = a.db
 			}
+			// Flag a tool whose credential dependency doesn't resolve, for a
+			// row badge. Cheap (a registry lookup); no-auth / credential-less
+			// tools return nil.
+			toolMissingDeps := func(t TempTool) []string {
+				cred := strings.TrimSpace(t.Credential)
+				if cred == "" || strings.EqualFold(cred, "no_auth") {
+					return nil
+				}
+				if exists, _, _ := Secure().CredentialStatus(cred); !exists {
+					return []string{"credential:" + cred}
+				}
+				return nil
+			}
 			type pendingWithOwner struct {
 				Owner string `json:"owner"`
 				PendingTempTool
 			}
 			type activeWithOwner struct {
-				Owner string `json:"owner"`
+				Owner      string   `json:"owner"`
+				Missing    []string `json:"missing,omitempty"`
+				HasMissing bool     `json:"has_missing"`
 				PersistentTempTool
 			}
 			var pending []pendingWithOwner
@@ -2031,7 +2046,8 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						pending = append(pending, pendingWithOwner{Owner: u, PendingTempTool: p})
 					}
 					for _, p := range LoadPersistentTempTools(a.db, u) {
-						active = append(active, activeWithOwner{Owner: u, PersistentTempTool: p})
+						m := toolMissingDeps(p.Tool)
+						active = append(active, activeWithOwner{Owner: u, Missing: m, HasMissing: len(m) > 0, PersistentTempTool: p})
 					}
 				}
 				// Walk both tables — usernames may exist in one and not
@@ -2057,10 +2073,31 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			// Walk every user's agent records and surface each bundled tool
 			// with its owning agent so nothing is invisible in the DB.
 			type bundledWithOwner struct {
-				Owner   string   `json:"owner"`
-				Agent   string   `json:"agent"`
-				AgentID string   `json:"agent_id"`
-				Tool    TempTool `json:"tool"`
+				Owner      string   `json:"owner"`
+				Agent      string   `json:"agent"`
+				AgentID    string   `json:"agent_id"`
+				Missing    []string `json:"missing,omitempty"`
+				HasMissing bool     `json:"has_missing"`
+				Tool       TempTool `json:"tool"`
+			}
+			// Global SUPERSEDES agent scope in this listing. A tool that
+			// lives in the owner's global pool AND on an agent record (a
+			// leftover copy from before promotion, or a name collision)
+			// belongs under Global — every one of the owner's agents already
+			// sees it there, so also listing it as "agent-scoped" is a
+			// confusing duplicate that invites descoping the wrong copy.
+			// Skip those names below; they reappear as agent-scoped only when
+			// the Global pill is turned off (demoteGlobalToScoped bundles the
+			// copies back). Mirrors captureOrphanedTools, which drops the same
+			// global-covered names from the orphan store on agent delete.
+			globalByOwner := map[string]map[string]bool{}
+			for _, aw := range active {
+				m := globalByOwner[aw.Owner]
+				if m == nil {
+					m = map[string]bool{}
+					globalByOwner[aw.Owner] = m
+				}
+				m[aw.Tool.Name] = true
 			}
 			var bundled []bundledWithOwner
 			orchestrateBase := a.db.Bucket("orchestrate")
@@ -2082,17 +2119,38 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						continue
 					}
 					for _, t := range rec.Tools {
+						if globalByOwner[u.Username][t.Name] {
+							continue // global copy supersedes this agent-scoped duplicate
+						}
+						m := toolMissingDeps(t)
 						bundled = append(bundled, bundledWithOwner{
-							Owner: u.Username, Agent: rec.Name, AgentID: rec.ID, Tool: t,
+							Owner: u.Username, Agent: rec.Name, AgentID: rec.ID,
+							Missing: m, HasMissing: len(m) > 0, Tool: t,
 						})
 					}
 				}
 			}
+			// Orphaned tools — formerly agent-scoped, captured when their
+			// owning agent was deleted. Walk every user's orphan pool.
+			type orphanWithOwner struct {
+				Owner string `json:"owner"`
+				OrphanedTempTool
+				Missing    []string `json:"missing,omitempty"`
+				HasMissing bool     `json:"has_missing"`
+			}
+			var orphaned []orphanWithOwner
+			for _, u := range AuthListUsers(a.db) {
+				for _, o := range LoadOrphanedTempTools(a.db, u.Username) {
+					m := toolMissingDeps(o.Tool)
+					orphaned = append(orphaned, orphanWithOwner{Owner: u.Username, OrphanedTempTool: o, Missing: m, HasMissing: len(m) > 0})
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{
-				"pending": pending,
-				"active":  active,
-				"bundled": bundled,
+				"pending":  pending,
+				"active":   active,
+				"bundled":  bundled,
+				"orphaned": orphaned,
 			})
 		case http.MethodPost:
 			// owner query param tells the handler which user's pool
@@ -2120,8 +2178,30 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				err = SetPersistentTempToolShared(a.db, owner, name, true)
 			case "unshare":
 				err = SetPersistentTempToolShared(a.db, owner, name, false)
+			case "orphan_promote":
+				if AdminRehomeOrphanTool == nil {
+					http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+					return
+				}
+				err = AdminRehomeOrphanTool(a.db, owner, name, "global")
+			case "orphan_attach":
+				agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+				if agentID == "" {
+					http.Error(w, "orphan_attach requires agent", http.StatusBadRequest)
+					return
+				}
+				if AdminRehomeOrphanTool == nil {
+					http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+					return
+				}
+				err = AdminRehomeOrphanTool(a.db, owner, name, agentID)
+			case "orphan_delete":
+				if !RemoveOrphanedTempTool(a.db, owner, name) {
+					http.Error(w, "no orphaned tool named "+name, http.StatusNotFound)
+					return
+				}
 			default:
-				http.Error(w, "action must be approve|reject|share|unshare", http.StatusBadRequest)
+				http.Error(w, "action must be approve|reject|share|unshare|orphan_promote|orphan_attach|orphan_delete", http.StatusBadRequest)
 				return
 			}
 			if err != nil {
@@ -2140,6 +2220,73 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				return
 			}
 			if err := DeletePersistentTempTool(a.db, owner, name); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Tool scope — the pill control's data + toggles. GET ?name=&owner=
+	// returns the ToolScopeState (global flag + per-agent on/off + missing
+	// deps). POST ?name=&owner= with body {target, on} applies one toggle
+	// (target "global" or an agent id). Both delegate to orchestrate.
+	sub.HandleFunc("/api/tool-scope", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		username := AuthCurrentUser(r)
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+		if owner == "" {
+			owner = username
+		}
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		// kind selects the scope backend (tool | pipeline | credential),
+		// dispatched through the core registry the orchestrate app wires.
+		kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+		if kind == "" {
+			kind = "tool"
+		}
+		prov, ok := ScopeProviderFor(kind)
+		if !ok {
+			http.Error(w, "unavailable (scope kind "+kind+" not wired)", http.StatusServiceUnavailable)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			st, ok := prov.State(a.db, owner, name)
+			if !ok {
+				http.Error(w, kind+" not found", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			// The scope-pill modal re-GETs this exact URL immediately after
+			// each toggle POST to re-render. A cached (stale) response makes
+			// the pill snap back to its pre-toggle state ("won't uncheck"), so
+			// force a fresh read every time.
+			w.Header().Set("Cache-Control", "no-store")
+			json.NewEncoder(w).Encode(st)
+		case http.MethodPost:
+			var body struct {
+				Target string `json:"target"`
+				On     bool   `json:"on"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request body", http.StatusBadRequest)
+				return
+			}
+			body.Target = strings.TrimSpace(body.Target)
+			if body.Target == "" {
+				http.Error(w, "target is required", http.StatusBadRequest)
+				return
+			}
+			if err := prov.Set(a.db, owner, name, body.Target, body.On); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}

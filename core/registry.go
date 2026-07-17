@@ -179,12 +179,17 @@ func ChatToolToAgentToolDef(ct ChatTool) AgentToolDef {
 	if c, ok := ct.(CapabilityTool); ok {
 		caps = c.Caps()
 	}
+	trusted := false
+	if to, ok := ct.(TrustedOutputTool); ok {
+		trusted = to.TrustedOutput()
+	}
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        ct.Name(),
-			Description: ct.Desc(),
-			Parameters:  ct.Params(),
-			Caps:        caps,
+			Name:          ct.Name(),
+			Description:   ct.Desc(),
+			Parameters:    ct.Params(),
+			Caps:          caps,
+			TrustedOutput: trusted,
 		},
 		Handler:      ct.Run,
 		NeedsConfirm: confirm,
@@ -359,12 +364,17 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	if sf, ok := ct.(SingleFireTool); ok {
 		singleFire = sf.SingleFirePerBatch()
 	}
+	trusted := false
+	if to, ok := ct.(TrustedOutputTool); ok {
+		trusted = to.TrustedOutput()
+	}
 	return AgentToolDef{
 		Tool: Tool{
-			Name:        ct.Name(),
-			Description: ct.Desc(),
-			Parameters:  ct.Params(),
-			Caps:        caps,
+			Name:          ct.Name(),
+			Description:   ct.Desc(),
+			Parameters:    ct.Params(),
+			Caps:          caps,
+			TrustedOutput: trusted,
 		},
 		Handler:            handler,
 		NeedsConfirm:       confirm,

@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,10 +56,16 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/delete", gw(T.handleConsoleAgentDelete))
 	T.HandleFunc("/api/console/agents/pause", gw(T.handleConsoleAgentPause))
 	T.HandleFunc("/api/console/agents/resume", gw(T.handleConsoleAgentResume))
+	T.HandleFunc("/api/console/agents/run", gw(T.handleConsoleAgentRun))
 	T.HandleFunc("/api/console/monitors", g(T.handleConsoleMonitors))
 	T.HandleFunc("/api/console/monitors/delete", gw(T.handleConsoleMonitorDelete))
 	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))
 	T.HandleFunc("/api/console/monitors/resume", gw(T.handleConsoleMonitorResume))
+	T.HandleFunc("/api/console/monitors/run", gw(T.handleConsoleMonitorRun))
+	T.HandleFunc("/api/console/monitors/get", g(T.handleConsoleMonitorGet))
+	T.HandleFunc("/api/console/monitors/update", gw(T.handleConsoleMonitorUpdate))
+	T.HandleFunc("/api/console/agents/get", g(T.handleConsoleAgentGet))
+	T.HandleFunc("/api/console/agents/update", gw(T.handleConsoleAgentUpdate))
 	T.HandleFunc("/api/console/runs", g(T.handleConsoleRuns))
 	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
 	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))
@@ -98,6 +105,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/schedules", g(T.handleSchedules))
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
+	T.HandleFunc("/api/console/recurring", g(T.handleConsoleRecurring))
+	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
 	// Get one recurring task's editable fields (for the rail's edit modal) and
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
@@ -125,19 +134,30 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		if agentID != "" && wake != agentID {
 			continue
 		}
-		kind := string(m.Kind)
+		// Bridges have their own app (and are push-oriented, not polled
+		// schedules), so they're excluded from the unified Scheduler view.
 		if isBridgeMonitor(m) {
-			kind = "bridge"
+			continue
 		}
+		kind := string(m.Kind)
 		id := url.QueryEscape(m.Name)
-		rows = append(rows, map[string]any{
-			"name":       m.Name,
-			"detail":     fmt.Sprintf("%s · every %ds", kind, m.IntervalSeconds),
-			"paused":     m.Paused,
-			"pause_url":  "api/console/monitors/pause?id=" + id,
-			"resume_url": "api/console/monitors/resume?id=" + id,
-			"delete_url": "api/console/monitors/delete?id=" + id,
-		})
+		row := map[string]any{
+			"name":           m.Name,
+			"detail":         fmt.Sprintf("%s · every %ds", kind, m.IntervalSeconds),
+			"paused":         m.Paused,
+			"pause_url":      "api/console/monitors/pause?id=" + id,
+			"resume_url":     "api/console/monitors/resume?id=" + id,
+			"delete_url":     "api/console/monitors/delete?id=" + id,
+			"category":       "monitor",
+			"category_label": "Event monitors",
+		}
+		// Schedulable kinds (poll / http_poll / watch) get a click-to-edit-interval
+		// modal; webhook monitors are push-only, so no edit affordance.
+		if IsScheduledEventKind(m.Kind) {
+			row["id"] = m.Name
+			row["edit_action"] = "orchestrate_edit_monitor"
+		}
+		rows = append(rows, row)
 	}
 	for _, sa := range ListStandingAgents(RootDB, user) {
 		if agentID != "" && sa.AgentID != agentID {
@@ -145,12 +165,16 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 		}
 		id := url.QueryEscape(sa.Name)
 		rows = append(rows, map[string]any{
-			"name":       sa.Name,
-			"detail":     "scheduled run · " + StandingScheduleLabel(sa),
-			"paused":     sa.Paused,
-			"pause_url":  "api/console/agents/pause?id=" + id,
-			"resume_url": "api/console/agents/resume?id=" + id,
-			"delete_url": "api/console/agents/delete?id=" + id,
+			"name":           sa.Name,
+			"detail":         "scheduled run · " + StandingScheduleLabel(sa),
+			"paused":         sa.Paused,
+			"pause_url":      "api/console/agents/pause?id=" + id,
+			"resume_url":     "api/console/agents/resume?id=" + id,
+			"delete_url":     "api/console/agents/delete?id=" + id,
+			"category":       "standing",
+			"category_label": "Scheduled agents",
+			"id":             sa.Name,
+			"edit_action":    "orchestrate_edit_standing",
 		})
 	}
 	// Recurring tasks (the `recurring` tool → per-session scheduled updates).
@@ -164,13 +188,60 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			label = "recurring task"
 		}
 		rows = append(rows, map[string]any{
-			"name":        label,
-			"detail":      recurringDetail(rt.Payload),
-			"paused":      false,
-			"delete_url":  "api/console/recurring/delete?id=" + url.QueryEscape(rt.TaskID),
-			"id":          rt.TaskID,
-			"edit_action": "orchestrate_edit_schedule",
+			"name":           label,
+			"detail":         recurringDetail(rt.Payload),
+			"paused":         false,
+			"delete_url":     "api/console/recurring/delete?id=" + url.QueryEscape(rt.TaskID),
+			"id":             rt.TaskID,
+			"edit_action":    "orchestrate_edit_schedule",
+			"category":       "recurring",
+			"category_label": "Recurring tasks",
 		})
+	}
+	writeJSON(w, rows)
+}
+
+type consoleRecurringRow struct {
+	// Recurring tasks carry no user-set name — the label is the prompt's first
+	// line (matching the Schedules rail). It renders as the card title.
+	Name    string `json:"name"`
+	Cadence string `json:"cadence"`            // human cadence ("recurring · every 30m")
+	Fires   string `json:"fires,omitempty"`    // "<fired> / <cap>" so far
+	NextRun string `json:"next_run,omitempty"` // RFC3339 next fire (matches consoleAgentRow)
+	ID      string `json:"_id"`                // hidden; row-action target (the scheduler task id)
+}
+
+// handleConsoleRecurring lists the owner's recurring tasks (the `recurring` tool
+// → per-session scheduled updates) for the Recurring-tasks nav card view — the
+// status-card sibling of Enabled agents / Event monitors. Scoped to the agent
+// that runs them (AgentID), matching the other two panes. Recurring tasks have
+// no pause concept, so the only row action is Delete.
+func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	rows := []consoleRecurringRow{}
+	for _, rt := range listAgentRecurringTasks(user, agentID) {
+		label := firstLineLabel(rt.Payload.Prompt)
+		if label == "" {
+			label = "recurring task"
+		}
+		// Uncapped continuous-random tasks report effectiveMaxFires as MaxInt32
+		// (no real ceiling) — show just the count run so far, not "3 / 2147483647".
+		fires := fmt.Sprintf("%d fired", rt.Payload.FireCount)
+		if cap := rt.Payload.effectiveMaxFires(); cap < math.MaxInt32 {
+			fires = fmt.Sprintf("%d / %d fired", rt.Payload.FireCount, cap)
+		}
+		row := consoleRecurringRow{
+			Name:    label,
+			Cadence: recurringDetail(rt.Payload),
+			Fires:   fires,
+			NextRun: rt.RunAt,
+			ID:      rt.TaskID,
+		}
+		rows = append(rows, row)
 	}
 	writeJSON(w, rows)
 }
@@ -198,6 +269,49 @@ func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *
 		}
 	}
 	http.Error(w, "recurring task not found", http.StatusNotFound)
+}
+
+// handleConsoleRecurringRun fires a recurring task's prompt once immediately from
+// the Recurring-tasks pane's "Run now" button — a one-off manual test that does
+// NOT touch the schedule (RunOrchestrateUpdateNow fires without rescheduling or
+// consuming the fire budget). Ownership is enforced inside RunOrchestrateUpdateNow
+// (payload-username match), and we pre-check existence here to return a clean 404.
+// The fire runs off-request in a goroutine with a background context (it replays a
+// full agent-loop turn and must outlive the response); the reply is appended to
+// the task's thread and the run ledger updates on reload. id = the scheduler task
+// id. Returns 202 once the fire is launched.
+func (T *OrchestrateApp) handleConsoleRecurringRun(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	found := false
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID == id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "recurring task not found", http.StatusNotFound)
+		return
+	}
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				Log("[orchestrate/console] run-now panicked for recurring task %s: %v", id, rec)
+			}
+		}()
+		if err := RunOrchestrateUpdateNow(context.Background(), user, id); err != nil {
+			Log("[orchestrate/console] run-now failed for recurring task %s: %v", id, err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // handleConsoleRecurringGet returns one recurring task's editable fields for the
@@ -326,6 +440,164 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		return
 	}
 	writeJSON(w, map[string]any{"id": newID})
+}
+
+// handleConsoleMonitorGet returns an event monitor's editable schedule for the
+// Scheduler edit modal. Only scheduled kinds (poll / http_poll / watch) carry an
+// interval; a webhook monitor is push-triggered and reports schedulable=false.
+func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
+	if !found {
+		http.Error(w, "no such monitor", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"name":             m.Name,
+		"kind":             m.Kind,
+		"interval_seconds": m.IntervalSeconds,
+		"interval_minutes": m.IntervalSeconds / 60,
+		"schedulable":      IsScheduledEventKind(m.Kind),
+		"paused":           m.Paused,
+	})
+}
+
+// handleConsoleMonitorUpdate edits an event monitor's poll interval in place and
+// re-arms it. Rejected for webhook (push-only) monitors. A paused monitor keeps
+// its new interval persisted without re-arming (it applies on resume). POST
+// ?id=<name> with {interval_minutes} (or {interval_seconds}).
+func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	m, found := GetEventMonitor(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
+	if !found {
+		http.Error(w, "no such monitor", http.StatusNotFound)
+		return
+	}
+	if !IsScheduledEventKind(m.Kind) {
+		http.Error(w, "this monitor is push-triggered — it has no schedule to edit", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		IntervalSeconds int `json:"interval_seconds"`
+		IntervalMinutes int `json:"interval_minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	secs := body.IntervalSeconds
+	if secs == 0 && body.IntervalMinutes > 0 {
+		secs = body.IntervalMinutes * 60
+	}
+	if secs < 5 {
+		http.Error(w, "interval too small — minimum 5 seconds", http.StatusBadRequest)
+		return
+	}
+	m.IntervalSeconds = secs
+	if m.Paused {
+		SaveEventMonitor(RootDB, m)
+	} else if err := ScheduleEventMonitor(RootDB, m); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsoleAgentGet returns a standing agent's editable schedule for the
+// Scheduler edit modal.
+func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	sa, found := GetStandingAgent(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
+	if !found {
+		http.Error(w, "no such standing agent", http.StatusNotFound)
+		return
+	}
+	startAt := ""
+	if !sa.StartAt.IsZero() {
+		startAt = sa.StartAt.Format(time.RFC3339)
+	}
+	writeJSON(w, map[string]any{
+		"name":             sa.Name,
+		"mission":          sa.Mission,
+		"cron":             sa.Cron,
+		"interval_seconds": sa.IntervalSeconds,
+		"interval_minutes": sa.IntervalSeconds / 60,
+		"start_at":         startAt,
+		"schedule_label":   StandingScheduleLabel(sa),
+		"paused":           sa.Paused,
+	})
+}
+
+// handleConsoleAgentUpdate edits a standing agent's schedule (a cron spec OR an
+// interval) in place and re-arms it. Cron takes precedence when set, matching
+// StandingAgent semantics. A bad schedule (e.g. unparseable cron) is rejected
+// and the original restored so an edit never strands the agent. POST ?id=<name>
+// with {cron} and/or {interval_minutes}.
+func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sa, found := GetStandingAgent(RootDB, user, strings.TrimSpace(r.URL.Query().Get("id")))
+	if !found {
+		http.Error(w, "no such standing agent", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Cron            string `json:"cron"`
+		IntervalMinutes int    `json:"interval_minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	cron := strings.TrimSpace(body.Cron)
+	secs := body.IntervalMinutes * 60
+	if cron == "" && secs <= 0 {
+		http.Error(w, "set a cron schedule or an interval (minutes)", http.StatusBadRequest)
+		return
+	}
+	prevCron, prevInterval := sa.Cron, sa.IntervalSeconds
+	if cron != "" {
+		sa.Cron, sa.IntervalSeconds = cron, 0
+	} else {
+		sa.Cron, sa.IntervalSeconds = "", secs
+	}
+	var err error
+	if sa.Paused {
+		SaveStandingAgent(RootDB, sa)
+	} else {
+		err = ScheduleStandingAgent(RootDB, sa)
+	}
+	if err != nil {
+		// Restore so a rejected edit doesn't strand the agent.
+		sa.Cron, sa.IntervalSeconds = prevCron, prevInterval
+		if sa.Paused {
+			SaveStandingAgent(RootDB, sa)
+		} else {
+			_ = ScheduleStandingAgent(RootDB, sa)
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // channelLabelForRow returns the friendly name of a bridge's target channel
@@ -790,6 +1062,35 @@ func (T *OrchestrateApp) handleConsoleAgentResume(w http.ResponseWriter, r *http
 	T.setConsoleAgentPaused(w, r, false)
 }
 
+// handleConsoleAgentRun fires a standing agent's run immediately from the
+// Enabled-agents pane's "Run now" button — a one-off manual test that does NOT
+// disturb the recurring schedule (RunStandingAgentNow stamps trigger "manual").
+// The run executes off-request in a goroutine (an agent run can take a while and
+// must outlive the response), with a background context so it isn't cancelled
+// when the HTTP handler returns; the outcome reports back through the standing
+// reporter, and the run ledger updates the row's status on reload. id = the
+// agent's name. Returns 202 once the run is launched.
+func (T *OrchestrateApp) handleConsoleAgentRun(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("id"))
+	if _, found := GetStandingAgent(RootDB, user, name); !found {
+		http.Error(w, "no such standing agent", http.StatusNotFound)
+		return
+	}
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				Log("[orchestrate/console] run-now panicked for standing agent %s/%s: %v", user, name, rec)
+			}
+		}()
+		RunStandingAgentNow(context.Background(), RootDB, user, name)
+	}()
+	w.WriteHeader(http.StatusAccepted)
+}
+
 type consoleMonitorRow struct {
 	Name    string `json:"name"`
 	Kind    string `json:"kind"`
@@ -801,6 +1102,9 @@ type consoleMonitorRow struct {
 	Last    string `json:"last_fired"`
 	ID      string `json:"_id"`     // hidden; row-action target (the monitor name)
 	Paused  bool   `json:"_paused"` // hidden; gates Pause vs Resume per row
+	// Schedulable gates the "Test" row action: only poll / http_poll / watch
+	// monitors have a check to run on demand — a webhook is push-only.
+	Schedulable bool `json:"_schedulable"`
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -895,7 +1199,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused})
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind)})
 	}
 	writeJSON(w, rows)
 }
@@ -948,6 +1252,42 @@ func (T *OrchestrateApp) handleConsoleMonitorPause(w http.ResponseWriter, r *htt
 
 func (T *OrchestrateApp) handleConsoleMonitorResume(w http.ResponseWriter, r *http.Request) {
 	T.setConsoleMonitorPaused(w, r, false)
+}
+
+// handleConsoleMonitorRun runs a monitor's check immediately from the
+// Event-monitors pane's "Test" button — a one-off manual poll that fires the
+// wake/notify if the condition matches, without touching the monitor's cadence
+// (RunEventMonitorCheck does not re-arm). Rejected for webhook (push-only)
+// monitors, which have no check to run. The check runs off-request in a
+// goroutine with a background context (a poll can call an external agent/URL and
+// must outlive the response); the row's last-checked timestamp updates on
+// reload. id = the monitor's name. Returns 202 once the check is launched.
+func (T *OrchestrateApp) handleConsoleMonitorRun(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("id"))
+	m, found := GetEventMonitor(RootDB, user, name)
+	if !found {
+		http.Error(w, "no such monitor", http.StatusNotFound)
+		return
+	}
+	if !IsScheduledEventKind(m.Kind) {
+		http.Error(w, "this monitor is push-triggered — it has no check to run", http.StatusBadRequest)
+		return
+	}
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				Log("[orchestrate/console] test-check panicked for monitor %s/%s: %v", user, name, rec)
+			}
+		}()
+		if err := RunEventMonitorCheck(context.Background(), RootDB, user, name); err != nil {
+			Log("[orchestrate/console] test-check failed for monitor %s/%s: %v", user, name, err)
+		}
+	}()
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // handleConsoleRuns returns the run-ledger feed (owner-scoped, status-level).

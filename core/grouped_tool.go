@@ -117,7 +117,18 @@ type GroupedTool struct {
 	actions    map[string]*GroupedToolAction
 	singleFire bool
 	framework  bool
+	trusted    bool
 }
+
+// SetTrustedOutput marks this grouped tool's result as framework-generated
+// control / authoring output (not raw external content), suppressing the
+// untrusted-content fence even when the tool's union Caps() include CapNetwork
+// for one action (e.g. tool_def's "test"). Use for authoring/control tools;
+// NEVER for a tool that fetches external content.
+func (g *GroupedTool) SetTrustedOutput(v bool) { g.trusted = v }
+
+// TrustedOutput satisfies the TrustedOutputTool interface.
+func (g *GroupedTool) TrustedOutput() bool { return g.trusted }
 
 // SetSingleFirePerBatch marks the whole grouped tool as single-fire-
 // per-batch. When the LLM emits multiple calls to this tool in one

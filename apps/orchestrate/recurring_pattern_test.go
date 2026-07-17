@@ -132,6 +132,62 @@ func TestNextRandomFire_PopsQueueThenReplans(t *testing.T) {
 	}
 }
 
+// TestNextRandomFire_MidWindowDoesNotCram is the regression for the "math only
+// of what's left" bug: creating/editing a random schedule mid-window used to
+// plan the whole day's fires into now→windowEnd, which crammed the spacing (or
+// errored when the sliver was too small, rejecting the edit). The plan must span
+// the FULL window and simply keep the fires still ahead of now.
+func TestNextRandomFire_MidWindowDoesNotCram(t *testing.T) {
+	// Window 09:00–17:00 (480m), 3 fires ≥30m apart — fits the full window fine.
+	// "now" is 16:30, leaving only 30m: the OLD code needed 2×30m=60m of gaps in
+	// that sliver and errored. The fix plans the full window instead.
+	newP := func() *orchUpdatePayload {
+		return &orchUpdatePayload{
+			Pattern:       RecurringRandom,
+			TimesPerDay:   3,
+			MinGapSeconds: 30 * 60,
+			HasWindow:     true,
+			WindowFromMin: 540,  // 09:00
+			WindowToMin:   1020, // 17:00
+		}
+	}
+	rng := rand.New(rand.NewSource(11))
+	p := newP()
+	now := refDay(16, 30)
+	next, err := nextRandomFire(p, now, rng.Float64)
+	if err != nil {
+		t.Fatalf("mid-window plan errored (the bug): %v", err)
+	}
+	// The next fire is either a leftover slot after 16:30 today, or (if all of
+	// today's slots fell before 16:30) tomorrow's window — never before now.
+	if !next.After(now) {
+		t.Errorf("next fire %v is not after now %v", next, now)
+	}
+	// It must land inside SOME day's 09:00–17:00 window, never in the cram zone
+	// beyond it.
+	mins := next.Hour()*60 + next.Minute()
+	if mins < 540 || mins > 1020 {
+		t.Errorf("next fire %v (%d min) is outside the 09:00–17:00 window", next, mins)
+	}
+
+	// Full-window density sanity: plan from BEFORE the window and confirm all 3
+	// fires span it (first can be early, last can be late) rather than clustering
+	// in a tail sliver.
+	p2 := newP()
+	first, err := nextRandomFire(p2, refDay(8, 0), rng.Float64)
+	if err != nil {
+		t.Fatalf("pre-window plan: %v", err)
+	}
+	if len(p2.RemainingToday) != 2 {
+		t.Fatalf("want 2 queued after first, got %d", len(p2.RemainingToday))
+	}
+	last := parseFutureTimes(p2.RemainingToday, first)
+	span := last[len(last)-1].Sub(first)
+	if span < time.Hour {
+		t.Errorf("fires clustered (span %v) — expected them spread across the full window", span)
+	}
+}
+
 func TestNextSpacedRandomFire_GapBounds(t *testing.T) {
 	p := &orchUpdatePayload{
 		Pattern:       RecurringRandom,

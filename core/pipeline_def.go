@@ -118,8 +118,14 @@ type PipelineDef struct {
 	Name        string          `json:"name"`                  // human-readable pipeline name
 	Description string          `json:"description,omitempty"` // what it does / when to use it
 	Stages      []PipelineStage `json:"stages"`                // ordered stages
-	Created     time.Time       `json:"created,omitempty"`     // stripped on export
-	Updated     time.Time       `json:"updated,omitempty"`     // stripped on export
+	// Global scopes the pipeline to ALL of the owner's agents (minus any that
+	// deny it via AgentRecord.DisabledPipelines), the way a global tool lives
+	// in the user-wide pool. Off = available only to the agents that list its
+	// ID in AttachedPipelines. Managed via the scope pill; a local decision,
+	// so it's stripped on export (an imported pipeline lands non-global).
+	Global  bool      `json:"global,omitempty"`
+	Created time.Time `json:"created,omitempty"` // stripped on export
+	Updated time.Time `json:"updated,omitempty"` // stripped on export
 }
 
 // Validate checks a pipeline def is runnable: at least one stage,
@@ -250,6 +256,7 @@ func ExportPipeline(d PipelineDef) PipelineDef {
 	d.Owner = ""
 	d.Created = time.Time{}
 	d.Updated = time.Time{}
+	d.Global = false // scope is a local decision; imported pipelines land non-global
 	return d
 }
 

@@ -172,14 +172,27 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// runs with — "what it's told to do") renders as a detail line
 						// under the name, alongside its schedule / status / next run.
 						{Label: "Enabled agents", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
 							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
 						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
+							// Test = run the check once now. Only scheduled kinds
+							// (poll / http_poll / watch) have a check to run — a
+							// webhook is push-only, so gate on _schedulable.
+							{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_schedulable", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
 							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
+						}},
+						// Cards layout so each recurring task shows its cadence, fire
+						// count, and next run alongside the name — the status-card
+						// sibling of Enabled agents / Event monitors. Recurring tasks
+						// have no pause concept, so Delete is the only row action.
+						{Label: "Recurring tasks", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
 						}},
 						// Permissions — pinned ABOVE the session list (it's an action
 						// queue, not browse-config), and combines BOTH pending

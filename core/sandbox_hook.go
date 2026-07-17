@@ -414,6 +414,12 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		if credName, rerr := Secure().AutoRouteCredential(rawURL); rerr != nil {
 			writeHookError(conn, rerr.Error())
 			return
+		} else if credName != "" && h.Sess.CredentialDenied(credName) {
+			// Credential scope: mirror the LLM fetch_url — a covered host whose
+			// credential is denied for this agent is blocked, not routed, so a
+			// script can't bypass the scope pill by fetching the host directly.
+			writeHookError(conn, "fetch blocked: host is served by credential \""+credName+"\", which this agent is not allowed to use (revoked in its credential scope)")
+			return
 		} else if credName != "" {
 			method := "GET"
 			if m, ok := params["method"].(string); ok && m != "" {

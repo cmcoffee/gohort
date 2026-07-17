@@ -45,6 +45,151 @@ var tempToolPersistMu sync.Mutex
 // read the new state via LoadPersistentTempTools and see it.
 var OnTempToolApproved func(db Database, username, toolName string)
 
+// ToolScopeAgent is one agent's relationship to a tool, for the pill UI.
+// On means the tool is currently available to that agent (for a global
+// tool: not disabled/denied; for an agent-scoped tool: it owns a copy).
+type ToolScopeAgent struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	On   bool   `json:"on"`
+}
+
+// ToolScopeState is the full scope picture for one tool, driving the pill
+// control on both the admin page and the in-chat Tools modal. Global marks
+// whether the tool lives in the user-wide pool; Agents lists every one of
+// the owner's agents with its on/off state; Missing carries any broken
+// dependency descriptors (e.g. "credential:stripe") for a badge.
+type ToolScopeState struct {
+	Name    string           `json:"name"`
+	Global  bool             `json:"global"`
+	Missing []string         `json:"missing,omitempty"`
+	Agents  []ToolScopeAgent `json:"agents"`
+}
+
+// AdminToolScopeState, when set, returns the current scope picture for a
+// tool (owner-scoped). Wired by orchestrate (owns agent records). Second
+// return is false when the tool can't be found in any scope.
+var AdminToolScopeState func(db Database, owner, toolName string) (ToolScopeState, bool)
+
+// AdminSetToolScope, when set, applies ONE pill toggle. target is either
+// "global" (the Global pill) or an agent id; on is the desired state.
+// The orchestrate impl interprets the transition against current state:
+//   target=global, on=true  → promote agent-scoped → user-wide pool
+//   target=global, on=false → demote: descope to the currently-ON agents
+//   target=<agent>, on=true  → enable (global: un-deny / allow; scoped: add copy)
+//   target=<agent>, on=false → disable (global: deny/de-allow; scoped: drop copy)
+var AdminSetToolScope func(db Database, owner, toolName, target string, on bool) error
+
+// AdminRehomeOrphanTool, when set, re-homes an orphaned tool and removes it
+// from the orphan store. target is "global" (into the user-wide pool) or an
+// agent id (bundled onto that agent). Wired by orchestrate.
+var AdminRehomeOrphanTool func(db Database, owner, toolName, target string) error
+
+// ScopeProvider is one kind's scope backend (tool, pipeline, credential).
+// State returns the current pill picture for a named item (false when the
+// item isn't found in any scope); Set applies ONE pill toggle — target is
+// "global" (the primary pill) or an agent id, on is the desired state. The
+// ToolScopeState shape is shared across kinds: Global marks the "all agents"
+// scope, Agents lists each agent's on/off, Missing carries dependency
+// badges. This is the generalization of the tool-only AdminToolScopeState /
+// AdminSetToolScope vars so the same pill UI + HTTP handlers drive pipelines
+// and credentials too — the app registers one provider per kind.
+type ScopeProvider struct {
+	State func(db Database, owner, name string) (ToolScopeState, bool)
+	Set   func(db Database, owner, name, target string, on bool) error
+}
+
+var scopeProviders = map[string]ScopeProvider{}
+
+// RegisterScopeProvider registers the scope backend for a kind ("tool",
+// "pipeline", "credential"). Called from the owning app's init(). Last
+// registration wins, so a kind can be overridden in tests.
+func RegisterScopeProvider(kind string, p ScopeProvider) {
+	scopeProviders[kind] = p
+}
+
+// ScopeProviderFor returns the provider registered for kind, or false when
+// none is wired. The HTTP handlers use this to dispatch by ?kind=.
+func ScopeProviderFor(kind string) (ScopeProvider, bool) {
+	p, ok := scopeProviders[kind]
+	return p, ok
+}
+
+const orphanedTempToolsTable = "orphaned_temp_tools"
+
+// OrphanedTempTool is a formerly agent-scoped tool whose owning agent was
+// deleted. Captured at delete time (the tool lived inside AgentRecord.Tools,
+// so it would otherwise vanish with the record) so the admin can re-home or
+// discard it deliberately.
+type OrphanedTempTool struct {
+	Tool            TempTool  `json:"tool"`
+	FormerAgentID   string    `json:"former_agent_id"`
+	FormerAgentName string    `json:"former_agent_name"`
+	OrphanedAt      time.Time `json:"orphaned_at"`
+}
+
+// LoadOrphanedTempTools returns the orphan pool for a user, newest-first.
+func LoadOrphanedTempTools(db Database, username string) []OrphanedTempTool {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return nil
+	}
+	var out []OrphanedTempTool
+	if !db.Get(orphanedTempToolsTable, username, &out) {
+		return nil
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].OrphanedAt.After(out[j].OrphanedAt) })
+	return out
+}
+
+// AddOrphanedTempTools appends orphans to a user's pool (replace-by-name so
+// re-deleting an agent that re-acquired a name doesn't duplicate).
+func AddOrphanedTempTools(db Database, username string, orphans []OrphanedTempTool) {
+	db = tempToolStore(db)
+	if db == nil || username == "" || len(orphans) == 0 {
+		return
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	existing := LoadOrphanedTempTools(db, username)
+	byName := make(map[string]bool, len(orphans))
+	for _, o := range orphans {
+		byName[o.Tool.Name] = true
+	}
+	kept := existing[:0]
+	for _, e := range existing {
+		if !byName[e.Tool.Name] {
+			kept = append(kept, e)
+		}
+	}
+	kept = append(kept, orphans...)
+	db.Set(orphanedTempToolsTable, username, kept)
+}
+
+// RemoveOrphanedTempTool drops one orphan by name. Returns true if removed.
+func RemoveOrphanedTempTool(db Database, username, name string) bool {
+	db = tempToolStore(db)
+	if db == nil || username == "" || name == "" {
+		return false
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	existing := LoadOrphanedTempTools(db, username)
+	kept := existing[:0]
+	removed := false
+	for _, e := range existing {
+		if e.Tool.Name == name {
+			removed = true
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if removed {
+		db.Set(orphanedTempToolsTable, username, kept)
+	}
+	return removed
+}
+
 // tempToolStore returns the canonical DB for temp-tool persistence:
 // the process-level RootDB. Temp-tool pools (pending/persistent/
 // session-scoped) MUST live in a single shared store so the chat

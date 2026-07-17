@@ -30,6 +30,11 @@ func BuildToolDef() *GroupedTool {
 	// time keeps each create+verify cycle visible to the operator
 	// before the LLM bundle-creates three tools that might overlap.
 	gt.SetSingleFirePerBatch(true)
+	// Its output is framework-authoring text (create/update/delete/list/get
+	// confirmations) — NOT external content. The union Caps() carry CapNetwork
+	// only because the "test" action makes real calls; suppress the untrusted-
+	// content fence so every authoring result isn't wrapped in it.
+	gt.SetTrustedOutput(true)
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List all session-scoped + persistent tools currently available to you. Returns name, mode (shell|api), and a one-line description for each.",
@@ -48,7 +53,7 @@ func BuildToolDef() *GroupedTool {
 	})
 
 	gt.AddAction("create", &GroupedToolAction{
-		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. Admin approval for cross-session persistence is a SEPARATE downstream gate the framework queues automatically in the background — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions. Toolboxes live ONLY here — `add_tool` cannot build one, and to change a SINGLE action of an existing toolbox you use action=\"update\" (actions=[{name, ...just the changed fields}]) rather than recreating the whole thing; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow, do NOT author a tool at all — use the standalone pipeline tool (action=\"create\") and attach it to the agent. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus pipeline_steps (deterministic chain). Tools you create here are immediately callable in this session. The framework auto-queues them for admin review in the background — admin approval governs cross-session persistence ONLY, not whether you can create or call the tool. Call action=\"help\" for the full spec including examples.",
+		Description: "Define a new runtime tool for THIS session. **THIS IS THE CREATION CALL — JUST CALL IT.** You do not need to ask the user for permission to call tool_def; it IS the act of creation. The tool persists automatically with NO approval step — never tell the user 'an admin needs to register this' or 'want me to do that now?' as a confirmation question. After iterate-and-test (local(write) + local(run) to validate a script), the next step is ALWAYS tool_def(action=\"create\", ...) — without it you've written a script, not authored a tool. **COMPOSE BEFORE YOU BUILD**: if an existing tool already does part of the work (web_search for search, fetch_url for an HTTPS fetch, find_image / fetch_image / download_video for media), prefer chaining it via mode=\"pipeline\" (pipeline_steps) with a shell-mode tool authored alongside for the local processing — DON'T reimplement what the framework already gives you. CHOOSE MODE: (a) mode=\"api\" for a single HTTPS endpoint the framework can't already reach (with credential=\"no_auth\" for public APIs like Open-Meteo / wttr.in, or credential=\"<registered name>\" for authenticated ones); (b) mode=\"toolbox\" when wrapping MULTIPLE related endpoints under one tool name (a whole API surface: GitHub, Stripe, the moltbook social API, etc.) — surfaces as one catalog entry with action=\"<sub>\" dispatch, shares one credential across actions. Toolboxes live ONLY here — `add_tool` cannot build one, and to change a SINGLE action of an existing toolbox you use action=\"update\" (actions=[{name, ...just the changed fields}]) rather than recreating the whole thing; (c) mode=\"shell\" for pure local computation/parsing/scripting against data the caller passes in — NOT for fetching content from the network; (d) mode=\"pipeline\" with pipeline_steps for deterministic chains (e.g. fetch_url → your shell processor). For an adaptive multi-step LLM workflow, do NOT author a tool at all — use the standalone pipeline tool (action=\"create\") and attach it to the agent. Do NOT wrap an HTTPS endpoint with a Python+urllib or curl-in-shell script — that path is plagued by invented method names, homoglyph URL bugs, and JSON parse errors that don't exist in api / toolbox / pipeline mode. Required: name, description, mode, plus mode-specific fields. mode=\"api\" needs credential, url_template, method, params, optional body_template, and optional response_pipe. mode=\"toolbox\" needs credential and actions (an array of {name, description, url_template, params, ...}). mode=\"shell\" needs command_template + params; for non-trivial scripts pass script_body. mode=\"pipeline\" needs pipeline_tools plus pipeline_steps (deterministic chain). Tools you create here are immediately callable in this session AND persist across sessions automatically, with no approval step — Builder's tools land in your user-wide pool (available to all your agents); every other agent's land on that agent's OWN record (scoped to it alone). Call action=\"help\" for the full spec including examples.",
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":       {Type: "string", Description: "What the tool does. Shown to you in the catalog."},
@@ -92,9 +97,11 @@ func BuildToolDef() *GroupedTool {
 						"required":      {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Names of this action's params callers MUST supply. OMIT to default all required; pass [] to make all optional; or list a subset. An optional query-param placeholder (\"?key={name}\") drops from the URL when omitted."},
 						"body_template": {Type: "string", Description: "Optional request body template; {param} placeholders are JSON-encoded."},
 						"response_pipe": {Type: "string", Description: "Optional shell post-processor (jq, awk, ...) for the raw response."},
+						"disabled":      {Type: "boolean", Description: "Quarantine this ONE action without touching the rest of the toolbox — it drops from the catalog and refuses to run, while the other actions keep serving. Use when a single action is broken. Re-enable via update with disabled:false. Default false."},
 					},
 					Required: []string{"name", "url_template"},
 				}},
+			"expand": {Type: "boolean", Description: "(toolbox mode) Surface each action as its own top-level `<toolbox>_<action>` tool (with the action's own params as its schema) instead of one collapsed action=\"<sub>\" entry. The record/credential/artifact stay a single entity — this only changes how the LLM SEES and CALLS the actions, and lets a broken action be fixed or quarantined as one named tool. Default false (collapsed group). When true, callers invoke e.g. github_list_issues(...) directly rather than github(action=\"list_issues\", ...)."},
 		},
 		Required: []string{"name", "description", "mode"},
 		// Creating a tool is registry CRUD — it does not execute anything.
@@ -133,8 +140,9 @@ func BuildToolDef() *GroupedTool {
 			"name":             {Type: "string", Description: "The tool to update."},
 			"description":      {Type: "string", Description: "(optional) New top-level description."},
 			"credential":       {Type: "string", Description: "(optional) New credential name (api/toolbox)."},
-			"actions":          {Type: "array", Description: "(toolbox) Action objects to UPSERT by name — same shape as create's actions. Existing actions not listed here are kept as-is."},
+			"actions":          {Type: "array", Description: "(toolbox) Action objects to UPSERT by name — same shape as create's actions (including optional `disabled` to quarantine/re-enable one action). Existing actions not listed here are kept as-is."},
 			"remove_actions":   {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(toolbox) Names of actions to remove."},
+			"expand":           {Type: "boolean", Description: "(toolbox) Toggle per-action expansion: true surfaces each action as its own `<toolbox>_<action>` tool; false collapses back to one action=\"<sub>\" entry."},
 			"params":           {Type: "object", Description: "(api/shell) Replacement params object."},
 			"required":         {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(api/shell) Replacement required list. [] = all optional; omit to leave unchanged."},
 			"url_template":     {Type: "string", Description: "(api) New URL template."},
@@ -304,67 +312,66 @@ func modeLabel(mode string) string {
 	}
 }
 
-// queueForReview routes the named session draft to the right pool
-// after a successful tool_def create:
+// finalizeAuthoredTool routes a freshly-authored tool (currently a
+// session draft written by the create path) to its durable home based
+// on WHO authored it — no admin-approval queue in either path:
 //
-//   - If the name is already in the user's ACTIVE pool, the LLM is
-//     iterating on a tool that was approved at some point. Overwrite
-//     the active entry in place (preserving the original ApprovedAt
-//     for the audit trail) so the new version is immediately live
-//     for every other session/agent. NO admin re-approval needed.
+//   - Builder (sess.CanScopeGlobal): the user-wide persistent pool via
+//     AdminPersistTempTool. Builder is the trusted authoring surface, so
+//     re-approving its own output was pure ceremony; the tool persists
+//     immediately and replace-by-name handles LLM iteration.
 //
-//   - Otherwise, the name is brand-new (or only in pending) — queue
-//     the session draft into the pending-review pool. Admin decides
-//     whether to promote it.
+//   - every other agent: its OWN record (AgentRecord.Tools) via
+//     sess.BundleTool, so a self-serve agent grows only its own kit and
+//     can never write to the shared pool.
 //
-// Agent-bundled tools (created during a create_agent / add_tool call)
-// get dequeued downstream by the auto-copy hook. The brief window of
-// "pending until claimed" is acceptable since the admin UI isn't
-// poll-refreshed.
-//
-// The in-place update on iteration is the fix for the "Builder
-// updated the tool but the global one didn't change" bug — previously
-// a re-author was a no-op for the persistent pool, so other agents
-// kept seeing the stale version until the admin manually re-approved.
-func queueForReview(sess *ToolSession, toolName string) {
+// The session draft stays registered in-memory so the tool is
+// dispatchable THIS turn regardless of scope. Deliberate re-scoping
+// (agent→global, or attaching a global tool onto an agent) is an admin
+// action, not an authoring one — see the admin Tools surface.
+func finalizeAuthoredTool(sess *ToolSession, toolName string) {
 	if sess == nil || sess.DB == nil || sess.Username == "" || sess.ChatSessionID == "" || toolName == "" {
 		return
 	}
-	// LLM-iteration path: name already lives in the active pool. Find
-	// the fresh session-draft content and overwrite the active entry
-	// in place; skip the queue.
-	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
-		if p.Tool.Name != toolName {
-			continue
-		}
-		for _, draft := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
-			if draft.Name != toolName {
-				continue
-			}
-			if UpdatePersistentTempTool(sess.DB, sess.Username, draft) {
-				Log("[temptool.pending] in-place update of active tool %q (LLM iteration; admin re-approval skipped)", toolName)
-				// Session draft is now redundant — the active pool
-				// has the same content canonically. Drop the per-
-				// session record so it doesn't show up as a
-				// duplicate session draft in any UI that walks the
-				// session_temp_tools table.
-				RemoveSessionTempTool(sess.DB, sess.ChatSessionID, toolName)
-			}
+	var draft *TempTool
+	for _, d := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
+		if d.Name == toolName {
+			tmp := d
+			draft = &tmp
 			break
 		}
+	}
+	if draft == nil {
 		return
 	}
-	for _, t := range LoadSessionTempTools(sess.DB, sess.ChatSessionID) {
-		if t.Name != toolName {
-			continue
-		}
-		if err := QueuePendingTempTool(sess.DB, sess.Username, t, sess.ChatSessionID); err != nil {
-			Log("[temptool.pending] queue failed for %q (session=%s): %v", toolName, sess.ChatSessionID, err)
+	// Global scope (Builder only): auto-persist to the user-wide pool,
+	// skipping the pending-approval queue. AdminPersistTempTool replaces
+	// by name (so LLM iteration updates in place), dedupes any stale
+	// pending entry, and cleans redundant session drafts.
+	if sess.CanScopeGlobal {
+		if err := AdminPersistTempTool(sess.DB, sess.Username, *draft); err != nil {
+			Log("[temptool.scope] global persist failed for %q: %v", toolName, err)
 		} else {
-			Log("[temptool.pending] queued %q for admin review (session=%s)", toolName, sess.ChatSessionID)
+			Log("[temptool.scope] persisted %q to the user-wide pool (Builder authoring; no approval)", toolName)
 		}
 		return
 	}
+	// Agent scope (every non-Builder agent): attach to the calling
+	// agent's own record. On any failure (no bundle target, seed with no
+	// per-user record, ownership mismatch) the tool simply stays
+	// session-scoped — usable this turn, not escalated to the shared pool.
+	if sess.BundleTool == nil {
+		Log("[temptool.scope] %q kept session-scoped (no agent bundle target)", toolName)
+		return
+	}
+	if err := sess.BundleTool(*draft); err != nil {
+		Log("[temptool.scope] agent-scope attach failed for %q (kept session-scoped): %v", toolName, err)
+		return
+	}
+	// Now owned by the agent record; clear any stale pending entry so the
+	// same name can't linger in the admin review queue.
+	DequeuePendingTempTool(sess.DB, sess.Username, toolName)
+	Log("[temptool.scope] attached %q to authoring agent record (agent-scoped)", toolName)
 }
 
 // createGrouped dispatches between create_temp_tool (shell) and
@@ -408,7 +415,7 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		t := &CreateTempToolTool{}
 		res, err := t.RunWithSession(shellArgs, sess)
 		if err == nil {
-			queueForReview(sess, strings.TrimSpace(StringArg(args, "name")))
+			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
 		}
 		return res, err
 	case TempToolModeAPI:
@@ -437,19 +444,19 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		t := &CreateAPIToolTool{}
 		res, err := t.RunWithSession(apiArgs, sess)
 		if err == nil {
-			queueForReview(sess, strings.TrimSpace(StringArg(args, "name")))
+			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
 		}
 		return res, err
 	case TempToolModePipeline:
 		res, err := createPipelineGrouped(args, sess)
 		if err == nil {
-			queueForReview(sess, strings.TrimSpace(StringArg(args, "name")))
+			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
 		}
 		return res, err
 	case TempToolModeToolbox:
 		res, err := createToolboxGrouped(args, sess)
 		if err == nil {
-			queueForReview(sess, strings.TrimSpace(StringArg(args, "name")))
+			finalizeAuthoredTool(sess, strings.TrimSpace(StringArg(args, "name")))
 		}
 		return res, err
 	default:
@@ -583,6 +590,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			Method:       method,
 			BodyTemplate: bodyTpl,
 			ResponsePipe: strings.TrimSpace(StringArg(m, "response_pipe")),
+			Disabled:     BoolArg(m, "disabled"),
 		})
 	}
 	tool := &TempTool{
@@ -591,6 +599,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		Mode:        TempToolModeToolbox,
 		Credential:  credential,
 		Actions:     actions,
+		Expand:      BoolArg(args, "expand"),
 	}
 	sess.RemoveTempTool(tool.Name)
 	if err := sess.AppendTempTool(tool); err != nil {
@@ -605,7 +614,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...). Available in this session; admin promotes to permanent via the Tools modal.",
 		name, len(actions), actionNames(actions), name)
 	if len(scaffoldedActions) > 0 {
-		msg += fmt.Sprintf(" NOTE: auto-added a body_template for write action(s) %v so their required params POST as a JSON body — no need to hand-write it. If the API expects different field names, refine via action=\"update\".", scaffoldedActions)
+		msg += fmt.Sprintf(" NOTE: for write action(s) %v I auto-added a body_template whose JSON keys are your PARAM NAMES — that is a GUESS at the API's body schema, not a verified fact. If the API expects different field names (a common case: it wants \"parent_id\" for a comment_id value), the live call will 4xx. Override with an explicit body_template via action=\"update\", mapping each value with its {param} placeholder — e.g. body_template={\"parent_id\": {comment_id}, \"content\": {content}}. Verify the field names against the API docs before relying on these actions.", scaffoldedActions)
 	}
 	return msg, nil
 }
@@ -881,6 +890,9 @@ func actionToArgs(a TempToolAction) map[string]any {
 	if a.ResponsePipe != "" {
 		m["response_pipe"] = a.ResponsePipe
 	}
+	if a.Disabled {
+		m["disabled"] = true
+	}
 	return m
 }
 
@@ -907,6 +919,9 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 			acts = append(acts, actionToArgs(a))
 		}
 		out["actions"] = acts
+		if tt.Expand {
+			out["expand"] = true
+		}
 	default:
 		// api / shell share the same scalar fields; empty ones are simply
 		// absent, which the create path tolerates per mode.
@@ -957,8 +972,22 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	merged := tempToolToCreateArgs(existing)
 
+	// A toolbox has NO top-level url/body/method/etc — those are per-ACTION.
+	// Passing one at the top level used to be silently ignored (the "I set
+	// body_template on the toolbox and nothing changed, so I tried again five
+	// times" trap). Reject with a redirect that shows the correct shape.
+	if existing.Mode == TempToolModeToolbox {
+		for _, f := range []string{"url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name", "params", "required"} {
+			if _, present := args[f]; present {
+				return "", fmt.Errorf("%q is a PER-ACTION field on a toolbox, not a top-level one — setting it at the top level does nothing. Put it INSIDE the action: actions=[{name:\"<action>\", %s:...}]. Example fixing a reply body: actions=[{name:\"reply_to_comment\", body_template:{\"parent_id\": {comment_id}, \"content\": {content}}}] (unspecified fields on that action are preserved)", f, f)
+			}
+		}
+	}
+
 	// Patch top-level scalar fields when provided (present = intent to change).
-	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name"} {
+	// "expand" (toolbox presentation toggle) rides the same present-means-change
+	// path — BoolArg in createToolboxGrouped reads whatever value lands here.
+	for _, f := range []string{"description", "credential", "url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name", "expand"} {
 		if v, present := args[f]; present {
 			merged[f] = v
 		}
@@ -994,7 +1023,23 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 					return "", fmt.Errorf("each action to upsert needs a name")
 				}
 				if idx, found := byName[an]; found {
-					cur[idx] = am // replace in place
+					// Field-level MERGE, not whole-object replace. The docs
+					// promise "just the changed fields"; a wholesale replace
+					// silently dropped every field the caller didn't re-supply.
+					// That was the "I set body_template but it reverted to the
+					// param-name guess" bug: updating an action's params without
+					// re-passing body_template lost the explicit body, and the
+					// write-action scaffold regenerated the wrong one. Merge so
+					// unspecified fields (body_template, response_pipe, method,
+					// description, disabled, …) survive.
+					if existingAM, ok := cur[idx].(map[string]any); ok {
+						for k, v := range am {
+							existingAM[k] = v
+						}
+						cur[idx] = existingAM
+					} else {
+						cur[idx] = am
+					}
 				} else {
 					cur = append(cur, am) // add new
 					byName[an] = len(cur) - 1

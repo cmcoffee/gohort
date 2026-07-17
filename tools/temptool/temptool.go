@@ -867,66 +867,209 @@ func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
 	Debug("[temptool] BuildAgentToolDefs: producing %d AgentToolDef(s) — %v", len(tools), names)
 	out := make([]AgentToolDef, 0, len(tools))
 	for _, tt := range tools {
-		out = append(out, agentToolFromTemp(sess, tt))
+		out = append(out, agentToolDefsFromTemp(sess, tt)...)
 	}
 	return out
 }
 
+// agentToolDefsFromTemp renders one temp tool into the AgentToolDefs it
+// contributes to the catalog. Almost every tool yields exactly one def;
+// an EXPANDED toolbox (tt.Expand) yields one `<toolbox>_<action>` def per
+// live action instead of a single collapsed action-dispatch entry. The
+// single-entity boundary is untouched — one record, one credential, one
+// artifact; expansion is purely presentation, decided here at build time.
+func agentToolDefsFromTemp(sess *ToolSession, tt *TempTool) []AgentToolDef {
+	if tt.Mode == TempToolModeToolbox && tt.Expand {
+		return expandedToolboxDefs(sess, tt)
+	}
+	return []AgentToolDef{agentToolFromTemp(sess, tt)}
+}
+
+// expandedToolboxDefs surfaces each non-disabled toolbox action as its own
+// top-level tool named `<toolbox>_<action>`, with the action's own params
+// as its schema (no action="<sub>" indirection). Each handler pins the
+// action and reuses the shared toolbox dispatcher, so credential, allow-
+// list, audit, and response_pipe behavior are identical to the collapsed
+// path. Disabled actions are quarantined — dropped from the catalog.
+func expandedToolboxDefs(sess *ToolSession, tt *TempTool) []AgentToolDef {
+	out := make([]AgentToolDef, 0, len(tt.Actions))
+	for i := range tt.Actions {
+		if tt.Actions[i].Disabled {
+			continue
+		}
+		out = append(out, perActionToolDef(sess, tt, tt.Actions[i]))
+	}
+	return out
+}
+
+// perActionToolDef builds the standalone AgentToolDef for one expanded
+// toolbox action. Mirrors the collapsed group's per-action handler (pin
+// action, hand off to dispatchTempTool → dispatchToolboxModeTempTool) but
+// promotes the action to a first-class catalog name with its own schema.
+func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) AgentToolDef {
+	writes := isMutatingMethod(act.Method)
+	kind := "read"
+	if writes {
+		kind = "write"
+	}
+	desc := act.Description + fmt.Sprintf(" (%s action of toolbox %q, credential %q; defined via tool_def)", kind, tt.Name, tt.Credential)
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        tt.Name + "_" + act.Name,
+			Description: desc,
+			Parameters:  act.Params,
+			Required:    act.Required,
+			Caps:        []Capability{CapNetwork, CapExecute},
+		},
+		NeedsConfirm: true,
+		Handler: func(args map[string]any) (string, error) {
+			a2 := make(map[string]any, len(args)+1)
+			for k, v := range args {
+				a2[k] = v
+			}
+			a2["action"] = act.Name
+			// Resolve against the live record so a mid-turn edit to this
+			// action (url/body/params) dispatches the current version, not
+			// the turn-start snapshot (same staleness fix as the collapsed
+			// path — agent-owned toolboxes are pinned static and skip the
+			// dynamic refresh feed).
+			live := sess.LookupTempTool(tt.Name)
+			if live == nil {
+				live = tt
+			}
+			return dispatchTempTool(sess, live, a2)
+		},
+	}
+}
+
+// isMutatingMethod reports whether an HTTP method has side effects — used
+// to classify a toolbox action as read vs write for the LLM description
+// and the admin audit view. Empty defaults to GET (read).
+func isMutatingMethod(method string) bool {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case "", "GET", "HEAD", "OPTIONS":
+		return false
+	default:
+		return true
+	}
+}
+
+// newToolboxGroupedTool builds the framework GroupedTool for a toolbox-mode
+// TempTool: one catalog name, action="<sub>" dispatch, disabled actions left
+// out (quarantined). Each action handler synthesizes a single-endpoint api-
+// mode TempTool at dispatch time via dispatchTempTool. Built from whatever
+// record is passed — the caller passes the LIVE session record so a group
+// rebuilt mid-call reflects mutations (see agentToolFromTemp's live-resolve
+// handler).
+func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
+	live := 0
+	for i := range tt.Actions {
+		if !tt.Actions[i].Disabled {
+			live++
+		}
+	}
+	gtDesc := tt.Description + fmt.Sprintf(" (toolbox — wraps credential %q with %d action(s), defined this session via tool_def)", tt.Credential, live)
+	gt := NewGroupedTool(tt.Name, gtDesc)
+	for i := range tt.Actions {
+		if tt.Actions[i].Disabled {
+			continue // quarantined — not offered
+		}
+		act := tt.Actions[i] // capture by value for the closure
+		gt.AddAction(act.Name, &GroupedToolAction{
+			Description: act.Description,
+			Params:      act.Params,
+			Required:    act.Required,
+			Caps:        []Capability{CapNetwork, CapExecute}, // api-mode + response_pipe
+			Handler: func(args map[string]any, s *ToolSession) (string, error) {
+				// Re-attach the action key so the toolbox dispatcher
+				// finds its routing handle. The framework's grouped
+				// tool stripped it during routing; we put it back
+				// because dispatchToolboxModeTempTool reads
+				// args["action"] to look up the sub-action.
+				a2 := make(map[string]any, len(args)+1)
+				for k, v := range args {
+					a2[k] = v
+				}
+				a2["action"] = act.Name
+				return dispatchTempTool(s, tt, a2)
+			},
+		})
+	}
+	return gt
+}
+
+// tempToolCaps returns the capability tier a non-toolbox temp tool needs at
+// dispatch. API mode needs CapNetwork (HTTP via the stored credential), plus
+// CapExecute when it carries a response_pipe (sandboxed shell over the
+// response). Shell / pipeline / everything else runs sandboxed shell →
+// CapExecute. Shared by the def builder (declared caps, cap-gated by the
+// loop) and the live-resolve guard (so a mid-turn edit can't dispatch a
+// version that needs more than the loop gated on).
+func tempToolCaps(tt *TempTool) []Capability {
+	if tt.Mode == TempToolModeAPI {
+		if tt.ResponsePipe != "" {
+			return []Capability{CapNetwork, CapExecute}
+		}
+		return []Capability{CapNetwork}
+	}
+	return []Capability{CapExecute}
+}
+
+// capsSubset reports whether every capability in want is present in have —
+// i.e. want does not exceed the granted set.
+func capsSubset(want, have []Capability) bool {
+	for _, w := range want {
+		found := false
+		for _, h := range have {
+			if h == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	// Toolbox mode is structurally a GroupedTool — bundle of action-
-	// dispatched sub-endpoints. Build it through the framework's
-	// GroupedTool primitive so the LLM-facing schema is identical to
+	// dispatched sub-endpoints. The LLM-facing schema is identical to
 	// built-in grouped tools (tool_def / agents / workspace): one tool
-	// name in the catalog, action="<sub>" routes to the right
-	// endpoint's params. Each action handler synthesizes a single-
-	// endpoint api-mode TempTool at dispatch time (see
-	// dispatchToolboxModeTempTool — they share the synth-and-reuse
-	// trick).
+	// name in the catalog, action="<sub>" routes to the right endpoint.
 	if tt.Mode == TempToolModeToolbox {
-		gtDesc := tt.Description + fmt.Sprintf(" (toolbox — wraps credential %q with %d action(s), defined this session via tool_def)", tt.Credential, len(tt.Actions))
-		gt := NewGroupedTool(tt.Name, gtDesc)
-		for i := range tt.Actions {
-			act := tt.Actions[i] // capture by value for the closure
-			gt.AddAction(act.Name, &GroupedToolAction{
-				Description: act.Description,
-				Params:      act.Params,
-				Required:    act.Required,
-				Caps:        []Capability{CapNetwork, CapExecute}, // api-mode + response_pipe
-				Handler: func(args map[string]any, s *ToolSession) (string, error) {
-					// Re-attach the action key so the toolbox dispatcher
-					// finds its routing handle. The framework's grouped
-					// tool stripped it during routing; we put it back
-					// because dispatchToolboxModeTempTool reads
-					// args["action"] to look up the sub-action.
-					a2 := make(map[string]any, len(args)+1)
-					for k, v := range args {
-						a2[k] = v
-					}
-					a2["action"] = act.Name
-					return dispatchTempTool(s, tt, a2)
-				},
-			})
+		snapshot := newToolboxGroupedTool(tt)
+		def := ChatToolToAgentToolDefWithSession(snapshot, sess)
+		// Live-resolve on dispatch. An agent-OWNED toolbox is pinned into
+		// the static catalog (staticTempToolNames) and the per-round
+		// dynamic-tool feed deliberately skips static names, so the group
+		// built at turn start is re-registered every round and never
+		// refreshed. Without this, a mid-turn tool_def update / delete /
+		// recreate mutates the session record but dispatch keeps hitting
+		// the frozen snapshot — a renamed action 404s as "unknown action"
+		// and help lists stale names (observed: a whole moltbook rename
+		// that never took effect). Rebuilding the group from the LIVE
+		// record on each call makes mutations take effect immediately.
+		// The schema shown to the LLM still reflects the snapshot until the
+		// next turn (cosmetic — the model calls the name it just authored,
+		// and both dispatch and the help action resolve against live).
+		def.Handler = func(args map[string]any) (string, error) {
+			live := sess.LookupTempTool(tt.Name)
+			if live == nil || live.Mode != TempToolModeToolbox {
+				return snapshot.RunWithSession(args, sess)
+			}
+			return newToolboxGroupedTool(live).RunWithSession(args, sess)
 		}
-		return ChatToolToAgentToolDefWithSession(gt, sess)
+		return def
 	}
 
-	// Caps depend on execution mode. Shell mode requires CapExecute
-	// (sandboxed shell), API mode requires CapNetwork (HTTP call via
-	// stored credential). The AllowedCaps filter then hides the tool
-	// from sessions that don't grant the required tier.
-	var caps []Capability
+	// Caps depend on execution mode (see tempToolCaps). The AllowedCaps
+	// filter then hides the tool from sessions that don't grant the tier.
+	caps := tempToolCaps(tt)
 	descSuffix := " (temp tool — defined this session via create_temp_tool)"
-	switch tt.Mode {
-	case TempToolModeAPI:
-		caps = []Capability{CapNetwork}
-		// Response pipe runs sandboxed shell on the API result, so the
-		// wrapper needs CapExecute as well as CapNetwork.
-		if tt.ResponsePipe != "" {
-			caps = append(caps, CapExecute)
-		}
+	if tt.Mode == TempToolModeAPI {
 		descSuffix = fmt.Sprintf(" (api tool — wraps credential %q, defined this session via create_api_tool)", tt.Credential)
-	default:
-		caps = []Capability{CapExecute}
 	}
 	return AgentToolDef{
 		Tool: Tool{
@@ -940,7 +1083,27 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// approval prompt run_local does. The LLM defined the tool but
 		// the user still sees each call.
 		NeedsConfirm: true,
+		// Live-resolve on dispatch — same staleness fix as the toolbox path
+		// above, generalized to api/shell/pipeline tools. An agent-OWNED
+		// temp tool is pinned into the static catalog and skipped by the
+		// per-round dynamic-tool refresh, so a mid-turn tool_def/add_tool
+		// update would otherwise keep dispatching the frozen turn-start
+		// snapshot (an edited url_template / body_template / command /
+		// script_body never takes effect). Dispatch the LIVE record instead.
+		// GUARD: only when the live tool needs no MORE capabilities than the
+		// snapshot the loop already cap-gated on. A mid-turn edit that GROWS
+		// the cap profile (e.g. an api tool gaining a response_pipe →
+		// CapExecute) must wait for the next turn's fresh build + gate, so it
+		// can't run an un-gated shell pipe this turn; until then the snapshot
+		// dispatches. Non-cap edits — the common case — apply immediately.
 		Handler: func(args map[string]any) (string, error) {
+			live := sess.LookupTempTool(tt.Name)
+			if live == nil {
+				return dispatchTempTool(sess, tt, args)
+			}
+			if capsSubset(tempToolCaps(live), caps) {
+				return dispatchTempTool(sess, live, args)
+			}
 			return dispatchTempTool(sess, tt, args)
 		},
 	}
@@ -2624,6 +2787,9 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 			names = append(names, a.Name)
 		}
 		return "", fmt.Errorf("toolbox %q: no action named %q. available: %v", tt.Name, actionName, names)
+	}
+	if act.Disabled {
+		return "", fmt.Errorf("toolbox %q action %q is disabled (quarantined). Fix it and re-enable via tool_def(action=\"update\", name=%q, actions=[{name:%q, disabled:false, ...}])", tt.Name, act.Name, tt.Name, act.Name)
 	}
 	// Drop the routing key so the synthetic api-mode tool doesn't see
 	// it (action isn't one of its declared params, and the substitute

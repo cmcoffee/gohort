@@ -47,6 +47,17 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			if r := strings.TrimSpace(shadow.Rules); r != "" {
 				seed.Rules = shadow.Rules
 			}
+			// Scope decisions are DEPLOYMENT state (admin/user drives the scope
+			// pills), not framework structure, so they must survive the rebase
+			// like Rules does. Without this, denying a credential / pipeline /
+			// tool on Builder saved to the shadow but was discarded on read-back
+			// — the pill snapped straight back on ("can't unselect Builder via
+			// api scope"). Everything else (prompt, AllowedTools authoring kit)
+			// still flows from the in-code seed.
+			seed.DisabledCredentials = shadow.DisabledCredentials
+			seed.DisabledPipelines = shadow.DisabledPipelines
+			seed.AttachedPipelines = shadow.AttachedPipelines
+			seed.DisabledPersistentTools = shadow.DisabledPersistentTools
 		}
 		return seed, true
 	}
@@ -542,7 +553,19 @@ func selfHealAllowedTools(db Database, a AgentRecord) AgentRecord {
 	if !dropped {
 		return a
 	}
-	a.AllowedTools = cleaned
+	// Healing away the LAST entry must not empty the list. An empty
+	// AllowedTools reads as "sees the whole default pool" (see the guard at the
+	// top of this function, and agentSeesGlobalTool), so an agent pinned to a
+	// restricted list whose entries all went stale — e.g. its only temp tool was
+	// deleted — would silently WIDEN from a few tools to every tool. Collapse to
+	// the explicit no-tools sentinel instead: the restriction was deliberate, so
+	// losing its last member means "nothing", never "everything".
+	if len(cleaned) == 0 {
+		Log("[orchestrate.agents] agent %q AllowedTools healed to empty; pinning no-tools sentinel rather than widening to the default pool", a.ID)
+		a.AllowedTools = []string{noToolsSentinel}
+	} else {
+		a.AllowedTools = cleaned
+	}
 	a.Updated = time.Now()
 	db.Set(agentsTable, a.ID, a)
 	return a
@@ -672,22 +695,28 @@ func listAgents(db Database, owner string) []AgentRecord {
 		if !db.Get(agentsTable, k, &a) {
 			continue
 		}
-		// Skip stale rows from the pre-shadow era when seeds were
-		// installed into per-user sub-stores with Owner=seedOwner.
-		// Migration drops them on first list, but harden anyway.
-		if a.Owner == seedOwner {
-			continue
-		}
 		// Seed shadows: route through loadAgent so framework-owned fields
 		// (prompt, description, Mode) are refreshed from the in-code seed
 		// instead of frozen at whatever the shadow captured. Without this a
 		// Mode-less shadow would hide the orchestrator nav for the Operator.
+		// This MUST run before the seedOwner skip below: a shadow created by a
+		// scope mutation on a virgin seed inherits the seed's Owner=seedOwner
+		// marker (that marker is load-bearing elsewhere, so we don't rewrite
+		// it), and culling it as "stale" would drop the user's scope decisions
+		// (denied credential / pipeline / tool) and re-add the pristine seed —
+		// the "can't unselect Builder/seed via api scope" bug.
 		if _, isSeed := seedAgentByID(a.ID); isSeed {
 			if merged, ok := loadAgent(db, a.ID); ok {
 				out = append(out, merged)
 				seen[a.ID] = true
 				continue
 			}
+		}
+		// Skip stale rows from the pre-shadow era when NON-seed records were
+		// installed into per-user sub-stores with Owner=seedOwner.
+		// Migration drops them on first list, but harden anyway.
+		if a.Owner == seedOwner {
+			continue
 		}
 		// Orphaned-sub-agent self-heal: OwnedBy points at a parent that no longer
 		// exists (parent deleted before the cascade fix, cross-owner, legacy data).
@@ -748,6 +777,10 @@ func deleteAgent(db Database, id, owner string) error {
 	if a.Owner != owner {
 		return fmt.Errorf("agent %q is not yours", id)
 	}
+	// Agent-scoped tools live INSIDE this record, so they'd vanish with it.
+	// Capture any that aren't also global into the owner's orphan pool so the
+	// admin can re-home or discard them deliberately (Orphaned Tools surface).
+	captureOrphanedTools(db, owner, a)
 	// Cascade-delete sub-agents — anything where OwnedBy points at the
 	// agent being deleted. Recursive (a sub-agent that owns its own
 	// sub-agents propagates the delete down). Idempotent: a sub-agent

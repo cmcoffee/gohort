@@ -2277,17 +2277,32 @@
           var customTools = (agent.tools || []).filter(function(t){
             return !catalogNames[t.name];
           });
-          if (customTools.length > 0) {
+          // Agent-Scoped Tools — the tools that live on THIS agent's
+          // record (AgentRecord.Tools): authored by the agent for itself,
+          // or built for it by Builder. Scoped to this one agent; they
+          // don't appear in other agents' catalogs. Rendered
+          // unconditionally so the panel is always discoverable, with an
+          // empty state when the agent has none. (Replaces the old
+          // always-on "Session tools" panel — session drafts now auto-
+          // attach here or go global, so there's nothing transient to prune.)
+          {
             var customSection = document.createElement('div');
             customSection.className = 'ui-orch-custom-tools';
             var ch = document.createElement('div');
             ch.className = 'ui-orch-custom-tools-h';
-            ch.textContent = 'Custom tools bundled with this agent (' + customTools.length + ')';
+            ch.textContent = 'Agent-Scoped Tools' + (customTools.length ? ' (' + customTools.length + ')' : '');
             customSection.appendChild(ch);
             var ci = document.createElement('div');
             ci.className = 'ui-orch-custom-tools-help';
-            ci.textContent = 'Authored for this agent specifically. Edit via Builder.';
+            ci.textContent = 'Tools scoped to this agent only. Authored by the agent for itself, or built for it by Builder. Remove to unbundle it here; promote it to your user-wide pool from the Admin tools page. Edit via Builder.';
             customSection.appendChild(ci);
+            if (customTools.length === 0) {
+              var emptyC = document.createElement('div');
+              emptyC.className = 'ui-orch-custom-tools-help';
+              emptyC.style.fontStyle = 'italic';
+              emptyC.textContent = '(No tools are scoped to this agent yet.)';
+              customSection.appendChild(emptyC);
+            }
             customTools.forEach(function(t) {
               var row = document.createElement('div');
               row.className = 'ui-orch-custom-tool';
@@ -2338,6 +2353,57 @@
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
+              // Scope button — opens the shared pill editor (Global + one
+              // pill per agent) against api/tool-scope. Promote to global,
+              // descope, or toggle per-agent availability, all in place. The
+              // renderer (window.uiRenderScopePills) lives in core/ui.
+              (function(tool){
+                var scopeBtn = document.createElement('button');
+                scopeBtn.className = 'ui-row-btn';
+                scopeBtn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.55rem';
+                scopeBtn.textContent = 'Scope';
+                scopeBtn.title = 'Manage where this tool is available (global / per-agent)';
+                scopeBtn.addEventListener('click', function(){
+                  var qs = 'name=' + encodeURIComponent(tool.name || '');
+                  window.uiOpenSimpleModal({
+                    title: 'Scope: ' + (tool.name || 'tool'),
+                    width: '560px',
+                    mount: function(mbody){
+                      var host = document.createElement('div');
+                      mbody.appendChild(host);
+                      window.uiRenderScopePills(host, {
+                        load: function(){
+                          return fetch('api/tool-scope?' + qs).then(function(res){
+                            if(!res.ok) return res.text().then(function(x){ throw new Error(x || ('HTTP ' + res.status)); });
+                            return res.json();
+                          }).then(function(st){
+                            var note = (st.missing && st.missing.length) ? ('⚠ Missing dependency: ' + st.missing.join(', ') + '. ') : '';
+                            note += st.global
+                              ? 'Global: every agent gets this tool. Turn an agent off to deny it there; turn Global off to descope it to the agents left on.'
+                              : 'Agent-scoped: available only on the agents shown. Turn Global on to share it with all your agents.';
+                            return {
+                              primary: { label: 'Global (all agents)', on: !!st.global },
+                              items: (st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on }; }),
+                              note: note
+                            };
+                          });
+                        },
+                        toggle: function(key, on){
+                          var target = (key === '__primary__') ? 'global' : key;
+                          return fetch('api/tool-scope?' + qs, {
+                            method: 'POST',
+                            headers: {'Content-Type':'application/json'},
+                            body: JSON.stringify({ target: target, on: on })
+                          }).then(function(res){
+                            if(!res.ok) return res.text().then(function(x){ throw new Error(x || ('HTTP ' + res.status)); });
+                          });
+                        }
+                      });
+                    }
+                  });
+                });
+                rowActions.appendChild(scopeBtn);
+              })(t);
               // Remove button — available on EVERY agent. Previously
               // gated to seed agents only ("user-authored agents'
               // bundles are a real authoring decision"), but in
@@ -2388,185 +2454,6 @@
               customSection.appendChild(detailEl);
             });
             m.body.appendChild(customSection);
-          }
-
-          // Session tools — drafts the LLM authored mid-conversation
-          // via tool_def / add_tool. Distinct from custom-tools
-          // (agent-bundled, persistent) and the global catalog. Each
-          // row gets:
-          //   - Persist [Global ☐] → admin-promote out of the draft
-          //     pool; Global=true lands in user-wide persistent
-          //     pool, Global=false attaches to the focused agent.
-          //   - Drop → remove from the draft pool.
-          // Section renders UNCONDITIONALLY (so the user always knows
-          // it's a panel that exists), with state-aware copy when
-          // there's no active session or nothing's been authored yet.
-          {
-            var sec = document.createElement('div');
-            sec.className = 'ui-orch-custom-tools';
-            var sh = document.createElement('div');
-            sh.className = 'ui-orch-custom-tools-h';
-            sh.textContent = 'Session tools (this conversation)';
-            sec.appendChild(sh);
-            var si = document.createElement('div');
-            si.className = 'ui-orch-custom-tools-help';
-            si.textContent = 'Drafts the LLM authored in this conversation. Persist to keep them past the session, or Drop to clear.';
-            sec.appendChild(si);
-            var sessLoading = document.createElement('div');
-            sessLoading.className = 'ui-orch-custom-tools-help';
-            sessLoading.style.fontStyle = 'italic';
-            sessLoading.textContent = activeSid ? 'Loading…' : 'No active session yet — authored tools will appear here once a session is open.';
-            sec.appendChild(sessLoading);
-            // Insert the empty shell early so layout doesn't reshuffle
-            // when the fetch resolves; the fetch then fills it in. At
-            // this point in the synchronous build, the global-catalog
-            // list hasn't been appended yet — so appendChild parks the
-            // shell right after the bundled-custom-tools section and
-            // above the catalog (which lands next).
-            m.body.appendChild(sec);
-            if (!activeSid) {
-              // No session — leave the placeholder copy in place and
-              // skip the fetch entirely. The section stays visible so
-              // the user knows where the surface lives.
-            } else
-            fetch('api/sessions/' + encodeURIComponent(activeSid) +
-                  '/tools?agent_id=' + encodeURIComponent(id))
-              .then(function(r) {
-                if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
-                return r.json();
-              })
-              .then(function(sessTools) {
-                sessLoading.remove();
-                if (!Array.isArray(sessTools) || sessTools.length === 0) {
-                  var empty = document.createElement('div');
-                  empty.className = 'ui-orch-custom-tools-help';
-                  empty.style.fontStyle = 'italic';
-                  empty.textContent = '(No session tools have been authored yet. The LLM authors via tool_def or add_tool.)';
-                  sec.appendChild(empty);
-                  return;
-                }
-                sh.textContent = 'Session tools (this conversation, ' + sessTools.length + ')';
-                sessTools.forEach(function(t) {
-                  var row = document.createElement('div');
-                  row.className = 'ui-orch-custom-tool';
-                  var icon = document.createElement('span');
-                  icon.className = 'ui-orch-custom-tool-icon';
-                  var mode = (t.mode || 'shell');
-                  icon.textContent = (mode === 'pipeline') ? '⚙' : (mode === 'api') ? '🌐' : '🐚';
-                  icon.title = 'mode: ' + mode;
-                  row.appendChild(icon);
-                  var meta = document.createElement('div');
-                  meta.className = 'ui-orch-custom-tool-meta';
-                  var nm = document.createElement('div');
-                  nm.className = 'ui-orch-custom-tool-name';
-                  nm.textContent = t.name || '(unnamed)';
-                  meta.appendChild(nm);
-                  if (t.description) {
-                    var desc = document.createElement('div');
-                    desc.className = 'ui-orch-custom-tool-desc';
-                    desc.textContent = t.description;
-                    meta.appendChild(desc);
-                  }
-                  var summary = '';
-                  if (mode === 'shell' && t.command_template) {
-                    summary = '$ ' + t.command_template;
-                  } else if (mode === 'api' && t.command_template) {
-                    summary = (t.method || 'GET') + ' ' + t.command_template;
-                  } else if (mode === 'pipeline') {
-                    var steps = (t.pipeline_steps || []);
-                    if (steps.length > 0) {
-                      summary = steps.map(function(s){ return s.tool; }).join(' → ');
-                    } else if (t.pipeline_prompt) {
-                      summary = '(adaptive pipeline)';
-                    }
-                  }
-                  if (summary) {
-                    var sm = document.createElement('div');
-                    sm.className = 'ui-orch-custom-tool-summary';
-                    if (summary.length > 140) summary = summary.slice(0, 140) + '…';
-                    sm.textContent = summary;
-                    meta.appendChild(sm);
-                  }
-                  row.appendChild(meta);
-                  // Action column — Global checkbox + Persist + Drop.
-                  var actions = document.createElement('div');
-                  actions.className = 'ui-orch-session-tool-actions';
-                  actions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
-                  var globalLbl = document.createElement('label');
-                  globalLbl.style.cssText = 'display:flex;align-items:center;gap:0.25rem;color:var(--text-mute);font-size:0.78rem;cursor:pointer';
-                  var globalCb = document.createElement('input');
-                  globalCb.type = 'checkbox';
-                  globalCb.title = 'When checked, persist to your user-wide tool pool (available to every agent). When unchecked, attach to this agent only.';
-                  globalLbl.appendChild(globalCb);
-                  globalLbl.appendChild(document.createTextNode('Global'));
-                  var persistBtn = document.createElement('button');
-                  persistBtn.type = 'button';
-                  persistBtn.className = 'ui-row-btn';
-                  persistBtn.textContent = 'Persist';
-                  var dropBtn = document.createElement('button');
-                  dropBtn.type = 'button';
-                  dropBtn.className = 'ui-row-btn';
-                  dropBtn.style.cssText = 'color:var(--danger,#c0392b)';
-                  dropBtn.textContent = 'Drop';
-                  function doAction(action, extras) {
-                    persistBtn.disabled = true; dropBtn.disabled = true;
-                    var qs = 'action=' + action +
-                             '&agent_id=' + encodeURIComponent(id);
-                    if (extras && extras.global) qs += '&global=true';
-                    fetch('api/sessions/' + encodeURIComponent(activeSid) +
-                          '/tools/' + encodeURIComponent(t.name) + '?' + qs,
-                          { method: 'POST' })
-                      .then(function(r) {
-                        if (!r.ok) return r.text().then(function(s) { throw new Error(s || r.statusText); });
-                        // Visually mark the row + fade it out so the
-                        // modal reads the outcome without a re-fetch.
-                        row.style.opacity = '0.5';
-                        if (action === 'persist') {
-                          var done = document.createElement('div');
-                          done.style.cssText = 'color:var(--accent);font-size:0.78rem;margin-left:0.4rem';
-                          done.textContent = (extras && extras.global) ? 'Persisted (global)' : 'Attached to agent';
-                          actions.innerHTML = '';
-                          actions.appendChild(done);
-                        } else {
-                          actions.innerHTML = '<span style="color:var(--text-mute);font-size:0.78rem">Dropped</span>';
-                        }
-                      })
-                      .catch(function(err) {
-                        persistBtn.disabled = false; dropBtn.disabled = false;
-                        window.uiAlert(action + ' failed: ' + (err && err.message || err));
-                      });
-                  }
-                  persistBtn.addEventListener('click', function() {
-                    doAction('persist', { global: globalCb.checked });
-                  });
-                  dropBtn.addEventListener('click', async function() {
-                    if (!(await window.uiConfirm('Drop session tool ' + t.name + '?'))) return;
-                    doAction('drop', null);
-                  });
-                  // Expand toggle → reveals the full tool definition.
-                  // Sits alongside the Persist/Drop actions so the
-                  // admin can audit before promoting.
-                  var sessDetail = buildToolDetail(t);
-                  attachExpandToggle(actions, sessDetail);
-                  actions.appendChild(globalLbl);
-                  actions.appendChild(persistBtn);
-                  actions.appendChild(dropBtn);
-                  row.appendChild(actions);
-                  sec.appendChild(row);
-                  sec.appendChild(sessDetail);
-                });
-                // Shell was already inserted above; rows just landed
-                // inside it. No further DOM movement needed.
-              })
-              .catch(function(err) {
-                sessLoading.remove();
-                var errRow = document.createElement('div');
-                errRow.className = 'ui-orch-custom-tools-help';
-                errRow.style.color = 'var(--danger,#c0392b)';
-                errRow.textContent = 'Could not load session tools: ' + (err && err.message || err);
-                sec.appendChild(errRow);
-                if (window.console) console.warn('session-tools fetch failed:', err);
-              });
           }
 
           var list = document.createElement('div');
@@ -3850,8 +3737,14 @@
             var timesPerDay = num(task.times_per_day);
             var minGap = num(task.min_gap_minutes);
             var maxGap = num(task.max_gap_minutes);
-            var fromI = txt(task.has_window ? task.active_from : '', 'e.g. 09:00');
-            var toI = txt(task.has_window ? task.active_to : '', 'e.g. 17:30');
+            function timeI(val) {
+              var i = document.createElement('input');
+              i.type = 'time'; i.step = '60'; i.className = 'ui-orch-sec-filter';
+              if (val) i.value = val;
+              return i;
+            }
+            var fromI = timeI(task.has_window ? task.active_from : '');
+            var toI = timeI(task.has_window ? task.active_to : '');
             var maxFires = num(task.max_fires);
 
             var fixedRow = labeled('Every N minutes', interval);
@@ -3909,6 +3802,251 @@
             m.footer.appendChild(saveBtn);
           })
           .catch(function(err) { window.uiAlert('Could not load task: ' + (err && err.message || err)); });
+      });
+
+      // Small shared field helpers for the schedule edit modals below.
+      function schedLabeled(labelText, inputEl) {
+        var wrap = document.createElement('label');
+        wrap.style.cssText = 'display:block;margin:0.4rem 0';
+        var lb = document.createElement('div');
+        lb.className = 'ui-orch-sec-toggle-help';
+        lb.textContent = labelText;
+        wrap.appendChild(lb);
+        wrap.appendChild(inputEl);
+        return wrap;
+      }
+      function schedNum(val, min) {
+        var i = document.createElement('input');
+        i.type = 'number'; i.min = (min == null ? '0' : String(min));
+        i.className = 'ui-orch-sec-filter';
+        i.value = (val ? String(val) : '');
+        return i;
+      }
+      function schedTxt(val, phold) {
+        var i = document.createElement('input');
+        i.type = 'text'; i.className = 'ui-orch-sec-filter';
+        i.value = val || ''; i.placeholder = phold || '';
+        return i;
+      }
+      // schedSelect builds a select from [value, label] pairs, pre-selecting the
+      // given value. The single option-picker the schedule modals share so a user
+      // never types a raw cron / duration string.
+      function schedSelect(options, selected) {
+        var s = document.createElement('select');
+        s.className = 'ui-orch-sec-filter';
+        options.forEach(function(o) {
+          var opt = document.createElement('option');
+          opt.value = o[0]; opt.textContent = o[1];
+          if (o[0] === selected) opt.selected = true;
+          s.appendChild(opt);
+        });
+        return s;
+      }
+      // schedTime builds a native time picker (HH:MM, local). Emits the exact
+      // zero-padded "HH:MM" the cron parser expects.
+      function schedTime(val) {
+        var i = document.createElement('input');
+        i.type = 'time'; i.step = '60'; i.className = 'ui-orch-sec-filter';
+        if (val) i.value = val;
+        return i;
+      }
+      function schedButtons(m, saveBtn) {
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'ui-orch-modal-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = m.close;
+        m.footer.appendChild(cancelBtn);
+        m.footer.appendChild(saveBtn);
+      }
+
+      // Edit an EVENT MONITOR's poll interval from the Scheduler modal. Webhook
+      // monitors are push-only and carry no edit affordance, so this always
+      // targets a schedulable (poll / http_poll / watch) monitor.
+      window.uiRegisterClientAction('orchestrate_edit_monitor', function(ctx) {
+        var id = ctx && ctx.id;
+        if (!id) return;
+        fetch('api/console/monitors/get?id=' + encodeURIComponent(id))
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(mon) {
+            var m = openOrchModal('Event monitor');
+            var help = document.createElement('div');
+            help.className = 'ui-orch-modal-help';
+            help.textContent = '“' + (mon.name || '') + '” (' + (mon.kind || 'monitor') + ') checks on a fixed interval. Edit how often it runs.';
+            m.body.appendChild(help);
+
+            if (!mon.schedulable) {
+              var note = document.createElement('div');
+              note.className = 'ui-orch-sec-pick-desc';
+              note.textContent = 'This monitor is push-triggered — there is no interval to edit.';
+              m.body.appendChild(note);
+              return;
+            }
+
+            // Interval as a value + unit picker instead of a raw seconds box:
+            // pick "every 5 minutes" / "every 2 hours" from options, not math.
+            // Derive the friendliest unit from the stored seconds on load.
+            var storedSecs = mon.interval_seconds || 60;
+            var unit = 'seconds', val = storedSecs;
+            if (storedSecs % 3600 === 0) { unit = 'hours'; val = storedSecs / 3600; }
+            else if (storedSecs % 60 === 0) { unit = 'minutes'; val = storedSecs / 60; }
+            var everyVal = schedNum(val, 1);
+            var unitSel = schedSelect([['seconds', 'seconds'], ['minutes', 'minutes'], ['hours', 'hours']], unit);
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
+            everyVal.style.maxWidth = '6rem';
+            row.appendChild(everyVal); row.appendChild(unitSel);
+            m.body.appendChild(schedLabeled('Check every', row));
+
+            function unitSecs(u) { return u === 'hours' ? 3600 : (u === 'minutes' ? 60 : 1); }
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'ui-orch-modal-btn primary';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = function() {
+              var v = parseInt(everyVal.value, 10);
+              var n = (isNaN(v) ? 0 : v) * unitSecs(unitSel.value);
+              if (n < 5) { window.uiAlert('Interval must be at least 5 seconds.'); return; }
+              saveBtn.disabled = true;
+              fetch('api/console/monitors/update?id=' + encodeURIComponent(id), {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({interval_seconds: n})
+              }).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+                m.close();
+                if (ctx.reload) ctx.reload();
+              }).catch(function(err) {
+                saveBtn.disabled = false;
+                window.uiAlert('Update failed: ' + (err && err.message || err));
+              });
+            };
+            schedButtons(m, saveBtn);
+          })
+          .catch(function(err) { window.uiAlert('Could not load monitor: ' + (err && err.message || err)); });
+      });
+
+      // Edit a SCHEDULED (standing) AGENT's schedule from the Scheduler modal:
+      // a cron spec OR an interval. Cron wins when both are set (matches the
+      // server), so the modal notes that and clears the other on save.
+      window.uiRegisterClientAction('orchestrate_edit_standing', function(ctx) {
+        var id = ctx && ctx.id;
+        if (!id) return;
+        fetch('api/console/agents/get?id=' + encodeURIComponent(id))
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(sa) {
+            var m = openOrchModal('Scheduled agent');
+            var help = document.createElement('div');
+            help.className = 'ui-orch-modal-help';
+            help.textContent = '“' + (sa.name || '') + '” runs ' + (sa.schedule_label || 'on a schedule') + '. Choose when it runs.';
+            m.body.appendChild(help);
+
+            var DAYS = [['MON', 'Mon'], ['TUE', 'Tue'], ['WED', 'Wed'], ['THU', 'Thu'], ['FRI', 'Fri'], ['SAT', 'Sat'], ['SUN', 'Sun']];
+
+            // Frequency drives which time controls show — no cron string typed.
+            var freq = schedSelect([
+              ['interval', 'Every N minutes'],
+              ['daily', 'Every day'],
+              ['weekdays', 'Weekdays (Mon–Fri)'],
+              ['weekends', 'Weekends (Sat–Sun)'],
+              ['weekly', 'Weekly on a day'],
+              ['custom', 'Specific days']
+            ], 'daily');
+            m.body.appendChild(schedLabeled('Frequency', freq));
+
+            var interval = schedNum(sa.interval_minutes || 60, 1);
+            var intervalRow = schedLabeled('Every N minutes', interval);
+            m.body.appendChild(intervalRow);
+
+            var timeInput = schedTime('');
+            var timeRow = schedLabeled('At time (local)', timeInput);
+            m.body.appendChild(timeRow);
+
+            var weekdaySel = schedSelect(DAYS, 'MON');
+            var weeklyRow = schedLabeled('On day', weekdaySel);
+            m.body.appendChild(weeklyRow);
+
+            var customWrap = document.createElement('div');
+            customWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.6rem;margin:0.2rem 0';
+            var dayBoxes = DAYS.map(function(d) {
+              var lbl = document.createElement('label');
+              lbl.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem';
+              var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = d[0];
+              lbl.appendChild(cb); lbl.appendChild(document.createTextNode(d[1]));
+              customWrap.appendChild(lbl);
+              return cb;
+            });
+            var customRow = schedLabeled('On days', customWrap);
+            m.body.appendChild(customRow);
+
+            function show(el, on) { el.style.display = on ? '' : 'none'; }
+            function sync() {
+              var f = freq.value;
+              show(intervalRow, f === 'interval');
+              show(timeRow, f !== 'interval');
+              show(weeklyRow, f === 'weekly');
+              show(customRow, f === 'custom');
+            }
+            freq.addEventListener('change', sync);
+
+            // Prefill the controls from the agent's current schedule so an edit
+            // starts from what's set, not a blank default.
+            (function prefill() {
+              var cron = (sa.cron || '').trim();
+              if (!cron && (sa.interval_minutes || 0) > 0) { freq.value = 'interval'; return; }
+              var parts = cron.split(/\s+/);
+              if (parts.length === 2) {
+                var days = parts[0].toLowerCase(), hhmm = parts[1];
+                if (/^\d{1,2}:\d{2}$/.test(hhmm)) { timeInput.value = hhmm.length === 4 ? '0' + hhmm : hhmm; }
+                if (days === 'daily' || days === 'everyday') { freq.value = 'daily'; }
+                else if (days === 'weekdays') { freq.value = 'weekdays'; }
+                else if (days === 'weekends') { freq.value = 'weekends'; }
+                else {
+                  var toks = days.split(',').map(function(s) { return s.trim().slice(0, 3).toUpperCase(); }).filter(Boolean);
+                  if (toks.length === 1) { freq.value = 'weekly'; weekdaySel.value = toks[0]; }
+                  else { freq.value = 'custom'; dayBoxes.forEach(function(cb) { cb.checked = toks.indexOf(cb.value) >= 0; }); }
+                }
+              }
+            })();
+            if (!timeInput.value) timeInput.value = '09:00';
+            sync();
+
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'ui-orch-modal-btn primary';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = function() {
+              var f = freq.value, cronVal = '', iv = 0;
+              if (f === 'interval') {
+                iv = parseInt(interval.value, 10);
+                if (isNaN(iv) || iv < 1) { window.uiAlert('Enter a minute interval of 1 or more.'); return; }
+              } else {
+                var hhmm = timeInput.value;
+                if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { window.uiAlert('Pick a time of day.'); return; }
+                var daysTok = '';
+                if (f === 'daily') daysTok = 'daily';
+                else if (f === 'weekdays') daysTok = 'weekdays';
+                else if (f === 'weekends') daysTok = 'weekends';
+                else if (f === 'weekly') daysTok = weekdaySel.value;
+                else if (f === 'custom') {
+                  var sel = dayBoxes.filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
+                  if (!sel.length) { window.uiAlert('Pick at least one day.'); return; }
+                  daysTok = sel.join(',');
+                }
+                cronVal = daysTok + ' ' + hhmm;
+              }
+              saveBtn.disabled = true;
+              fetch('api/console/agents/update?id=' + encodeURIComponent(id), {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({cron: cronVal, interval_minutes: iv})
+              }).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+                m.close();
+                if (ctx.reload) ctx.reload();
+              }).catch(function(err) {
+                saveBtn.disabled = false;
+                window.uiAlert('Update failed: ' + (err && err.message || err));
+              });
+            };
+            schedButtons(m, saveBtn);
+          })
+          .catch(function(err) { window.uiAlert('Could not load agent: ' + (err && err.message || err)); });
       });
 
       // --- Per-agent count refresh on the Tools / Memory / Rules buttons ---

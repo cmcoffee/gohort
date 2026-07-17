@@ -3635,60 +3635,123 @@
       }).catch(function() { /* leave the section as-is on error */ });
     }
 
-    // loadSchedules — render the agent's own event monitors + scheduled runs
-    // (from cfg.schedules_url) as a labeled rail section. Each row carries its
-    // own pause/resume/delete URLs from the server, so this stays generic over
-    // the two record types. Hidden when the agent has none.
+    // loadSchedules — render a single "Scheduler" rail entry carrying the TOTAL
+    // count of the agent's schedulable/triggered entries (recurring tasks,
+    // scheduled agents, event monitors — from cfg.schedules_url). Clicking it
+    // opens a modal that lists every entry grouped by category. Stays generic:
+    // rows carry their own action URLs and a server-supplied category /
+    // category_label; core/ui never names a category itself. Hidden when none.
     function loadSchedules() {
       if (!cfg.schedules_url || !schedulesEl) return;
-      fetchJSON(substituteExtras(cfg.schedules_url)).then(function(list) {
+      function renderSchedulerRow(list) {
         if (!Array.isArray(list)) list = [];
         schedulesEl.innerHTML = '';
-        if (!list.length) { schedulesEl.style.display = 'none'; return; }
-        schedulesEl.appendChild(el('div', {class: 'ui-channels-h'},
-          [el('span', {class: 'ui-channels-h-title'}, ['Schedules'])]));
-        list.forEach(function(s) {
-          var main = el('div', {style: 'flex:1;min-width:0;overflow:hidden'}, [
-            el('div', {style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'}, [s.name || 'schedule']),
-            el('div', {style: 'font-size:0.75em;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},
-              [(s.paused ? 'paused · ' : '') + (s.detail || '')])
-          ]);
-          var row = el('div', {class: 'ui-chat-side-item ui-channels-item'}, [main]);
-          // Optional per-row edit: when the server tags a row with edit_action,
-          // clicking its body invokes that app-registered client action with the
-          // row id (+ a reload cb). Stays domain-agnostic — core/ui doesn't know
-          // what the action does; the app registers it (e.g. an edit modal).
-          if (s.edit_action && window.UIClientActions && window.UIClientActions[s.edit_action]) {
-            main.style.cursor = 'pointer';
-            main.title = 'Edit';
-            main.addEventListener('click', function() {
-              window.UIClientActions[s.edit_action]({id: s.id, reload: loadSchedules});
-            });
-          }
-          var toggleUrl = s.paused ? s.resume_url : s.pause_url;
-          if (toggleUrl) {
-            row.appendChild(el('button', {class: 'ui-chat-side-ren', title: s.paused ? 'Resume' : 'Pause',
-              onclick: function(ev) {
-                ev.stopPropagation();
-                fetchJSON(substituteExtras(toggleUrl), {method: 'POST'})
-                  .then(function() { loadSchedules(); })
-                  .catch(function(err) { showToast('Failed: ' + (err && err.message || err)); });
-              }}, [s.paused ? '▶' : '⏸']));
-          }
-          if (s.delete_url) {
-            row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete schedule',
-              onclick: async function(ev) {
-                ev.stopPropagation();
-                if (!(await window.uiConfirm('Delete this schedule? It stops running.'))) return;
-                fetchJSON(substituteExtras(s.delete_url), {method: 'DELETE'})
-                  .then(function() { loadSchedules(); })
-                  .catch(function(err) { showToast('Delete failed: ' + (err && err.message || err)); });
-              }}, ['×']));
-          }
-          schedulesEl.appendChild(row);
-        });
+        // Always render the Scheduler entry when the app wired a
+        // schedules_url — it's the entry point for CREATING schedules, so
+        // it must stay reachable even with none yet (the modal shows an
+        // empty state). The count badge appears only when there's >= 1.
+        var kids = [
+          el('span', {style: 'flex:none'}, ['🕐']),
+          el('div', {style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, ['Scheduler'])
+        ];
+        if (list.length) {
+          kids.push(el('span', {style: 'margin-left:auto;flex:none;background:var(--accent,#6366f1);color:#fff;border-radius:10px;padding:0 0.5em;font-size:0.72em;line-height:1.5;min-width:1.4em;text-align:center'},
+            [String(list.length)]));
+        }
+        var btn = el('div', {class: 'ui-chat-side-item ui-channels-item', style: 'cursor:pointer;display:flex;align-items:center;gap:0.4em', title: 'View all schedules'}, kids);
+        btn.addEventListener('click', openSchedulerModal);
+        schedulesEl.appendChild(btn);
         schedulesEl.style.display = '';
-      }).catch(function() { schedulesEl.style.display = 'none'; });
+      }
+      // Render the row immediately (empty state), then refresh with the
+      // real list — so the entry is present even if the fetch is slow or
+      // fails, matching the "always visible" policy.
+      renderSchedulerRow([]);
+      fetchJSON(substituteExtras(cfg.schedules_url)).then(renderSchedulerRow).catch(function() { renderSchedulerRow([]); });
+    }
+
+    // buildScheduleRow — one schedule entry (name + detail + edit/pause/delete),
+    // used inside the Scheduler modal. `reload` re-renders after any action.
+    // Domain-agnostic: it only knows the row's own URLs and edit_action.
+    function buildScheduleRow(s, reload) {
+      var main = el('div', {style: 'flex:1;min-width:0;overflow:hidden'}, [
+        el('div', {style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'}, [s.name || 'schedule']),
+        el('div', {style: 'font-size:0.75em;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},
+          [(s.paused ? 'paused · ' : '') + (s.detail || '')])
+      ]);
+      var row = el('div', {class: 'ui-chat-side-item ui-channels-item'}, [main]);
+      // Optional per-row edit: when the server tags a row with edit_action,
+      // clicking its body invokes that app-registered client action with the
+      // row id (+ a reload cb). core/ui doesn't know what the action does.
+      if (s.edit_action && window.UIClientActions && window.UIClientActions[s.edit_action]) {
+        main.style.cursor = 'pointer';
+        main.title = 'Edit';
+        main.addEventListener('click', function() {
+          window.UIClientActions[s.edit_action]({id: s.id, reload: reload});
+        });
+      }
+      var toggleUrl = s.paused ? s.resume_url : s.pause_url;
+      if (toggleUrl) {
+        row.appendChild(el('button', {class: 'ui-chat-side-ren', title: s.paused ? 'Resume' : 'Pause',
+          onclick: function(ev) {
+            ev.stopPropagation();
+            fetchJSON(substituteExtras(toggleUrl), {method: 'POST'})
+              .then(function() { reload(); })
+              .catch(function(err) { showToast('Failed: ' + (err && err.message || err)); });
+          }}, [s.paused ? '▶' : '⏸']));
+      }
+      if (s.delete_url) {
+        row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete schedule',
+          onclick: async function(ev) {
+            ev.stopPropagation();
+            if (!(await window.uiConfirm('Delete this schedule? It stops running.'))) return;
+            fetchJSON(substituteExtras(s.delete_url), {method: 'DELETE'})
+              .then(function() { reload(); })
+              .catch(function(err) { showToast('Delete failed: ' + (err && err.message || err)); });
+          }}, ['×']));
+      }
+      return row;
+    }
+
+    // openSchedulerModal — the unified Scheduler "page": every entry grouped
+    // under its category header, in the server's first-seen category order.
+    // Actions re-render the modal AND refresh the rail count via loadSchedules.
+    function openSchedulerModal() {
+      var modal = window.uiOpenModal({
+        title: 'Scheduler',
+        subtitle: 'Everything this agent runs on a timer or trigger.',
+        width: '560px'
+      });
+      function render() {
+        fetchJSON(substituteExtras(cfg.schedules_url)).then(function(list) {
+          if (!Array.isArray(list)) list = [];
+          modal.body.innerHTML = '';
+          loadSchedules(); // keep the rail badge in sync
+          if (!list.length) {
+            modal.body.appendChild(el('div', {style: 'opacity:0.6;padding:0.3rem'}, ['No schedules yet.']));
+            return;
+          }
+          var order = [], groups = {};
+          list.forEach(function(s) {
+            var cat = s.category || 'other';
+            if (!groups[cat]) { groups[cat] = {label: s.category_label || 'Other', rows: []}; order.push(cat); }
+            groups[cat].rows.push(s);
+          });
+          order.forEach(function(cat) {
+            var g = groups[cat];
+            var sect = el('div', {}, [
+              el('div', {class: 'ui-channels-h', style: 'margin-top:0'},
+                [el('span', {class: 'ui-channels-h-title'}, [g.label + ' (' + g.rows.length + ')'])])
+            ]);
+            g.rows.forEach(function(s) { sect.appendChild(buildScheduleRow(s, render)); });
+            modal.body.appendChild(sect);
+          });
+        }).catch(function() {
+          modal.body.innerHTML = '';
+          modal.body.appendChild(el('div', {style: 'opacity:0.6'}, ['Could not load schedules.']));
+        });
+      }
+      render();
     }
 
     // appendChannelMessage — render one newly-arrived channel message (live
@@ -4319,7 +4382,7 @@
           var byKey = {}, keyOrder = [];
           uiBlocks.forEach(function(b, i) {
             if (!b || !b.type) return;
-            var key = b.type + ' ' + (b.url || b.title || b.id || i);
+            var key = b.type + '\x00' + (b.url || b.title || b.id || i);
             if (!(key in byKey)) keyOrder.push(key);
             byKey[key] = b;
           });

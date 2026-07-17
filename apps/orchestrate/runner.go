@@ -1304,16 +1304,30 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	// the persistent pool — the point is that tool_def's delete must
 	// reach the RECORD, not just the session copy. Scope the callback to
 	// this agent + owner so a delete can't touch another agent's kit.
+	// Wire the agent-scope authoring + bundle-management callbacks, all
+	// owner-scoped to THIS agent: BundleTool attaches a newly authored
+	// tool to the record, UnbundleTool removes one, BundledToolNames tags
+	// the already-bundled set. CanScopeGlobal gates whether tool_def may
+	// instead persist a tool user-wide — Builder only; every other agent
+	// is forced to agent scope. BundleTool + CanScopeGlobal are wired
+	// unconditionally (even from an empty Tools[]) so a FIRST agent-scoped
+	// tool has a durable home; BundledToolNames only matters once the
+	// record already carries tools.
+	base := t.agent
+	agentID, owner, poolDBRef := t.agent.ID, poolUser, poolDB
+	sess.CanScopeGlobal = isBuilderAgent(agentID)
+	sess.BundleTool = func(tt TempTool) error {
+		return bundleAgentTool(poolDBRef, owner, base, tt)
+	}
+	sess.UnbundleTool = func(name string) error {
+		return unbundleAgentTool(poolDBRef, owner, agentID, name)
+	}
 	if len(t.agent.Tools) > 0 {
 		bundled := make(map[string]bool, len(t.agent.Tools))
 		for i := range t.agent.Tools {
 			bundled[t.agent.Tools[i].Name] = true
 		}
 		sess.BundledToolNames = bundled
-		agentID, owner, poolDBRef := t.agent.ID, poolUser, poolDB
-		sess.UnbundleTool = func(name string) error {
-			return unbundleAgentTool(poolDBRef, owner, agentID, name)
-		}
 	}
 }
 
@@ -1346,6 +1360,43 @@ func unbundleAgentTool(db Database, owner, agentID, name string) error {
 		return fmt.Errorf("tool %q is not bundled on agent %q", name, rec.Name)
 	}
 	rec.Tools = kept
+	_, err := saveAgent(db, rec)
+	return err
+}
+
+// bundleAgentTool attaches (or replaces by name) a tool on an agent's
+// record-attached kit (AgentRecord.Tools) and persists — the durable
+// half of tool_def(create) at agent scope and the wired target for
+// sess.BundleTool. Mirrors unbundleAgentTool: owner-scoped through the
+// same load/save path so an agent can only grow its OWN kit. When the
+// agent has no saved record yet (a first-ever agent-scoped tool on a
+// seed persona), it shadows the in-memory base record so the tool still
+// gets a durable home.
+func bundleAgentTool(db Database, owner string, base AgentRecord, t TempTool) error {
+	if db == nil {
+		return fmt.Errorf("no db")
+	}
+	rec, ok := loadAgent(db, base.ID)
+	if !ok {
+		rec = base
+		if rec.Owner == "" {
+			rec.Owner = owner
+		}
+	}
+	if rec.Owner != "" && owner != "" && rec.Owner != owner {
+		return fmt.Errorf("not your agent")
+	}
+	replaced := false
+	for i := range rec.Tools {
+		if rec.Tools[i].Name == t.Name {
+			rec.Tools[i] = t
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		rec.Tools = append(rec.Tools, t)
+	}
 	_, err := saveAgent(db, rec)
 	return err
 }
@@ -1415,6 +1466,12 @@ func (t *chatTurn) newToolSession() *ToolSession {
 		// infinite-loop. See runPipelineSubAgent.
 		SubAgentRunner: t.runPipelineSubAgent,
 	}
+	// Credential scope — the set of credentials this agent has been denied
+	// (scope pill). Carried on the session so the fetch_url auto-route (LLM
+	// tool + script gohort.fetch_url) blocks a covered host whose credential
+	// is revoked, closing the bypass that the tool-kit filter alone leaves
+	// open (a plain fetch to the host instead of a credential-bound tool).
+	sess.DeniedCredentials = credentialDenySet(t.agent)
 	// Tag with the active chat session id so SaveSessionTempTool /
 	// LoadSessionTempTools can scope tool drafts to this conversation.
 	// Tools the LLM authors mid-conversation (via create_pipeline_tool
@@ -2367,8 +2424,12 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		}
 		// Fence network-tool results as untrusted external content. Wrap the RAW
 		// handler so the fence rides through the cache + activity emission below
-		// (cache stores fenced; the model always sees the marker).
-		if toolCarriesNetworkCap(tools[i].Tool) {
+		// (cache stores fenced; the model always sees the marker). TrustedOutput
+		// tools opt out: their result is framework-generated control/authoring
+		// text (tool_def / add_tool confirmations), not fetched content — the
+		// CapNetwork on their union comes from a verify/test sub-action, not
+		// from their everyday output.
+		if toolCarriesNetworkCap(tools[i].Tool) && !tools[i].Tool.TrustedOutput {
 			inner := orig
 			orig = func(args map[string]any) (string, error) {
 				out, err := inner(args)
@@ -3347,18 +3408,32 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 // — recurring(schedule) ran, then synthesis timed out on runaway reasoning and
 // the confirmation was never persisted. No-op when nothing actually ran.
 func persistIncompleteTurnTrace(sess *ChatSession, udb Database, turn *chatTurn, reason string) {
-	orphanCalls := appendMidTurnBubbles(sess, turn.drainMidTurnBubbles(), "")
+	bubbles := turn.drainMidTurnBubbles()
+	orphanCalls := appendMidTurnBubbles(sess, bubbles, "")
 	finalCalls := append(orphanCalls, turn.persistedToolCalls()...)
-	if len(finalCalls) == 0 {
+	// Bail only when the turn produced NOTHING — no mid-turn answers AND no
+	// tool calls. Previously this returned whenever there were no tool calls,
+	// which silently dropped the mid-turn answers the user saw live: the
+	// bubbles were appended to sess.Messages above but the early return skipped
+	// the save, so the reloaded thread / Copy-session export lost them. A turn
+	// that only narrated (answered) before failing must still persist those
+	// answers.
+	if len(bubbles) == 0 && len(finalCalls) == 0 {
 		return
 	}
-	sess.Messages = append(sess.Messages, ChatMessage{
-		Role:      "assistant",
-		Content:   "_(This reply didn't finish — " + reason + " — but the tool actions this turn did run and are recorded above.)_",
-		Created:   time.Now(),
-		Usage:     turn.drainLastUsage(),
-		ToolCalls: finalCalls,
-	})
+	// The synthetic "didn't finish" trailer is only meaningful when tool calls
+	// ran OUTSIDE a captured bubble (their record would otherwise have no
+	// owning message). A turn that produced only narration answers keeps the
+	// bubbles alone — no trailer noise.
+	if len(finalCalls) > 0 {
+		sess.Messages = append(sess.Messages, ChatMessage{
+			Role:      "assistant",
+			Content:   "_(This reply didn't finish — " + reason + " — but the tool actions this turn did run and are recorded above.)_",
+			Created:   time.Now(),
+			Usage:     turn.drainLastUsage(),
+			ToolCalls: finalCalls,
+		})
+	}
 	_, _ = saveChatSession(udb, *sess)
 }
 
@@ -4548,6 +4623,31 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 // (e.g. ts3_client_status works in the web chat but is absent over a channel).
 func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, lazyPromptSection string) {
 	allCustomTools := temptool.BuildAgentToolDefs(sess)
+	// Credential scope enforcement: drop any tool whose backing credential
+	// this agent denies (AgentRecord.DisabledCredentials). Credentials are
+	// global by default; a per-agent deny (set via the scope pill) revokes
+	// every tool that dispatches through that credential for this agent. The
+	// backing TempTool carries .Credential; api/toolbox tools have one, shell
+	// tools don't (empty → never denied).
+	if len(t.agent.DisabledCredentials) > 0 {
+		deny := make(map[string]bool, len(t.agent.DisabledCredentials))
+		for _, c := range t.agent.DisabledCredentials {
+			deny[c] = true
+		}
+		kept := allCustomTools[:0]
+		var dropped []string
+		for _, td := range allCustomTools {
+			if lt := sess.LookupTempTool(td.Tool.Name); lt != nil && deny[lt.Credential] {
+				dropped = append(dropped, td.Tool.Name)
+				continue
+			}
+			kept = append(kept, td)
+		}
+		allCustomTools = kept
+		if len(dropped) > 0 {
+			Log("[orchestrate.scope] agent=%s credential-denied, dropped %d tool(s): %v", t.agent.ID, len(dropped), dropped)
+		}
+	}
 	t.wrapToolsForActivity(sess, allCustomTools)
 	t.staticTempToolNames = map[string]bool{}
 	t.lazyCustomToolNames = map[string]bool{}
