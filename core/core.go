@@ -74,9 +74,10 @@ var (
 // --- textutil ----------------------------------------------------------------
 
 const (
-	BannedWordsRule   = textutil.BannedWordsRule
-	TimeAwarenessRule = textutil.TimeAwarenessRule
-	UntrustedDataRule = textutil.UntrustedDataRule
+	BannedWordsRule          = textutil.BannedWordsRule
+	TimeAwarenessRule        = textutil.TimeAwarenessRule
+	UntrustedDataRule        = textutil.UntrustedDataRule
+	UntrustedToolResultFence = textutil.UntrustedToolResultFence
 )
 
 var (

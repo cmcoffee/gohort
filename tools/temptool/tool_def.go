@@ -30,10 +30,14 @@ func BuildToolDef() *GroupedTool {
 	// time keeps each create+verify cycle visible to the operator
 	// before the LLM bundle-creates three tools that might overlap.
 	gt.SetSingleFirePerBatch(true)
-	// Its output is framework-authoring text (create/update/delete/list/get
-	// confirmations) — NOT external content. The union Caps() carry CapNetwork
-	// only because the "test" action makes real calls; suppress the untrusted-
-	// content fence so every authoring result isn't wrapped in it.
+	// Decline the BLANKET fence and apply it per-action instead. Nearly every
+	// action returns framework-authoring text (create/update/delete/list/get
+	// confirmations) — not external content — and the union Caps() carry
+	// CapNetwork only because "test" makes real calls, so fencing the whole tool
+	// would wrap all that authoring output in an external-content warning.
+	// "test" IS the exception and fences itself: it fires the authored tool at a
+	// real endpoint and hands back the response. Any future action that returns
+	// fetched content must do the same.
 	gt.SetTrustedOutput(true)
 
 	gt.AddAction("list", &GroupedToolAction{
@@ -195,7 +199,18 @@ func BuildToolDef() *GroupedTool {
 			if sess == nil {
 				return "", fmt.Errorf("requires a session")
 			}
-			return testGrouped(args, sess)
+			out, err := testGrouped(args, sess)
+			if err != nil || strings.TrimSpace(out) == "" {
+				return out, err
+			}
+			// Fence THIS action, since the tool as a whole opted out
+			// (SetTrustedOutput above). Every other action returns authoring
+			// text we generated; "test" fires the authored tool at a REAL
+			// endpoint and reports the response body back, so its output is
+			// third-party content wearing a PASS/FAIL table. Author a tool
+			// against a hostile URL, hit test, and without this the response
+			// lands in the authoring model's context as trusted text.
+			return UntrustedToolResultFence + out, nil
 		},
 	})
 

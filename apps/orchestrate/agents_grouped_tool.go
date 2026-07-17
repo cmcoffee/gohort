@@ -51,7 +51,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		},
 		"id": {
 			Type:        "string",
-			Description: "(get) Agent id (from action=\"list\").",
+			Description: "(get) Agent id from action=\"list\" — or its name, which resolves the same way. The `agent` param is accepted here interchangeably.",
 		},
 		"full": {
 			Type:        "boolean",
@@ -146,6 +146,16 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			Parameters:  params,
 			Required:    []string{"action"},
 			Caps:        caps,
+			// Opt out of the BLANKET untrusted fence and apply it per-action
+			// below instead. CapNetwork above is tagged for Private-mode
+			// stripping (a `run` could reach a sub-agent's web_search), but the
+			// fence keys off the same cap — so list/get, which are pure reads of
+			// the user's OWN agent registry, were being wrapped in "UNTRUSTED
+			// EXTERNAL CONTENT — fetched from outside the system". That told an
+			// authoring agent to distrust the very records it was about to edit,
+			// and burned ~500 chars of banner on every call. Only run/run_tool
+			// return content that actually came from outside; they self-fence.
+			TrustedOutput: true,
 		},
 		Handler: func(args map[string]any) (string, error) {
 			action := strings.TrimSpace(stringArg(args, "action"))
@@ -160,12 +170,12 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 				if !allowRun {
 					return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
 				}
-				return t.agentsRunAction(args)
+				return fenceAgentsOutput(t.agentsRunAction(args))
 			case "run_tool":
 				if !allowRunTool {
 					return "", fmt.Errorf("agents(run_tool) is not available to this agent — it's a Builder-only allowance for verifying an agent's tools directly")
 				}
-				return t.agentsRunToolAction(args)
+				return fenceAgentsOutput(t.agentsRunToolAction(args))
 			default:
 				acts := []string{"list", "get"}
 				if allowRun {
@@ -179,6 +189,21 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 			}
 		},
 	}
+}
+
+// fenceAgentsOutput wraps a dispatch result in the untrusted-content fence —
+// the per-action half of the agents tool's TrustedOutput opt-out (see the Tool
+// literal in agentsGroupedToolDef). run / run_tool hand back whatever a
+// SUB-AGENT produced, and that sub-agent may have run web_search / fetch_url /
+// a scripted tool, so the text can carry attacker-influenced content and must
+// be marked as data. Shaped as a pass-through so a call site can wrap the
+// action call directly. Errors and blank results are returned untouched:
+// there's nothing to fence, and fencing an error would only bury the message.
+func fenceAgentsOutput(out string, err error) (string, error) {
+	if err != nil || strings.TrimSpace(out) == "" {
+		return out, err
+	}
+	return untrustedContentFence + out, nil
 }
 
 func agentsToolHelp(allowRun, allowRunTool bool) string {
@@ -276,19 +301,34 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if t.udb == nil || t.user == "" {
 		return "", errors.New("agents(get) requires authenticated session")
 	}
-	id := strings.TrimSpace(stringArg(args, "id"))
-	if id == "" {
-		return "", errors.New("id is required for action=get")
+	// Accept a NAME as readily as an id. This action used to hard-require id,
+	// while the same tool's `agent` param documents "Name or id" for run /
+	// run_tool — so the natural first call, agents(get, agent="OSINT
+	// Investigator"), was rejected and cost a round to list-then-get. Take
+	// either key, and resolve by name or id the same way run does.
+	key := strings.TrimSpace(stringArg(args, "id"))
+	if key == "" {
+		key = strings.TrimSpace(stringArg(args, "agent"))
+	}
+	if key == "" {
+		return "", errors.New("action=get needs the agent to fetch — pass id=\"<uuid>\" or agent=\"<name or id>\" (agents(action=\"list\") shows both)")
 	}
 	// Builder is hidden from this surface — see agentsRunAction and
 	// agentsListAction for the rationale.
-	if isBuilderAgent(id) {
-		return "", fmt.Errorf("agent %q not found", id)
+	if isBuilderAgent(key) {
+		return "", fmt.Errorf("agent %q not found", key)
 	}
 	fleetDB, fleetUser := t.fleetView()
-	a, ok := loadAgent(fleetDB, id)
+	a, ok := loadAgent(fleetDB, key)
+	if !ok {
+		// Not a raw id — try it as a name before giving up.
+		a, ok = findAgentByNameOrID(fleetDB, fleetUser, key)
+	}
 	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
-		return "", fmt.Errorf("agent %q not found", id)
+		return "", fmt.Errorf("agent %q not found", key)
+	}
+	if isBuilderAgent(a.ID) {
+		return "", fmt.Errorf("agent %q not found", key)
 	}
 	if t.session != nil && t.session.ID != "" {
 		saveAuthoringInProgress(t.udb, t.session.ID, a.ID)
