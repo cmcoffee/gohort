@@ -463,9 +463,11 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 // blocked or still pending. Returns a structured summary that the
 // model must address in its Phase 5 synthesis (either explicitly
 // surfacing the gap to the user, or revising the plan to fill it).
-// Sets BuildPlanState.GapsReported (currently advisory — nothing reads it;
-// the prompt is what compels the call) so a future gate knows
-// the call happened.
+// Sets BuildPlanState.GapsReported, which injectSkippedGapReportWarning
+// reads at turn end: a reply that closes out the plan without this call
+// gets a corrective note + a visible warning. Enforcement is post-hoc
+// rather than a mid-turn block because the reply has already streamed by
+// then, and discarding it to force another round re-renders the content.
 //
 // Grades TWO independent things, deliberately. Step status is the model's OWN
 // claim — it calls mark_step_done itself — so it cannot stand in for evidence:

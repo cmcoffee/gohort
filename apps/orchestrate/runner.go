@@ -4361,6 +4361,20 @@ func (T *OrchestrateApp) handleSendWithAppTools(w http.ResponseWriter, r *http.R
 			"text": "Every authoring call this turn failed, but the reply claims it's done — the tool/agent was NOT saved. Next turn is re-prompted to actually fix it.",
 		})
 	}
+	// The build closed out without ever running the gap check, so nothing
+	// surfaced blocked steps or unverified tools. Same post-hoc shape as the two
+	// checks above rather than a mid-turn block: the reply has already streamed
+	// to the client, and discarding it to force another round re-renders the
+	// content (see the correction/re-render rule).
+	if injectSkippedGapReportWarning(&sess, udb, reply) {
+		_, _ = saveChatSession(udb, sess)
+		sse.Send(map[string]any{
+			"kind": "activity",
+			"type": "error",
+			"id":   activityCheapID(),
+			"text": "The build plan was closed out without calling report_build_gaps — blocked steps and unverified tools went unchecked. Next turn is re-prompted to verify before claiming done.",
+		})
+	}
 
 	turn.titleAfterFirstTurn()
 
@@ -4414,6 +4428,53 @@ func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []Persisted
 		note += "s"
 	}
 	note += ". Do not describe work you haven't done. Re-do the next pending step by ACTUALLY calling the right authoring tool with concrete arguments. One tool call per turn — that is the only path that advances the plan."
+	sess.Messages = append(sess.Messages, ChatMessage{
+		Role:    "user",
+		Content: note,
+		Created: time.Now(),
+		Hidden:  true,
+	})
+	return true
+}
+
+// injectSkippedGapReportWarning is the enforcement half of report_build_gaps.
+// The tool's contract — "call this BEFORE your final reply" — lived only in the
+// prompt and the tool description: BuildPlanState.GapsReported was set and
+// never read, so a model that simply never called it wrapped up unchecked, and
+// every unverified tool it authored went unmentioned.
+//
+// Fires only when the plan LOOKS FINISHED (no pending or in-progress steps) and
+// the turn produced a reply anyway without ever gap-checking. That precondition
+// matters: the plan-approval turn and every mid-execution turn legitimately end
+// with a reply and no gap report, and warning on those would train the model to
+// ignore the notice. The complement of injectAuthoringMismatchWarning above,
+// which covers the pending-steps-but-nothing-fired case.
+//
+// Names the unverified tools directly, since skipping the call is exactly how
+// their standing stays invisible — the correction has to carry the payload the
+// skipped tool would have delivered, or the next turn just re-runs blind.
+func injectSkippedGapReportWarning(sess *ChatSession, udb Database, reply string) bool {
+	if sess == nil || sess.BuildPlan == nil || len(sess.BuildPlan.Steps) == 0 {
+		return false
+	}
+	if sess.BuildPlan.GapsReported || strings.TrimSpace(reply) == "" {
+		return false
+	}
+	for _, s := range sess.BuildPlan.Steps {
+		if s.Status != "done" && s.Status != "blocked" {
+			return false // still executing — a reply here is legitimate
+		}
+	}
+	note := "FRAMEWORK NOTICE: your previous reply closed out the build plan without calling report_build_gaps. That call is required before any reply that presents the build as finished — it is what surfaces blocked steps and tools that are not verified. Marking a step done is your OWN claim and is not evidence the tool works."
+	if un := unverifiedTools(udb, sess.ID); len(un) > 0 {
+		note += "\n\nTools you authored that do NOT currently stand verified:"
+		for _, u := range un {
+			note += fmt.Sprintf("\n  - %s — %s", u.Tool, u.Reason)
+		}
+		note += "\n\nYou may have told the user these are working. Verify each one now (add_tool with test_args, or tool_def(action=\"test\")), then say plainly what was actually confirmed and what was not."
+	} else {
+		note += " Call it now and address whatever it returns before restating that the work is done."
+	}
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role:    "user",
 		Content: note,
