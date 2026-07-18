@@ -143,6 +143,47 @@ func TestChatReconstructsChannelThenFleet(t *testing.T) {
 	}
 }
 
+// How-to-decide and Work-it-honestly must be LIFTED OUT of the Chat seed.
+func TestHowToDecideAndWorkHonestlyRemovedFromChatSeed(t *testing.T) {
+	p := chatSeed(t).OrchestratorPrompt
+	if strings.Contains(p, howToDecideSectionHeading) {
+		t.Fatalf("Chat seed still contains %q", howToDecideSectionHeading)
+	}
+	if strings.Contains(p, workHonestlyMarker) {
+		t.Fatalf("Chat seed still contains %q", workHonestlyMarker)
+	}
+}
+
+// ...injected on the interactive surface, gated off otherwise.
+func TestFrameworkGatesHowToDecideAndWorkHonestly(t *testing.T) {
+	on := frameworkPromptBlocks("", chatSeed(t), true)
+	if !strings.Contains(on, howToDecideSectionHeading) || !strings.Contains(on, workHonestlyMarker) {
+		t.Fatal("how-to-decide / work-honestly missing when hasPlanSet=true")
+	}
+	off := frameworkPromptBlocks("", chatSeed(t), false)
+	if strings.Contains(off, howToDecideSectionHeading) || strings.Contains(off, workHonestlyMarker) {
+		t.Fatal("how-to-decide / work-honestly leaked onto a non-interactive surface")
+	}
+}
+
+// Milestone: with every framework block lifted, the Chat seed persona is now
+// pure voice — no "## " framework sections and none of the lifted markers.
+func TestChatSeedIsPurePersona(t *testing.T) {
+	p := chatSeed(t).OrchestratorPrompt
+	if strings.Contains(p, "\n## ") || strings.HasPrefix(p, "## ") {
+		t.Fatalf("Chat seed still contains a '## ' framework section:\n%s", p)
+	}
+	for _, marker := range []string{
+		planSetSectionHeading, clarifyingSectionHeading, toolsSelfServeMarker,
+		exportMarker, builderRoutingMarker, channelSectionHeading,
+		fleetSupervisionMarker, howToDecideSectionHeading, workHonestlyMarker,
+	} {
+		if strings.Contains(p, marker) {
+			t.Fatalf("Chat seed still contains lifted marker %q", marker)
+		}
+	}
+}
+
 func seedNamed(t *testing.T, name string) AgentRecord {
 	t.Helper()
 	for _, s := range coreSeedAgents() {

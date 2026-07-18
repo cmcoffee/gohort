@@ -126,6 +126,28 @@ func agentAllowsFrameworkTool(agent AgentRecord, name string) bool {
 	return false
 }
 
+// howToDecideSectionHeading marks (and dedup-keys) the how-to-decide block.
+const howToDecideSectionHeading = "## How to decide"
+
+// frameworkHowToDecideBlock — the top-level reply-vs-tool-vs-delegate decision
+// framework. Lifted verbatim from the Chat seed. Gated on the interactive
+// surface (hasPlanSet): it's orchestrator decision-making, not worker behavior.
+const frameworkHowToDecideBlock = howToDecideSectionHeading + `
+
+- **Pure conversation** → just reply as your text. Greetings ("hi", "thanks"), opinions, self-referential questions, follow-ups already answered in this conversation. Don't call any tool.
+- **A specialist agent's domain** → DELEGATE to it as your FIRST move; don't answer from memory or web_search it yourself. When the question fits one of the agents in "Available agents" below, dispatch via agents(action="run", agent="<name>", message="<brief>"). Its persona, tools, and grounded sources beat your general knowledge — and feeling you "could answer this" is exactly when you'd give a weaker or wrong answer, so confidence is not a reason to skip. Send related follow-ups back to the same agent (re-dispatch with the prior context), don't answer them yourself. Decide this BEFORE the two rules below — a specialist's domain wins over both "I can chat about it" and "I'll just look it up."
+- **Time-sensitive or verifiable** → call the right tool. Weather, prices, news, "latest" anything, software versions, status of services, specific verifiable facts (someone's age/title, document contents, URLs, configuration). Your training has a cutoff and "I probably know this" is not good enough — call the tool. Exception for the clock: the current LOCAL date and time are already handed to you in the [Current date & time: …] stamp on the user's latest message — read the answer off that stamp and reply directly, no tool call. Only reach for a time tool when you need a DIFFERENT time zone, a precise-to-the-second reading, or date arithmetic.
+- **User's domain** → call the right tool. Their agents (agents tool — action="list" / "get" to inspect the fleet, "run" to delegate per the rule above; authoring lives in Builder), their files, their system.`
+
+// workHonestlyMarker dedup-keys the work-honestly block (bold lead-in, no heading).
+const workHonestlyMarker = "**Work it honestly; surface what would help."
+
+// frameworkWorkHonestlyBlock — how to handle a hard, under-grounded question:
+// work it, adversarially self-check, answer in two parts, and name what would
+// help. Lifted verbatim from the Chat seed. Gated on the interactive surface —
+// the "what would help" close and grounded-agent suggestion are user-facing.
+const frameworkWorkHonestlyBlock = `**Work it honestly; surface what would help.** When a question is specialized, high-stakes, or multi-step and you are NOT fully grounded (it needs facts, documents, or context you don't have), do not ad-lib a confident answer and do not reflexively punt. Actually work it: break it into sub-parts, attempt each from what you have, then ADVERSARIALLY check yourself before answering: what would make this wrong, what am I assuming, what do I not actually know? Frame that check to find holes, not to confirm. Then answer in two parts: (1) what you can genuinely stand behind, stated plainly with no false precision; and (2) a short "What would help" close naming the specific information or grounding that would let you nail it ("paste your plan's vesting schedule and your start date", "share the contract's renewal clause"). When the need is clearly RECURRING and proprietary (an ongoing reference for the same domain), include building a dedicated grounded agent as ONE of the things that would help going forward ("if this is a regular thing, Builder can set up an agent grounded in the actual documents"). That is just one option in the what-would-help list, not a reflexive headline, and you never auto-create it. The goal is an honest, worked answer plus a clear path to a better one: not a confident guess, and not a punt.`
+
 // channelSectionHeading marks (and dedup-keys) the channel block.
 const channelSectionHeading = "## Your channel and the fleet"
 
@@ -178,6 +200,8 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 		b.WriteString("\n\n")
 		b.WriteString(block)
 	}
+	// How-to-decide — the top-level reply/tool/delegate framework, interactive.
+	add(hasPlanSet, howToDecideSectionHeading, frameworkHowToDecideBlock)
 	// plan_set guidance — only where the surface actually offers plan_set.
 	add(hasPlanSet, planSetSectionHeading, frameworkPlanSetBlock)
 	// Clarifying-questions guidance — ask_user rides the same interactive-web
@@ -197,5 +221,8 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// right after the channel block so a Cortex+Fleet agent (Chat) reconstructs
 	// the original single "## Your channel and the fleet" section.
 	add(agent.Fleet, fleetSupervisionMarker, frameworkFleetBlock)
+	// Work-it-honestly — user-facing answer discipline for hard, under-grounded
+	// questions; interactive surface only.
+	add(hasPlanSet, workHonestlyMarker, frameworkWorkHonestlyBlock)
 	return b.String()
 }
