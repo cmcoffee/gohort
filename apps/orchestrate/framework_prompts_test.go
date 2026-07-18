@@ -43,6 +43,23 @@ func TestFrameworkOmitsPlanSetWhenSurfaceLacksIt(t *testing.T) {
 	}
 }
 
+// Clarifying-questions guidance must be LIFTED OUT of the Chat seed persona.
+func TestClarifyingRemovedFromChatSeed(t *testing.T) {
+	if strings.Contains(chatSeed(t).OrchestratorPrompt, clarifyingSectionHeading) {
+		t.Fatalf("Chat seed still contains %q", clarifyingSectionHeading)
+	}
+}
+
+// ...injected on the interactive surface (hasPlanSet true), gated off otherwise.
+func TestFrameworkGatesClarifyingOnInteractiveSurface(t *testing.T) {
+	if !strings.Contains(frameworkPromptBlocks("", chatSeed(t), true), clarifyingSectionHeading) {
+		t.Fatal("clarifying block missing when hasPlanSet=true")
+	}
+	if strings.Contains(frameworkPromptBlocks("", chatSeed(t), false), clarifyingSectionHeading) {
+		t.Fatal("clarifying block leaked onto a non-interactive surface (hasPlanSet=false)")
+	}
+}
+
 func seedNamed(t *testing.T, name string) AgentRecord {
 	t.Helper()
 	for _, s := range coreSeedAgents() {

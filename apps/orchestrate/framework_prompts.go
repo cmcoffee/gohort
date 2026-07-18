@@ -62,6 +62,32 @@ const frameworkBuilderRoutingBlock = `**An APP goes to Builder — a gohort "app
 
 For a complex or open-ended design ("help me figure out what I even want"), you don't need one perfect dispatch: go BACK AND FORTH with Builder in this thread. Dispatch what you have; if it needs a decision it can't assume, it says so — relay that, get the answer, dispatch again in the SAME thread (it remembers the prior exchange). Keep iterating until the design is captured, then report what was built and that it's held for approval. (Tools you still make yourself.)`
 
+// clarifyingSectionHeading marks (and dedup-keys) the clarifying-questions block.
+const clarifyingSectionHeading = "## Asking the user clarifying questions"
+
+// frameworkClarifyingBlock — when to pause and ask vs. when to just search, and
+// how to shape the ask (ask_user vs ask_user_form). Lifted verbatim from the
+// Chat seed. Gated on the interactive-web surface (hasPlanSet): ask_user /
+// ask_user_form only exist there — a dispatch/worker surface can't prompt the
+// user, so the guidance would be noise.
+const frameworkClarifyingBlock = clarifyingSectionHeading + `
+
+**When to ask** — Pause and ask whenever GUESSING is the alternative (not when SEARCHING is). Concrete triggers:
+
+- A tool returned 2+ plausible matches and you'd be picking arbitrarily ("there are 3 agents named 'helper' — which one?" → ask_user with the 3 names as options).
+- The user must choose between meaningfully different approaches that no tool can resolve ("PDF or HTML?", "shallow or deep?", "version 2 or 3?").
+- They must supply personal info you can't look up (which appliance, which file, their preference).
+- The request has an unresolved scope you can't infer from history ("clean up the database" — which one?).
+
+DON'T ask when a tool call would just answer the question. "What's the price of X?" → web_search, not ask_user.
+
+**How to ask** —
+
+- One question, enumerable choices → ask_user with options[].
+- Several questions, each with their own choices → ask_user_form with steps[]. NEVER stuff multiple questions into one ask_user as a numbered list; that forces the user to type "1. … 2. … 3. …" instead of clicking through.
+- Several specific VALUES the user must TYPE (an API base URL, a key, a count, an endpoint) → ask_user_form with steps[] where each step sets type ("text"/"number"/"textarea"/"select"/"password"). Any typed step renders the whole thing as ONE form (all fields at once, single Submit) instead of a step-through — the right shape for "fill these fields in." Use type:"password" for secrets/keys, type:"select" with options for a dropdown.
+- Open-ended single question with no clear options → ask_user without options.`
+
 // frameworkPromptBlocks returns the capability-gated framework orchestration
 // sections for this agent + surface, joined for splicing into the system
 // prompt. `existing` is the prompt assembled so far (persona + prior blocks);
@@ -85,6 +111,9 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	}
 	// plan_set guidance — only where the surface actually offers plan_set.
 	add(hasPlanSet, planSetSectionHeading, frameworkPlanSetBlock)
+	// Clarifying-questions guidance — ask_user rides the same interactive-web
+	// signal as plan_set; a dispatch/worker surface can't prompt the user.
+	add(hasPlanSet, clarifyingSectionHeading, frameworkClarifyingBlock)
 	// Builder routing — only a delegating (Fleet) agent that is NOT Builder
 	// itself. Builder is the authoring agent; routing it to itself is nonsense.
 	add(agent.Fleet && !isBuilderAgent(agent.ID), builderRoutingMarker, frameworkBuilderRoutingBlock)
