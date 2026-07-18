@@ -98,6 +98,13 @@ func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBl
 // content (triggered-skill instructions, per-turn trigger hints) is deliberately
 // NOT here — it rides the user message for prompt-cache stability.
 func appendAgentCapabilityBlocks(sys string, agent AgentRecord, udb Database, user string, hasPlanSet bool) string {
+	// Framework orchestration blocks lifted out of individual seed personas
+	// (see framework_prompts.go) so every capable agent inherits them, not
+	// just whichever seed happened to hand-author the prose. Gated by
+	// capability; splices in ahead of the agent's own plan-guidance addendum.
+	// Passes the prompt-so-far so a block a cloned persona already carries
+	// isn't injected twice.
+	sys += frameworkPromptBlocks(sys, agent, hasPlanSet)
 	if g := strings.TrimSpace(agent.PlanGuidance); g != "" {
 		sys += "\n\n## Plan guidance\n" + g
 	}
