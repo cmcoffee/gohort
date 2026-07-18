@@ -96,6 +96,53 @@ func TestFrameworkGatesToolBlocksOnAllowlist(t *testing.T) {
 	}
 }
 
+// Channel + fleet supervision must be LIFTED OUT of the Chat seed persona.
+func TestChannelFleetRemovedFromChatSeed(t *testing.T) {
+	p := chatSeed(t).OrchestratorPrompt
+	if strings.Contains(p, channelSectionHeading) {
+		t.Fatalf("Chat seed still contains the channel block (%q)", channelSectionHeading)
+	}
+	if strings.Contains(p, fleetSupervisionMarker) {
+		t.Fatalf("Chat seed still contains the fleet block (%q)", fleetSupervisionMarker)
+	}
+}
+
+// The channel block is gated on Cortex; the fleet block on Fleet. A Cortex-only
+// agent gets the home-thread guidance but not fleet supervision, and vice-versa.
+func TestFrameworkGatesChannelAndFleetIndependently(t *testing.T) {
+	cortexOnly := AgentRecord{ID: "cx", Cortex: true}
+	got := frameworkPromptBlocks("", cortexOnly, false)
+	if !strings.Contains(got, channelSectionHeading) {
+		t.Fatal("channel block missing for a Cortex agent")
+	}
+	if strings.Contains(got, fleetSupervisionMarker) {
+		t.Fatal("fleet block leaked onto a non-Fleet agent")
+	}
+
+	fleetOnly := AgentRecord{ID: "fl", Fleet: true}
+	got = frameworkPromptBlocks("", fleetOnly, false)
+	if !strings.Contains(got, fleetSupervisionMarker) {
+		t.Fatal("fleet block missing for a Fleet agent")
+	}
+	if strings.Contains(got, channelSectionHeading) {
+		t.Fatal("channel block leaked onto a non-Cortex agent")
+	}
+}
+
+// Chat (Cortex+Fleet) reconstructs the original single section: the heading, then
+// the channel paragraph, then the fleet paragraphs, in order.
+func TestChatReconstructsChannelThenFleet(t *testing.T) {
+	got := frameworkPromptBlocks("", chatSeed(t), true)
+	ch := strings.Index(got, channelSectionHeading)
+	fl := strings.Index(got, fleetSupervisionMarker)
+	if ch < 0 || fl < 0 {
+		t.Fatalf("expected both channel and fleet blocks for Chat (ch=%d fl=%d)", ch, fl)
+	}
+	if ch > fl {
+		t.Fatal("channel heading should precede the fleet block, matching the original section order")
+	}
+}
+
 func seedNamed(t *testing.T, name string) AgentRecord {
 	t.Helper()
 	for _, s := range coreSeedAgents() {
