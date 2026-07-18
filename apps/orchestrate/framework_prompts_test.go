@@ -60,6 +60,42 @@ func TestFrameworkGatesClarifyingOnInteractiveSurface(t *testing.T) {
 	}
 }
 
+// tools-self-serve and export must be LIFTED OUT of the Chat seed persona.
+func TestToolBlocksRemovedFromChatSeed(t *testing.T) {
+	p := chatSeed(t).OrchestratorPrompt
+	if strings.Contains(p, toolsSelfServeMarker) {
+		t.Fatalf("Chat seed still contains the tools-self-serve block (%q)", toolsSelfServeMarker)
+	}
+	if strings.Contains(p, exportMarker) {
+		t.Fatalf("Chat seed still contains the export block (%q)", exportMarker)
+	}
+}
+
+// Default-pool agent (empty AllowedTools, like Chat) has tool_def + export, so
+// both blocks inject.
+func TestFrameworkInjectsToolBlocksForDefaultPool(t *testing.T) {
+	got := frameworkPromptBlocks("", chatSeed(t), true)
+	if !strings.Contains(got, toolsSelfServeMarker) {
+		t.Fatal("tools-self-serve block missing for a default-pool agent")
+	}
+	if !strings.Contains(got, exportMarker) {
+		t.Fatal("export block missing for a default-pool agent")
+	}
+}
+
+// A restricted allowlist gates each tool block on membership — no false "use
+// tool_def" prompt for an agent whose allowlist doesn't include it.
+func TestFrameworkGatesToolBlocksOnAllowlist(t *testing.T) {
+	without := AgentRecord{ID: "restricted", AllowedTools: []string{"web_search"}}
+	if strings.Contains(frameworkPromptBlocks("", without, true), toolsSelfServeMarker) {
+		t.Fatal("tools-self-serve block appeared for an agent whose allowlist lacks tool_def")
+	}
+	with := AgentRecord{ID: "authoring", AllowedTools: []string{"tool_def"}}
+	if !strings.Contains(frameworkPromptBlocks("", with, true), toolsSelfServeMarker) {
+		t.Fatal("tools-self-serve block missing for an agent that allowlists tool_def")
+	}
+}
+
 func seedNamed(t *testing.T, name string) AgentRecord {
 	t.Helper()
 	for _, s := range coreSeedAgents() {

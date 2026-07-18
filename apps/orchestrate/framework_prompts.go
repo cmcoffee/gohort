@@ -88,6 +88,44 @@ DON'T ask when a tool call would just answer the question. "What's the price of 
 - Several specific VALUES the user must TYPE (an API base URL, a key, a count, an endpoint) → ask_user_form with steps[] where each step sets type ("text"/"number"/"textarea"/"select"/"password"). Any typed step renders the whole thing as ONE form (all fields at once, single Submit) instead of a step-through — the right shape for "fill these fields in." Use type:"password" for secrets/keys, type:"select" with options for a dropdown.
 - Open-ended single question with no clear options → ask_user without options.`
 
+// toolsSelfServeMarker / exportMarker dedup-key the tool-gated blocks (each
+// leads with a bold sentence, not a `##` heading).
+const toolsSelfServeMarker = "**Tools are self-serve."
+const exportMarker = "**Producing a document FILE"
+
+// frameworkToolsSelfServeBlock — a TOOL is the calling agent's own job (author
+// it with tool_def), not Builder's. Lifted verbatim from the Chat seed. Gated
+// on the agent actually having tool_def (see agentAllowsFrameworkTool) so a
+// restricted agent that lacks it is never told to reach for it.
+const frameworkToolsSelfServeBlock = `**Tools are self-serve.** When the user wants a new TOOL, author it yourself with tool_def — you don't punt this to Builder. The loop: for an API endpoint, tool_def(mode="api", credential=...) wraps it directly; for local processing, write and run a script in the workspace (workspace write + run) to prove it works, then tool_def(mode="shell", script_body=...) to wrap it. The tool is callable immediately in this session; cross-session persistence is auto-queued for admin approval in the background (don't ask permission, just author it). Once a tool works, you can wrap it in a monitor (create_event_monitor kind="watch") to watch it for changes. Before you tell the user whether you HAVE some tool ("do you have a vapi tool?"), or build one that might already exist, call tool_def(action="list") and look: it is the only surface that shows every custom tool in scope (session drafts, your approved persistent tools, AND ones still pending approval). Answer from that list, never from memory, and never claim you "previously set one up" without checking it.`
+
+// frameworkExportBlock — producing a downloadable document/spreadsheet/deck is
+// the built-in export tool's job, never hand-built file bytes. Lifted verbatim
+// from the Chat seed. Gated on the agent having the export tool.
+const frameworkExportBlock = `**Producing a document FILE (pdf / Word .docx / Excel .xlsx / PowerPoint .pptx) is the built-in export tool's job — never hand-build the file format.** When the user wants a downloadable document, spreadsheet, or deck ("export a docx", "save this as a PDF", "make me an xlsx", "the docx export is broken"), use the export tool: export(action="formats") shows each format's expected data shape, export(action="create", format=..., data=...) generates the file and attaches it to your reply. It renders through real libraries (python-docx, openpyxl, python-pptx, the markdown-to-PDF renderer) and provisions their dependencies for you, so the output opens cleanly in Word / Excel / Preview. Do NOT author a bespoke tool_def that hand-assembles OOXML / PDF / zip bytes, and do NOT try to patch an old hand-rolled document tool — a hand-built office file is exactly what macOS Word rejects with "Word experienced an error trying to open the file" (this has burned us). If export genuinely lacks a format the user needs (CSV, a bespoke layout), register it ONCE via export(action="define") with a generator script — that is the extension path, not a standalone tool.`
+
+// agentAllowsFrameworkTool reports whether a framework tool (tool_def, export)
+// is in the agent's scope, using the same AllowedTools semantics the tool
+// filter uses: the no-tools sentinel means none; an empty list means the full
+// default pool (which includes the authoring/export tools); a non-empty list is
+// an allowlist, so the tool must be named in it. Errs toward NOT showing a
+// block when uncertain — a false negative is harmless; the anti-pattern to
+// avoid is telling an agent to use a tool it doesn't have.
+func agentAllowsFrameworkTool(agent AgentRecord, name string) bool {
+	if isNoToolsSentinel(agent.AllowedTools) {
+		return false
+	}
+	if len(agent.AllowedTools) == 0 {
+		return true
+	}
+	for _, t := range agent.AllowedTools {
+		if strings.TrimSpace(t) == name {
+			return true
+		}
+	}
+	return false
+}
+
 // frameworkPromptBlocks returns the capability-gated framework orchestration
 // sections for this agent + surface, joined for splicing into the system
 // prompt. `existing` is the prompt assembled so far (persona + prior blocks);
@@ -114,6 +152,11 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 	// Clarifying-questions guidance — ask_user rides the same interactive-web
 	// signal as plan_set; a dispatch/worker surface can't prompt the user.
 	add(hasPlanSet, clarifyingSectionHeading, frameworkClarifyingBlock)
+	// Tools-self-serve and document-export — gated on the agent actually having
+	// the tool (tool_def / export), not on the surface: unlike plan_set these
+	// tools can exist off the interactive surface too, so capability is the gate.
+	add(agentAllowsFrameworkTool(agent, "tool_def"), toolsSelfServeMarker, frameworkToolsSelfServeBlock)
+	add(agentAllowsFrameworkTool(agent, "export"), exportMarker, frameworkExportBlock)
 	// Builder routing — only a delegating (Fleet) agent that is NOT Builder
 	// itself. Builder is the authoring agent; routing it to itself is nonsense.
 	add(agent.Fleet && !isBuilderAgent(agent.ID), builderRoutingMarker, frameworkBuilderRoutingBlock)
