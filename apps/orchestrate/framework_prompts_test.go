@@ -184,6 +184,32 @@ func TestChatSeedIsPurePersona(t *testing.T) {
 	}
 }
 
+// dispatchBriefHint turns an agent's intake_form into a "put this in the brief"
+// cue: required markers, a document note for file fields, buttons skipped, and
+// "" when there's no form.
+func TestDispatchBriefHint(t *testing.T) {
+	if got := dispatchBriefHint(AgentRecord{}); got != "" {
+		t.Fatalf("no intake form should give empty hint, got %q", got)
+	}
+	a := AgentRecord{IntakeForm: IntakeFormSpec{
+		{Name: "company", Label: "Company name", Required: true},
+		{Name: "audience", Label: "Target audience"},
+		{Name: "resume", Label: "Resume", Type: "file"},
+		{Name: "go", Label: "Submit", Type: "button"},
+	}}
+	got := dispatchBriefHint(a)
+	for _, want := range []string{
+		"Company name (required)", "Target audience", "Resume (as document text)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("hint missing %q; got %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Submit") {
+		t.Fatalf("button field should be skipped; got %q", got)
+	}
+}
+
 func seedNamed(t *testing.T, name string) AgentRecord {
 	t.Helper()
 	for _, s := range coreSeedAgents() {

@@ -877,9 +877,52 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 		b.WriteString(a.Name)
 		b.WriteString("** — ")
 		b.WriteString(desc)
+		// Deterministic dispatch contract: a sub-agent gets its structured
+		// input from the parent's brief, not a form (intake_form isn't applied
+		// on dispatch), so an agent that declares an intake_form is telling us
+		// exactly what its brief needs. Surface those field labels so the
+		// orchestrator packs them up front instead of dispatching a vague brief
+		// and forcing a clarifying round-trip. Derived at render time from the
+		// agent's CURRENT spec — nothing stored, never stale.
+		b.WriteString(dispatchBriefHint(a))
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// dispatchBriefHint returns a one-line "put this in the brief" cue built from an
+// agent's intake_form field labels, or "" when it declares none. Required
+// fields are marked; a file field asks for the document's text (a text brief
+// can't carry an upload); button fields are skipped (self-submitting actions,
+// not inputs to supply).
+func dispatchBriefHint(a AgentRecord) string {
+	if len(a.IntakeForm) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, f := range a.IntakeForm {
+		if f.Type == "button" {
+			continue
+		}
+		label := strings.TrimSpace(f.Label)
+		if label == "" {
+			label = strings.TrimSpace(f.Name)
+		}
+		if label == "" {
+			continue
+		}
+		if f.Type == "file" {
+			label += " (as document text)"
+		}
+		if f.Required {
+			label += " (required)"
+		}
+		parts = append(parts, label)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " When you dispatch, include in the brief: " + strings.Join(parts, ", ") + "."
 }
 
 // renderAgentTriggerHints surfaces a SOFT per-turn nudge for dispatchable
