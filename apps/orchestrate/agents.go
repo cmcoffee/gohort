@@ -809,14 +809,21 @@ func deleteAgent(db Database, id, owner string) error {
 	for _, ch := range ListChannelsForAgent(RootDB, owner, id) {
 		DeleteChannel(RootDB, owner, ch.ID)
 	}
+	// Monitors / standing agents that target the deleted agent are NOT removed —
+	// silently losing them is the friction we're avoiding. Mark them broken +
+	// paused (cancels their live schedule) so they survive, show a "needs relink"
+	// state in the console, and can be re-pointed at a live agent or deleted
+	// deliberately.
 	for _, m := range ListEventMonitors(RootDB, owner) {
 		if m.WakeAgent == id {
-			DeleteEventMonitor(RootDB, owner, m.Name)
+			MarkEventMonitorBroken(RootDB, owner, m.Name,
+				fmt.Sprintf("wakes deleted agent %q", a.Name))
 		}
 	}
 	for _, s := range ListStandingAgents(RootDB, owner) {
 		if s.AgentID == id {
-			DeleteStandingAgent(RootDB, owner, s.Name)
+			MarkStandingAgentBroken(RootDB, owner, s.Name,
+				fmt.Sprintf("runs deleted agent %q", a.Name))
 		}
 	}
 	for _, k := range db.Keys(agentsTable) {

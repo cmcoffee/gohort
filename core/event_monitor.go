@@ -150,8 +150,15 @@ type EventMonitor struct {
 	// asked to be woken WHEN a result arrives (a reply, a call outcome, a job
 	// finishing), not on every subsequent change, so after the first wake the
 	// monitor is done. Standing monitors leave this false and keep watching.
-	OneShot      bool      `json:"one_shot,omitempty"`
-	Paused       bool      `json:"paused"`
+	OneShot bool `json:"one_shot,omitempty"`
+	Paused  bool `json:"paused"`
+	// Broken marks a monitor whose dependency is gone — its wake agent deleted,
+	// or (re-checked at fire time) a credential/tool/connector it needs removed.
+	// A broken monitor is auto-paused and unscheduled but KEPT, not silently
+	// deleted, so the owner can relink it to a live target or remove it
+	// deliberately. Distinct from a user Pause; BrokenReason records why.
+	Broken       bool      `json:"broken,omitempty"`
+	BrokenReason string    `json:"broken_reason,omitempty"`
 	Created      time.Time `json:"created"`
 	NextCheck    time.Time `json:"next_check,omitempty"`
 	LastFired    time.Time `json:"last_fired,omitempty"`
@@ -344,6 +351,43 @@ func DeleteEventMonitor(db Database, owner, name string) {
 		UnscheduleTask(m.SchedulerID)
 	}
 	db.Unset(eventMonitorsTable, eventKey(owner, name))
+}
+
+// MarkEventMonitorBroken flags a monitor as no longer usable (a dependency was
+// removed), pauses it, and cancels its live poll — but KEEPS the record so the
+// owner can relink or delete it deliberately instead of losing it silently.
+// Idempotent; returns false if the monitor is missing.
+func MarkEventMonitorBroken(db Database, owner, name, reason string) bool {
+	m, ok := GetEventMonitor(db, owner, name)
+	if !ok {
+		return false
+	}
+	if m.SchedulerID != "" {
+		UnscheduleTask(m.SchedulerID)
+		m.SchedulerID = ""
+	}
+	m.Broken = true
+	m.BrokenReason = reason
+	m.Paused = true // stops firing against the missing dependency
+	m.NextCheck = time.Time{}
+	SaveEventMonitor(db, m)
+	return true
+}
+
+// ClearEventMonitorBroken lifts the broken flag once the dependency is restored
+// (e.g. a relink to a live agent). It deliberately LEAVES the monitor paused:
+// recovery is never an automatic restart — the owner must explicitly Resume it.
+// Returns false if the monitor is missing.
+func ClearEventMonitorBroken(db Database, owner, name string) bool {
+	m, ok := GetEventMonitor(db, owner, name)
+	if !ok {
+		return false
+	}
+	m.Broken = false
+	m.BrokenReason = ""
+	// Paused stays true on purpose — resume is an explicit owner action.
+	SaveEventMonitor(db, m)
+	return true
 }
 
 // --- poll match --------------------------------------------------------------

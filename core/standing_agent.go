@@ -48,6 +48,12 @@ type StandingAgent struct {
 	StartAt         time.Time `json:"start_at,omitempty"`
 	IntervalSeconds int       `json:"interval_seconds,omitempty"`
 	Paused          bool      `json:"paused"`
+	// Broken marks a standing agent whose target agent was deleted (or another
+	// dependency removed). Auto-paused and unscheduled but KEPT — not silently
+	// deleted — so the owner can relink it to a live agent or remove it. Distinct
+	// from a user Pause; BrokenReason records why.
+	Broken          bool      `json:"broken,omitempty"`
+	BrokenReason    string    `json:"broken_reason,omitempty"`
 	Created         time.Time `json:"created"`
 	NextRun         time.Time `json:"next_run,omitempty"`     // display: next scheduled fire
 	SchedulerID     string    `json:"scheduler_id,omitempty"` // current recurring task id (for cancel-and-replace)
@@ -165,6 +171,43 @@ func DeleteStandingAgent(db Database, owner, name string) {
 		UnscheduleTask(sa.SchedulerID)
 	}
 	db.Unset(standingAgentsTable, standingKey(owner, name))
+}
+
+// MarkStandingAgentBroken flags a standing agent as no longer usable (its target
+// agent was deleted, or another dependency removed), pauses it, and cancels its
+// recurring task — but KEEPS the record so the owner can relink or delete it
+// deliberately. Idempotent; returns false if the standing agent is missing.
+func MarkStandingAgentBroken(db Database, owner, name, reason string) bool {
+	sa, ok := GetStandingAgent(db, owner, name)
+	if !ok {
+		return false
+	}
+	if sa.SchedulerID != "" {
+		UnscheduleTask(sa.SchedulerID)
+		sa.SchedulerID = ""
+	}
+	sa.Broken = true
+	sa.BrokenReason = reason
+	sa.Paused = true
+	sa.NextRun = time.Time{}
+	SaveStandingAgent(db, sa)
+	return true
+}
+
+// ClearStandingAgentBroken lifts the broken flag once the dependency is restored
+// (e.g. a relink to a live agent). It deliberately LEAVES the standing agent
+// paused: recovery is never an automatic restart — the owner must explicitly
+// Resume it. Returns false if the standing agent is missing.
+func ClearStandingAgentBroken(db Database, owner, name string) bool {
+	sa, ok := GetStandingAgent(db, owner, name)
+	if !ok {
+		return false
+	}
+	sa.Broken = false
+	sa.BrokenReason = ""
+	// Paused stays true on purpose — resume is an explicit owner action.
+	SaveStandingAgent(db, sa)
+	return true
 }
 
 // --- schedule + run ----------------------------------------------------------
