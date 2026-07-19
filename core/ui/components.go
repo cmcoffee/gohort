@@ -1963,6 +1963,14 @@ type OrchestratorRowAction struct {
 	// with OnlyIf:"_paused" so only the applicable one shows per row.
 	OnlyIf string `json:"only_if,omitempty"`
 	HideIf string `json:"hide_if,omitempty"`
+	// PickerSource turns the action into a "pick a target, then act" control: on
+	// click it GETs PickerSource (which returns a JSON list of {value,label},
+	// with ?agent=<id> appended) and shows the choices in a modal; picking one
+	// POSTs URL?id=<row._id>&agent=<id>&value=<picked>. Generic — a relink to a
+	// live agent, a reassignment, any choose-from-a-list-then-act row action.
+	// When empty the action is a plain fixed-URL button as before.
+	PickerSource string `json:"picker_source,omitempty"`
+	PickerTitle  string `json:"picker_title,omitempty"` // modal heading (default: Label)
 }
 
 // AgentTerminal configures the optional bottom-right terminal pane

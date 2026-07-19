@@ -57,10 +57,14 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/pause", gw(T.handleConsoleAgentPause))
 	T.HandleFunc("/api/console/agents/resume", gw(T.handleConsoleAgentResume))
 	T.HandleFunc("/api/console/agents/run", gw(T.handleConsoleAgentRun))
+	T.HandleFunc("/api/console/agents/relink", gw(T.handleConsoleAgentRelink))
+	// Shared relink picker source: the owner's agents as {value:id,label:name}.
+	T.HandleFunc("/api/console/agent-options", g(T.handleConsoleAgentOptions))
 	T.HandleFunc("/api/console/monitors", g(T.handleConsoleMonitors))
 	T.HandleFunc("/api/console/monitors/delete", gw(T.handleConsoleMonitorDelete))
 	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))
 	T.HandleFunc("/api/console/monitors/resume", gw(T.handleConsoleMonitorResume))
+	T.HandleFunc("/api/console/monitors/relink", gw(T.handleConsoleMonitorRelink))
 	T.HandleFunc("/api/console/monitors/run", gw(T.handleConsoleMonitorRun))
 	T.HandleFunc("/api/console/monitors/get", g(T.handleConsoleMonitorGet))
 	T.HandleFunc("/api/console/monitors/update", gw(T.handleConsoleMonitorUpdate))
@@ -108,6 +112,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/recurring", g(T.handleConsoleRecurring))
 	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
+	T.HandleFunc("/api/console/recurring/relink", gw(T.handleConsoleRecurringRelink))
 	// Get one recurring task's editable fields (for the rail's edit modal) and
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
 	T.HandleFunc("/api/console/recurring/get", g(T.handleConsoleRecurringGet))
@@ -277,6 +282,122 @@ func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
+	}
+	http.Error(w, "recurring task not found", http.StatusNotFound)
+}
+
+// handleConsoleAgentOptions lists the owner's agents as picker options
+// ({value:id,label:name}) — the shared source for the "Relink" row action across
+// the monitors / enabled-agents / recurring panes.
+func (T *OrchestrateApp) handleConsoleAgentOptions(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	type opt struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+	}
+	opts := []opt{}
+	for _, a := range listAgents(UserDB(T.DB, user), user) {
+		label := strings.TrimSpace(a.Name)
+		if label == "" {
+			label = a.ID
+		}
+		opts = append(opts, opt{Value: a.ID, Label: label})
+	}
+	writeJSON(w, opts)
+}
+
+// handleConsoleMonitorRelink re-points a broken monitor's wake agent at a live
+// one and clears the broken flag — but LEAVES it paused, so recovery finishes
+// with an explicit Resume (which re-checks the now-healthy dependency).
+func (T *OrchestrateApp) handleConsoleMonitorRelink(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("id"))
+	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
+	if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
+		http.Error(w, "no such agent", http.StatusBadRequest)
+		return
+	}
+	m, found := GetEventMonitor(RootDB, user, name)
+	if !found {
+		http.Error(w, "no such monitor", http.StatusNotFound)
+		return
+	}
+	m.WakeAgent = newAgent
+	m.Broken = false
+	m.BrokenReason = ""
+	// Paused stays true on purpose — the user resumes explicitly.
+	SaveEventMonitor(RootDB, m)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsoleAgentRelink re-points a broken standing agent at a live target
+// agent and clears broken (leaves paused — an explicit Resume finishes recovery).
+func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("id"))
+	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
+	if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
+		http.Error(w, "no such agent", http.StatusBadRequest)
+		return
+	}
+	sa, found := GetStandingAgent(RootDB, user, name)
+	if !found {
+		http.Error(w, "no such standing agent", http.StatusNotFound)
+		return
+	}
+	sa.AgentID = newAgent
+	sa.Broken = false
+	sa.BrokenReason = ""
+	SaveStandingAgent(RootDB, sa)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsoleRecurringRelink re-points a parked (broken) recurring task at a
+// live agent and puts it straight back on its real cadence. Recurring has no
+// pause/resume concept (unlike monitors/standing), so relink resumes it
+// directly; LastActive is refreshed so the idle guard doesn't immediately reap a
+// just-relinked task.
+func (T *OrchestrateApp) handleConsoleRecurringRelink(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	newAgent := strings.TrimSpace(r.URL.Query().Get("value"))
+	if _, ok := loadAgent(UserDB(T.DB, user), newAgent); !ok {
+		http.Error(w, "no such agent", http.StatusBadRequest)
+		return
+	}
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID != id {
+			continue
+		}
+		UnscheduleTask(id)
+		p := rt.Payload
+		p.AgentID = newAgent
+		p.Broken = false
+		p.BrokenReason = ""
+		p.LastActive = time.Now().Format(time.RFC3339)
+		next, err := computeNextFire(&p, time.Now().In(UserLocation(user)))
+		if err != nil {
+			http.Error(w, "relinked but couldn't schedule: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	http.Error(w, "recurring task not found", http.StatusNotFound)
 }

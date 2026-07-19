@@ -245,6 +245,37 @@
         // list (like Claude Desktop's permission settings): title + inline muted
         // details + a Status pill on the left, the segmented state control and
         // action buttons on the right. Wraps to a second line only when narrow.
+        // openRowPicker backs a row action with a picker_source: fetch a list of
+        // {value,label} choices and show them in a modal; picking one POSTs the
+        // action URL with the chosen value, then reloads. Shared by the cards +
+        // table renderers below.
+        function openRowPicker(a, row) {
+          var agent = window.GOHORT_AGENT_ID || '';
+          var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
+          window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
+            var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, ['Loading…']);
+            var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});
+            body.appendChild(status); body.appendChild(list);
+            fetch(src, {credentials: 'same-origin'})
+              .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
+              .then(function(opts) {
+                status.remove();
+                if (!opts || !opts.length) { list.appendChild(el('div', {style: 'color:var(--text-mute,#999)'}, ['No options available.'])); return; }
+                opts.forEach(function(opt) {
+                  var b = el('button', {type: 'button', class: 'ui-row-btn', style: 'text-align:left', onclick: function() {
+                    var u = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
+                    b.disabled = true;
+                    fetch(u, {method: a.method || 'POST', credentials: 'same-origin'})
+                      .then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); })
+                      .then(function() { try { dlg.close(); } catch(e){} if (reload) reload(); })
+                      .catch(function(err) { b.disabled = false; list.appendChild(el('div', {style: 'color:var(--danger,#e5484d);font-size:0.8rem'}, ['Failed: ' + err.message])); });
+                  }}, [opt.label || opt.value]);
+                  list.appendChild(b);
+                });
+              })
+              .catch(function(err) { status.textContent = 'Failed to load: ' + err.message; });
+          }});
+        }
         if (item && item.layout === 'cards') {
           var cactions = (item && item.row_actions) || [];
           var ckeys = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
@@ -294,6 +325,7 @@
               var btn = el('button', {type: 'button', class: cls, onclick: async function(ev) {
                 if (ev) ev.stopPropagation();
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                if (a.picker_source) { openRowPicker(a, row); return; }
                 var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
                 fetch(rowURL, {method: a.method || 'POST'})
                   .then(function() { if (reload) reload(); })
@@ -347,6 +379,7 @@
               var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function(ev) {
                 if (ev) ev.stopPropagation(); // don't toggle the row expand
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                if (a.picker_source) { openRowPicker(a, row); return; }
                 // Stamp the in-view agent so per-agent row actions (e.g. History
                 // turn-scrub) target the right agent's thread, not the default.
                 var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
