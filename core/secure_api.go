@@ -221,6 +221,23 @@ type SecureCredential struct {
 // so listing credentials doesn't pull encrypted blobs into memory.
 func secureCredSecretKey(name string) string { return name + "__secret" }
 
+// credStoreKey is the DB metadata key for a credential. A GLOBAL credential
+// (owner == "") keys by its bare name — unchanged, backward-compatible. A
+// USER-OWNED credential keys by an "@u:<owner>:<name>" tuple: "@" and ":" can't
+// appear in a credential name (lowercase/digits/underscore only), so a user
+// credential never collides with a global one, users never collide with each
+// other, and List() (global) skips the "@"-prefixed keys. The per-user SECRET
+// of a hybrid (cred_scope=per_user) GLOBAL credential is a separate mechanism
+// (secureCredUserSecretKey / __usecret__<user> on the bare name) — a user-owned
+// credential is the whole record in the user's namespace, secret included.
+func credStoreKey(owner, name string) string {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return name
+	}
+	return "@u:" + owner + ":" + name
+}
+
 // securePasswordKey is the DB key for the SECOND secret of an oauth2 password
 // grant: the resource-owner password. Kept separate from __secret (which holds
 // the client_secret) so the two secrets never share a blob (Option B). Only
@@ -467,9 +484,13 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Owner-aware storage key: global creds key by bare name, user-owned creds by
+	// the @u:<owner>:<name> tuple. secretKey follows the same key.
+	key := credStoreKey(c.Owner, c.Name)
+	secretKey := secureCredSecretKey(key)
 	// Preserve CreatedAt + LastUsedAt across updates.
 	var existing SecureCredential
-	exists := s.db.Get(secureAPITable, c.Name, &existing)
+	exists := s.db.Get(secureAPITable, key, &existing)
 	if exists {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
@@ -487,8 +508,8 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	// can short-circuit safely), and skip all the secret-required
 	// branching below.
 	if c.Type == SecureCredNone {
-		s.db.Set(secureAPITable, c.Name, c)
-		s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), "(none)")
+		s.db.Set(secureAPITable, key, c)
+		s.db.CryptSet(secureAPITable, secretKey, "(none)")
 		return nil
 	}
 	// Secret is required on first save, optional on update — empty
@@ -500,15 +521,15 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 			return fmt.Errorf("secret value is required for new credentials")
 		}
 		var existingSecret string
-		if !s.db.Get(secureAPITable, secureCredSecretKey(c.Name), &existingSecret) || existingSecret == "" {
+		if !s.db.Get(secureAPITable, secretKey, &existingSecret) || existingSecret == "" {
 			return fmt.Errorf("secret value is required (no existing secret to preserve)")
 		}
 		// Keep existing secret; just upsert the metadata record.
-		s.db.Set(secureAPITable, c.Name, c)
+		s.db.Set(secureAPITable, key, c)
 		return nil
 	}
-	s.db.Set(secureAPITable, c.Name, c)
-	s.db.CryptSet(secureAPITable, secureCredSecretKey(c.Name), secret)
+	s.db.Set(secureAPITable, key, c)
+	s.db.CryptSet(secureAPITable, secretKey, secret)
 	return nil
 }
 
@@ -538,8 +559,9 @@ func (s *SecureAPI) List() []SecureCredential {
 	var out []SecureCredential
 	for _, k := range s.db.Keys(secureAPITable) {
 		// Skip the per-credential secret blobs (shared __secret, password, and
-		// the per-user __usecret__<user> keys) — only metadata records list.
-		if strings.Contains(k, "__") {
+		// the per-user __usecret__<user> keys) — only metadata records list. Also
+		// skip user-OWNED creds (@u:<owner>:<name>): List() is the GLOBAL namespace.
+		if strings.Contains(k, "__") || strings.HasPrefix(k, "@") {
 			continue
 		}
 		var c SecureCredential
@@ -548,6 +570,60 @@ func (s *SecureAPI) List() []SecureCredential {
 		}
 	}
 	return out
+}
+
+// LoadUser loads a USER-OWNED credential from owner's namespace.
+func (s *SecureAPI) LoadUser(owner, name string) (SecureCredential, bool) {
+	var c SecureCredential
+	if !s.ready() || strings.TrimSpace(owner) == "" || name == "" {
+		return c, false
+	}
+	ok := s.db.Get(secureAPITable, credStoreKey(owner, name), &c)
+	return c, ok
+}
+
+// ListUser returns a user's OWN credentials (their namespace only).
+func (s *SecureAPI) ListUser(owner string) []SecureCredential {
+	if !s.ready() || strings.TrimSpace(owner) == "" {
+		return nil
+	}
+	prefix := "@u:" + owner + ":"
+	var out []SecureCredential
+	for _, k := range s.db.Keys(secureAPITable) {
+		if !strings.HasPrefix(k, prefix) || strings.Contains(k, "__") {
+			continue
+		}
+		var c SecureCredential
+		if s.db.Get(secureAPITable, k, &c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// DeleteUser removes a user-owned credential's metadata + secret.
+func (s *SecureAPI) DeleteUser(owner, name string) error {
+	if !s.ready() || strings.TrimSpace(owner) == "" || name == "" {
+		return fmt.Errorf("owner and name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	s.db.Unset(secureAPITable, key)
+	s.db.Unset(secureAPITable, secureCredSecretKey(key))
+	return nil
+}
+
+// Resolve returns the credential a tool reference `name` maps to for session user
+// `user`: the user's OWN credential shadows a global one of the same name (their
+// namespace wins), else the global credential. Empty user → global only.
+func (s *SecureAPI) Resolve(name, user string) (SecureCredential, bool) {
+	if strings.TrimSpace(user) != "" {
+		if c, ok := s.LoadUser(user, name); ok {
+			return c, true
+		}
+	}
+	return s.Load(name)
 }
 
 // PerUserConnection describes one per_user credential's state for a given user —
