@@ -517,6 +517,22 @@ type chatTurn struct {
 	// in-context-activated. Kept because the main knowledge_search passes
 	// it as the "scope skills" arg (empty = agent's own corpus only).
 	skillsActive []SkillRecord
+
+	// embedMemo caches query embeddings for the duration of ONE turn, keyed by
+	// the exact query text — so a query embedded more than once this turn (the
+	// recall-hint nudge embeds the user message at prompt-assembly time; a
+	// same-turn knowledge_search / memory_search that passes the same text, which
+	// the tool docs steer the model to do, would otherwise embed it again) costs
+	// a single round-trip. Retrieval tools run in goroutines, so guard with mu.
+	embedMemo   map[string][]float32
+	embedMemoMu sync.Mutex
+
+	// hintedDocIDs is the set of knowledge doc_ids the recall-hint nudge surfaced
+	// THIS turn. fetch_knowledge_doc checks it to log whether a pull acted on a
+	// hint — the "did the agent follow the nudge?" half of the recall telemetry
+	// loop that tunes the threshold. Populated by renderRecallHints; read under mu.
+	hintedDocIDs   map[string]bool
+	hintedDocIDsMu sync.Mutex
 	// deliveredSkills tracks which skills' instructions have been shown
 	// THIS turn (via read_skill, skill_knowledge_search, or trigger
 	// injection) so they aren't repeated. Per-turn only — never persisted,
@@ -4960,6 +4976,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// turn-specific signal the static block alone doesn't provide. Soft;
 	// the model still decides. No-op when no agent's triggers match.
 	turnContext += t.renderAgentTriggerHints(triggerMsg) // see turnContext note above — appended to user msg, not sys
+	// Recall hints: a cheap scored-pointer nudge toward the agent's own
+	// knowledge corpus (opt-in per agent), so it pulls relevant material with
+	// knowledge_search instead of missing it. Pointers only, next to the message
+	// — no chunk bodies injected. No-op when off or nothing scores high enough.
+	turnContext += t.renderRecallHints(triggerMsg)
 	// Active dispatch threads: remind the host of agents it already
 	// delegated to THIS session so a follow-up re-dispatches instead of
 	// being answered inline (the host's own history hides the delegation,

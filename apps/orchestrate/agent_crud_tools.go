@@ -549,6 +549,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"allowed_dispatch_targets": {Type: "array", Description: "Optional dispatch allowlist of agent IDs. Empty (default) = this agent can call ANY non-hidden agent in the fleet. Non-empty = restricted: this agent can ONLY call the listed targets (Hidden status of targets is ignored — explicit pick wins, so this also wires through to hidden specialists). Use to scope a specialist agent to only its relevant collaborators.", Items: &ToolParam{Type: "string"}},
 		"attached_collections":     {Type: "array", Description: "Optional list of Document Collection IDs to merge into this agent's RAG search. Each attached collection's chunks surface alongside the agent's own knowledge during recall — same many-to-many shape as skills, but bound at the agent layer (no skill activation required). Use to give a topic-narrow agent a curated reference corpus without authoring a skill: one collection of K8s docs, another of internal runbooks, etc. Pass collection IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
 		"attached_pipelines":       {Type: "array", Description: "Optional list of pipeline IDs (from pipeline action=list) to bolt onto this agent. Each attached pipeline becomes its OWN callable tool on the agent (named run_<pipeline>), so the agent can run that saved multi-stage workflow on demand without going through the generic pipeline tool. Use to give an agent a repeatable staged capability — e.g. a research agent with a \"decompose → investigate → synthesize\" pipeline always at hand. Pass pipeline IDs; author the pipeline first with the pipeline tool if it doesn't exist yet. Default empty.", Items: &ToolParam{Type: "string"}},
+		"recall_hints":             {Type: "boolean", Description: "Optional. When true, each turn surfaces a short scored list of the agent's OWN knowledge that looks relevant to the message — pointers (title + relevance + a fetch_knowledge_doc doc_id), not the content — so the agent pulls material it should look up instead of missing it. Best for agents with a real corpus (attached_collections / uploaded docs). Default false. Thresholds are deployment tunables."},
 		"triggers":                 {Type: "array", Description: "Optional substring/glob patterns matched against the user message each turn. On a match the host agent gets a salient per-turn nudge to dispatch to THIS agent FIRST (more effective than the static catalog for domains the host has priors in, e.g. law/medicine). Author SPECIFIC patterns the domain's questions actually contain — e.g. a criminal-law agent: \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\", \"sentencing\". Loose patterns over-fire and train the host to ignore the hint. Empty = agent still in the catalog, just no per-turn nudge.", Items: &ToolParam{Type: "string"}},
 		"owned_by":                 {Type: "string", Description: "Optional ID of a parent agent that owns this one as a sub-agent. Two effects: (1) when the parent is deleted, this agent is cascade-deleted along with its sessions/memory/knowledge — no orphan sub-agents; (2) the parent can dispatch to this sub-agent via agents(action=\"run\") without needing it in allowed_dispatch_targets — ownership IS the dispatch link. Combine with hidden=true to keep the sub-agent out of the global fleet menu while still reachable from its parent. Use for the sub-agent / specialist pattern: a parent orchestrator agent owns several focused capability sub-agents (e.g. OSINT parent → BusinessResearcher / CourtResearcher sub-agents). Pass the parent agent's ID."},
 		"ingest_attachments":       {Type: "boolean", Description: "Optional. When true, the extracted text from any paperclip- or intake-form-uploaded document (PDF, DOCX, text) is ALSO ingested into the agent's vector knowledge store under topic=\"attachments\". Future sessions retrieve it via knowledge_search. Set for document-Q&A, resume-reviewer, contract-analyzer style agents where the upload is meant to be referenced repeatedly. Default false."},
@@ -632,6 +633,9 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	}
 	if v, ok := args["hidden"].(bool); ok {
 		rec.Hidden = v
+	}
+	if v, ok := args["recall_hints"].(bool); ok {
+		rec.RecallHints = v
 	}
 	if _, ok := args["allowed_dispatch_targets"]; ok {
 		rec.AllowedDispatchTargets = stringSliceFromArgs(args, "allowed_dispatch_targets")
@@ -764,6 +768,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	}
 	if v, ok := args["hidden"].(bool); ok {
 		rec.Hidden = v
+	}
+	if v, ok := args["recall_hints"].(bool); ok {
+		rec.RecallHints = v
 	}
 	if v, ok := args["allowed_dispatch_targets"]; ok && v != nil {
 		rec.AllowedDispatchTargets = stringSliceFromArgs(args, "allowed_dispatch_targets")

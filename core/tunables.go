@@ -217,6 +217,15 @@ const (
 	TunableRecallMinScore = "tune_recall_min"
 	TunableChunkChars     = "tune_chunk_chars"
 	TunableLLMMaxRetries  = "tune_llm_retries"
+
+	// Recall-hint knobs — the per-turn "you already have relevant material"
+	// nudge (scored pointers injected next to the user message, opt-in per
+	// agent). Distinct from the recall FLOOR above: these gate the HINT, not
+	// what knowledge_search itself returns.
+	TunableRecallHintThreshold   = "tune_recall_hint_threshold"
+	TunableRecallHintMax         = "tune_recall_hint_max"
+	TunableRecallHintMinChars    = "tune_recall_hint_minchars"
+	TunableRecallHintAutoPromote = "tune_recall_hint_autopromote"
 )
 
 func init() {
@@ -234,6 +243,14 @@ func init() {
 		Help: "Max characters per embedded chunk. Applies to NEW ingestions only — existing documents keep their chunking until re-ingested.", Kind: KindInt, Default: 1000, Min: 200, Max: 8000})
 	RegisterTunable(TunableSpec{Key: TunableLLMMaxRetries, Category: "Limits", Label: "LLM retry attempts",
 		Help: "Retries for a failed LLM call before giving up (per-call override still applies).", Kind: KindInt, Default: 5, Min: 0, Max: 20})
+	RegisterTunable(TunableSpec{Key: TunableRecallHintThreshold, Category: "Retrieval", Label: "Recall-hint threshold",
+		Help: "Cosine floor a knowledge hit must clear to be surfaced as a per-turn recall hint (for agents with recall hints on). Higher = fewer, more-confident hints.", Kind: KindFloat, Default: 0.7, Min: 0, Max: 1, Decimals: 2})
+	RegisterTunable(TunableSpec{Key: TunableRecallHintMax, Category: "Retrieval", Label: "Recall-hint max count",
+		Help: "Most recall-hint pointers injected per turn (deduped by document). Keeps the nudge compact so it doesn't crowd the worker's context.", Kind: KindInt, Default: 4, Min: 1, Max: 12})
+	RegisterTunable(TunableSpec{Key: TunableRecallHintMinChars, Category: "Retrieval", Label: "Recall-hint min query chars",
+		Help: "Skip recall hints when the user message is shorter than this — a greeting shouldn't trigger a corpus search.", Kind: KindInt, Default: 12, Min: 0, Max: 200})
+	RegisterTunable(TunableSpec{Key: TunableRecallHintAutoPromote, Category: "Retrieval", Label: "Recall-hint auto-promote score (0 = off)",
+		Help: "When a curated-knowledge recall hit scores at or above this, inject its BODY into the turn (not just a pointer) — the one opt-in to automatic RAG. 0 = off (pointers only, the safe default); ~0.92 promotes only near-certain matches. Only curated knowledge is ever auto-injected, never derived memory.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
 }
 
 // Retrieval accessors — keep the names the orchestrate recall code already
@@ -245,3 +262,8 @@ func ReferenceRecallK() int   { return TuneInt(TunableReferenceK) }
 func RecallMinScore() float64 { return TuneFloat(TunableRecallMinScore) }
 func ChunkChars() int         { return TuneInt(TunableChunkChars) }
 func LLMMaxRetries() int      { return TuneInt(TunableLLMMaxRetries) }
+
+func RecallHintThreshold() float64   { return TuneFloat(TunableRecallHintThreshold) }
+func RecallHintMax() int             { return TuneInt(TunableRecallHintMax) }
+func RecallHintMinChars() int        { return TuneInt(TunableRecallHintMinChars) }
+func RecallHintAutoPromote() float64 { return TuneFloat(TunableRecallHintAutoPromote) }

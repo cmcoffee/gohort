@@ -33,7 +33,7 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, generalTopic, query, 3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeAll)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, generalTopic, query, t.embedQuery(ctx, query), 3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeAll)
 	// Relevance floor, like every other retrieval surface — this block says
 	// "Cite specifics ONLY from these", which makes an unfloored tangential
 	// hit not just noise but a licensed wrong citation.

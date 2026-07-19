@@ -509,6 +509,7 @@ func slimAgentJSON(a AgentRecord) []byte {
 		"disable_explicit":         a.DisableExplicit,
 		"disable_inferred":         a.DisableInferred,
 		"disable_skills":           a.DisableSkills,
+		"recall_hints":             a.RecallHints,
 		"memory_mode":              a.MemoryMode,
 		"ingest_attachments":       a.IngestAttachments,
 		"allow_explorer":           a.AllowExplorer,

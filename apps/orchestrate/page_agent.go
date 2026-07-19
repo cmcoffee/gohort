@@ -41,11 +41,11 @@ func agentTypeTemplates() []ui.FormTemplate {
 	return []ui.FormTemplate{
 		{
 			Label:  "Assistant — standing personal helper (continuous mind)",
-			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false},
+			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
 		},
 		{
 			Label:  "Conversational — a 1:1 chat persona that knows you",
-			Values: map[string]any{"channel": false, "memory_mode": "chatbot", "fleet": false},
+			Values: map[string]any{"channel": false, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
 		},
 		{
 			Label: "Channel agent — answers a messaging room / contact",
@@ -53,13 +53,14 @@ func agentTypeTemplates() []ui.FormTemplate {
 				"channel":             true, // Cortex on → the received→cortex feed
 				"memory_mode":         "agent",
 				"fleet":               false,
+				"recall_hints":        true,
 				"description":         "Conversational agent attached to a messaging channel (iMessage / Telegram / Slack).",
 				"orchestrator_prompt": channelAgentPrompt,
 			},
 		},
 		{
 			Label:  "Specialist — a focused, dispatchable worker",
-			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false},
+			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false, "recall_hints": true},
 		},
 	}
 }
@@ -242,6 +243,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "Strips store_fact tools + pre-injected facts block. For impersonal / stateless agents."},
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
 				Help: "Strips memory_save / memory_search / memory_forget from the catalog and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
+			ui.FormField{Field: "recall_hints", Type: "toggle", Label: "Recall hints",
+				Help: "Each turn, surface a short scored list of knowledge you already have that looks relevant to the message — pointers (title + relevance), not the content. The agent pulls one with knowledge_search only if it fits, so it stops missing material it should look up. Best for agents with a real corpus (attached collections / uploaded docs). Thresholds are deployment tunables."},
 			// (disable_skills toggle removed — redundant: skills only fire when a
 			// skill is ATTACHED (AllowedSkills), so "no skills" = attach none; the
 			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the

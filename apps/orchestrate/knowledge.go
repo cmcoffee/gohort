@@ -1371,7 +1371,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			topic := normalizeTopic(stringArg(args, "topic"))
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
-			hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+			hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
 			filtered := hits[:0]
 			for _, h := range hits {
@@ -1491,6 +1491,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			if docID == "" {
 				return "", errors.New("doc_id is required")
 			}
+			t.noteRecallHintPull(docID) // recall telemetry: pull acted on a hinted doc?
 			maxChars := fetchKnowledgeDocDefaultMax
 			if v, ok := args["max_chars"].(float64); ok && v > 0 {
 				maxChars = int(v)
@@ -1615,7 +1616,7 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	rawHits := len(hits)
 	filtered := hits[:0]
 	for _, h := range hits {
@@ -1741,7 +1742,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledge(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	// Apply the same relevance floor memory_search / knowledge_search use, so a
 	// loose forget query can't delete tangentially-related chunks it wouldn't
 	// even surface. Filtering here (not just checking len==0) keeps forget's

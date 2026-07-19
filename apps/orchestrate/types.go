@@ -68,6 +68,17 @@ type AgentRecord struct {
 	// it just grants the tools; the agent still does work directly.
 	Fleet bool `json:"fleet,omitempty"`
 
+	// RecallHints, when true, injects a per-turn "you already have relevant
+	// material" nudge: a cheap semantic search over the agent's knowledge
+	// corpus against the user message, surfacing above-threshold hits as SCORED
+	// POINTERS (title + relevance) next to the message — not the bodies. The
+	// agent pulls a body with knowledge_search only if a hint fits, closing the
+	// "didn't know to look" gap without the context bloat (and injection risk)
+	// of auto-injecting chunks every turn. Off by default; thresholds/count are
+	// deployment tunables (TunableRecallHint*). Best for agents with a real
+	// corpus (attached collections / uploaded docs).
+	RecallHints bool `json:"recall_hints,omitempty"`
+
 	// TagName, when true, prefixes this agent's OUTBOUND messages on a
 	// messaging channel/bridge with its own name — "[Assistant] …" — so the
 	// recipient can tell the agent's texts apart from the owner's own messages
