@@ -63,6 +63,12 @@ func TestCredentialUserNamespaceStore(t *testing.T) {
 		t.Fatal("resolve must miss when neither a user nor global cred exists")
 	}
 
+	// resolveSecret (the dispatch path) loads a user-owned cred's secret from its
+	// owner-namespaced key.
+	if s2, ok := s.resolveSecret(bc, "bob"); !ok || s2 != "bk" {
+		t.Fatalf("resolveSecret for a user-owned cred; got %q %v", s2, ok)
+	}
+
 	// Secrets are per-namespace.
 	var sec string
 	if !s.db.Get(secureAPITable, secureCredSecretKey(credStoreKey("alice", "github")), &sec) || sec != "ak" {

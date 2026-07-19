@@ -145,3 +145,27 @@ deferral, unblocked.
 - How `AllowedUsers` is edited in the admin UI at scale (a tags field now; a
   user-picker later — needs user enumeration, which doesn't exist yet).
 - Classification of today's single-pool resources into global vs user-owned.
+
+## Agent sharing
+
+An agent is shared by **reference**; its credential references (by name) resolve
+at RUNTIME in the **recipient's** namespace via `Resolve(name, sessionUser)`. A
+shared agent therefore never carries the sharer's secret. Three behaviors by
+credential type:
+
+- **Hybrid** (per-user secret): the recipient's own key — the ideal shareable
+  vehicle (share the shape, everyone brings their own secret).
+- **Global**: works if the recipient is in `AllowedUsers` (or it's open).
+- **User-owned**: the recipient can't dispatch through the sharer's private
+  secret — they supply their own same-named credential.
+
+**Delegation opt-in.** At share time, per user-owned credential the agent uses,
+the sharer chooses "recipient brings their own" (DEFAULT — safe) or "let
+recipients use my credential" (explicit). "Use mine" is delegated **use, not
+disclosure**: the secret dispatches server-side (the recipient never sees it),
+bounded by the credential's own URL allow-list + `RequiresConfirm`; it's
+auditable and revoked with the share. Mechanically, the share record carries a
+per-credential `delegate` flag and `Resolve`, when running a shared agent, honors
+it (resolves to the sharer's credential instead of the recipient's namespace).
+This belongs with the sharing UI (`project_cross_user_sharing`); the keyed store
+and `Resolve` built in phase 3 are its foundation.

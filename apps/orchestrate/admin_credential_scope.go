@@ -20,9 +20,10 @@ func init() {
 
 // credentialDenySet builds the set of credentials the agent — running in a
 // session for user `user` — may NOT dispatch through. Two tiers:
-//   - TIER 1 (on the credential): namespace + user grant. A USER-OWNED credential
-//     (Owner set) is denied to everyone but its owner; a GLOBAL credential with a
-//     non-empty AllowedUsers is denied to users not listed.
+//   - TIER 1 (on the credential): a GLOBAL credential with a non-empty
+//     AllowedUsers is denied to users not listed. (User-OWNED credentials need no
+//     entry here: they live in the owner's namespace and Secure().Resolve simply
+//     won't find them for anyone else — namespace isolation IS the enforcement.)
 //   - TIER 2 (per agent, on the record): the agent's own DisabledCredentials
 //     opt-outs.
 //
@@ -38,15 +39,11 @@ func credentialDenySet(a AgentRecord, user string) map[string]bool {
 		}
 		deny[name] = true
 	}
-	// Tier 1: namespace + user grants (only enforceable once we know the user).
+	// Tier 1: GLOBAL credentials whose AllowedUsers grant excludes this user.
+	// (Secure().List() is the global namespace — user-owned creds aren't in it.)
 	if user != "" {
 		for _, c := range Secure().List() {
-			switch {
-			case c.Owner != "" && c.Owner != user:
-				// USER-OWNED by someone else — it's in their namespace, off-limits.
-				add(c.Name)
-			case c.Owner == "" && len(c.AllowedUsers) > 0 && !containsString(c.AllowedUsers, user):
-				// GLOBAL credential that grants only specific users, not this one.
+			if len(c.AllowedUsers) > 0 && !containsString(c.AllowedUsers, user) {
 				add(c.Name)
 			}
 		}

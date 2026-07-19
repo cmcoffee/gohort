@@ -998,6 +998,12 @@ func (s *SecureAPI) resolveSecret(c SecureCredential, user string) (string, bool
 	if c.IsPerUser() {
 		return s.loadUserSecret(c.Name, user)
 	}
+	if c.Owner != "" {
+		// User-owned credential: its secret lives at the owner-namespaced key.
+		var secret string
+		ok := s.db.Get(secureAPITable, secureCredSecretKey(credStoreKey(c.Owner, c.Name)), &secret)
+		return secret, ok
+	}
 	return s.loadSecret(c.Name)
 }
 
@@ -1171,7 +1177,7 @@ func (s *SecureAPI) dispatchToolCall(sess *ToolSession, credName, urlStr, method
 		}
 		return s.dispatch(synth, args, sess)
 	}
-	c, ok := s.Load(credName)
+	c, ok := s.Resolve(credName, sessUsername(sess))
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
@@ -1748,11 +1754,21 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 	if !s.ready() {
 		return "", fmt.Errorf("secure-api store not initialized")
 	}
-	c, ok := s.Load(credName)
+	// Resolve in the session user's namespace: their OWN credential shadows a
+	// global one of the same name. Nil session → global only.
+	c, ok := s.Resolve(credName, sessUsername(sess))
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
 	return s.dispatch(c, args, sess)
+}
+
+// sessUsername returns the session's user, or "" for a nil session.
+func sessUsername(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.Username
 }
 
 // SetCredentialSecret stores (or overwrites) the encrypted secret of
