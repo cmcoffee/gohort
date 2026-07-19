@@ -372,9 +372,13 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 	if !ok {
 		return fmt.Errorf("agent %q not found", agentID)
 	}
-	if rec.Owner != "" && owner != "" && rec.Owner != owner {
-		return fmt.Errorf("not your agent")
-	}
+	// No Owner-field equality guard: the agent was loaded from the resolved user
+	// store (agentUserDB) and this is the admin-driven scope path, which scopes a
+	// tool onto ANY of the owner's agents — including SEED agents like Builder
+	// (Owner==seedOwner) and sub-agents whose .Owner differs. The equality check
+	// wrongly rejected exactly those with "not your agent" (mirrors the
+	// credential/pipeline scope fix). Saving writes the user's per-user shadow.
+	_ = owner
 	replaced := false
 	for i := range rec.Tools {
 		if rec.Tools[i].Name == t.Name {
