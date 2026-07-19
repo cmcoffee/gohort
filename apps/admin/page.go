@@ -77,12 +77,15 @@ func buildTunableSections() []ui.Section {
 			Decimals: s.Decimals,
 		})
 	}
-	sections := make([]ui.Section, 0, len(order))
+	// One category per rail item, so the Tuning tab is a compact side-index of
+	// areas (Network Timeouts, Limits, …) with only the selected category's
+	// fields shown — instead of one long stack that grows every time a knob is
+	// registered. Each category still saves as you edit with its own Revert.
+	items := make([]ui.NavItem, 0, len(order))
 	for _, cat := range order {
-		sections = append(sections, ui.Section{
-			Title:    cat,
-			Group:    "Tuning",
-			Subtitle: "Operator knobs, saved automatically as you edit. Use Revert to defaults to clear overrides.",
+		items = append(items, ui.NavItem{
+			Label: cat,
+			Key:   cat,
 			Body: ui.FormPanel{
 				Source:       "api/settings",
 				ResetURL:     "api/settings/reset-tunables?category=" + url.QueryEscape(cat),
@@ -92,7 +95,12 @@ func buildTunableSections() []ui.Section {
 			},
 		})
 	}
-	return sections
+	return []ui.Section{{
+		Group:    "Tuning",
+		Wide:     true, // rail + pane wants the full grid width, not the two-up config column
+		Subtitle: "Operator knobs, saved automatically as you edit. Pick an area on the left; each has its own Revert to defaults.",
+		Body:     ui.NavShell{Embedded: true, Items: items},
+	}}
 }
 
 // sourceHookFormTemplates turns the built-in SourceHookTemplates into

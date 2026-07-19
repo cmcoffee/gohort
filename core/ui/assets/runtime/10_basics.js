@@ -3068,7 +3068,12 @@
   components.nav_shell = function(cfg, ctx) {
     // Fill the viewport below the page header so the content pane reaches
     // the window bottom. min-height keeps it usable when dvh is unreliable.
-    var outer = el('div', {class: 'ui-navshell', style: 'display:flex;flex-direction:column;height:calc(100dvh - 70px);min-height:420px;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;overflow:hidden'});
+    // Embedded shells size to content (capped, internal scroll) since they sit
+    // below a page's header + tabs; the default fills the viewport (app-shell).
+    var shellHeight = cfg.embedded
+      ? 'min-height:320px;max-height:calc(100dvh - 210px)'
+      : 'height:calc(100dvh - 70px);min-height:420px';
+    var outer = el('div', {class: 'ui-navshell', style: 'display:flex;flex-direction:column;' + shellHeight + ';border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;overflow:hidden'});
 
     // Optional top control bar — a horizontal row of controls/dials.
     if (cfg.toolbar && cfg.toolbar.length) {
@@ -3077,8 +3082,10 @@
       outer.appendChild(bar);
     }
 
+    var railRight = (cfg.rail_side === 'right');
     var body = el('div', {style: 'display:flex;flex:1;min-height:0'});
-    var rail = el('div', {style: 'display:flex;flex-direction:column;gap:0.25rem;padding:0.5rem;min-width:190px;border-right:1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06));overflow:auto'});
+    var railBorder = railRight ? 'border-left' : 'border-right';
+    var rail = el('div', {style: 'display:flex;flex-direction:column;gap:0.25rem;padding:0.5rem;min-width:190px;' + railBorder + ':1px solid var(--border, rgba(127,127,127,0.3));background:var(--bg-1, rgba(127,127,127,0.06));overflow:auto'});
     var right = el('div', {style: 'flex:1;display:flex;flex-direction:column;min-width:0'});
 
     // Pinned activity strip — always visible regardless of selection.
@@ -3116,8 +3123,13 @@
       entries.push({btn: btn, panel: panel});
     });
 
-    body.appendChild(rail);
-    body.appendChild(right);
+    if (railRight) {
+      body.appendChild(right);
+      body.appendChild(rail);
+    } else {
+      body.appendChild(rail);
+      body.appendChild(right);
+    }
     outer.appendChild(body);
     if (entries.length) activate(0);
     return outer;

@@ -1120,6 +1120,16 @@ type NavShell struct {
 	Toolbar []Component // top control bar, rendered as a horizontal row above everything; nil = no bar
 	Header  Component   // pinned at the top of the content pane; nil = no strip
 	Items   []NavItem
+	// RailSide places the nav rail on the "left" (default) or "right" of the
+	// content pane. Right suits a settings surface where the primary page nav
+	// already lives on the left and the rail is a secondary within-page index
+	// (e.g. the admin Tuning categories).
+	RailSide string `json:"rail_side,omitempty"`
+	// Embedded switches the shell from filling the viewport (its default,
+	// app-shell use like the Operator) to sizing to its content with a cap and
+	// internal scroll — for a NavShell dropped INSIDE a page section (below a
+	// header + tabs) rather than owning the whole page.
+	Embedded bool `json:"embedded,omitempty"`
 }
 
 // NavItem is one entry in a NavShell's left rail.
@@ -1149,11 +1159,13 @@ func (n NavShell) MarshalJSON() ([]byte, error) {
 		toolbar = append(toolbar, marshalComponent(c))
 	}
 	return json.Marshal(struct {
-		Type    string            `json:"type"`
-		Toolbar []json.RawMessage `json:"toolbar,omitempty"`
-		Header  json.RawMessage   `json:"header,omitempty"`
-		Items   []itemJSON        `json:"items"`
-	}{"nav_shell", toolbar, hdr, items})
+		Type     string            `json:"type"`
+		Toolbar  []json.RawMessage `json:"toolbar,omitempty"`
+		Header   json.RawMessage   `json:"header,omitempty"`
+		Items    []itemJSON        `json:"items"`
+		RailSide string            `json:"rail_side,omitempty"`
+		Embedded bool              `json:"embedded,omitempty"`
+	}{"nav_shell", toolbar, hdr, items, n.RailSide, n.Embedded})
 }
 
 // Toolbar is a standalone horizontal row of action buttons — the same
