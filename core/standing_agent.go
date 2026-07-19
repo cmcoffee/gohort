@@ -210,6 +210,12 @@ func ClearStandingAgentBroken(db Database, owner, name string) bool {
 	return true
 }
 
+// StandingAgentDependencyError, when set by the orchestrate app at startup,
+// returns a non-empty reason if a standing agent can no longer run because its
+// target agent was removed. The run handler consults it before firing and marks
+// the standing agent broken instead of fail-looping. nil = no check.
+var StandingAgentDependencyError func(sa StandingAgent) string
+
 // --- schedule + run ----------------------------------------------------------
 
 // standingRearmGrace is how stale a NextRun must be before the reconciler
@@ -420,6 +426,15 @@ func StartStandingScheduler() {
 		if sa.Paused {
 			Log("[standing] %s/%s is paused — skipping fire", p.Owner, p.Name)
 			return
+		}
+		// Dependency guard: if the target agent was deleted since the last fire,
+		// mark broken (pauses + unschedules) instead of fail-looping. The deferred
+		// re-arm re-reads and honors the fresh Paused, so it won't reschedule.
+		if StandingAgentDependencyError != nil {
+			if reason := StandingAgentDependencyError(sa); reason != "" {
+				MarkStandingAgentBroken(RootDB, sa.Owner, sa.Name, reason)
+				return
+			}
 		}
 		executeStandingRun(ctx, RootDB, sa, p.Trigger)
 	})

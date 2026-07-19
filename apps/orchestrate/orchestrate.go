@@ -239,6 +239,10 @@ func (T *OrchestrateApp) Routes() {
 	// Credential → declaring-tools resolver for the admin credential UI (it
 	// can't reach agent records itself). Orchestrate scans agents + pools.
 	CredentialToolsResolver = credentialTools
+	// Fire-path dependency guards: a monitor / standing agent whose agent,
+	// credential, or tool vanished is marked broken (paused + kept) instead of
+	// firing into the void.
+	wireDependencyGuards()
 	ResolveAgentNameForExport = func(owner, key string) (string, bool) {
 		udb := UserDB(T.DB, owner)
 		if udb == nil {

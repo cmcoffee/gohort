@@ -50,6 +50,26 @@ func TestMarkEventMonitorBroken_KeepsRecordAndPauses(t *testing.T) {
 	}
 }
 
+// TestCredentialDeleteFiresHook verifies deleting a credential notifies the
+// broken-dependency hook (outside the SecureAPI lock) with the credential name,
+// so orchestrate can mark dependent monitors broken immediately.
+func TestCredentialDeleteFiresHook(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	s.db.Set(secureAPITable, "stripe", SecureCredential{Name: "stripe"})
+
+	var got string
+	prev := CredentialDeletedHook
+	CredentialDeletedHook = func(cred string) { got = cred }
+	defer func() { CredentialDeletedHook = prev }()
+
+	if err := s.Delete("stripe"); err != nil {
+		t.Fatal(err)
+	}
+	if got != "stripe" {
+		t.Errorf("expected CredentialDeletedHook(%q), got %q", "stripe", got)
+	}
+}
+
 // TestMarkStandingAgentBroken_KeepsRecordAndPauses mirrors the monitor case for
 // standing agents.
 func TestMarkStandingAgentBroken_KeepsRecordAndPauses(t *testing.T) {

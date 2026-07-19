@@ -670,7 +670,6 @@ func (s *SecureAPI) Delete(name string) error {
 		return fmt.Errorf("name required")
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.db.Unset(secureAPITable, name)
 	s.db.Unset(secureAPITable, secureCredSecretKey(name))
 	for _, k := range s.db.Keys(secureAPIAuditTable) {
@@ -678,8 +677,21 @@ func (s *SecureAPI) Delete(name string) error {
 			s.db.Unset(secureAPIAuditTable, k)
 		}
 	}
+	s.mu.Unlock()
+	// A monitor that polls through this credential just lost its dependency —
+	// mark those monitors broken (paused + kept) NOW instead of leaving them to
+	// notice at their next poll. Runs outside the lock; the hook only scans
+	// monitors, it never re-enters SecureAPI.
+	if CredentialDeletedHook != nil {
+		CredentialDeletedHook(name)
+	}
 	return nil
 }
+
+// CredentialDeletedHook, when set by the orchestrate app at startup, is called
+// after a credential is deleted so dependent event monitors can be marked broken
+// immediately. nil = no notification.
+var CredentialDeletedHook func(cred string)
 
 // LoadAudit returns the most recent audit entries for a credential,
 // newest first.

@@ -390,6 +390,15 @@ func ClearEventMonitorBroken(db Database, owner, name string) bool {
 	return true
 }
 
+// EventMonitorDependencyError, when set by the orchestrate app at startup,
+// returns a non-empty reason if a monitor can no longer run because a dependency
+// it needs — its wake/check agent, a credential, or a tool — has been removed.
+// The poll handler consults it right before firing and marks the monitor broken
+// instead of firing into a missing dependency. nil = no check (fire as before).
+// The resolver reads agents from the per-user DB and credentials/tools from
+// RootDB itself, so it takes only the monitor.
+var EventMonitorDependencyError func(m EventMonitor) string
+
 // --- poll match --------------------------------------------------------------
 
 // eventMatch reports whether a checker answer should fire the monitor: it fires
@@ -577,6 +586,17 @@ func StartEventMonitorScheduler() {
 			}
 		}()
 		if !m.Paused {
+			// Dependency guard: if the monitor's wake/check agent, credential, or
+			// tool was removed since the last tick, DON'T fire into the void (and
+			// don't fail-loop forever) — mark it broken, which pauses + unschedules
+			// it and surfaces a "needs relink" state. The deferred re-arm above
+			// re-reads and honors the fresh Paused, so it won't reschedule.
+			if EventMonitorDependencyError != nil {
+				if reason := EventMonitorDependencyError(m); reason != "" {
+					MarkEventMonitorBroken(RootDB, m.Owner, m.Name, reason)
+					return
+				}
+			}
 			// Record liveness every poll (even when nothing changes) so a
 			// healthy-but-quiet monitor is visibly alive in the console. Saved
 			// before execute* re-reads, so its own save preserves it.
