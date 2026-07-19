@@ -138,10 +138,6 @@ type SecureCredential struct {
 	// authoring time. Empty / ignored on Open creds. See
 	// docs/secured-credential-tool-binding.md.
 	ApprovedToolBindings []string `json:"approved_tool_bindings,omitempty"`
-	// PendingToolBindings are tools that REQUESTED to bind this secured cred and
-	// await admin review (recorded when authoring a new binding). An admin moves an
-	// entry to ApprovedToolBindings (ApproveToolBinding) or drops it (RevokeToolBinding).
-	PendingToolBindings []string `json:"pending_tool_bindings,omitempty"`
 	// RevokedToolBindings are TOMBSTONES: tools an admin explicitly revoked. They
 	// are the reason dispatch enforcement needs no eager backfill — a legacy
 	// declaring tool that predates the binding record is grandfathered (auto-
@@ -665,23 +661,22 @@ func (s *SecureAPI) ToolBindingApproved(cred, tool string) bool {
 	return credSliceHas(c.ApprovedToolBindings, tool)
 }
 
-// RequestToolBinding records that tool wants to declare secured cred, for admin
-// review. Idempotent — no-op if already approved or already pending.
-func (s *SecureAPI) RequestToolBinding(cred, tool string) error {
-	return s.mutateCred(cred, func(c *SecureCredential) {
-		if credSliceHas(c.ApprovedToolBindings, tool) || credSliceHas(c.PendingToolBindings, tool) {
-			return
-		}
-		c.PendingToolBindings = append(c.PendingToolBindings, tool)
-	})
+// ToolBindingRevoked reports whether an admin has explicitly REVOKED tool's
+// binding to cred (a durable deny that survives edits + delete/recreate).
+func (s *SecureAPI) ToolBindingRevoked(cred, tool string) bool {
+	c, ok := s.Load(cred)
+	if !ok {
+		return false
+	}
+	return credSliceHas(c.RevokedToolBindings, tool)
 }
 
-// ApproveToolBinding moves tool from pending to approved (admin action, and the
-// grandfather path for an existing declaring tool). Clears any revocation
-// tombstone — an explicit re-approval un-revokes. Idempotent.
+// ApproveToolBinding records tool as an approved binding of cred. Under
+// auto-resolve this is what declaring the cred does (no review); it's also the
+// admin's "un-revoke" from the Bindings UI. Clears any revoke tombstone.
+// Idempotent.
 func (s *SecureAPI) ApproveToolBinding(cred, tool string) error {
 	return s.mutateCred(cred, func(c *SecureCredential) {
-		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
 		c.RevokedToolBindings = credSliceRemove(c.RevokedToolBindings, tool)
 		if !credSliceHas(c.ApprovedToolBindings, tool) {
 			c.ApprovedToolBindings = append(c.ApprovedToolBindings, tool)
@@ -689,13 +684,12 @@ func (s *SecureAPI) ApproveToolBinding(cred, tool string) error {
 	})
 }
 
-// RevokeToolBinding removes tool from the approved + pending lists and TOMBSTONES
-// it, so dispatch refuses it instead of grandfathering it back. Re-approve to
-// undo.
+// RevokeToolBinding is the admin's durable DENY: drop the approval and TOMBSTONE
+// the tool so dispatch refuses it and a same-name (re)author is refused too. The
+// tombstone survives edits + delete/recreate. Re-approve to undo.
 func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 	return s.mutateCred(cred, func(c *SecureCredential) {
 		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
-		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
 		if !credSliceHas(c.RevokedToolBindings, tool) {
 			c.RevokedToolBindings = append(c.RevokedToolBindings, tool)
 		}
@@ -703,21 +697,16 @@ func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 }
 
 // EnforceSecuredBinding is the dispatch-time gate: may toolName dispatch through
-// credName? It returns nil (allow) or a directive error (refuse). Only Secured
-// creds are gated; Open creds always pass. The gate:
-//   - approved binding            → allow
-//   - revoked (tombstoned)        → refuse
-//   - neither (legacy declaring)  → GRANDFATHER: approve it and allow
+// credName? Returns nil (allow) or a directive error (refuse). Only Secured creds
+// are gated; Open creds always pass. Two states under auto-resolve:
+//   - revoked (tombstoned) → refuse
+//   - otherwise            → allow (and record the binding for the admin view)
 //
-// Grandfathering is safe because a tool can only REACH dispatch for a secured
-// cred if it already DECLARES it (the fetch_via hook / api-mode wiring verified
-// that), and Slice-1 authoring blocks declaring a secured cred without approval —
-// so a tool with the declaration in its record is a legitimate pre-record
-// (authored-while-open) tool. This is why no eager backfill sweep is needed; the
-// tombstone is what keeps revocation from being undone by the grandfather.
-//
-// toolName == "" (an unnamed caller: run_local / persistent shell, already gated
-// by the hook's fetch_via capability grant) is not binding-enforced.
+// A tool only REACHES dispatch for a secured cred if it already DECLARES it (the
+// fetch_via hook / api-mode wiring verified that), so an un-revoked declaring
+// tool is legitimately bound — no approval step. toolName == "" (an unnamed
+// caller: run_local / persistent shell, already gated by the hook's fetch_via
+// grant) is not binding-enforced.
 func (s *SecureAPI) EnforceSecuredBinding(credName, toolName string) error {
 	toolName = strings.TrimSpace(toolName)
 	if toolName == "" {
@@ -727,45 +716,24 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName string) error {
 	if !ok || !c.Secured {
 		return nil
 	}
-	if credSliceHas(c.ApprovedToolBindings, toolName) {
-		return nil
-	}
 	if credSliceHas(c.RevokedToolBindings, toolName) {
 		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED — an admin re-approves it in Admin > APIs to restore access", credName, toolName)
 	}
-	if credSliceHas(c.PendingToolBindings, toolName) {
-		// Explicitly pending (a fresh request, or re-opened by a material edit —
-		// P2). NOT grandfathered: pending means "awaiting review", so dispatch
-		// must refuse until an admin approves it.
-		return fmt.Errorf("credential %q is SECURED and tool %q's binding is PENDING admin review — approve it in Admin > APIs to enable access", credName, toolName)
+	if !credSliceHas(c.ApprovedToolBindings, toolName) {
+		// Declaring-but-unrecorded (a tool authored before the binding record, or
+		// via a path that didn't record it): auto-bind it on first dispatch.
+		_ = s.ApproveToolBinding(credName, toolName)
 	}
-	// Legacy declaring tool (absent from every list — authored before the binding
-	// record existed): grandfather it into the record on first dispatch.
-	_ = s.ApproveToolBinding(credName, toolName)
 	return nil
 }
 
-// RependToolBinding re-opens review for an already-approved binding (a material
-// edit invalidates the reviewed artifact — P2 edit-lock): approved/revoked → out,
-// pending → in. Dispatch then refuses until an admin re-approves.
-func (s *SecureAPI) RependToolBinding(cred, tool string) error {
+// ForgetToolBinding drops a tool's approval but KEEPS any revoke tombstone — used
+// when the tool is deleted. Under auto-resolve a recreate re-binds automatically,
+// so the approval is just tidy-up; the revoke must PERSIST so an admin's deny
+// survives a delete + same-name recreate.
+func (s *SecureAPI) ForgetToolBinding(cred, tool string) error {
 	return s.mutateCred(cred, func(c *SecureCredential) {
 		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
-		c.RevokedToolBindings = credSliceRemove(c.RevokedToolBindings, tool)
-		if !credSliceHas(c.PendingToolBindings, tool) {
-			c.PendingToolBindings = append(c.PendingToolBindings, tool)
-		}
-	})
-}
-
-// ClearToolBinding drops a tool from ALL of a cred's binding lists — used when the
-// tool is deleted, so a later recreate with the same name doesn't inherit its
-// approval (the name-laundering hole). A recreate then goes through fresh review.
-func (s *SecureAPI) ClearToolBinding(cred, tool string) error {
-	return s.mutateCred(cred, func(c *SecureCredential) {
-		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
-		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
-		c.RevokedToolBindings = credSliceRemove(c.RevokedToolBindings, tool)
 	})
 }
 

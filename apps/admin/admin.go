@@ -1105,25 +1105,22 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				return
 			}
 			// Tool-binding rows for a SECURED credential: what's approved, what's
-			// awaiting review, and what's been revoked (tombstoned). Drives the
-			// Bindings expand + its Approve/Revoke actions. Each row carries the
-			// credential name so a row action can address both cred + tool.
+			// bound (auto-resolved from its declaration), and what's been revoked
+			// (a durable deny). Drives the Bindings expand + its Approve/Revoke
+			// actions. Each row carries the credential name so a row action can
+			// address both cred + tool.
 			if name := strings.TrimSpace(r.URL.Query().Get("bindings")); name != "" {
 				type bindingRow struct {
 					Cred     string `json:"cred"`
 					Tool     string `json:"tool"`
 					Status   string `json:"status"`
-					Pending  bool   `json:"_pending,omitempty"`
 					Approved bool   `json:"_approved,omitempty"`
 					Revoked  bool   `json:"_revoked,omitempty"`
 				}
 				rows := []bindingRow{}
 				if c, ok := Secure().Load(name); ok {
 					for _, t := range c.ApprovedToolBindings {
-						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "approved", Approved: true})
-					}
-					for _, t := range c.PendingToolBindings {
-						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "pending", Pending: true})
+						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "bound", Approved: true})
 					}
 					for _, t := range c.RevokedToolBindings {
 						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "revoked", Revoked: true})

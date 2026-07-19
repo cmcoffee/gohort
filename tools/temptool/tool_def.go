@@ -529,13 +529,14 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		// no_auth's AllowedURLPattern if needed.
 		credential = "no_auth"
 	}
-	// Secured-credential binding: a toolbox wrapping a secured cred must be an
-	// APPROVED binding (its actions dispatch through the cred server-side). Mirror
-	// the api-mode guard — allow an approved toolbox, else record a request and
-	// refuse. See docs/secured-credential-tool-binding.md.
-	if cr, ok := Secure().Load(credential); ok && cr.Secured && !Secure().ToolBindingApproved(credential, name) {
-		_ = Secure().RequestToolBinding(credential, name)
-		return "", fmt.Errorf("credential %q is SECURED — toolbox %q must be APPROVED to bind it. A binding request has been recorded; an admin approves it in Admin > APIs, after which the toolbox's actions dispatch through %q and any agent it's scoped to can use it", credential, name, credential)
+	// Secured-credential binding is AUTO-RESOLVED: a toolbox that declares a
+	// secured cred is bound to it (its actions dispatch server-side). Exception: an
+	// admin's explicit REVOKE is a durable deny. See docs/secured-credential-tool-binding.md.
+	if cr, ok := Secure().Load(credential); ok && cr.Secured {
+		if Secure().ToolBindingRevoked(credential, name) {
+			return "", fmt.Errorf("credential %q is SECURED and toolbox %q's binding was REVOKED by an admin — ask them to restore it in Admin > APIs", credential, name)
+		}
+		_ = Secure().ApproveToolBinding(credential, name)
 	}
 	rawActions, ok := args["actions"]
 	if !ok || rawActions == nil {
@@ -1059,40 +1060,10 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	merged := tempToolToCreateArgs(existing)
 
-	// Grandfather an api/toolbox tool's secured-credential binding on edit: the
-	// tool already declares this cred, so editing it (a description change, an
-	// action tweak) must not trip the secured-binding authoring guard. Approve
-	// the existing binding so the re-run create passes — mirrors the shell path's
-	// _existing_cred_grants grandfather below.
-	if existing.Credential != "" {
-		if cr, ok := Secure().Load(existing.Credential); ok && cr.Secured {
-			_ = Secure().ApproveToolBinding(existing.Credential, existing.Name)
-		}
-	}
-
-	// Credentials already granted on the record being edited are PRESERVED
-	// here (round-tripped by tempToolToCreateArgs), not freshly declared —
-	// the update schema has no hook_capabilities field, so every fetch_via /
-	// secret grant on an update was already validated at create time. The
-	// create path's secured-credential guard must therefore not reject them:
-	// a secured cred stays locked to the tools that already use it, and this
-	// IS one of them. Pass the set so create skips the rejection for exactly
-	// these names (a NEW script_body still gets the ungranted-call guard).
-	if len(existing.HookCapabilities) > 0 {
-		var priorCreds []any
-		for _, c := range existing.HookCapabilities {
-			if i := strings.IndexByte(c, ':'); i >= 0 {
-				if m := strings.ToLower(c[:i]); m == "secret" || m == "fetch_via" {
-					if name := strings.TrimSpace(c[i+1:]); name != "" {
-						priorCreds = append(priorCreds, name)
-					}
-				}
-			}
-		}
-		if len(priorCreds) > 0 {
-			merged["_existing_cred_grants"] = priorCreds
-		}
-	}
+	// Secured-credential bindings are AUTO-RESOLVED on the re-run create below:
+	// the tool already declares the cred, so the authoring guard just re-approves
+	// it (unless an admin revoked it, which the guard respects). No pre-approval
+	// or edit re-review needed — access follows the tool's own scope.
 
 	// A toolbox has NO top-level url/body/method/etc — those are per-ACTION.
 	// Passing one at the top level used to be silently ignored (the "I set
@@ -1193,44 +1164,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// P2 edit-lock: a MATERIAL edit (the tool's executable definition changed —
-	// script / URL / body / method / credential / params) re-opens review for
-	// every SECURED cred this tool binds. The grandfather above approved the
-	// binding so the create guard would ALLOW the edit; now that it succeeded, move
-	// it back to pending so dispatch refuses the changed tool until an admin
-	// re-approves the reviewed artifact. A cosmetic edit (description only) leaves
-	// the approval intact. See docs/secured-credential-tool-binding.md.
-	repended := ""
-	if updateIsMaterial(args) {
-		for cred := range securedBindingCreds(existing) {
-			if err := Secure().RependToolBinding(cred, existing.Name); err == nil {
-				repended = cred
-			}
-		}
-	}
-	out := "Updated " + name + " in place. " + res
-	if repended != "" {
-		out += " NOTE: its executable definition changed, so its SECURED-credential binding(s) now need admin RE-APPROVAL in Admin > APIs before it can dispatch through them again."
-	}
-	return out, nil
-}
-
-// updateIsMaterial reports whether a tool_def(update) touches the tool's
-// EXECUTABLE definition (vs. a cosmetic description-only edit). Presence of any
-// of these fields in the update args means the reviewed artifact changed, so a
-// secured-credential binding must be re-reviewed (P2). name/description are
-// deliberately excluded.
-func updateIsMaterial(args map[string]any) bool {
-	for _, f := range []string{
-		"script_body", "command_template", "url_template", "body_template",
-		"method", "response_pipe", "credential", "params", "required",
-		"actions", "remove_actions", "hook_capabilities",
-	} {
-		if _, ok := args[f]; ok {
-			return true
-		}
-	}
-	return false
+	return "Updated " + name + " in place. " + res, nil
 }
 
 // securedBindingCreds returns the set of SECURED credentials a tool binds — its
@@ -1258,12 +1192,12 @@ func securedBindingCreds(tt TempTool) map[string]bool {
 
 func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
-	// P2: clear any secured-credential bindings this tool holds, so a later
-	// recreate with the SAME NAME doesn't silently inherit its approval (the
-	// name-laundering hole). A recreate then goes through fresh review.
+	// Forget this tool's secured-credential bindings (approved/pending) on delete —
+	// tidy-up under auto-resolve. A revoke tombstone is deliberately KEPT so an
+	// admin's deny survives a delete + same-name recreate.
 	if rec, ok := loadExistingToolRecord(sess, name); ok {
 		for cred := range securedBindingCreds(rec) {
-			_ = Secure().ClearToolBinding(cred, name)
+			_ = Secure().ForgetToolBinding(cred, name)
 		}
 	}
 	// Agent-bundled tool: the durable copy lives on the agent RECORD and

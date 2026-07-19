@@ -64,53 +64,44 @@ func TestAutoRouteMatchesInternalHost(t *testing.T) {
 	}
 }
 
-// TestSecuredToolBindingLifecycle covers P1 of the secured-credential tool
-// binding: request → approve → (dispatch-authoritative) → revoke, with
-// idempotence. This allowlist is how a secured cred's access follows TOOL scope.
+// TestSecuredToolBindingLifecycle covers the two-state binding model: approve
+// (auto-bind / un-revoke) ↔ revoke (durable deny), with idempotence and the
+// approve/revoke mutual exclusion.
 func TestSecuredToolBindingLifecycle(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	s.db.Set(secureAPITable, "ts3_api", SecureCredential{Name: "ts3_api", Secured: true})
 
-	if s.ToolBindingApproved("ts3_api", "ts3_status") {
-		t.Fatal("no binding approved initially")
+	if s.ToolBindingApproved("ts3_api", "ts3_status") || s.ToolBindingRevoked("ts3_api", "ts3_status") {
+		t.Fatal("no binding state initially")
 	}
 
-	// Request → pending, not yet approved.
-	if err := s.RequestToolBinding("ts3_api", "ts3_status"); err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	c, _ := s.Load("ts3_api")
-	if !credSliceHas(c.PendingToolBindings, "ts3_status") {
-		t.Fatalf("expected pending binding, got %v", c.PendingToolBindings)
-	}
-	if s.ToolBindingApproved("ts3_api", "ts3_status") {
-		t.Fatal("pending is not approved")
-	}
-	// Idempotent request.
-	_ = s.RequestToolBinding("ts3_api", "ts3_status")
-	c, _ = s.Load("ts3_api")
-	if len(c.PendingToolBindings) != 1 {
-		t.Fatalf("request must be idempotent; pending=%v", c.PendingToolBindings)
-	}
-
-	// Approve → approved, pending cleared.
+	// Approve → bound; idempotent.
 	if err := s.ApproveToolBinding("ts3_api", "ts3_status"); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
-	if !s.ToolBindingApproved("ts3_api", "ts3_status") {
-		t.Fatal("should be approved after ApproveToolBinding")
+	_ = s.ApproveToolBinding("ts3_api", "ts3_status")
+	c, _ := s.Load("ts3_api")
+	if len(c.ApprovedToolBindings) != 1 {
+		t.Fatalf("approve must be idempotent; approved=%v", c.ApprovedToolBindings)
 	}
-	c, _ = s.Load("ts3_api")
-	if credSliceHas(c.PendingToolBindings, "ts3_status") {
-		t.Fatal("pending must clear on approve")
+	if !s.ToolBindingApproved("ts3_api", "ts3_status") {
+		t.Fatal("should be bound after approve")
 	}
 
-	// Revoke → gone from both.
+	// Revoke → tombstoned, no longer approved (mutual exclusion).
 	if err := s.RevokeToolBinding("ts3_api", "ts3_status"); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	if s.ToolBindingApproved("ts3_api", "ts3_status") {
-		t.Fatal("should be revoked")
+	if s.ToolBindingApproved("ts3_api", "ts3_status") || !s.ToolBindingRevoked("ts3_api", "ts3_status") {
+		t.Fatal("revoke must move approved → revoked")
+	}
+
+	// Approve again → un-revokes.
+	if err := s.ApproveToolBinding("ts3_api", "ts3_status"); err != nil {
+		t.Fatalf("re-approve: %v", err)
+	}
+	if !s.ToolBindingApproved("ts3_api", "ts3_status") || s.ToolBindingRevoked("ts3_api", "ts3_status") {
+		t.Fatal("re-approve must un-revoke")
 	}
 }
 
@@ -158,47 +149,34 @@ func TestEnforceSecuredBinding(t *testing.T) {
 	}
 }
 
-// TestSecuredBindingRependClear covers P2: a pending binding is REFUSED at
-// dispatch (not grandfathered), RependToolBinding moves approved→pending, and
-// ClearToolBinding wipes all lists (delete path).
-func TestSecuredBindingRependClear(t *testing.T) {
+// TestSecuredBindingForgetKeepsRevoke covers the auto-resolve model's durable
+// deny: a REVOKE tombstone survives ForgetToolBinding (the delete path), so an
+// admin's deny persists across a delete + same-name recreate. A forget on an
+// APPROVED (not revoked) tool clears it cleanly.
+func TestSecuredBindingForgetKeepsRevoke(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	s.db.Set(secureAPITable, "sec", SecureCredential{Name: "sec", Secured: true})
 
-	s.ApproveToolBinding("sec", "t")
-	if err := s.EnforceSecuredBinding("sec", "t"); err != nil {
-		t.Fatalf("approved binding must pass: %v", err)
-	}
-
-	// Re-pend (material edit) → un-approved, pending, and dispatch REFUSES
-	// (must not silently grandfather a pending binding).
-	if err := s.RependToolBinding("sec", "t"); err != nil {
+	// Approved tool → forget clears it entirely (no revoke to preserve).
+	s.ApproveToolBinding("sec", "a")
+	if err := s.ForgetToolBinding("sec", "a"); err != nil {
 		t.Fatal(err)
 	}
-	if s.ToolBindingApproved("sec", "t") {
-		t.Fatal("re-pend must un-approve")
-	}
-	if err := s.EnforceSecuredBinding("sec", "t"); err == nil {
-		t.Fatal("a PENDING binding must be refused at dispatch")
-	}
-	if s.ToolBindingApproved("sec", "t") {
-		t.Fatal("enforcement must NOT grandfather a pending binding")
+	if s.ToolBindingApproved("sec", "a") || s.ToolBindingRevoked("sec", "a") {
+		t.Fatal("forget on an approved tool must leave it in no list")
 	}
 
-	// Re-approve → passes again.
-	s.ApproveToolBinding("sec", "t")
-	if err := s.EnforceSecuredBinding("sec", "t"); err != nil {
-		t.Fatalf("re-approved must pass: %v", err)
-	}
-
-	// Clear (delete path) → gone from every list.
-	if err := s.ClearToolBinding("sec", "t"); err != nil {
+	// Revoked tool → forget KEEPS the tombstone (durable deny survives delete).
+	s.RevokeToolBinding("sec", "r")
+	if err := s.ForgetToolBinding("sec", "r"); err != nil {
 		t.Fatal(err)
 	}
-	c, _ := s.Load("sec")
-	if credSliceHas(c.ApprovedToolBindings, "t") || credSliceHas(c.PendingToolBindings, "t") || credSliceHas(c.RevokedToolBindings, "t") {
-		t.Fatalf("clear must remove t from all lists; approved=%v pending=%v revoked=%v",
-			c.ApprovedToolBindings, c.PendingToolBindings, c.RevokedToolBindings)
+	if !s.ToolBindingRevoked("sec", "r") {
+		t.Fatal("forget must PRESERVE a revoke tombstone so the deny survives delete")
+	}
+	// And a "recreate" (dispatch after forget) is still refused.
+	if err := s.EnforceSecuredBinding("sec", "r"); err == nil {
+		t.Fatal("a forgotten-but-revoked binding must still be refused at dispatch")
 	}
 }
 

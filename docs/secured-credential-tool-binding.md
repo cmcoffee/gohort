@@ -1,141 +1,74 @@
 # Secured credential → tool binding
 
-**Status:** Spec. Prereq context: `project_secured_credentials`,
-`project_credential_ownership`.
+**Status:** Shipped. Model: **auto-resolve, deny-by-exception.** Prereq context:
+`project_secured_credentials`, `project_credential_ownership`.
 
-## The model (intended)
+> History: this started as an approval-gated model (a new tool binding a secured
+> cred needed admin sign-off). That was reverted — the approval step duplicated
+> protections already in place and added friction. The current model auto-resolves
+> access from the tool's declaration; an explicit revoke is the only admin gate.
+
+## The model
 
 Securing a credential moves access control from the **credential** plane to the
 **tool** plane:
 
-- A secured cred is reachable **only** through tools that DECLARE (bind to) it —
-  never the ambient auto-route, never a direct `fetch_url_<cred>`.
-- Access to the cred = access to a declaring tool. Whoever has that tool scoped
-  can use the cred *through* it. The cred's own scope pill becomes irrelevant.
-- The secret **never** reaches the agent/script — dispatch injects it
-  server-side (`fetch_via:` / api-mode `credential=`). `secret:<cred>` (raw key
-  handed to the script) is never allowed for a secured cred.
+- A secured cred is reachable **only** through tools that DECLARE it (`fetch_via:`
+  / api-mode `credential=` / a toolbox credential) — never the ambient auto-route,
+  never a direct `fetch_url_<cred>`. The secret is injected server-side; the tool
+  and agent never see it.
+- **Declaring the cred auto-binds the tool** — no approval step. Access is
+  auto-resolved from the declaration; the tool's own scope decides which agents
+  can use it. "The tool is the access unit; scope the tool, and its holders get
+  the cred."
+- **`secret:<cred>` is always hard-blocked.** Handing the raw secret to a script
+  violates securing's contract — that's not a binding and never is.
+- **Revoke is the exception.** An admin can DENY a specific tool from the Bindings
+  UI. A revoke is a **durable tombstone**: it refuses the tool at dispatch, blocks
+  a same-name (re)author, and survives edits + delete/recreate. Re-approve to undo.
 
-"The tool is the access unit; scope the tool, and its holders get the cred."
+Why no approval gate: the secret is server-side regardless; the credential's own
+`AllowedURLPattern` / `AllowedEndpoints` bound what any bound tool can hit; a
+high-stakes cred uses `RequiresConfirm` (per-call Allow/Deny); and the tool's
+scope already governs agents. A human checkpoint on *which tools may declare it*
+was redundant.
 
-## What already holds — do NOT rebuild
+## Binding states
 
-- **Dispatch already follows tool-scope.** `SecureAPI.dispatch` (secure_api.go)
-  does not check the agent's credential scope (`CredentialDenied`) or the Secured
-  flag. Declaring tools dispatch fine; comments say so outright ("Secured
-  credentials stay dispatchable — their declaring tools keep working"; "the
-  explicit declaring tools, whose own scope is the access [control]").
-- **Ambient paths correctly skip secured creds.** `AutoRouteCredential` and the
-  direct `fetch_url_<cred>` tool both exclude Secured — otherwise any script
-  could reach the secured host and the lock would mean nothing.
-- **Editing a tool that already holds the grant is preserved** (the
-  `_existing_cred_grants` fix): a description edit no longer strips a
-  `fetch_via:<secured>` binding.
+Two states, tracked on the credential:
 
-## The gap
+- `ApprovedToolBindings` — bound (auto-resolved on declaration, or an admin
+  un-revoke). Shown as **Bound** in the admin UI.
+- `RevokedToolBindings` — a durable admin deny (tombstone). Shown as **Revoked**.
 
-1. **You can't AUTHOR a new binding to a secured cred.** The authoring guard
-   (`tools/temptool/temptool.go:~429`) blocks `fetch_via:<secured>` the SAME as
-   `secret:<secured>` — even though `fetch_via` never exposes the secret
-   (server-side dispatch). So the only way to bind a new tool is the clumsy
-   unsecure → wire → re-secure dance. That defeats "the tool is the access unit."
-2. **No explicit binding record.** Which tools are bound to a secured cred is
-   implicit in each tool's `hook_capabilities` / `credential` field. There's no
-   authoritative list to review, revoke, or lock against.
-3. **No binding edit-lock.** Nothing distinguishes "edit the tool's logic" (fine)
-   from "re-point its credential wiring" (should require review).
+`EnforceSecuredBinding(cred, tool)` at dispatch: revoked → refuse; otherwise allow
+(and record the binding). A declaring-but-unrecorded tool is auto-bound on first
+dispatch. Unnamed callers (`run_local` / persistent shell, already gated by the
+hook's fetch_via grant) aren't binding-enforced.
 
-## Proposed mechanism
+## Where it's enforced
 
-1. **Reviewed binding (the core change).** Authoring a tool that declares
-   `fetch_via:<secured>` or api-mode `credential=<secured>` is ALLOWED, but the
-   tool lands in the existing pending-approval queue (`QueuePendingTempTool`)
-   flagged as a *credential-binding request*. On approval the binding is
-   sanctioned and the tool works; reject blocks it. The secret is server-side
-   throughout. `secret:<secured>` stays hard-blocked — never reviewable (securing
-   means the secret never reaches a script).
-2. **Explicit binding record.** The secured cred tracks its set of approved tool
-   bindings (`cred → {toolID…}`) — the authoritative "declaring tools" list.
-   Powers the admin view, revocation, and the edit-lock. Backfilled on migration
-   from tools whose `hook_capabilities` already grant the cred (grandfathered
-   pre-secure declaring tools).
-3. **Binding edit-lock.** A tool bound to a secured cred stays editable in
-   logic/description, but its credential wiring (the `fetch_via:` grant /
-   `credential` field) is immutable without re-review. Drop/swap → admin action.
-4. **Access = tool scope.** No dispatch change — already true. Lock it in with a
-   test so a future scope check can't regress it.
+- **Authoring** (`tools/temptool`): declaring a secured cred via `fetch_via:` /
+  api-mode / toolbox auto-approves the binding, unless the tool is revoked (then
+  refused). `secret:<secured>` is hard-blocked.
+- **Dispatch**: the fetch_via sandbox hook (via `SandboxHook.ToolName`) and the
+  api/toolbox chokepoint `dispatchTempToolUncached` call `EnforceSecuredBinding`.
+- **Edit**: a `tool_def(update)` just re-resolves (no re-review). A revoked tool
+  can't be edited back into service — the guard respects the deny.
+- **Delete**: `ForgetToolBinding` drops the approval but KEEPS a revoke tombstone,
+  so a deny survives delete + same-name recreate.
 
-## Admin surface
+## Admin UI
 
-- The secured cred's card lists its **bound tools**, and for each, the agents it's
-  scoped to — i.e. the **effective access set** for the cred. Revoke a binding
-  here (severs the cred from the tool; does not delete the tool).
-- The tool-approval queue entry shows a "binds secured credential X" flag.
+Each SECURED credential row (Admin > APIs) has a **Bindings** expand: the tools
+**Bound** to it (auto-resolved) and any **Revoked**, with **Revoke** (deny) and
+**Approve** (un-revoke) buttons. Backed by `GET api/secure-api?bindings={cred}`
+and `POST api/secure-api?action={approve,revoke}_binding&name={cred}&tool={tool}`.
+Effective access = the existing **Tools** expand (tool → the agents it's scoped
+to). Securing itself still removes the generic `call_<cred>` tool + the auto-route.
 
-## Phases
+## Tests
 
-- **P1** — allow `fetch_via:` / api-mode binding to a secured cred → routes to the
-  approval queue (keep `secret:<secured>` blocked). Add the explicit binding
-  record on the cred + migration backfill.
-  - **Slice 1 SHIPPED (authoring):** `SecureCredential.{ApprovedToolBindings,
-    PendingToolBindings}` + `Secure().{ToolBindingApproved,RequestToolBinding,
-    ApproveToolBinding,RevokeToolBinding}`. The shell (`fetch_via:`) and api-mode
-    authoring guards now: hard-block `secret:<secured>`; allow an approved (or
-    grandfathered-on-edit) binding; otherwise record a pending request and refuse
-    with a "must be APPROVED" directive. Dispatch is UNCHANGED (still allows any
-    tool that got past authoring — the authoring gate is the enforcement, as
-    before).
-  - **Slice 2 SHIPPED (dispatch enforcement):** the fetch_via hook (shell, via a
-    new `SandboxHook.ToolName`) and the api/toolbox dispatch chokepoint
-    (`dispatchTempToolUncached`) now call `Secure().EnforceSecuredBinding(cred,
-    tool)`: approved → allow, revoked → refuse, legacy declaring tool →
-    grandfather (auto-approve) + allow. Toolbox authoring got the same binding
-    guard the api/shell paths already had; editing an existing declaring
-    api/toolbox tool grandfathers its binding so the guard doesn't block edits.
-    **No eager backfill sweep** — tool storage isn't enumerable across owners, and
-    an eager sweep risks enforcement outrunning an incomplete backfill. Instead a
-    `RevokedToolBindings` **tombstone** makes lazy grandfather-on-first-dispatch
-    revocation-safe: a legacy tool is grandfathered, but a revoked one is refused
-    instead of re-grandfathered. Grandfathering is safe because only a tool that
-    already DECLARES the cred can reach dispatch, and slice-1 authoring blocks
-    declaring a secured cred without approval.
-  - **Slice 3 SHIPPED (admin UI):** a **Bindings** expand on each SECURED
-    credential's row (Admin > APIs) lists its tool bindings by status — Approved
-    / Pending review / Revoked — with per-row **Approve** and **Revoke** buttons.
-    Backed by `GET api/secure-api?bindings={cred}` (rows carry cred+tool+status)
-    and `POST api/secure-api?action={approve,revoke}_binding&name={cred}&tool={tool}`
-    → `Secure().{Approve,Revoke}ToolBinding`. So a pending request from slice-1
-    authoring is now approvable from the UI (no direct method call), and revoke
-    → slice-2 dispatch refuses the tool (watch monitors then fail-safe via the
-    failure circuit breaker).
-- **P2 SHIPPED** — binding edit-lock. A MATERIAL `tool_def(update)` (touching the
-  executable definition: script / URL / body / method / credential / params /
-  actions / hook-caps — vs. a cosmetic description-only edit) re-opens review: the
-  binding moves back to **pending** so dispatch refuses the changed tool until an
-  admin re-approves (grandfather-approve still runs first so the authoring guard
-  allows the edit; the re-pend happens AFTER the update succeeds).
-  `EnforceSecuredBinding` now REFUSES a pending binding — only a truly-absent
-  legacy tool is grandfathered. DELETE clears the binding (`ClearToolBinding`) so a
-  same-name recreate can't inherit the approval (name-laundering hole). New core
-  methods `RependToolBinding` / `ClearToolBinding`; re-pended bindings surface as
-  Pending in the P3 admin UI. Tests: TestSecuredBindingRependClear (core),
-  TestSecuredBindingEditLock (temptool).
-- **P3 SHIPPED** — admin surface: Bindings expand (status + Approve/Revoke) on each
-  secured cred row; effective-access is the existing Tools expand (tool → agent).
-
-## Open decisions
-
-- **Grandfathering:** backfill the binding record from existing tools whose
-  `hook_capabilities` already grant the (now-secured) cred? → **Yes**, on
-  migration, so today's working declaring tools appear in the record.
-- **`secret:<secured>` ever allowed via review?** → **Hard-never.** Securing's
-  contract is that the secret never reaches a script; `secret:` violates it.
-- **Revoke semantics:** delete the tool, or just sever the cred? → **Sever** —
-  the tool stays, dispatch fails until re-bound/re-reviewed.
-
-## Immediate unblock (pre-P1), e.g. `ts3_status` → `ts3_api`
-
-Admin > APIs → unsecure `ts3_api` → author `ts3_status` as api-mode
-(`credential=ts3_api`) or shell + `fetch_via:ts3_api` → re-secure. Now it's a
-declaring tool: dispatch works, and Gohort (which has the tool scoped) can use it
-— the model, realized by hand until P1 removes the dance.
+`TestSecuredToolBindingLifecycle`, `TestEnforceSecuredBinding`,
+`TestSecuredBindingForgetKeepsRevoke` (core); `TestSecuredCredBindingAuthoring`,
+`TestSecuredBindingAutoResolveEdits` (temptool).

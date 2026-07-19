@@ -1117,25 +1117,25 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									},
 									EmptyText: "No tool uses this credential.",
 								}),
-								// Bindings — for a SECURED credential, the tools an
-								// admin has approved to declare it, the requests
-								// awaiting review, and revoked tombstones. Approve a
-								// pending request → the tool dispatches through the cred
-								// (secret server-side) and access follows the tool's own
-								// scope; Revoke → dispatch refuses it until re-approved.
-								// Only meaningful when Secured (Open creds aren't bound).
+								// Bindings — for a SECURED credential, the tools bound to
+								// it (auto-resolved from their declaration) and any the
+								// admin has REVOKED (a durable deny). A bound tool
+								// dispatches through the cred (secret server-side) and
+								// access follows the tool's own scope. Revoke → dispatch
+								// refuses it and a same-name re-author is blocked;
+								// Approve un-revokes. Only meaningful when Secured.
 								ui.ExpandIf("Bindings", "secured", "", ui.Table{
 									Source: "api/secure-api?bindings={name}",
 									RowKey: "tool",
 									Columns: []ui.Col{
 										{Field: "tool", Label: "Tool", Flex: 1},
 										{Field: "status", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
-											{Value: "approved", Label: "Approved", Color: "success"},
-											{Value: "pending", Label: "Pending review", Color: "warning"},
+											{Value: "bound", Label: "Bound", Color: "success"},
 											{Value: "revoked", Label: "Revoked", Color: "danger"},
 										}},
 									},
 									RowActions: []ui.RowAction{
+										// Approve only shows on a revoked row (un-revoke).
 										{Type: "button", Label: "Approve", Method: "POST",
 											PostTo: "api/secure-api?action=approve_binding&name={cred}&tool={tool}",
 											HideIf: "_approved"},
@@ -1143,7 +1143,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 											PostTo: "api/secure-api?action=revoke_binding&name={cred}&tool={tool}",
 											HideIf: "_revoked"},
 									},
-									EmptyText: "No tool bindings yet. A tool that declares this secured credential lands here for approval.",
+									EmptyText: "No tools bound yet. A tool that declares this secured credential is bound automatically and appears here.",
 								}),
 								// Scope pill — per-agent revoke of this credential
 								// (global by default). Denying it on an agent drops
