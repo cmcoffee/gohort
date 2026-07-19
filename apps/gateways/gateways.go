@@ -39,6 +39,11 @@ func (T *Gateways) WebDesc() string {
 	return "Credentials, tools, and connections your agents use to reach the outside world."
 }
 
+// HubTab puts Gateways on the shared top-nav tab row alongside Agents, Bridges,
+// and Knowledge — it's the per-user capability surface those agents draw on, so
+// it belongs in the same hub. Ordered after the others.
+func (T *Gateways) HubTab() (string, int) { return "Gateways", 40 }
+
 func (T *Gateways) Routes() {
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
@@ -281,6 +286,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		Title:     "Gateways",
 		ShowTitle: true,
 		BackURL:   "/",
+		Nav:       HubNav("/gateways"), // shared hub tabs, Gateways active
 		MaxWidth:  "640px",
 		Sections:  sections,
 	}.ServeHTTP(w, r)
