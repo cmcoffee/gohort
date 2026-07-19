@@ -1,6 +1,6 @@
 # Tool & credential namespacing
 
-**Status:** Design + phase 1 in progress. Related: `project_credential_ownership`,
+**Status:** Phases 1-3 (credentials axis) shipped. Related: `project_credential_ownership`,
 `reference_tenancy_map`, `docs/agent-record-split.md`,
 `docs/secured-credential-tool-binding.md`.
 
@@ -97,29 +97,32 @@ user-namespace management there rather than a new console. Enforcement is *done*
 (phases 1-2): a user-owned credential is owner-only, a hybrid runs as the session
 user. Phase 3 is the **surface** + one real plumbing problem.
 
-### In scope — credentials (the axis we've built out)
+### In scope — credentials (the axis we've built out) — SHIPPED
 
-- **"My API Credentials"** — a user CRUDs their OWN credentials (stamped
-  `Owner = them`). Reuses the credential form; every op is scoped to
-  `Owner == currentUser`; these never appear on the admin page.
-- **"Global credential keys"** — for GLOBAL **hybrid** creds
-  (`cred_scope=per_user`) the user is granted (`AllowedUsers`), a place to paste
-  their own key (`SaveUserSecret`) — the non-OAuth counterpart to "Connected
-  accounts".
+- **"My API credentials"** (SHIPPED) — a user CRUDs their OWN credentials
+  (stamped `Owner = them`) from a section on the Account page
+  (`apps/account`, `api/credentials`). Every op is scoped to
+  `Owner == currentUser` via the keyed store (`ListUser` / `LoadUser` /
+  `DeleteUser` / `Save` with `Owner` set); these never appear on the admin page.
+  Offers the simple key-based types (bearer/header/query/basic_auth/none);
+  OAuth2 stays admin-managed.
+- **"Global credential keys"** (already present) — for GLOBAL **hybrid** creds
+  (`cred_scope=per_user`) the user is granted, the pre-existing "Connected
+  accounts" section is exactly this: `PerUserConnectionsFor` + `SaveUserSecret`.
 
-### The crux — per-user storage keying
+### The crux — per-user storage keying (SHIPPED)
 
-The credential store is a single `name → record` namespace (`secureAPITable[name]`),
-so two users' `github` collide. **User-owned creds must be keyed by `(owner, name)`**
-— a per-user sub-store or key prefix — with owner-aware `Save`/`Load`/`List`.
-Global creds keep their bare-name keys. This keyed store is the main plumbing
-Phase 3 adds, and it's a prerequisite before any user can safely create one.
+The credential store was a single `name → record` namespace, so two users'
+`github` would collide. User-owned creds are now keyed by `(owner, name)` via
+`credStoreKey` (`@u:<owner>:<name>`), with owner-aware `Save`/`Load`/`List`.
+Global creds keep their bare-name keys; `List()` skips the `@`-prefixed keys.
+`Resolve(name, user)` shadows a global with the user's own at dispatch time.
 
-### Rides with this: admin filtering
+### Rides with this: admin filtering (SHIPPED, for free)
 
-The admin credential list now filters to `Owner == ""` (global only). Safe *now*,
-because user-owned creds have a home (the Account surface). This is the phase-2
-deferral, unblocked.
+The admin credential list shows global-only with no extra code — it reads
+`ListWithPending`, which wraps `List()`, which already excludes the
+`@`-prefixed user-owned keys. This was the phase-2 deferral, unblocked.
 
 ### Deferred
 

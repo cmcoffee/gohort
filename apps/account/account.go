@@ -43,6 +43,7 @@ func (T *Account) Routes() {
 	T.HandleFunc("/api/prefs", T.handlePrefs)
 	T.HandleFunc("/api/password", T.handlePassword)
 	T.HandleFunc("/api/connections", T.handleConnections)
+	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
@@ -272,6 +273,92 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleCredentials is the user's OWN API-credential CRUD — the per-user
+// counterpart to the admin credential list. Every op is scoped to
+// Owner == currentUser: the store keys user-owned creds by (owner, name)
+// (Secure().ListUser / LoadUser / DeleteUser / Save with Owner set), so these
+// live in the user's namespace and never appear on the admin page. Only the
+// simple key-based types are offered here; OAuth2 stays admin-managed. Secrets
+// are never returned — GET reports has_secret only.
+func (T *Account) handleCredentials(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		type row struct {
+			Name            string `json:"name"`
+			Type            string `json:"type"`
+			BaseURL         string `json:"base_url"`
+			ParamName       string `json:"param_name,omitempty"`
+			Description     string `json:"description,omitempty"`
+			RequiresConfirm bool   `json:"requires_confirm"`
+			HasSecret       bool   `json:"has_secret"`
+		}
+		rows := []row{}
+		for _, c := range Secure().ListUser(user) {
+			rows = append(rows, row{
+				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
+				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
+				HasSecret: c.Type != SecureCredNone,
+			})
+		}
+		writeJSON(w, rows)
+	case http.MethodPost:
+		var body struct {
+			Name            string `json:"name"`
+			Type            string `json:"type"`
+			BaseURL         string `json:"base_url"`
+			ParamName       string `json:"param_name"`
+			Description     string `json:"description"`
+			Secret          string `json:"secret"`
+			RequiresConfirm bool   `json:"requires_confirm"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// Only the simple key-based types are user-managed; OAuth2 (and its
+		// admin-only client config) stays on the admin surface.
+		switch body.Type {
+		case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
+		default:
+			http.Error(w, "type must be bearer, header, query, basic_auth, or none", http.StatusBadRequest)
+			return
+		}
+		// Owner = the calling user: Save keys this into the user's namespace, so
+		// it can never touch a global (admin) credential of the same name.
+		c := SecureCredential{
+			Name:            strings.TrimSpace(body.Name),
+			Type:            body.Type,
+			BaseURL:         strings.TrimSpace(body.BaseURL),
+			ParamName:       strings.TrimSpace(body.ParamName),
+			Description:     strings.TrimSpace(body.Description),
+			RequiresConfirm: body.RequiresConfirm,
+			Owner:           user,
+		}
+		if err := Secure().Save(c, body.Secret); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		if err := Secure().DeleteUser(user, name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // --- preferences endpoint ----------------------------------------------------
 
 // handlePrefs GET returns the user's personal defaults; POST updates whichever
@@ -406,6 +493,11 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			Title:    "Connected accounts",
 			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
 			Body:     ui.Card{HTML: connectionsHTML},
+		},
+		ui.Section{
+			Title:    "My API credentials",
+			Subtitle: "API keys you own and manage yourself. They live in your namespace — only your agents can dispatch through them, and they never appear on the admin page. Secrets are stored encrypted and never shown to the assistant.",
+			Body:     ui.Card{HTML: credentialsHTML},
 		},
 		ui.Section{
 			Title:    "API keys (personal access)",
@@ -645,6 +737,113 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
   function reveal(t){
     if(!t || !t.token) return;
     root.insertBefore(el('div',{class:'acct-tok-reveal'},[ el('div',{class:'acct-tok-sub',text:'Copy this now — it will not be shown again:'}), el('code',{text:t.token}) ]), root.firstChild);
+  }
+  load();
+})();
+</script>`
+
+// credentialsHTML is the "My API credentials" panel: lists the user's OWN
+// credentials (name + type badge + base URL) with Edit/Delete, and an inline
+// add/edit form. App-specific, so it rides in a Card (the Card renderer
+// re-executes this <script>), same pattern as the connections + tokens panels.
+// All CRUD hits api/credentials, which scopes every op to the calling user.
+const credentialsHTML = `<div id="acct-creds" class="acct-creds">Loading…</div>
+<style>
+.acct-creds { display:flex; flex-direction:column; gap:0.55rem; }
+.acct-cred { border:1px solid var(--border); border-radius:8px; padding:0.55rem 0.75rem; display:flex; align-items:center; gap:0.6rem; }
+.acct-cred-meta { flex:1; min-width:0; }
+.acct-cred-name { font-weight:600; color:var(--text); }
+.acct-cred-sub { font-size:0.75rem; color:var(--text-mute); margin-top:0.1rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acct-cred-badge { font-size:0.68rem; font-weight:600; padding:0.08rem 0.45rem; border-radius:999px; background:var(--bg-2); color:var(--text-mute); margin-left:0.4rem; }
+.acct-cred-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:6px; padding:0.3rem 0.7rem; font:inherit; font-size:0.8rem; }
+.acct-cred-btn:hover { color:var(--text); }
+.acct-cred-btn.danger:hover { color:var(--danger); border-color:var(--danger); }
+.acct-cred-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
+.acct-cred-form { border:1px solid var(--accent); border-radius:8px; padding:0.75rem 0.85rem; display:flex; flex-direction:column; gap:0.5rem; background:var(--bg-2); }
+.acct-cred-form label { font-size:0.78rem; color:var(--text-mute); display:flex; flex-direction:column; gap:0.2rem; }
+.acct-cred-form input, .acct-cred-form select, .acct-cred-form textarea { background:var(--bg-0); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:0.4rem 0.55rem; font:inherit; font-size:0.85rem; }
+.acct-cred-form .row { display:flex; gap:0.6rem; }
+.acct-cred-form .row > label { flex:1; }
+.acct-cred-form .actions { display:flex; gap:0.5rem; align-items:center; margin-top:0.2rem; }
+.acct-cred-form .chk { flex-direction:row; align-items:center; gap:0.4rem; }
+.acct-cred-form .chk input { width:auto; }
+.acct-cred-add { align-self:flex-start; cursor:pointer; background:var(--accent); color:#fff; border:0; border-radius:6px; padding:0.4rem 0.9rem; font:inherit; font-weight:600; }
+.acct-cred-msg { font-size:0.8rem; }
+.acct-cred-msg.err { color:var(--danger); }
+</style>
+<script>
+(function(){
+  var root = document.getElementById('acct-creds');
+  if (!root) return;
+  function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else if(k==='class') n.className=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
+  var TYPES = [['bearer','Bearer token'],['header','Custom header'],['query','Query param'],['basic_auth','Basic auth'],['none','No auth (public)']];
+  function load(){ return fetch('api/credentials',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render).catch(function(){ root.textContent='Failed to load.'; }); }
+  function render(list){
+    root.innerHTML='';
+    list = list || [];
+    if(!list.length){ root.appendChild(el('div',{class:'acct-cred-empty',text:'No credentials yet. Add one to let your agents call an API as you.'})); }
+    list.forEach(function(c){
+      var sub = (c.base_url||'') + (c.description ? '  ·  '+c.description : '');
+      var meta = el('div',{class:'acct-cred-meta'},[
+        el('div',{class:'acct-cred-name'},[ document.createTextNode(c.name), el('span',{class:'acct-cred-badge',text:c.type}) ]),
+        el('div',{class:'acct-cred-sub',text: sub})
+      ]);
+      var edit = el('button',{class:'acct-cred-btn',text:'Edit'});
+      edit.addEventListener('click',function(){ showForm(c); });
+      var del = el('button',{class:'acct-cred-btn danger',text:'Delete'});
+      del.addEventListener('click',function(){
+        var go = window.uiConfirm ? window.uiConfirm('Delete credential "'+c.name+'"? Agents and tools using it stop working.') : Promise.resolve(confirm('Delete "'+c.name+'"?'));
+        go.then(function(ok){ if(!ok) return; fetch('api/credentials?name='+encodeURIComponent(c.name),{method:'DELETE',credentials:'same-origin'}).then(load); });
+      });
+      root.appendChild(el('div',{class:'acct-cred'},[meta,edit,del]));
+    });
+    var add = el('button',{class:'acct-cred-add',text:'+ Add credential'});
+    add.addEventListener('click',function(){ showForm(null); });
+    root.appendChild(add);
+  }
+  function field(labelText, node){ return el('label',{},[document.createTextNode(labelText), node]); }
+  function showForm(existing){
+    var editing = !!existing;
+    var nameI = el('input',{type:'text',placeholder:'lower_snake_case',value: editing?existing.name:''});
+    if(editing) nameI.setAttribute('readonly','readonly');
+    var typeSel = el('select',{});
+    TYPES.forEach(function(t){ var o=el('option',{value:t[0],text:t[1]}); if(editing&&existing.type===t[0]) o.setAttribute('selected','selected'); typeSel.appendChild(o); });
+    var baseI = el('input',{type:'text',placeholder:'https://api.example.com',value: editing?(existing.base_url||''):''});
+    var paramWrap = field('Header / query name', el('input',{type:'text',placeholder:'X-Api-Key',value: editing?(existing.param_name||''):''}));
+    var paramI = paramWrap.querySelector('input');
+    var descI = el('input',{type:'text',placeholder:'What this is for (optional)',value: editing?(existing.description||''):''});
+    var secretI = el('input',{type:'password',placeholder: editing?'Leave blank to keep current secret':'Paste your key / token'});
+    var confirmC = el('input',{type:'checkbox'}); if(editing&&existing.requires_confirm) confirmC.setAttribute('checked','checked');
+    var msg = el('span',{class:'acct-cred-msg'});
+    function syncType(){
+      var t = typeSel.value;
+      paramWrap.style.display = (t==='header'||t==='query') ? '' : 'none';
+      secretI.parentNode.style.display = (t==='none') ? 'none' : '';
+    }
+    typeSel.addEventListener('change', syncType);
+    var save = el('button',{class:'acct-cred-add',text: editing?'Save':'Create'});
+    var cancel = el('button',{class:'acct-cred-btn',text:'Cancel'});
+    cancel.addEventListener('click', load);
+    save.addEventListener('click',function(){
+      msg.textContent=''; msg.className='acct-cred-msg';
+      var body = { name:nameI.value.trim(), type:typeSel.value, base_url:baseI.value.trim(),
+        param_name:paramI.value.trim(), description:descI.value.trim(), secret:secretI.value,
+        requires_confirm:confirmC.checked };
+      save.disabled=true; var orig=save.textContent; save.textContent='Saving…';
+      fetch('api/credentials',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+        .then(function(r){ if(r.status===204){ load(); return; } return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); })
+        .catch(function(e){ save.disabled=false; save.textContent=orig; msg.className='acct-cred-msg err'; msg.textContent=(e&&e.message||e); });
+    });
+    var form = el('div',{class:'acct-cred-form'},[
+      field('Name', nameI),
+      el('div',{class:'row'},[ field('Type', typeSel), field('Base URL', baseI) ]),
+      paramWrap,
+      field('Description', descI),
+      field('Secret', secretI),
+      el('label',{class:'chk'},[confirmC, document.createTextNode('Require confirmation before each call')]),
+      el('div',{class:'actions'},[save, cancel, msg])
+    ]);
+    root.innerHTML=''; root.appendChild(form); syncType(); nameI.focus();
   }
   load();
 })();
