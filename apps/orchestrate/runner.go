@@ -1305,28 +1305,27 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 			allowPersistent[canonicalToolName(n)] = true
 		}
 	}
-	// Builder authors fresh — hide the user's pre-existing custom tools from its
-	// executable catalog (it can still ENUMERATE via tool_def(action="list")).
+	// The Builder loads the full tool pool like every other agent. It used to
+	// "author fresh" — skipping the user's existing tools from its EXECUTABLE
+	// catalog (enumerate-only via tool_def(action="list")) — but the Builder's job
+	// is to build AND verify, so it needs to actually run existing tools: call an
+	// api tool it just wrote, test one that dispatches through a credential, etc.
+	// This is orthogonal to Secured credentials: a secured cred still exposes no
+	// generic call tool (no improvising) and still refuses NEW tools that declare
+	// it (the authoring gate); the Builder only gains the ability to use the
+	// EXISTING declaring tools, which is the point.
+	//
+	// Deployment-shared persistent tools load for EVERY user on top of their own
+	// pool, deduped by name (the user's own copy wins). The per-agent gates below
+	// (private-mode, disabled list, user-crafted allow-list) apply uniformly.
 	loaded := LoadPersistentTempTools(poolDB, poolUser)
-	if isBuilderAgent(t.agent.ID) {
-		if n := len(loaded); n > 0 {
-			Debug("[orchestrate.tools] Builder catalog: skipped loading %d user-authored persistent tool(s) — Builder authors fresh, doesn't reuse", n)
-		}
-		loaded = nil
-	} else {
-		// Deployment-shared persistent tools load for EVERY user, on top of their
-		// own pool. Deduped by name with the user's own pool winning, so a user's
-		// own copy of a name takes precedence over a shared one. The same per-agent
-		// gates below (private-mode, disabled list, user-crafted allow-list) apply
-		// uniformly to shared tools.
-		own := make(map[string]bool, len(loaded))
-		for _, p := range loaded {
-			own[p.Tool.Name] = true
-		}
-		for _, p := range LoadSharedPersistentTempTools(poolDB) {
-			if !own[p.Tool.Name] {
-				loaded = append(loaded, p)
-			}
+	own := make(map[string]bool, len(loaded))
+	for _, p := range loaded {
+		own[p.Tool.Name] = true
+	}
+	for _, p := range LoadSharedPersistentTempTools(poolDB) {
+		if !own[p.Tool.Name] {
+			loaded = append(loaded, p)
 		}
 	}
 	for _, p := range loaded {
