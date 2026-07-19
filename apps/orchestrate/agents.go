@@ -58,6 +58,12 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			seed.DisabledPipelines = shadow.DisabledPipelines
 			seed.AttachedPipelines = shadow.AttachedPipelines
 			seed.DisabledPersistentTools = shadow.DisabledPersistentTools
+			// Agent-scoped tools bundled onto Builder (via the scope pill / add_tool)
+			// are deployment state too — same rationale as the disabled/attached
+			// fields above. Without this they saved to the shadow but were dropped
+			// on read-back, so the scope pill snapped straight back off ("can't
+			// enable Builder on a tool").
+			seed.Tools = shadow.Tools
 		}
 		return seed, true
 	}
