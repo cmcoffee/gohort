@@ -1064,16 +1064,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{
 									Field: "restricted", Type: "badge",
 									Badges: []ui.BadgeMapping{
-										{Value: true, Label: "Secured", Color: "warning"},
+										{Value: true, Label: "Wrapper-only", Color: "warning"},
 										{Value: false, Label: "Open", Color: "mute"},
 									},
 								},
-								// Tool-lock: only shows when set — the strongest
+								// Secured: only shows when set — the strongest
 								// lockdown (locked to its existing tools).
 								{
 									Field: "secured", Type: "badge",
 									Badges: []ui.BadgeMapping{
-										{Value: true, Label: "🔒 Locked", Color: "danger"},
+										{Value: true, Label: "🔒 Secured", Color: "danger"},
 									},
 								},
 								// Dead-credential warning — locked but no tool uses
@@ -1107,15 +1107,15 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									Fields:      credentialFormFields(),
 								}),
 								// Uses — the tools that declare this credential. What a
-								// Locked cred is bound to (and a scoped one dispatches through).
-								// Empty on a Locked cred is the dead-credential case above.
+								// Secured cred is bound to (and a scoped one dispatches through).
+								// Empty on a Secured cred is the dead-credential case above.
 								ui.Expand("Uses", ui.Table{
 									Source: "api/secure-api?tools={name}",
 									RowKey: "tool",
 									Columns: []ui.Col{
 										{Field: "tool", Label: "Tool", Flex: 1},
 										{Field: "agent", Label: "On", Mute: true},
-										// "secret" tools break once Locked (raw key
+										// "secret" tools break once Secured (raw key
 										// blocked) — rework them to fetch_via first.
 										{Field: "via", Label: "Via", Type: "badge", Badges: []ui.BadgeMapping{
 											{Value: "fetch_via", Label: "fetch_via", Color: "success"},
@@ -1129,7 +1129,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// (global by default). Denying it on an agent drops
 								// every tool that dispatches through it from that
 								// agent's kit.
-								// Hidden when Locked: a tool-locked credential has no
+								// Hidden when Secured: a tool-locked credential has no
 								// per-agent scope — access follows the tools that use it.
 								{Type: "button", Label: "Manage scope", Method: "client",
 									PostTo: "credential_scope_manage", HideIf: "secured"},
@@ -1147,29 +1147,30 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo: "api/secure-api?action=disable&name={name}",
 									Method: "POST",
 									HideIf: "disabled"},
-								// Open/Secure pair — Secure (formerly Restrict) reads
-								// more naturally for "lock down to wrapped tools only".
-								// Neutral for the same reason as Enable/Disable.
+								// Open/Wrapper-only pair — "Wrapper-only" names the
+								// state it enters (no standalone catalog tool; reachable
+								// only through wrapper tools that route to it). Neutral
+								// for the same reason as Enable/Disable.
 								{Type: "button", Label: "Open",
 									PostTo: "api/secure-api?action=open&name={name}",
 									Method: "POST", OnlyIf: "restricted", HideIf: "secured"},
-								{Type: "button", Label: "Secure",
+								{Type: "button", Label: "Wrapper-only",
 									PostTo: "api/secure-api?action=restrict&name={name}",
 									Method: "POST",
 									HideIf: "restricted"},
-								// Tool-lock pair — the strongest lockdown: reachable ONLY
+								// Secure pair — the strongest lockdown: reachable ONLY
 								// through the tools that already declare it, off the
 								// auto-route + catalog, per-agent scope no longer applies,
-								// and no NEW tool can declare it. Admin unlocks to change
+								// and no NEW tool can declare it. Admin unsecures to change
 								// the bound tools.
-								{Type: "button", Label: "Unlock",
+								{Type: "button", Label: "Unsecure",
 									PostTo: "api/secure-api?action=unsecure&name={name}",
 									Method: "POST", OnlyIf: "secured"},
-								{Type: "button", Label: "🔒 Lock to tools",
+								{Type: "button", Label: "🔒 Secure",
 									PostTo:  "api/secure-api?action=secure&name={name}",
 									Method:  "POST",
 									HideIf:  "secured",
-									Confirm: "Lock this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (unlock first to change which tools use it). Reversible."},
+									Confirm: "Secure this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (unsecure first to change which tools use it). Reversible."},
 								{Type: "button", Label: "Export", Method: "client",
 									PostTo: "credentials_export", Compact: true},
 								// Delete stays red — irreversible destruction.

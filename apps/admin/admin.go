@@ -1208,7 +1208,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
 					return
 				default:
-					http.Error(w, "action must be enable|disable|restrict|open|test", http.StatusBadRequest)
+					http.Error(w, "action must be enable|disable|restrict|open|secure|unsecure|test", http.StatusBadRequest)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
