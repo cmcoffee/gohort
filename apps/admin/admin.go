@@ -2174,11 +2174,20 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					// Name / Tools decode out of the full AgentRecord and
 					// the rest is ignored. TempTool is a core type.
 					var rec struct {
-						ID    string
-						Name  string
-						Tools []TempTool
+						ID      string
+						Name    string
+						Hidden  bool
+						OwnedBy string
+						Tools   []TempTool
 					}
 					if !udb.Get("orchestrate_agents", key, &rec) {
+						continue
+					}
+					// App-specific agents (Guide Author, Servitor Investigator, …)
+					// are Hidden, and sub-agents carry OwnedBy — both have curated,
+					// purpose-built kits and aren't user tool-scope targets. Keep
+					// them out of this list; only top-level user-managed agents show.
+					if rec.Hidden || rec.OwnedBy != "" {
 						continue
 					}
 					for _, t := range rec.Tools {

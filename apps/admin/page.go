@@ -1097,10 +1097,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									SubmitLabel: "Save changes",
 									Fields:      credentialFormFields(),
 								}),
-								// Uses — the tools that declare this credential. What a
-								// Secured cred is bound to (and a scoped one dispatches through).
-								// Empty on a Secured cred is the dead-credential case above.
-								ui.Expand("Uses", ui.Table{
+								// Tools — the tools connected to this credential (they declare
+								// it). What a Secured cred is bound to (and a scoped one
+								// dispatches through). Empty on a Secured cred = dead-credential.
+								ui.Expand("Tools", ui.Table{
 									Source: "api/secure-api?tools={name}",
 									RowKey: "tool",
 									Columns: []ui.Col{

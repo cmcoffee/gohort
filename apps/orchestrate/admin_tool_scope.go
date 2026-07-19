@@ -153,9 +153,17 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	st.Global = globalDef != nil
 
 	agents := listAgents(udb, owner)
+	// scopeTarget: only top-level, user-managed agents are tool-scope targets.
+	// App-specific agents (Guide Author, Servitor Investigator, …) are Hidden
+	// with curated kits, and sub-agents (OwnedBy) are managed via their parent —
+	// neither belongs in the pill or the derived state.
+	scopeTarget := func(a AgentRecord) bool { return !a.Hidden && a.OwnedBy == "" }
 	agentHas := map[string]bool{}
 	var scopedDef *TempTool
 	for i := range agents {
+		if !scopeTarget(agents[i]) {
+			continue
+		}
 		for j := range agents[i].Tools {
 			if agents[i].Tools[j].Name == toolName {
 				agentHas[agents[i].ID] = true
@@ -177,6 +185,9 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 		st.Missing = missingDeps(*def)
 	}
 	for i := range agents {
+		if !scopeTarget(agents[i]) {
+			continue
+		}
 		on := agentHas[agents[i].ID]
 		if st.Global {
 			on = agentSeesGlobalTool(agents[i], toolName)
