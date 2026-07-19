@@ -46,6 +46,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 								Help: "How your own messages are labeled in group chats."},
 							{Field: "self_handle", Label: "Your handle", Type: "text", Placeholder: "+15551234567",
 								Help: "Your own phone/email — lets the agent text you directly (notify_me) and resolve \"me\" as a recipient."},
+							{Field: "tag_override", Label: "Outbound name tag (global override)", Type: "text", Placeholder: "(agent's own name)",
+								Help: "Optional. When set, every agent that signs its outbound messages uses THIS name instead of its own — a deployment-wide label so all agents present as one identity. Leave blank to let each agent sign with its own name. A per-channel override still wins over this. Whether an agent tags at all is set per-agent in the agent editor."},
 						},
 					},
 				}},
@@ -214,40 +216,51 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 								AliasHandlesField: "alias_handles",
 								EmptyText:         "No members yet. Add one — handle is the phone/email; aliases are the same person's other handles.",
 							}),
-							// Relabel — give the chat a friendly name (overrides the
-							// raw handle shown in the list).
-							ui.Expand("✎ Rename", ui.FormPanel{
-								Source:      "/bridges/api/conv-info/{chat_id}",
-								PostURL:     "/bridges/api/conversation/{chat_id}",
-								Method:      "PATCH",
-								SubmitLabel: "Rename",
-								Fields: []ui.FormField{
-									{Field: "display_name", Label: "Name", Type: "text",
-										Placeholder: "Family chat"},
+							// Edit — one place to rename the chat AND link/relink it to
+							// an agent's channel. The channel picker reuses
+							// connect-channel, which clears any current binding and
+							// rebinds, so the SAME control connects an unbound chat and
+							// relinks a bound one to a different agent. (Clear, below,
+							// stays a one-click unbind.)
+							ui.Expand("✎ Edit", ui.Stack{Children: []ui.Component{
+								ui.Card{HTML: "<div style=\"font-weight:600;margin-bottom:0.35rem\">Name</div>"},
+								ui.FormPanel{
+									Source:      "/bridges/api/conv-info/{chat_id}",
+									PostURL:     "/bridges/api/conversation/{chat_id}",
+									Method:      "PATCH",
+									SubmitLabel: "Rename",
+									Fields: []ui.FormField{
+										{Field: "display_name", Label: "", Type: "text",
+											Placeholder: "Family chat"},
+									},
 								},
-							}),
-							// Connect — pick a free channel (the interface to an agent).
-							// Only offered while UNconnected; once bound, the auto-reply
-							// toggle and Clear take over.
-							ui.ExpandIf("🔗 Connect", "", "connected", ui.ActionList{
-								Source:     "/bridges/api/agent-channels",
-								LabelField: "label",
-								DescField:  "desc",
-								ButtonText: "Connect",
-								Method:     "POST",
-								PostTo:     "/bridges/api/connect-channel?chat_id={chat_id}&channel_id={id}",
-								Confirm:    "Route this chat to this channel's agent?",
-								EmptyText:  "No free channels — create one in Agency (or free one up by clearing another chat), then connect it here.",
-							}),
-							// Clear — the only thing that unbinds the channel and frees
-							// it back to the pool. Non-destructive to the chat: the
-							// thread and members stay, and the agent's session is kept
-							// (it resumes if this chat is reconnected). To just stop it
-							// answering for now, switch the auto-reply toggle off.
-							{Type: "button", Label: "Clear", Method: "POST",
-								PostTo:  "/bridges/api/connect-channel?chat_id={chat_id}&channel_id=",
-								OnlyIf:  "connected",
-								Confirm: "Clear this chat's channel binding? The channel returns to the available pool. The chat's messages are kept, and reconnecting the same chat resumes its session. To just pause replies, use the auto-reply toggle instead.", Compact: true},
+								ui.Card{HTML: "<div style=\"font-weight:600;margin:0.6rem 0 0.35rem\">Link to an agent</div><div style=\"opacity:0.7;font-size:0.85em;margin-bottom:0.4rem\">Pick a channel to route this chat to. Replaces the current binding if any.</div>"},
+								ui.ActionList{
+									Source:     "/bridges/api/agent-channels",
+									LabelField: "label",
+									DescField:  "desc",
+									ButtonText: "Link",
+									Method:     "POST",
+									PostTo:     "/bridges/api/connect-channel?chat_id={chat_id}&channel_id={id}",
+									Confirm:    "Route this chat to this channel's agent? Any current binding is replaced.",
+									EmptyText:  "No free channels — create one in Agency (or free one up by clearing another chat), then link it here.",
+									Invalidate: []string{"/bridges/api/conversations"},
+								},
+								// Clear — unbind the channel, freeing it back to the
+								// pool. Only shown while connected (row context gates
+								// it). Non-destructive: the thread + session are kept.
+								ui.Button{
+									Label:      "Clear channel binding",
+									URL:        "/bridges/api/connect-channel?chat_id={chat_id}&channel_id=",
+									Method:     "POST",
+									Confirm:    "Clear this chat's channel binding? The channel returns to the available pool. The chat's messages are kept, and reconnecting the same chat resumes its session. To just pause replies, use the auto-reply toggle instead.",
+									Invalidate: []string{"/bridges/api/conversations"},
+									Variant:    "danger",
+									OnlyIf:     "connected",
+								},
+							}}),
+							// (Clear moved into the ✎ Edit panel above, alongside the
+							// rename + link controls.)
 							// Remove — delete the conversation (and its thread). Use
 							// after folding it into another chat as an alias handle.
 							{Type: "button", Label: "Remove", Method: "DELETE",

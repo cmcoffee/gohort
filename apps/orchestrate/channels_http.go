@@ -67,6 +67,8 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			AutoReply   bool   `json:"auto_reply"`
 			Direction   string `json:"direction"`
 			Gatekeeper  string `json:"gatekeeper"`
+			TagOverride string `json:"tag_override"` // per-channel outbound name-tag override ("" = inherit)
+			TagDisabled bool   `json:"tag_disabled"` // disable the outbound name tag on this channel
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -88,6 +90,8 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			ch.AutoReply = req.AutoReply
 			ch.Direction = strings.TrimSpace(req.Direction)
 			ch.Gatekeeper = strings.TrimSpace(req.Gatekeeper)
+			ch.TagOverride = strings.TrimSpace(req.TagOverride)
+			ch.TagDisabled = req.TagDisabled
 			if a := strings.TrimSpace(req.AgentID); a != "" {
 				ch.AgentID = a
 				T.ensureAgentCortex(user, a) // re-pointed: the new agent gets a cortex too
@@ -118,6 +122,8 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			AutoReply:   req.AutoReply,
 			Direction:   strings.TrimSpace(req.Direction),
 			Gatekeeper:  strings.TrimSpace(req.Gatekeeper),
+			TagOverride: strings.TrimSpace(req.TagOverride),
+			TagDisabled: req.TagDisabled,
 			Created:     time.Now().UTC().Format(time.RFC3339),
 		}
 		SaveChannel(RootDB, ch)

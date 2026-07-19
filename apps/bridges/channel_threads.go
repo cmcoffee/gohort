@@ -56,7 +56,7 @@ func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelL
 	return out
 }
 
-func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text string, images []string) error {
+func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text, agentName string, images []string) error {
 	svc := strings.TrimSpace(service)
 	if svc == "" {
 		// Caller didn't specify a transport (proactive send) — resolve it from
@@ -81,7 +81,7 @@ func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text string,
 			}
 		}
 	}
-	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Type: "reply"})
+	c.T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: text, Images: images, Agent: agentName, Owner: owner, Type: "reply"})
 	// Mirror the outbound into the thread store so the dashboard + read_chat see it.
 	c.T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: text})
 	return nil

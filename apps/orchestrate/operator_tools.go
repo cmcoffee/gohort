@@ -335,7 +335,7 @@ func operatorRecipientLabel(s MessagingChatSummary) string {
 // approval-execution path; routing it through Bridges' outbox is what makes them
 // actually deliver (phantom's outbox is no longer drained — the daemon polls
 // Bridges now). Returns the text delivered.
-func operatorDeliverMessage(owner, chatID, handle, text string, images []string) (string, error) {
+func operatorDeliverMessage(owner, agentID, chatID, handle, text string, images []string) (string, error) {
 	ct, ok := ActiveChannelThreads()
 	if !ok {
 		return "", fmt.Errorf("no messaging transport is available")
@@ -343,10 +343,39 @@ func operatorDeliverMessage(owner, chatID, handle, text string, images []string)
 	// Empty service => let the transport resolve it from the conversation, so a
 	// proactive send to a Telegram chat goes out Telegram (not the iMessage
 	// default). Channel REPLIES already pass the inbound's service explicitly.
-	if err := ct.Deliver(owner, "", chatID, handle, text, images); err != nil {
+	// The resolved agent name rides along for the optional outbound name tag —
+	// this covers proactive sends (send_message) and notify_me, so the owner
+	// sees which agent pinged them.
+	if err := ct.Deliver(owner, "", chatID, handle, text, agentNameTag(owner, agentID), images); err != nil {
 		return "", err
 	}
 	return text, nil
+}
+
+// orchestrateBaseDB is the orchestrate app's base store, captured at Init so
+// free functions can resolve per-user agents from UserDB(orchestrateBaseDB,
+// owner) — the SAME store the editor writes to, NOT RootDB (a different bucket).
+var orchestrateBaseDB Database
+
+// agentNameTag returns the name to prefix on an agent's outbound message when
+// that agent opted into signing its messages (AgentRecord.TagName). Returns ""
+// when the agent hasn't opted in, can't be resolved, or has no name — an empty
+// tag leaves the message untagged, which is the safe default.
+func agentNameTag(owner, agentID string) string {
+	owner = strings.TrimSpace(owner)
+	agentID = strings.TrimSpace(agentID)
+	if owner == "" || agentID == "" || orchestrateBaseDB == nil {
+		return ""
+	}
+	udb := UserDB(orchestrateBaseDB, owner)
+	if udb == nil {
+		return ""
+	}
+	a, ok := findAgentByNameOrID(udb, owner, agentID)
+	if !ok || !a.TagName {
+		return ""
+	}
+	return strings.TrimSpace(a.Name)
 }
 
 // threadBindingGatekeeperRule is the wake rule stamped on an agent-requested 1:1
@@ -932,7 +961,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// DeliverMessage (not SendToHandle) so attachments ride along;
 				// persona is inactive for the owner's own chat, so the text
 				// is sent verbatim. Empty chatID resolves the owner's thread.
-				if _, err := operatorDeliverMessage(owner, "", self, text, images); err != nil {
+				if _, err := operatorDeliverMessage(owner, agentID, "", self, text, images); err != nil {
 					return "", err
 				}
 				// The owner's channel (their phone) must see what was sent — record
@@ -986,14 +1015,14 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// Replying to the conversation that just messaged us is in-thread,
 				// not a proactive reach-out — deliver without the approval queue.
 				if isReplyToActiveInbound(sess, recip) {
-					if _, err := operatorDeliverMessage(owner, rec.ChatID, rec.Handle, text, images); err != nil {
+					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
 						return "", err
 					}
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				// Pre-authorized recipient: send immediately, skip the queue.
 				if IsContactPreAuthorized(RootDB, owner, recip) {
-					if _, err := operatorDeliverMessage(owner, rec.ChatID, rec.Handle, text, images); err != nil {
+					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
 						return "", err
 					}
 					// If the target is a bound channel, make its agent see the post

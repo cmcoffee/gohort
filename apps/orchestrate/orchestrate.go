@@ -232,6 +232,10 @@ func (T *OrchestrateApp) Routes() {
 	// imported agent is reborn under a fresh ID; only the name survives).
 	// Core can't reach the per-user agent store, so orchestrate supplies the
 	// resolver.
+	// Base store for free functions that must resolve a per-user agent from the
+	// SAME store the editor writes to (UserDB(T.DB, owner)) — NOT RootDB, which
+	// is a different bucket. Used by the outbound name-tag resolver.
+	orchestrateBaseDB = T.DB
 	ResolveAgentNameForExport = func(owner, key string) (string, bool) {
 		udb := UserDB(T.DB, owner)
 		if udb == nil {

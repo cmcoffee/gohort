@@ -70,7 +70,10 @@ func (p messagingLinkImpl) ReadChat(owner, chatID string, limit int) ([]Messagin
 // service resolved from the conversation, markdown flattened per service, the
 // message mirrored into the thread store.
 func (p messagingLinkImpl) deliver(owner, chatID, handle, text string, images []string) error {
-	return channelThreadsImpl{p.T}.Deliver(owner, "", chatID, handle, text, images)
+	// The generic MessagingLink seam carries no agent identity (it's used by
+	// non-agent send paths), so it delivers untagged — the name tag rides the
+	// agent-aware paths (channel replies, operator sends).
+	return channelThreadsImpl{p.T}.Deliver(owner, "", chatID, handle, text, "", images)
 }
 
 func (p messagingLinkImpl) SendToChat(owner, chatID, text string) error {

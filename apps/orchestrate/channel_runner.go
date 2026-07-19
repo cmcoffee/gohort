@@ -328,7 +328,10 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
 		app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
-		return ChannelReply{Text: replyText, Images: res.Images, Videos: res.Videos}, nil
+		// Carry the bound agent's display name so the transport can prefix an
+		// outbound name tag (opt-in) — lets the recipient tell the agent's reply
+		// apart from the owner's own texts in the same thread.
+		return ChannelReply{Text: replyText, Images: res.Images, Videos: res.Videos, AgentName: agentNameTag(in.Owner, in.AgentID)}, nil
 	})
 }
 

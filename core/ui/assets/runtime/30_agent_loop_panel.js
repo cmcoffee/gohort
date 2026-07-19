@@ -3508,6 +3508,13 @@
       });
       var arIn = el('input', {type: 'checkbox'});
       if (ch.auto_reply) arIn.checked = true;
+      // Per-channel outbound name-tag controls: override the name the bound
+      // agent signs its messages with on THIS channel, or turn the tag off here.
+      // Both are inert unless the bound agent enabled tagging in its editor.
+      var tagOverIn = el('input', {class: 'ui-modal-input', type: 'text', placeholder: "Name tag override (optional)"});
+      tagOverIn.value = ch.tag_override || '';
+      var tagDisIn = el('input', {type: 'checkbox'});
+      if (ch.tag_disabled) tagDisIn.checked = true;
       var gkEditor = railRulesEditor(ch.gatekeeper);
       // Bound-agent picker — only on EDIT, to RE-POINT an existing channel at a
       // different agent. On ADD there's no selector: a new channel binds to the
@@ -3547,9 +3554,14 @@
         gkReset.addEventListener('click', function() { gkEditor.setValue(cfg.default_gatekeeper_rule); });
         body.appendChild(gkReset);
       }
+      body.appendChild(railFieldLabel('Name tag override', tagOverIn));
+      body.appendChild(el('label', {style: 'display:flex;align-items:center;gap:0.4rem;margin:0.5rem 0',
+        title: 'On: the bound agent does NOT prefix its name to messages sent on this channel, even if it signs its messages elsewhere. Off: inherit the agent (and any global) name-tag setting.'},
+        [tagDisIn, el('span', {}, ['Disable name tag on this channel'])]));
       var saveB = el('button', {class: 'ui-btn-primary', onclick: function() {
         var payload = {id: ch.id || '', name: nameIn.value.trim(), description: descIn.value.trim(),
-          direction: dirSel.value, auto_reply: arIn.checked, gatekeeper: gkEditor.getValue()};
+          direction: dirSel.value, auto_reply: arIn.checked, gatekeeper: gkEditor.getValue(),
+          tag_override: tagOverIn.value.trim(), tag_disabled: tagDisIn.checked};
         if (isEdit && cfg.channel_agents_url && agentSel.value) payload.agent_id = agentSel.value;
         fetchJSON(substituteExtras(cfg.channel_save_url), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)})
           .then(function() { try { dlg.close(); } catch (e) {} dlg.remove(); loadChannels(); })

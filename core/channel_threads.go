@@ -56,7 +56,9 @@ type ChannelThreads interface {
 	Members(owner, chatID string) []ChannelMember
 	// Deliver enqueues an outbound message to a conversation (by chatID) or a
 	// handle, on a service. images are base64 attachments (nil for text-only).
-	Deliver(owner, service, chatID, handle, text string, images []string) error
+	// agentName is the display name of the agent that composed the message, used
+	// for the optional outbound name tag (empty = untagged / unknown sender).
+	Deliver(owner, service, chatID, handle, text, agentName string, images []string) error
 }
 
 var (

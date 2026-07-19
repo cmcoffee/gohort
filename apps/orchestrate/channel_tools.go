@@ -295,13 +295,13 @@ func channelChatTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
 				// Replying to the conversation that just messaged us is in-thread,
 				// not a proactive reach-out — deliver without the approval queue.
 				if isReplyToActiveInbound(sess, recip) {
-					if _, err := operatorDeliverMessage(owner, chatID, handle, text, images); err != nil {
+					if _, err := operatorDeliverMessage(owner, agentID, chatID, handle, text, images); err != nil {
 						return "", err
 					}
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				if IsContactPreAuthorized(RootDB, owner, recip) {
-					if _, err := operatorDeliverMessage(owner, chatID, handle, text, images); err != nil {
+					if _, err := operatorDeliverMessage(owner, agentID, chatID, handle, text, images); err != nil {
 						return "", err
 					}
 					// If this chat is a bound channel, make its agent see the post

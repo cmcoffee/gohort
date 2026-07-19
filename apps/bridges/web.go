@@ -27,6 +27,12 @@ type bridgesConfig struct {
 	// "me" as a recipient. Bridges only knew SelfName (a label) before; this is the
 	// addressable handle the MessagingLink owner-handle seam needs.
 	SelfHandle string `json:"self_handle,omitempty"`
+	// TagOverride is the GLOBAL layer of the outbound name tag: when set, it
+	// replaces each agent's own name in the "[Name] …" prefix on outbound
+	// messages — a deployment-wide label (e.g. a brand or assistant name) so
+	// every agent signs with the same identity. A per-channel override still
+	// wins over it, and it's inert on any agent that hasn't enabled tagging.
+	TagOverride string `json:"tag_override,omitempty"`
 }
 
 func (T *Bridges) config() bridgesConfig {
@@ -365,7 +371,7 @@ func (T *Bridges) handleHook(w http.ResponseWriter, r *http.Request) {
 		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 {
 			return
 		}
-		T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Type: "reply"})
+		T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: reply.Text, Images: reply.Images, Videos: reply.Videos, Agent: reply.AgentName, Owner: ch.Owner, Type: "reply"})
 		T.storeMessage(StoredMessage{ID: newToken()[:12], ChatID: chatID, Role: "assistant", Text: reply.Text})
 	}()
 	w.WriteHeader(http.StatusAccepted)

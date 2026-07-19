@@ -62,7 +62,16 @@ type Channel struct {
 	// (set_thread_wake) or torn down (release_thread_binding) by the agent
 	// itself — it can never touch its foundational channels or another agent's.
 	AgentBound bool   `json:"agent_bound,omitempty"`
-	Created    string `json:"created,omitempty"`
+	// TagOverride / TagDisabled are the per-channel layer of the outbound name
+	// tag (the "[Assistant] …" prefix an agent adds to distinguish its messages
+	// from the owner's own). TagOverride, when set, replaces the agent/global
+	// name for THIS channel only (most specific wins). TagDisabled turns the tag
+	// off on this channel even when the bound agent opted in — e.g. a private
+	// thread where the name prefix reads as noise. Both are inert unless the
+	// bound agent enabled tagging (AgentRecord.TagName).
+	TagOverride string `json:"tag_override,omitempty"`
+	TagDisabled bool   `json:"tag_disabled,omitempty"`
+	Created     string `json:"created,omitempty"`
 }
 
 // Channel flow directions (Channel.Direction).
@@ -342,6 +351,11 @@ type ChannelReply struct {
 	Text   string
 	Images []string // base64 image attachments the agent produced this turn
 	Videos []string // base64 video attachments (kept separate so the transport delivers them as video, not mislabeled images)
+	// AgentName is the display name of the bound agent that produced this reply,
+	// so the transport can prefix an outbound name tag (opt-in) letting the
+	// recipient tell an agent's message apart from the owner's own texts. Empty
+	// when unresolved; the transport then leaves the message untagged.
+	AgentName string
 }
 
 // ChannelAgentRunnerFunc runs a channel's bound agent on one inbound message

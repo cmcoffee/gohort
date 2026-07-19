@@ -474,6 +474,17 @@ type OutboxItem struct {
 	Images  []string `json:"images,omitempty"` // base64
 	Videos  []string `json:"videos,omitempty"` // base64 video attachments — connector delivers as video, not image
 	Type    string   `json:"type,omitempty"`   // "reply" | "status"
+	// Agent is the display name of the agent that composed this outbound (the
+	// bound channel agent for a reply, the calling agent for a proactive send),
+	// set ONLY when that agent opted into signing its messages
+	// (AgentRecord.TagName). enqueueOutbox prefixes it as a "[Agent] " name tag
+	// so recipients can tell an agent's message from the owner's own texts.
+	// Empty = the agent didn't opt in (or is unknown) → untagged.
+	Agent   string   `json:"agent,omitempty"`
+	// Owner is the gohort user this outbound belongs to, carried ONLY so
+	// enqueueOutbox can resolve the bound channel for per-channel tag overrides.
+	// Cleared before the item is stored/drained, so it never reaches a connector.
+	Owner   string   `json:"-"`
 	Created string   `json:"created"`
 	// Seq is a per-process monotonic enqueue counter used ONLY to break ties when
 	// drainOutbox sorts: Created is second-resolution, so two items enqueued in
@@ -505,6 +516,36 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	if it.Text != "" && !ServiceRendersMarkdown(it.Service) {
 		it.Text = MarkdownToPlain(it.Text)
 	}
+	// Outbound name tag: prefix "[Name] " so the recipient can tell an agent's
+	// message apart from the owner's own texts in the same thread. Done here at
+	// the single outbound chokepoint so it covers channel replies, send_message,
+	// and notify_me alike. Three layers resolve here (most specific wins):
+	//   enabled  = the bound agent opted in (it.Agent set) AND the channel
+	//              didn't disable the tag.
+	//   name     = per-channel override → global override → the agent's own name.
+	// The agent-aware send paths stamp it.Agent with the agent's name only when
+	// that agent opted in, so a non-empty Agent means "the base case is on".
+	// Stored transcripts keep the untagged text — this is a wire-only concern.
+	if it.Agent != "" && it.Text != "" {
+		name := it.Agent
+		if g := strings.TrimSpace(T.config().TagOverride); g != "" {
+			name = g
+		}
+		if it.Owner != "" {
+			if ch, ok := ChannelForInbound(RootDB, it.Owner, it.Service, it.ChatID, it.Handle); ok {
+				switch {
+				case ch.TagDisabled:
+					name = ""
+				case strings.TrimSpace(ch.TagOverride) != "":
+					name = strings.TrimSpace(ch.TagOverride)
+				}
+			}
+		}
+		if name != "" {
+			it.Text = "[" + name + "] " + it.Text
+		}
+	}
+	it.Owner = "" // transient — never persist/leak the owner to a connector
 	T.DB.Set(outboxTable, it.ID, it)
 	// Delivery-leg visibility: the outbound path (enqueue → connector /api/poll →
 	// drainOutbox) was previously unlogged, so a dropped reply was invisible.

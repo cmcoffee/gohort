@@ -1540,7 +1540,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		if always {
 			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
 		}
-		if _, err := operatorDeliverMessage(a.Owner, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
+		if _, err := operatorDeliverMessage(a.Owner, a.Agent, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
 			Log("[operator.approval] send_message to %s failed: %v", recip, err)
 		}
 		// Approved post: if the target is a bound channel, make its agent see it

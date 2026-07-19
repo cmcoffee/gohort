@@ -68,6 +68,15 @@ type AgentRecord struct {
 	// it just grants the tools; the agent still does work directly.
 	Fleet bool `json:"fleet,omitempty"`
 
+	// TagName, when true, prefixes this agent's OUTBOUND messages on a
+	// messaging channel/bridge with its own name — "[Assistant] …" — so the
+	// recipient can tell the agent's texts apart from the owner's own messages
+	// in the same thread. Per-agent because the tag IS the agent's identity: one
+	// agent may sign its messages while another shouldn't. Off by default (it
+	// changes what recipients see). Applied at the transport's outbound
+	// chokepoint from the name the runner stamps on the reply.
+	TagName bool `json:"tag_name,omitempty"`
+
 	// Triggers are substring/glob patterns (same shape as a skill's
 	// Triggers) matched against the user message each turn. When one
 	// matches, the framework injects a per-turn HINT next to the message —
