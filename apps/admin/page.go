@@ -2146,6 +2146,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// no admin edit. Pre-grouped under the "Tuning" tab; the loop below skips
 	// them (their titles aren't in sectionGroup, so their Group is preserved).
 	page.Sections = append(page.Sections, buildTunableSections()...)
+	// App-contributed admin sections — framework tuning that belongs in admin
+	// (e.g. the prompt-block editor), self-registered via core so admin doesn't
+	// import the app. Each carries its own Group/Wide; its Head brings any
+	// client actions the section's controls need.
+	for _, e := range AdminSectionEntries() {
+		page.Sections = append(page.Sections, e.Section)
+		page.ExtraHeadHTML += e.Head
+	}
 	for i := range page.Sections {
 		t := page.Sections[i].Title
 		if g, ok := sectionGroup[t]; ok {
@@ -2159,7 +2167,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// by this rank so the tabs read in a sensible order regardless of the
 	// section authoring order above; sections keep their relative order
 	// within each group.
-	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Tools": 5, "Tuning": 6, "Maintenance": 7}
+	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Tools": 5, "Tuning": 6, "Prompts": 7, "Maintenance": 8}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})

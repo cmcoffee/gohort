@@ -3,6 +3,8 @@ package orchestrate
 import "strings"
 import "testing"
 
+import core "github.com/cmcoffee/gohort/core"
+
 func chatSeed(t *testing.T) AgentRecord {
 	t.Helper()
 	for _, s := range coreSeedAgents() {
@@ -207,6 +209,29 @@ func TestDispatchBriefHint(t *testing.T) {
 	}
 	if strings.Contains(got, "Submit") {
 		t.Fatalf("button field should be skipped; got %q", got)
+	}
+}
+
+// Every lifted framework block should be registered (with non-empty text) so it
+// shows up on the Prompts page. Catches a dropped reg() or an emptied const.
+func TestFrameworkBlocksRegisteredForPromptsPage(t *testing.T) {
+	have := map[string]core.PromptBlock{}
+	for _, b := range core.AllPromptBlocks() {
+		have[b.Key] = b
+	}
+	for _, key := range []string{
+		"framework.how_to_decide", "framework.plan_set", "framework.clarifying",
+		"framework.work_honestly", "framework.tools_self_serve", "framework.export",
+		"framework.builder_routing", "framework.channel", "framework.fleet",
+	} {
+		b, ok := have[key]
+		if !ok {
+			t.Errorf("framework block %q not registered for the Prompts page", key)
+			continue
+		}
+		if strings.TrimSpace(b.Text) == "" {
+			t.Errorf("framework block %q registered with empty text", key)
+		}
 	}
 }
 

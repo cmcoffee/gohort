@@ -1619,6 +1619,9 @@ func init_database() {
 	// Wire the operator-set retrieval / limit tunables (admin Site Settings)
 	// to the main DB. Until this runs, every getter sits on its const fallback.
 	SetTunablesDB(global.db)
+	// Wire operator prompt-block overrides (edited on the Prompts page) to the
+	// main DB. Until this runs, every block sits on its in-code default.
+	SetPromptOverrideDB(global.db)
 
 	// Wire the per-source external-call cost ledger (cost hooks). Until this
 	// runs, RecordExternalCost is a no-op.

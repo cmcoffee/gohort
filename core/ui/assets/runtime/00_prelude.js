@@ -938,7 +938,9 @@
     // alternate new-session modes (opts.newVariants — each {label, title,
     // onSelect}). Generic — core/ui knows nothing about what a variant
     // means; the caller wires onSelect. Absent variants → plain button.
-    if (opts.newVariants && opts.newVariants.length) {
+    if (opts.noNew) {
+      // Fixed-set list (a fixed catalog) — no create button.
+    } else if (opts.newVariants && opts.newVariants.length) {
       var nvMenu = el('div', {class: 'ui-side-menu', style: 'display:none'});
       opts.newVariants.forEach(function(v) {
         nvMenu.appendChild(el('button', {

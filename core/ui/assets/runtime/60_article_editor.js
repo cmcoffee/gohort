@@ -18,18 +18,22 @@
       onclick: function(){ toggleCollapse(); },
     }, ['‹']);
     var sideHdrBuilt = renderSideHeader({
-      label:     'Articles',
+      label:     cfg.list_label || 'Articles',
       className: 'ui-tw-side-h',
       newTitle:  'New article',
+      noNew:     cfg.no_new,
       onNew:     function(){ openArticle(null); },
       onClose:   function(){ closeDrawer(); },
       leftExtras: [collapseBtn],
+      // List-scoped actions (e.g. "Optimize all") live with the list, built via
+      // the hoisted buildActionBtn so they dispatch like the toolbar's.
+      rightExtras: (cfg.list_actions || []).map(buildActionBtn),
     });
     var sideHdr  = sideHdrBuilt.elt;
     var sideList = el('div', {class: 'ui-tw-side-list'}, ['Loading…']);
-    var sideSearch = makeSideSearch(sideList);
+    var sideSearch = cfg.no_search ? null : makeSideSearch(sideList);
     side.appendChild(sideHdr);
-    side.appendChild(sideSearch);
+    if (sideSearch) side.appendChild(sideSearch);
     side.appendChild(sideList);
 
     // Floating expand-tab shown when the sidebar is collapsed. Sits
@@ -50,9 +54,9 @@
 
     var drawer = makeDrawer(side, {
       title:          'New article',
-      hamburgerTitle: 'Articles',
+      hamburgerTitle: cfg.list_label || 'Articles',
       newTitle:       'New article',
-      onNew:          function(){ openArticle(null); },
+      onNew:          cfg.no_new ? null : function(){ openArticle(null); },
     });
     var mobileTitle    = drawer.mobileTitle;
     var drawerBackdrop = drawer.backdrop;
@@ -64,6 +68,8 @@
     var titleBar = el('div', {class: 'ui-tw-titlebar'});
     var titleInput = el('input', {type: 'text', class: 'ui-tw-title',
       placeholder: cfg.placeholder_title || 'Article title…'});
+    // Fixed-name records edit the body, not the title.
+    if (cfg.title_readonly) { titleInput.readOnly = true; titleInput.title = 'Name is fixed'; }
     var savedTag = el('span', {class: 'ui-tw-saved'}, []);
 
     // Declarative toolbar — apps populate cfg.actions with the
@@ -97,12 +103,15 @@
       getID:    function()    { return currentID; },
       getImage: function()    { return currentImageURL; },
       setImage: function(url) { showImage(url); },
-      save:     function()    { saveArticle(); },
+      save:     function(extra) { saveArticle(extra); },
       toast:    function(msg) { showToast(msg); },
       busy:     function(btn, label) { setBtnBusy(btn, label); },
       restore:  function(btn) { restoreBtn(btn); },
       confirm:  function(msg) { return window.uiConfirm(msg); },
       appendAssistant: function(role, content) { asstAppend(role, content); },
+      // Re-fetch and re-render the left list — e.g. after an app action changes a
+      // row's summary or badge. Preserves the current editor content + selection.
+      reloadList: function() { loadList(); },
     };
 
     var actionButtons = [];
@@ -118,7 +127,11 @@
       }
       return null;
     }
-    (cfg.actions || []).forEach(function(action) {
+    // buildActionBtn turns a declarative ToolbarAction into a wired button.
+    // Shared by the editor toolbar (cfg.actions) and the sidebar list header
+    // (cfg.list_actions) so both dispatch identically. Hoisted, so the header
+    // (built earlier) can call it; editorAPI/currentID are read at click time.
+    function buildActionBtn(action) {
       var classes = 'ui-row-btn';
       if (action.variant) classes += ' ' + action.variant;
       var btn = el('button', {class: classes, title: action.title || ''},
@@ -137,12 +150,10 @@
           return;
         }
         if (method === 'builtin') {
-          var fn = builtinAction(action.url || '');
-          // Pass the clicked button so the handler can drive its
-          // own busy/spinner state without relying on a globally
-          // named button variable (which doesn't exist any more
-          // now that the toolbar is declarative).
-          if (fn) fn(btn);
+          var bfn = builtinAction(action.url || '');
+          // Pass the clicked button so the handler can drive its own
+          // busy/spinner state without a globally named button variable.
+          if (bfn) bfn(btn);
           else showToast('Unknown built-in action: ' + (action.url || ''));
           return;
         }
@@ -155,8 +166,9 @@
           });
         }
       });
-      actionButtons.push(btn);
-    });
+      return btn;
+    }
+    (cfg.actions || []).forEach(function(action) { actionButtons.push(buildActionBtn(action)); });
 
     // Less-frequent actions tucked under a "More" button so the
     // titlebar stays readable. The CONTENTS are driven entirely by
@@ -564,7 +576,7 @@
       }).catch(function(err){ showToast('Load failed: ' + err.message); });
     }
 
-    function saveArticle() {
+    function saveArticle(extra) {
       var subject = titleInput.value.trim();
       var body    = bodyArea.value;
       if (!subject && !body) { showToast('Nothing to save'); return; }
@@ -576,6 +588,12 @@
         body:      body,
         image_url: currentImageURL || '',
       };
+      // Optional caller-supplied fields (e.g. a client action tagging the save
+      // so the server can record HOW it happened). Generic — the editor doesn't
+      // interpret them.
+      if (extra && typeof extra === 'object') {
+        for (var ek in extra) record[ek] = extra[ek];
+      }
       saveBtn.disabled = true;
       savedTag.textContent = 'saving…';
       fetchJSON(cfg.save_url, {
@@ -637,7 +655,10 @@
       var n = revisions.length;
       revBackBtn.disabled = revisionIndex <= 0;
       revFwdBtn.disabled = revisionIndex >= n - 1;
-      revIndicator.textContent = n > 0 ? 'rev ' + (revisionIndex + 1) + '/' + n : '';
+      var curRev = (revisionIndex >= 0) ? revisions[revisionIndex] : null;
+      revIndicator.textContent = n > 0
+        ? 'rev ' + (revisionIndex + 1) + '/' + n + (curRev && curRev.label ? ' · ' + curRev.label : '')
+        : '';
       revMakeCurrentBtn.style.display = (n > 0 && revisionIndex < n - 1) ? 'inline-flex' : 'none';
       // The whole rev group is hidden until there are revisions to
       // navigate. Use explicit inline-flex / none so the value beats

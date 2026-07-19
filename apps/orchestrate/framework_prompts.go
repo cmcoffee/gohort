@@ -1,6 +1,10 @@
 package orchestrate
 
-import "strings"
+import (
+	"strings"
+
+	core "github.com/cmcoffee/gohort/core"
+)
 
 // Framework prompt blocks — capability-gated orchestration guidance the
 // framework injects into EVERY orchestrator's system prompt, so the behavior
@@ -188,7 +192,7 @@ You can reach the user on their phone through the phantom (iMessage) bridge: not
 // of the assembly plumbing; appendAgentCapabilityBlocks calls it.
 func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) string {
 	var b strings.Builder
-	add := func(gated bool, heading, block string) {
+	add := func(gated bool, key, heading, def string) {
 		if !gated {
 			return
 		}
@@ -198,31 +202,35 @@ func frameworkPromptBlocks(existing string, agent AgentRecord, hasPlanSet bool) 
 			return
 		}
 		b.WriteString("\n\n")
-		b.WriteString(block)
+		// Effective text = an operator override (edited on the Prompts page) when
+		// set, else the in-code default. With no override configured it returns
+		// def, so this stays behavior-identical by default; keys match the
+		// registrations in framework_prompts_registry.go.
+		b.WriteString(core.EffectivePromptText(key, def))
 	}
 	// How-to-decide — the top-level reply/tool/delegate framework, interactive.
-	add(hasPlanSet, howToDecideSectionHeading, frameworkHowToDecideBlock)
+	add(hasPlanSet, "framework.how_to_decide", howToDecideSectionHeading, frameworkHowToDecideBlock)
 	// plan_set guidance — only where the surface actually offers plan_set.
-	add(hasPlanSet, planSetSectionHeading, frameworkPlanSetBlock)
+	add(hasPlanSet, "framework.plan_set", planSetSectionHeading, frameworkPlanSetBlock)
 	// Clarifying-questions guidance — ask_user rides the same interactive-web
 	// signal as plan_set; a dispatch/worker surface can't prompt the user.
-	add(hasPlanSet, clarifyingSectionHeading, frameworkClarifyingBlock)
+	add(hasPlanSet, "framework.clarifying", clarifyingSectionHeading, frameworkClarifyingBlock)
 	// Tools-self-serve and document-export — gated on the agent actually having
 	// the tool (tool_def / export), not on the surface: unlike plan_set these
 	// tools can exist off the interactive surface too, so capability is the gate.
-	add(agentAllowsFrameworkTool(agent, "tool_def"), toolsSelfServeMarker, frameworkToolsSelfServeBlock)
-	add(agentAllowsFrameworkTool(agent, "export"), exportMarker, frameworkExportBlock)
+	add(agentAllowsFrameworkTool(agent, "tool_def"), "framework.tools_self_serve", toolsSelfServeMarker, frameworkToolsSelfServeBlock)
+	add(agentAllowsFrameworkTool(agent, "export"), "framework.export", exportMarker, frameworkExportBlock)
 	// Builder routing — only a delegating (Fleet) agent that is NOT Builder
 	// itself. Builder is the authoring agent; routing it to itself is nonsense.
-	add(agent.Fleet && !isBuilderAgent(agent.ID), builderRoutingMarker, frameworkBuilderRoutingBlock)
+	add(agent.Fleet && !isBuilderAgent(agent.ID), "framework.builder_routing", builderRoutingMarker, frameworkBuilderRoutingBlock)
 	// Channel home thread — Cortex agents only (carries the section heading).
-	add(agent.Cortex, channelSectionHeading, frameworkChannelBlock())
+	add(agent.Cortex, "framework.channel", channelSectionHeading, frameworkChannelBlock())
 	// Fleet supervision, monitors, notify, phantom reach — Fleet agents. Ordered
 	// right after the channel block so a Cortex+Fleet agent (Chat) reconstructs
 	// the original single "## Your channel and the fleet" section.
-	add(agent.Fleet, fleetSupervisionMarker, frameworkFleetBlock)
+	add(agent.Fleet, "framework.fleet", fleetSupervisionMarker, frameworkFleetBlock)
 	// Work-it-honestly — user-facing answer discipline for hard, under-grounded
 	// questions; interactive surface only.
-	add(hasPlanSet, workHonestlyMarker, frameworkWorkHonestlyBlock)
+	add(hasPlanSet, "framework.work_honestly", workHonestlyMarker, frameworkWorkHonestlyBlock)
 	return b.String()
 }

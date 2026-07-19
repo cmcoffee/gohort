@@ -2016,6 +2016,21 @@ type ArticleEditor struct {
 	// bar at the top of the list. Supports bulk delete via DeleteURL
 	// repeated per selection. Off by default — apps opt in.
 	BulkSelect bool `json:"bulk_select,omitempty"`
+	// ListLabel names the sidebar list (its header + the mobile drawer
+	// title). Default "Articles"; override to match the record kind the
+	// editor holds.
+	ListLabel string `json:"list_label,omitempty"`
+	// NoNew hides the "+ New" button — for an editor over a FIXED set of
+	// records (you edit the existing items, you don't create new ones, e.g.
+	// a fixed catalog of records).
+	NoNew bool `json:"no_new,omitempty"`
+	// NoSearch hides the sidebar search box — for a small fixed list where
+	// a search field is just noise.
+	NoSearch bool `json:"no_search,omitempty"`
+	// TitleReadOnly makes the title input read-only — the record's NAME is
+	// fixed (framework-defined), so the user edits the body, not the title
+	// (e.g. a record whose name is its key).
+	TitleReadOnly bool `json:"title_readonly,omitempty"`
 
 	// Optional toolbar features. Leave any URL blank to hide that
 	// control. All endpoints are app-specific so the framework stays
@@ -2047,6 +2062,12 @@ type ArticleEditor struct {
 	// the toolbar with app-defined actions. See MenuAction for the
 	// shape.
 	ExtraActions []MenuAction `json:"extra_actions,omitempty"`
+
+	// ListActions renders buttons in the sidebar LIST header — for
+	// actions scoped to the whole collection rather than the open record
+	// (e.g. a batch action over the whole list). Same ToolbarAction
+	// dispatch as Actions; they just live with the list, not the editor.
+	ListActions []ToolbarAction `json:"list_actions,omitempty"`
 
 	// Actions is the declarative toolbar — list of buttons rendered
 	// between the title input and the "More ▾" popover. Each entry
