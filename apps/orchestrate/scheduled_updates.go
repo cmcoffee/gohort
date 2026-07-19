@@ -77,6 +77,15 @@ type orchUpdatePayload struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`
+
+	// Broken parks a recurring task whose target agent was deleted. Unlike a
+	// monitor/standing agent (which have a stored record), a recurring task lives
+	// ONLY as its scheduler entry — so "keep it, don't drop it" means re-arming a
+	// dormant no-op tick with this flag set (parkRecurringBroken) instead of the
+	// old silent stop. The fire handler skips running a broken task; the console
+	// shows a "needs relink" row. BrokenReason records why.
+	Broken       bool   `json:"broken,omitempty"`
+	BrokenReason string `json:"broken_reason,omitempty"`
 	// LastActive (RFC3339) is renewed on a productive fire (one that called
 	// tools) and on create / edit-in-place. The idle guard reaps a task whose
 	// LastActive — or CreatedAt, for legacy tasks that predate this field — is
@@ -231,6 +240,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if app == nil {
 		return fmt.Errorf("not initialized, dropping task for session %s", p.SessionID)
 	}
+	// A parked (broken) task stays LISTED but never runs — re-arm its dormant tick
+	// and return. Resume/relink clears Broken and puts it back on its real cadence.
+	if p.Broken {
+		if reArm {
+			parkRecurringBroken(p, "")
+		}
+		return nil
+	}
 	if reArm && p.FireCount >= p.effectiveMaxFires() {
 		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
 		return nil
@@ -242,7 +259,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	agent, ok := loadAgent(udb, p.AgentID)
 	if !ok {
-		return fmt.Errorf("agent %s missing for user %s, dropping task", p.AgentID, p.Username)
+		// Don't silently drop the chain — park it as broken so the owner sees a
+		// "needs relink" task instead of a vanished one, and can relink or delete
+		// it deliberately.
+		Log("[orchestrate/scheduled] agent %s missing for user %s — parking task as broken", p.AgentID, p.Username)
+		if reArm {
+			parkRecurringBroken(p, fmt.Sprintf("its agent was deleted (id %s)", p.AgentID))
+		}
+		return nil
 	}
 	sess, ok := loadChatSession(udb, p.AgentID, p.SessionID)
 	if !ok {
@@ -527,6 +551,28 @@ func RunOrchestrateUpdateNow(ctx context.Context, user, taskID string) error {
 // reschedule emits the next fire of a recurring orchestrate update. The next
 // time — and, for the random pattern, the mutation of p.RemainingToday — is
 // computed by computeNextFire so the fixed/random branch lives in one place.
+// brokenDormantReArm is how often a parked (broken) recurring task re-checks. It
+// never runs the agent while broken — this just keeps a scheduler entry alive so
+// the task stays LISTED for the owner to resume/relink or delete.
+const brokenDormantReArm = 24 * time.Hour
+
+// parkRecurringBroken keeps a recurring task LISTED but dormant: it marks the
+// task broken and re-arms a no-op tick at a slow cadence WITHOUT counting a fire,
+// tripping the fire cap, or idle-reaping it. This replaces the old silent drop
+// when a task's agent is gone, so the owner sees a "needs relink" task instead of
+// a vanished one. A subsequent resume/relink clears Broken and reschedules the
+// task on its real cadence.
+func parkRecurringBroken(p orchUpdatePayload, reason string) {
+	p.Broken = true
+	if reason != "" {
+		p.BrokenReason = reason
+	}
+	next := time.Now().Add(brokenDormantReArm)
+	if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
+		Log("[orchestrate/scheduled] park-broken reschedule failed for session %s: %v", p.SessionID, err)
+	}
+}
+
 func reschedule(p orchUpdatePayload) {
 	// Idle guard — reap a task that has gone tune_orch_update_idle_days without a
 	// productive fire or an edit. A task that keeps doing useful work (or gets

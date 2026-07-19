@@ -120,6 +120,16 @@ func credentialDeleted(cred string) {
 	}
 }
 
+// brokenStateLabel builds the visible "needs relink" state a console row shows
+// when its record is broken. Shared by the monitor / standing / recurring list
+// handlers so all three read identically.
+func brokenStateLabel(reason string) string {
+	if strings.TrimSpace(reason) == "" {
+		return "⚠ needs relink"
+	}
+	return "⚠ needs relink — " + reason
+}
+
 // wireDependencyGuards installs the fire-path resolvers + the credential-delete
 // hook. Called once at startup.
 func wireDependencyGuards() {

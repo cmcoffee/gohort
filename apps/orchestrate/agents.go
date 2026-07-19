@@ -826,6 +826,13 @@ func deleteAgent(db Database, id, owner string) error {
 				fmt.Sprintf("runs deleted agent %q", a.Name))
 		}
 	}
+	// Recurring tasks have no stored record — they live only as scheduler
+	// entries — so "keep, don't drop" means cancelling the live entry and re-arming
+	// a dormant broken one (parkRecurringBroken) rather than a mark-in-place.
+	for _, row := range listAgentRecurringTasks(owner, id) {
+		UnscheduleTask(row.TaskID)
+		parkRecurringBroken(row.Payload, fmt.Sprintf("its agent %q was deleted", a.Name))
+	}
 	for _, k := range db.Keys(agentsTable) {
 		if k == id {
 			continue

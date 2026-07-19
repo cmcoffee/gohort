@@ -211,7 +211,9 @@ type consoleRecurringRow struct {
 	Cadence string `json:"cadence"`            // human cadence ("recurring · every 30m")
 	Fires   string `json:"fires,omitempty"`    // "<fired> / <cap>" so far
 	NextRun string `json:"next_run,omitempty"` // RFC3339 next fire (matches consoleAgentRow)
+	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — …")
 	ID      string `json:"_id"`                // hidden; row-action target (the scheduler task id)
+	Broken  bool   `json:"_broken,omitempty"`  // hidden gate (Delete-only on a broken row)
 }
 
 // handleConsoleRecurring lists the owner's recurring tasks (the `recurring` tool
@@ -243,6 +245,11 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 			Fires:   fires,
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
+		}
+		if rt.Payload.Broken {
+			row.Broken = true
+			row.State = brokenStateLabel(rt.Payload.BrokenReason)
+			row.NextRun = "" // parked: the dormant re-check isn't a real next run
 		}
 		rows = append(rows, row)
 	}
@@ -1087,8 +1094,9 @@ type consoleAgentRow struct {
 	Schedule string `json:"schedule"`
 	Status   string `json:"status"`
 	NextRun  string `json:"next_run"`
-	ID       string `json:"_id"`     // hidden; row-action target (the agent name)
-	Paused   bool   `json:"_paused"` // hidden; gates Pause vs Resume per row
+	ID       string `json:"_id"`               // hidden; row-action target (the agent name)
+	Paused   bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
+	Broken   bool   `json:"_broken,omitempty"` // hidden; broken (target agent gone) → needs relink
 }
 
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
@@ -1119,6 +1127,10 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 			state = "paused"
 		}
 		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
+		if sa.Broken {
+			row.Broken = true
+			row.State = brokenStateLabel(sa.BrokenReason)
+		}
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)
 		}
@@ -1170,6 +1182,16 @@ func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Re
 		}
 		SaveStandingAgent(RootDB, sa)
 	} else {
+		// Resume from broken is gated: only proceed once the target agent is back,
+		// clearing the broken flag on success (see the monitor path for rationale).
+		if sa.Broken {
+			if reason := standingAgentDependencyError(sa); reason != "" {
+				http.Error(w, "can't resume — "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
+				return
+			}
+			sa.Broken = false
+			sa.BrokenReason = ""
+		}
 		SaveStandingAgent(RootDB, sa)
 		_ = ScheduleStandingAgent(RootDB, sa)
 	}
@@ -1227,6 +1249,7 @@ type consoleMonitorRow struct {
 	// Schedulable gates the "Test" row action: only poll / http_poll / watch
 	// monitors have a check to run on demand — a webhook is push-only.
 	Schedulable bool `json:"_schedulable"`
+	Broken      bool `json:"_broken,omitempty"` // hidden; dependency gone → needs relink
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -1255,6 +1278,9 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		state := "active"
 		if m.Paused {
 			state = "paused"
+		}
+		if m.Broken {
+			state = brokenStateLabel(m.BrokenReason)
 		}
 		detail := ""
 		switch m.Kind {
@@ -1321,7 +1347,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind)})
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken})
 	}
 	writeJSON(w, rows)
 }
@@ -1362,6 +1388,19 @@ func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.
 		}
 		SaveEventMonitor(RootDB, m)
 	} else {
+		// Resume — recovery from a broken monitor is a GATED, explicit action:
+		// only allow it once the missing dependency is actually back, otherwise
+		// we'd resume into a monitor that just re-breaks on its next tick. Re-check
+		// here and refuse while it's still missing; clear the broken flag on
+		// success so the monitor comes back healthy.
+		if m.Broken {
+			if reason := eventMonitorDependencyError(m); reason != "" {
+				http.Error(w, "can't resume — "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
+				return
+			}
+			m.Broken = false
+			m.BrokenReason = ""
+		}
 		SaveEventMonitor(RootDB, m)
 		_ = ScheduleEventMonitor(RootDB, m)
 	}
