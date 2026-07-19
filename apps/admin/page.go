@@ -1682,14 +1682,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Agent-Scoped Tools",
-				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the one agent shown; they don't appear in the shared pool. \"Manage scope\" opens the pill editor to promote a tool to global (all your agents) or add it to other agents. A ⚠ badge marks a missing credential dependency.",
+				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown — a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Manage scope\" opens the pill editor to promote a tool to global (all your agents) or add it to other agents. A ⚠ badge marks a missing credential dependency.",
 				Body: ui.Table{
 					Source:       "api/persistent-tools",
 					RecordsField: "bundled",
 					RowKey:       "tool.name",
 					Columns: []ui.Col{
 						{Field: "tool.name", Flex: 1},
-						{Field: "agent", Flex: 1, Label: "Agent", Mute: true},
+						{Field: "agent", Flex: 1, Label: "Agents", Mute: true},
 						{Field: "owner", Flex: 0, Mute: true},
 						{Field: "has_missing", Flex: 0, Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "⚠ missing", Color: "danger"},
@@ -1700,7 +1700,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						ui.Expand("View", ui.RecordView{
 							Pairs: []ui.DisplayPair{
 								{Label: "Name", Field: "tool.name", Mono: true},
-								{Label: "Agent", Field: "agent"},
+								{Label: "Agents", Field: "agent"},
 								{Label: "Owner", Field: "owner"},
 								{Label: "Description", Field: "tool.description"},
 								{Label: "Mode", Field: "tool.mode"},

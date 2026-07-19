@@ -2156,13 +2156,20 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			// Read-only here: they're removed via Builder, not the admin.
 			// Walk every user's agent records and surface each bundled tool
 			// with its owning agent so nothing is invisible in the DB.
+			type bundledAgent struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			}
+			// One row per (owner, tool): a tool scoped to several agents is listed
+			// ONCE with all of them, not duplicated per agent. Agent is the
+			// comma-joined names for the column; Agents is the structured list.
 			type bundledWithOwner struct {
-				Owner      string   `json:"owner"`
-				Agent      string   `json:"agent"`
-				AgentID    string   `json:"agent_id"`
-				Missing    []string `json:"missing,omitempty"`
-				HasMissing bool     `json:"has_missing"`
-				Tool       TempTool `json:"tool"`
+				Owner      string         `json:"owner"`
+				Agent      string         `json:"agent"`
+				Agents     []bundledAgent `json:"agents"`
+				Missing    []string       `json:"missing,omitempty"`
+				HasMissing bool           `json:"has_missing"`
+				Tool       TempTool       `json:"tool"`
 			}
 			// Global SUPERSEDES agent scope in this listing. A tool that
 			// lives in the owner's global pool AND on an agent record (a
@@ -2184,6 +2191,10 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				m[aw.Tool.Name] = true
 			}
 			var bundled []bundledWithOwner
+			// Group by (owner, tool name) so a tool scoped to N agents is one row
+			// listing all N — not N duplicate rows sharing the same tool.name key.
+			type bundleKey struct{ owner, name string }
+			bundleIdx := map[bundleKey]int{}
 			orchestrateBase := a.db.Bucket("orchestrate")
 			for _, u := range AuthListUsers(a.db) {
 				udb := UserDB(orchestrateBase, u.Username)
@@ -2206,13 +2217,27 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						if globalByOwner[u.Username][t.Name] {
 							continue // global copy supersedes this agent-scoped duplicate
 						}
-						m := toolMissingDeps(t)
-						bundled = append(bundled, bundledWithOwner{
-							Owner: u.Username, Agent: rec.Name, AgentID: rec.ID,
-							Missing: m, HasMissing: len(m) > 0, Tool: t,
-						})
+						bk := bundleKey{u.Username, t.Name}
+						i, ok := bundleIdx[bk]
+						if !ok {
+							m := toolMissingDeps(t)
+							bundled = append(bundled, bundledWithOwner{
+								Owner: u.Username, Missing: m, HasMissing: len(m) > 0, Tool: t,
+							})
+							i = len(bundled) - 1
+							bundleIdx[bk] = i
+						}
+						bundled[i].Agents = append(bundled[i].Agents, bundledAgent{ID: rec.ID, Name: rec.Name})
 					}
 				}
+			}
+			// Comma-join each row's agent names for the display column.
+			for i := range bundled {
+				names := make([]string, 0, len(bundled[i].Agents))
+				for _, ag := range bundled[i].Agents {
+					names = append(names, ag.Name)
+				}
+				bundled[i].Agent = strings.Join(names, ", ")
 			}
 			// Orphaned tools — formerly agent-scoped, captured when their
 			// owning agent was deleted. Walk every user's orphan pool.
