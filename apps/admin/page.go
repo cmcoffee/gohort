@@ -1064,9 +1064,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 										{Value: false, Label: "Enabled", Color: "success"},
 									},
 								},
-								// Lockdown level (open/wrapper/secured) is shown and set
-								// by the segmented pill in the row actions below — no
-								// separate state badge needed here.
+								// Lockdown level (open / secured) is shown and set by the
+								// segmented pill in the row actions below — no separate
+								// state badge needed here.
 								// Dead-credential warning — locked but no tool uses
 								// it, so nothing can reach it. Only renders when set.
 								{
@@ -1139,22 +1139,18 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo: "api/secure-api?action=disable&name={name}",
 									Method: "POST",
 									HideIf: "disabled"},
-								// Lockdown ladder — one segmented pill (Open < Wrapper-only
-								// < 🔒 Secured) replaces the old Open/Wrapper/Secure button
-								// spray, which read as confusing action buttons (a "🔒
-								// Secure" that only showed while UNlocked). The pill shows
-								// the current level highlighted; picking another POSTs it to
-								// one reconciling endpoint. "Secured" confirms first — it's
-								// consequential: reachable ONLY through the tools that
-								// already declare it, off the auto-route + catalog, per-agent
-								// scope no longer applies, and no NEW tool can declare it.
+								// Lockdown pill — Open (generic call tool + auto-route +
+								// per-agent scope) vs 🔒 Secured (reachable only through the
+								// tools that already declare it: off the auto-route + catalog,
+								// scope no longer applies, no NEW tool can declare it). The
+								// current level is highlighted; picking the other POSTs it.
+								// "Secured" confirms first — it's consequential.
 								{Type: "segmented", Field: "access_level",
 									PostTo: "api/secure-api?action=access&name={name}",
 									Options: []ui.SelectOption{
 										{Value: "open", Label: "Open"},
-										{Value: "wrapper", Label: "Wrapper-only"},
 										{Value: "secured", Label: "🔒 Secured",
-											Confirm: "Secure this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (move it back to Open/Wrapper-only to change which tools use it). Reversible."},
+											Confirm: "Secure this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (set it back to Open to change which tools use it). Reversible."},
 									}},
 								{Type: "button", Label: "Export", Method: "client",
 									PostTo: "credentials_export", Compact: true},

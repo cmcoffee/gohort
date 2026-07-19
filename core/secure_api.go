@@ -113,35 +113,22 @@ type SecureCredential struct {
 	// which deserialize to the zero value — keep their default-on
 	// behavior.
 	Disabled bool `json:"disabled,omitempty"`
-	// Restricted removes the auto-generated `call_<name>` direct
-	// tool from every agent surface (chat, phantom, anywhere). The
-	// LLM cannot invoke the credential directly under any
-	// circumstance — only admin-approved wrapped temp tools that
-	// reference it by name (place_call, etc.) keep dispatching
-	// through it. Use this once specific wrappers have been approved
-	// so the LLM is forced down a reviewed path instead of
-	// improvising against the raw `call_<name>`. Different from
-	// Disabled: Disabled kills the credential outright (wrappers
-	// fail too); Restricted leaves wrappers working and only removes
-	// the direct route. The inverse state is "Open" — direct
-	// `call_<name>` exposed for the LLM to improvise against.
-	//
-	// Renamed from HideFromCatalog (2026-05); pre-rename gob records
-	// decode into Restricted=false, so any previously-restricted
-	// credential must be re-restricted once after upgrade.
-	Restricted bool `json:"restricted,omitempty"`
 	// Secured locks the credential to the tools that DECLARE it
 	// (hook_capabilities fetch_via:<name> / secret:<name>). A secured
 	// credential has no access-scope of its own — access is whatever the
 	// scope of those tools already permits — so the per-agent "Manage
 	// scope" surface is redundant for it. Enforced by two exclusions:
 	// it's dropped from the fetch_url auto-route (so a covered host can't
-	// reach the secret without a declaring tool) and, like Restricted,
-	// it gets no auto-generated fetch_url_<name> catalog tool (which would
-	// hand the default pool access). The only paths left are the explicit
-	// declaring tools, whose own scope is the access control. Distinct
-	// from Restricted (wrapper-only but still auto-routable + scoped);
-	// Secured is the tool-locked, scope-less mode.
+	// reach the secret without a declaring tool) and it gets no
+	// auto-generated fetch_url_<name> / call_<name> catalog tool (which
+	// would hand the default pool an open improvise route). The only paths
+	// left are the explicit declaring tools, whose own scope is the access
+	// control. The inverse state is "Open" — the generic call_<name> tool
+	// is exposed and the credential auto-routes + honors per-agent scope.
+	//
+	// (The former middle "Restricted"/wrapper-only mode was removed 2026-07;
+	// its records' inert `restricted` flag is ignored on decode, so they
+	// read as Open. Open vs Secured is the whole ladder now.)
 	Secured bool `json:"secured,omitempty"`
 	// AllowedMethods restricts which HTTP methods the LLM may use
 	// against this credential. Empty/nil = all methods allowed
@@ -452,13 +439,12 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 	if exists {
 		c.CreatedAt = existing.CreatedAt
 		c.LastUsedAt = existing.LastUsedAt
-		// Disabled + Restricted are owned by the enable/disable and
-		// secure/open action endpoints, never the upsert form (which
+		// Disabled + Secured are owned by the enable/disable and
+		// secure/unsecure action endpoints, never the upsert form (which
 		// doesn't carry those fields). Preserve them so editing a
-		// credential's config can't silently re-enable or un-secure it.
+		// credential's config can't silently re-enable or unsecure it.
 		c.Disabled = existing.Disabled
-		c.Restricted = existing.Restricted
-		c.Secured = existing.Secured // owned by the secure/open action, not the upsert form
+		c.Secured = existing.Secured
 	} else {
 		c.CreatedAt = time.Now()
 	}
@@ -602,27 +588,6 @@ func (s *SecureAPI) SetDisabled(name string, disabled bool) error {
 		return fmt.Errorf("credential %q not found", name)
 	}
 	c.Disabled = disabled
-	s.db.Set(secureAPITable, name, c)
-	return nil
-}
-
-// SetRestricted toggles the per-credential Restricted flag. When
-// true, the credential becomes wrapper-only: dispatchable through
-// admin-approved api-mode temp tools but no longer producing a
-// `call_<name>` direct tool in any agent's catalog. Used to
-// "graduate" a credential from Open (improvisation allowed) to
-// Restricted (only reviewed wrappers can use it).
-func (s *SecureAPI) SetRestricted(name string, restricted bool) error {
-	if !s.ready() || name == "" {
-		return fmt.Errorf("name required")
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var c SecureCredential
-	if !s.db.Get(secureAPITable, name, &c) {
-		return fmt.Errorf("credential %q not found", name)
-	}
-	c.Restricted = restricted
 	s.db.Set(secureAPITable, name, c)
 	return nil
 }
@@ -824,13 +789,11 @@ func (s *SecureAPI) CredentialStatus(name string) (exists, enabled, hasSecret bo
 // catalog enumeration outside a request). With a nil session, save_to
 // becomes unusable but text-mode responses still work.
 //
-// Respects both Disabled (hard kill) and Restricted (the admin
-// "Restrict" toggle). A restricted credential is unreachable as a
-// direct call_<name> tool from any agent surface — chat, phantom,
-// anywhere — but admin-approved wrapped tools that reference it
-// (api-mode temp tools) still dispatch through DispatchToolCall.
-// That's the whole point: force the LLM through a reviewed wrapper
-// instead of improvising against the raw credential.
+// Respects both Disabled (hard kill) and Secured (tool-locked). A secured
+// credential is unreachable as a direct call_<name> tool from any agent
+// surface — chat, phantom, anywhere — but the tools that DECLARE it (api-mode
+// temp tools) still dispatch through DispatchToolCall. That's the whole point:
+// a secured credential is reachable only down its reviewed declaring tools.
 func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	if !s.ready() {
 		return nil
@@ -839,12 +802,12 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	creds := s.List()
 	out := make([]AgentToolDef, 0, len(creds))
 	for _, c := range creds {
-		if c.Disabled || c.Restricted || c.Secured {
-			// Disabled = hard kill; Restricted = wrapper-only; Secured =
-			// tool-locked. None get a direct LLM-callable fetch_url_<name>
-			// (for Secured that would hand the default pool access, defeating
-			// the lock). Dispatch via DispatchToolCall (api-mode temp tools /
-			// declaring wrappers) is unaffected.
+		if c.Disabled || c.Secured {
+			// Disabled = hard kill; Secured = tool-locked. Neither gets a direct
+			// LLM-callable fetch_url_<name> (for Secured that would hand the
+			// default pool access, defeating the lock). Dispatch via
+			// DispatchToolCall (api-mode temp tools / declaring wrappers) is
+			// unaffected.
 			continue
 		}
 		// SecureCredNone (the bootstrapped "no_auth" credential) is
@@ -864,7 +827,7 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	// Decode-mismatch diagnostic: only fires on the genuine failure
 	// shape — the table has keys but nothing deserialized into a
 	// SecureCredential. Empty-output states caused by Disabled or
-	// Restricted are normal and shouldn't emit noise.
+	// Secured are normal and shouldn't emit noise.
 	if len(allKeys) > 0 && len(creds) == 0 {
 		Debug("[secure_api] BuildTools: %d keys in table but 0 credentials decoded — check struct compat against persisted records", len(allKeys))
 	}
@@ -1001,9 +964,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// Fail-closed on Disabled. BuildTools already hides disabled
 	// credentials from the LLM catalog, but pre-existing watchers and
 	// approved api-mode temp tools dispatch through this path
-	// directly and would otherwise keep firing. Restricted is the
-	// soft variant — it stays dispatchable on purpose so vetted
-	// wrappers keep working — Disabled is the hard kill switch.
+	// directly and would otherwise keep firing. Secured credentials
+	// stay dispatchable on purpose (their declaring tools keep working);
+	// Disabled is the hard kill switch.
 	if c.Disabled {
 		return "", fmt.Errorf("credential %q is disabled", c.Name)
 	}

@@ -1124,10 +1124,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			type credRow struct {
 				SecureCredential
 				Orphaned bool `json:"orphaned,omitempty"`
-				// AccessLevel collapses the Restricted/Secured bools into the
-				// single lockdown ladder the admin picks from a segmented pill:
-				// open < wrapper < secured. Secured dominates (supersedes
-				// restricted), so it's checked last.
+				// AccessLevel is what the admin picks from the segmented pill:
+				// "open" (generic call tool + auto-route + per-agent scope) or
+				// "secured" (tool-locked; off auto-route + scope).
 				AccessLevel string `json:"access_level"`
 			}
 			creds := Secure().ListWithPending()
@@ -1138,9 +1137,6 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					orphaned = len(CredentialToolsResolver(c.Name)) == 0
 				}
 				level := "open"
-				if c.Restricted {
-					level = "wrapper"
-				}
 				if c.Secured {
 					level = "secured"
 				}
@@ -1169,27 +1165,6 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
-				case "restrict", "lock", "hide":
-					// Restrict the credential to wrapped tools only —
-					// the generic call_<name> direct tool stops
-					// appearing in any agent's catalog (chat, phantom,
-					// anywhere). Approved temp tools that reference the
-					// credential by name still dispatch. ("lock"/"hide"
-					// kept as aliases for older clients still POSTing
-					// the old verbs.)
-					if err := Secure().SetRestricted(name, true); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-						return
-					}
-				case "open", "unlock", "show":
-					// Re-expose the call_<name> direct tool. Used to
-					// undo a "restrict" — usually because the LLM
-					// needs to improvise against the API again to
-					// discover a new shape worth wrapping.
-					if err := Secure().SetRestricted(name, false); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-						return
-					}
 				case "secure":
 					// Tool-lock: reachable only through the tools that already
 					// declare it, off the auto-route + auto-catalog, and no NEW
@@ -1201,36 +1176,29 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					}
 				case "unsecure":
 					// Release the tool-lock — the credential goes back to the
-					// normal scoped/auto-routable model.
+					// normal (Open) scoped/auto-routable model.
 					if err := Secure().SetSecured(name, false); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
 				case "access":
-					// One idempotent "set lockdown level" from the segmented pill,
-					// reconciling the Restricted/Secured bools for the target level
-					// so the UI never has to sequence restrict→secure verbs itself.
+					// One idempotent "set lockdown level" from the segmented pill:
+					// "open" (unlocked) or "secured" (tool-locked).
 					var body struct {
 						AccessLevel string `json:"access_level"`
 					}
 					_ = json.NewDecoder(r.Body).Decode(&body)
-					var restrict, secure bool
+					var secure bool
 					switch strings.TrimSpace(body.AccessLevel) {
 					case "open":
-						restrict, secure = false, false
-					case "wrapper":
-						restrict, secure = true, false
+						secure = false
 					case "secured":
-						restrict, secure = false, true
+						secure = true
 					default:
-						http.Error(w, "access_level must be open|wrapper|secured", http.StatusBadRequest)
+						http.Error(w, "access_level must be open|secured", http.StatusBadRequest)
 						return
 					}
 					if err := Secure().SetSecured(name, secure); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-						return
-					}
-					if err := Secure().SetRestricted(name, restrict); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
@@ -1248,7 +1216,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
 					return
 				default:
-					http.Error(w, "action must be enable|disable|restrict|open|secure|unsecure|access|test", http.StatusBadRequest)
+					http.Error(w, "action must be enable|disable|secure|unsecure|access|test", http.StatusBadRequest)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)
