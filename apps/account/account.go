@@ -42,9 +42,10 @@ func (T *Account) WebHidden() bool { return true }
 func (T *Account) Routes() {
 	T.HandleFunc("/api/prefs", T.handlePrefs)
 	T.HandleFunc("/api/password", T.handlePassword)
+	// Connected-accounts (per-user OAuth/MCP) endpoints stay registered here for
+	// redirect-URI stability even though the management card now renders under
+	// the Gateways app (which calls these by absolute /account path).
 	T.HandleFunc("/api/connections", T.handleConnections)
-	T.HandleFunc("/api/credentials", T.handleCredentials)
-	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
@@ -114,17 +115,17 @@ func (T *Account) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
-		http.Redirect(w, r, "/account/?oauth=denied", http.StatusFound)
+		http.Redirect(w, r, "/gateways/?oauth=denied", http.StatusFound)
 		return
 	}
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
 	if _, _, err := Secure().OAuthCallback(r.Context(), state, code); err != nil {
 		Log("[account] oauth callback failed: %v", err)
-		http.Redirect(w, r, "/account/?oauth=failed", http.StatusFound)
+		http.Redirect(w, r, "/gateways/?oauth=failed", http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/account/?oauth=connected", http.StatusFound)
+	http.Redirect(w, r, "/gateways/?oauth=connected", http.StatusFound)
 }
 
 // handleMCPConnect begins the per-user OAuth consent for a hosted MCP server
@@ -274,151 +275,6 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleCredentials is the user's OWN API-credential CRUD — the per-user
-// counterpart to the admin credential list. Every op is scoped to
-// Owner == currentUser: the store keys user-owned creds by (owner, name)
-// (Secure().ListUser / LoadUser / DeleteUser / Save with Owner set), so these
-// live in the user's namespace and never appear on the admin page. Only the
-// simple key-based types are offered here; OAuth2 stays admin-managed. Secrets
-// are never returned — GET reports has_secret only.
-func (T *Account) handleCredentials(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		type row struct {
-			Name            string `json:"name"`
-			Type            string `json:"type"`
-			BaseURL         string `json:"base_url"`
-			ParamName       string `json:"param_name,omitempty"`
-			Description     string `json:"description,omitempty"`
-			RequiresConfirm bool   `json:"requires_confirm"`
-			HasSecret       bool   `json:"has_secret"`
-		}
-		rows := []row{}
-		for _, c := range Secure().ListUser(user) {
-			rows = append(rows, row{
-				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
-				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
-				HasSecret: c.Type != SecureCredNone,
-			})
-		}
-		writeJSON(w, rows)
-	case http.MethodPost:
-		var body struct {
-			Name            string `json:"name"`
-			Type            string `json:"type"`
-			BaseURL         string `json:"base_url"`
-			ParamName       string `json:"param_name"`
-			Description     string `json:"description"`
-			Secret          string `json:"secret"`
-			RequiresConfirm bool   `json:"requires_confirm"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		// Only the simple key-based types are user-managed; OAuth2 (and its
-		// admin-only client config) stays on the admin surface.
-		switch body.Type {
-		case SecureCredBearer, SecureCredHeader, SecureCredQuery, SecureCredBasicAuth, SecureCredNone:
-		default:
-			http.Error(w, "type must be bearer, header, query, basic_auth, or none", http.StatusBadRequest)
-			return
-		}
-		// Owner = the calling user: Save keys this into the user's namespace, so
-		// it can never touch a global (admin) credential of the same name.
-		c := SecureCredential{
-			Name:            strings.TrimSpace(body.Name),
-			Type:            body.Type,
-			BaseURL:         strings.TrimSpace(body.BaseURL),
-			ParamName:       strings.TrimSpace(body.ParamName),
-			Description:     strings.TrimSpace(body.Description),
-			RequiresConfirm: body.RequiresConfirm,
-			Owner:           user,
-		}
-		if err := Secure().Save(c, body.Secret); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	case http.MethodDelete:
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		if name == "" {
-			http.Error(w, "missing name", http.StatusBadRequest)
-			return
-		}
-		if err := Secure().DeleteUser(user, name); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-// handleUserTools is the user's OWN persistent-tool surface — the counterpart
-// to the admin persistent-tools page, scoped to the calling user's pool. GET
-// lists the user's active tools (authored via chat/Builder); DELETE removes one
-// (the break-glass "this tool misbehaves, drop it" control). Authoring stays in
-// chat — a tool is a script or API definition, not a hand-filled form — so this
-// surface is view + delete, not create.
-func (T *Account) handleUserTools(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		type row struct {
-			Name        string `json:"name"`
-			Description string `json:"description,omitempty"`
-			Mode        string `json:"mode,omitempty"`
-			Credential  string `json:"credential,omitempty"`
-			Missing     bool   `json:"missing"`
-			Shared      bool   `json:"shared"`
-			LastUsed    string `json:"last_used,omitempty"`
-		}
-		rows := []row{}
-		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-			// Dependency check resolves in the USER's namespace (a tool may lean
-			// on the user's own credential, which the global-only CredentialStatus
-			// wouldn't find).
-			missing := false
-			if cred := strings.TrimSpace(p.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
-				if _, found := Secure().Resolve(cred, user); !found {
-					missing = true
-				}
-			}
-			last := ""
-			if !p.LastUsedAt.IsZero() {
-				last = p.LastUsedAt.Format("2006-01-02")
-			}
-			rows = append(rows, row{
-				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Missing: missing, Shared: p.Shared, LastUsed: last,
-			})
-		}
-		writeJSON(w, rows)
-	case http.MethodDelete:
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		if name == "" {
-			http.Error(w, "missing name", http.StatusBadRequest)
-			return
-		}
-		if err := DeletePersistentTempTool(AuthDB(), user, name); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
 // --- preferences endpoint ----------------------------------------------------
 
 // handlePrefs GET returns the user's personal defaults; POST updates whichever
@@ -548,22 +404,11 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			Body:     ui.Card{HTML: passwordHTML},
 		})
 	}
+	// Connected accounts, My API credentials, and My tools moved to the Gateways
+	// app (the per-user "outward reach" surface). Account keeps identity +
+	// preferences, including inbound personal access tokens below (the keys an
+	// external MCP client uses to reach THIS user's agents).
 	sections = append(sections,
-		ui.Section{
-			Title:    "Connected accounts",
-			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
-			Body:     ui.Card{HTML: connectionsHTML},
-		},
-		ui.Section{
-			Title:    "My API credentials",
-			Subtitle: "API keys you own and manage yourself. They live in your namespace — only your agents can dispatch through them, and they never appear on the admin page. Secrets are stored encrypted and never shown to the assistant.",
-			Body:     ui.Card{HTML: credentialsHTML},
-		},
-		ui.Section{
-			Title:    "My tools",
-			Subtitle: "Tools you've had the assistant build for you, live in your own pool. Ask in chat to create or change one; delete here to retire any that misbehave.",
-			Body:     ui.Card{HTML: userToolsHTML},
-		},
 		ui.Section{
 			Title:    "API keys (personal access)",
 			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP — to your own gohort agents and tools. Put the token in the client's X-API-Key header. Shown once at creation; revoke any time.",
@@ -656,92 +501,6 @@ const passwordHTML = `<div class="acct-pw">
       })
       .catch(function(e){ btn.disabled=false; btn.textContent=orig; setMsg('Failed: '+(e&&e.message||e), false); });
   });
-})();
-</script>`
-
-// connectionsHTML is the Connected-accounts panel: a container the inline script
-// fills by fetching api/connections, rendering each per_user integration with a
-// connected/not badge + a key field (Save / Disconnect). App-specific, so it
-// rides in a Card rather than a core/ui primitive. The Card renderer re-executes
-// this <script>.
-const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div>
-<style>
-.acct-conns { display: flex; flex-direction: column; gap: 0.6rem; }
-.acct-conn { border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem 0.8rem; }
-.acct-conn-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-.acct-conn-name { font-weight: 600; color: var(--text); flex: 1; }
-.acct-conn-badge { font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.5rem; border-radius: 999px; }
-.acct-conn-badge.on { background: color-mix(in srgb, var(--success) 22%, transparent); color: var(--success); }
-.acct-conn-badge.off { background: var(--bg-2); color: var(--text-mute); }
-.acct-conn-desc { font-size: 0.82rem; color: var(--text-mute); margin-bottom: 0.5rem; }
-.acct-conn-row { display: flex; gap: 0.4rem; align-items: center; }
-.acct-conn-row input { flex: 1; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.5rem; font: inherit; font-size: 0.85rem; }
-.acct-conns-empty { color: var(--text-mute); font-style: italic; padding: 0.5rem 0; }
-</style>
-<script>
-(function(){
-  var box = document.getElementById('acct-conns');
-  if (!box) return;
-  // A consent popup reports success via postMessage; refresh so the badge flips.
-  window.addEventListener('message', function(e){ if (e && e.data === 'gohort-mcp-connected') load(); });
-  function el(t, a, k){ var n=document.createElement(t); if(a) for(var x in a){ if(x==='text') n.textContent=a[x]; else if(x==='class') n.className=a[x]; else n.setAttribute(x,a[x]); } (k||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
-  function post(body, btn){
-    btn.disabled = true; var orig = btn.textContent; btn.textContent = '…';
-    return fetch('api/connections', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
-      .then(function(r){ if(!r.ok && r.status!==204) return r.text().then(function(t){ throw new Error(t||('HTTP '+r.status)); }); load(); })
-      .catch(function(e){ btn.disabled=false; btn.textContent=orig; alert('Failed: '+(e&&e.message||e)); });
-  }
-  function save(name, secret, btn){ return post({name:name, secret:secret}, btn); }
-  function disconnect(name, btn){ return post({name:name, disconnect:true}, btn); }
-  function load(){
-    fetch('api/connections', {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(list){
-      box.innerHTML = '';
-      if (!list || !list.length){ box.appendChild(el('div',{class:'acct-conns-empty',text:'No per-user integrations available yet. When your admin enables one, it appears here to connect with your own account.'})); return; }
-      list.forEach(function(c){
-        var badge = el('span', {class:'acct-conn-badge '+(c.connected?'on':'off'), text: c.connected?'Connected':'Not connected'});
-        var head = el('div', {class:'acct-conn-head'}, [el('span',{class:'acct-conn-name',text:c.name}), badge]);
-        var card = el('div', {class:'acct-conn'}, [head]);
-        if (c.description) card.appendChild(el('div',{class:'acct-conn-desc',text:c.description}));
-        var row = el('div', {class:'acct-conn-row'});
-        if (c.oauth){
-          if (c.connect_url){
-            // MCP-style OAuth: open consent in a popup and refresh the list when
-            // it reports back (postMessage), so the badge flips without a full
-            // page nav. Falls back to a new tab if the popup is blocked.
-            var conn = el('button', {class:'ui-row-btn primary', text: c.connected?'Reconnect':'Connect'});
-            conn.addEventListener('click', function(){
-              var w = window.open(c.connect_url, 'gohort-connect', 'width=600,height=760');
-              if (!w) { window.open(c.connect_url, '_blank'); }
-            });
-            row.appendChild(conn);
-          } else {
-            // SecureAPI OAuth: a Connect link that redirects to the provider.
-            var connA = el('a', {class:'ui-row-btn primary', href:'oauth/start?cred='+encodeURIComponent(c.name), text: c.connected?'Reconnect':'Connect'});
-            row.appendChild(connA);
-          }
-          if (c.connected){
-            var d2 = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            d2.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your authorization is removed.')) return; disconnect(c.name, d2); });
-            row.appendChild(d2);
-          }
-        } else {
-          // Per-user key: paste a key.
-          var inp = el('input', {type:'password', placeholder: c.connected?'Replace your key…':'Paste your key / token'});
-          var saveBtn = el('button', {class:'ui-row-btn primary', text: c.connected?'Update':'Connect'});
-          saveBtn.addEventListener('click', function(){ var v=inp.value.trim(); if(!v){ inp.focus(); return; } save(c.name, v, saveBtn); });
-          row.appendChild(inp); row.appendChild(saveBtn);
-          if (c.connected){
-            var dis = el('button', {class:'ui-row-btn', text:'Disconnect'});
-            dis.addEventListener('click', function(){ if(!confirm('Disconnect '+c.name+'? Your stored key is removed.')) return; disconnect(c.name, dis); });
-            row.appendChild(dis);
-          }
-        }
-        card.appendChild(row);
-        box.appendChild(card);
-      });
-    }).catch(function(){ box.textContent = 'Could not load connections.'; });
-  }
-  load();
 })();
 </script>`
 

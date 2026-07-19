@@ -246,11 +246,14 @@ func registerOperatorWake(app *OrchestrateApp) {
 			c := tt
 			sess.TempTools = append(sess.TempTools, &c)
 		}
-		for _, p := range LoadPersistentTempTools(AuthDB(), owner) { // owner global pool
+		for _, p := range LoadPersistentTempTools(AuthDB(), owner) { // owner's own pool
 			addTool(p.Tool)
 		}
-		for _, p := range LoadSharedPersistentTempTools(AuthDB()) { // shared/deployment pool
-			addTool(p.Tool)
+		adoptedGlobal := LoadAdoptedGlobalTools(AuthDB(), owner)
+		for _, p := range LoadSharedPersistentTempTools(AuthDB()) { // global pool: opt-in only
+			if adoptedGlobal[p.Tool.Name] {
+				addTool(p.Tool)
+			}
 		}
 		for _, a := range listAgents(agentUserDB(RootDB, owner), owner) { // agent-scoped tools
 			for _, tt := range a.Tools {

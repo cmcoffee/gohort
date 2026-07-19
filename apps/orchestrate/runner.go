@@ -1315,16 +1315,21 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	// it (the authoring gate); the Builder only gains the ability to use the
 	// EXISTING declaring tools, which is the point.
 	//
-	// Deployment-shared persistent tools load for EVERY user on top of their own
-	// pool, deduped by name (the user's own copy wins). The per-agent gates below
-	// (private-mode, disabled list, user-crafted allow-list) apply uniformly.
+	// Deployment-shared (global) persistent tools are OPT-IN: a Shared tool loads
+	// for this user's agents only once the user has adopted it from the global-
+	// tool catalog (Account page). The user's own pool always loads; the shared
+	// pool is filtered to the user's adoption set, deduped by name (own copy
+	// wins). The per-agent gates below (private-mode, disabled list, user-crafted
+	// allow-list) then apply uniformly. Existing users were grandfathered into
+	// their previously auto-loaded shared tools by migrateGlobalToolAdoption.
 	loaded := LoadPersistentTempTools(poolDB, poolUser)
 	own := make(map[string]bool, len(loaded))
 	for _, p := range loaded {
 		own[p.Tool.Name] = true
 	}
+	adoptedGlobal := LoadAdoptedGlobalTools(poolDB, poolUser)
 	for _, p := range LoadSharedPersistentTempTools(poolDB) {
-		if !own[p.Tool.Name] {
+		if !own[p.Tool.Name] && adoptedGlobal[p.Tool.Name] {
 			loaded = append(loaded, p)
 		}
 	}

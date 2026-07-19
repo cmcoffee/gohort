@@ -1621,7 +1621,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Global Tools",
-				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes to every USER (loads on top of their own pool); Unshare pulls it back. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Gateways page (it no longer auto-loads for everyone); Unshare pulls it from the catalog. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 				Body: ui.Stack{Children: []ui.Component{
 					ui.Table{
 						Source:       "api/persistent-tools",

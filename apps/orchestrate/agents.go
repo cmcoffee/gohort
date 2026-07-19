@@ -331,6 +331,49 @@ func (T *OrchestrateApp) dropLegacyOperator() {
 	}
 }
 
+// deployMigrationsTable holds deployment-wide (not per-user) one-shot migration
+// markers, keyed by a migration id. Distinct from the per-user
+// orchestrate_migrations markers.
+const deployMigrationsTable = "deploy_migrations"
+
+// migrateGlobalToolAdoption grandfathers every existing user into the global-
+// tool OPT-IN model exactly once. Before it, every Shared tool auto-loaded for
+// every user; now a Shared tool loads for a user only after they adopt it from
+// the catalog. To avoid silently pulling tools out from under people, this seeds
+// each existing user's adoption list with the current shared-tool names. A
+// deployment-wide marker makes it run once — a user who later unadopts
+// everything is never re-seeded, and users created after the marker start empty
+// (true opt-in). See LoadAdoptedGlobalTools + the runner's shared-pool load.
+func (T *OrchestrateApp) migrateGlobalToolAdoption() {
+	if T == nil || AuthDB == nil {
+		return
+	}
+	authDB := AuthDB()
+	store := RootDB
+	if authDB == nil || store == nil {
+		return
+	}
+	const marker = "global_tool_adoption_v1"
+	var done bool
+	store.Get(deployMigrationsTable, marker, &done)
+	if done {
+		return
+	}
+	shared := LoadSharedPersistentTempTools(store)
+	names := make([]string, 0, len(shared))
+	for _, p := range shared {
+		names = append(names, p.Tool.Name)
+	}
+	if len(names) > 0 {
+		users := AuthListUsers(authDB)
+		for _, u := range users {
+			MergeAdoptedGlobalTools(store, u.Username, names)
+		}
+		Log("[orchestrate.migrate] global-tool opt-in: grandfathered %d shared tool(s) for %d existing user(s)", len(names), len(users))
+	}
+	store.Set(deployMigrationsTable, marker, true)
+}
+
 // migrateSeedChatFrozenAllowedTools clears the AllowedTools field on
 // every user's seed-chat shadow that was materialized by the old
 // enableApprovedToolOnSeedChat expansion path. The old code froze an

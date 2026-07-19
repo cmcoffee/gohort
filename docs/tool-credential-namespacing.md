@@ -151,10 +151,43 @@ pool. Filtering it to "global only" would *remove* oversight, not tidy a
 namespace, so it stays. "Global tools" here = the `Shared` pool, and the admin
 already surfaces that distinction per-row.
 
+### Global-tool opt-in catalog — SHIPPED (phase 4)
+
+`Shared` tools used to auto-load for every user (push). Now they're **opt-in**
+(pull): a Shared tool loads for a user's agents only once they adopt it.
+
+- **Adoption store** (`core/temp_tool_persist.go`): `adopted_global_tools[user]`
+  = the names a user has pulled in. `LoadAdoptedGlobalTools` / `SetGlobalTool`
+  `Adopted` / `MergeAdoptedGlobalTools`.
+- **Enforcement**: the two agent-execution tool-load paths (`runner.go`,
+  `operator_wake.go`) filter the shared pool to the user's adoption set. The
+  other two `LoadSharedPersistentTempTools` call sites (credential-tool scan,
+  broken-dep resolvability) stay full-pool — they ask "does this tool exist,"
+  not "does this user load it."
+- **Catalog surface**: the Gateways page (`api/global-tools`) — GET lists the
+  shared catalog with an `adopted` flag; POST `{name, adopt}` toggles it.
+- **Migration** (`migrateGlobalToolAdoption`, deploy-wide one-shot marker):
+  grandfathers every EXISTING user into the shared tools they saw under the old
+  auto-load model, so nothing disappears. Users created after the marker start
+  empty (true opt-in). Admin "Share" copy updated: it publishes to the catalog,
+  not to everyone's pool.
+
+## The Gateways app
+
+The user-namespace surfaces live in their own app (`apps/gateways`), not scattered
+on Account. **Gateways = a user's outward reach**: My API credentials, Connected
+accounts (per-user OAuth/MCP), My tools, and the Global-tools catalog. **Account =
+identity + preferences**: password, timezone, and inbound personal-access tokens
+(the keys an external MCP client uses to reach THIS user's agents — the *inbound*
+side, kept on Account deliberately).
+
+The OAuth/MCP consent + callback endpoints stay registered on `/account/…` for
+redirect-URI stability (a provider registered `/account/oauth/callback`); the
+Gateways "Connected accounts" card calls them by absolute path and the callback
+redirects the user back to `/gateways/`.
+
 ### Deferred
 
-- Global-tool opt-in catalog (phase 4): a catalog users pick `Shared` tools from
-  INTO their agents (the one thing a user pulls from the global namespace).
 - User enumeration / `AllowedUsers` picker / user management (phase 5).
 
 ### Open questions (phase 3)

@@ -327,6 +327,13 @@ func (T *OrchestrateApp) Routes() {
 	// Fleet flag can actually be turned off (and the agent published).
 	T.migrateLegacyOrchestratorMode()
 
+	// One-shot deploy-time grandfather for the global-tool OPT-IN model. Shared
+	// tools used to auto-load for everyone; now they load only after a user
+	// adopts them. This seeds every EXISTING user's adoption list with the
+	// current shared-tool names so nothing they relied on silently disappears.
+	// Guarded by a deployment marker; users created afterward start empty.
+	T.migrateGlobalToolAdoption()
+
 	// One-shot fact-store migration. Walks core_facts rows and
 	// converts the old keyed shape ({Namespace, Key, Value, ...})
 	// to the new flat shape ({Namespace, ID, Note, Created}),

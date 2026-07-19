@@ -342,6 +342,92 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	return nil
 }
 
+const adoptedGlobalToolsTable = "adopted_global_tools"
+
+// LoadAdoptedGlobalTools returns the set of global (Shared) tool NAMES the user
+// has adopted into their fleet. Global tools are opt-IN: a Shared tool loads for
+// a user's agents only once they've adopted it from the catalog (their Account
+// page). Empty set when the user has adopted none. See SetGlobalToolAdopted and
+// the runner's shared-pool load path.
+func LoadAdoptedGlobalTools(db Database, username string) map[string]bool {
+	db = tempToolStore(db)
+	out := map[string]bool{}
+	if db == nil || username == "" {
+		return out
+	}
+	var names []string
+	if db.Get(adoptedGlobalToolsTable, username, &names) {
+		for _, n := range names {
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// SetGlobalToolAdopted adds (adopted=true) or removes (adopted=false) one global
+// tool from the user's adoption list. Idempotent; the stored list is deduped and
+// sorted. Adopting a name not currently in the shared pool is harmless — it just
+// won't resolve until such a tool is published.
+func SetGlobalToolAdopted(db Database, username, name string, adopted bool) error {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return errString("adoption requires an authenticated user")
+	}
+	if strings.TrimSpace(name) == "" {
+		return errString("tool name required")
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	var names []string
+	db.Get(adoptedGlobalToolsTable, username, &names)
+	set := make(map[string]bool, len(names))
+	for _, n := range names {
+		set[n] = true
+	}
+	if adopted {
+		set[name] = true
+	} else {
+		delete(set, name)
+	}
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	db.Set(adoptedGlobalToolsTable, username, out)
+	return nil
+}
+
+// MergeAdoptedGlobalTools unions the given names into the user's adoption list
+// (deduped, sorted). Used by the one-time opt-in migration to grandfather every
+// existing user into the global tools they saw under the old auto-load model,
+// without clobbering anything they'd already adopted.
+func MergeAdoptedGlobalTools(db Database, username string, names []string) {
+	db = tempToolStore(db)
+	if db == nil || username == "" || len(names) == 0 {
+		return
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	var existing []string
+	db.Get(adoptedGlobalToolsTable, username, &existing)
+	set := make(map[string]bool, len(existing)+len(names))
+	for _, n := range existing {
+		set[n] = true
+	}
+	for _, n := range names {
+		if strings.TrimSpace(n) != "" {
+			set[n] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	db.Set(adoptedGlobalToolsTable, username, out)
+}
+
 // QueuePendingTempTool adds a tool to the approval queue. Returns an
 // error if a same-named tool is already pending or approved (avoid
 // silent overwrites — the user should explicitly delete the old one
