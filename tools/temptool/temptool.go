@@ -391,6 +391,15 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// every credential it can read. Other typos fail authoring
 	// rather than silently never being granted at dispatch.
 	if caps := stringSliceArg(args["hook_capabilities"]); len(caps) > 0 {
+		// Credential grants already present on the record being edited: the
+		// update path passes these so a preserved (round-tripped) grant on a
+		// now-secured credential isn't rejected as if it were a fresh
+		// declaration. Empty on the create path — new tools can't self-grant
+		// a secured cred. See updateGrouped in tool_def.go.
+		priorGrant := map[string]bool{}
+		for _, n := range stringSliceArg(args["_existing_cred_grants"]) {
+			priorGrant[n] = true
+		}
 		bareKnown := map[string]bool{"fetch": true, "log": true, "browse_page": true}
 		var bad []string
 		var clean []string
@@ -426,7 +435,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 				// whole point of securing it). To bind a new tool, an admin
 				// unsecures it in Admin > APIs first, wires the tool, then
 				// re-secures. Not-ready store / unknown cred → no restriction.
-				if cr, ok := Secure().Load(name); ok && cr.Secured {
+				if cr, ok := Secure().Load(name); ok && cr.Secured && !priorGrant[name] {
 					return "", fmt.Errorf("credential %q is SECURED — it's locked to the tools that already use it and can't be declared by a new or edited tool. Ask an admin to unsecure it in Admin > APIs to change which tools use it", name)
 				}
 				c = method + ":" + name
@@ -1137,10 +1146,16 @@ func canonicalizeArgKeys(args map[string]any, required []string, params map[stri
 // var names (spaces, hyphens) are sanitized; unhelpful but unlikely
 // since temp tools use snake_case params by convention.
 func buildEnvArgs(args map[string]any) map[string]string {
-	if len(args) == 0 {
-		return nil
-	}
+	// Always return a writable map, never nil: the dispatcher writes
+	// GOHORT_HOOK_PATH into this map when the tool has a sandbox hook, and
+	// a param-less tool (no args) with a hook — e.g. a poll-an-endpoint
+	// script that takes no arguments — would otherwise panic with
+	// "assignment to entry in nil map" at that write. len(args)==0 is the
+	// COMMON case for such tools, not an edge one.
 	out := make(map[string]string, len(args))
+	if len(args) == 0 {
+		return out
+	}
 	for k, v := range args {
 		if k == "" || !isValidEnvVarName(k) {
 			continue

@@ -29,6 +29,41 @@ func TestSecuredCredentialSkipsAutoRoute(t *testing.T) {
 	}
 }
 
+// TestAutoRouteMatchesInternalHost pins the invariant the handleFetch reorder
+// depends on: AutoRouteCredential matches purely on BaseURL prefix and has NO
+// public/private notion, so a credential whose BaseURL is an INTERNAL host
+// (.local / private IP) still covers it. This is why moving the auto-route
+// ahead of the non-public-host SSRF refusal in the sandbox fetch hook lets a
+// script reach a self-hosted, credential-scoped API — the exact case
+// (ts3_api on teamspeak.snuglab.local) that broke when its host got scoped.
+func TestAutoRouteMatchesInternalHost(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	// Non-secured, enabled, internal .local BaseURL, secret set.
+	s.db.Set(secureAPITable, "ts3_api", SecureCredential{Name: "ts3_api", BaseURL: "http://teamspeak.snuglab.local:10080"})
+	s.db.Set(secureAPITable, secureCredSecretKey("ts3_api"), "tok")
+
+	name, err := s.AutoRouteCredential("http://teamspeak.snuglab.local:10080/clientlist")
+	if err != nil {
+		t.Fatalf("auto-route errored on a covered internal host: %v", err)
+	}
+	if name != "ts3_api" {
+		t.Fatalf("internal covered host must auto-route via its credential; got name=%q (a nil/empty result is the pre-reorder bug: SSRF guard would then refuse it)", name)
+	}
+
+	// A private-IP BaseURL is likewise covered — no public-only carve-out.
+	s.db.Set(secureAPITable, "lan_api", SecureCredential{Name: "lan_api", BaseURL: "http://10.0.0.5:8080"})
+	s.db.Set(secureAPITable, secureCredSecretKey("lan_api"), "tok")
+	if name, err := s.AutoRouteCredential("http://10.0.0.5:8080/status"); name != "lan_api" || err != nil {
+		t.Fatalf("private-IP covered host must auto-route; name=%q err=%v", name, err)
+	}
+
+	// An UNCOVERED internal host stays unmatched → falls through to the SSRF
+	// refusal in the fetch hook, exactly as intended.
+	if name, err := s.AutoRouteCredential("http://other.internal:9000/x"); name != "" || err != nil {
+		t.Fatalf("uncovered internal host must NOT auto-route (must reach the SSRF guard); name=%q err=%v", name, err)
+	}
+}
+
 func TestSetSecuredRoundTrip(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	s.db.Set(secureAPITable, "c", SecureCredential{Name: "c"})

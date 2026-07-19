@@ -979,7 +979,56 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 			out["script_name"] = tt.ScriptName
 		}
 	}
+	// Sandbox capability + state fields the create path consumes from args.
+	// The update schema has NO parameter for any of these (there's no
+	// hook_capabilities / raw_network / state_path / cache update field), so
+	// if we don't round-trip them here they're the caller's to lose: updating
+	// a shell tool reconstructs its create-args WITHOUT them, and the create
+	// path then default-ons only [fetch log browse_page]. A tool that declared
+	// hook_capabilities=["fetch_via:<cred>"] on create silently reverts to the
+	// defaults on the next edit, and its next dispatch fails with
+	// `method "fetch_via" not granted`. Emit them so update is non-lossy.
+	if len(tt.HookCapabilities) > 0 {
+		caps := make([]any, len(tt.HookCapabilities))
+		for i, c := range tt.HookCapabilities {
+			caps[i] = c
+		}
+		out["hook_capabilities"] = caps
+	}
+	if tt.RawNetwork {
+		out["raw_network"] = true
+	}
+	if tt.StatePath != "" {
+		out["state_path"] = tt.StatePath
+	}
+	if tt.Cache != nil {
+		out["cache"] = cacheToArgs(tt.Cache)
+	}
 	return out
+}
+
+// cacheToArgs reverses parseCacheArg: it renders a stored TempToolCache back
+// into the map[string]any the create path expects under args["cache"], so an
+// update round-trips memoization instead of silently dropping it.
+func cacheToArgs(c *TempToolCache) map[string]any {
+	m := map[string]any{}
+	if c.Key != "" {
+		m["key"] = c.Key
+	}
+	if c.TTL != "" {
+		m["ttl"] = c.TTL
+	}
+	if c.Scope != "" {
+		m["scope"] = c.Scope
+	}
+	if len(c.InvalidateWhen) > 0 {
+		inv := make([]any, len(c.InvalidateWhen))
+		for i, s := range c.InvalidateWhen {
+			inv[i] = s
+		}
+		m["invalidate_when"] = inv
+	}
+	return m
 }
 
 // updateGrouped applies a PARTIAL edit to an existing tool without recreating
@@ -1001,6 +1050,30 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}
 	merged := tempToolToCreateArgs(existing)
+
+	// Credentials already granted on the record being edited are PRESERVED
+	// here (round-tripped by tempToolToCreateArgs), not freshly declared —
+	// the update schema has no hook_capabilities field, so every fetch_via /
+	// secret grant on an update was already validated at create time. The
+	// create path's secured-credential guard must therefore not reject them:
+	// a secured cred stays locked to the tools that already use it, and this
+	// IS one of them. Pass the set so create skips the rejection for exactly
+	// these names (a NEW script_body still gets the ungranted-call guard).
+	if len(existing.HookCapabilities) > 0 {
+		var priorCreds []any
+		for _, c := range existing.HookCapabilities {
+			if i := strings.IndexByte(c, ':'); i >= 0 {
+				if m := strings.ToLower(c[:i]); m == "secret" || m == "fetch_via" {
+					if name := strings.TrimSpace(c[i+1:]); name != "" {
+						priorCreds = append(priorCreds, name)
+					}
+				}
+			}
+		}
+		if len(priorCreds) > 0 {
+			merged["_existing_cred_grants"] = priorCreds
+		}
+	}
 
 	// A toolbox has NO top-level url/body/method/etc — those are per-ACTION.
 	// Passing one at the top level used to be silently ignored (the "I set

@@ -373,18 +373,6 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		writeHookError(conn, "fetch refused: url must be an http:// or https:// URL")
 		return
 	}
-	if host := parsed.Hostname(); host != "" {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
-				return
-			}
-		}
-		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
-			return
-		}
-	}
 	// Refuse URLs with raw whitespace — almost always an unencoded
 	// f-string substitution like f"...?name={city}" where city is
 	// "Santa Cruz". Go's http.Client will accept and forward the
@@ -409,7 +397,16 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// NOTE: this intentionally does NOT require a fetch_via:<cred> capability
 	// (matching the LLM tool, which has no per-credential gate); the credential
 	// still bounds sends to its own host + AllowedURLPattern and logs to its
-	// audit ledger. Precedes the JS-heavy browse route: auth correctness first.
+	// audit ledger.
+	//
+	// This runs BEFORE the non-public-host refusal below: a covered INTERNAL
+	// host (a self-hosted API on .local / a private IP that an admin registered
+	// as a credential's BaseURL) must dispatch through that credential, exactly
+	// as the LLM-callable fetch_url_<cred> tool already does. Refusing it here
+	// on the "non-public host" rule — before the auto-route — is the bug that
+	// made an internal credential unreachable from a script once its host got
+	// scoped behind a credential. Only hosts covered by NO credential fall
+	// through to the SSRF refusal.
 	if h != nil && h.Sess != nil {
 		if credName, rerr := Secure().AutoRouteCredential(rawURL); rerr != nil {
 			writeHookError(conn, rerr.Error())
@@ -454,6 +451,23 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 				"headers": map[string]string{"X-Gohort-Fetched-Via": "credential:" + credName},
 				"body":    respBody,
 			})
+			return
+		}
+	}
+	// Non-public-host refusal — SSRF guard, now AFTER the credential auto-route
+	// above so a covered internal host has already been dispatched. Anything
+	// reaching here is covered by NO credential, so a private IP / .local /
+	// .internal target is a genuine SSRF attempt and is refused, same rule as
+	// the LLM-callable fetch_url tool.
+	if host := parsed.Hostname(); host != "" {
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
+				return
+			}
+		}
+		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+			writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
 			return
 		}
 	}
