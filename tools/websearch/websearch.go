@@ -281,26 +281,18 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return "", fmt.Errorf("'url' must be an http:// or https:// URL")
 	}
-	// SSRF guard: refuse loopback + private-network hosts so the tool
-	// can't be used to probe the server's own internal services.
-	if host := parsed.Hostname(); host != "" {
-		if ip := net.ParseIP(host); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-				return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
-			}
-		}
-		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
-			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
-		}
-	}
-
-	// Auto-route: when a registered credential covers this host, dispatch
-	// THROUGH it (auth injected server-side) instead of sending an anonymous
-	// request that just 401s. The model reaches for the always-live fetch_url
-	// even on credentialed hosts — routing it makes that Just Work rather than
-	// a 401 loop the model misreads. Multiple-covering / disabled / secretless
-	// hosts return a precise error instead of guessing. Only fires when a
-	// session is present (dispatch needs it for save_to + audit scope).
+	// Auto-route FIRST: when a registered credential covers this host, dispatch
+	// THROUGH it (auth injected server-side) instead of an anonymous request that
+	// 401s. The model reaches for the always-live fetch_url even on credentialed
+	// hosts — routing it makes that Just Work. Crucially this runs BEFORE the SSRF
+	// refusal below, so a credential-covered INTERNAL host (a self-hosted API on
+	// .local / a private IP that an admin registered as a credential's BaseURL)
+	// dispatches through that credential exactly as the per-credential
+	// fetch_url_<cred> tool does — running the refusal first (the old order) made
+	// such a host unreachable via fetch_url even though its credential could reach
+	// it. Only hosts covered by NO credential fall through to the refusal.
+	// Multiple-covering / disabled / secretless hosts return a precise error.
+	// Mirrors the sandbox hook's handleFetch ordering.
 	if sess != nil {
 		if credName, rerr := Secure().AutoRouteCredential(target); rerr != nil {
 			return "", rerr
@@ -317,6 +309,20 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 				return out, derr
 			}
 			return fmt.Sprintf("[Sent through the %q credential — authenticated for you automatically.]\n\n%s", credName, out), nil
+		}
+	}
+
+	// SSRF guard: refuse loopback + private-network + .local hosts that are
+	// covered by NO credential (covered ones auto-routed above), so the tool
+	// can't be used to probe the server's own internal services.
+	if host := parsed.Hostname(); host != "" {
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+				return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
+			}
+		}
+		if lower := strings.ToLower(host); lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+			return "", fmt.Errorf("refusing to fetch non-public host: %s", host)
 		}
 	}
 
