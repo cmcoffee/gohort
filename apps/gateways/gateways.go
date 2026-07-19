@@ -79,13 +79,28 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			RequiresConfirm bool   `json:"requires_confirm"`
 			HasSecret       bool   `json:"has_secret"`
 		}
-		rows := []row{}
-		for _, c := range Secure().ListUser(user) {
-			rows = append(rows, row{
+		toRow := func(c SecureCredential) row {
+			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
 				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
 				HasSecret: c.Type != SecureCredNone,
-			})
+			}
+		}
+		// ?name=<name> returns the SINGLE record — the edit form's Source. The
+		// secret is never included, so leaving the form's secret field blank keeps
+		// the stored value.
+		if name := strings.TrimSpace(r.URL.Query().Get("name")); name != "" {
+			c, found := Secure().LoadUser(user, name)
+			if !found {
+				http.Error(w, "no such credential", http.StatusNotFound)
+				return
+			}
+			writeJSON(w, toRow(c))
+			return
+		}
+		rows := []row{}
+		for _, c := range Secure().ListUser(user) {
+			rows = append(rows, toRow(c))
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
@@ -238,21 +253,52 @@ func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
-		var body struct {
-			Name  string `json:"name"`
-			Adopt bool   `json:"adopt"`
+		// Accept the toggle either as a JSON body ({name, adopt}) or as query
+		// params (?name=&adopt=true) — the latter lets a declarative table
+		// RowAction button drive it with no client script.
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		adopt := r.URL.Query().Get("adopt") == "true"
+		if name == "" {
+			var body struct {
+				Name  string `json:"name"`
+				Adopt bool   `json:"adopt"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			name, adopt = strings.TrimSpace(body.Name), body.Adopt
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		if err := SetGlobalToolAdopted(AuthDB(), user, strings.TrimSpace(body.Name), body.Adopt); err != nil {
+		if err := SetGlobalToolAdopted(AuthDB(), user, name, adopt); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// credentialFormFields is the shared field list for the "My API credentials" add
+// (modal) and edit (row Expand) forms — the user-namespace counterpart to the
+// admin credential form, trimmed to the simple key-based types (no OAuth2, which
+// stays admin-managed). Type-specific inputs collapse via ShowWhen; the secret is
+// a password that stays blank on edit (leaving it blank keeps the stored value).
+func credentialFormFields() []ui.FormField {
+	return []ui.FormField{
+		{Field: "name", Label: "Name", Placeholder: "github_api", Help: "snake_case. Becomes fetch_url_<name> for your agents. Re-using a name updates that credential."},
+		{Field: "type", Label: "Type", Type: "select", Options: []ui.SelectOption{
+			{Value: "bearer", Label: "Bearer (Authorization: Bearer ...)"},
+			{Value: "header", Label: "Custom header"},
+			{Value: "query", Label: "Query param"},
+			{Value: "basic_auth", Label: "HTTP Basic (user:pass)"},
+			{Value: "none", Label: "No auth (public API)"},
+		}},
+		{Field: "param_name", Label: "Header / Param name", Placeholder: "X-Api-Key or api_key", ShowWhen: "type:header|query"},
+		{Field: "base_url", Label: "Base URL", Placeholder: "https://api.example.com", Help: "The server this credential talks to. Requests are allowed only under this host."},
+		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. Leave blank when editing to keep the stored value."},
+		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first. Use for anything that reaches real people or spends money."},
+		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to your agents as the tool description."},
 	}
 }
 
@@ -263,23 +309,108 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 	sections := []ui.Section{
 		{
 			Title:    "My API credentials",
-			Subtitle: "API keys you own and manage yourself. They live in your namespace — only your agents can dispatch through them, and they never appear on the admin page. Secrets are stored encrypted and never shown to the assistant.",
-			Body:     ui.Card{HTML: credentialsHTML},
-		},
-		{
-			Title:    "Connected accounts",
-			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
-			Body:     ui.Card{HTML: connectionsHTML},
+			Wide:     true,
+			Subtitle: "API keys you own and manage yourself. They live in your namespace — only your agents can dispatch through them (as fetch_url_<name>), and they never appear on the admin page. Secrets are stored encrypted and never shown to the assistant.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Table{
+					Source: "api/credentials",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "name", Flex: 1},
+						{Field: "type", Mute: true},
+						{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
+					},
+					RowActions: []ui.RowAction{
+						ui.Expand("Edit", ui.FormPanel{
+							Source:      "api/credentials?name={name}",
+							PostURL:     "api/credentials",
+							SubmitLabel: "Save changes",
+							Fields:      credentialFormFields(),
+						}),
+						{Type: "button", Label: "Delete", Method: "DELETE",
+							PostTo:     "api/credentials?name={name}",
+							Variant:    "danger",
+							Confirm:    "Delete this credential? Agents and tools using it stop working.",
+							Optimistic: true},
+					},
+					EmptyText: "No credentials yet. Add one to let your agents call an API as you.",
+				},
+				ui.ModalButton{
+					Label:    "Add credential",
+					Title:    "Add API credential",
+					Subtitle: "Pick a type. Bearer / header / query / basic attach a static secret; \"No auth\" is for a public API.",
+					Variant:  "primary",
+					Width:    "560px",
+					Body: ui.FormPanel{
+						PostURL:     "api/credentials",
+						SubmitLabel: "Create credential",
+						Fields:      credentialFormFields(),
+					},
+				},
+			}},
 		},
 		{
 			Title:    "My tools",
-			Subtitle: "Tools you've had the assistant build for you, live in your own pool. Ask in chat to create or change one; delete here to retire any that misbehave.",
-			Body:     ui.Card{HTML: userToolsHTML},
+			Subtitle: "Tools you've had the assistant build for you, in your own pool. Ask in chat to create or change one; delete here to retire any that misbehave.",
+			Body: ui.Table{
+				Source: "api/tools",
+				RowKey: "name",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 1},
+					{Field: "mode", Mute: true},
+					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Shared", Color: "info"},
+					}},
+					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "⚠ missing", Color: "danger"},
+					}},
+					{Field: "description", Mute: true, Flex: 2},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Delete", Method: "DELETE",
+						PostTo:     "api/tools?name={name}",
+						Variant:    "danger",
+						Confirm:    "Delete this tool? Agents using it lose it.",
+						Optimistic: true},
+				},
+				EmptyText: "No tools yet. Ask the assistant in chat to build one for you.",
+			},
 		},
 		{
 			Title:    "Global tools",
 			Subtitle: "Shared tools your deployment publishes. Add the ones you want and they become available to your agents; remove any you don't use.",
-			Body:     ui.Card{HTML: globalToolsHTML},
+			Body: ui.Table{
+				Source: "api/global-tools",
+				RowKey: "name",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 1},
+					{Field: "mode", Mute: true},
+					{Field: "adopted", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Added", Color: "success"},
+					}},
+					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "⚠ missing", Color: "danger"},
+					}},
+					{Field: "description", Mute: true, Flex: 2},
+				},
+				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Add", Method: "POST",
+						PostTo:     "api/global-tools?name={name}&adopt=true",
+						HideIf:     "adopted",
+						Optimistic: true},
+					{Type: "button", Label: "Remove", Method: "POST",
+						PostTo:     "api/global-tools?name={name}&adopt=false",
+						OnlyIf:     "adopted",
+						Optimistic: true},
+				},
+				EmptyText: "No global tools published yet. When your deployment shares one, it appears here to add.",
+			},
+		},
+		{
+			Title:    "Connected accounts",
+			Wide:     true,
+			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
+			Body:     ui.Card{HTML: connectionsHTML},
 		},
 	}
 	ui.Page{
@@ -287,7 +418,8 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		ShowTitle: true,
 		BackURL:   "/",
 		Nav:       HubNav("/gateways"), // shared hub tabs, Gateways active
-		MaxWidth:  "640px",
+		MaxWidth:  "1200px",            // wide, admin-style: full-width tables in a two-column grid
+		Grid:      true,                // two-column section grid (Wide sections span both)
 		Sections:  sections,
 	}.ServeHTTP(w, r)
 }
