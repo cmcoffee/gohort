@@ -77,8 +77,13 @@ gating by user, and splitting the surfaces.
    credential-access model: `AllowedUsers` on the credential (enforced by the
    session user), the pre-existing `DisabledCredentials` as the per-agent
    refinement. Replaces the per-agent `EnabledCredentials` experiment.
-2. **Classify + filter.** Mark credentials/tools global vs user-owned (Owner-based);
-   the admin page filters to the global namespace.
+2. **Classify (SHIPPED) + filter (deferred to phase 3).** Credentials gained an
+   `Owner` field: empty = global (admin surface, gated by `AllowedUsers`), a
+   username = user-owned (that user's namespace only — enforced as `AllowedUsers ==
+   [Owner]`). Tools were already owner-namespaced. The admin shows a Global /
+   User-owned badge. **Filtering** the admin to global-only is deliberately held
+   until phase 3 — hiding user-owned resources before users have a surface to
+   manage them would orphan them in the UI.
 3. **User namespace surface.** Where a user manages their own credentials + tools
    (Account page or a per-user console).
 4. **Global-tool opt-in flow.** A catalog users pick global tools from into their

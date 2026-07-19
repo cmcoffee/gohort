@@ -1057,6 +1057,16 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Columns: []ui.Col{
 								{Field: "name", Flex: 1},
 								{Field: "type", Mute: true},
+								// Namespace: global (this admin surface) vs user-owned.
+								// Every credential here is global today; the badge makes
+								// the classification visible as user namespaces land.
+								{
+									Field: "namespace", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: "global", Label: "Global", Color: "mute"},
+										{Value: "user", Label: "User-owned", Color: "info"},
+									},
+								},
 								// Status badges — at-a-glance current state.
 								{
 									Field: "disabled", Type: "badge",

@@ -130,6 +130,15 @@ type SecureCredential struct {
 	// its records' inert `restricted` flag is ignored on decode, so they
 	// read as Open. Open vs Secured is the whole ladder now.)
 	Secured bool `json:"secured,omitempty"`
+	// Owner classifies the credential's NAMESPACE. Empty = GLOBAL (a
+	// deployment/system credential — what the admin page manages; access gated by
+	// AllowedUsers). A username = USER-OWNED (lives in that user's namespace —
+	// only their own sessions may use it, as if AllowedUsers were exactly
+	// [Owner]). Admin-created credentials are global; user-created ones (via the
+	// future user surface, phase 3) carry their owner. A hybrid
+	// (cred_scope=per_user) stays GLOBAL config with per-user SECRETS — Owner is
+	// still empty for it. See docs/tool-credential-namespacing.md.
+	Owner string `json:"owner,omitempty"`
 	// AllowedUsers is TIER 1 of credential access: which USERS may dispatch
 	// through this credential. Empty = all users (open). Non-empty = only those
 	// usernames — the scalable per-user grant that lives on the credential (vs. a

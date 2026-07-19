@@ -23,8 +23,20 @@ func TestCredentialAllowedUsers(t *testing.T) {
 	if err := Secure().Save(SecureCredential{Name: "team", Type: SecureCredBearer, BaseURL: "https://t.test", AllowedUsers: []string{"alice"}}, "t"); err != nil {
 		t.Fatal(err)
 	}
+	// "mine" is USER-OWNED by alice (her namespace) — only her sessions may use it.
+	if err := Secure().Save(SecureCredential{Name: "mine", Type: SecureCredBearer, BaseURL: "https://m.test", Owner: "alice"}, "t"); err != nil {
+		t.Fatal(err)
+	}
 
 	agent := AgentRecord{Name: "A", Owner: "alice"}
+
+	// Namespace classification: alice may use her own "mine"; bob may not.
+	if deny := credentialDenySet(agent, "alice"); deny["mine"] {
+		t.Fatalf("owner must be able to use their own credential; got %v", deny)
+	}
+	if deny := credentialDenySet(agent, "bob"); !deny["mine"] {
+		t.Fatalf("a user-owned credential must be denied to non-owners; got %v", deny)
+	}
 
 	// Tier 1: alice (granted) is denied nothing; bob (not granted) is denied "team",
 	// never "open".

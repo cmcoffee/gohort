@@ -1154,6 +1154,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				// "open" (generic call tool + auto-route + per-agent scope) or
 				// "secured" (tool-locked; off auto-route + scope).
 				AccessLevel string `json:"access_level"`
+				// Namespace classifies the credential: "global" (Owner empty — this
+				// admin surface manages it) vs "user" (owned by a user's namespace).
+				Namespace string `json:"namespace"`
 			}
 			creds := Secure().ListWithPending()
 			rows := make([]credRow, len(creds))
@@ -1166,7 +1169,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				if c.Secured {
 					level = "secured"
 				}
-				rows[i] = credRow{SecureCredential: c, Orphaned: orphaned, AccessLevel: level}
+				ns := "global"
+				if c.Owner != "" {
+					ns = "user"
+				}
+				rows[i] = credRow{SecureCredential: c, Orphaned: orphaned, AccessLevel: level, Namespace: ns}
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(rows)
