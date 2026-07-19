@@ -1117,6 +1117,34 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									},
 									EmptyText: "No tool uses this credential.",
 								}),
+								// Bindings — for a SECURED credential, the tools an
+								// admin has approved to declare it, the requests
+								// awaiting review, and revoked tombstones. Approve a
+								// pending request → the tool dispatches through the cred
+								// (secret server-side) and access follows the tool's own
+								// scope; Revoke → dispatch refuses it until re-approved.
+								// Only meaningful when Secured (Open creds aren't bound).
+								ui.ExpandIf("Bindings", "secured", "", ui.Table{
+									Source: "api/secure-api?bindings={name}",
+									RowKey: "tool",
+									Columns: []ui.Col{
+										{Field: "tool", Label: "Tool", Flex: 1},
+										{Field: "status", Label: "Status", Type: "badge", Badges: []ui.BadgeMapping{
+											{Value: "approved", Label: "Approved", Color: "success"},
+											{Value: "pending", Label: "Pending review", Color: "warning"},
+											{Value: "revoked", Label: "Revoked", Color: "danger"},
+										}},
+									},
+									RowActions: []ui.RowAction{
+										{Type: "button", Label: "Approve", Method: "POST",
+											PostTo: "api/secure-api?action=approve_binding&name={cred}&tool={tool}",
+											HideIf: "_approved"},
+										{Type: "button", Label: "Revoke", Method: "POST", Variant: "danger",
+											PostTo: "api/secure-api?action=revoke_binding&name={cred}&tool={tool}",
+											HideIf: "_revoked"},
+									},
+									EmptyText: "No tool bindings yet. A tool that declares this secured credential lands here for approval.",
+								}),
 								// Scope pill — per-agent revoke of this credential
 								// (global by default). Denying it on an agent drops
 								// every tool that dispatches through it from that

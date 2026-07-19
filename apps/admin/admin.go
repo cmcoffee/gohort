@@ -1104,6 +1104,35 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				json.NewEncoder(w).Encode(refs)
 				return
 			}
+			// Tool-binding rows for a SECURED credential: what's approved, what's
+			// awaiting review, and what's been revoked (tombstoned). Drives the
+			// Bindings expand + its Approve/Revoke actions. Each row carries the
+			// credential name so a row action can address both cred + tool.
+			if name := strings.TrimSpace(r.URL.Query().Get("bindings")); name != "" {
+				type bindingRow struct {
+					Cred     string `json:"cred"`
+					Tool     string `json:"tool"`
+					Status   string `json:"status"`
+					Pending  bool   `json:"_pending,omitempty"`
+					Approved bool   `json:"_approved,omitempty"`
+					Revoked  bool   `json:"_revoked,omitempty"`
+				}
+				rows := []bindingRow{}
+				if c, ok := Secure().Load(name); ok {
+					for _, t := range c.ApprovedToolBindings {
+						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "approved", Approved: true})
+					}
+					for _, t := range c.PendingToolBindings {
+						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "pending", Pending: true})
+					}
+					for _, t := range c.RevokedToolBindings {
+						rows = append(rows, bindingRow{Cred: name, Tool: t, Status: "revoked", Revoked: true})
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(rows)
+				return
+			}
 			// Single-record fetch for the declarative edit form's Source.
 			// Returns one credential as an object (secret never included —
 			// the password field stays blank on edit, which keeps the
@@ -1202,6 +1231,31 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
+				case "approve_binding":
+					// Admin approves a tool's request to bind this secured cred —
+					// the tool can then dispatch through it (secret server-side), and
+					// access follows the tool's own scope. Clears any revoke tombstone.
+					tool := strings.TrimSpace(r.URL.Query().Get("tool"))
+					if tool == "" {
+						http.Error(w, "missing tool", http.StatusBadRequest)
+						return
+					}
+					if err := Secure().ApproveToolBinding(name, tool); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				case "revoke_binding":
+					// Admin revokes a binding — tombstoned, so dispatch refuses it
+					// (the tool stays, but can't reach the cred until re-approved).
+					tool := strings.TrimSpace(r.URL.Query().Get("tool"))
+					if tool == "" {
+						http.Error(w, "missing tool", http.StatusBadRequest)
+						return
+					}
+					if err := Secure().RevokeToolBinding(name, tool); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
 				case "test":
 					// Mint-and-discard an OAuth token to verify the config +
 					// secret before relying on the credential. Returns the
@@ -1216,7 +1270,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
 					return
 				default:
-					http.Error(w, "action must be enable|disable|secure|unsecure|access|test", http.StatusBadRequest)
+					http.Error(w, "action must be enable|disable|secure|unsecure|access|approve_binding|revoke_binding|test", http.StatusBadRequest)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)

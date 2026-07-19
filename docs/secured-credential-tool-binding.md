@@ -99,7 +99,15 @@ Securing a credential moves access control from the **credential** plane to the
     instead of re-grandfathered. Grandfathering is safe because only a tool that
     already DECLARES the cred can reach dispatch, and slice-1 authoring blocks
     declaring a secured cred without approval.
-  - **Slice 3:** an admin approve/revoke action wired to a UI (see P3).
+  - **Slice 3 SHIPPED (admin UI):** a **Bindings** expand on each SECURED
+    credential's row (Admin > APIs) lists its tool bindings by status — Approved
+    / Pending review / Revoked — with per-row **Approve** and **Revoke** buttons.
+    Backed by `GET api/secure-api?bindings={cred}` (rows carry cred+tool+status)
+    and `POST api/secure-api?action={approve,revoke}_binding&name={cred}&tool={tool}`
+    → `Secure().{Approve,Revoke}ToolBinding`. So a pending request from slice-1
+    authoring is now approvable from the UI (no direct method call), and revoke
+    → slice-2 dispatch refuses the tool (watch monitors then fail-safe via the
+    failure circuit breaker).
 - **P2** — binding edit-lock (wiring immutable without re-review).
 - **P3** — admin surface: bound-tools list + effective-access view + revoke.
 
