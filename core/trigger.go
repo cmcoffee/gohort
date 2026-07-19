@@ -398,7 +398,10 @@ func evaluateGate(ctx context.Context, db Database, t ScheduledTrigger) (fire bo
 			SaveScheduledTrigger(db, cur) // baseline only — don't fire on first poll
 			return false, ""
 		}
-		s, suppress := formatWatchAlert(ctx, cur.Owner, cur.Name, cur.FormatScript, prior, body)
+		// A no-LLM action (notify=direct/text) posts verbatim; only a channel
+		// wake (ActionCallback / notify=channel) gets the diff wrapper.
+		directNotify := cur.Notify == EventNotifyDirect || cur.Notify == EventNotifyText
+		s, suppress := formatWatchAlert(ctx, cur.Owner, cur.Name, cur.FormatScript, prior, body, directNotify)
 		SaveScheduledTrigger(db, cur) // advance baseline regardless
 		if suppress {
 			return false, "" // format_script printed nothing — intentional skip

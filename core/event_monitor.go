@@ -803,7 +803,12 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// Build the alert text. A format_script (sandboxed python) shapes the
 	// notification; empty stdout is its "skip this change" signal (suppress),
 	// while a script error / no script falls back to the built-in diff.
-	summary, suppress := buildWatchSummary(ctx, cur, prior, body)
+	// No-LLM deliveries (direct-to-channel, or text-to-phone) get the tool's
+	// output verbatim; only a channel wake (LLM in the loop) gets the diff
+	// wrapper. deliver_to already forces Notify=direct upstream, so Notify
+	// alone is the signal.
+	direct := m.Notify == EventNotifyDirect || m.Notify == EventNotifyText
+	summary, suppress := buildWatchSummary(ctx, cur, prior, body, direct)
 	if suppress {
 		// Intentional skip: the baseline was already advanced above, so persist
 		// it and stay quiet. The next poll diffs against THIS body, not the
@@ -851,8 +856,8 @@ func addedLinesContain(prior, current, needle string) bool {
 	return false
 }
 
-func buildWatchSummary(ctx context.Context, m EventMonitor, prior, current string) (summary string, suppress bool) {
-	return formatWatchAlert(ctx, m.Owner, m.Name, m.FormatScript, prior, current)
+func buildWatchSummary(ctx context.Context, m EventMonitor, prior, current string, direct bool) (summary string, suppress bool) {
+	return formatWatchAlert(ctx, m.Owner, m.Name, m.FormatScript, prior, current, direct)
 }
 
 // formatWatchAlert produces the alert text for a change/watch fire, decoupled
@@ -862,7 +867,17 @@ func buildWatchSummary(ctx context.Context, m EventMonitor, prior, current strin
 // and SUPPRESSES the wake (second return = true). A script error or no script
 // falls back to the built-in diff + current-output summary so a real change
 // still fires.
-func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, current string) (summary string, suppress bool) {
+//
+// direct=true marks a NO-LLM delivery (notify=direct to a channel, or text to a
+// phone): nothing downstream reads the text to react — it lands verbatim in
+// front of a human. There the "Watch monitor X detected a change / What changed
+// / Current output" wrapper is just noise, especially for a tool that already
+// emits a finished line ("SouthPawn has left TeamSpeak."). So a direct delivery
+// with no format_script posts the tool's current output verbatim (HTTP status
+// prefix stripped); an empty current suppresses rather than posting a blank
+// line. Agent-wake (notify=channel, direct=false) keeps the diff wrapper — the
+// LLM benefits from the before/after context.
+func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, current string, direct bool) (summary string, suppress bool) {
 	if strings.TrimSpace(formatScript) != "" {
 		// Hand the script the body (HTTP status line split off, so json.loads
 		// works directly) AND the status line separately, so a script that wants
@@ -892,8 +907,20 @@ func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, cur
 			return "", true
 		}
 	}
-	// Built-in: lead with WHAT changed (added/removed lines), then the current
-	// output for context.
+	// Direct/no-LLM delivery: post the tool's output verbatim, no diagnostic
+	// wrapper. Strip any leading "HTTP <code>" line an api-mode tool prepends so
+	// a channel post stays clean; an empty body means "nothing to say" — suppress
+	// rather than dropping a blank line into the channel.
+	if direct {
+		_, body := SplitHTTPStatus(current)
+		body = strings.TrimSpace(body)
+		if body == "" {
+			return "", true
+		}
+		return truncateEvent(body, 1200), false
+	}
+	// Built-in (agent-wake): lead with WHAT changed (added/removed lines), then
+	// the current output for context.
 	summary = fmt.Sprintf("Watch monitor %q detected a change.", name)
 	if d := diffLines(prior, current); d != "" {
 		summary += "\n\nWhat changed:\n" + d

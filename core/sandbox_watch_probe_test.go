@@ -35,7 +35,7 @@ print("prior_len=%d current_len=%d" % (len(d["prior"]), len(d["current"])))`
 	}
 
 	// And confirm formatWatchAlert (the watcher's actual call) returns that text.
-	summary, suppress := formatWatchAlert(context.Background(), "tester", "probe", script, "No clients connected.", `[{"clid":"170"}]`)
+	summary, suppress := formatWatchAlert(context.Background(), "tester", "probe", script, "No clients connected.", `[{"clid":"170"}]`, false)
 	t.Logf("formatWatchAlert summary=%q suppress=%v", summary, suppress)
 	if suppress || strings.TrimSpace(summary) == "" {
 		t.Fatalf("formatWatchAlert suppressed a script that prints output: suppress=%v summary=%q", suppress, summary)

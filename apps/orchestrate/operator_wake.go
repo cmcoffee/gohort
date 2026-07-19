@@ -130,34 +130,54 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// — a phantom-origin watcher (DeliverChatID set) into that conversation
 		// (e.g. the group); otherwise into the Agency channel thread.
 		if modes[EventNotifyDirect] {
-			if chatTarget != "" {
-				if link, ok := ActiveMessagingLink(); ok {
-					if err := link.SendToChat(owner, chatTarget, summary); err == nil {
-						delivered = true
-						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
-					} else {
-						Log("[operator.wake] %s/%s notify=direct send to chat %s failed: %v", owner, monitorName, chatTarget, err)
-					}
-				} else {
-					Log("[operator.wake] %s/%s notify=direct but phantom bridge unavailable", owner, monitorName)
+			// A direct fire does NOT wake the agent (no LLM turn — that's the whole
+			// point of direct). But it should still leave a durable trace in the
+			// agent's cortex session — an event-monitor card — so the agent has
+			// CONTEXT that the monitor fired next time it runs, EVEN when the alert
+			// went straight out to an external channel. recordMonitorCard appends
+			// that card without running the agent. Same ReportKind the in-thread
+			// direct path already used, so it renders as a monitor card either way.
+			recordMonitorCard := func(content string) bool {
+				udb := UserDB(app.DB, owner)
+				if udb == nil {
+					return false
 				}
-			} else if udb := UserDB(app.DB, owner); udb != nil {
 				sess, ok := loadChatSession(udb, wakeAgent, wakeSession)
 				if !ok {
 					sess = ChatSession{ID: wakeSession, AgentID: wakeAgent}
 				}
 				sess.Messages = append(sess.Messages, ChatMessage{
 					Role:       "assistant",
-					Content:    summary,
+					Content:    content,
 					Created:    time.Now(),
 					ReportFrom: monitorName,
 					ReportKind: cortexKindMonitor,
 				})
-				if _, err := saveChatSession(udb, sess); err == nil {
-					delivered = true
-				} else {
-					Log("[operator.wake] %s/%s notify=direct save failed: %v", owner, monitorName, err)
+				if _, err := saveChatSession(udb, sess); err != nil {
+					Log("[operator.wake] %s/%s record monitor card failed: %v", owner, monitorName, err)
+					return false
 				}
+				return true
+			}
+			if chatTarget != "" {
+				// External channel (a phantom chat / group): post the alert out,
+				// THEN record the card so the agent sees it fired. A failed external
+				// send leaves delivered=false so the never-drop fallback wake still
+				// fires — the card is a trace, not a substitute for delivery.
+				if link, ok := ActiveMessagingLink(); ok {
+					if err := link.SendToChat(owner, chatTarget, summary); err == nil {
+						delivered = true
+						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
+						recordMonitorCard(fmt.Sprintf("%s\n\n(auto-posted directly to %s — no reply needed)", summary, chatTarget))
+					} else {
+						Log("[operator.wake] %s/%s notify=direct send to chat %s failed: %v", owner, monitorName, chatTarget, err)
+					}
+				} else {
+					Log("[operator.wake] %s/%s notify=direct but phantom bridge unavailable", owner, monitorName)
+				}
+			} else if recordMonitorCard(summary) {
+				// No external target: the cortex card IS the delivery.
+				delivered = true
 			}
 		}
 
