@@ -92,3 +92,50 @@ func TestCredentialUserNamespaceStore(t *testing.T) {
 		t.Fatal("DeleteUser hit the wrong user")
 	}
 }
+
+// TestBuildToolsUserNamespace covers the auto-catalog: BuildTools surfaces the
+// session user's OWN credentials as fetch_url_<name> tools, a nil session sees
+// global-only, and a user cred shadows a same-named global (one tool, not two).
+func TestBuildToolsUserNamespace(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	save := func(name, owner, secret string) {
+		if err := s.Save(SecureCredential{Name: name, Owner: owner, Type: SecureCredBearer, BaseURL: "https://x.test"}, secret); err != nil {
+			t.Fatalf("save %s/%s: %v", owner, name, err)
+		}
+	}
+	save("shared", "", "gk")    // global-only
+	save("dup", "", "gk")       // global, shadowed by alice's
+	save("dup", "alice", "ak")  // alice's own, same name as the global
+	save("mine", "alice", "ak") // alice-only
+
+	names := func(sess *ToolSession) (map[string]bool, int) {
+		m := map[string]bool{}
+		dup := 0
+		for _, td := range s.BuildTools(sess) {
+			m[td.Tool.Name] = true
+			if td.Tool.Name == "fetch_url_dup" {
+				dup++
+			}
+		}
+		return m, dup
+	}
+
+	// Nil session (headless) → global namespace only.
+	g, _ := names(nil)
+	if !g["fetch_url_shared"] || g["fetch_url_mine"] {
+		t.Fatalf("nil-session BuildTools must be global-only; got %v", g)
+	}
+	// Alice's session → her own + global; fetch_url_dup appears exactly once.
+	a, dup := names(&ToolSession{Username: "alice"})
+	if !a["fetch_url_mine"] || !a["fetch_url_shared"] || !a["fetch_url_dup"] {
+		t.Fatalf("alice must see her own + global tools; got %v", a)
+	}
+	if dup != 1 {
+		t.Fatalf("fetch_url_dup must appear once (user shadows global); got %d", dup)
+	}
+	// Bob's session → global only; alice's creds are invisible to him.
+	b, _ := names(&ToolSession{Username: "bob"})
+	if b["fetch_url_mine"] || !b["fetch_url_shared"] {
+		t.Fatalf("bob must not see alice's creds; got %v", b)
+	}
+}

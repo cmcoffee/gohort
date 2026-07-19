@@ -1046,29 +1046,48 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	allKeys := s.db.Keys(secureAPITable)
 	creds := s.List()
 	out := make([]AgentToolDef, 0, len(creds))
-	for _, c := range creds {
-		if c.Disabled || c.Secured {
-			// Disabled = hard kill; Secured = tool-locked. Neither gets a direct
-			// LLM-callable fetch_url_<name> (for Secured that would hand the
-			// default pool access, defeating the lock). Dispatch via
-			// DispatchToolCall (api-mode temp tools / declaring wrappers) is
-			// unaffected.
-			continue
+	// seen dedupes by NAME so the session user's OWN credential shadows a global
+	// of the same name — matching Resolve's dispatch-time precedence. A name is
+	// marked seen even when it yields no tool (disabled/secured/none) so a global
+	// can't slip in behind a user cred the owner deliberately turned off.
+	seen := map[string]bool{}
+	emit := func(cs []SecureCredential) {
+		for _, c := range cs {
+			if seen[c.Name] {
+				continue
+			}
+			seen[c.Name] = true
+			if c.Disabled || c.Secured {
+				// Disabled = hard kill; Secured = tool-locked. Neither gets a
+				// direct LLM-callable fetch_url_<name> (for Secured that would
+				// hand the default pool access, defeating the lock). Dispatch via
+				// DispatchToolCall (api-mode temp tools / declaring wrappers) is
+				// unaffected.
+				continue
+			}
+			// SecureCredNone (the bootstrapped "no_auth" credential) is
+			// the policy storage for the bare fetch_url tool — operators
+			// tune its AllowedURLPattern / rate limit / audit verbosity to
+			// scope unauthenticated HTTP. Do NOT generate a separate
+			// fetch_url_no_auth tool — fetch_url already covers that path
+			// and dispatches through this credential for the same policy.
+			// Exposing it as a parallel LLM-callable would be a redundant
+			// catalog entry and force the LLM to disambiguate two tools
+			// that do the same thing.
+			if c.Type == SecureCredNone {
+				continue
+			}
+			out = append(out, s.agentToolFromCredential(c, sess))
 		}
-		// SecureCredNone (the bootstrapped "no_auth" credential) is
-		// the policy storage for the bare fetch_url tool — operators
-		// tune its AllowedURLPattern / rate limit / audit verbosity to
-		// scope unauthenticated HTTP. Do NOT generate a separate
-		// fetch_url_no_auth tool — fetch_url already covers that path
-		// and dispatches through this credential for the same policy.
-		// Exposing it as a parallel LLM-callable would be a redundant
-		// catalog entry and force the LLM to disambiguate two tools
-		// that do the same thing.
-		if c.Type == SecureCredNone {
-			continue
-		}
-		out = append(out, s.agentToolFromCredential(c, sess))
 	}
+	// The session user's OWN credentials come first (they shadow same-named
+	// globals). This is what makes a user-owned credential a first-class
+	// fetch_url_<name> tool for the owner's agents — without it, a cred created
+	// on the Account page would be reachable only via a temp-tool fetch_via.
+	if u := sessUsername(sess); u != "" {
+		emit(s.ListUser(u))
+	}
+	emit(creds)
 	// Decode-mismatch diagnostic: only fires on the genuine failure
 	// shape — the table has keys but nothing deserialized into a
 	// SecureCredential. Empty-output states caused by Disabled or
