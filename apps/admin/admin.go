@@ -1279,6 +1279,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				AllowedURLPattern string   `json:"allowed_url_pattern"`
 				BaseURL           string   `json:"base_url"`
 				AllowedEndpoints  []string `json:"allowed_endpoints"`
+				AllowedUsers      []string `json:"allowed_users"`
 				ParamName         string   `json:"param_name"`
 				Description       string   `json:"description"`
 				CredScope         string   `json:"cred_scope"`
@@ -1312,6 +1313,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				AllowedURLPattern: strings.TrimSpace(req.AllowedURLPattern),
 				BaseURL:           strings.TrimSpace(req.BaseURL),
 				AllowedEndpoints:  req.AllowedEndpoints,
+				AllowedUsers:      req.AllowedUsers,
 				ParamName:         strings.TrimSpace(req.ParamName),
 				Description:       strings.TrimSpace(req.Description),
 				CredScope:         strings.TrimSpace(req.CredScope),

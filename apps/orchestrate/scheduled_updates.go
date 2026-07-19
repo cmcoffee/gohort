@@ -319,7 +319,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		Username:          p.Username,
 		DB:                udb,
 		ChatSessionID:     schedSessID,
-		DeniedCredentials: credentialDenySet(agent),
+		DeniedCredentials: credentialDenySet(agent, p.Username),
 	}
 	if ws, werr := EnsureWorkspaceDir(p.Username); werr == nil {
 		subSess.WorkspaceDir = ws

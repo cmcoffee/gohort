@@ -1558,7 +1558,7 @@ func (t *chatTurn) newToolSession() *ToolSession {
 	// tool + script gohort.fetch_url) blocks a covered host whose credential
 	// is revoked, closing the bypass that the tool-kit filter alone leaves
 	// open (a plain fetch to the host instead of a credential-bound tool).
-	sess.DeniedCredentials = credentialDenySet(t.agent)
+	sess.DeniedCredentials = credentialDenySet(t.agent, sess.Username)
 	// Tag with the active chat session id so SaveSessionTempTool /
 	// LoadSessionTempTools can scope tool drafts to this conversation.
 	// Tools the LLM authors mid-conversation (via create_pipeline_tool
@@ -4777,12 +4777,11 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, lazyPromptSection string) {
 	allCustomTools := temptool.BuildAgentToolDefs(sess)
 	// Credential scope enforcement: drop any tool whose backing credential this
-	// agent may not use. credentialDenySet resolves the agent's effective deny set
-	// under either model — the EnabledCredentials allow-list (deny = open creds not
-	// allowed) or the legacy DisabledCredentials deny-list. The backing TempTool
-	// carries .Credential; api/toolbox tools have one, shell tools don't (empty →
-	// never denied).
-	if deny := credentialDenySet(t.agent); len(deny) > 0 {
+	// agent may not use. credentialDenySet resolves the effective deny set — tier 1
+	// (a credential's AllowedUsers vs the session user) ∪ tier 2 (the agent's own
+	// DisabledCredentials opt-outs). The backing TempTool carries .Credential;
+	// api/toolbox tools have one, shell tools don't (empty → never denied).
+	if deny := credentialDenySet(t.agent, sess.Username); len(deny) > 0 {
 		kept := allCustomTools[:0]
 		var dropped []string
 		for _, td := range allCustomTools {

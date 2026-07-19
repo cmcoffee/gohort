@@ -228,6 +228,7 @@ func credentialFormFields() []ui.FormField {
 		{Field: "safety", Type: "header", Label: "Safety + limits"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://192.168.0.1", Help: "The server this credential talks to. Requests are allowed only under this host (and the endpoints below). This is where you change which server it reaches."},
 		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call. e.g. /api/* allows everything under /api/ ; /api/core/* scopes to one module. Add/remove entries. Leave empty to allow ANY path under the Base URL."},
+		{Field: "allowed_users", Label: "Allowed Users", Type: "tags", Help: "Which users may use this credential (their agents). Empty = ALL users. Add usernames to restrict it to just them — the scalable per-user grant. A user then refines which of their own agents can use it via the Access pill. (Secured credentials ignore this — their access follows their tool bindings.)"},
 		// (The legacy "Allowed URL pattern" single-glob field is retired
 		// from the form: two overlapping scoping fields kept misleading
 		// admins and LLMs about which applied. Old records that still

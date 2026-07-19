@@ -56,8 +56,6 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// api scope"). Everything else (prompt, AllowedTools authoring kit)
 			// still flows from the in-code seed.
 			seed.DisabledCredentials = shadow.DisabledCredentials
-			seed.CredAllowlist = shadow.CredAllowlist
-			seed.EnabledCredentials = shadow.EnabledCredentials
 			seed.DisabledPipelines = shadow.DisabledPipelines
 			seed.AttachedPipelines = shadow.AttachedPipelines
 			seed.DisabledPersistentTools = shadow.DisabledPersistentTools
@@ -691,12 +689,6 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 	if a.ID == "" {
 		a.ID = UUIDv4()
 		a.Created = now
-		// New agent → stamp the credential allow-list with a snapshot of the
-		// currently-registered open creds (least privilege: a credential added
-		// LATER won't silently reach this agent). migrateCredScope is a no-op if
-		// the record already carries an allow-list (e.g. a clone/import) or the
-		// credential store isn't ready.
-		a = migrateCredScope(a)
 	}
 	if a.Created.IsZero() {
 		a.Created = now

@@ -130,6 +130,16 @@ type SecureCredential struct {
 	// its records' inert `restricted` flag is ignored on decode, so they
 	// read as Open. Open vs Secured is the whole ladder now.)
 	Secured bool `json:"secured,omitempty"`
+	// AllowedUsers is TIER 1 of credential access: which USERS may dispatch
+	// through this credential. Empty = all users (open). Non-empty = only those
+	// usernames — the scalable per-user grant that lives on the credential (vs. a
+	// per-agent ACL the admin would have to manage across everyone). Applies to
+	// global/shared and hybrid (per-user-secret) credentials — the ones whose
+	// config lives on the admin page. User-OWNED credentials are governed by
+	// ownership instead. A user's per-agent opt-out is tier 2
+	// (AgentRecord.DisabledCredentials). Secured creds ignore this (their access
+	// follows the tool-binding model). See docs/tool-credential-namespacing.md.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
 	// ApprovedToolBindings is the authoritative "declaring tools" allowlist for a
 	// SECURED credential — the tools an admin has approved to bind (fetch_via /
 	// api-mode) and thereby dispatch through it. This is what makes access follow

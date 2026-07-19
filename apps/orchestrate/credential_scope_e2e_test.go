@@ -107,10 +107,9 @@ func TestCredentialDenyBuilder(t *testing.T) {
 	if agentOn(st, "seed-builder") {
 		t.Error("Builder credential deny did not stick — seed-builder still reads On=true (loadAgent dropped DisabledCredentials)")
 	}
-	// The shadow must carry the deny (write side). Touching scope migrates Builder
-	// to the allow-list, so the deny is expressed as ABSENCE from EnabledCredentials.
-	if a, _ := loadAgent(udb, "seed-builder"); !a.CredAllowlist || containsString(a.EnabledCredentials, cred) {
-		t.Errorf("builder deny must persist as absence from the allow-list — allowlist=%v enabled=%v", a.CredAllowlist, a.EnabledCredentials)
+	// The shadow must actually carry the deny (tier-2 per-agent opt-out).
+	if a, _ := loadAgent(udb, "seed-builder"); !containsString(a.DisabledCredentials, cred) {
+		t.Errorf("loadAgent(seed-builder) dropped DisabledCredentials — got %v", a.DisabledCredentials)
 	}
 }
 

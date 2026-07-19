@@ -18,81 +18,38 @@ func init() {
 	RegisterScopeProvider("credential", ScopeProvider{State: credentialScopeState, Set: setCredentialScope})
 }
 
-// openCredNames returns the names of every OPEN (non-secured) registered
-// credential — the set the allow-list gates. Secured creds are excluded: their
-// access follows the tool-binding model, not per-agent scope.
-func openCredNames() []string {
-	var out []string
-	for _, c := range Secure().List() {
-		if !c.Secured {
-			out = append(out, c.Name)
-		}
-	}
-	return out
-}
-
-// credentialDenySet builds the lookup set of credentials this agent may NOT
-// dispatch through. Dual-path during the deny→allow migration:
-//   - EnabledCredentials present (allow-list): deny = every open cred NOT in it,
-//     so a newly-registered cred is denied by default (least privilege).
-//   - EnabledCredentials nil (legacy): deny = DisabledCredentials, i.e. exactly
-//     the old behavior, so an un-migrated agent is unchanged.
+// credentialDenySet builds the set of credentials the agent — running in a
+// session for user `user` — may NOT dispatch through. Two tiers:
+//   - TIER 1 (per user, on the credential): a credential that grants specific
+//     users (AllowedUsers non-empty) denies this agent when `user` isn't listed.
+//   - TIER 2 (per agent, on the record): the agent's own DisabledCredentials
+//     opt-outs.
 //
-// Populated onto every ToolSession that runs this agent's loop so the fetch_url
-// auto-route enforces the same scope everywhere the agent can fetch.
-func credentialDenySet(a AgentRecord) map[string]bool {
-	if a.CredAllowlist {
-		allow := make(map[string]bool, len(a.EnabledCredentials))
-		for _, c := range a.EnabledCredentials {
-			allow[c] = true
+// `user` is the SESSION user, not agent.Owner — a system-owned seed agent runs on
+// behalf of whoever is in the session. Populated onto every ToolSession that runs
+// this agent's loop so the fetch_url auto-route enforces the same scope
+// everywhere the agent can fetch. See docs/tool-credential-namespacing.md.
+func credentialDenySet(a AgentRecord, user string) map[string]bool {
+	var deny map[string]bool
+	add := func(name string) {
+		if deny == nil {
+			deny = map[string]bool{}
 		}
-		var deny map[string]bool
-		for _, name := range openCredNames() {
-			if !allow[name] {
-				if deny == nil {
-					deny = map[string]bool{}
-				}
-				deny[name] = true
+		deny[name] = true
+	}
+	// Tier 1: user-granted credentials the session user isn't granted.
+	if user != "" {
+		for _, c := range Secure().List() {
+			if len(c.AllowedUsers) > 0 && !containsString(c.AllowedUsers, user) {
+				add(c.Name)
 			}
 		}
-		return deny
 	}
-	if len(a.DisabledCredentials) == 0 {
-		return nil
-	}
-	deny := make(map[string]bool, len(a.DisabledCredentials))
+	// Tier 2: this agent's per-agent opt-outs.
 	for _, c := range a.DisabledCredentials {
-		deny[c] = true
+		add(c)
 	}
 	return deny
-}
-
-// migrateCredScope converts a legacy (nil EnabledCredentials) agent to the
-// allow-list model, baking in its CURRENT effective access (every open cred it
-// isn't denying) so it loses nothing, then clearing the deny-list. Idempotent —
-// an already-migrated agent is returned unchanged. Called on any write to an
-// agent's credential scope. A no-op if the credential store isn't ready yet, so
-// enforcement never snapshots an empty (deny-all) list at startup.
-func migrateCredScope(a AgentRecord) AgentRecord {
-	if a.CredAllowlist {
-		return a
-	}
-	open := openCredNames()
-	if len(open) == 0 {
-		// No open creds registered (or the store isn't ready) — snapshotting now
-		// would bake a deny-all list. Leave legacy; enforcement uses the deny-list.
-		return a
-	}
-	enabled := []string{}
-	for _, name := range open {
-		if !containsString(a.DisabledCredentials, name) {
-			enabled = append(enabled, name)
-		}
-	}
-	a.CredAllowlist = true
-	a.EnabledCredentials = enabled
-	a.DisabledCredentials = nil
-	return a
 }
 
 // credentialScopeState builds the per-agent picture for a credential. Global
@@ -116,14 +73,8 @@ func credentialScopeState(db Database, owner, name string) (ToolScopeState, bool
 		if a.Hidden || a.OwnedBy != "" || isAppAgent(a.ID) {
 			continue
 		}
-		// Migrated (allow-list) agent → on = it's in the allow-list; legacy agent
-		// → on = not in the deny-list (unchanged reading).
-		on := true
-		if a.CredAllowlist {
-			on = containsString(a.EnabledCredentials, name)
-		} else {
-			on = !containsString(a.DisabledCredentials, name)
-		}
+		// Tier-2 per-agent view: on = this agent hasn't opted out of the cred.
+		on := !containsString(a.DisabledCredentials, name)
 		if !on {
 			allAllowed = false
 		}
@@ -148,36 +99,19 @@ func setCredentialScope(db Database, owner, name, target string, on bool) error 
 		return fmt.Errorf("no agent store for user %q", owner)
 	}
 
+	// Tier-2 per-agent opt-out toggle. on → allow (remove the opt-out); off → deny
+	// (add it). Tier-1 "which users" is managed on the credential (AllowedUsers).
 	setOne := func(a AgentRecord) error {
-		// Touching an agent's credential scope migrates it to the allow-list model
-		// (baking in its current access), then toggles membership.
-		a = migrateCredScope(a)
-		if !a.CredAllowlist {
-			// Store not ready to snapshot — fall back to the legacy deny-list toggle.
-			if on {
-				if !containsString(a.DisabledCredentials, name) {
-					return nil
-				}
-				a.DisabledCredentials = removeString(a.DisabledCredentials, name)
-			} else {
-				if containsString(a.DisabledCredentials, name) {
-					return nil
-				}
-				a.DisabledCredentials = append(a.DisabledCredentials, name)
-			}
-			_, err := saveAgent(udb, a)
-			return err
-		}
 		if on {
-			if containsString(a.EnabledCredentials, name) {
+			if !containsString(a.DisabledCredentials, name) {
 				return nil
 			}
-			a.EnabledCredentials = append(a.EnabledCredentials, name)
+			a.DisabledCredentials = removeString(a.DisabledCredentials, name)
 		} else {
-			if !containsString(a.EnabledCredentials, name) {
+			if containsString(a.DisabledCredentials, name) {
 				return nil
 			}
-			a.EnabledCredentials = removeString(a.EnabledCredentials, name)
+			a.DisabledCredentials = append(a.DisabledCredentials, name)
 		}
 		_, err := saveAgent(udb, a)
 		return err
