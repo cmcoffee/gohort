@@ -84,11 +84,59 @@ gating by user, and splitting the surfaces.
    User-owned badge. **Filtering** the admin to global-only is deliberately held
    until phase 3 — hiding user-owned resources before users have a surface to
    manage them would orphan them in the UI.
-3. **User namespace surface.** Where a user manages their own credentials + tools
-   (Account page or a per-user console).
+3. **User namespace surface.** Scoped below.
 4. **Global-tool opt-in flow.** A catalog users pick global tools from into their
    agents.
 5. **Multi-user hardening.** Per the tenancy map.
+
+## Phase 3 scope — the user namespace surface
+
+**Home:** the existing **Account page** (`apps/account`), already the per-user
+authenticated surface (Preferences, Connected accounts, API keys). We add
+user-namespace management there rather than a new console. Enforcement is *done*
+(phases 1-2): a user-owned credential is owner-only, a hybrid runs as the session
+user. Phase 3 is the **surface** + one real plumbing problem.
+
+### In scope — credentials (the axis we've built out)
+
+- **"My API Credentials"** — a user CRUDs their OWN credentials (stamped
+  `Owner = them`). Reuses the credential form; every op is scoped to
+  `Owner == currentUser`; these never appear on the admin page.
+- **"Global credential keys"** — for GLOBAL **hybrid** creds
+  (`cred_scope=per_user`) the user is granted (`AllowedUsers`), a place to paste
+  their own key (`SaveUserSecret`) — the non-OAuth counterpart to "Connected
+  accounts".
+
+### The crux — per-user storage keying
+
+The credential store is a single `name → record` namespace (`secureAPITable[name]`),
+so two users' `github` collide. **User-owned creds must be keyed by `(owner, name)`**
+— a per-user sub-store or key prefix — with owner-aware `Save`/`Load`/`List`.
+Global creds keep their bare-name keys. This keyed store is the main plumbing
+Phase 3 adds, and it's a prerequisite before any user can safely create one.
+
+### Rides with this: admin filtering
+
+The admin credential list now filters to `Owner == ""` (global only). Safe *now*,
+because user-owned creds have a home (the Account surface). This is the phase-2
+deferral, unblocked.
+
+### Deferred
+
+- **Tools user-surface + admin tool-filtering.** Tools are already per-owner in
+  the admin; giving users their own tool surface (and filtering the admin) is a
+  symmetric but separate chunk — do it after the credential surface proves the
+  pattern.
+- Global-tool opt-in catalog (phase 4); user enumeration / `AllowedUsers` picker /
+  user management (phase 5).
+
+### Open questions (phase 3)
+
+- User-owned cred names: globally unique, or per-user (needs the keyed store —
+  recommend **per-user**, since a user shouldn't have to avoid others' names).
+- Do user-owned creds need any scope? **No** — the owner's agents get them; the
+  tier-2 per-agent opt-out is still available.
+- Hybrid-key entry: a new section, or fold into "Connected accounts".
 
 ## Open questions
 
