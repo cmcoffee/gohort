@@ -47,6 +47,9 @@ func (T *KnowledgeApp) Main() error {
 }
 
 func (T *KnowledgeApp) WebPath() string { return "/knowledge" }
+
+// HubTab makes Knowledge a member of the shared top-nav hub.
+func (T *KnowledgeApp) HubTab() (string, int) { return "Knowledge", 30 }
 func (T *KnowledgeApp) WebName() string { return "Knowledge" }
 func (T *KnowledgeApp) WebDesc() string {
 	return "Named document collections that travel with your skills."
@@ -82,6 +85,8 @@ func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "920px",
+		Nav:       HubNav("/knowledge"), // shared hub tabs, Knowledge active
+
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
@@ -100,6 +105,7 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 		Title:     "Collection",
 		ShowTitle: true,
 		BackURL:   "/knowledge/",
+		Nav:       HubNav("/knowledge"), // shared hub tabs, Knowledge active
 		MaxWidth:  "920px",
 		Sections: []ui.Section{
 			{

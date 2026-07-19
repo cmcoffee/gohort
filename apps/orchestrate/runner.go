@@ -41,7 +41,7 @@ var (
 // the budget shows up in the editor.
 const (
 	defaultMaxPlanSteps    = 5
-	defaultMaxWorkerRounds = 10 // 10 rounds + the 5 wrap-up grace rounds (grace only arms at MaxRounds >= 10)
+	defaultMaxWorkerRounds = 15 // 15 rounds + the 5 wrap-up grace rounds (grace only arms at MaxRounds >= 10)
 	// buildPlanRoundsPerStep is how many execution rounds each build-plan
 	// step grants once Builder calls present_build_plan. A step is
 	// typically draft script → test → fix → verify → mark_step_done, so
@@ -5888,6 +5888,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
 		SystemPrompt:         sys,
 		Tools:                allTools,
+		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
 		DynamicTools:         t.dynamicNewTempTools(sess),
 		ToolFallbackResolver: t.lazyToolFallback,
 		Stream:               streamHandler,

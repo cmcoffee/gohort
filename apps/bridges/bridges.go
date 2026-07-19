@@ -46,6 +46,9 @@ type Bridges struct {
 
 func (T *Bridges) Name() string    { return "bridges" }
 func (T *Bridges) WebPath() string { return "/bridges" }
+
+// HubTab makes Bridges a member of the shared top-nav hub.
+func (T *Bridges) HubTab() (string, int) { return "Bridges", 20 }
 func (T *Bridges) WebName() string { return "Bridges" }
 func (T *Bridges) WebDesc() string {
 	return "Connect messaging services (iMessage, Telegram, …) to your channel agents."

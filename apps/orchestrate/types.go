@@ -792,6 +792,14 @@ type ChatMessage struct {
 	// "deliverable" (a filed artifact pointer). Empty falls back to the default
 	// (scheduled) icon. Display-only — the LLM context marker keys off ReportFrom.
 	ReportKind string `json:"report_kind,omitempty"`
+	// ReportDetail is an optional one-line subtitle for a ReportFrom card,
+	// rendered under the name + time header. Carries the secondary context a
+	// name alone can't — for a recurring fire, the owning agent + cadence + fire
+	// number ("Molt Poster · every 30m · fire 5") so the card says WHICH schedule
+	// fired and where it is in its run, not just that something did. Generic:
+	// standing agents / monitors may populate it too. Display-only, like
+	// ReportFrom/ReportKind — the LLM context marker ignores it.
+	ReportDetail string `json:"report_detail,omitempty"`
 	// Sender names who authored this message, for channel-room transcripts
 	// where the session is a multi-party messaging thread: the contact's
 	// display name on inbound (user) messages, the bound agent's name on its

@@ -151,6 +151,9 @@ func (T *OrchestrateApp) Main() error {
 }
 
 func (T *OrchestrateApp) WebPath() string { return "/orchestrate" }
+
+// HubTab makes Agency a member of the shared top-nav hub, rendered as "Agents".
+func (T *OrchestrateApp) HubTab() (string, int) { return "Agents", 10 }
 func (T *OrchestrateApp) WebName() string { return "Agency" }
 func (T *OrchestrateApp) WebDesc() string {
 	return "Build, manage, and dispatch your fleet of AI agents — the workbench where personas, tools, pipelines, and memory all live."

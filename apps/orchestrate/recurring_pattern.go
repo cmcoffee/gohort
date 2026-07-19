@@ -38,6 +38,7 @@ type RecurringSpec struct {
 	AgentID   string
 	Username  string
 	Prompt    string
+	Name      string // short label identifying this task on its report card / rail; falls back to the prompt's first line when empty
 
 	Pattern         string // RecurringFixed (default) | RecurringRandom
 	IntervalSeconds int    // fixed: gap between fires
@@ -50,6 +51,13 @@ type RecurringSpec struct {
 	WindowToMin   int  // window end, minutes since local midnight
 
 	MaxFires int // per-task total cap; 0 = deployment default
+
+	// Carry-over identity, set ONLY by an edit-in-place (handleConsoleRecurringUpdate)
+	// so a retime / directive edit preserves the task's history instead of resetting
+	// it. Fresh schedules (the recurring tool, console create) leave these zero/empty:
+	// FireCount 0 = start of budget, CreatedAt "" = stamp now.
+	FireCount int    // fires already consumed (preserves max_fires progress on edit)
+	CreatedAt string // original creation time (RFC3339); empty = stamp now
 }
 
 // isContinuousRandom reports the unbounded spaced-random shape: pattern=random
@@ -66,17 +74,40 @@ func (p orchUpdatePayload) isContinuousRandom() bool {
 // day": there MaxFires>0 is honored verbatim and 0 means no cap (run until
 // cancelled). The MinGap floor is the real throttle for that mode.
 func (p orchUpdatePayload) effectiveMaxFires() int {
-	if p.isContinuousRandom() {
-		if p.MaxFires > 0 {
-			return p.MaxFires
-		}
-		return math.MaxInt32
-	}
-	ceiling := orchUpdateMaxFires()
-	if p.MaxFires > 0 && p.MaxFires < ceiling {
+	// MaxFires is now a uniform, pattern-independent rule: >0 means "fire
+	// exactly this many times then stop" (an explicit bound); 0 means
+	// INDEFINITE — run until cancelled, every pattern (fixed-rate random,
+	// continuous, interval, cron alike). The old behavior capped everything
+	// except continuous-random at a flat fire count, which silently killed a
+	// high-frequency "run forever" task (a 24x/day poster burned the 50-cap in
+	// ~2 days). Runaway protection is no longer a fire count — it's the 90-day
+	// renewable idle guard in the fire/reschedule path (a task neither doing
+	// useful work nor touched by the user for 90 days is reaped). See
+	// effectiveMaxFires callers + reschedule().
+	if p.MaxFires > 0 {
 		return p.MaxFires
 	}
-	return ceiling
+	return math.MaxInt32
+}
+
+// idleReapDue reports whether the idle guard should cancel this task as of
+// `now`: its LastActive — or CreatedAt, for legacy tasks that predate the field
+// — is older than idleDays. A non-positive idleDays (guard disabled) or an
+// unparseable timestamp returns false, the safe default of keeping the task.
+// Pure so the reap decision is unit-testable apart from the fire/DB plumbing.
+func (p orchUpdatePayload) idleReapDue(now time.Time, idleDays int) bool {
+	if idleDays <= 0 {
+		return false
+	}
+	ref := p.LastActive
+	if ref == "" {
+		ref = p.CreatedAt
+	}
+	last, err := time.Parse(time.RFC3339, ref)
+	if err != nil {
+		return false
+	}
+	return now.Sub(last) > time.Duration(idleDays)*24*time.Hour
 }
 
 // parseHHMM parses "H:MM" / "HH:MM" (24h) into minutes since midnight.

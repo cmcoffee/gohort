@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 // DashboardCards implements core.DashboardCardSource — one card per
@@ -147,6 +148,18 @@ func publiclyExposable(a AgentRecord) bool {
 	// dashboard cards, and the grantable-apps picker without waiting for a
 	// re-save to repair the record.
 	if isCloneOnlySeed(a.ID) {
+		return false
+	}
+	// Internal app-agents — registered Hidden via RegisterAppAgent (e.g. the
+	// Servitor Investigator template, the Guide Author) — are reached only
+	// through their owning app, never as a standalone dashboard / /agents/
+	// surface. Guard them the same read-side way as clone-only seeds so a stale
+	// Exposed flag on a per-user shadow can't leak them onto the dashboard,
+	// /agents/, or the grantable-apps picker without a re-save to repair the
+	// record. Scoped to app-agents whose registered spec is Hidden, so a user's
+	// own published-but-hidden agent (not an app-agent) is unaffected, and an
+	// app-agent an app deliberately registers non-Hidden can still be exposed.
+	if spec, ok := appagents.AppAgentByID(a.ID); ok && spec.Hidden {
 		return false
 	}
 	return a.Exposed

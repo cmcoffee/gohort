@@ -228,15 +228,16 @@ func TestContinuousRandom_UnlimitedFires(t *testing.T) {
 }
 
 func TestEffectiveMaxFires(t *testing.T) {
-	// Per-task below ceiling wins; above/zero falls back to ceiling.
-	ceiling := orchUpdateMaxFires()
+	// New rule: an explicit MaxFires>0 is honored verbatim (no ceiling); 0 means
+	// indefinite. The old flat fire cap was replaced by the idle guard, so a
+	// task can now run forever (subject only to idle-reaping).
 	if got := (orchUpdatePayload{MaxFires: 3}).effectiveMaxFires(); got != 3 {
 		t.Errorf("MaxFires=3 → %d, want 3", got)
 	}
-	if got := (orchUpdatePayload{MaxFires: 0}).effectiveMaxFires(); got != ceiling {
-		t.Errorf("MaxFires=0 → %d, want ceiling %d", got, ceiling)
+	if got := (orchUpdatePayload{MaxFires: 0}).effectiveMaxFires(); got != math.MaxInt32 {
+		t.Errorf("MaxFires=0 → %d, want MaxInt32 (indefinite)", got)
 	}
-	if got := (orchUpdatePayload{MaxFires: ceiling + 100}).effectiveMaxFires(); got != ceiling {
-		t.Errorf("MaxFires above ceiling → %d, want ceiling %d", got, ceiling)
+	if got := (orchUpdatePayload{MaxFires: 5000}).effectiveMaxFires(); got != 5000 {
+		t.Errorf("MaxFires=5000 → %d, want 5000 (honored verbatim, no ceiling)", got)
 	}
 }

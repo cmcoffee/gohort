@@ -383,6 +383,35 @@ func agentNameTag(owner, agentID string) string {
 // connections in apps/bridges) — see core.DefaultDMGatekeeperRule for the rules.
 const threadBindingGatekeeperRule = DefaultDMGatekeeperRule
 
+// formatRunSteps renders a run's tool trace as a compact "steps:" block for
+// inspect_run, so the model (and the audit trail) can see WHAT the run did — each
+// tool, its args, and a truncated result or the error. Returns "" when the run
+// captured no steps (older runs, or a fire that only produced text), so the
+// output stays unchanged for those.
+func formatRunSteps(steps []RunStep) string {
+	if len(steps) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("steps:\n")
+	for i, s := range steps {
+		outcome := s.Result
+		if s.Err != "" {
+			outcome = "ERROR: " + s.Err
+		}
+		outcome = strings.TrimSpace(strings.ReplaceAll(outcome, "\n", " "))
+		if r := []rune(outcome); len(r) > 200 {
+			outcome = string(r[:200]) + "…"
+		}
+		args := strings.TrimSpace(s.Args)
+		if r := []rune(args); len(r) > 200 {
+			args = string(r[:200]) + "…"
+		}
+		b.WriteString(fmt.Sprintf("  %d. %s(%s) -> %s\n", i+1, s.Name, args, outcome))
+	}
+	return b.String()
+}
+
 // argBool reads a boolean tool arg (accepts a real bool, or a "true"/"false"
 // string which some tool bridges send), falling back to def.
 func argBool(args map[string]any, key string, def bool) bool {
@@ -700,8 +729,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// (observed live). Return a hard, id-less directive instead.
 					return "", fmt.Errorf("no run with that id — run ids are opaque and come ONLY from list_runs, never constructed. If you were trying to answer the user, this is the WRONG tool: call the tool that does what they asked. If you genuinely need a run, call list_runs first, then inspect_run with an id it returned.")
 				}
-				return fmt.Sprintf("Run %s\nagent: %s\nstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\noutput:\n%s",
-					rec.ID, rec.Agent, rec.Status, rec.Trigger, rec.Brief, rec.Summary, rec.Raw), nil
+				return fmt.Sprintf("Run %s\nagent: %s\nstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\n%soutput:\n%s",
+					rec.ID, rec.Agent, rec.Status, rec.Trigger, rec.Brief, rec.Summary, formatRunSteps(rec.Steps), rec.Raw), nil
 			},
 		},
 		{

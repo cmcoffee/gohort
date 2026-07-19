@@ -112,6 +112,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
 	T.HandleFunc("/api/console/recurring/get", g(T.handleConsoleRecurringGet))
 	T.HandleFunc("/api/console/recurring/update", gw(T.handleConsoleRecurringUpdate))
+	// Create a NEW recurring task from the Scheduler modal's "New recurring task"
+	// button (agent + session supplied in the body; timing same shape as update).
+	T.HandleFunc("/api/console/recurring/create", gw(T.handleConsoleRecurringCreate))
 }
 
 // handleSchedules returns an agent's scheduled runs + event monitors for the
@@ -333,6 +336,7 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 		}
 		writeJSON(w, map[string]any{
 			"id":               rt.TaskID,
+			"name":             recurringName(p),
 			"prompt":           p.Prompt,
 			"pattern":          pattern,
 			"interval_minutes": p.IntervalSeconds / 60,
@@ -387,16 +391,38 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		ActiveFrom      string `json:"active_from"`
 		ActiveTo        string `json:"active_to"`
 		MaxFires        int    `json:"max_fires"`
+		// Pointers so "field omitted" (nil = preserve the stored value) is
+		// distinguishable from "sent empty". Prompt is required, so an empty
+		// prompt preserves too; Name may legitimately be cleared (empty falls
+		// back to the prompt's first line at render).
+		Prompt *string `json:"prompt"`
+		Name   *string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Directive + name are editable now (not just timing). Base = the stored
+	// values; a provided prompt (non-empty; prompt is required) or name overrides.
+	// Computed into LOCALS, not mutated onto found — the rejected-edit restore path
+	// below re-schedules *found and must keep the original directive/name intact.
+	prompt, name := found.Prompt, found.Name
+	if body.Prompt != nil {
+		if p := strings.TrimSpace(*body.Prompt); p != "" {
+			prompt = p
+		}
+	}
+	if body.Name != nil {
+		name = strings.TrimSpace(*body.Name)
+	}
 	spec := RecurringSpec{
 		SessionID:       found.SessionID,
 		AgentID:         found.AgentID,
 		Username:        found.Username,
-		Prompt:          found.Prompt,
+		Prompt:          prompt,
+		Name:            name,
+		FireCount:       found.FireCount, // preserve run history across an edit (don't reset the budget)
+		CreatedAt:       found.CreatedAt, // keep the original creation time, not "now"
 		Pattern:         strings.ToLower(strings.TrimSpace(body.Pattern)),
 		IntervalSeconds: body.IntervalMinutes * 60,
 		TimesPerDay:     body.TimesPerDay,
@@ -433,9 +459,105 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 	newID, err := ScheduleOrchestrateUpdate(spec)
 	if err != nil {
 		// Restore the original so a rejected edit doesn't destroy the task.
-		if next, cerr := computeNextFire(found, time.Now()); cerr == nil {
+		if next, cerr := computeNextFire(found, time.Now().In(UserLocation(found.Username))); cerr == nil {
 			_, _ = ScheduleTask(OrchestrateScheduledUpdateKind, *found, next)
 		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"id": newID})
+}
+
+// handleConsoleRecurringCreate creates a NEW recurring task from the Scheduler
+// modal's "New recurring task" button. Unlike update (which edits an existing
+// task by id), this needs a target: agent_id (the rail's current agent) and
+// session_id (the open thread), defaulting to the agent's home thread when none
+// is open so an agent-level task always lands somewhere sensible. The per-session
+// active-task cap is enforced inside ScheduleOrchestrateUpdate. POST JSON
+// {agent_id, session_id, name, prompt, pattern, timing…}.
+func (T *OrchestrateApp) handleConsoleRecurringCreate(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		AgentID         string `json:"agent_id"`
+		SessionID       string `json:"session_id"`
+		Name            string `json:"name"`
+		Prompt          string `json:"prompt"`
+		Pattern         string `json:"pattern"`
+		IntervalMinutes int    `json:"interval_minutes"`
+		TimesPerDay     int    `json:"times_per_day"`
+		MinGapMinutes   int    `json:"min_gap_minutes"`
+		MaxGapMinutes   int    `json:"max_gap_minutes"`
+		ActiveFrom      string `json:"active_from"`
+		ActiveTo        string `json:"active_to"`
+		MaxFires        int    `json:"max_fires"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	agentID := strings.TrimSpace(body.AgentID)
+	if agentID == "" {
+		http.Error(w, "agent_id required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := loadAgent(UserDB(T.DB, user), agentID); !ok {
+		http.Error(w, "unknown agent", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Prompt) == "" {
+		http.Error(w, "directive (prompt) is required", http.StatusBadRequest)
+		return
+	}
+	sessionID := strings.TrimSpace(body.SessionID)
+	if sessionID == "" {
+		sessionID = cortexSessionID(agentID) // no open thread → attach to the agent's home thread
+	}
+	spec := RecurringSpec{
+		SessionID:       sessionID,
+		AgentID:         agentID,
+		Username:        user,
+		Prompt:          strings.TrimSpace(body.Prompt),
+		Name:            strings.TrimSpace(body.Name),
+		Pattern:         strings.ToLower(strings.TrimSpace(body.Pattern)),
+		IntervalSeconds: body.IntervalMinutes * 60,
+		TimesPerDay:     body.TimesPerDay,
+		MinGapSeconds:   body.MinGapMinutes * 60,
+		MaxGapSeconds:   body.MaxGapMinutes * 60,
+		MaxFires:        body.MaxFires,
+	}
+	if spec.Pattern == "" {
+		spec.Pattern = RecurringFixed
+	}
+	from := strings.TrimSpace(body.ActiveFrom)
+	to := strings.TrimSpace(body.ActiveTo)
+	if (from == "") != (to == "") {
+		http.Error(w, "active_from and active_to must be set together", http.StatusBadRequest)
+		return
+	}
+	if from != "" {
+		fMin, ferr := parseHHMM(from)
+		if ferr != nil {
+			http.Error(w, ferr.Error(), http.StatusBadRequest)
+			return
+		}
+		tMin, terr := parseHHMM(to)
+		if terr != nil {
+			http.Error(w, terr.Error(), http.StatusBadRequest)
+			return
+		}
+		spec.HasWindow = true
+		spec.WindowFromMin = fMin
+		spec.WindowToMin = tMin
+	}
+	newID, err := ScheduleOrchestrateUpdate(spec)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -706,7 +706,17 @@ func WithoutAutoDate() ChatOption {
 // conversation and re-prefills it on the daily (or per-request, with time)
 // rollover. Local time, no em-dash (an AI tell we scrub from product output).
 func CurrentContextStamp() string {
-	return "[Current date & time: " + time.Now().Local().Format("Mon, January 2, 2006 at 3:04 PM MST") + "]"
+	return CurrentContextStampIn(time.Local)
+}
+
+// CurrentContextStampIn is CurrentContextStamp in a specific location — used
+// to stamp the turn in the acting user's own timezone (Phase 2 per-user zone).
+// A nil location falls back to the deployment/host zone (time.Local).
+func CurrentContextStampIn(loc *time.Location) string {
+	if loc == nil {
+		loc = time.Local
+	}
+	return "[Current date & time: " + time.Now().In(loc).Format("Mon, January 2, 2006 at 3:04 PM MST") + "]"
 }
 
 // WithTools provides tool definitions for the LLM to use.

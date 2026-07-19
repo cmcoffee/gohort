@@ -615,11 +615,12 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
 	resp, _, runErr := T.RunAgentLoop(ctx, []Message{{Role: "user", Content: deliveredMessage}}, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    resolveMaxWorkerRounds(target),
-		ThinkBudget:  target.ThinkBudget, // per-agent override; 0 = inherit route/global
-		OnStep:       func(info StepInfo) { telem.record(info) },
+		SystemPrompt:  sysPrompt,
+		Tools:         tools,
+		MaxRounds:     resolveMaxWorkerRounds(target),
+		StampLocation: UserLocation(runtimeUser), // stamp the turn in the acting user's zone
+		ThinkBudget:   target.ThinkBudget,         // per-agent override; 0 = inherit route/global
+		OnStep:        func(info StepInfo) { telem.record(info) },
 		Confirm:      confirm,
 		// Custom-tool resolution, same as the web runPlan: lazyToolFallback
 		// resolves a direct call to a has-args custom tool; dynamicNewTempTools
@@ -1267,6 +1268,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	}
 	// Feed view_video's sampled frames to the model on the next round.
 	loopCfg.DrainViewImages = subSess.DrainViewImages
+	loopCfg.StampLocation = UserLocation(runtimeUser) // stamp the turn in the acting user's zone
 	resp, _, runErr := T.RunAgentLoop(ctx, llmMessages, loopCfg)
 	Log("[orchestrate.RunAgentSyncContinuing] owner=%s runtime=%s target=%s sub=%s prior_msgs=%d msg_chars=%d err=%v",
 		agentOwner, runtimeUser, target.ID, subSessionID, len(priorSession.Messages), len(message), runErr)

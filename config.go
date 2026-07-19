@@ -701,6 +701,7 @@ func setup_fuzz() {
 	var webServiceName string
 	var webMaxLoginAttempts int
 	var webLockoutMinutes int
+	webTimezone := DeploymentTimezoneName(global.db)
 	// Operator-set-once settings live in gohort.ini (with one-time
 	// migration from the kvlite store baked into the helpers). The
 	// remaining DB-only settings stay on the global.db.Get path.
@@ -745,6 +746,7 @@ func setup_fuzz() {
 
 	webmenu := NewOptions(" [Web Server Settings] ", "(selection or 'q' to return to previous)", 'q')
 	webmenu.StringVar(&webAddr, "Listen Address", webAddr, "Address for web dashboard (e.g. ':8080', '0.0.0.0:443').")
+	webmenu.StringVar(&webTimezone, "Timezone", webTimezone, "Deployment timezone for all day boundaries, schedules, and displayed times. IANA name ('America/New_York'), city ('Tokyo'), or US abbreviation ('PST'). Blank = host zone. Applies on restart.")
 	webmenu.IntVar(&webMaxConcurrent, "Max Concurrent Tasks", webMaxConcurrent, "Max simultaneous apps. Others are queued.", 1, 32)
 	webmenu.ToggleVar(&webTLSSelfSigned, "TLS (self-signed auto-certificate)", webTLSSelfSigned)
 	webmenu.StringVar(&webTLSCert, "TLS Certificate", webTLSCert, "Path to PEM certificate file (overrides self-signed).")
@@ -997,6 +999,15 @@ func setup_fuzz() {
 	saveWebBool("tls_self_signed", webTLSSelfSigned)
 	saveWebInt("max_concurrent", webMaxConcurrent)
 	saveWebString("admin_allowed_ips", strings.TrimSpace(webAdminIPs))
+	// Timezone: validate before storing so a typo can't strand the box in the
+	// wrong zone on next boot. Blank clears the override (back to host zone).
+	if tz := strings.TrimSpace(webTimezone); tz == "" {
+		global.db.Set(WebTable, TimezoneKey, "")
+	} else if _, iana, err := ResolveZone(tz); err != nil {
+		Err("Timezone %q not recognized — leaving previous value: %s", tz, err)
+	} else {
+		global.db.Set(WebTable, TimezoneKey, iana)
+	}
 	// allow_signup stays in the DB — runtime-toggleable from the
 	// admin UI; not an operator-deploy-time decision.
 	global.db.Set(WebTable, "allow_signup", webAllowSignup)
@@ -1575,6 +1586,12 @@ func init_database() {
 	Critical(err)
 	SetErrTable(global.db.Table("fuzz_errors"))
 	global.cache = global.db.Sub("cache")
+
+	// Install the operator-configured deployment timezone as the process
+	// time.Local before anything formats a time or computes a day boundary.
+	// Blank config leaves the host zone in place (historical behavior); a
+	// change takes effect on restart (see ApplyDeploymentTimezone).
+	ApplyDeploymentTimezone(global.db)
 
 	// Dedicated vector store. Defaults to data_dir (co-located, same
 	// behavior as before); operators relocate it to local SSD via

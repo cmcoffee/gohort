@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -334,6 +335,13 @@ type AgentLoopConfig struct {
 	// Works even when ContextSize is 0. Nil = budget-only compaction.
 	RoundCompactNow func() bool
 
+	// StampLocation sets the timezone of the "[Current date & time: …]"
+	// marker prefixed onto the newest user turn. Nil = the deployment/host
+	// zone (time.Local). Set it to the acting user's location (UserLocation)
+	// so the model sees the wall-clock in the user's own zone rather than the
+	// server's. Only the stamp is affected; nothing else in the loop reads it.
+	StampLocation *time.Location
+
 	// AllowedCaps gates which tools the LLM is offered, by capability tier
 	// (CapRead, CapNetwork, CapWrite, CapExecute). Tools whose declared Caps
 	// aren't all in this set are filtered out before the LLM ever sees the
@@ -563,7 +571,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// on the LLM calls below so the date isn't ALSO injected into the system prompt.
 	if n := len(history); n > 0 && history[n-1].Role == "user" &&
 		!strings.HasPrefix(history[n-1].Content, "[Current date & time:") {
-		history[n-1].Content = CurrentContextStamp() + "\n\n" + history[n-1].Content
+		history[n-1].Content = CurrentContextStampIn(cfg.StampLocation) + "\n\n" + history[n-1].Content
 	}
 
 	// In PromptTools mode, inject tool descriptions into the system
@@ -603,6 +611,12 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// fabricated citation that reads as authoritative. Pin specifics to
 	// what was actually retrieved or provided.
 	if len(tools) > 0 {
+		// Framing header — names the blocks below as ONE grounding contract seen
+		// from several angles, so they read as a coherent message rather than a
+		// pile of rules. Kept to a single short line on purpose: the per-block
+		// salience the 27B needs comes from the blunt standalone blocks, NOT from
+		// a long preamble, so the frame stays out of their way.
+		systemPrompt += "\n\n[Grounding contract: the blocks below are one rule seen from several sides. You earn the right to state a fact by pointing to where it came from THIS turn; when you can't, say so instead of guessing.]"
 		// Capability-first — tool SELECTION, distinct from Grounding (which
 		// governs specifics once you have results). The failure mode: the
 		// model answers a recency-sensitive or job-specific question straight
@@ -612,14 +626,14 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// separate from the trust decision (where the answer comes from) so
 		// this doesn't push the model away from delegating real multi-step
 		// work. Written without em-dashes so it doesn't model the tic.
-		systemPrompt += "\n\n[Capability-first: when a tool or an agent can do the job, or get fresher information than you hold (current events, news, prices, status, anything that may have changed since your training, or anything the user expects to be up to date), use it instead of answering from training or memory. Match the capability to the job: a direct tool when one lookup or action answers it; an agent when the job needs multiple steps, decomposition, or specialized work a single tool cannot cover. Do not substitute a quick tool for an agent the job needs, nor spin up an agent for what one tool answers. Treat prior knowledge as a fallback for gaps no tool or agent can fill, never as a substitute for a capability that exists for the job. If you fall back to prior knowledge, say so and offer to verify. Questions about your OWN tools or capabilities ('do you have an X tool', 'what can you do') follow the same rule: to say what tools you have or can use, read your live catalog and any 'custom tools (load before use)' section in this prompt, never recite your tool inventory from memory, and never claim you already built or 'previously set up' a tool without checking the catalog first.]"
-		systemPrompt += "\n\n[Grounding: state a precise specific — a number, a name, a citation or reference (statute, case, version, ID), a date, a figure, a dosage, a direct quote — ONLY when it appears in a tool result or in material the user gave you THIS turn. Never from memory, even when you're confident: a plausible-looking specific you can't point to is worse than not having one. This holds in CASUAL conversation as much as in formal answers — you may state the general shape of the answer, but do NOT attach a specific identifier you can't source right now; if you can't verify the exact one, say you're not certain rather than guessing. The current local date and time ARE given to you this turn in the [Current date & time: …] stamp on the latest user message: read them off that stamp and state them plainly (the stamp is a this-turn source, not a memory guess, so no tool call is needed to tell the local time or date), but do NOT dress them with a holiday, event, season, or \"long weekend\" association unless a tool or the user gave you that this turn: a holiday whose date follows a rule (\"the last Monday in May\") is exactly the kind of specific you must not assert from memory, and a warm reply never needs an invented one (a plain \"it's a regular Sunday, what's up?\" is friendlier than a confident wrong holiday). If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing — never quietly supply it from memory. This applies to MEDIA you were asked to look at: if you could not open, download, or view a linked image, video, or reel (the fetch failed, was blocked, or returned no frames), do NOT describe what it shows or claim you made a thumbnail of it. Say plainly that you couldn't access it, never infer its content from the URL, the caption, the sender, or nearby messages, and never reuse a description from one media item for a different one. If a PAST turn's transcript shows an image was attached (a \"[N image(s) attached ...]\" note) but you can no longer see the pixels this turn, rely ONLY on the recorded depiction in that note: do not re-describe the image from scratch, and never invent its subject, sender, or type from the surrounding conversation. And if the user CORRECTS a specific you gave, do NOT swap in another from memory or invent a rationale for the mistake — admit you're not certain and offer to look it up. A confident wrong specific, then a confident second wrong one, is the failure to avoid.]"
+		systemPrompt += "\n\n[Capability-first: when a tool or agent can do the job or get fresher information than you hold (news, prices, status, anything that may have changed since training), use it instead of answering from memory. Size it to the job: a direct tool for one lookup or action, an agent for multi-step or specialized work. Prior knowledge is a fallback for gaps no capability can fill, never a substitute for one that exists; if you fall back, say so and offer to verify. To answer what tools you have, read your live catalog (including any 'custom tools (load before use)' section), never recite from memory, and never claim you already built a tool without checking.]"
+		systemPrompt += "\n\n[Grounding: state a precise specific (number, name, citation, statute/case/version/ID, date, dosage, direct quote) ONLY when it appears in a tool result or material the user gave you THIS turn, never from memory however confident — a specific you can't point to is worse than none. This holds in casual talk too: give the general shape, but don't attach a specific you can't source, say you're not sure instead of guessing. The [Current date & time: …] stamp on the latest user message IS a this-turn source: read the date and time off it and state them plainly (no tool call needed), but do NOT add a holiday, season, or event association unless a source gave it this turn (a rule-based holiday like \"the last Monday in May\" is exactly the specific you must not assert from memory; \"it's a regular Sunday, what's up?\" beats a confident wrong holiday). If a tool you relied on fails, errors, times out, or returns empty, treat the data as missing, never backfill from memory. Same for MEDIA you couldn't open, download, or view: don't describe it or infer its content from the URL, caption, sender, or nearby messages, and don't reuse one item's description for another; if a past turn's \"[N image(s) attached …]\" note records what an image showed, rely only on that note, don't re-describe or invent its subject. If the user corrects a specific, don't swap in another guess or invent a reason for the error, admit you're unsure and offer to look it up.]"
 		// Action grounding — the sibling of Grounding aimed at ACTIONS rather than
 		// facts. The failure mode (observed live: an agent in a group chat said "I
 		// sent a meme" with zero tool calls): the model narrates a completed action
 		// it never performed, because its reply text feels like doing the thing.
 		// Written without em-dashes (house style).
-		systemPrompt += "\n\n[Actions: never claim you have DONE something (sent a message, meme, image, or file; posted; scheduled; created; saved; delivered; ran a command) unless you actually called the tool that does it THIS turn and its result confirms success. Your reply text is NOT an action: writing 'I sent the meme', 'I've attached it', 'posted to the group', or 'done' does not send, attach, post, or do anything by itself. If doing the thing needs a tool, call the tool and report what its result says; if you did not call it, do not say you did. If you cannot do it or chose not to, say so plainly instead of narrating a success that did not happen. When an action or delivery tool errors, times out, or returns empty, treat the action as NOT done and tell the user, rather than claiming it worked.]"
+		systemPrompt += "\n\n[Actions: never claim you DID something (sent a message/meme/image/file, posted, scheduled, created, saved, ran a command) unless you called the tool that does it THIS turn and its result confirms success. Your reply text is NOT an action: writing 'I sent it', 'attached', 'posted to the group', or 'done' does nothing by itself. If the thing needs a tool, call it and report what its result says; if you didn't call it, don't say you did. If you couldn't or chose not to, say so plainly. When an action tool errors, times out, or returns empty, treat the action as NOT done and tell the user.]"
 		// Contradiction discipline — the sibling of Grounding aimed the OPPOSITE
 		// direction: not the model's own volunteered specifics, but the model
 		// DISPUTING a fact the user stated or assumed. The failure mode is a
@@ -628,8 +642,8 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// Scoped to CONTRADICTING the user (not to general answers) so it does
 		// not add hedging to the decisive-language posture elsewhere. Written
 		// without em-dashes (house style).
-		systemPrompt += "\n\n[Disagreeing with the user: your training is not sufficient grounds to tell the user they are wrong. When they state or assume a fact and you think it is mistaken, treat your own prior knowledge as possibly stale or incomplete. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it (no tool fits, the tool fails or returns empty, or you are offline), do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask a clarifying question. This is about EMPIRICAL claims (dates, numbers, who or what or when, current state, how something works, what is true now). Reasoning, logic, math you can show step by step, and the user's own stated preferences you can still engage with directly and decisively. Do not manufacture a confident contradiction from priors; ground the disagreement or hold it as uncertain until you can.]"
-		systemPrompt += "\n\n[Numbers: when you state a figure, price, count, or measurement from a source, reproduce it exactly as written, keep its unit or currency attached, and keep it bound to the specific thing it describes (which item, which date, which place) so you never swap two values that appeared in the same source. Do not perform multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: if a calculation matters, show the steps so it can be checked, or use a tool. If two sources disagree on a number, say so rather than silently picking one. Prices and other time-sensitive figures go stale: when you quote a price, make sure it is current, note when it was observed if the source says, and never present an old or cached figure as today's price — if you cannot confirm it is current, say so or re-check rather than stating it as fact.]"
+		systemPrompt += "\n\n[Disagreeing with the user: your training is not enough to tell the user they are wrong. When they state a fact you think is mistaken, treat your priors as possibly stale. If a tool can check it, verify FIRST, then correct with the source in hand. If nothing can verify it, do NOT assert they are wrong from memory: say you are not certain and offer to check, or ask. This is about EMPIRICAL claims (dates, numbers, who/what/when, current state, how something works). Reasoning, math you can show step by step, and the user's own preferences you can still engage directly and decisively.]"
+		systemPrompt += "\n\n[Numbers: reproduce a figure exactly as the source writes it, keep its unit or currency attached, and keep it bound to the thing it describes (which item, date, place) so you never swap two values from the same source. Do not do multi-step arithmetic, percentages, or unit/currency conversion in your head and present the result as fact: show the steps so it can be checked, or use a tool. If two sources disagree, say so rather than silently picking one. (Prices and other time-sensitive figures are governed by [Volatile facts].)]"
 		// False-precision prevention — the behavioral half of the same concern
 		// the [Numbers] / [Grounding] blocks address: stop the model inventing a
 		// percentage / fraction / dollar figure for rhetorical weight. This is
@@ -637,7 +651,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		// it was removed because its verbatim-corpus match couldn't tell a
 		// correctly COMPUTED figure ("$120 over MSRP") from a fabricated one and
 		// false-flagged the model's own arithmetic.
-		systemPrompt += "\n\n[No false precision: do NOT manufacture a number for emphasis or to sound authoritative. If you do not have a real, sourced figure, do not invent a percentage, fraction, or dollar amount to stand in for one: say \"most\", \"a lot\", \"roughly half\", \"the majority\", \"a few thousand\", or describe the size in plain words. An invented \"80%\" or \"$5,000\" reads as precise and is worse than an honest \"most\" or \"a few thousand\". This is about figures conjured for rhetorical weight; a genuinely sourced number stated exactly is right, arithmetic you actually did on sourced numbers is right (show it), and hedged estimates (\"about half\", \"roughly a third\") are fine.]"
+		systemPrompt += "\n\n[No false precision: do NOT manufacture a number for emphasis or authority. Without a real sourced figure, don't invent a percentage, fraction, or dollar amount: say \"most\", \"roughly half\", \"a few thousand\", or describe the size in words. An invented \"80%\" or \"$5,000\" reads as precise and is worse than an honest \"most\". A genuinely sourced number stated exactly is right, as is arithmetic you actually did on sourced numbers (show it), and hedged estimates (\"about half\") are fine.]"
 		// Volatile facts — a blunt, standalone restatement of the Grounding rule
 		// aimed at the specifics the worker keeps fabricating. Already covered
 		// inside Grounding + Capability-first + Numbers, but buried in long
@@ -1984,7 +1998,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 			// One firm nudge before the force-final: keep_going fired but no
 			// real tool, so the promise-correction path never ran.
 			history = append(history, Message{
-				Role: "user",
+				Role:    "user",
 				Content: "You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
 			})
 		} else {
@@ -2076,9 +2090,26 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 	// "stuck in tool-call thrashing, hit MaxRounds with nothing to
 	// show the user" failure that the lookback rescue can't help
 	// with (when there's no clean assistant content anywhere recent).
-	if lastResp != nil && (forceFinal || strings.TrimSpace(lastResp.Content) == "") && T.LLM != nil {
+	//
+	// ALSO fire when the last completed round CALLED TOOLS (lastRoundToolCalled),
+	// even though its content is non-empty. Reaching this post-loop point always
+	// means an abnormal exit (the natural "no more tool calls, here's my answer"
+	// completion returns from INSIDE the loop) — so if the budget ran out while
+	// the model was still tool-calling, whatever text it emitted that round is
+	// narration alongside the call ("Let me get the full details to give you the
+	// steps."), not a synthesis. Without this, that intent-stub is promoted to the
+	// final answer and the turn ends looking done while the actual answer was never
+	// written — even though the tool results it needs are already in history
+	// (dispatch happens before the next round's top-of-loop break). Structural, not
+	// phrase-matched: the tell is "last round was still calling tools", not any
+	// wording. The forced call below has the retrieved data on hand and synthesizes
+	// the real answer from it.
+	lastRoundToolCalled := lastResp != nil && len(lastResp.ToolCalls) > 0
+	if lastResp != nil && (forceFinal || lastRoundToolCalled || strings.TrimSpace(lastResp.Content) == "") && T.LLM != nil {
 		if forceFinal {
 			Debug("[agent_loop] wedge break — issuing a forced-final-answer call with no tools")
+		} else if lastRoundToolCalled {
+			Debug("[agent_loop] budget exhausted mid-tool-call (last content is narration, not a synthesis) — issuing a forced-final-answer call with no tools")
 		} else {
 			Debug("[agent_loop] empty after lookback rescue — issuing a forced-final-answer call with no tools")
 		}

@@ -29,7 +29,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 			Description: "Manage RECURRING background tasks for THIS chat session — a task that re-runs at a fixed interval and appends its reply into this session (the user sees it when they next open the thread). Each fire runs as this agent, with its persona / tools / memory, like a live turn.\n" +
 				"WHAT THIS IS: a recurring task on a timer. It is NOT a bridge, NOT a connector, and NOT an event monitor. When you tell the user, call it a \"recurring task\" (or \"scheduled check\") — never a \"bridge\" — and do NOT point them at the Bridges app. Once scheduled it appears in this agent's Schedules rail (beside the chat), where the user can see and cancel it.\n" +
 				"Pick the action:\n" +
-				"  action=\"schedule\" — set one up. Always: prompt (the directive run each fire, e.g. \"check the build, post if red\" — don't put timing in it). Then pick a pattern:\n" +
+				"  action=\"schedule\" — set one up. Always: prompt (the directive run each fire, e.g. \"check the build, post if red\" — don't put timing in it). Give it a short name too (e.g. \"build watch\") so its report cards and the Schedules rail identify it; if you omit name, the first line of the prompt is used. Then pick a pattern:\n" +
 				"     pattern=\"fixed\" (default) — fires every interval_minutes (>=1).\n" +
 				"     pattern=\"random\" — random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
 				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Fixed and N-per-day random auto-cancel after 50 fires; UNLIMITED random has no auto-stop unless you set max_fires.\n" +
@@ -40,6 +40,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 			Parameters: map[string]ToolParam{
 				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel"}, Description: "schedule | list | cancel."},
 				"prompt":           {Type: "string", Description: "(schedule) The recurring task as a directive the agent follows each fire. Don't include timing — that's the pattern params."},
+				"name":             {Type: "string", Description: "(schedule, optional) Short label identifying this task on its report cards and in the Schedules rail (e.g. \"build watch\"). Defaults to the prompt's first line if omitted."},
 				"pattern":          {Type: "string", Enum: []string{"fixed", "random"}, Description: "(schedule) fixed = every interval_minutes (default); random = times_per_day random moments inside the active window."},
 				"interval_minutes": {Type: "integer", Description: "(schedule, fixed) How often the task fires, in minutes. Minimum 1."},
 				"times_per_day":    {Type: "integer", Description: "(schedule, random) Fire this many random times inside the daily window (1–48). OMIT for UNLIMITED firing at random gaps — see max_gap_minutes."},
@@ -79,6 +80,7 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 		AgentID:   t.agent.ID,
 		Username:  t.user,
 		Prompt:    strings.TrimSpace(stringArg(args, "prompt")),
+		Name:      strings.TrimSpace(stringArg(args, "name")),
 		Pattern:   strings.ToLower(strings.TrimSpace(stringArg(args, "pattern"))),
 		MaxFires:  intFromArgs(args, "max_fires"),
 	}
@@ -149,6 +151,7 @@ func (t *chatTurn) recurringList() (string, error) {
 	// is the cancel key) — re-fetch with the ids.
 	type row struct {
 		ID        string `json:"id"`
+		Name      string `json:"name"`
 		Prompt    string `json:"prompt"`
 		Pattern   string `json:"pattern"`
 		Cadence   string `json:"cadence"`
@@ -166,7 +169,7 @@ func (t *chatTurn) recurringList() (string, error) {
 			pattern = RecurringFixed
 		}
 		rows = append(rows, row{
-			ID: task.ID, Prompt: p.Prompt,
+			ID: task.ID, Name: recurringName(p), Prompt: p.Prompt,
 			Pattern: pattern, Cadence: recurringDetail(p),
 			FireCount: p.FireCount, CreatedAt: p.CreatedAt,
 		})

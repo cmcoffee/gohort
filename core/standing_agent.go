@@ -336,7 +336,10 @@ func ScheduleStandingAgent(db Database, sa StandingAgent) error {
 	if sa.SchedulerID != "" {
 		UnscheduleTask(sa.SchedulerID) // cancel-and-replace
 	}
-	next, err := nextStandingRun(sa, time.Now())
+	// Compute the next fire in the owner's zone so a cron like "daily 08:00"
+	// means 08:00 for them, not the server. Interval schedules are unaffected
+	// (absolute). Falls back to the deployment zone when the owner has none.
+	next, err := nextStandingRun(sa, time.Now().In(UserLocation(sa.Owner)))
 	if err != nil {
 		return err
 	}

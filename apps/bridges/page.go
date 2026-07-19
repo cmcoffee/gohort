@@ -19,6 +19,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "900px",
+		Nav:       HubNav("/bridges"), // shared hub tabs, Bridges active
+
 		// Transport kill-switch — flips the master switch off; inbound is still
 		// recorded but nothing routes to an agent or delivers.
 		Sticky: ui.PanicBar{

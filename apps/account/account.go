@@ -284,16 +284,18 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 	db := AuthDB()
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]bool{
+		writeJSON(w, map[string]any{
 			"notify":            AuthGetNotifyDefault(db, user),
 			"private_mode":      AuthGetPrivateMode(db, user),
 			"inferred_disabled": AuthGetInferredDisabled(db, user),
+			"timezone":          AuthGetUserTimezone(db, user),
 		})
 	case http.MethodPost:
 		var req struct {
-			Notify           *bool `json:"notify,omitempty"`
-			PrivateMode      *bool `json:"private_mode,omitempty"`
-			InferredDisabled *bool `json:"inferred_disabled,omitempty"`
+			Notify           *bool   `json:"notify,omitempty"`
+			PrivateMode      *bool   `json:"private_mode,omitempty"`
+			InferredDisabled *bool   `json:"inferred_disabled,omitempty"`
+			Timezone         *string `json:"timezone,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -307,6 +309,19 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.InferredDisabled != nil {
 			AuthSetInferredDisabled(db, user, *req.InferredDisabled)
+		}
+		if req.Timezone != nil {
+			// Blank clears back to the deployment zone. Otherwise validate and
+			// store the canonical IANA name so a typo can't corrupt the user's
+			// schedules/stamp; a bad value is rejected so the form shows it.
+			if tz := strings.TrimSpace(*req.Timezone); tz == "" {
+				AuthSetUserTimezone(db, user, "")
+			} else if _, iana, err := ResolveZone(tz); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			} else {
+				AuthSetUserTimezone(db, user, iana)
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	default:
@@ -371,6 +386,9 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 						Help: "Mask network-capable tools (web search, fetch, …) by default — keeps turns local. Per-agent overrides still apply."},
 					{Field: "inferred_disabled", Label: "Clean mode by default", Type: "toggle",
 						Help: "Suppress the Reference Memory layer by default — agents answer fresh from your question + knowledge, without prior derived findings. Per-agent overrides still apply."},
+					{Field: "timezone", Label: "Timezone", Type: "select",
+						Options: TimezoneSelectOptions("System default"),
+						Help:    "Your personal timezone, used for the times agents see and the day boundaries of schedules you own. Blank uses the system default."},
 				},
 			},
 		},

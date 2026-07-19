@@ -665,7 +665,7 @@
   padding-top: 0;
 }
 .orch-report-card-hdr {
-  display: flex; align-items: center; gap: 0.45rem;
+  display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap;
   padding: 0.4rem 0.65rem;
   margin: 0 0 0.5rem 0;
   border-bottom: 1px solid var(--border, rgba(127,127,127,0.25));
@@ -674,6 +674,7 @@
 .orch-report-card-icon { flex: 0 0 auto; }
 .orch-report-card-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .orch-report-card-time { color: var(--text-mute, #999); font-size: 0.7rem; flex: 0 0 auto; }
+.orch-report-card-detail { flex: 0 0 100%; margin-top: 0.15rem; color: var(--text-mute, #999); font-size: 0.7rem; font-weight: 400; }
 
 </style>
 <script>
@@ -3674,9 +3675,119 @@
         });
       });
 
+      // Build the shared recurring-task fields (name, directive, pattern, timing)
+      // into a modal body. Returns collect() → the JSON body the create/update
+      // endpoints accept. Shared by the edit action and the create action so the
+      // two forms never drift.
+      function buildRecurringFields(m, task) {
+        task = task || {};
+        function labeled(labelText, inputEl) {
+          var wrap = document.createElement('label');
+          wrap.style.cssText = 'display:block;margin:0.4rem 0';
+          var lb = document.createElement('div');
+          lb.className = 'ui-orch-sec-toggle-help';
+          lb.textContent = labelText;
+          wrap.appendChild(lb);
+          wrap.appendChild(inputEl);
+          return wrap;
+        }
+        function num(val) {
+          var i = document.createElement('input');
+          i.type = 'number'; i.min = '0';
+          i.className = 'ui-orch-sec-filter';
+          i.value = (val ? String(val) : '');
+          return i;
+        }
+        function timeI(val) {
+          var i = document.createElement('input');
+          i.type = 'time'; i.step = '60'; i.className = 'ui-orch-sec-filter';
+          if (val) i.value = val;
+          return i;
+        }
+
+        // Name — identifies the task on its report cards and in the rail.
+        var nameH = document.createElement('div');
+        nameH.className = 'ui-orch-sec-h';
+        nameH.textContent = 'Name';
+        m.body.appendChild(nameH);
+        var nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.className = 'ui-orch-sec-filter';
+        nameInput.value = task.name || '';
+        nameInput.placeholder = "(defaults to the directive's first line)";
+        nameInput.style.cssText = 'margin-bottom:0.6rem';
+        m.body.appendChild(nameInput);
+
+        // Directive (run each fire).
+        var ph = document.createElement('div');
+        ph.className = 'ui-orch-sec-h';
+        ph.textContent = 'Directive (run each fire)';
+        m.body.appendChild(ph);
+        var promptInput = document.createElement('textarea');
+        promptInput.className = 'ui-orch-sec-filter';
+        promptInput.rows = 6;
+        promptInput.style.cssText = 'width:100%;white-space:pre-wrap;margin-bottom:0.6rem;resize:vertical';
+        promptInput.value = task.prompt || '';
+        promptInput.placeholder = 'What the agent should do each time it fires (no timing here). e.g. "check the build, post if it is red"';
+        m.body.appendChild(promptInput);
+
+        var patternSel = document.createElement('select');
+        patternSel.className = 'ui-orch-sec-filter';
+        [['fixed', 'Fixed — every N minutes'], ['random', 'Random']].forEach(function(o) {
+          var opt = document.createElement('option');
+          opt.value = o[0]; opt.textContent = o[1];
+          if (o[0] === (task.pattern || 'fixed')) opt.selected = true;
+          patternSel.appendChild(opt);
+        });
+        m.body.appendChild(labeled('Pattern', patternSel));
+
+        var interval = num(task.interval_minutes);
+        var timesPerDay = num(task.times_per_day);
+        var minGap = num(task.min_gap_minutes);
+        var maxGap = num(task.max_gap_minutes);
+        var fromI = timeI(task.has_window ? task.active_from : '');
+        var toI = timeI(task.has_window ? task.active_to : '');
+        var maxFires = num(task.max_fires);
+
+        var fixedRow = labeled('Every N minutes', interval);
+        var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
+        var minGapRow = labeled('Min minutes between fires', minGap);
+        var maxGapRow = labeled('Max minutes between fires (unlimited random)', maxGap);
+        [fixedRow, timesRow, minGapRow, maxGapRow].forEach(function(x) { m.body.appendChild(x); });
+        m.body.appendChild(labeled('Active window from (HH:MM, optional)', fromI));
+        m.body.appendChild(labeled('Active window to (HH:MM, optional)', toI));
+        m.body.appendChild(labeled('Max total fires (blank = default)', maxFires));
+
+        function syncPattern() {
+          var isRandom = patternSel.value === 'random';
+          fixedRow.style.display = isRandom ? 'none' : '';
+          timesRow.style.display = isRandom ? '' : 'none';
+          minGapRow.style.display = isRandom ? '' : 'none';
+          maxGapRow.style.display = isRandom ? '' : 'none';
+        }
+        patternSel.addEventListener('change', syncPattern);
+        syncPattern();
+
+        return function collect() {
+          function iv(x) { var n = parseInt(x.value, 10); return isNaN(n) ? 0 : n; }
+          return {
+            name: nameInput.value.trim(),
+            prompt: promptInput.value,
+            pattern: patternSel.value,
+            interval_minutes: iv(interval),
+            times_per_day: iv(timesPerDay),
+            min_gap_minutes: iv(minGap),
+            max_gap_minutes: iv(maxGap),
+            active_from: fromI.value.trim(),
+            active_to: toI.value.trim(),
+            max_fires: iv(maxFires)
+          };
+        };
+      }
+
       // Edit a recurring task from the Schedules rail (row click → this action).
-      // Loads the task's editable timing and posts changes to the update route,
-      // which reschedules in place (prompt/agent/session preserved).
+      // Loads the task's editable fields and posts changes to the update route,
+      // which reschedules in place (agent/session + fire history preserved).
       window.uiRegisterClientAction('orchestrate_edit_schedule', function(ctx) {
         var id = ctx && ctx.id;
         if (!id) return;
@@ -3686,85 +3797,45 @@
             var m = openOrchModal('Recurring task');
             var help = document.createElement('div');
             help.className = 'ui-orch-modal-help';
-            help.textContent = 'This task runs ' + (task.cadence || '') + ' · fired ' + (task.fire_count || 0) + ' time(s). Edit its timing below.';
+            help.textContent = 'This task runs ' + (task.cadence || '') + ' · fired ' + (task.fire_count || 0) + ' time(s). Edit its name, directive, and timing below, or run it now / delete it.';
             m.body.appendChild(help);
 
-            var ph = document.createElement('div');
-            ph.className = 'ui-orch-sec-h';
-            ph.textContent = 'Directive (run each fire)';
-            m.body.appendChild(ph);
-            var pv = document.createElement('div');
-            pv.className = 'ui-orch-sec-pick-desc';
-            pv.style.cssText = 'white-space:pre-wrap;margin-bottom:0.6rem';
-            pv.textContent = task.prompt || '';
-            m.body.appendChild(pv);
+            var collect = buildRecurringFields(m, task);
 
-            function labeled(labelText, inputEl) {
-              var wrap = document.createElement('label');
-              wrap.style.cssText = 'display:block;margin:0.4rem 0';
-              var lb = document.createElement('div');
-              lb.className = 'ui-orch-sec-toggle-help';
-              lb.textContent = labelText;
-              wrap.appendChild(lb);
-              wrap.appendChild(inputEl);
-              return wrap;
-            }
-            function num(val) {
-              var i = document.createElement('input');
-              i.type = 'number'; i.min = '0';
-              i.className = 'ui-orch-sec-filter';
-              i.value = (val ? String(val) : '');
-              return i;
-            }
-            function txt(val, phold) {
-              var i = document.createElement('input');
-              i.type = 'text'; i.className = 'ui-orch-sec-filter';
-              i.value = val || ''; i.placeholder = phold || '';
-              return i;
-            }
+            // Delete — remove the task entirely (backend /delete). Confirmed,
+            // since it's destructive and can't be undone.
+            var delBtn = document.createElement('button');
+            delBtn.className = 'ui-orch-modal-btn';
+            delBtn.textContent = 'Delete';
+            delBtn.title = 'Remove this recurring task permanently';
+            delBtn.onclick = function() {
+              Promise.resolve(window.uiConfirm ? window.uiConfirm('Delete this recurring task? This cannot be undone.') : window.confirm('Delete this recurring task?')).then(function(ok) {
+                if (!ok) return;
+                delBtn.disabled = true;
+                fetch('api/console/recurring/delete?id=' + encodeURIComponent(id), { method: 'POST' })
+                  .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t); }); m.close(); if (ctx.reload) ctx.reload(); })
+                  .catch(function(err) { delBtn.disabled = false; window.uiAlert('Delete failed: ' + (err && err.message || err)); });
+              });
+            };
+            m.footer.appendChild(delBtn);
 
-            var patternSel = document.createElement('select');
-            patternSel.className = 'ui-orch-sec-filter';
-            [['fixed', 'Fixed — every N minutes'], ['random', 'Random']].forEach(function(o) {
-              var opt = document.createElement('option');
-              opt.value = o[0]; opt.textContent = o[1];
-              if (o[0] === task.pattern) opt.selected = true;
-              patternSel.appendChild(opt);
-            });
-            m.body.appendChild(labeled('Pattern', patternSel));
-
-            var interval = num(task.interval_minutes);
-            var timesPerDay = num(task.times_per_day);
-            var minGap = num(task.min_gap_minutes);
-            var maxGap = num(task.max_gap_minutes);
-            function timeI(val) {
-              var i = document.createElement('input');
-              i.type = 'time'; i.step = '60'; i.className = 'ui-orch-sec-filter';
-              if (val) i.value = val;
-              return i;
-            }
-            var fromI = timeI(task.has_window ? task.active_from : '');
-            var toI = timeI(task.has_window ? task.active_to : '');
-            var maxFires = num(task.max_fires);
-
-            var fixedRow = labeled('Every N minutes', interval);
-            var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
-            var minGapRow = labeled('Min minutes between fires', minGap);
-            var maxGapRow = labeled('Max minutes between fires (unlimited random)', maxGap);
-            [fixedRow, timesRow, minGapRow, maxGapRow].forEach(function(x) { m.body.appendChild(x); });
-            m.body.appendChild(labeled('Active window from (HH:MM, optional)', fromI));
-            m.body.appendChild(labeled('Active window to (HH:MM, optional)', toI));
-            m.body.appendChild(labeled('Max total fires (blank = default)', maxFires));
-
-            function syncPattern() {
-              var isRandom = patternSel.value === 'random';
-              fixedRow.style.display = isRandom ? 'none' : '';
-              timesRow.style.display = isRandom ? '' : 'none';
-              minGapRow.style.display = isRandom ? '' : 'none';
-              maxGapRow.style.display = isRandom ? '' : 'none';
-            }
-            patternSel.addEventListener('change', syncPattern);
-            syncPattern();
+            // Run now — fire once immediately (backend /run). Does NOT touch the
+            // schedule or consume the fire budget; the reply lands in the thread.
+            var runBtn = document.createElement('button');
+            runBtn.className = 'ui-orch-modal-btn';
+            runBtn.textContent = 'Run now';
+            runBtn.title = 'Fire this task once now (does not affect its schedule)';
+            runBtn.onclick = function() {
+              runBtn.disabled = true;
+              fetch('api/console/recurring/run?id=' + encodeURIComponent(id), { method: 'POST' })
+                .then(function(r) {
+                  if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+                  runBtn.disabled = false;
+                  window.uiAlert('Fired once — its reply will appear in the thread shortly.');
+                })
+                .catch(function(err) { runBtn.disabled = false; window.uiAlert('Run failed: ' + (err && err.message || err)); });
+            };
+            m.footer.appendChild(runBtn);
 
             var cancelBtn = document.createElement('button');
             cancelBtn.className = 'ui-orch-modal-btn';
@@ -3776,20 +3847,9 @@
             saveBtn.className = 'ui-orch-modal-btn primary';
             saveBtn.textContent = 'Save';
             saveBtn.onclick = function() {
-              function iv(x) { var n = parseInt(x.value, 10); return isNaN(n) ? 0 : n; }
-              var body = {
-                pattern: patternSel.value,
-                interval_minutes: iv(interval),
-                times_per_day: iv(timesPerDay),
-                min_gap_minutes: iv(minGap),
-                max_gap_minutes: iv(maxGap),
-                active_from: fromI.value.trim(),
-                active_to: toI.value.trim(),
-                max_fires: iv(maxFires)
-              };
               saveBtn.disabled = true;
               fetch('api/console/recurring/update?id=' + encodeURIComponent(id), {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(collect())
               }).then(function(r) {
                 if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
                 m.close();
@@ -3802,6 +3862,51 @@
             m.footer.appendChild(saveBtn);
           })
           .catch(function(err) { window.uiAlert('Could not load task: ' + (err && err.message || err)); });
+      });
+
+      // Create a NEW recurring task from the Scheduler modal's "New recurring
+      // task" button (cfg.schedule_creators → this client action). The agent is
+      // the rail's current agent (window.GOHORT_AGENT_ID); the task attaches to
+      // the open thread (ctx.sessionId), or the agent's home thread when none is
+      // open (the server defaults it). Posts to the create route.
+      window.uiRegisterClientAction('orchestrate_new_recurring', function(ctx) {
+        var agentId = window.GOHORT_AGENT_ID || '';
+        if (!agentId) { window.uiAlert('Pick an agent first.'); return; }
+        var m = openOrchModal('New recurring task');
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'Runs this agent on a timer, posting each result into its thread. Give it a directive and a cadence.';
+        m.body.appendChild(help);
+
+        var collect = buildRecurringFields(m, {pattern: 'fixed', interval_minutes: 30});
+
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'ui-orch-modal-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = m.close;
+        m.footer.appendChild(cancelBtn);
+
+        var createBtn = document.createElement('button');
+        createBtn.className = 'ui-orch-modal-btn primary';
+        createBtn.textContent = 'Create';
+        createBtn.onclick = function() {
+          var body = collect();
+          if (!body.prompt.trim()) { window.uiAlert('Enter a directive for the task.'); return; }
+          body.agent_id = agentId;
+          body.session_id = (ctx && ctx.sessionId) || '';
+          createBtn.disabled = true;
+          fetch('api/console/recurring/create', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+            m.close();
+            if (ctx && ctx.reload) ctx.reload();
+          }).catch(function(err) {
+            createBtn.disabled = false;
+            window.uiAlert('Create failed: ' + (err && err.message || err));
+          });
+        };
+        m.footer.appendChild(createBtn);
       });
 
       // Small shared field helpers for the schedule edit modals below.
@@ -4797,6 +4902,16 @@
           var name = document.createElement('span'); name.className = 'orch-report-card-name'; name.textContent = msg.report_from;
           hdr.appendChild(icon); hdr.appendChild(name);
           if (when) { var ts = document.createElement('span'); ts.className = 'orch-report-card-time'; ts.textContent = when; hdr.appendChild(ts); }
+          // Optional subtitle: secondary context a name can't carry (for a
+          // recurring fire: owning agent · cadence · fire N). Sits under the
+          // name/time header so the card says WHICH schedule fired and where it
+          // is in its run, not just that something reported.
+          if (msg.report_detail) {
+            var sub = document.createElement('div');
+            sub.className = 'orch-report-card-detail';
+            sub.textContent = msg.report_detail;
+            hdr.appendChild(sub);
+          }
           bubble.insertBefore(hdr, bubble.firstChild);
         });
       }

@@ -3759,6 +3759,7 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"ui_theme":             ui_theme,
 		"doc_brand":            AuthGetDocBrand(a.db),
 		"site_name":            AuthGetSiteName(a.db),
+		"timezone":             DeploymentTimezoneName(a.db),
 	}
 	// Tunables — effective values (stored override or spec default), generated
 	// from the registry so a newly-registered knob surfaces here automatically.
@@ -3789,6 +3790,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		UITheme            *string   `json:"ui_theme,omitempty"`
 		DocBrand           *string   `json:"doc_brand,omitempty"`
 		SiteName           *string   `json:"site_name,omitempty"`
+		Timezone           *string   `json:"timezone,omitempty"`
 	}
 	// Read the body once: the static settings decode into the typed struct
 	// above, the tunables come off the same bytes as a generic map (validated
@@ -3868,6 +3870,22 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.SiteName != nil {
 		AuthSetSiteName(a.db, strings.TrimSpace(*req.SiteName))
 		Log("[admin] user %q set site_name=%q", current, strings.TrimSpace(*req.SiteName))
+	}
+	if req.Timezone != nil {
+		// Validate against the zone resolver so a typo can't strand the
+		// deployment in the wrong zone on next boot. Blank clears the override
+		// (back to host zone). Stored as the canonical IANA name. Takes effect
+		// on restart — reassigning time.Local live would race concurrent
+		// formatting.
+		if tz := strings.TrimSpace(*req.Timezone); tz == "" {
+			a.db.Set(WebTable, TimezoneKey, "")
+			Log("[admin] user %q cleared timezone (host zone; applies on restart)", current)
+		} else if _, iana, err := ResolveZone(tz); err != nil {
+			Log("[admin] user %q tried to set unknown timezone=%q — ignored", current, tz)
+		} else {
+			a.db.Set(WebTable, TimezoneKey, iana)
+			Log("[admin] user %q set timezone=%q (applies on restart)", current, iana)
+		}
 	}
 	// Tunables — validated against the registry, so adding a knob needs no
 	// change here. A present numeric key within its spec's [Min, Max] is

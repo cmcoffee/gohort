@@ -277,7 +277,7 @@ func ScheduleTrigger(db Database, t ScheduledTrigger) error {
 	case !t.RunAt.IsZero() && t.RunAt.After(time.Now()):
 		runAt = t.RunAt
 	default:
-		n, recurring := nextTriggerRun(t, time.Now())
+		n, recurring := nextTriggerRun(t, time.Now().In(UserLocation(t.Owner)))
 		if !recurring {
 			return fmt.Errorf("trigger %q has no schedule: set run_at, interval_seconds, cron, or random_window", t.Name)
 		}
@@ -322,7 +322,7 @@ func StartTriggerScheduler() {
 			if r := recover(); r != nil {
 				Log("[trigger] %s/%s handler panicked: %v — rescheduling to survive", p.Owner, p.Name, r)
 				if cur, ok := GetScheduledTrigger(RootDB, p.Owner, p.Name); ok && !cur.Paused && !cur.Push {
-					if next, recurring := nextTriggerRun(cur, time.Now()); recurring {
+					if next, recurring := nextTriggerRun(cur, time.Now().In(UserLocation(cur.Owner))); recurring {
 						_ = scheduleTriggerAt(RootDB, cur, next)
 					}
 				}
@@ -356,7 +356,7 @@ func StartTriggerScheduler() {
 		}
 		// Reschedule the recurring cadence (re-read in case it was paused/edited).
 		if cur, ok := GetScheduledTrigger(RootDB, p.Owner, p.Name); ok && !cur.Paused && !cur.Push {
-			if next, recurring := nextTriggerRun(cur, time.Now()); recurring {
+			if next, recurring := nextTriggerRun(cur, time.Now().In(UserLocation(cur.Owner))); recurring {
 				if err := scheduleTriggerAt(RootDB, cur, next); err != nil {
 					Log("[trigger] reschedule failed for %s/%s: %v", p.Owner, p.Name, err)
 				}

@@ -154,6 +154,63 @@ func RegisteredWebApps() []WebApp {
 	return registeredWebApps
 }
 
+// WebAppHubTab is optionally implemented by a WebApp that should appear as a tab
+// in the shared top-nav "hub" — the persistent Page.Nav tab row rendered on the
+// header of every hub member, so a user can move between the related surfaces
+// (Agency, Bridges, Knowledge, …). Label is the tab text (it may differ from
+// WebName — e.g. the Agency app shows as "Agents"); Order sorts the tabs, lower
+// first. Purely opt-in: only apps that implement this appear as tabs.
+type WebAppHubTab interface {
+	HubTab() (label string, order int)
+}
+
+// HubNav builds the shared hub tab row for a page, marking the tab whose app
+// path equals activePath as the current one. Every hub member sets
+// Page.Nav = HubNav(<its WebPath>), so the same tabs render on all of them,
+// single-sourced from the registry — adding a member is one HubTab() method, no
+// per-page duplication. Empty when no app opts in.
+func HubNav(activePath string) []ui.NavLink {
+	type tab struct {
+		label, path string
+		order       int
+	}
+	var tabs []tab
+	// Enumerate every web-capable component the same way the dashboard does —
+	// explicit WebApps PLUS registered Apps/Agents that implement WebApp (most
+	// apps, incl. Agency/Bridges/Knowledge, register via RegisterApp, not
+	// RegisterWebApp) — deduped by path. Collect the ones opting into the hub.
+	seen := make(map[string]bool)
+	consider := func(wa WebApp) {
+		if seen[wa.WebPath()] {
+			return
+		}
+		seen[wa.WebPath()] = true
+		if ht, ok := wa.(WebAppHubTab); ok {
+			label, order := ht.HubTab()
+			tabs = append(tabs, tab{label: label, path: wa.WebPath(), order: order})
+		}
+	}
+	for _, wa := range RegisteredWebApps() {
+		consider(wa)
+	}
+	for _, a := range RegisteredApps() {
+		if wa, ok := a.(WebApp); ok {
+			consider(wa)
+		}
+	}
+	for _, a := range RegisteredAgents() {
+		if wa, ok := a.(WebApp); ok {
+			consider(wa)
+		}
+	}
+	sort.SliceStable(tabs, func(i, j int) bool { return tabs[i].order < tabs[j].order })
+	out := make([]ui.NavLink, 0, len(tabs))
+	for _, t := range tabs {
+		out = append(out, ui.NavLink{Label: t.label, URL: t.path, Active: t.path == activePath})
+	}
+	return out
+}
+
 // SetupWebAgentFunc is set by the application to initialize agents for the
 // central web server (sets up DB buckets, LLM config, etc.).
 var SetupWebAgentFunc func(agent Agent)

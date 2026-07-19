@@ -256,6 +256,12 @@ type AuthUser struct {
 	// without it bleeding into Chat.
 	PrivateModePerAgent      map[string]bool `json:"private_mode_per_agent,omitempty"`
 	InferredDisabledPerAgent map[string]bool `json:"inferred_disabled_per_agent,omitempty"`
+
+	// Timezone is the user's personal IANA zone (e.g. "America/New_York").
+	// Empty = fall back to the deployment zone. Resolved via UserLocation;
+	// used for the user's turn stamp and the day boundaries of schedules they
+	// own. Set/read through AuthSetUserTimezone / AuthGetUserTimezone.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // AuthSetNotifyDefault updates the user's persistent notify preference.
@@ -275,6 +281,27 @@ func AuthGetNotifyDefault(db Database, username string) bool {
 		return false
 	}
 	return user.NotifyDefault
+}
+
+// AuthGetUserTimezone returns the user's personal IANA zone, or "" when unset
+// (meaning: use the deployment zone). Trimmed.
+func AuthGetUserTimezone(db Database, username string) string {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return ""
+	}
+	return strings.TrimSpace(user.Timezone)
+}
+
+// AuthSetUserTimezone stores the user's personal zone (canonical IANA name;
+// pass "" to clear back to the deployment default). No-op on an unknown user.
+func AuthSetUserTimezone(db Database, username, iana string) {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	user.Timezone = strings.TrimSpace(iana)
+	db.Set(AuthTable, "user:"+username, user)
 }
 
 // AuthSetPrivateMode updates the user's persistent chat private-mode preference.

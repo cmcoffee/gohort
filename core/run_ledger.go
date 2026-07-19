@@ -33,8 +33,9 @@ import (
 )
 
 const (
-	runLedgerTable    = "run_ledger"     // metadata: <owner>:<id> -> RunRecord (Raw stripped)
-	runLedgerRawTable = "run_ledger_raw" // raw output: <owner>:<id> -> string (CryptSet)
+	runLedgerTable      = "run_ledger"       // metadata: <owner>:<id> -> RunRecord (Raw + Steps stripped)
+	runLedgerRawTable   = "run_ledger_raw"   // raw output: <owner>:<id> -> string (CryptSet)
+	runLedgerStepsTable = "run_ledger_steps" // tool trace: <owner>:<id> -> []RunStep (CryptSet)
 )
 
 // maxRunsPerOwner caps retained runs per owner; oldest pruned past this.
@@ -64,18 +65,33 @@ type RunArtifact struct {
 	Value string `json:"value"` // path, URL, or inline content
 }
 
+// RunStep is one tool invocation captured during a run, so the ledger records
+// WHAT the run did (its steps) and not just its final output. Populated from the
+// same per-message tool trace the chat UI renders as chips; kept as a core type
+// so every trigger (schedule, dispatch, standing agent) can fill it without a
+// dependency on an app package. As sensitive as Raw — args/results can carry
+// fetched data — so it travels ONLY in the encrypted side table (never in
+// metadata / ListRuns), rehydrated only by GetRun.
+type RunStep struct {
+	Name   string `json:"name"`
+	Args   string `json:"args,omitempty"`   // JSON-encoded call args, as the caller serialized them
+	Result string `json:"result,omitempty"` // handler output (empty when Err set)
+	Err    string `json:"err,omitempty"`    // set when the call failed
+}
+
 // RunRecord is one entry in the ledger. Raw is the only sensitive field
 // and never travels in the metadata table or in ListRuns results — it is
 // stored encrypted in a side table and rehydrated only by GetRun.
 type RunRecord struct {
 	ID        string        `json:"id"`
 	Owner     string        `json:"owner"`
-	Agent     string        `json:"agent"`         // standing-agent / job name
-	Trigger   string        `json:"trigger"`       // "schedule" | "dispatch" | "channel" | "manual"
-	Brief     string        `json:"brief"`         // what it was asked to do
-	Status    RunStatus     `json:"status"`        // ok | attention | failed | running
-	Summary   string        `json:"summary"`       // worker-LLM digest shown in the feed
-	Raw       string        `json:"raw,omitempty"` // full output — encrypted side table, GetRun only
+	Agent     string        `json:"agent"`           // standing-agent / job name
+	Trigger   string        `json:"trigger"`         // "schedule" | "dispatch" | "channel" | "manual"
+	Brief     string        `json:"brief"`           // what it was asked to do
+	Status    RunStatus     `json:"status"`          // ok | attention | failed | running
+	Summary   string        `json:"summary"`         // worker-LLM digest shown in the feed
+	Raw       string        `json:"raw,omitempty"`   // full output — encrypted side table, GetRun only
+	Steps     []RunStep     `json:"steps,omitempty"` // tool trace — encrypted side table, GetRun only
 	Artifacts []RunArtifact `json:"artifacts,omitempty"`
 	Started   time.Time     `json:"started"`
 	Ended     time.Time     `json:"ended,omitempty"`
@@ -118,13 +134,19 @@ func RecordRun(db Database, r RunRecord) RunRecord {
 	}
 	key := runLedgerKey(r.Owner, r.ID)
 
-	// Raw lives only in the encrypted side table — never in metadata.
+	// Raw and Steps live only in the encrypted side tables — never in metadata
+	// (ListRuns reads metadata, so a leak there would surface in the feed).
 	raw := r.Raw
+	steps := r.Steps
 	meta := r
 	meta.Raw = ""
+	meta.Steps = nil
 	db.Set(runLedgerTable, key, meta)
 	if raw != "" {
 		db.CryptSet(runLedgerRawTable, key, raw)
+	}
+	if len(steps) > 0 {
+		db.CryptSet(runLedgerStepsTable, key, steps)
 	}
 
 	pruneRuns(db, r.Owner)
@@ -145,6 +167,10 @@ func GetRun(db Database, owner, id string) (RunRecord, bool) {
 	var raw string
 	if db.Get(runLedgerRawTable, key, &raw) {
 		r.Raw = raw
+	}
+	var steps []RunStep
+	if db.Get(runLedgerStepsTable, key, &steps) {
+		r.Steps = steps
 	}
 	return r, true
 }
@@ -197,5 +223,6 @@ func pruneRuns(db Database, owner string) {
 		key := runLedgerKey(owner, r.ID)
 		db.Unset(runLedgerTable, key)
 		db.Unset(runLedgerRawTable, key)
+		db.Unset(runLedgerStepsTable, key)
 	}
 }

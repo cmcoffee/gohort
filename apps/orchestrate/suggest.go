@@ -49,9 +49,9 @@ func fieldGuidance(field string) string {
 	case "plan_guidance":
 		return "Optional nudge for decomposition style appended to the orchestrator prompt. 1-3 short sentences. Examples: \"Prefer 2-3 steps over fragmenting. Always start by restating the goal.\""
 	case "max_plan_steps":
-		return "Integer 1-12. How many steps the orchestrator may commit to per turn. Default 5. Pick 7-10 for deep-research or thorough agents, 1-2 for snappy lookup agents."
+		return fmt.Sprintf("Integer 1-12. How many steps the orchestrator may commit to per turn. Default %d. Pick 7-10 for deep-research or thorough agents, 1-2 for snappy lookup agents.", defaultMaxPlanSteps)
 	case "max_worker_rounds":
-		return "Integer 1-20. How many LLM call + tool-execution cycles the worker may run per step. Default 5. Raise when the worker chains many tool calls (10+), lower for single-tool answers (3)."
+		return fmt.Sprintf("Integer 1-20. How many LLM call + tool-execution cycles the worker may run per step. Default %d. Raise when the worker chains many tool calls (18+), lower for single-tool answers (3).", defaultMaxWorkerRounds)
 	}
 	return ""
 }

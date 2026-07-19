@@ -100,6 +100,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		BackURL:       "/",
 		MaxWidth:      "100%",
 		ExtraHeadHTML: headHTML,
+		// Top nav — the shared hub tabs, single-sourced from the WebApp registry
+		// (each member app's HubTab()); Agents is marked active here. Adding a
+		// member is one HubTab() method on that app, no change to this list.
+		Nav: HubNav("/orchestrate"),
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
@@ -120,6 +124,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// Schedules rail — the agent's own monitors + scheduled runs.
 					// Shown for any agent that has them (hidden when empty).
 					SchedulesURL: "api/schedules?agent={agent_id}",
+					// Let the user create a recurring task from the rail (not only via
+					// chat). The button invokes the orchestrate_new_recurring client
+					// action registered in web_assets.html.
+					ScheduleCreators: []ui.ScheduleCreator{
+						{Label: "New recurring task", Action: "orchestrate_new_recurring"},
+					},
 					// Canonical default wake rule, so the channel editor can offer
 					// "Reset to default" on the gatekeeper rules (source of truth is Go).
 					DefaultGatekeeperRule: DefaultDMGatekeeperRule,

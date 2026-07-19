@@ -61,13 +61,26 @@
     // Page header — back link + visible title. Renders above any
     // sticky bar so the back-arrow is the very first thing on the
     // page, easy to reach without scrolling.
-    if (cfg.back_url || cfg.show_title) {
+    if (cfg.back_url || cfg.show_title || (cfg.nav && cfg.nav.length)) {
       var header = el('div', {class: 'ui-page-header'});
       if (cfg.back_url) {
         header.appendChild(el('a', {class: 'ui-back-link', href: cfg.back_url, title: 'Back'}, ['← Back']));
       }
       if (cfg.show_title && cfg.title) {
         header.appendChild(el('h1', {class: 'ui-page-title'}, [cfg.title]));
+      }
+      // Top tabs — Page.Nav rendered inline on the header row (same line as the
+      // back link): a shared page menu for a multi-page app, active page
+      // highlighted. Scrolls horizontally on narrow screens rather than wrapping.
+      if (cfg.nav && cfg.nav.length) {
+        var tabs = el('nav', {class: 'ui-page-tabs'});
+        cfg.nav.forEach(function(it) {
+          tabs.appendChild(el('a', {
+            class: 'ui-page-tab' + (it.active ? ' active' : ''),
+            href: it.url || '#',
+          }, [it.label || '']));
+        });
+        header.appendChild(tabs);
       }
       // Live-sessions pill — polls /api/live every 10s and shows a
       // running/queued count badge with a click-through popover. Lets
@@ -148,22 +161,6 @@
       // column.)
       if (root.parentNode) root.parentNode.insertBefore(header, root);
       else root.appendChild(header);
-    }
-
-    // Top nav bar — a shared menu of page links for multi-page apps. Sits
-    // below the header, spans the full viewport width, and highlights the
-    // active page. Replaces chained footer links (Page.Footer) with a
-    // persistent menu the operator can jump around from on any page.
-    if (cfg.nav && cfg.nav.length) {
-      var navBar = el('nav', {class: 'ui-page-nav'});
-      cfg.nav.forEach(function(it) {
-        navBar.appendChild(el('a', {
-          class: 'ui-page-nav-link' + (it.active ? ' active' : ''),
-          href: it.url || '#',
-        }, [it.label || '']));
-      });
-      if (root.parentNode) root.parentNode.insertBefore(navBar, root);
-      else root.appendChild(navBar);
     }
 
     if (cfg.sticky) mountComponent(cfg.sticky, root);

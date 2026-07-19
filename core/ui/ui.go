@@ -61,11 +61,12 @@ type Page struct {
 	// addition to the document <title>). Pairs with BackURL — the
 	// header bar shows back-arrow + title + optional badge area.
 	ShowTitle bool
-	// Nav renders a shared menu of page links below the header, spanning
-	// the full viewport width. Use it to give a multi-page app one
-	// persistent top menu instead of chained Footer links — set the same
-	// Nav on every page, marking the current page's link Active. Empty
-	// omits the bar.
+	// Nav renders a shared row of page-link tabs INLINE ON THE HEADER ROW
+	// (same line as the back link), highlighting the active page. Use it to
+	// give a multi-page app one persistent top nav instead of chained Footer
+	// links — set the same Nav on every page, marking the current page's link
+	// Active. Empty omits the tabs. The header row appears when any of BackURL,
+	// ShowTitle, or Nav is set.
 	Nav []NavLink
 	// Sticky is rendered above all sections, sticky to the top of the
 	// viewport. Typically a PanicBar or AlertBar.

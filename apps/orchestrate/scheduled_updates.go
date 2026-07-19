@@ -36,10 +36,25 @@ import (
 
 const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"
 
+// scheduledFireDirective is appended to every recurring fire's synthetic user
+// turn. A scheduled fire runs with no human watching the instant it happens, so
+// the conversational reflexes that are fine in live chat ("let me check…",
+// "starting cycle N…", "shall I proceed?") are pure noise here: nobody is there
+// to read the narration or answer the question, and on this path the loop ends
+// the moment the model emits text without a tool call, so an intent-stub becomes
+// the whole reply and posts as a bogus report card. This tells the model to skip
+// the narration, actually do the work, and report only the concrete result — or
+// stay silent when there is nothing to report. Prompt-only by design: we prevent
+// the intent-stub at the source rather than deterministically dropping a
+// no-tool-call reply after the fact, which would also eat a legitimate pure-text
+// fire. If preambles still leak on the 27B, the drop is a small follow-up.
+// Written without em-dashes to match house style.
+const scheduledFireDirective = "[This is an autonomous scheduled fire. No human is watching right now to read narration, answer a question, or approve anything. Do NOT announce what you are about to do or narrate intent (\"let me check…\", \"starting cycle N…\", \"shall I proceed?\"). Call your tools, do the work, and reply with ONLY the concrete result of what you actually did this cycle. If there is nothing to act on or report, produce no output at all rather than a status line or preamble.]"
+
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_orch_update_min_interval", Category: "Timeouts", Label: "Scheduled update min interval", Help: "Minimum interval allowed for a recurring orchestrate update.", Kind: KindSeconds, Default: 60, Min: 10, Max: 3600})
 	RegisterTunable(TunableSpec{Key: "tune_orch_update_max_per_session", Category: "Limits", Label: "Scheduled updates per session", Help: "Max active recurring updates a single session may hold.", Kind: KindInt, Default: 5, Min: 1, Max: 50})
-	RegisterTunable(TunableSpec{Key: "tune_orch_update_max_fires", Category: "Limits", Label: "Scheduled update fire cap", Help: "Max times a recurring update fires before auto-cancel.", Kind: KindInt, Default: 50, Min: 5, Max: 1000})
+	RegisterTunable(TunableSpec{Key: "tune_orch_update_idle_days", Category: "Limits", Label: "Recurring task idle-reap (days)", Help: "Auto-cancel a recurring task that has gone this many days without a productive fire (one that called tools) or a create/edit. A productive fire or an edit renews it; 0 disables the guard. Replaces the old total fire cap, so a task set to max_fires=0 runs indefinitely.", Kind: KindInt, Default: 90, Min: 7, Max: 365})
 }
 
 // orchUpdateMinInterval is the floor on a recurring update's interval.
@@ -48,17 +63,25 @@ func orchUpdateMinInterval() time.Duration { return TuneDuration("tune_orch_upda
 // orchUpdateMaxPerSession caps active recurring updates per session.
 func orchUpdateMaxPerSession() int { return TuneInt("tune_orch_update_max_per_session") }
 
-// orchUpdateMaxFires caps how many times a recurring update fires.
-func orchUpdateMaxFires() int { return TuneInt("tune_orch_update_max_fires") }
+// orchUpdateIdleDays is how many days a recurring task may go without a
+// productive fire or an edit before the idle guard reaps it (0 = disabled).
+func orchUpdateIdleDays() int { return TuneInt("tune_orch_update_idle_days") }
 
 type orchUpdatePayload struct {
-	SessionID       string `json:"session_id"`
-	AgentID         string `json:"agent_id"`
-	Username        string `json:"username"`
-	Prompt          string `json:"prompt"`
+	SessionID string `json:"session_id"`
+	AgentID   string `json:"agent_id"`
+	Username  string `json:"username"`
+	Prompt    string `json:"prompt"`
+	Name      string `json:"name,omitempty"` // short task label; empty = derive from Prompt's first line
+
 	IntervalSeconds int    `json:"interval_seconds"`
 	FireCount       int    `json:"fire_count"`
 	CreatedAt       string `json:"created_at"`
+	// LastActive (RFC3339) is renewed on a productive fire (one that called
+	// tools) and on create / edit-in-place. The idle guard reaps a task whose
+	// LastActive — or CreatedAt, for legacy tasks that predate this field — is
+	// older than tune_orch_update_idle_days. See reschedule().
+	LastActive string `json:"last_active,omitempty"`
 
 	// Pattern modifiers (empty Pattern == fixed, the original every-N-minutes
 	// behavior). See recurring_pattern.go for the scheduling math.
@@ -69,7 +92,7 @@ type orchUpdatePayload struct {
 	HasWindow     bool   `json:"has_window,omitempty"`      // whether the daily window applies
 	WindowFromMin int    `json:"window_from_min,omitempty"` // window start, minutes since local midnight
 	WindowToMin   int    `json:"window_to_min,omitempty"`   // window end, minutes since local midnight
-	MaxFires      int    `json:"max_fires,omitempty"`       // per-task total cap; 0 = deployment default
+	MaxFires      int    `json:"max_fires,omitempty"`       // per-task total cap; 0 = indefinite (run until cancelled or idle-reaped)
 	// RemainingToday holds the random pattern's still-pending fire times for the
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
@@ -104,7 +127,7 @@ func registerOrchestrateScheduledUpdates(o *OrchestrateApp) {
 		if a, ok := loadAgent(UserDB(o.DB, p.Username), p.AgentID); ok && strings.TrimSpace(a.Name) != "" {
 			agent = a.Name
 		}
-		return fmt.Sprintf("%s — %s (agent: %s)", recurringDetail(p), firstLineLabel(p.Prompt), agent)
+		return fmt.Sprintf("%s — %s (agent: %s)", recurringDetail(p), recurringName(p), agent)
 	})
 }
 
@@ -152,6 +175,18 @@ func firstLineLabel(s string) string {
 		s = string(r[:59]) + "…"
 	}
 	return s
+}
+
+// recurringName is the stable label for a recurring task: its explicit Name when
+// set, else the first line of its prompt. Same fallback everywhere a task is
+// labelled — the admin describer, the Schedules rail, and the report card — so a
+// given task reads the same in all three. Unlike the scheduler task id (which
+// reschedule mints fresh each fire), this is stable across the task's lifetime.
+func recurringName(p orchUpdatePayload) string {
+	if n := strings.TrimSpace(p.Name); n != "" {
+		return n
+	}
+	return firstLineLabel(p.Prompt)
 }
 
 // handleOrchestrateScheduledUpdate is the scheduler callback. Loads
@@ -235,8 +270,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	msgs = append(msgs, Message{
 		Role: "user",
 		Content: fmt.Sprintf(
-			"[SCHEDULED UPDATE — fire %d, %s] %s",
-			p.FireCount+1, recurringDetail(p), p.Prompt),
+			"[SCHEDULED UPDATE — fire %d, %s] %s\n\n%s",
+			p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective),
 	})
 
 	// Assemble the SAME toolkit a live turn / standing-agent fire gets, so a
@@ -308,13 +343,32 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	sysPrompt := dispatchSystemPrompt(agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
 
 	started := time.Now()
-	f := false
+	// Think the SAME way every other surface runs this agent. resolveDispatchThink
+	// defaults ON (agent's Think setting / route default) and is the single source
+	// of truth for chat, channel, and dispatch. The scheduled path used to hardcode
+	// WithThink(false), so a fire ran the agent brain-off while its live turns think
+	// — and a no-think 27B answers a scheduled directive with a conversational ack
+	// ("Let me handle this cycle.") and stops at round 1 with zero tool calls
+	// instead of planning and executing the work. Align it so a scheduled fire
+	// plans and acts like a live turn does.
+	think := resolveDispatchThink(agent)
+	// Track the highest round the loop reached, so we can tell a fire that
+	// finished with budget to spare from one that consumed its whole round
+	// allowance and had to be forced to wrap up (its work is likely incomplete).
+	softCap := resolveMaxWorkerRounds(agent)
+	lastRound := 0
 	resp, transcript, runErr := app.RunAgentLoop(ctx, msgs, AgentLoopConfig{
-		SystemPrompt: sysPrompt,
-		Tools:        tools,
-		MaxRounds:    resolveMaxWorkerRounds(agent),
-		ThinkBudget:  agent.ThinkBudget,
-		Confirm:      func(name, args string) bool { return true },
+		SystemPrompt:  sysPrompt,
+		Tools:         tools,
+		MaxRounds:     softCap,
+		StampLocation: UserLocation(p.Username), // stamp the turn in the owning user's zone
+		ThinkBudget:   agent.ThinkBudget,
+		Confirm:       func(name, args string) bool { return true },
+		OnStep: func(s StepInfo) {
+			if s.Round > lastRound {
+				lastRound = s.Round
+			}
+		},
 		// Custom-tool resolution, same as the dispatch path: resolve a direct
 		// call to a has-args custom tool and surface tools loaded via load_tool.
 		ToolFallbackResolver: subTurn.lazyToolFallback,
@@ -322,7 +376,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		DrainViewImages:      subSess.DrainViewImages,
 		ChatOptions: []ChatOption{
 			WithRouteKey("app.orchestrate.worker"),
-			WithThink(f),
+			WithThink(think),
 		},
 	})
 
@@ -341,6 +395,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if strings.TrimSpace(agentLabel) == "" {
 		agentLabel = agent.ID
 	}
+	// Tool trace, reconstructed once from the loop transcript: the card renders
+	// it as chips, the ledger stores it as Steps, and the preamble guard keys on
+	// whether it's empty. A scheduled fire has no live chatTurn to snapshot from,
+	// so this reconstruction IS the record of what the fire did.
+	toolTrace := persistedToolCallsFromTranscript(transcript)
+	steps := runStepsFromToolCalls(toolTrace)
 	record := func(status RunStatus, summary, raw, errStr string) {
 		RecordRun(RootDB, RunRecord{
 			Owner:   p.Username,
@@ -350,6 +410,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			Status:  status,
 			Summary: summary,
 			Raw:     raw,
+			Steps:   steps,
 			Started: started,
 			Ended:   time.Now(),
 			Err:     errStr,
@@ -377,6 +438,37 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		return nil
 	}
 
+	// Preamble guard (backstop to scheduledFireDirective): a fire that produced
+	// text but called ZERO tools did no real work this cycle — it narrated intent
+	// ("Starting cycle 5. Let me check notifications…") and stopped. On this path
+	// the loop ends the instant the model emits text without a tool call, so that
+	// intent-stub becomes resp.Content and would post as a bogus report card.
+	// Don't append it. Still record the fire in the ledger (Raw = the preamble) so
+	// it stays inspectable via list_runs / inspect_run, then reschedule. The
+	// prompt directive prevents most of these; this catches the ones the 27B emits
+	// anyway. NOTE: a recurring task that legitimately produces pure text with no
+	// tools would also be skipped — not a shape these action-oriented fires use;
+	// add an opt-out flag if that ever becomes real.
+	if len(toolTrace) == 0 {
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", agentLabel, p.SessionID, p.FireCount+1)
+		record(RunOK, "(no tool activity — preamble only, nothing posted)", reply, "")
+		if reArm {
+			reschedule(p)
+		}
+		return nil
+	}
+
+	// Round-budget exhaustion: the loop reached its soft cap and had to be forced
+	// to wrap up, so this fire's work is probably incomplete (it ran out of rounds
+	// mid-task rather than finishing). Surface it — badge the ledger run "attention"
+	// and mark the card — instead of letting a truncated cycle read as a clean one.
+	// Raising the agent's max_worker_rounds is the fix when this recurs.
+	hitCap := lastRound >= softCap
+	detail := fmt.Sprintf("%s · %s · fire %d", agentLabel, recurringDetail(p), p.FireCount+1)
+	if hitCap {
+		detail += fmt.Sprintf(" · hit round cap (%d) — may be incomplete", softCap)
+	}
+
 	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the
 	// same distinct-bubble treatment standing-agent reports and monitor wakes
 	// get — a bare assistant bubble hid that the message was an automated fire.
@@ -384,22 +476,34 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// scheduled fire has no live chatTurn to snapshot from) so the export and the
 	// session UI show WHAT the agent did to produce the reply, not just the text.
 	sess.Messages = append(sess.Messages, ChatMessage{
-		Role:       "assistant",
-		Content:    reply,
-		Created:    time.Now(),
-		ReportFrom: agentLabel,
-		ReportKind: cortexKindScheduled,
-		ToolCalls:  persistedToolCallsFromTranscript(transcript),
+		Role:         "assistant",
+		Content:      reply,
+		Created:      time.Now(),
+		ReportFrom:   recurringName(p),
+		ReportKind:   cortexKindScheduled,
+		ReportDetail: detail,
+		ToolCalls:    toolTrace,
 	})
 	sess.LastAt = time.Now()
 	if _, err := saveChatSession(udb, sess); err != nil {
 		Log("[orchestrate/scheduled] save failed for session %s: %v", p.SessionID, err)
 	}
-	record(RunOK, standingSummary(reply), reply, "")
+	status, summary := RunOK, standingSummary(reply)
+	if hitCap {
+		status = RunAttention
+		summary = fmt.Sprintf("hit round cap (%d rounds) — cycle may be incomplete. %s", softCap, summary)
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d HIT ROUND CAP (%d) — likely incomplete", agentLabel, p.SessionID, p.FireCount+1, softCap)
+	}
+	record(status, summary, reply, "")
 	Log("[orchestrate/scheduled] agent=%s session=%s posted fire %d (%d chars)",
 		agentLabel, p.SessionID, p.FireCount+1, len(reply))
 
 	if reArm {
+		// Productive fire — reaching here means toolTrace was non-empty (a
+		// preamble-only fire returns at the guard above), so the task did real
+		// work this cycle. Renew the idle clock so an actively-working task
+		// never trips the idle guard.
+		p.LastActive = time.Now().UTC().Format(time.RFC3339)
 		reschedule(p)
 	}
 	return nil
@@ -424,11 +528,27 @@ func RunOrchestrateUpdateNow(ctx context.Context, user, taskID string) error {
 // time — and, for the random pattern, the mutation of p.RemainingToday — is
 // computed by computeNextFire so the fixed/random branch lives in one place.
 func reschedule(p orchUpdatePayload) {
-	p.FireCount++
-	if p.FireCount >= p.effectiveMaxFires() {
+	// Idle guard — reap a task that has gone tune_orch_update_idle_days without a
+	// productive fire or an edit. A task that keeps doing useful work (or gets
+	// edited) renews LastActive and never trips this; only a spinning or
+	// forgotten one ages out. This replaced the old flat fire cap so max_fires=0
+	// can mean "indefinite" without a task running forever unwatched.
+	if idleDays := orchUpdateIdleDays(); p.idleReapDue(time.Now(), idleDays) {
+		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days — recurring task auto-cancelled", p.SessionID, idleDays)
 		return
 	}
-	next, err := computeNextFire(&p, time.Now())
+	p.FireCount++
+	if p.FireCount >= p.effectiveMaxFires() {
+		// A recurring task that hits its total fire cap retires here. Log it —
+		// otherwise the task simply stops rescheduling and vanishes with no
+		// trace (the sibling error path below logs; this one used to be silent,
+		// which made a capped-out schedule impossible to distinguish from a
+		// delete). A high-frequency pattern (e.g. 24x/day) burns the default
+		// cap in days, so this fires more than the name "cap" suggests.
+		Log("[orchestrate/scheduled] session=%s retired: reached fire cap %d (recurring task auto-cancelled)", p.SessionID, p.effectiveMaxFires())
+		return
+	}
+	next, err := computeNextFire(&p, time.Now().In(UserLocation(p.Username)))
 	if err != nil {
 		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v — stopping", p.SessionID, err)
 		return
@@ -522,6 +642,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		AgentID:         spec.AgentID,
 		Username:        spec.Username,
 		Prompt:          spec.Prompt,
+		Name:            strings.TrimSpace(spec.Name),
 		Pattern:         spec.Pattern,
 		IntervalSeconds: spec.IntervalSeconds,
 		TimesPerDay:     spec.TimesPerDay,
@@ -531,9 +652,17 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		WindowFromMin:   spec.WindowFromMin,
 		WindowToMin:     spec.WindowToMin,
 		MaxFires:        spec.MaxFires,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
+		// Preserve fire count + creation time on edit-in-place; fresh schedules
+		// pass zero/empty and start clean.
+		FireCount: spec.FireCount,
+		CreatedAt: firstNonEmptyStr(strings.TrimSpace(spec.CreatedAt), time.Now().UTC().Format(time.RFC3339)),
+		// Create AND edit-in-place both renew the idle clock — reaching this
+		// path is a deliberate user action. The automatic re-arm does NOT come
+		// through here (it goes reschedule -> ScheduleTask, preserving LastActive),
+		// so only real user/productive activity renews.
+		LastActive: time.Now().UTC().Format(time.RFC3339),
 	}
-	next, err := computeNextFire(&p, time.Now())
+	next, err := computeNextFire(&p, time.Now().In(UserLocation(p.Username)))
 	if err != nil {
 		return "", err
 	}
@@ -597,6 +726,26 @@ func persistedToolCallsFromTranscript(transcript []Message) []PersistedToolCall 
 			}
 			out = append(out, pc)
 		}
+	}
+	return out
+}
+
+// runStepsFromToolCalls flattens the card's tool trace into the ledger's []RunStep
+// so inspect_run shows WHICH tools a fire ran (name, args, result/err), not just
+// its final text. Args are JSON-encoded to match how the trace was serialized.
+func runStepsFromToolCalls(calls []PersistedToolCall) []RunStep {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]RunStep, 0, len(calls))
+	for _, c := range calls {
+		args := ""
+		if len(c.Args) > 0 {
+			if b, err := json.Marshal(c.Args); err == nil {
+				args = string(b)
+			}
+		}
+		out = append(out, RunStep{Name: c.Name, Args: args, Result: c.Result, Err: c.Err})
 	}
 	return out
 }

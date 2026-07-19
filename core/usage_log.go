@@ -6,7 +6,7 @@
 // rollup so the chart reflects every cost-incurring call regardless
 // of which app made it.
 //
-// Storage shape: one record per UTC day with the same UsageDiff
+// Storage shape: one record per local-calendar day with the same UsageDiff
 // fields the chart already consumes. Read-modify-write is serialized
 // via a process-wide mutex so two concurrent calls on the same day
 // can't lose updates to a race.
@@ -59,7 +59,12 @@ func recordDailyUsage(diff UsageDiff) {
 		return
 	}
 	usageDailyDropOnce.Do(dropLegacyUsageDaily)
-	day := time.Now().UTC().Format("2006-01-02")
+	// Key by LOCAL calendar day so the rollup boundary matches every
+	// other day-scoped surface (recurring caps, the external cost
+	// ledger, the date the user sees on their turn). See the invariant
+	// note in AggregateDailyCost: the chart window MUST be derived from
+	// the same zone these keys use.
+	day := time.Now().Format("2006-01-02")
 	usageDailyMu.Lock()
 	defer usageDailyMu.Unlock()
 	var rec DailyCost

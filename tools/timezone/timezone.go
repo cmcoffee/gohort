@@ -55,7 +55,7 @@ func (t *TimeZoneTool) Run(args map[string]any) (string, error) {
 		loc, label := time.Local, "the local zone"
 		if z := strings.TrimSpace(asString(args["zone"])); z != "" {
 			var err error
-			loc, label, err = resolveZone(z)
+			loc, label, err = ResolveZone(z)
 			if err != nil {
 				return "", err
 			}
@@ -70,11 +70,11 @@ func (t *TimeZoneTool) Run(args map[string]any) (string, error) {
 		if strings.TrimSpace(tstr) == "" || strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
 			return "", fmt.Errorf("convert requires time, from, and to")
 		}
-		fromLoc, fromLabel, err := resolveZone(from)
+		fromLoc, fromLabel, err := ResolveZone(from)
 		if err != nil {
 			return "", fmt.Errorf("from: %w", err)
 		}
-		toLoc, toLabel, err := resolveZone(to)
+		toLoc, toLabel, err := ResolveZone(to)
 		if err != nil {
 			return "", fmt.Errorf("to: %w", err)
 		}
@@ -104,57 +104,8 @@ func (t *TimeZoneTool) Run(args map[string]any) (string, error) {
 	return "", fmt.Errorf(`unsupported operation %q (use "now" or "convert")`, op)
 }
 
-// zoneAliases maps the names an LLM actually produces (cities, US
-// abbreviations) to IANA zone names, since time.LoadLocation only accepts
-// IANA. DST is handled automatically by the IANA zone, so EST and EDT both
-// map to America/New_York. "ist" is ambiguous (India / Israel / Irish) —
-// resolved to India, the most common usage.
-var zoneAliases = map[string]string{
-	"utc": "UTC", "gmt": "UTC", "z": "UTC", "zulu": "UTC",
-	"est": "America/New_York", "edt": "America/New_York", "et": "America/New_York", "eastern": "America/New_York",
-	"cst": "America/Chicago", "cdt": "America/Chicago", "ct": "America/Chicago", "central": "America/Chicago",
-	"mst": "America/Denver", "mdt": "America/Denver", "mt": "America/Denver", "mountain": "America/Denver",
-	"pst": "America/Los_Angeles", "pdt": "America/Los_Angeles", "pt": "America/Los_Angeles", "pacific": "America/Los_Angeles",
-	"new york": "America/New_York", "nyc": "America/New_York", "newyork": "America/New_York", "boston": "America/New_York", "miami": "America/New_York", "atlanta": "America/New_York",
-	"los angeles": "America/Los_Angeles", "la": "America/Los_Angeles", "san francisco": "America/Los_Angeles", "sf": "America/Los_Angeles", "seattle": "America/Los_Angeles", "portland": "America/Los_Angeles",
-	"chicago": "America/Chicago", "dallas": "America/Chicago", "houston": "America/Chicago", "austin": "America/Chicago",
-	"denver": "America/Denver", "phoenix": "America/Phoenix",
-	"toronto": "America/Toronto", "mexico city": "America/Mexico_City",
-	"sao paulo": "America/Sao_Paulo",
-	"london":    "Europe/London", "uk": "Europe/London", "dublin": "Europe/Dublin", "lisbon": "Europe/Lisbon",
-	"paris": "Europe/Paris", "berlin": "Europe/Berlin", "madrid": "Europe/Madrid", "rome": "Europe/Rome",
-	"amsterdam": "Europe/Amsterdam", "zurich": "Europe/Zurich", "stockholm": "Europe/Stockholm",
-	"moscow": "Europe/Moscow", "istanbul": "Europe/Istanbul", "athens": "Europe/Athens",
-	"dubai": "Asia/Dubai", "abu dhabi": "Asia/Dubai", "gst": "Asia/Dubai",
-	"mumbai": "Asia/Kolkata", "delhi": "Asia/Kolkata", "bangalore": "Asia/Kolkata", "india": "Asia/Kolkata", "ist": "Asia/Kolkata",
-	"singapore": "Asia/Singapore", "bangkok": "Asia/Bangkok", "jakarta": "Asia/Jakarta",
-	"hong kong": "Asia/Hong_Kong", "hongkong": "Asia/Hong_Kong",
-	"shanghai": "Asia/Shanghai", "beijing": "Asia/Shanghai", "china": "Asia/Shanghai",
-	"tokyo": "Asia/Tokyo", "japan": "Asia/Tokyo", "jst": "Asia/Tokyo",
-	"seoul": "Asia/Seoul", "kst": "Asia/Seoul",
-	"sydney": "Australia/Sydney", "melbourne": "Australia/Melbourne", "perth": "Australia/Perth", "brisbane": "Australia/Brisbane",
-	"auckland": "Pacific/Auckland", "new zealand": "Pacific/Auckland",
-	"honolulu": "Pacific/Honolulu", "hawaii": "Pacific/Honolulu",
-}
-
-// resolveZone turns a city / abbreviation / IANA name into a Location plus
-// the IANA label it resolved to. Tries the alias map first, then the raw
-// input as a literal IANA name.
-func resolveZone(s string) (*time.Location, string, error) {
-	raw := strings.TrimSpace(s)
-	if raw == "" {
-		return nil, "", fmt.Errorf("zone is required")
-	}
-	if iana, ok := zoneAliases[strings.ToLower(raw)]; ok {
-		if loc, err := time.LoadLocation(iana); err == nil {
-			return loc, iana, nil
-		}
-	}
-	if loc, err := time.LoadLocation(raw); err == nil {
-		return loc, raw, nil
-	}
-	return nil, "", fmt.Errorf(`unknown timezone %q — use an IANA name like "America/New_York" or "Asia/Tokyo", a major city ("Tokyo", "London"), or a US abbreviation (EST/CST/MST/PST)`, raw)
-}
+// Zone resolution (ResolveZone + its alias table) lives in core, shared with
+// the deployment-timezone setting. This tool just calls core.ResolveZone.
 
 // parseClock parses a clock time into hour (24h) + minute. Accepts
 // "3:00 PM", "3pm", "15:00", "15", "3:30pm".

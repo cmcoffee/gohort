@@ -3739,6 +3739,23 @@
           if (!Array.isArray(list)) list = [];
           modal.body.innerHTML = '';
           loadSchedules(); // keep the rail badge in sync
+          // App-provided "+ New …" create buttons at the top (shown even in the
+          // empty state, since this modal is the create entry point). Each invokes
+          // an app-registered client action; core/ui never knows the schedule kind.
+          var creators = cfg.schedule_creators;
+          if (Array.isArray(creators) && creators.length) {
+            var bar = el('div', {style: 'display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.7rem'});
+            creators.forEach(function(c) {
+              if (!c || !c.action) return;
+              var b = el('button', {style: 'padding:0.35em 0.7em;border:none;border-radius:6px;background:var(--accent,#6366f1);color:#fff;cursor:pointer;font-size:0.85em'}, ['＋ ' + (c.label || 'New')]);
+              b.addEventListener('click', function() {
+                var fn = window.UIClientActions && window.UIClientActions[c.action];
+                if (fn) fn({reload: render, sessionId: activeSessionId});
+              });
+              bar.appendChild(b);
+            });
+            modal.body.appendChild(bar);
+          }
           if (!list.length) {
             modal.body.appendChild(el('div', {style: 'opacity:0.6;padding:0.3rem'}, ['No schedules yet.']));
             return;
@@ -3809,11 +3826,46 @@
     }
     // renderObservation appends one cortex observation card — same path the
     // initial replay uses (bubble + meta + the app's report-card replay hook).
+    // applyPersistedToolCalls hydrates a bubble's tool toggle from a message's
+    // persisted tool_calls ([ ]PersistedToolCall stored per assistant message).
+    // The live SSE path (tool_call / tool_result events) builds the same
+    // host.tools[] structure; on replay the server has already paired call+result
+    // into one entry, so we collapse them into a single push and refresh the
+    // toggle once. Shared by the openSession replay loop AND renderObservation, so
+    // a live-polled report card shows the same tool chips a reloaded one does
+    // (before this, a scheduled/monitor card rendered live via polling showed the
+    // prose but none of its tool activity). No-op when there are no tool calls.
+    function applyPersistedToolCalls(mid, m) {
+      var toolCalls = m && (m.tool_calls || m.ToolCalls);
+      if (!m || m.role !== 'assistant' || !Array.isArray(toolCalls) || !toolCalls.length) return;
+      var rmEntry = msgEls[mid];
+      var rmHost = rmEntry && toolHostFor(rmEntry);
+      if (!rmHost) return;
+      if (!rmHost.tools) rmHost.tools = [];
+      toolCalls.forEach(function(tc, idx) {
+        var argsStr = '';
+        try { argsStr = JSON.stringify(tc.args || tc.Args || {}); }
+        catch (_) { argsStr = String(tc.args || tc.Args || ''); }
+        var resultText = tc.result || tc.Result || '';
+        var errText = tc.err || tc.Err || '';
+        var output = errText ? ('ERROR: ' + errText) : resultText;
+        var cached = tc.cached || tc.Cached;
+        rmHost.tools.push({
+          call_id: 'replay-' + mid + '-' + idx,
+          name: (tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
+          args: argsStr,
+          output: String(output == null ? '' : output),
+          kind: '',
+        });
+      });
+      attachAgentToolToggle(rmHost);
+    }
     function renderObservation(m) {
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
       if (m.created || m.usage) setMessageMeta(mid, {created: m.created, usage: m.usage});
+      applyPersistedToolCalls(mid, m);
       if (messageReplayHooks.length) {
         var entry = msgEls[mid], bubble = entry && entry.bubble;
         if (bubble) messageReplayHooks.forEach(function(fn) { try { fn(bubble, m); } catch (e) {} });
@@ -4327,39 +4379,7 @@
               setMessageMeta(mid, {created: m.created, usage: m.usage});
             }
             // Replay persisted tool calls onto this bubble's host.
-            // The live SSE path (tool_call / tool_result events)
-            // builds the same host.tools[] structure; on replay the
-            // server has already paired call+result into one
-            // PersistedToolCall per entry, so we collapse the two
-            // live events into a single push and refresh the toggle
-            // once at the end. Without this, reloading a session
-            // showed prose but no chips for the tool activity the
-            // user watched live.
-            var toolCalls = m.tool_calls || m.ToolCalls;
-            if (m.role === 'assistant' && Array.isArray(toolCalls) && toolCalls.length) {
-              var rmEntry = msgEls[mid];
-              var rmHost = rmEntry && toolHostFor(rmEntry);
-              if (rmHost) {
-                if (!rmHost.tools) rmHost.tools = [];
-                toolCalls.forEach(function(tc, idx) {
-                  var argsStr = '';
-                  try { argsStr = JSON.stringify(tc.args || tc.Args || {}); }
-                  catch (_) { argsStr = String(tc.args || tc.Args || ''); }
-                  var resultText = tc.result || tc.Result || '';
-                  var errText = tc.err || tc.Err || '';
-                  var output = errText ? ('ERROR: ' + errText) : resultText;
-                  var cached = tc.cached || tc.Cached;
-                  rmHost.tools.push({
-                    call_id: 'replay-' + mid + '-' + idx,
-                    name: (tc.name || tc.Name || 'tool') + (cached ? ' ♻' : ''),
-                    args: argsStr,
-                    output: String(output == null ? '' : output),
-                    kind: '',
-                  });
-                });
-                attachAgentToolToggle(rmHost);
-              }
-            }
+            applyPersistedToolCalls(mid, m);
             // App-registered replay hooks let app code decorate
             // replayed bubbles (e.g. swap an intake-derived user msg's
             // body for the re-editable form widget). Each hook decides
