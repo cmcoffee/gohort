@@ -44,6 +44,7 @@ func (T *Account) Routes() {
 	T.HandleFunc("/api/password", T.handlePassword)
 	T.HandleFunc("/api/connections", T.handleConnections)
 	T.HandleFunc("/api/credentials", T.handleCredentials)
+	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
@@ -359,6 +360,65 @@ func (T *Account) handleCredentials(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleUserTools is the user's OWN persistent-tool surface — the counterpart
+// to the admin persistent-tools page, scoped to the calling user's pool. GET
+// lists the user's active tools (authored via chat/Builder); DELETE removes one
+// (the break-glass "this tool misbehaves, drop it" control). Authoring stays in
+// chat — a tool is a script or API definition, not a hand-filled form — so this
+// surface is view + delete, not create.
+func (T *Account) handleUserTools(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		type row struct {
+			Name        string `json:"name"`
+			Description string `json:"description,omitempty"`
+			Mode        string `json:"mode,omitempty"`
+			Credential  string `json:"credential,omitempty"`
+			Missing     bool   `json:"missing"`
+			Shared      bool   `json:"shared"`
+			LastUsed    string `json:"last_used,omitempty"`
+		}
+		rows := []row{}
+		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			// Dependency check resolves in the USER's namespace (a tool may lean
+			// on the user's own credential, which the global-only CredentialStatus
+			// wouldn't find).
+			missing := false
+			if cred := strings.TrimSpace(p.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
+				if _, found := Secure().Resolve(cred, user); !found {
+					missing = true
+				}
+			}
+			last := ""
+			if !p.LastUsedAt.IsZero() {
+				last = p.LastUsedAt.Format("2006-01-02")
+			}
+			rows = append(rows, row{
+				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
+				Credential: p.Tool.Credential, Missing: missing, Shared: p.Shared, LastUsed: last,
+			})
+		}
+		writeJSON(w, rows)
+	case http.MethodDelete:
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		if name == "" {
+			http.Error(w, "missing name", http.StatusBadRequest)
+			return
+		}
+		if err := DeletePersistentTempTool(AuthDB(), user, name); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // --- preferences endpoint ----------------------------------------------------
 
 // handlePrefs GET returns the user's personal defaults; POST updates whichever
@@ -498,6 +558,11 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			Title:    "My API credentials",
 			Subtitle: "API keys you own and manage yourself. They live in your namespace — only your agents can dispatch through them, and they never appear on the admin page. Secrets are stored encrypted and never shown to the assistant.",
 			Body:     ui.Card{HTML: credentialsHTML},
+		},
+		ui.Section{
+			Title:    "My tools",
+			Subtitle: "Tools you've had the assistant build for you, live in your own pool. Ask in chat to create or change one; delete here to retire any that misbehave.",
+			Body:     ui.Card{HTML: userToolsHTML},
 		},
 		ui.Section{
 			Title:    "API keys (personal access)",
@@ -844,6 +909,55 @@ const credentialsHTML = `<div id="acct-creds" class="acct-creds">Loading…</div
       el('div',{class:'actions'},[save, cancel, msg])
     ]);
     root.innerHTML=''; root.appendChild(form); syncType(); nameI.focus();
+  }
+  load();
+})();
+</script>`
+
+// userToolsHTML is the "My tools" panel: a read-mostly list of the user's OWN
+// persistent tools (name + mode badge + description, a missing-dependency badge,
+// a shared badge) with a Delete control. Authoring happens in chat, so there's
+// no create form here. App-specific, so it rides in a Card (the Card renderer
+// re-executes this <script>), same pattern as the other Account panels.
+const userToolsHTML = `<div id="acct-tools" class="acct-tools">Loading…</div>
+<style>
+.acct-tools { display:flex; flex-direction:column; gap:0.55rem; }
+.acct-tool { border:1px solid var(--border); border-radius:8px; padding:0.55rem 0.75rem; display:flex; align-items:center; gap:0.6rem; }
+.acct-tool-meta { flex:1; min-width:0; }
+.acct-tool-name { font-weight:600; color:var(--text); }
+.acct-tool-badge { font-size:0.68rem; font-weight:600; padding:0.08rem 0.45rem; border-radius:999px; background:var(--bg-2); color:var(--text-mute); margin-left:0.4rem; }
+.acct-tool-badge.shared { background:color-mix(in srgb, var(--accent) 22%, transparent); color:var(--accent); }
+.acct-tool-badge.missing { background:color-mix(in srgb, var(--danger) 20%, transparent); color:var(--danger); }
+.acct-tool-sub { font-size:0.75rem; color:var(--text-mute); margin-top:0.1rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acct-tool-btn { cursor:pointer; background:var(--bg-2); color:var(--text-mute); border:1px solid var(--border); border-radius:6px; padding:0.3rem 0.7rem; font:inherit; font-size:0.8rem; }
+.acct-tool-btn:hover { color:var(--danger); border-color:var(--danger); }
+.acct-tool-empty { color:var(--text-mute); font-style:italic; padding:0.4rem 0; }
+</style>
+<script>
+(function(){
+  var root = document.getElementById('acct-tools');
+  if (!root) return;
+  function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else if(k==='class') n.className=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
+  function load(){ return fetch('api/tools',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render).catch(function(){ root.textContent='Failed to load.'; }); }
+  function render(list){
+    root.innerHTML='';
+    list = list || [];
+    if(!list.length){ root.appendChild(el('div',{class:'acct-tool-empty',text:'No tools yet. Ask the assistant in chat to build one for you.'})); return; }
+    list.forEach(function(t){
+      var name = el('div',{class:'acct-tool-name'},[document.createTextNode(t.name)]);
+      if(t.mode) name.appendChild(el('span',{class:'acct-tool-badge',text:t.mode}));
+      if(t.shared) name.appendChild(el('span',{class:'acct-tool-badge shared',text:'shared'}));
+      if(t.missing) name.appendChild(el('span',{class:'acct-tool-badge missing',text:'missing '+(t.credential||'credential')}));
+      var subText = t.description || '';
+      if(t.last_used) subText = subText ? (subText+'  ·  last used '+t.last_used) : ('last used '+t.last_used);
+      var meta = el('div',{class:'acct-tool-meta'},[ name, el('div',{class:'acct-tool-sub',text: subText}) ]);
+      var del = el('button',{class:'acct-tool-btn',text:'Delete'});
+      del.addEventListener('click',function(){
+        var go = window.uiConfirm ? window.uiConfirm('Delete tool "'+t.name+'"? Agents using it lose it.') : Promise.resolve(confirm('Delete "'+t.name+'"?'));
+        go.then(function(ok){ if(!ok) return; fetch('api/tools?name='+encodeURIComponent(t.name),{method:'DELETE',credentials:'same-origin'}).then(load); });
+      });
+      root.appendChild(el('div',{class:'acct-tool'},[meta,del]));
+    });
   }
   load();
 })();

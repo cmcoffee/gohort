@@ -124,14 +124,38 @@ The admin credential list shows global-only with no extra code — it reads
 `ListWithPending`, which wraps `List()`, which already excludes the
 `@`-prefixed user-owned keys. This was the phase-2 deferral, unblocked.
 
+### Tools — SHIPPED (rides with phase 3)
+
+The tools axis is simpler than credentials: the persistent-tool pool is already
+keyed by **username** (`persistent_temp_tools[user]`), so there was never a
+collision to solve — the per-user namespace substrate already existed.
+
+- **Auto-catalog** (SHIPPED) — `BuildTools(sess)` now emits the session user's
+  OWN credentials as `fetch_url_<name>` tools (deduped so a user cred shadows a
+  same-named global), so a credential created on the Account page is immediately
+  a first-class callable tool for the owner's agents — not reachable only via a
+  temp-tool `fetch_via`. This is the concrete gap the "My API credentials"
+  surface would otherwise have left open.
+- **"My tools"** (SHIPPED) — a section on the Account page (`api/tools`) lists the
+  user's OWN persistent tools (mode + description, a missing-dependency badge
+  resolved in the user's namespace, a shared badge) with a break-glass Delete.
+  Authoring stays in chat/Builder — a tool is a script or API definition, not a
+  hand-filled form — so this surface is view + delete, not create.
+
+**Admin tool-filtering — intentionally NOT done.** Unlike credentials (where
+user-owned creds live in a separate `@u:` keyspace that `List()` hides for free),
+tool pools are ALL per-user; there is no separate namespace to hide. The admin
+persistent-tools page is genuine deployment OVERSIGHT — every user's tools with an
+owner badge + break-glass delete + the Shared toggle that defines the global
+pool. Filtering it to "global only" would *remove* oversight, not tidy a
+namespace, so it stays. "Global tools" here = the `Shared` pool, and the admin
+already surfaces that distinction per-row.
+
 ### Deferred
 
-- **Tools user-surface + admin tool-filtering.** Tools are already per-owner in
-  the admin; giving users their own tool surface (and filtering the admin) is a
-  symmetric but separate chunk — do it after the credential surface proves the
-  pattern.
-- Global-tool opt-in catalog (phase 4); user enumeration / `AllowedUsers` picker /
-  user management (phase 5).
+- Global-tool opt-in catalog (phase 4): a catalog users pick `Shared` tools from
+  INTO their agents (the one thing a user pulls from the global namespace).
+- User enumeration / `AllowedUsers` picker / user management (phase 5).
 
 ### Open questions (phase 3)
 
