@@ -247,7 +247,7 @@ func setToolScope(db Database, owner, toolName, target string, on bool) error {
 			break
 		}
 	}
-	if err := unbundleAgentTool(udb, owner, target, toolName); err != nil {
+	if err := unbundleAgentToolByID(udb, owner, target, toolName); err != nil {
 		return err
 	}
 	// st.Global is false here (the global branch returned above), so a tool
@@ -277,7 +277,11 @@ func promoteScopedToGlobal(db, udb Database, owner, toolName string) error {
 	for _, a := range listAgents(udb, owner) {
 		for _, t := range a.Tools {
 			if t.Name == toolName {
-				_ = unbundleAgentTool(udb, owner, a.ID, toolName)
+				if err := unbundleAgentToolByID(udb, owner, a.ID, toolName); err != nil {
+					// Don't silently leave a scoped copy behind: that's the
+					// "promoted to global but it came back on Case Analyzer" bug.
+					Log("[temptool.scope] promote %q: strip from %q failed: %v", toolName, a.Name, err)
+				}
 				break
 			}
 		}
@@ -401,6 +405,39 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 	if !replaced {
 		rec.Tools = append(rec.Tools, t)
 	}
+	_, err := saveAgent(udb, rec)
+	return err
+}
+
+// unbundleAgentToolByID removes a tool from an agent's record — the OFF twin of
+// bundleAgentToolByID, and like it it carries NO Owner-field equality guard.
+// The admin scope path removes a tool from ANY of the owner's agents, including
+// SEED/app agents (Owner==seedOwner, e.g. Casefile's "Case Analyzer") and
+// sub-agents whose .Owner differs. runner.go's unbundleAgentTool keeps that
+// guard for the RUNTIME sess.UnbundleTool caller, but here it only mis-fired:
+// it made the Access selector's unselect return "not your agent", and it made
+// promoteScopedToGlobal's strip silently fail on those agents — so a tool
+// promoted to global kept its scoped copy and "came back" after the global one
+// was deleted. Loaded from the resolved user store; saving writes the shadow.
+func unbundleAgentToolByID(udb Database, owner, agentID, toolName string) error {
+	rec, ok := loadAgent(udb, agentID)
+	if !ok {
+		return fmt.Errorf("agent %q not found", agentID)
+	}
+	_ = owner
+	kept := rec.Tools[:0]
+	found := false
+	for _, tl := range rec.Tools {
+		if tl.Name == toolName {
+			found = true
+			continue
+		}
+		kept = append(kept, tl)
+	}
+	if !found {
+		return fmt.Errorf("tool %q is not bundled on agent %q", toolName, rec.Name)
+	}
+	rec.Tools = kept
 	_, err := saveAgent(udb, rec)
 	return err
 }

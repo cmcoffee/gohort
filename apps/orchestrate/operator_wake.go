@@ -179,6 +179,18 @@ func registerOperatorWake(app *OrchestrateApp) {
 	// dispatch the named tool; anything not found falls back to the global path.
 	RegisterWatchToolInvoker(func(owner, agentID, toolName string, toolArgs map[string]any) (string, error) {
 		sess := &ToolSession{Username: owner, DB: AuthDB()}
+		// Give the invoker session the owner's real workspace. Without it a
+		// SHELL/script temp tool (script_body + "python3 {workspace_dir}/x.py")
+		// bails every tick with "references {workspace_dir} but the session has
+		// no sandbox" — so a scoped script tool could never run on a monitor,
+		// and the model fell back to hand-authoring a self-sending script. An
+		// api-mode wrapper doesn't need this (it dispatches through the
+		// credential), but not every watch tool is api-mode. Best-effort: on
+		// failure WorkspaceDir stays empty and shell tools still get the clear
+		// no-sandbox error rather than a silent one.
+		if wd, werr := EnsureWorkspaceDir(owner); werr == nil {
+			sess.WorkspaceDir = wd
+		}
 		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
 		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
 			if td.Tool.Name == toolName {

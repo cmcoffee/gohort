@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 const (
@@ -109,6 +110,19 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// before this flag existed) never picks it up and the plan-first
 			// behavior silently doesn't land after redeploy.
 			shadow.PreMortem = seed.PreMortem
+			// App-agents (registered via RegisterAppAgent, e.g. Casefile's
+			// "Case Analyzer") are framework-owned for VISIBILITY too — the app
+			// decides Hidden, not the user. A stale shadow, created the moment a
+			// tool got mis-scoped onto the app-agent (the bundle path's
+			// saveAgent), otherwise pins Hidden at whatever it was then, so
+			// flipping the spec to Hidden:true never takes: the app-agent keeps
+			// showing in the fleet picker and the scope pills. Refresh from the
+			// spec so the app's decision wins (mirrors the prompt/Mode refresh).
+			// Regular seeds keep their shadow Hidden — a user CAN flip a normal
+			// agent's Hide toggle, and that's legitimate deployment state.
+			if _, isApp := appagents.AppAgentByID(id); isApp {
+				shadow.Hidden = seed.Hidden
+			}
 			shadow = selfHealAllowedTools(db, shadow)
 			return enforceSubAgentPosture(applyLegacyMode(shadow)), true
 		}
