@@ -130,6 +130,19 @@ type SecureCredential struct {
 	// decode into Restricted=false, so any previously-restricted
 	// credential must be re-restricted once after upgrade.
 	Restricted bool `json:"restricted,omitempty"`
+	// Secured locks the credential to the tools that DECLARE it
+	// (hook_capabilities fetch_via:<name> / secret:<name>). A secured
+	// credential has no access-scope of its own — access is whatever the
+	// scope of those tools already permits — so the per-agent "Manage
+	// scope" surface is redundant for it. Enforced by two exclusions:
+	// it's dropped from the fetch_url auto-route (so a covered host can't
+	// reach the secret without a declaring tool) and, like Restricted,
+	// it gets no auto-generated fetch_url_<name> catalog tool (which would
+	// hand the default pool access). The only paths left are the explicit
+	// declaring tools, whose own scope is the access control. Distinct
+	// from Restricted (wrapper-only but still auto-routable + scoped);
+	// Secured is the tool-locked, scope-less mode.
+	Secured bool `json:"secured,omitempty"`
 	// AllowedMethods restricts which HTTP methods the LLM may use
 	// against this credential. Empty/nil = all methods allowed
 	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
@@ -445,6 +458,7 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// credential's config can't silently re-enable or un-secure it.
 		c.Disabled = existing.Disabled
 		c.Restricted = existing.Restricted
+		c.Secured = existing.Secured // owned by the secure/open action, not the upsert form
 	} else {
 		c.CreatedAt = time.Now()
 	}
@@ -613,6 +627,43 @@ func (s *SecureAPI) SetRestricted(name string, restricted bool) error {
 	return nil
 }
 
+// CredentialToolRef names one tool that declares a credential — via its api-mode
+// Credential or a fetch_via:/secret: hook capability — with the agent it lives on
+// (or a pool label for global tools). Lets the admin UI show what a credential is
+// bound to and warn on a secured-but-unused ("dead") credential.
+type CredentialToolRef struct {
+	Agent string `json:"agent"`
+	Tool  string `json:"tool"`
+	// Via is how the tool uses the credential: "fetch_via" (server-side
+	// dispatch, safe under Secured), "secret" (raw key to the script — BLOCKED
+	// once secured, so such a tool must be reworked), or "api" (api-mode tool).
+	Via string `json:"via,omitempty"`
+}
+
+// CredentialToolsResolver, when wired at startup (by orchestrate, which can reach
+// every agent's tools + the global pool), returns every tool that declares the
+// named credential. nil when orchestrate isn't loaded — callers treat nil as
+// "unknown" (don't warn), not "none".
+var CredentialToolsResolver func(cred string) []CredentialToolRef
+
+// SetSecured toggles a credential's tool-locked mode: a secured credential is
+// reachable only through the tools that declare it (its access follows their
+// scope) — off the fetch_url auto-route and off the auto-generated catalog tool.
+func (s *SecureAPI) SetSecured(name string, secured bool) error {
+	if !s.ready() || name == "" {
+		return fmt.Errorf("name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, name, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.Secured = secured
+	s.db.Set(secureAPITable, name, c)
+	return nil
+}
+
 // Delete removes both metadata and encrypted secret.
 func (s *SecureAPI) Delete(name string) error {
 	if !s.ready() || name == "" {
@@ -776,11 +827,12 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	creds := s.List()
 	out := make([]AgentToolDef, 0, len(creds))
 	for _, c := range creds {
-		if c.Disabled || c.Restricted {
-			// Disabled = hard kill; Restricted = wrapper-only. Either
-			// way, no direct LLM-callable exposure. Dispatch via
-			// DispatchToolCall (used by api-mode temp tools) is
-			// unaffected by Restricted.
+		if c.Disabled || c.Restricted || c.Secured {
+			// Disabled = hard kill; Restricted = wrapper-only; Secured =
+			// tool-locked. None get a direct LLM-callable fetch_url_<name>
+			// (for Secured that would hand the default pool access, defeating
+			// the lock). Dispatch via DispatchToolCall (api-mode temp tools /
+			// declaring wrappers) is unaffected.
 			continue
 		}
 		// SecureCredNone (the bootstrapped "no_auth" credential) is
@@ -1438,6 +1490,14 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string) (string, error) {
 	}
 	var covering []string
 	for _, c := range s.List() {
+		if c.Secured {
+			// Secured credentials are reachable ONLY through the tools that
+			// declare them — never via the fetch_url auto-route. Skipping here
+			// means a covered host reads as "not credential-covered", so the
+			// secret can't leak through an un-declared fetch. This exclusion is
+			// what makes "access via the tool" actually hold.
+			continue
+		}
 		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
 		if base == "" {
 			continue

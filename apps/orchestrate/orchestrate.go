@@ -236,6 +236,9 @@ func (T *OrchestrateApp) Routes() {
 	// SAME store the editor writes to (UserDB(T.DB, owner)) — NOT RootDB, which
 	// is a different bucket. Used by the outbound name-tag resolver.
 	orchestrateBaseDB = T.DB
+	// Credential → declaring-tools resolver for the admin credential UI (it
+	// can't reach agent records itself). Orchestrate scans agents + pools.
+	CredentialToolsResolver = credentialTools
 	ResolveAgentNameForExport = func(owner, key string) (string, bool) {
 		udb := UserDB(T.DB, owner)
 		if udb == nil {

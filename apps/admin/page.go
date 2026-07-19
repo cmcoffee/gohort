@@ -1068,6 +1068,22 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 										{Value: false, Label: "Open", Color: "mute"},
 									},
 								},
+								// Tool-lock: only shows when set — the strongest
+								// lockdown (locked to its existing tools).
+								{
+									Field: "secured", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "🔒 Locked", Color: "danger"},
+									},
+								},
+								// Dead-credential warning — locked but no tool uses
+								// it, so nothing can reach it. Only renders when set.
+								{
+									Field: "orphaned", Type: "badge",
+									Badges: []ui.BadgeMapping{
+										{Value: true, Label: "⚠ No tool uses this", Color: "danger"},
+									},
+								},
 								// Pending = oauth2 draft missing its secret.
 								// Only renders the badge when true (mute/blank
 								// otherwise keeps non-oauth rows uncluttered).
@@ -1090,12 +1106,33 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									SubmitLabel: "Save changes",
 									Fields:      credentialFormFields(),
 								}),
+								// Uses — the tools that declare this credential. What a
+								// Locked cred is bound to (and a scoped one dispatches through).
+								// Empty on a Locked cred is the dead-credential case above.
+								ui.Expand("Uses", ui.Table{
+									Source: "api/secure-api?tools={name}",
+									RowKey: "tool",
+									Columns: []ui.Col{
+										{Field: "tool", Label: "Tool", Flex: 1},
+										{Field: "agent", Label: "On", Mute: true},
+										// "secret" tools break once Locked (raw key
+										// blocked) — rework them to fetch_via first.
+										{Field: "via", Label: "Via", Type: "badge", Badges: []ui.BadgeMapping{
+											{Value: "fetch_via", Label: "fetch_via", Color: "success"},
+											{Value: "secret", Label: "secret ⚠", Color: "warning"},
+											{Value: "api", Label: "api", Color: "mute"},
+										}},
+									},
+									EmptyText: "No tool uses this credential.",
+								}),
 								// Scope pill — per-agent revoke of this credential
 								// (global by default). Denying it on an agent drops
 								// every tool that dispatches through it from that
 								// agent's kit.
+								// Hidden when Locked: a tool-locked credential has no
+								// per-agent scope — access follows the tools that use it.
 								{Type: "button", Label: "Manage scope", Method: "client",
-									PostTo: "credential_scope_manage"},
+									PostTo: "credential_scope_manage", HideIf: "secured"},
 								// Enable/Disable pair — only one renders depending on
 								// current state. Left NEUTRAL (no variant): the button
 								// color used to encode action-severity (green Enable /
@@ -1115,11 +1152,24 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// Neutral for the same reason as Enable/Disable.
 								{Type: "button", Label: "Open",
 									PostTo: "api/secure-api?action=open&name={name}",
-									Method: "POST", OnlyIf: "restricted"},
+									Method: "POST", OnlyIf: "restricted", HideIf: "secured"},
 								{Type: "button", Label: "Secure",
 									PostTo: "api/secure-api?action=restrict&name={name}",
 									Method: "POST",
 									HideIf: "restricted"},
+								// Tool-lock pair — the strongest lockdown: reachable ONLY
+								// through the tools that already declare it, off the
+								// auto-route + catalog, per-agent scope no longer applies,
+								// and no NEW tool can declare it. Admin unlocks to change
+								// the bound tools.
+								{Type: "button", Label: "Unlock",
+									PostTo: "api/secure-api?action=unsecure&name={name}",
+									Method: "POST", OnlyIf: "secured"},
+								{Type: "button", Label: "🔒 Lock to tools",
+									PostTo:  "api/secure-api?action=secure&name={name}",
+									Method:  "POST",
+									HideIf:  "secured",
+									Confirm: "Lock this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (unlock first to change which tools use it). Reversible."},
 								{Type: "button", Label: "Export", Method: "client",
 									PostTo: "credentials_export", Compact: true},
 								// Delete stays red — irreversible destruction.

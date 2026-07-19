@@ -420,6 +420,15 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 					bad = append(bad, c)
 					continue
 				}
+				// Refuse declaring a SECURED credential in a NEW/edited tool: a
+				// secured cred is locked to the tools that already use it, so
+				// authoring can't add one (that would self-grant the secret — the
+				// whole point of securing it). To bind a new tool, an admin
+				// unsecures it in Admin > APIs first, wires the tool, then
+				// re-secures. Not-ready store / unknown cred → no restriction.
+				if cr, ok := Secure().Load(name); ok && cr.Secured {
+					return "", fmt.Errorf("credential %q is SECURED — it's locked to the tools that already use it and can't be declared by a new or edited tool. Ask an admin to unsecure it in Admin > APIs to change which tools use it", name)
+				}
 				c = method + ":" + name
 			} else {
 				c = strings.ToLower(c)
@@ -2372,8 +2381,14 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		// AllowedURLPattern if scope-limiting matters.
 		credName = "no_auth"
 	}
-	if _, ok := Secure().Load(credName); !ok {
+	cr, ok := Secure().Load(credName)
+	if !ok {
 		return "", fmt.Errorf("credential %q is not registered — register it via the admin UI first", credName)
+	}
+	// A secured credential is locked to the tools that already use it; a new or
+	// edited tool can't declare it (that would self-grant the secret).
+	if cr.Secured {
+		return "", fmt.Errorf("credential %q is SECURED — locked to the tools that already use it and can't be declared by a new or edited tool. Ask an admin to unsecure it in Admin > APIs to change which tools use it", credName)
 	}
 	urlTpl := strings.TrimSpace(StringArg(args, "url_template"))
 	if urlTpl == "" {

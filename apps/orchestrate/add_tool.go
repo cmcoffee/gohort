@@ -269,6 +269,14 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		if credential != "" && isPlaceholderCredential(credential) {
 			return "", fmt.Errorf("credential value %q is a placeholder string, not a real credential. For PUBLIC APIs (no auth needed), OMIT the credential field entirely — the runtime will route through plain HTTP. For AUTHENTICATED APIs, pass the actual registered credential name (have the user register one via the admin UI if none exists)", credential)
 		}
+		// A secured credential is locked to the tools that already use it — a
+		// new/edited api tool can't declare it (that would self-grant the
+		// secret). Same gate the shell path enforces on fetch_via:/secret:.
+		if credential != "" {
+			if cr, ok := Secure().Load(credential); ok && cr.Secured {
+				return "", fmt.Errorf("credential %q is SECURED — locked to the tools that already use it; a new tool can't declare it. Ask an admin to unsecure it in Admin > APIs to change which tools use it", credential)
+			}
+		}
 		tt.Mode = TempToolModeAPI
 		tt.CommandTemplate = url
 		tt.Method = strings.ToUpper(strings.TrimSpace(stringArg(args, "method")))

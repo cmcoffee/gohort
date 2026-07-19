@@ -812,6 +812,16 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		writeHookError(conn, fmt.Sprintf("no credential named %q registered — register it via the admin UI first", name))
 		return
 	}
+	if cred.Secured {
+		// Secured credentials NEVER hand out the raw secret — even to a bound
+		// tool — so the key can't be exfiltrated by tool code. Server-side
+		// dispatch only: use fetch_via, which applies auth on the server and
+		// returns just the response. (A tool that used secret:<name> before the
+		// credential was secured must be reworked to fetch_via to keep working.)
+		Log("[hook/secret] DENIED %q — credential is SECURED (fetch_via-only)", name)
+		writeHookError(conn, fmt.Sprintf("credential %q is SECURED — the raw secret is never returned. Use fetch_via:%s (server-side dispatch: auth is applied on the server and the script never sees the secret) instead of secret:%s", name, name, name))
+		return
+	}
 	if cred.Type == SecureCredNone {
 		writeHookError(conn, fmt.Sprintf("credential %q is no_auth — it has no stored secret to return", name))
 		return

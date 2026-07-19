@@ -1091,6 +1091,19 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				json.NewEncoder(w).Encode(Secure().LoadAudit(name))
 				return
 			}
+			// Declaring-tools list for a credential — what a secured cred is
+			// locked to, and what a scoped one dispatches through.
+			if name := strings.TrimSpace(r.URL.Query().Get("tools")); name != "" {
+				refs := []CredentialToolRef{}
+				if CredentialToolsResolver != nil {
+					if r := CredentialToolsResolver(name); r != nil {
+						refs = r
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(refs)
+				return
+			}
 			// Single-record fetch for the declarative edit form's Source.
 			// Returns one credential as an object (secret never included —
 			// the password field stays blank on edit, which keeps the
@@ -1106,8 +1119,23 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, "not found", http.StatusNotFound)
 				return
 			}
+			// List — enrich each SECURED credential with whether it's orphaned
+			// (locked but no tool uses it → unreachable), for the dead-cred badge.
+			type credRow struct {
+				SecureCredential
+				Orphaned bool `json:"orphaned,omitempty"`
+			}
+			creds := Secure().ListWithPending()
+			rows := make([]credRow, len(creds))
+			for i, c := range creds {
+				orphaned := false
+				if c.Secured && CredentialToolsResolver != nil {
+					orphaned = len(CredentialToolsResolver(c.Name)) == 0
+				}
+				rows[i] = credRow{SecureCredential: c, Orphaned: orphaned}
+			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(Secure().ListWithPending())
+			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
 			// Two POST shapes: the upsert body (full credential) and the
 			// toggle action (?action=enable|disable&name=X). Distinguish
@@ -1147,6 +1175,22 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					// needs to improvise against the API again to
 					// discover a new shape worth wrapping.
 					if err := Secure().SetRestricted(name, false); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				case "secure":
+					// Tool-lock: reachable only through the tools that already
+					// declare it, off the auto-route + auto-catalog, and no NEW
+					// tool may declare it. Access follows those tools' scope, so
+					// the per-agent scope surface no longer applies.
+					if err := Secure().SetSecured(name, true); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				case "unsecure":
+					// Release the tool-lock — the credential goes back to the
+					// normal scoped/auto-routable model.
+					if err := Secure().SetSecured(name, false); err != nil {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
