@@ -13,8 +13,30 @@
 package orchestrate
 
 import (
+	"sync"
+
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
 )
+
+// appAgentVisibilityWarnOnce fires the visible-app-agent lint a single time,
+// the first time app agents are folded into resolution (startup / first agent
+// list). Guarded so the per-request registeredAppAgents() call doesn't spam.
+var appAgentVisibilityWarnOnce sync.Once
+
+// warnVisibleAppAgents logs a one-time WARNING for every app-agent registered
+// NON-Hidden. A visible app-agent shows in the picker AND becomes a tool-scope
+// target, so a stray tool can be mis-scoped onto it (the Casefile "Case
+// Analyzer" incident). The removal + Hidden-from-spec fixes make that
+// recoverable, but the trap is easy to walk into — RegisterAppAgent can't lint
+// (it's a stdlib-only leaf), so the nudge lives here where nfo logging exists.
+func warnVisibleAppAgents() {
+	for _, s := range appagents.AppAgents() {
+		if !s.Hidden {
+			Warn("[app-agents] %q (%s) is registered VISIBLE (Hidden:false) — it appears in the agent picker and becomes a tool-scope target, so a stray tool can be mis-scoped onto it. Register it Hidden:true unless users are meant to chat with it directly.", s.Name, s.ID)
+		}
+	}
+}
 
 // appAgentSpecToRecord maps a portable appagents.AppAgentSpec onto orchestrate's
 // AgentRecord. Owner=seedOwner marks it framework/app-owned (read-mostly, with
@@ -36,6 +58,7 @@ func appAgentSpecToRecord(s appagents.AppAgentSpec) AgentRecord {
 
 // registeredAppAgents converts every cross-app registered agent to a record.
 func registeredAppAgents() []AgentRecord {
+	appAgentVisibilityWarnOnce.Do(warnVisibleAppAgents)
 	specs := appagents.AppAgents()
 	out := make([]AgentRecord, 0, len(specs))
 	for _, s := range specs {
