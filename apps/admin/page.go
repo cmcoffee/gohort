@@ -1123,7 +1123,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// agent's kit.
 								// Hidden when Secured: a tool-locked credential has no
 								// per-agent scope — access follows the tools that use it.
-								{Type: "button", Label: "Manage scope", Method: "client",
+								{Type: "button", Label: "Access", Method: "client",
 									PostTo: "credential_scope_manage", HideIf: "secured"},
 								// Enable/Disable pair — only one renders depending on
 								// current state. Left NEUTRAL (no variant): the button
@@ -1582,7 +1582,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Global Tools",
-				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Manage scope\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes to every USER (loads on top of their own pool); Unshare pulls it back. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+				Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes to every USER (loads on top of their own pool); Unshare pulls it back. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 				Body: ui.Stack{Children: []ui.Component{
 					ui.Table{
 						Source:       "api/persistent-tools",
@@ -1653,11 +1653,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								Optimistic: true},
 							{Type: "button", Label: "Export", Method: "client",
 								PostTo: "tools_export", Compact: true},
-							// Manage scope — the pill editor (Global pill + one pill per
+							// Access — the pill editor (Global pill + one pill per
 							// agent). Replaces the old one-shot "Attach to agent" form:
 							// from here you descope to specific agents, disable per agent,
 							// or leave it global.
-							{Type: "button", Label: "Manage scope", Method: "client",
+							{Type: "button", Label: "Access", Method: "client",
 								PostTo: "tool_scope_manage"},
 							{Type: "button", Label: "Delete",
 								PostTo:     "api/persistent-tools?name={tool.name}&owner={owner}",
@@ -1678,7 +1678,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Agent-Scoped Tools",
-				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown — a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Manage scope\" opens the pill editor to promote a tool to global (all your agents) or add it to other agents. A ⚠ badge marks a missing credential dependency.",
+				Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown — a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Access\" opens the pill editor to promote a tool to global (all your agents) or add it to other agents. A ⚠ badge marks a missing credential dependency.",
 				Body: ui.Table{
 					Source:       "api/persistent-tools",
 					RecordsField: "bundled",
@@ -1709,10 +1709,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Label: "Hook capabilities", Field: "tool.hook_capabilities", Mono: true},
 							},
 						}),
-						// Manage scope — the pill editor. Promoting to global and
+						// Access — the pill editor. Promoting to global and
 						// attaching to other agents both happen here now (Global pill
 						// on = promote; agent pills add copies).
-						{Type: "button", Label: "Manage scope", Method: "client",
+						{Type: "button", Label: "Access", Method: "client",
 							PostTo: "tool_scope_manage"},
 					},
 					EmptyText: "No agent-scoped tools.",
@@ -1720,7 +1720,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Orphaned Tools",
-				Subtitle: "Formerly agent-scoped tools whose owning agent was deleted. They were captured so they aren't silently lost. Promote one to your user-wide pool to keep it (then use \"Manage scope\" on Global Tools to place it), or Delete to discard. A ⚠ badge marks a missing credential dependency.",
+				Subtitle: "Formerly agent-scoped tools whose owning agent was deleted. They were captured so they aren't silently lost. Promote one to your user-wide pool to keep it (then use \"Access\" on Global Tools to place it), or Delete to discard. A ⚠ badge marks a missing credential dependency.",
 				Body: ui.Table{
 					Source:       "api/persistent-tools",
 					RecordsField: "orphaned",
@@ -2024,7 +2024,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						ui.Expand("View", ui.JSONView{Field: "detail", Title: "Definition"}),
 						// Scope pill — Global (all agents run it) + per-agent
 						// attach, mirroring the tool scope control.
-						{Type: "button", Label: "Manage scope", Method: "client",
+						{Type: "button", Label: "Access", Method: "client",
 							PostTo: "pipeline_scope_manage"},
 						{Type: "button", Label: "Delete",
 							PostTo:     "api/pipelines?id={id}",
