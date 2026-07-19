@@ -106,7 +106,18 @@ its plane. Scope layer, `bundleAgentTool`, dispatch, page rendering →
   No behavior change; both planes still resolve. Migrate-on-load.
 - **Phase 2.** Move field *access* to the correct type across the codebase
   (mechanical, compiler-driven).
-- **Phase 3.** Flip credentials to `EnabledCredentials` with the bake-in migration.
+- **Phase 3 SHIPPED (done independently of the type split).** Credentials flipped
+  from the `DisabledCredentials` deny-list to an `EnabledCredentials` allow-list
+  (least privilege — a newly-registered cred is denied by default, no longer
+  silently reaching every agent). A `CredAllowlist bool` marker (not nil-vs-empty,
+  which gob can't preserve) distinguishes migrated from legacy agents;
+  `credentialDenySet` is dual-path (allow-list: deny open creds not listed; legacy:
+  the old deny-list). Migration bakes in each agent's current effective access
+  (`openCreds − Disabled`) on first scope-touch or at creation, so nobody loses
+  access; secured creds are never scope-gated. Un-touched existing agents stay
+  legacy until scoped (safe coexistence — no eager sweep, since agents aren't
+  enumerable across owners). Tests: `TestCredentialAllowlist`,
+  `TestSetCredentialScopeEndToEnd`, `TestCredentialDenyBuilder`.
 - **Phase 4.** Delete the now-dead heuristics — including Phase 0's guards, the
   `Hidden`-from-spec refresh, and the scope-pill proxies. The type holds the line.
 

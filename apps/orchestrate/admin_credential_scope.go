@@ -18,11 +18,45 @@ func init() {
 	RegisterScopeProvider("credential", ScopeProvider{State: credentialScopeState, Set: setCredentialScope})
 }
 
-// credentialDenySet builds the lookup set for an agent's denied credentials,
-// or nil when it denies none. Populated onto every ToolSession that runs this
-// agent's loop (the interactive turn AND sub-agent/dispatch sessions) so the
-// fetch_url auto-route enforces the same scope everywhere the agent can fetch.
+// openCredNames returns the names of every OPEN (non-secured) registered
+// credential — the set the allow-list gates. Secured creds are excluded: their
+// access follows the tool-binding model, not per-agent scope.
+func openCredNames() []string {
+	var out []string
+	for _, c := range Secure().List() {
+		if !c.Secured {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+// credentialDenySet builds the lookup set of credentials this agent may NOT
+// dispatch through. Dual-path during the deny→allow migration:
+//   - EnabledCredentials present (allow-list): deny = every open cred NOT in it,
+//     so a newly-registered cred is denied by default (least privilege).
+//   - EnabledCredentials nil (legacy): deny = DisabledCredentials, i.e. exactly
+//     the old behavior, so an un-migrated agent is unchanged.
+//
+// Populated onto every ToolSession that runs this agent's loop so the fetch_url
+// auto-route enforces the same scope everywhere the agent can fetch.
 func credentialDenySet(a AgentRecord) map[string]bool {
+	if a.CredAllowlist {
+		allow := make(map[string]bool, len(a.EnabledCredentials))
+		for _, c := range a.EnabledCredentials {
+			allow[c] = true
+		}
+		var deny map[string]bool
+		for _, name := range openCredNames() {
+			if !allow[name] {
+				if deny == nil {
+					deny = map[string]bool{}
+				}
+				deny[name] = true
+			}
+		}
+		return deny
+	}
 	if len(a.DisabledCredentials) == 0 {
 		return nil
 	}
@@ -31,6 +65,34 @@ func credentialDenySet(a AgentRecord) map[string]bool {
 		deny[c] = true
 	}
 	return deny
+}
+
+// migrateCredScope converts a legacy (nil EnabledCredentials) agent to the
+// allow-list model, baking in its CURRENT effective access (every open cred it
+// isn't denying) so it loses nothing, then clearing the deny-list. Idempotent —
+// an already-migrated agent is returned unchanged. Called on any write to an
+// agent's credential scope. A no-op if the credential store isn't ready yet, so
+// enforcement never snapshots an empty (deny-all) list at startup.
+func migrateCredScope(a AgentRecord) AgentRecord {
+	if a.CredAllowlist {
+		return a
+	}
+	open := openCredNames()
+	if len(open) == 0 {
+		// No open creds registered (or the store isn't ready) — snapshotting now
+		// would bake a deny-all list. Leave legacy; enforcement uses the deny-list.
+		return a
+	}
+	enabled := []string{}
+	for _, name := range open {
+		if !containsString(a.DisabledCredentials, name) {
+			enabled = append(enabled, name)
+		}
+	}
+	a.CredAllowlist = true
+	a.EnabledCredentials = enabled
+	a.DisabledCredentials = nil
+	return a
 }
 
 // credentialScopeState builds the per-agent picture for a credential. Global
@@ -54,7 +116,14 @@ func credentialScopeState(db Database, owner, name string) (ToolScopeState, bool
 		if a.Hidden || a.OwnedBy != "" || isAppAgent(a.ID) {
 			continue
 		}
-		on := !containsString(a.DisabledCredentials, name)
+		// Migrated (allow-list) agent → on = it's in the allow-list; legacy agent
+		// → on = not in the deny-list (unchanged reading).
+		on := true
+		if a.CredAllowlist {
+			on = containsString(a.EnabledCredentials, name)
+		} else {
+			on = !containsString(a.DisabledCredentials, name)
+		}
 		if !on {
 			allAllowed = false
 		}
@@ -80,16 +149,35 @@ func setCredentialScope(db Database, owner, name, target string, on bool) error 
 	}
 
 	setOne := func(a AgentRecord) error {
+		// Touching an agent's credential scope migrates it to the allow-list model
+		// (baking in its current access), then toggles membership.
+		a = migrateCredScope(a)
+		if !a.CredAllowlist {
+			// Store not ready to snapshot — fall back to the legacy deny-list toggle.
+			if on {
+				if !containsString(a.DisabledCredentials, name) {
+					return nil
+				}
+				a.DisabledCredentials = removeString(a.DisabledCredentials, name)
+			} else {
+				if containsString(a.DisabledCredentials, name) {
+					return nil
+				}
+				a.DisabledCredentials = append(a.DisabledCredentials, name)
+			}
+			_, err := saveAgent(udb, a)
+			return err
+		}
 		if on {
-			if !containsString(a.DisabledCredentials, name) {
+			if containsString(a.EnabledCredentials, name) {
 				return nil
 			}
-			a.DisabledCredentials = removeString(a.DisabledCredentials, name)
+			a.EnabledCredentials = append(a.EnabledCredentials, name)
 		} else {
-			if containsString(a.DisabledCredentials, name) {
+			if !containsString(a.EnabledCredentials, name) {
 				return nil
 			}
-			a.DisabledCredentials = append(a.DisabledCredentials, name)
+			a.EnabledCredentials = removeString(a.EnabledCredentials, name)
 		}
 		_, err := saveAgent(udb, a)
 		return err

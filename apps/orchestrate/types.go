@@ -409,11 +409,27 @@ type AgentRecord struct {
 	// gated by AttachedPipelines instead). Managed via the scope pill.
 	DisabledPipelines []string `json:"disabled_pipelines,omitempty"`
 
-	// DisabledCredentials is a DENY-LIST of SecureAPI credential names this
-	// agent may NOT dispatch through. Credentials are global (all agents)
-	// by default; listing one here revokes it for this agent — any tool
-	// whose .Credential matches is dropped from the agent's kit. Managed
-	// via the scope pill on the admin Credentials section.
+	// CredAllowlist marks this agent as MIGRATED to the allow-list credential
+	// model (below). It's the migration marker — a bool rather than
+	// nil-vs-present on EnabledCredentials, because gob decodes an empty slice
+	// back to nil, which would make a legitimate deny-all (empty allow-list)
+	// agent look un-migrated and get silently re-opened. false = legacy
+	// (DisabledCredentials deny-list); true = allow-list.
+	CredAllowlist bool `json:"cred_allowlist,omitempty"`
+
+	// EnabledCredentials is the ALLOW-LIST of open SecureAPI credentials this
+	// agent may dispatch through, used when CredAllowlist is true — least
+	// privilege: a credential NOT listed is denied, so a newly-registered
+	// credential doesn't silently reach every agent. An agent is migrated (its
+	// current effective access baked in, DisabledCredentials cleared) the first
+	// time its credential scope is touched, or on creation (stamped with a
+	// snapshot of the then-current open creds). Secured creds are never
+	// scope-gated (access follows the binding model); secret-less creds like
+	// no_auth are simply included in the snapshot.
+	EnabledCredentials []string `json:"enabled_credentials,omitempty"`
+
+	// DisabledCredentials is the LEGACY deny-list, used when CredAllowlist is
+	// false. Cleared on migration.
 	DisabledCredentials []string `json:"disabled_credentials,omitempty"`
 
 	// Hidden controls whether this agent is discoverable / callable

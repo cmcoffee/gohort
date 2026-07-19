@@ -36,7 +36,9 @@ func TestSetCredentialScopeEndToEnd(t *testing.T) {
 
 	const owner = "alice"
 	udb := agentUserDB(root, owner)
-	sub, err := saveAgent(udb, AgentRecord{Name: "Sub", OrchestratorPrompt: "s", Owner: owner, OwnedBy: "seed-chat"})
+	// A TOP-LEVEL agent (not a sub-agent): credentialScopeState excludes
+	// sub-agents (OwnedBy set), so only a top-level agent is a scope target.
+	sub, err := saveAgent(udb, AgentRecord{Name: "Sub", OrchestratorPrompt: "s", Owner: owner})
 	if err != nil {
 		t.Fatalf("save agent: %v", err)
 	}
@@ -105,9 +107,10 @@ func TestCredentialDenyBuilder(t *testing.T) {
 	if agentOn(st, "seed-builder") {
 		t.Error("Builder credential deny did not stick — seed-builder still reads On=true (loadAgent dropped DisabledCredentials)")
 	}
-	// And the shadow must actually carry it (the write side).
-	if a, _ := loadAgent(udb, "seed-builder"); !containsString(a.DisabledCredentials, cred) {
-		t.Errorf("loadAgent(seed-builder) dropped DisabledCredentials — got %v", a.DisabledCredentials)
+	// The shadow must carry the deny (write side). Touching scope migrates Builder
+	// to the allow-list, so the deny is expressed as ABSENCE from EnabledCredentials.
+	if a, _ := loadAgent(udb, "seed-builder"); !a.CredAllowlist || containsString(a.EnabledCredentials, cred) {
+		t.Errorf("builder deny must persist as absence from the allow-list — allowlist=%v enabled=%v", a.CredAllowlist, a.EnabledCredentials)
 	}
 }
 

@@ -4776,17 +4776,13 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 // (e.g. ts3_client_status works in the web chat but is absent over a channel).
 func (t *chatTurn) setupCustomTools(sess *ToolSession) (direct []AgentToolDef, lazyPromptSection string) {
 	allCustomTools := temptool.BuildAgentToolDefs(sess)
-	// Credential scope enforcement: drop any tool whose backing credential
-	// this agent denies (AgentRecord.DisabledCredentials). Credentials are
-	// global by default; a per-agent deny (set via the scope pill) revokes
-	// every tool that dispatches through that credential for this agent. The
-	// backing TempTool carries .Credential; api/toolbox tools have one, shell
-	// tools don't (empty → never denied).
-	if len(t.agent.DisabledCredentials) > 0 {
-		deny := make(map[string]bool, len(t.agent.DisabledCredentials))
-		for _, c := range t.agent.DisabledCredentials {
-			deny[c] = true
-		}
+	// Credential scope enforcement: drop any tool whose backing credential this
+	// agent may not use. credentialDenySet resolves the agent's effective deny set
+	// under either model — the EnabledCredentials allow-list (deny = open creds not
+	// allowed) or the legacy DisabledCredentials deny-list. The backing TempTool
+	// carries .Credential; api/toolbox tools have one, shell tools don't (empty →
+	// never denied).
+	if deny := credentialDenySet(t.agent); len(deny) > 0 {
 		kept := allCustomTools[:0]
 		var dropped []string
 		for _, td := range allCustomTools {
