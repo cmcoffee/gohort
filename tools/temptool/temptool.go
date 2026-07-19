@@ -1288,6 +1288,16 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 // dispatchTempTool wraps with cache lookup/store. Required-arg
 // validation and key canonicalization have already happened above.
 func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
+	// Secured-credential binding enforcement for the credential-dispatching modes
+	// (api / toolbox dispatch through tt.Credential). Only APPROVED tools may reach
+	// a secured cred; a legacy declaring tool is grandfathered, a revoked one
+	// refused; open creds pass. Shell-mode fetch_via is enforced in the sandbox
+	// hook (it dispatches per-call, not here). See secured-credential-tool-binding.md.
+	if (tt.Mode == TempToolModeAPI || tt.Mode == TempToolModeToolbox) && strings.TrimSpace(tt.Credential) != "" {
+		if err := Secure().EnforceSecuredBinding(tt.Credential, tt.Name); err != nil {
+			return "", err
+		}
+	}
 	if tt.Mode == TempToolModeAPI {
 		return dispatchAPIModeTempTool(sess, tt, args)
 	}
@@ -1529,6 +1539,9 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 	if hook != nil {
 		defer hook.Close()
+		// Identify the tool to the hook for secured-credential binding
+		// enforcement on fetch_via. Set before the sandbox runs (below).
+		hook.ToolName = tt.Name
 		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
 		// The gohort helper package is bind-mounted RO into the
 		// sandbox from a host-side library dir (see

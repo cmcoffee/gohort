@@ -85,10 +85,20 @@ Securing a credential moves access control from the **credential** plane to the
     with a "must be APPROVED" directive. Dispatch is UNCHANGED (still allows any
     tool that got past authoring — the authoring gate is the enforcement, as
     before).
-  - **Slice 2 (next):** dispatch-side enforcement (only approved bindings dispatch
-    through a secured cred) + a migration/backfill sweep that seeds
-    ApprovedToolBindings from existing declaring tools, so nothing regresses when
-    dispatch starts checking.
+  - **Slice 2 SHIPPED (dispatch enforcement):** the fetch_via hook (shell, via a
+    new `SandboxHook.ToolName`) and the api/toolbox dispatch chokepoint
+    (`dispatchTempToolUncached`) now call `Secure().EnforceSecuredBinding(cred,
+    tool)`: approved → allow, revoked → refuse, legacy declaring tool →
+    grandfather (auto-approve) + allow. Toolbox authoring got the same binding
+    guard the api/shell paths already had; editing an existing declaring
+    api/toolbox tool grandfathers its binding so the guard doesn't block edits.
+    **No eager backfill sweep** — tool storage isn't enumerable across owners, and
+    an eager sweep risks enforcement outrunning an incomplete backfill. Instead a
+    `RevokedToolBindings` **tombstone** makes lazy grandfather-on-first-dispatch
+    revocation-safe: a legacy tool is grandfathered, but a revoked one is refused
+    instead of re-grandfathered. Grandfathering is safe because only a tool that
+    already DECLARES the cred can reach dispatch, and slice-1 authoring blocks
+    declaring a secured cred without approval.
   - **Slice 3:** an admin approve/revoke action wired to a UI (see P3).
 - **P2** — binding edit-lock (wiring immutable without re-review).
 - **P3** — admin surface: bound-tools list + effective-access view + revoke.

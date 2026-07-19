@@ -70,6 +70,11 @@ type SandboxHook struct {
 	SocketPath   string
 	Capabilities []string
 	Sess         *ToolSession
+	// ToolName identifies the temp tool this hook serves, for secured-credential
+	// binding enforcement on fetch_via (see EnforceSecuredBinding). Empty for
+	// unnamed callers (run_local / persistent shell), which aren't binding-gated.
+	// Set by the dispatcher right after NewSandboxHook, before the sandbox runs.
+	ToolName string
 
 	listener net.Listener
 	wg       sync.WaitGroup
@@ -878,6 +883,14 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	if !h.grantedFetchVia(credName) {
 		Log("[hook/fetch_via] DENIED credential=%q (not in capabilities=%v)", credName, h.Capabilities)
 		writeHookError(conn, fmt.Sprintf("fetch_via credential %q not granted to this tool — add \"fetch_via:%s\" to hook_capabilities", credName, credName))
+		return
+	}
+	// Secured-credential binding enforcement: a secured cred is reachable only
+	// through APPROVED declaring tools. Grandfathers a legacy declaring tool,
+	// refuses a revoked one. Open creds and unnamed callers pass through.
+	if err := Secure().EnforceSecuredBinding(credName, h.ToolName); err != nil {
+		Log("[hook/fetch_via] binding refused credential=%q tool=%q: %v", credName, h.ToolName, err)
+		writeHookError(conn, err.Error())
 		return
 	}
 	url, _ := params["url"].(string)

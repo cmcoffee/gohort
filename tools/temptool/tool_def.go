@@ -529,6 +529,14 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		// no_auth's AllowedURLPattern if needed.
 		credential = "no_auth"
 	}
+	// Secured-credential binding: a toolbox wrapping a secured cred must be an
+	// APPROVED binding (its actions dispatch through the cred server-side). Mirror
+	// the api-mode guard — allow an approved toolbox, else record a request and
+	// refuse. See docs/secured-credential-tool-binding.md.
+	if cr, ok := Secure().Load(credential); ok && cr.Secured && !Secure().ToolBindingApproved(credential, name) {
+		_ = Secure().RequestToolBinding(credential, name)
+		return "", fmt.Errorf("credential %q is SECURED — toolbox %q must be APPROVED to bind it. A binding request has been recorded; an admin approves it in Admin > APIs, after which the toolbox's actions dispatch through %q and any agent it's scoped to can use it", credential, name, credential)
+	}
 	rawActions, ok := args["actions"]
 	if !ok || rawActions == nil {
 		return "", fmt.Errorf("actions is required for toolbox mode — provide an array of {name, description, url_template, params, ...} sub-action objects")
@@ -1050,6 +1058,17 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}
 	merged := tempToolToCreateArgs(existing)
+
+	// Grandfather an api/toolbox tool's secured-credential binding on edit: the
+	// tool already declares this cred, so editing it (a description change, an
+	// action tweak) must not trip the secured-binding authoring guard. Approve
+	// the existing binding so the re-run create passes — mirrors the shell path's
+	// _existing_cred_grants grandfather below.
+	if existing.Credential != "" {
+		if cr, ok := Secure().Load(existing.Credential); ok && cr.Secured {
+			_ = Secure().ApproveToolBinding(existing.Credential, existing.Name)
+		}
+	}
 
 	// Credentials already granted on the record being edited are PRESERVED
 	// here (round-tripped by tempToolToCreateArgs), not freshly declared —

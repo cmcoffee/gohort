@@ -114,6 +114,50 @@ func TestSecuredToolBindingLifecycle(t *testing.T) {
 	}
 }
 
+// TestEnforceSecuredBinding covers P1 slice 2 dispatch enforcement: open creds
+// and unnamed callers pass; a legacy declaring tool is grandfathered on first
+// dispatch; a revoked binding is refused (tombstone survives, not re-
+// grandfathered); a re-approval un-revokes.
+func TestEnforceSecuredBinding(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	s.db.Set(secureAPITable, "sec", SecureCredential{Name: "sec", Secured: true})
+	s.db.Set(secureAPITable, "open", SecureCredential{Name: "open"})
+
+	if err := s.EnforceSecuredBinding("open", "any_tool"); err != nil {
+		t.Fatalf("open cred must always pass: %v", err)
+	}
+	if err := s.EnforceSecuredBinding("sec", ""); err != nil {
+		t.Fatalf("unnamed caller must pass: %v", err)
+	}
+
+	// Legacy declaring tool → grandfathered (allowed) + recorded approved.
+	if err := s.EnforceSecuredBinding("sec", "legacy"); err != nil {
+		t.Fatalf("legacy declaring tool must be grandfathered: %v", err)
+	}
+	if !s.ToolBindingApproved("sec", "legacy") {
+		t.Fatal("grandfather must record the binding as approved")
+	}
+
+	// Revoke → tombstoned → refused, and NOT re-grandfathered on the next call.
+	if err := s.RevokeToolBinding("sec", "legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnforceSecuredBinding("sec", "legacy"); err == nil {
+		t.Fatal("revoked binding must be refused")
+	}
+	if s.ToolBindingApproved("sec", "legacy") {
+		t.Fatal("a revoked binding must not be silently re-approved by enforcement")
+	}
+
+	// Re-approve → un-revoked → passes again.
+	if err := s.ApproveToolBinding("sec", "legacy"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.EnforceSecuredBinding("sec", "legacy"); err != nil {
+		t.Fatalf("re-approved binding must pass: %v", err)
+	}
+}
+
 func TestSetSecuredRoundTrip(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	s.db.Set(secureAPITable, "c", SecureCredential{Name: "c"})

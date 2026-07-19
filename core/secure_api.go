@@ -142,6 +142,13 @@ type SecureCredential struct {
 	// await admin review (recorded when authoring a new binding). An admin moves an
 	// entry to ApprovedToolBindings (ApproveToolBinding) or drops it (RevokeToolBinding).
 	PendingToolBindings []string `json:"pending_tool_bindings,omitempty"`
+	// RevokedToolBindings are TOMBSTONES: tools an admin explicitly revoked. They
+	// are the reason dispatch enforcement needs no eager backfill — a legacy
+	// declaring tool that predates the binding record is grandfathered (auto-
+	// approved) on its first dispatch, but a tombstoned tool is refused instead of
+	// re-grandfathered, so revocation survives. Cleared when a binding is
+	// re-approved.
+	RevokedToolBindings []string `json:"revoked_tool_bindings,omitempty"`
 	// AllowedMethods restricts which HTTP methods the LLM may use
 	// against this credential. Empty/nil = all methods allowed
 	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
@@ -670,22 +677,65 @@ func (s *SecureAPI) RequestToolBinding(cred, tool string) error {
 }
 
 // ApproveToolBinding moves tool from pending to approved (admin action, and the
-// grandfather path for an existing declaring tool). Idempotent.
+// grandfather path for an existing declaring tool). Clears any revocation
+// tombstone — an explicit re-approval un-revokes. Idempotent.
 func (s *SecureAPI) ApproveToolBinding(cred, tool string) error {
 	return s.mutateCred(cred, func(c *SecureCredential) {
 		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
+		c.RevokedToolBindings = credSliceRemove(c.RevokedToolBindings, tool)
 		if !credSliceHas(c.ApprovedToolBindings, tool) {
 			c.ApprovedToolBindings = append(c.ApprovedToolBindings, tool)
 		}
 	})
 }
 
-// RevokeToolBinding removes tool from both the approved and pending lists.
+// RevokeToolBinding removes tool from the approved + pending lists and TOMBSTONES
+// it, so dispatch refuses it instead of grandfathering it back. Re-approve to
+// undo.
 func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 	return s.mutateCred(cred, func(c *SecureCredential) {
 		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
 		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
+		if !credSliceHas(c.RevokedToolBindings, tool) {
+			c.RevokedToolBindings = append(c.RevokedToolBindings, tool)
+		}
 	})
+}
+
+// EnforceSecuredBinding is the dispatch-time gate: may toolName dispatch through
+// credName? It returns nil (allow) or a directive error (refuse). Only Secured
+// creds are gated; Open creds always pass. The gate:
+//   - approved binding            → allow
+//   - revoked (tombstoned)        → refuse
+//   - neither (legacy declaring)  → GRANDFATHER: approve it and allow
+//
+// Grandfathering is safe because a tool can only REACH dispatch for a secured
+// cred if it already DECLARES it (the fetch_via hook / api-mode wiring verified
+// that), and Slice-1 authoring blocks declaring a secured cred without approval —
+// so a tool with the declaration in its record is a legitimate pre-record
+// (authored-while-open) tool. This is why no eager backfill sweep is needed; the
+// tombstone is what keeps revocation from being undone by the grandfather.
+//
+// toolName == "" (an unnamed caller: run_local / persistent shell, already gated
+// by the hook's fetch_via capability grant) is not binding-enforced.
+func (s *SecureAPI) EnforceSecuredBinding(credName, toolName string) error {
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
+		return nil
+	}
+	c, ok := s.Load(credName)
+	if !ok || !c.Secured {
+		return nil
+	}
+	if credSliceHas(c.ApprovedToolBindings, toolName) {
+		return nil
+	}
+	if credSliceHas(c.RevokedToolBindings, toolName) {
+		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED — an admin re-approves it in Admin > APIs to restore access", credName, toolName)
+	}
+	// Legacy declaring tool: grandfather it into the record on first dispatch.
+	_ = s.ApproveToolBinding(credName, toolName)
+	return nil
 }
 
 // mutateCred loads a credential's config, applies fn, and re-saves — without
