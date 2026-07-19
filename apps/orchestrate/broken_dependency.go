@@ -27,7 +27,7 @@ func agentExists(owner, id string) bool {
 	if strings.TrimSpace(id) == "" {
 		return true
 	}
-	_, ok := loadAgent(UserDB(RootDB, owner), id)
+	_, ok := loadAgent(agentUserDB(RootDB, owner), id)
 	return ok
 }
 
@@ -50,7 +50,7 @@ func toolResolvable(owner, name string) bool {
 			return true
 		}
 	}
-	for _, a := range listAgents(UserDB(RootDB, owner), owner) {
+	for _, a := range listAgents(agentUserDB(RootDB, owner), owner) {
 		for _, tt := range a.Tools {
 			if tt.Name == name {
 				return true
@@ -85,7 +85,7 @@ func eventMonitorDependencyError(m EventMonitor) string {
 		}
 	case m.SourceKind == "pipeline":
 		base := strings.TrimPrefix(m.ToolName, "run_")
-		if _, ok := LoadPipelineDef(UserDB(RootDB, m.Owner), m.Owner, base); !ok {
+		if _, ok := LoadPipelineDef(agentUserDB(RootDB, m.Owner), m.Owner, base); !ok {
 			return fmt.Sprintf("pipeline %q no longer exists", base)
 		}
 	case m.SourceKind == "tool":

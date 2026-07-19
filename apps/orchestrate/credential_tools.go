@@ -44,7 +44,7 @@ func credentialTools(cred string) []CredentialToolRef {
 		add("deployment pool", pt.Tool.Name, via(pt.Tool))
 	}
 	for _, u := range AuthListUsers(RootDB) {
-		udb := UserDB(RootDB, u.Username)
+		udb := agentUserDB(RootDB, u.Username)
 		for _, a := range listAgents(udb, u.Username) {
 			for _, tt := range a.Tools {
 				add(a.Name, tt.Name, via(tt))

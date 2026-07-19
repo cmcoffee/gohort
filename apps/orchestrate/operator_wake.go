@@ -220,7 +220,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) { // shared/deployment pool
 			addTool(p.Tool)
 		}
-		agents := listAgents(UserDB(RootDB, owner), owner)
+		agents := listAgents(agentUserDB(RootDB, owner), owner)
 		agentToolCount := 0
 		for _, a := range agents { // agent-scoped tools
 			for _, tt := range a.Tools {
