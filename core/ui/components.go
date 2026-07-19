@@ -243,7 +243,12 @@ type RowAction struct {
 	// Variant styles the action: "danger" colors a button red. Empty
 	// uses the default neutral styling.
 	Variant string `json:"variant,omitempty"`
-	// Options for select-type row actions.
+	// Options for select-type AND segmented-type row actions. A "segmented"
+	// action renders these as a single-select pill track (each option a
+	// segment, the one matching record[Field] highlighted) instead of a
+	// dropdown — use it for a short, mutually-exclusive ladder the user
+	// should see all of at once (e.g. an access-lockdown level). Picking a
+	// segment POSTs {Field: value} to PostTo, same as select.
 	Options []SelectOption `json:"options,omitempty"`
 	// Min, Max for number-type row actions.
 	Min int `json:"min,omitempty"`
@@ -680,6 +685,11 @@ type SelectOption struct {
 	Label string `json:"label,omitempty"`
 	Help  string `json:"help,omitempty"`
 	Group string `json:"group,omitempty"`
+	// Confirm, when set, asks the user to confirm before this option is
+	// applied (select + segmented row actions). Use for a consequential
+	// choice — a lockdown level that drops access, an irreversible tier — so
+	// picking it isn't a silent one-tap. Empty options apply immediately.
+	Confirm string `json:"confirm,omitempty"`
 }
 
 // DisplayPanel renders a read-only labeled-value display fetched from

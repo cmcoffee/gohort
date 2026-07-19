@@ -213,6 +213,33 @@
           rec[act.field] = sel.value;
         });
         parent.appendChild(sel);
+      } else if (act.type === 'segmented') {
+        // Single-select pill track: each option is a segment, the one
+        // matching rec[field] is highlighted. Picking a segment POSTs
+        // {field: value} to post_to — same contract as 'select', just a
+        // more visible control for a short mutually-exclusive ladder.
+        var track = el('div', {class: 'ui-row-segmented'});
+        var segDisabled = act.disable_if && rec[act.disable_if];
+        (act.options || []).forEach(function(o) {
+          var active = String(rec[act.field]) === String(o.value);
+          var seg = el('button', {class: 'ui-seg' + (active ? ' active' : '')},
+            [o.label || o.value]);
+          if (segDisabled) seg.disabled = true;
+          seg.addEventListener('click', async function() {
+            if (active) return; // already the selected level — no-op
+            if (o.confirm && !(await window.uiConfirm(o.confirm))) return;
+            var url = substitute(act.post_to, rec);
+            var body = {}; body[act.field] = o.value;
+            if (cfg.row_key) body[cfg.row_key] = rec[cfg.row_key];
+            fetchJSON(url, {
+              method: act.method || 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(body)
+            }).then(function(){ reload(true); })
+              .catch(function(err){ showToast('Save failed: ' + err.message); });
+          });
+          track.appendChild(seg);
+        });
+        parent.appendChild(track);
       } else if (act.type === 'number') {
         var ninput = el('input', {type: 'number', class: 'ui-row-number'});
         if (act.width) ninput.style.width = act.width;

@@ -54,5 +54,21 @@ func credentialTools(cred string) []CredentialToolRef {
 			add(u.Username+" pool", pt.Tool.Name, via(pt.Tool))
 		}
 	}
+	// Connectors bind a credential too, but the tool they generate
+	// (rest_poll's call_<cred>, an MCP server's <name>.<tool>) is materialized
+	// from the connector spec — it never lands in a pool or agent record, so the
+	// TempTool scan above can't see it. Enumerate connectors directly.
+	for _, c := range ListConnectors(RootDB) {
+		for _, ref := range ConnectorCredentialRefs(c.Spec) {
+			if strings.TrimSpace(ref) != cred {
+				continue
+			}
+			tool := c.Name + ".*"
+			if c.Kind == RestPollConnectorKind {
+				tool = "call_" + cred // rest_poll's generated watch tool
+			}
+			add(c.Name, tool, "connector")
+		}
+	}
 	return out
 }

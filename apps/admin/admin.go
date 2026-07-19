@@ -1124,6 +1124,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			type credRow struct {
 				SecureCredential
 				Orphaned bool `json:"orphaned,omitempty"`
+				// AccessLevel collapses the Restricted/Secured bools into the
+				// single lockdown ladder the admin picks from a segmented pill:
+				// open < wrapper < secured. Secured dominates (supersedes
+				// restricted), so it's checked last.
+				AccessLevel string `json:"access_level"`
 			}
 			creds := Secure().ListWithPending()
 			rows := make([]credRow, len(creds))
@@ -1132,7 +1137,14 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				if c.Secured && CredentialToolsResolver != nil {
 					orphaned = len(CredentialToolsResolver(c.Name)) == 0
 				}
-				rows[i] = credRow{SecureCredential: c, Orphaned: orphaned}
+				level := "open"
+				if c.Restricted {
+					level = "wrapper"
+				}
+				if c.Secured {
+					level = "secured"
+				}
+				rows[i] = credRow{SecureCredential: c, Orphaned: orphaned, AccessLevel: level}
 			}
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(rows)
@@ -1194,6 +1206,34 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 						http.Error(w, err.Error(), http.StatusBadRequest)
 						return
 					}
+				case "access":
+					// One idempotent "set lockdown level" from the segmented pill,
+					// reconciling the Restricted/Secured bools for the target level
+					// so the UI never has to sequence restrict→secure verbs itself.
+					var body struct {
+						AccessLevel string `json:"access_level"`
+					}
+					_ = json.NewDecoder(r.Body).Decode(&body)
+					var restrict, secure bool
+					switch strings.TrimSpace(body.AccessLevel) {
+					case "open":
+						restrict, secure = false, false
+					case "wrapper":
+						restrict, secure = true, false
+					case "secured":
+						restrict, secure = false, true
+					default:
+						http.Error(w, "access_level must be open|wrapper|secured", http.StatusBadRequest)
+						return
+					}
+					if err := Secure().SetSecured(name, secure); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					if err := Secure().SetRestricted(name, restrict); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
 				case "test":
 					// Mint-and-discard an OAuth token to verify the config +
 					// secret before relying on the credential. Returns the
@@ -1208,7 +1248,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					json.NewEncoder(w).Encode(map[string]any{"ok": true, "message": msg})
 					return
 				default:
-					http.Error(w, "action must be enable|disable|restrict|open|secure|unsecure|test", http.StatusBadRequest)
+					http.Error(w, "action must be enable|disable|restrict|open|secure|unsecure|access|test", http.StatusBadRequest)
 					return
 				}
 				w.WriteHeader(http.StatusNoContent)

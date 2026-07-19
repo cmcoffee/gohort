@@ -1061,21 +1061,9 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 										{Value: false, Label: "Enabled", Color: "success"},
 									},
 								},
-								{
-									Field: "restricted", Type: "badge",
-									Badges: []ui.BadgeMapping{
-										{Value: true, Label: "Wrapper-only", Color: "warning"},
-										{Value: false, Label: "Open", Color: "mute"},
-									},
-								},
-								// Secured: only shows when set — the strongest
-								// lockdown (locked to its existing tools).
-								{
-									Field: "secured", Type: "badge",
-									Badges: []ui.BadgeMapping{
-										{Value: true, Label: "🔒 Secured", Color: "danger"},
-									},
-								},
+								// Lockdown level (open/wrapper/secured) is shown and set
+								// by the segmented pill in the row actions below — no
+								// separate state badge needed here.
 								// Dead-credential warning — locked but no tool uses
 								// it, so nothing can reach it. Only renders when set.
 								{
@@ -1121,6 +1109,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 											{Value: "fetch_via", Label: "fetch_via", Color: "success"},
 											{Value: "secret", Label: "secret ⚠", Color: "warning"},
 											{Value: "api", Label: "api", Color: "mute"},
+											{Value: "connector", Label: "connector", Color: "mute"},
 										}},
 									},
 									EmptyText: "No tool uses this credential.",
@@ -1147,30 +1136,23 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo: "api/secure-api?action=disable&name={name}",
 									Method: "POST",
 									HideIf: "disabled"},
-								// Open/Wrapper-only pair — "Wrapper-only" names the
-								// state it enters (no standalone catalog tool; reachable
-								// only through wrapper tools that route to it). Neutral
-								// for the same reason as Enable/Disable.
-								{Type: "button", Label: "Open",
-									PostTo: "api/secure-api?action=open&name={name}",
-									Method: "POST", OnlyIf: "restricted", HideIf: "secured"},
-								{Type: "button", Label: "Wrapper-only",
-									PostTo: "api/secure-api?action=restrict&name={name}",
-									Method: "POST",
-									HideIf: "restricted"},
-								// Secure pair — the strongest lockdown: reachable ONLY
-								// through the tools that already declare it, off the
-								// auto-route + catalog, per-agent scope no longer applies,
-								// and no NEW tool can declare it. Admin unsecures to change
-								// the bound tools.
-								{Type: "button", Label: "Unsecure",
-									PostTo: "api/secure-api?action=unsecure&name={name}",
-									Method: "POST", OnlyIf: "secured"},
-								{Type: "button", Label: "🔒 Secure",
-									PostTo:  "api/secure-api?action=secure&name={name}",
-									Method:  "POST",
-									HideIf:  "secured",
-									Confirm: "Secure this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (unsecure first to change which tools use it). Reversible."},
+								// Lockdown ladder — one segmented pill (Open < Wrapper-only
+								// < 🔒 Secured) replaces the old Open/Wrapper/Secure button
+								// spray, which read as confusing action buttons (a "🔒
+								// Secure" that only showed while UNlocked). The pill shows
+								// the current level highlighted; picking another POSTs it to
+								// one reconciling endpoint. "Secured" confirms first — it's
+								// consequential: reachable ONLY through the tools that
+								// already declare it, off the auto-route + catalog, per-agent
+								// scope no longer applies, and no NEW tool can declare it.
+								{Type: "segmented", Field: "access_level",
+									PostTo: "api/secure-api?action=access&name={name}",
+									Options: []ui.SelectOption{
+										{Value: "open", Label: "Open"},
+										{Value: "wrapper", Label: "Wrapper-only"},
+										{Value: "secured", Label: "🔒 Secured",
+											Confirm: "Secure this credential to the tools that already use it? It leaves the fetch_url auto-route and the tool catalog, its per-agent scope no longer applies, and NO new or edited tool can declare it (move it back to Open/Wrapper-only to change which tools use it). Reversible."},
+									}},
 								{Type: "button", Label: "Export", Method: "client",
 									PostTo: "credentials_export", Compact: true},
 								// Delete stays red — irreversible destruction.

@@ -149,6 +149,15 @@ func GetConnector(db Database, name string) (Connector, bool) {
 	return c, ok
 }
 
+// ConnectorCredentialRefs returns the SecureAPI credential names a connector's
+// spec binds to (rest_poll spells it "credential", the MCP kinds "secure_cred").
+// Exported so the credential admin UI can list connector-bound usage — a
+// connector generates a tool (call_<cred> / <server>.<tool>) that isn't a
+// TempTool, so a credential's tool scan would otherwise miss it.
+func ConnectorCredentialRefs(spec json.RawMessage) []string {
+	return connectorCredentialRefs(spec)
+}
+
 // ListConnectors returns every connector, sorted by name.
 func ListConnectors(db Database) []Connector {
 	if db == nil {

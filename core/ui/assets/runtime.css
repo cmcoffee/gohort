@@ -530,6 +530,22 @@ body { min-height: 100vh; min-height: 100dvh; }
 .ui-row-select:focus, .ui-row-number:focus { border-color: var(--accent); }
 .ui-row-select:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-row-number { width: 6rem; text-align: right; }
+/* Segmented pill track — single-select ladder rendered inline in a row.
+ * The active segment reads as filled state; the rest are quiet options. */
+.ui-row-segmented {
+  display: inline-flex; flex-shrink: 0; align-items: stretch;
+  border: 1px solid var(--border); border-radius: 7px; overflow: hidden;
+}
+.ui-row-segmented .ui-seg {
+  padding: 0.35rem 0.6rem; background: transparent; color: var(--text-mute);
+  border: none; border-left: 1px solid var(--border);
+  font-size: 0.82rem; font-family: inherit; cursor: pointer; white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.ui-row-segmented .ui-seg:first-child { border-left: none; }
+.ui-row-segmented .ui-seg:hover:not(.active):not(:disabled) { color: var(--text); background: var(--bg-1); }
+.ui-row-segmented .ui-seg.active { background: var(--accent); color: #fff; cursor: default; }
+.ui-row-segmented .ui-seg:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-row-btn.danger  { color: var(--danger); border-color: var(--danger); }
 .ui-row-btn.warning { color: var(--warning); border-color: var(--warning); }
 .ui-row-btn.success { color: var(--success); border-color: var(--success); }
