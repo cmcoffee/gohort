@@ -220,8 +220,11 @@ func registerOperatorWake(app *OrchestrateApp) {
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) { // shared/deployment pool
 			addTool(p.Tool)
 		}
-		for _, a := range listAgents(UserDB(RootDB, owner), owner) { // agent-scoped tools
+		agents := listAgents(UserDB(RootDB, owner), owner)
+		agentToolCount := 0
+		for _, a := range agents { // agent-scoped tools
 			for _, tt := range a.Tools {
+				agentToolCount++
 				addTool(tt)
 			}
 		}
@@ -230,6 +233,16 @@ func registerOperatorWake(app *OrchestrateApp) {
 				return td.Handler(toolArgs)
 			}
 		}
+		// Diagnostic: the tool resolved in NO owner scope. Dump what we searched
+		// so a "not registered" watch can be traced to where the tool actually
+		// lives (or doesn't) — owner-key correctness, agent count, and the full
+		// resolved name set across global + shared + agent-scoped scopes.
+		resolved := make([]string, 0, len(sess.TempTools))
+		for _, tt := range sess.TempTools {
+			resolved = append(resolved, tt.Name)
+		}
+		Debug("[watch-resolve] %q NOT found — owner=%q agentID=%q; %d agent(s), %d agent-scoped tool(s); resolvable set (%d): %v",
+			toolName, owner, agentID, len(agents), agentToolCount, len(resolved), resolved)
 		return "", ErrWatchToolNotHandled
 	})
 
