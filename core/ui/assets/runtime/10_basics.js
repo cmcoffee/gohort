@@ -1059,6 +1059,10 @@
       // the generic fieldWrap.appendChild(input) below to be skipped
       // so the switch isn't double-inserted.
       var toggleHandled = false;
+      // expandEditBtn — set by the textarea branch in expand mode. Held here
+      // so the suggest-row block below can place it right after the Suggest
+      // button (sharing its theme) whether or not Suggest is present.
+      var expandEditBtn = null;
       var initial = current[f.field];
       if (initial == null) initial = '';
 
@@ -1084,13 +1088,105 @@
           clearTimeout(debounceTimers[f.field]);
           if (current[f.field] !== input.value) save(f.field, input.value);
         });
+        // Expand mode — a large prompt/JSON blob is unreadable peeked through
+        // a short inline box, so present it as a read-only PREVIEW the user
+        // can still SCROLL and read exactly as before (just can't type into),
+        // plus an "Edit" button that opens the whole value in a wide, tall
+        // modal (the shared uiOpenModal). The real <textarea> stays in the DOM
+        // as the single value carrier (just hidden) so every existing wire —
+        // save, blur, Suggest, presets, chips — keeps reading input.value
+        // untouched. Trigger: explicit f.expand, or auto for Rows >= 6;
+        // f.inline forces the plain box regardless. Generic: any app's
+        // textarea field opts in without app-specific code.
+        var useExpand = !f.inline && (f.expand || (f.rows || 3) >= 6);
+        if (useExpand) {
+          input.style.display = 'none';
+          // Scrollable read-only viewer, sized to the same Rows the inline box
+          // would have used so it reads identically — just not editable here.
+          var rows = f.rows || 8;
+          var previewEl = el('div', {class: 'ui-form-preview'});
+          previewEl.style.cssText = 'max-height:' + (rows * 1.5) + 'rem;overflow-y:auto;padding:0.5rem 0.6rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-1);color:var(--text);font-size:0.82rem;line-height:1.5;white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-overflow-scrolling:touch';
+          function refreshPreview() {
+            var v = input.value || '';
+            if (v.trim() === '') {
+              previewEl.textContent = f.placeholder || 'Empty — use Edit to add.';
+              previewEl.style.color = 'var(--text-mute)';
+            } else {
+              previewEl.textContent = v;
+              previewEl.style.color = 'var(--text)';
+            }
+          }
+          function openEditor() {
+            var ta;
+            window.uiOpenModal({
+              title: f.label || 'Edit',
+              subtitle: f.help || undefined,
+              width: 'min(920px, 94vw)',
+              actions: [
+                {label: 'Cancel'},
+                {label: 'Save', primary: true, onClick: function(api) {
+                  input.value = ta.value;
+                  save(f.field, input.value);
+                  refreshPreview();
+                  api.close();
+                }},
+              ],
+              mount: function(body) {
+                ta = el('textarea', {class: 'ui-form-textarea'});
+                ta.value = input.value;
+                ta.style.cssText = 'width:100%;min-height:60vh;flex:1 1 auto;resize:vertical;box-sizing:border-box';
+                body.appendChild(ta);
+                setTimeout(function() { ta.focus(); }, 0);
+              },
+            });
+          }
+          fieldWrap.appendChild(previewEl);
+          refreshPreview();
+          // The Edit button is themed like the Suggest button and placed right
+          // after it below; stash it here and let the suggest-row block append
+          // it so the two sit together regardless of whether Suggest exists.
+          expandEditBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'}, ['✎ Edit']);
+          expandEditBtn.addEventListener('click', openEditor);
+          // Route programmatic setters (the ✨ Suggest path) through here so
+          // the preview reflects the new value; registering it now pre-empts
+          // the generic setter block below. Presets, if any, set input.value
+          // directly and won't refresh the preview — an accepted edge (expand
+          // fields don't use presets today).
+          fieldSetters[f.field] = function(v) {
+            input.value = String(v == null ? '' : v);
+            save(f.field, input.value);
+            refreshPreview();
+          };
+        }
       } else if (t === 'select') {
         input = el('select', {class: 'ui-form-select'});
-        (f.options || []).forEach(function(o) {
+        var mkOpt = function(o) {
           var opt = el('option', {value: o.value}, [o.label || o.value]);
           if (String(initial) === String(o.value)) opt.selected = true;
-          input.appendChild(opt);
-        });
+          return opt;
+        };
+        // When any option carries a non-empty `group`, nest options under
+        // optgroup labels so long lists (e.g. timezones by region) read as
+        // sections. Bare (no-group) options render first, in source order.
+        var opts = f.options || [];
+        var hasGroups = opts.some(function(o){ return o.group; });
+        if (hasGroups) {
+          var groupMap = {}, groupOrder = [];
+          opts.forEach(function(o) {
+            var g = o.group || '';
+            if (!g) { input.appendChild(mkOpt(o)); return; }
+            if (!groupMap[g]) { groupMap[g] = []; groupOrder.push(g); }
+            groupMap[g].push(o);
+          });
+          groupOrder.forEach(function(g) {
+            var og = document.createElement('optgroup');
+            og.label = g;
+            groupMap[g].forEach(function(o){ og.appendChild(mkOpt(o)); });
+            input.appendChild(og);
+          });
+        } else {
+          opts.forEach(function(o){ input.appendChild(mkOpt(o)); });
+        }
         // Submit-mode + no initial value: the browser auto-selects
         // the first option visually but current[field] stays
         // undefined until the user changes the dropdown. Seed
@@ -1512,15 +1608,20 @@
 
       // "✨ Suggest" button — POSTs the current record + the target
       // field name + an optional hint to f.suggest_url. The server
-      // returns {value}, which the field-typed setter applies.
-      if (f.suggest_url && fieldSetters[f.field]) {
+      // returns {value}, which the field-typed setter applies. The expand
+      // "✎ Edit" button (if any) rides in the same row, right after Suggest,
+      // sharing its theme; when there's no Suggest, Edit gets its own row.
+      if ((f.suggest_url && fieldSetters[f.field]) || expandEditBtn) {
         var suggestRow = el('div', {class: 'ui-form-suggest-row'});
-        var sBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'},
-          ['✨ Suggest']);
-        sBtn.addEventListener('click', function() {
-          runFieldSuggest(f, sBtn);
-        });
-        suggestRow.appendChild(sBtn);
+        if (f.suggest_url && fieldSetters[f.field]) {
+          var sBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'},
+            ['✨ Suggest']);
+          sBtn.addEventListener('click', function() {
+            runFieldSuggest(f, sBtn);
+          });
+          suggestRow.appendChild(sBtn);
+        }
+        if (expandEditBtn) suggestRow.appendChild(expandEditBtn);
         fieldWrap.appendChild(suggestRow);
       }
 
@@ -2928,6 +3029,34 @@
     var wrap = el('div', {class: 'ui-stack'});
     (cfg.items || []).forEach(function(item) { mountComponent(item, wrap, ctx); });
     return wrap;
+  };
+
+  // button — a single action button that POSTs to an endpoint. The
+  // standalone-component form of a row-action button, so it can sit inside a
+  // Stack / Expand panel. When mounted in a row expander, ctx is the row
+  // record: only_if / hide_if gate rendering on a row field, and {row_key}
+  // placeholders in the url were already substituted at expand time. On
+  // success it refreshes any invalidate sources and surfaces a server message.
+  components.button = function(cfg, ctx) {
+    if (ctx) {
+      if (cfg.only_if && !ctx[cfg.only_if]) return el('span', {style: 'display:none'});
+      if (cfg.hide_if && ctx[cfg.hide_if]) return el('span', {style: 'display:none'});
+    }
+    var classes = 'ui-row-btn';
+    if (cfg.variant) classes += ' ' + cfg.variant;
+    var btn = el('button', {class: classes, onclick: async function() {
+      if (cfg.confirm && !(await window.uiConfirm(cfg.confirm))) return;
+      btn.disabled = true;
+      fetchJSON(cfg.url, {method: cfg.method || 'POST'}).then(function(r) {
+        btn.disabled = false;
+        if (cfg.invalidate && window.uiInvalidate) window.uiInvalidate(cfg.invalidate);
+        if (r && typeof r === 'object' && r.message) showToast(r.message);
+      }).catch(function(err) {
+        btn.disabled = false;
+        showToast('Failed: ' + err.message);
+      });
+    }}, [cfg.label || '…']);
+    return btn;
   };
 
   // nav_shell — app-shell layout: left rail of nav buttons, a content pane

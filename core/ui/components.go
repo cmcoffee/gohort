@@ -567,8 +567,19 @@ type FormField struct {
 	Placeholder string `json:"placeholder,omitempty"`
 	Help        string `json:"help,omitempty"`
 	Rows        int    `json:"rows,omitempty"`
-	Min         int    `json:"min,omitempty"`
-	Max         int    `json:"max,omitempty"`
+	// Expand / Inline control how a "textarea" field is presented. A large
+	// prompt or JSON blob peeked through a short inline box is hard to read
+	// and edit, so a textarea can instead render as a read-only clamped
+	// preview plus an "Edit" button that opens the whole value in a wide,
+	// tall modal editor (the shared uiOpenModal). Default: auto — any
+	// textarea with Rows >= 6 gets the preview+Edit treatment; smaller ones
+	// stay plain inline boxes. Expand forces it on regardless of Rows;
+	// Inline forces the plain inline box regardless of Rows. Ignored by
+	// non-textarea field types.
+	Expand bool `json:"expand,omitempty"`
+	Inline bool `json:"inline,omitempty"`
+	Min    int  `json:"min,omitempty"`
+	Max    int  `json:"max,omitempty"`
 	// Decimals enables float input on a "number" field. 0 = integer
 	// only (default). >0 = parseFloat with that many decimal places
 	// in the saved value (use 4 for per-1K-token rates like 0.0003).
@@ -1592,6 +1603,15 @@ func (c PipelinePanel) MarshalJSON() ([]byte, error) {
 // supplied prompt and a button per action. Clicking a button
 // POSTs to ConfirmURL with `{id, value}` and the runtime clears
 // the card.
+// ScheduleCreator is one "+ New …" button in the Scheduler modal: a label and
+// the name of a client action (window.uiRegisterClientAction) the app registers
+// to run the create flow. Kept generic so core/ui offers a create affordance
+// without knowing any schedule kind.
+type ScheduleCreator struct {
+	Label  string `json:"label"`
+	Action string `json:"action"`
+}
+
 type AgentLoopPanel struct {
 	// Left rail — drives a generic list of named records. There
 	// are two flavors, picked by ListIsContext:
@@ -1636,6 +1656,14 @@ type AgentLoopPanel struct {
 	// modal and `category_label` is the section header — core/ui never names a
 	// category itself; it renders whatever the app provides, in first-seen order.
 	SchedulesURL string `json:"schedules_url,omitempty"`
+	// ScheduleCreators optionally adds "+ New …" buttons to the top of the
+	// Scheduler modal (for schedule kinds the app lets the user CREATE from the
+	// rail, not only via chat). Each renders a button that invokes the named
+	// client action (registered with window.uiRegisterClientAction) with a
+	// {reload, sessionId} context — the app owns the create form and endpoint.
+	// Generic: core/ui renders the button and dispatches the action by name; it
+	// never knows what a "recurring task" is. Omit for none.
+	ScheduleCreators []ScheduleCreator `json:"schedule_creators,omitempty"`
 	// ChannelAgentsURL — optional GET → [{id, name}] of the agents a channel
 	// may be bound to, so the channel editor can re-point a channel at a
 	// different agent. Omit to hide the agent picker.
@@ -2157,6 +2185,38 @@ func (c Card) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		alias
 	}{"card", alias(c)})
+}
+
+// Button is a single action button that calls an endpoint on click — the
+// standalone-component form of a row-action button, so a button can live
+// inside a Stack / Expand panel (which only accept nested Components) rather
+// than only in a Table's RowActions. When mounted inside a row expander it
+// receives the same {row_key} URL substitution and row-record context as the
+// other nested components, so OnlyIf / HideIf can gate it on a row field
+// (e.g. show "Clear" only when the row is connected). Standalone (no row
+// context) buttons ignore the gates. On success it can refresh other lists
+// (Invalidate, matched against their Source) and surface a server {message}.
+type Button struct {
+	Label      string   `json:"label"`
+	URL        string   `json:"url"`                  // endpoint to call
+	Method     string   `json:"method,omitempty"`     // default POST
+	Confirm    string   `json:"confirm,omitempty"`    // confirmation prompt before firing
+	Invalidate []string `json:"invalidate,omitempty"` // Sources to refetch on success
+	Variant    string   `json:"variant,omitempty"`    // extra CSS class, e.g. "danger"
+	// OnlyIf / HideIf gate rendering on a row-record field when the button is
+	// nested in a row expander: render only when OnlyIf is truthy / hide when
+	// HideIf is truthy. Ignored when there's no row context.
+	OnlyIf string `json:"only_if,omitempty"`
+	HideIf string `json:"hide_if,omitempty"`
+}
+
+func (Button) componentType() string { return "button" }
+func (b Button) MarshalJSON() ([]byte, error) {
+	type alias Button
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		alias
+	}{"button", alias(b)})
 }
 
 // EmptyState is the centered "nothing here yet" placeholder — a large dimmed
