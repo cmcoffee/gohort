@@ -130,6 +130,18 @@ type SecureCredential struct {
 	// its records' inert `restricted` flag is ignored on decode, so they
 	// read as Open. Open vs Secured is the whole ladder now.)
 	Secured bool `json:"secured,omitempty"`
+	// ApprovedToolBindings is the authoritative "declaring tools" allowlist for a
+	// SECURED credential — the tools an admin has approved to bind (fetch_via /
+	// api-mode) and thereby dispatch through it. This is what makes access follow
+	// TOOL scope: whoever has an approved tool scoped can use the cred through it,
+	// secret server-side. A tool not listed can't newly bind the secured cred at
+	// authoring time. Empty / ignored on Open creds. See
+	// docs/secured-credential-tool-binding.md.
+	ApprovedToolBindings []string `json:"approved_tool_bindings,omitempty"`
+	// PendingToolBindings are tools that REQUESTED to bind this secured cred and
+	// await admin review (recorded when authoring a new binding). An admin moves an
+	// entry to ApprovedToolBindings (ApproveToolBinding) or drops it (RevokeToolBinding).
+	PendingToolBindings []string `json:"pending_tool_bindings,omitempty"`
 	// AllowedMethods restricts which HTTP methods the LLM may use
 	// against this credential. Empty/nil = all methods allowed
 	// (legacy behavior). Set to ["GET","HEAD"] for a read-only
@@ -627,6 +639,89 @@ func (s *SecureAPI) SetSecured(name string, secured bool) error {
 	c.Secured = secured
 	s.db.Set(secureAPITable, name, c)
 	return nil
+}
+
+// --- secured-credential tool bindings ---------------------------------------
+// The binding allowlist is how a SECURED credential's access follows TOOL scope:
+// a tool must be an APPROVED binding to declare (and thus dispatch through) the
+// cred. See docs/secured-credential-tool-binding.md. secret:<cred> is never a
+// binding — that path stays hard-blocked in the authoring guard; only the
+// secret-safe fetch_via / api-mode declarations are bindable.
+
+// ToolBindingApproved reports whether tool is an approved declaring binding of
+// credential cred.
+func (s *SecureAPI) ToolBindingApproved(cred, tool string) bool {
+	c, ok := s.Load(cred)
+	if !ok {
+		return false
+	}
+	return credSliceHas(c.ApprovedToolBindings, tool)
+}
+
+// RequestToolBinding records that tool wants to declare secured cred, for admin
+// review. Idempotent — no-op if already approved or already pending.
+func (s *SecureAPI) RequestToolBinding(cred, tool string) error {
+	return s.mutateCred(cred, func(c *SecureCredential) {
+		if credSliceHas(c.ApprovedToolBindings, tool) || credSliceHas(c.PendingToolBindings, tool) {
+			return
+		}
+		c.PendingToolBindings = append(c.PendingToolBindings, tool)
+	})
+}
+
+// ApproveToolBinding moves tool from pending to approved (admin action, and the
+// grandfather path for an existing declaring tool). Idempotent.
+func (s *SecureAPI) ApproveToolBinding(cred, tool string) error {
+	return s.mutateCred(cred, func(c *SecureCredential) {
+		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
+		if !credSliceHas(c.ApprovedToolBindings, tool) {
+			c.ApprovedToolBindings = append(c.ApprovedToolBindings, tool)
+		}
+	})
+}
+
+// RevokeToolBinding removes tool from both the approved and pending lists.
+func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
+	return s.mutateCred(cred, func(c *SecureCredential) {
+		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
+		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
+	})
+}
+
+// mutateCred loads a credential's config, applies fn, and re-saves — without
+// touching the encrypted secret (stored under a separate key). Mirrors SetSecured.
+func (s *SecureAPI) mutateCred(name string, fn func(*SecureCredential)) error {
+	if !s.ready() || strings.TrimSpace(name) == "" {
+		return fmt.Errorf("name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, name, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	fn(&c)
+	s.db.Set(secureAPITable, name, c)
+	return nil
+}
+
+func credSliceHas(list []string, v string) bool {
+	for _, e := range list {
+		if e == v {
+			return true
+		}
+	}
+	return false
+}
+
+func credSliceRemove(list []string, v string) []string {
+	out := list[:0]
+	for _, e := range list {
+		if e != v {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Delete removes both metadata and encrypted secret.

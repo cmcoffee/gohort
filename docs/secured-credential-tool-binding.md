@@ -77,6 +77,19 @@ Securing a credential moves access control from the **credential** plane to the
 - **P1** — allow `fetch_via:` / api-mode binding to a secured cred → routes to the
   approval queue (keep `secret:<secured>` blocked). Add the explicit binding
   record on the cred + migration backfill.
+  - **Slice 1 SHIPPED (authoring):** `SecureCredential.{ApprovedToolBindings,
+    PendingToolBindings}` + `Secure().{ToolBindingApproved,RequestToolBinding,
+    ApproveToolBinding,RevokeToolBinding}`. The shell (`fetch_via:`) and api-mode
+    authoring guards now: hard-block `secret:<secured>`; allow an approved (or
+    grandfathered-on-edit) binding; otherwise record a pending request and refuse
+    with a "must be APPROVED" directive. Dispatch is UNCHANGED (still allows any
+    tool that got past authoring — the authoring gate is the enforcement, as
+    before).
+  - **Slice 2 (next):** dispatch-side enforcement (only approved bindings dispatch
+    through a secured cred) + a migration/backfill sweep that seeds
+    ApprovedToolBindings from existing declaring tools, so nothing regresses when
+    dispatch starts checking.
+  - **Slice 3:** an admin approve/revoke action wired to a UI (see P3).
 - **P2** — binding edit-lock (wiring immutable without re-review).
 - **P3** — admin surface: bound-tools list + effective-access view + revoke.
 

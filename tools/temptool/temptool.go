@@ -435,8 +435,25 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 				// whole point of securing it). To bind a new tool, an admin
 				// unsecures it in Admin > APIs first, wires the tool, then
 				// re-secures. Not-ready store / unknown cred → no restriction.
-				if cr, ok := Secure().Load(name); ok && cr.Secured && !priorGrant[name] {
-					return "", fmt.Errorf("credential %q is SECURED — it's locked to the tools that already use it and can't be declared by a new or edited tool. Ask an admin to unsecure it in Admin > APIs to change which tools use it", name)
+				if cr, ok := Secure().Load(name); ok && cr.Secured {
+					switch {
+					case priorGrant[name]:
+						// Existing declaring tool being edited: keep it, and record the
+						// binding so the cred's allowlist matches reality (grandfather).
+						_ = Secure().ApproveToolBinding(name, tool.Name)
+					case method == "secret":
+						// Raw secret to a script is NEVER a binding — securing's contract
+						// is that the secret never reaches a script. Hard-blocked always.
+						return "", fmt.Errorf("credential %q is SECURED — a tool cannot take its raw secret (secret:%s). Route the call through the credential with fetch_via:%s instead (the secret stays server-side), and have an admin approve the binding in Admin > APIs", name, name, name)
+					case Secure().ToolBindingApproved(name, tool.Name):
+						// Admin-approved binding — allow.
+					default:
+						// New fetch_via binding to a secured cred: record the request and
+						// hold it for admin review (access follows this tool's scope once
+						// approved). See docs/secured-credential-tool-binding.md.
+						_ = Secure().RequestToolBinding(name, tool.Name)
+						return "", fmt.Errorf("credential %q is SECURED — tool %q must be APPROVED to bind it. A binding request has been recorded; an admin approves it in Admin > APIs, after which this tool dispatches through %q (secret server-side) and any agent it's scoped to can use it", name, tool.Name, name)
+					}
 				}
 				c = method + ":" + name
 			} else {
@@ -2400,10 +2417,13 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	if !ok {
 		return "", fmt.Errorf("credential %q is not registered — register it via the admin UI first", credName)
 	}
-	// A secured credential is locked to the tools that already use it; a new or
-	// edited tool can't declare it (that would self-grant the secret).
-	if cr.Secured {
-		return "", fmt.Errorf("credential %q is SECURED — locked to the tools that already use it and can't be declared by a new or edited tool. Ask an admin to unsecure it in Admin > APIs to change which tools use it", credName)
+	// A secured credential is bindable only by APPROVED tools. An api-mode tool
+	// dispatches through the credential server-side (secret never exposed), so it's
+	// a legitimate binding once an admin approves it — unlike a hard block, this
+	// lets access follow the tool's scope. See docs/secured-credential-tool-binding.md.
+	if cr.Secured && !Secure().ToolBindingApproved(credName, name) {
+		_ = Secure().RequestToolBinding(credName, name)
+		return "", fmt.Errorf("credential %q is SECURED — tool %q must be APPROVED to bind it. A binding request has been recorded; an admin approves it in Admin > APIs, after which this tool dispatches through %q and any agent it's scoped to can use it", credName, name, credName)
 	}
 	urlTpl := strings.TrimSpace(StringArg(args, "url_template"))
 	if urlTpl == "" {

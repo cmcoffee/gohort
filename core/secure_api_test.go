@@ -64,6 +64,56 @@ func TestAutoRouteMatchesInternalHost(t *testing.T) {
 	}
 }
 
+// TestSecuredToolBindingLifecycle covers P1 of the secured-credential tool
+// binding: request → approve → (dispatch-authoritative) → revoke, with
+// idempotence. This allowlist is how a secured cred's access follows TOOL scope.
+func TestSecuredToolBindingLifecycle(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	s.db.Set(secureAPITable, "ts3_api", SecureCredential{Name: "ts3_api", Secured: true})
+
+	if s.ToolBindingApproved("ts3_api", "ts3_status") {
+		t.Fatal("no binding approved initially")
+	}
+
+	// Request → pending, not yet approved.
+	if err := s.RequestToolBinding("ts3_api", "ts3_status"); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	c, _ := s.Load("ts3_api")
+	if !credSliceHas(c.PendingToolBindings, "ts3_status") {
+		t.Fatalf("expected pending binding, got %v", c.PendingToolBindings)
+	}
+	if s.ToolBindingApproved("ts3_api", "ts3_status") {
+		t.Fatal("pending is not approved")
+	}
+	// Idempotent request.
+	_ = s.RequestToolBinding("ts3_api", "ts3_status")
+	c, _ = s.Load("ts3_api")
+	if len(c.PendingToolBindings) != 1 {
+		t.Fatalf("request must be idempotent; pending=%v", c.PendingToolBindings)
+	}
+
+	// Approve → approved, pending cleared.
+	if err := s.ApproveToolBinding("ts3_api", "ts3_status"); err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	if !s.ToolBindingApproved("ts3_api", "ts3_status") {
+		t.Fatal("should be approved after ApproveToolBinding")
+	}
+	c, _ = s.Load("ts3_api")
+	if credSliceHas(c.PendingToolBindings, "ts3_status") {
+		t.Fatal("pending must clear on approve")
+	}
+
+	// Revoke → gone from both.
+	if err := s.RevokeToolBinding("ts3_api", "ts3_status"); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if s.ToolBindingApproved("ts3_api", "ts3_status") {
+		t.Fatal("should be revoked")
+	}
+}
+
 func TestSetSecuredRoundTrip(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	s.db.Set(secureAPITable, "c", SecureCredential{Name: "c"})
