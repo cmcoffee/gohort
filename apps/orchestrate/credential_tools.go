@@ -32,12 +32,31 @@ func credentialTools(cred string) []CredentialToolRef {
 		}
 		return ""
 	}
-	var out []CredentialToolRef
-	seen := map[string]bool{}
+	// Group by (tool, via): one row per tool listing every agent/scope it lives
+	// on, so a tool scoped to several agents shows once with all of them — not
+	// once per agent.
+	type toolGroup struct {
+		tool   string
+		via    string
+		agents []string
+		seenAg map[string]bool
+	}
+	groups := map[string]*toolGroup{}
+	var order []string
 	add := func(agent, tool, v string) {
-		if k := agent + "\x00" + tool; v != "" && !seen[k] {
-			seen[k] = true
-			out = append(out, CredentialToolRef{Agent: agent, Tool: tool, Via: v})
+		if v == "" {
+			return
+		}
+		k := tool + "\x00" + v
+		g := groups[k]
+		if g == nil {
+			g = &toolGroup{tool: tool, via: v, seenAg: map[string]bool{}}
+			groups[k] = g
+			order = append(order, k)
+		}
+		if agent != "" && !g.seenAg[agent] {
+			g.seenAg[agent] = true
+			g.agents = append(g.agents, agent)
 		}
 	}
 	for _, pt := range LoadSharedPersistentTempTools(RootDB) {
@@ -69,6 +88,11 @@ func credentialTools(cred string) []CredentialToolRef {
 			}
 			add(c.Name, tool, "connector")
 		}
+	}
+	out := make([]CredentialToolRef, 0, len(order))
+	for _, k := range order {
+		g := groups[k]
+		out = append(out, CredentialToolRef{Agent: strings.Join(g.agents, ", "), Tool: g.tool, Via: g.via})
 	}
 	return out
 }
