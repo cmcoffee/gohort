@@ -159,7 +159,13 @@ type EventMonitor struct {
 	// deliberately. Distinct from a user Pause; BrokenReason records why.
 	Broken       bool      `json:"broken,omitempty"`
 	BrokenReason string    `json:"broken_reason,omitempty"`
-	Created      time.Time `json:"created"`
+	// ConsecutiveFailures counts back-to-back FAILED polls (a tool error or a
+	// failure-shaped result — traceback / non-zero exit / timeout). A failed poll
+	// is never delivered (so a direct-channel monitor can't spam a traceback into
+	// a human chat) and doesn't advance the baseline; the streak resets on any
+	// success. At watchFailureThreshold the monitor is marked broken + paused.
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
+	Created             time.Time `json:"created"`
 	NextCheck    time.Time `json:"next_check,omitempty"`
 	LastFired    time.Time `json:"last_fired,omitempty"`
 	LastChecked  time.Time `json:"last_checked,omitempty"`  // last time the poll ran (every interval) — proves liveness even with no change
@@ -759,6 +765,30 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 	}
 }
 
+// watchFailureThreshold is how many consecutive FAILED polls a watch monitor
+// tolerates before it's marked broken + paused. Low enough to stop spam / a
+// definitively-dead dependency (a revoked binding) quickly; high enough that a
+// single transient blip self-heals on the next successful poll.
+const watchFailureThreshold = 3
+
+// watchPollFailed reports whether a watch tool invocation should be treated as a
+// FAILED poll — never delivered, counted toward the broken threshold. It catches
+// both a returned error AND the framework's failure-shaped OUTPUT: shell dispatch
+// returns a non-zero exit / timeout / traceback as the result string with a nil
+// error (so the LLM can see and fix it), so the body must be inspected too.
+// Returns a short reason for the log + the broken state.
+func watchPollFailed(body string, err error) (bool, string) {
+	if err != nil {
+		return true, truncateEvent(strings.TrimSpace(err.Error()), 200)
+	}
+	for _, marker := range []string{"[exit: ", "[TIMED OUT after", "Traceback (most recent call last):"} {
+		if strings.Contains(body, marker) {
+			return true, truncateEvent(strings.TrimSpace(body), 200)
+		}
+	}
+	return false, ""
+}
+
 // executeWatchPoll invokes the captured tool, hashes its output, and wakes the
 // channel agent ONLY when the hash differs from the stored baseline — the cheap
 // "tell me when X changes" path with zero LLM until something actually changes.
@@ -767,15 +797,35 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 // watcher engine's InvokeWatcherTool + sha256Sum (same core package).
 func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	body, err := InvokeWatchTool(m.Owner, m.WakeAgent, m.ToolName, m.ToolArgs)
-	if err != nil {
-		Log("[event] watch %s/%s tool %q failed: %v", m.Owner, m.Name, m.ToolName, err)
-		return
-	}
-	hash := sha256Sum(body)
 	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
 	if !ok {
 		return
 	}
+	// Failure guard. A tool error OR a failure-shaped result — a Python traceback,
+	// a non-zero exit, a timeout (shell dispatch bakes these into the OUTPUT with
+	// err=nil) — is NOT monitored content. NEVER deliver it: a direct-channel
+	// monitor would otherwise post a raw traceback into a human chat, and a
+	// revoked secured-credential binding fails in exactly this shape. Don't advance
+	// the baseline (so a genuine recovery still registers as a change), count the
+	// streak, and after watchFailureThreshold consecutive failures mark the monitor
+	// broken — which pauses + unschedules it and surfaces a "needs attention" state
+	// — instead of retrying into the void or spamming.
+	if failed, reason := watchPollFailed(body, err); failed {
+		cur.ConsecutiveFailures++
+		Log("[event] watch %s/%s failed poll %d/%d: %s", m.Owner, m.Name, cur.ConsecutiveFailures, watchFailureThreshold, reason)
+		if cur.ConsecutiveFailures >= watchFailureThreshold {
+			MarkEventMonitorBroken(db, m.Owner, m.Name, "watch tool is failing: "+reason)
+			return
+		}
+		SaveEventMonitor(db, cur)
+		return
+	}
+	// Success: clear any accumulated failure streak so a transient blip self-heals.
+	if cur.ConsecutiveFailures != 0 {
+		cur.ConsecutiveFailures = 0
+		SaveEventMonitor(db, cur)
+	}
+	hash := sha256Sum(body)
 	if hash == cur.LastHash {
 		return // no change — stay quiet, no LLM
 	}
