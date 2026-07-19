@@ -55,6 +55,12 @@ func pipelineScopeState(db Database, owner, name string) (ToolScopeState, bool) 
 	st.Name = def.Name
 	st.Global = def.Global
 	for _, a := range listAgents(udb, owner) {
+		// App agents aren't pipeline-scope targets — their kit is app-declared.
+		// Keyed on identity (the other planes' Hidden proxy leaks for a visible
+		// app agent).
+		if isAppAgent(a.ID) {
+			continue
+		}
 		on := agentHasAttachedPipeline(a, def.ID)
 		if st.Global {
 			on = agentSeesGlobalPipeline(a, def.ID)
@@ -89,6 +95,9 @@ func setPipelineScope(db Database, owner, name, target string, on bool) error {
 			def.Global = true
 			SavePipelineDef(udb, def)
 			for _, a := range listAgents(udb, owner) {
+				if isAppAgent(a.ID) {
+					continue // never touch an app agent's kit
+				}
 				changed := false
 				if agentHasAttachedPipeline(a, def.ID) {
 					a.AttachedPipelines = removeString(a.AttachedPipelines, def.ID)
@@ -109,6 +118,9 @@ func setPipelineScope(db Database, owner, name, target string, on bool) error {
 		// Demote: bundle a per-agent attach onto every agent that currently
 		// sees it (not denied), then clear global + deny-lists.
 		for _, a := range listAgents(udb, owner) {
+			if isAppAgent(a.ID) {
+				continue // don't attach a pipeline onto an app agent
+			}
 			if !agentSeesGlobalPipeline(a, def.ID) {
 				a.DisabledPipelines = removeString(a.DisabledPipelines, def.ID)
 				if _, err := saveAgent(udb, a); err != nil {

@@ -157,7 +157,11 @@ func toolScopeState(db Database, owner, toolName string) (ToolScopeState, bool) 
 	// App-specific agents (Guide Author, Servitor Investigator, …) are Hidden
 	// with curated kits, and sub-agents (OwnedBy) are managed via their parent —
 	// neither belongs in the pill or the derived state.
-	scopeTarget := func(a AgentRecord) bool { return !a.Hidden && a.OwnedBy == "" }
+	// App agents are excluded by IDENTITY (not the Hidden proxy, which leaks for
+	// a VISIBLE app agent like Casefile's "Case Analyzer" was): their kit is
+	// app-declared, so they're never a tool-scope target. Sub-agents (OwnedBy)
+	// are managed via their parent.
+	scopeTarget := func(a AgentRecord) bool { return !a.Hidden && a.OwnedBy == "" && !isAppAgent(a.ID) }
 	agentHas := map[string]bool{}
 	var scopedDef *TempTool
 	for i := range agents {
@@ -386,6 +390,13 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 	rec, ok := loadAgent(udb, agentID)
 	if !ok {
 		return fmt.Errorf("agent %q not found", agentID)
+	}
+	// App agents are not tool-scope targets — their kit is app-declared. The
+	// scope pill already excludes them (scopeTarget), but guard the write path
+	// too so no caller can bundle onto one. Removal stays open (unbundle is
+	// unguarded) so an already-mis-scoped tool can still be cleaned off.
+	if isAppAgent(rec.ID) {
+		return fmt.Errorf("cannot scope a tool onto app agent %q — app agents get their tools from the owning app, not the LLM-authored plane", rec.Name)
 	}
 	// No Owner-field equality guard: the agent was loaded from the resolved user
 	// store (agentUserDB) and this is the admin-driven scope path, which scopes a

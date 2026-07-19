@@ -19,6 +19,18 @@ import (
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
+// isAppAgent reports whether id belongs to a code-registered App Agent. This is
+// the AUTHORITATIVE app-agent test — it keys on the registry, not on drift-able
+// runtime proxies (Owner=="system", Hidden), which a stale per-user shadow can
+// forge. Every safeguard that must hold the app-agent boundary (no LLM-authored
+// tools, not a scope target) keys on THIS, so the boundary can't be walked
+// across by a mis-saved record. (Phase 0 of the AgentRecord split — until the
+// type itself carries the boundary, this is the single source of truth.)
+func isAppAgent(id string) bool {
+	_, ok := appagents.AppAgentByID(id)
+	return ok
+}
+
 // appAgentVisibilityWarnOnce fires the visible-app-agent lint a single time,
 // the first time app agents are folded into resolution (startup / first agent
 // list). Guarded so the per-request registeredAppAgents() call doesn't spam.

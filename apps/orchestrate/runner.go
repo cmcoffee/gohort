@@ -1456,6 +1456,13 @@ func bundleAgentTool(db Database, owner string, base AgentRecord, t TempTool) er
 	if db == nil {
 		return fmt.Errorf("no db")
 	}
+	// App agents never hold LLM-authored tools — their kit is app-declared. This
+	// is the runtime chokepoint (an app agent authoring a tool mid-session goes
+	// through here); refuse regardless of caller. Keyed on the registry so a
+	// drift-able Owner can't slip a tool onto an app agent.
+	if isAppAgent(base.ID) {
+		return fmt.Errorf("cannot bundle a tool onto app agent %q — app agents get their tools from the owning app, not the LLM-authored plane", base.Name)
+	}
 	rec, ok := loadAgent(db, base.ID)
 	if !ok {
 		rec = base

@@ -48,10 +48,10 @@ func credentialScopeState(db Database, owner, name string) (ToolScopeState, bool
 	}
 	allAllowed := true
 	for _, a := range listAgents(udb, owner) {
-		// Only top-level, user-managed agents are access targets. App-specific
-		// agents (Servitor Investigator, Guide Author, … — Hidden) and sub-agents
-		// (OwnedBy) have curated kits and aren't credential-scope targets.
-		if a.Hidden || a.OwnedBy != "" {
+		// Only top-level, user-managed agents are access targets. App agents are
+		// excluded by IDENTITY (isAppAgent) — the Hidden proxy leaks for a VISIBLE
+		// app agent — and sub-agents (OwnedBy) are managed via their parent.
+		if a.Hidden || a.OwnedBy != "" || isAppAgent(a.ID) {
 			continue
 		}
 		on := !containsString(a.DisabledCredentials, name)
@@ -98,8 +98,8 @@ func setCredentialScope(db Database, owner, name, target string, on bool) error 
 	if target == "global" {
 		for _, a := range listAgents(udb, owner) {
 			// Global toggle applies only to the user-managed agents the pill shows
-			// (see credentialScopeState); skip app-specific (Hidden) + sub-agents.
-			if a.Hidden || a.OwnedBy != "" {
+			// (see credentialScopeState); skip app agents (by identity) + sub-agents.
+			if a.Hidden || a.OwnedBy != "" || isAppAgent(a.ID) {
 				continue
 			}
 			if err := setOne(a); err != nil {

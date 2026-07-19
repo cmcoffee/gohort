@@ -174,6 +174,15 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		}
 		target = found
 	}
+	// App agents have a CLOSED, code-declared kit: their tools come from the
+	// owning app (spec AllowedTools + what the app wires), never from the
+	// LLM-authored plane. Refuse to bundle onto one — keyed on the registry, not
+	// target.Owner (a stale shadow can drift Owner to the user and slip past the
+	// seed check below). This is what prevents a stray tool landing on a hidden
+	// app agent like Casefile's "Case Analyzer".
+	if isAppAgent(target.ID) {
+		return "", fmt.Errorf("add_tool: %q is an app agent — its tools are declared by its owning app in code and can't be authored into it. Point add_tool at one of your own agents (agents(action=\"list\")), or add the capability to the app itself", target.Name)
+	}
 	if target.Owner != sess.Username {
 		return "", fmt.Errorf("add_tool: agent %q is a read-only seed — call clone_agent to make an editable copy, then continue", target.Name)
 	}
