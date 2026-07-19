@@ -733,9 +733,40 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName string) error {
 	if credSliceHas(c.RevokedToolBindings, toolName) {
 		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED — an admin re-approves it in Admin > APIs to restore access", credName, toolName)
 	}
-	// Legacy declaring tool: grandfather it into the record on first dispatch.
+	if credSliceHas(c.PendingToolBindings, toolName) {
+		// Explicitly pending (a fresh request, or re-opened by a material edit —
+		// P2). NOT grandfathered: pending means "awaiting review", so dispatch
+		// must refuse until an admin approves it.
+		return fmt.Errorf("credential %q is SECURED and tool %q's binding is PENDING admin review — approve it in Admin > APIs to enable access", credName, toolName)
+	}
+	// Legacy declaring tool (absent from every list — authored before the binding
+	// record existed): grandfather it into the record on first dispatch.
 	_ = s.ApproveToolBinding(credName, toolName)
 	return nil
+}
+
+// RependToolBinding re-opens review for an already-approved binding (a material
+// edit invalidates the reviewed artifact — P2 edit-lock): approved/revoked → out,
+// pending → in. Dispatch then refuses until an admin re-approves.
+func (s *SecureAPI) RependToolBinding(cred, tool string) error {
+	return s.mutateCred(cred, func(c *SecureCredential) {
+		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
+		c.RevokedToolBindings = credSliceRemove(c.RevokedToolBindings, tool)
+		if !credSliceHas(c.PendingToolBindings, tool) {
+			c.PendingToolBindings = append(c.PendingToolBindings, tool)
+		}
+	})
+}
+
+// ClearToolBinding drops a tool from ALL of a cred's binding lists — used when the
+// tool is deleted, so a later recreate with the same name doesn't inherit its
+// approval (the name-laundering hole). A recreate then goes through fresh review.
+func (s *SecureAPI) ClearToolBinding(cred, tool string) error {
+	return s.mutateCred(cred, func(c *SecureCredential) {
+		c.ApprovedToolBindings = credSliceRemove(c.ApprovedToolBindings, tool)
+		c.PendingToolBindings = credSliceRemove(c.PendingToolBindings, tool)
+		c.RevokedToolBindings = credSliceRemove(c.RevokedToolBindings, tool)
+	})
 }
 
 // mutateCred loads a credential's config, applies fn, and re-saves — without

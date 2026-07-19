@@ -108,8 +108,20 @@ Securing a credential moves access control from the **credential** plane to the
     authoring is now approvable from the UI (no direct method call), and revoke
     → slice-2 dispatch refuses the tool (watch monitors then fail-safe via the
     failure circuit breaker).
-- **P2** — binding edit-lock (wiring immutable without re-review).
-- **P3** — admin surface: bound-tools list + effective-access view + revoke.
+- **P2 SHIPPED** — binding edit-lock. A MATERIAL `tool_def(update)` (touching the
+  executable definition: script / URL / body / method / credential / params /
+  actions / hook-caps — vs. a cosmetic description-only edit) re-opens review: the
+  binding moves back to **pending** so dispatch refuses the changed tool until an
+  admin re-approves (grandfather-approve still runs first so the authoring guard
+  allows the edit; the re-pend happens AFTER the update succeeds).
+  `EnforceSecuredBinding` now REFUSES a pending binding — only a truly-absent
+  legacy tool is grandfathered. DELETE clears the binding (`ClearToolBinding`) so a
+  same-name recreate can't inherit the approval (name-laundering hole). New core
+  methods `RependToolBinding` / `ClearToolBinding`; re-pended bindings surface as
+  Pending in the P3 admin UI. Tests: TestSecuredBindingRependClear (core),
+  TestSecuredBindingEditLock (temptool).
+- **P3 SHIPPED** — admin surface: Bindings expand (status + Approve/Revoke) on each
+  secured cred row; effective-access is the existing Tools expand (tool → agent).
 
 ## Open decisions
 

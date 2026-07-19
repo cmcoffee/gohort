@@ -1193,11 +1193,79 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "Updated " + name + " in place. " + res, nil
+	// P2 edit-lock: a MATERIAL edit (the tool's executable definition changed —
+	// script / URL / body / method / credential / params) re-opens review for
+	// every SECURED cred this tool binds. The grandfather above approved the
+	// binding so the create guard would ALLOW the edit; now that it succeeded, move
+	// it back to pending so dispatch refuses the changed tool until an admin
+	// re-approves the reviewed artifact. A cosmetic edit (description only) leaves
+	// the approval intact. See docs/secured-credential-tool-binding.md.
+	repended := ""
+	if updateIsMaterial(args) {
+		for cred := range securedBindingCreds(existing) {
+			if err := Secure().RependToolBinding(cred, existing.Name); err == nil {
+				repended = cred
+			}
+		}
+	}
+	out := "Updated " + name + " in place. " + res
+	if repended != "" {
+		out += " NOTE: its executable definition changed, so its SECURED-credential binding(s) now need admin RE-APPROVAL in Admin > APIs before it can dispatch through them again."
+	}
+	return out, nil
+}
+
+// updateIsMaterial reports whether a tool_def(update) touches the tool's
+// EXECUTABLE definition (vs. a cosmetic description-only edit). Presence of any
+// of these fields in the update args means the reviewed artifact changed, so a
+// secured-credential binding must be re-reviewed (P2). name/description are
+// deliberately excluded.
+func updateIsMaterial(args map[string]any) bool {
+	for _, f := range []string{
+		"script_body", "command_template", "url_template", "body_template",
+		"method", "response_pipe", "credential", "params", "required",
+		"actions", "remove_actions", "hook_capabilities",
+	} {
+		if _, ok := args[f]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// securedBindingCreds returns the set of SECURED credentials a tool binds — its
+// api/toolbox Credential plus every fetch_via:<cred> in its hook_capabilities.
+// Used to re-pend (on material edit) or clear (on delete) exactly those bindings.
+func securedBindingCreds(tt TempTool) map[string]bool {
+	out := map[string]bool{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		if cr, ok := Secure().Load(name); ok && cr.Secured {
+			out[name] = true
+		}
+	}
+	add(tt.Credential)
+	for _, c := range tt.HookCapabilities {
+		if i := strings.IndexByte(c, ':'); i >= 0 && strings.EqualFold(strings.TrimSpace(c[:i]), "fetch_via") {
+			add(c[i+1:])
+		}
+	}
+	return out
 }
 
 func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
+	// P2: clear any secured-credential bindings this tool holds, so a later
+	// recreate with the SAME NAME doesn't silently inherit its approval (the
+	// name-laundering hole). A recreate then goes through fresh review.
+	if rec, ok := loadExistingToolRecord(sess, name); ok {
+		for cred := range securedBindingCreds(rec) {
+			_ = Secure().ClearToolBinding(cred, name)
+		}
+	}
 	// Agent-bundled tool: the durable copy lives on the agent RECORD and
 	// is reconstituted every turn, so removing only the session/pool copy
 	// leaves a "zombie" that keeps firing. Route through the app's

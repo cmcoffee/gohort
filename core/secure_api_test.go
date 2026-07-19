@@ -158,6 +158,50 @@ func TestEnforceSecuredBinding(t *testing.T) {
 	}
 }
 
+// TestSecuredBindingRependClear covers P2: a pending binding is REFUSED at
+// dispatch (not grandfathered), RependToolBinding moves approved→pending, and
+// ClearToolBinding wipes all lists (delete path).
+func TestSecuredBindingRependClear(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	s.db.Set(secureAPITable, "sec", SecureCredential{Name: "sec", Secured: true})
+
+	s.ApproveToolBinding("sec", "t")
+	if err := s.EnforceSecuredBinding("sec", "t"); err != nil {
+		t.Fatalf("approved binding must pass: %v", err)
+	}
+
+	// Re-pend (material edit) → un-approved, pending, and dispatch REFUSES
+	// (must not silently grandfather a pending binding).
+	if err := s.RependToolBinding("sec", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if s.ToolBindingApproved("sec", "t") {
+		t.Fatal("re-pend must un-approve")
+	}
+	if err := s.EnforceSecuredBinding("sec", "t"); err == nil {
+		t.Fatal("a PENDING binding must be refused at dispatch")
+	}
+	if s.ToolBindingApproved("sec", "t") {
+		t.Fatal("enforcement must NOT grandfather a pending binding")
+	}
+
+	// Re-approve → passes again.
+	s.ApproveToolBinding("sec", "t")
+	if err := s.EnforceSecuredBinding("sec", "t"); err != nil {
+		t.Fatalf("re-approved must pass: %v", err)
+	}
+
+	// Clear (delete path) → gone from every list.
+	if err := s.ClearToolBinding("sec", "t"); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.Load("sec")
+	if credSliceHas(c.ApprovedToolBindings, "t") || credSliceHas(c.PendingToolBindings, "t") || credSliceHas(c.RevokedToolBindings, "t") {
+		t.Fatalf("clear must remove t from all lists; approved=%v pending=%v revoked=%v",
+			c.ApprovedToolBindings, c.PendingToolBindings, c.RevokedToolBindings)
+	}
+}
+
 func TestSetSecuredRoundTrip(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 	s.db.Set(secureAPITable, "c", SecureCredential{Name: "c"})
