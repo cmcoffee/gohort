@@ -1102,27 +1102,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// Access ACL (which users may use this credential) is
 								// edited by its own picker below the form, not as a
 								// free-text tags field — so admins pick real users.
-								ui.Expand("Edit", ui.Stack{
-									Children: []ui.Component{
-										ui.FormPanel{
-											Source:      "api/secure-api?name={name}",
-											PostURL:     "api/secure-api",
-											TestURL:     "api/secure-api/test",
-											TestLabel:   "Test token (oauth2)",
-											SubmitLabel: "Save changes",
-											Fields:      credentialFormFields(),
-										},
-										ui.ACLPicker(ui.ACLPickerConfig{
-											OptionsSource: "api/user-candidates",
-											RecordSource:  "api/secure-api?name={name}",
-											Field:         "allowed_users",
-											PostTo:        "api/secure-api",
-											Method:        "POST",
-											Noun:          "user",
-											Intro:         "Access — which users may use this credential (their agents). Empty = all users. Secured credentials ignore this (access follows their tool bindings).",
-											EmptyText:     "No other users to grant yet.",
-										}),
-									},
+								ui.Expand("Edit", ui.FormPanel{
+									Source:      "api/secure-api?name={name}",
+									PostURL:     "api/secure-api",
+									TestURL:     "api/secure-api/test",
+									TestLabel:   "Test token (oauth2)",
+									SubmitLabel: "Save changes",
+									Fields:      credentialFormFields(),
 								}),
 								// Tools — the tools connected to this credential (they declare
 								// it). What a Secured cred is bound to (and a scoped one
@@ -1172,13 +1158,21 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									},
 									EmptyText: "No tools bound yet. A tool that declares this secured credential is bound automatically and appears here.",
 								}),
-								// (Per-agent "Access" scope pill removed — this page is
-								// tier 1 only: the "Allowed Users" editor above governs
-								// WHICH USERS may use the credential. Tier 2 — WHICH OF A
-								// USER'S OWN AGENTS may use it — moved to the agent editor
-								// ("Credentials this agent may use"), so each user scopes
-								// their own fleet instead of the admin managing an
-								// unbounded per-agent list here.)
+								// Access — tier-1 user ACL: which USERS may use this
+								// credential. (Tier 2 — which of a user's OWN agents may
+								// use it — is on the agent editor, "Credentials this agent
+								// may use", so each user scopes their own fleet instead of
+								// the admin managing an unbounded per-agent list here.)
+								ui.ModalAction("Access", ui.ACLPicker(ui.ACLPickerConfig{
+									OptionsSource: "api/user-candidates",
+									RecordSource:  "api/secure-api?name={name}",
+									Field:         "allowed_users",
+									PostTo:        "api/secure-api",
+									Method:        "POST",
+									Noun:          "user",
+									Intro:         "Which users may use this credential. Empty = all users. Each user then chooses which of THEIR agents use it, on the agent editor.",
+									EmptyText:     "No other users to grant yet.",
+								})),
 								// Enable/Disable pair — only one renders depending on
 								// current state. Left NEUTRAL (no variant): the button
 								// color used to encode action-severity (green Enable /
