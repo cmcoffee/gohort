@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -34,11 +35,12 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"     pattern=\"random\" — random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
 				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Fixed and N-per-day random auto-cancel after 50 fires; UNLIMITED random has no auto-stop unless you set max_fires.\n" +
 				"  To CHANGE an existing task's timing, re-issue action=\"schedule\" with the SAME prompt and the new timing — it REPLACES the matching task in place instead of creating a duplicate. Keep the prompt identical when you mean to edit.\n" +
-				"  action=\"list\" — show active tasks for this session (id, cadence, fire count, prompt). Call before scheduling to avoid duplicates.\n" +
+				"  action=\"list\" — show this agent's active tasks (id, cadence, fire count, prompt, and WHERE each posts: this session, the Cortex mind, or another session). Call before scheduling to avoid duplicates.\n" +
 				"  action=\"cancel\" — stop one. Required: id (from schedule or list).\n" +
+				"  action=\"move\" — retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread — good for background engagement cycles the user shouldn't wade through in a conversation) or to=\"session\" (this current conversation). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
 				"Use this for periodic polling / checks the agent runs itself. NOT for one-shot work, and NOT for dispatching to other agents.",
 			Parameters: map[string]ToolParam{
-				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel"}, Description: "schedule | list | cancel."},
+				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel", "move"}, Description: "schedule | list | cancel | move."},
 				"prompt":           {Type: "string", Description: "(schedule) The recurring task as a directive the agent follows each fire. Don't include timing — that's the pattern params."},
 				"name":             {Type: "string", Description: "(schedule, optional) Short label identifying this task on its report cards and in the Schedules rail (e.g. \"build watch\"). Defaults to the prompt's first line if omitted."},
 				"pattern":          {Type: "string", Enum: []string{"fixed", "random"}, Description: "(schedule) fixed = every interval_minutes (default); random = times_per_day random moments inside the active window."},
@@ -49,7 +51,8 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"active_from":      {Type: "string", Description: "(schedule, optional) Daily window start, 24-hour HH:MM local time (e.g. 09:00). Set together with active_to. Required for random WITH times_per_day; optional otherwise."},
 				"active_to":        {Type: "string", Description: "(schedule, optional) Daily window end, 24-hour HH:MM local time (e.g. 17:30). Must be after active_from."},
 				"max_fires":        {Type: "integer", Description: "(schedule, optional) Auto-stop after this many total fires. Capped at the deployment ceiling (50)."},
-				"id":               {Type: "string", Description: "(cancel) Scheduler task id of the recurring task to cancel (from schedule or list)."},
+				"id":               {Type: "string", Description: "(cancel / move) Scheduler task id of the recurring task (from schedule or list)."},
+				"to":               {Type: "string", Enum: []string{"cortex", "session"}, Description: "(move) Where the task should post its reports: cortex = the agent's standing mind thread; session = this current conversation."},
 			},
 			Required: []string{"action"},
 			Caps:     []Capability{CapRead, CapWrite},
@@ -62,10 +65,12 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				return t.recurringList()
 			case "cancel":
 				return t.recurringCancel(args)
+			case "move":
+				return t.recurringMove(args)
 			case "", "help":
-				return "recurring actions: schedule (prompt + interval_minutes) | list | cancel (id).", nil
+				return "recurring actions: schedule (prompt + interval_minutes) | list | cancel (id) | move (id, to=cortex|session).", nil
 			default:
-				return "", fmt.Errorf("unknown action %q for recurring — use schedule | list | cancel", stringArg(args, "action"))
+				return "", fmt.Errorf("unknown action %q for recurring — use schedule | list | cancel | move", stringArg(args, "action"))
 			}
 		},
 	}
@@ -139,16 +144,14 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	return fmt.Sprintf("%s id=%s%s — a recurring TASK now runs %s, appending its reply into this session each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor) and don't send them to the Bridges app. Manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), id), nil
 }
 
+// recurringList shows the AGENT's active tasks, not just this session's —
+// once a task can live in the Cortex thread (recurring(move)), a
+// session-scoped list would hide exactly the tasks the user asks about.
+// posts_to tells the model (and the user) where each task's reports land.
 func (t *chatTurn) recurringList() (string, error) {
 	if t.session == nil || t.session.ID == "" {
 		return "(no active session)", nil
 	}
-	updates := ListOrchestrateUpdates(t.session.ID)
-	if len(updates) == 0 {
-		return "(no recurring tasks for this session)", nil
-	}
-	// Need a stable JSON shape but include the scheduler task id (which
-	// is the cancel key) — re-fetch with the ids.
 	type row struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
@@ -157,27 +160,39 @@ func (t *chatTurn) recurringList() (string, error) {
 		Cadence   string `json:"cadence"`
 		FireCount int    `json:"fire_count"`
 		CreatedAt string `json:"created_at"`
+		PostsTo   string `json:"posts_to"` // this_session | cortex | other_session
 	}
 	var rows []row
-	for _, task := range ListScheduledTasks(OrchestrateScheduledUpdateKind) {
-		var p orchUpdatePayload
-		if json.Unmarshal(task.Payload, &p) != nil || p.SessionID != t.session.ID {
-			continue
-		}
+	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+		p := rt.Payload
 		pattern := p.Pattern
 		if pattern == "" {
 			pattern = RecurringFixed
 		}
+		postsTo := "other_session"
+		switch p.SessionID {
+		case t.session.ID:
+			postsTo = "this_session"
+		case cortexSessionID(t.agent.ID):
+			postsTo = "cortex"
+		}
 		rows = append(rows, row{
-			ID: task.ID, Name: recurringName(p), Prompt: p.Prompt,
+			ID: rt.TaskID, Name: recurringName(p), Prompt: p.Prompt,
 			Pattern: pattern, Cadence: recurringDetail(p),
 			FireCount: p.FireCount, CreatedAt: p.CreatedAt,
+			PostsTo: postsTo,
 		})
+	}
+	if len(rows) == 0 {
+		return "(no recurring tasks for this agent)", nil
 	}
 	b, _ := json.MarshalIndent(rows, "", "  ")
 	return string(b), nil
 }
 
+// recurringCancel stops any of THIS agent's tasks owned by this user —
+// agent-scoped to match list, so a task moved to the Cortex thread stays
+// cancellable from the conversation that's discussing it.
 func (t *chatTurn) recurringCancel(args map[string]any) (string, error) {
 	if t.session == nil || t.session.ID == "" {
 		return "", errors.New("recurring(cancel) requires an active session")
@@ -186,8 +201,63 @@ func (t *chatTurn) recurringCancel(args map[string]any) (string, error) {
 	if id == "" {
 		return "", errors.New("id is required for recurring(cancel)")
 	}
-	if err := CancelOrchestrateUpdate(t.session.ID, id); err != nil {
-		return "", err
+	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+		if rt.TaskID == id {
+			UnscheduleTask(id)
+			return fmt.Sprintf("CANCELLED ok. Recurring task %s removed.", id), nil
+		}
 	}
-	return fmt.Sprintf("CANCELLED ok. Recurring task %s removed.", id), nil
+	return "", fmt.Errorf("no recurring task %s on this agent — recurring(action=\"list\") shows ids", id)
+}
+
+// recurringMove retargets where an existing task posts its reports — into the
+// agent's Cortex mind thread (background cycles the user shouldn't wade
+// through mid-conversation) or back into the current session. The queued
+// occurrence's payload is updated ATOMICALLY in place (UpdateScheduledTaskPayload),
+// so timing, fire count, and budget carry over untouched and no fire is
+// consumed. If the task is mid-fire its queued entry is the pre-armed next
+// occurrence, which this updates the same way.
+func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
+	if t.session == nil || t.session.ID == "" {
+		return "", errors.New("recurring(move) requires an active session")
+	}
+	id := strings.TrimSpace(stringArg(args, "id"))
+	if id == "" {
+		return "", errors.New("id is required for recurring(move)")
+	}
+	var target, destLabel string
+	switch strings.ToLower(strings.TrimSpace(stringArg(args, "to"))) {
+	case "cortex":
+		if !t.agent.Cortex {
+			return "", errors.New("this agent doesn't maintain a Cortex thread — enable \"Maintain a Cortex thread\" in its editor first, or leave the task in a session")
+		}
+		target = cortexSessionID(t.agent.ID)
+		destLabel = "this agent's Cortex mind thread"
+	case "session":
+		target = t.session.ID
+		destLabel = "this session"
+	default:
+		return "", fmt.Errorf("to must be \"cortex\" or \"session\" (got %q)", stringArg(args, "to"))
+	}
+	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+		if rt.TaskID != id {
+			continue
+		}
+		p := rt.Payload
+		if p.SessionID == target {
+			return fmt.Sprintf("Recurring task %s already posts into %s — nothing to move.", id, destLabel), nil
+		}
+		// Respect the destination thread's active-task cap, same as schedule.
+		if active := ListOrchestrateUpdates(target); len(active) >= orchUpdateMaxPerSession() {
+			return "", fmt.Errorf("the destination already has %d active recurring tasks (cap %d) — cancel one there first", len(active), orchUpdateMaxPerSession())
+		}
+		p.SessionID = target
+		// A deliberate edit renews the idle clock, same as create/update.
+		p.LastActive = time.Now().UTC().Format(time.RFC3339)
+		if !UpdateScheduledTaskPayload(rt.TaskID, p) {
+			return "", errors.New("that task is firing right now — try the move again in a moment (recurring(action=\"list\") for a fresh id)")
+		}
+		return fmt.Sprintf("MOVED_OK id=%s — the recurring task now posts its reports into %s. Timing, fire count, and budget are unchanged. Tell the user where its reports will appear from now on.", id, destLabel), nil
+	}
+	return "", fmt.Errorf("no recurring task %s on this agent — recurring(action=\"list\") shows ids", id)
 }
