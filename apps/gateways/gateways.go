@@ -198,7 +198,9 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			if !p.LastUsedAt.IsZero() {
 				last = p.LastUsedAt.Format("2006-01-02")
 			}
-			pending := PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
+			// A shared tool is never "requested" (sharing fulfills the request), so
+			// suppress the badge even if a stale pending row survives.
+			pending := !p.Shared && PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
 			rows = append(rows, row{
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Missing: missing, Shared: p.Shared, LastUsed: last,

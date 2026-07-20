@@ -118,6 +118,30 @@ func TestGlobalToolAdoptACL(t *testing.T) {
 	}
 }
 
+// TestSharingResolvesPromotionRequest pins the fix for a stale "Publish requested"
+// badge: sharing a tool — by ANY path — fulfills a pending publish request, so the
+// request queue and the owner's badge don't linger on an already-shared tool.
+func TestSharingResolvesPromotionRequest(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+
+	db.Set(persistentTempToolsTable, "alice", []PersistentTempTool{{Tool: TempTool{Name: "weather"}}})
+	if err := CreatePromotionRequest(db, "alice", "tool", "weather", "please"); err != nil {
+		t.Fatal(err)
+	}
+	if !PendingPromotion(db, "alice", "tool", "weather") {
+		t.Fatal("precondition: request should be pending")
+	}
+	if err := SetPersistentTempToolShared(db, "alice", "weather", true); err != nil {
+		t.Fatal(err)
+	}
+	if PendingPromotion(db, "alice", "tool", "weather") {
+		t.Fatal("sharing the tool must fulfill (clear) the pending publish request")
+	}
+}
+
 // TestSetPersistentTempToolAllowedUsers covers the admin adopt-ACL setter: it
 // normalizes (trim/dedupe/sort), updates CanAdoptGlobalTool, errors on an unknown
 // tool, and an empty list re-opens the tool to everyone.

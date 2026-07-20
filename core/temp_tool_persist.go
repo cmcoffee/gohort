@@ -346,6 +346,16 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 		return errString("no persistent tool named " + name)
 	}
 	db.Set(persistentTempToolsTable, username, approved)
+	// Sharing FULFILLS any pending publish request for this tool, however it got
+	// shared (admin Approve, the direct Share button, a migration) — otherwise the
+	// request queue and the owner's "Publish requested" badge go stale on a tool
+	// that is, in fact, already shared. Un-sharing leaves the request untouched.
+	if shared {
+		reqID := promotionRequestKey("tool", username, name)
+		if req, ok := GetPromotionRequest(db, reqID); ok && req.State == PromotionPendingState {
+			_ = SetPromotionRequestState(db, reqID, PromotionApprovedState, req.DecidedBy)
+		}
+	}
 	return nil
 }
 
