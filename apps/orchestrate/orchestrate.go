@@ -361,6 +361,9 @@ func (T *OrchestrateApp) Routes() {
 	// Candidate user list for the agent-page "Share with users" ACLPicker (peer
 	// sharing). Any authenticated user may share their own agent.
 	T.HandleFunc("/api/user-candidates", g(T.handleUserCandidates))
+	// Agent-centric tier-2 credential scoping — which of the user's granted
+	// credentials this agent may use (writes AgentRecord.DisabledCredentials).
+	T.HandleFunc("/api/agent-credentials", g(T.handleAgentCredentials))
 	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
 	T.HandleFunc("/api/tool-scope", g(T.handleToolScope))
 	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized

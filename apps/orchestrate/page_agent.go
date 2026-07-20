@@ -369,6 +369,32 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		})
 	}
 
+	// Credentials this agent may use — tier-2 per-agent scoping, relocated here
+	// from the admin credential page (which now only governs tier-1: which USERS
+	// may use a credential). Agent-centric so each user sees only their own fleet.
+	// The picker is an allowlist (checked = may use); the endpoint inverts it onto
+	// the AgentRecord.DisabledCredentials opt-out. Existing, non-sub agents only.
+	if id != "" && !subAgent {
+		sections = append(sections, ui.Section{
+			Title:    "Credentials this agent may use",
+			Subtitle: "The APIs you've been granted. All are available to this agent by default; uncheck any this agent shouldn't reach — that drops the tools that dispatch through them from its kit. Secured credentials aren't listed: their access follows their tool bindings, not per-agent scope.",
+			Body: ui.ChipPicker{
+				Mode:          "attach",
+				OptionsSource: "../api/agent-credentials?id=" + id,
+				RecordsField:  "credentials",
+				AttachedField: "enabled_credentials",
+				PostTo:        "../api/agent-credentials?id=" + id,
+				SaveKey:       "enabled_credentials",
+				NameField:     "value",
+				LabelField:    "label",
+				DescField:     "desc",
+				Noun:          "credential",
+				Intro:         "Checked = this agent may use it.",
+				EmptyText:     "No credentials have been granted to you yet.",
+			},
+		})
+	}
+
 	// Share with users — peer-sharing (namespacing phase 5). Existing, non-seed,
 	// top-level agents only: a seed is framework-owned and a sub-agent is a
 	// component of its parent, neither is independently shareable. The recipient

@@ -1172,14 +1172,13 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									},
 									EmptyText: "No tools bound yet. A tool that declares this secured credential is bound automatically and appears here.",
 								}),
-								// Scope pill — per-agent revoke of this credential
-								// (global by default). Denying it on an agent drops
-								// every tool that dispatches through it from that
-								// agent's kit.
-								// Hidden when Secured: a tool-locked credential has no
-								// per-agent scope — access follows the tools that use it.
-								{Type: "button", Label: "Access", Method: "client",
-									PostTo: "credential_scope_manage", HideIf: "secured"},
+								// (Per-agent "Access" scope pill removed — this page is
+								// tier 1 only: the "Allowed Users" editor above governs
+								// WHICH USERS may use the credential. Tier 2 — WHICH OF A
+								// USER'S OWN AGENTS may use it — moved to the agent editor
+								// ("Credentials this agent may use"), so each user scopes
+								// their own fleet instead of the admin managing an
+								// unbounded per-agent list here.)
 								// Enable/Disable pair — only one renders depending on
 								// current state. Left NEUTRAL (no variant): the button
 								// color used to encode action-severity (green Enable /
