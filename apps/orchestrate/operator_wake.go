@@ -39,26 +39,25 @@ func registerOperatorWake(app *OrchestrateApp) {
 		brief := ""
 		// The monitor names the agent to wake (WakeAgent) and the session it
 		// was created in (WakeSession), so the event lands back where the user
-		// set it up. Fall back to the deployment default channel agent and its
-		// home thread when unset (legacy monitors created before the fields).
-		wakeAgent := defaultConsoleAgent
-		wakeSession := ""
-		chatTarget := ""
-		wakeChannel := ""
+		// set it up. There is NO implicit default anymore — the old fallback
+		// (the framework Chat seed) is retired, and waking it would post into
+		// a thread no user can open; the empty case parks the monitor broken
+		// below instead.
+		m, ok := GetEventMonitor(RootDB, owner, monitorName)
+		if !ok {
+			Log("[operator.wake] %s/%s: monitor no longer exists — wake dropped", owner, monitorName)
+			return
+		}
+		if strings.TrimSpace(m.WakeBrief) != "" {
+			brief = "\n\nWhat to do: " + m.WakeBrief
+		}
+		wakeAgent := strings.TrimSpace(m.WakeAgent)
+		wakeSession := strings.TrimSpace(m.WakeSession)
+		chatTarget := strings.TrimSpace(m.DeliverChatID)
+		wakeChannel := strings.TrimSpace(m.WakeChannel)
 		notify := EventNotifyChannel
-		if m, ok := GetEventMonitor(RootDB, owner, monitorName); ok {
-			if strings.TrimSpace(m.WakeBrief) != "" {
-				brief = "\n\nWhat to do: " + m.WakeBrief
-			}
-			if a := strings.TrimSpace(m.WakeAgent); a != "" {
-				wakeAgent = a
-			}
-			wakeSession = strings.TrimSpace(m.WakeSession)
-			chatTarget = strings.TrimSpace(m.DeliverChatID)
-			wakeChannel = strings.TrimSpace(m.WakeChannel)
-			if m.Notify != "" {
-				notify = m.Notify
-			}
+		if m.Notify != "" {
+			notify = m.Notify
 		}
 
 		// Channel target (Stage B, unified source→channel): deliver the change
@@ -86,6 +85,21 @@ func registerOperatorWake(app *OrchestrateApp) {
 			} else {
 				Log("[operator.wake] %s/%s channel target %q not found — falling back to agent thread", owner, monitorName, wakeChannel)
 			}
+		}
+		// No wake agent (a legacy monitor from before the field): if the
+		// channel target above delivered, that IS the wake; every other path
+		// below needs an agent thread, so park the monitor broken — the owner
+		// relinks an agent from the console instead of the alert vanishing
+		// into the retired Chat seed's unreachable thread. The poll-tick
+		// dependency guard (eventMonitorDependencyError) parks these
+		// proactively too; this covers webhook-kind monitors and races.
+		if wakeAgent == "" {
+			if channelTargetDelivered {
+				return
+			}
+			MarkEventMonitorBroken(RootDB, owner, monitorName, "it has no wake agent — its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume")
+			Log("[operator.wake] %s/%s parked broken: no wake agent (legacy Chat-seed default retired)", owner, monitorName)
+			return
 		}
 		if wakeSession == "" {
 			wakeSession = cortexSessionID(wakeAgent)

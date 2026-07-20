@@ -64,6 +64,13 @@ func toolResolvable(owner, name string) bool {
 // wake/check agent deleted, a credential removed, or a tool/pipeline gone — or
 // "" if healthy. Wired into core.EventMonitorDependencyError.
 func eventMonitorDependencyError(m EventMonitor) string {
+	// Legacy monitors created before the WakeAgent field carried an implicit
+	// default: the framework Chat seed — now retired, so waking it would post
+	// into a thread no user can open. A monitor with a channel target is
+	// exempt (delivery goes into the channel, not an agent thread).
+	if strings.TrimSpace(m.WakeAgent) == "" && strings.TrimSpace(m.WakeChannel) == "" {
+		return "it has no wake agent — its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume"
+	}
 	if !agentExists(m.Owner, m.WakeAgent) {
 		return fmt.Sprintf("its wake agent was deleted (id %s)", m.WakeAgent)
 	}
