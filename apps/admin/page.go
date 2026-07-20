@@ -399,7 +399,6 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("tool_scope_manage", toolScopeManageAction).
 			ClientAction("pipeline_scope_manage", pipelineScopeManageAction).
-			ClientAction("credential_scope_manage", credentialScopeManageAction).
 			ClientAction("credentials_export", credentialsExportAction).
 			ClientAction("credentials_export_all", credentialsExportAllAction).
 			ClientAction("skills_export", skillsExportAction).
@@ -2683,14 +2682,9 @@ var pipelineScopeManageAction = scopeManageActionJS("pipeline",
     return { primary: { label: 'Global (all agents)', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
   }`)
 
-// credentialScopeManageAction — per-agent revoke of a credential (global by
-// default). "All agents" primary is a revoke-everywhere convenience.
-var credentialScopeManageAction = scopeManageActionJS("credential",
-	`r.name`, `r.name`,
-	`function(st){
-    var note = 'Every agent can use this credential by default. Turn an agent off to revoke it there; turn All agents off to revoke it everywhere. Any tool that dispatches through this credential is dropped from a denied agent\'s kit.';
-    return { primary: { label: 'All agents', on: !!st.global }, items: `+mapAgentsPillsJS+`, note: note };
-  }`)
+// (credentialScopeManageAction removed — the per-agent credential scope pill is
+// gone: tier-1 "which users" is the credential's Access button, and tier-2
+// per-agent scope moved to the agent editor's "Credentials this agent may use".)
 
 // artifactsExportAllAction downloads EVERYTHING — connectors + tools +
 // credentials + agents + skills + any future registered type — as one
