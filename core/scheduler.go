@@ -119,6 +119,34 @@ func ScheduleTask(kind string, payload any, runAt time.Time) (string, error) {
 	return id, nil
 }
 
+// UpdateScheduledTaskPayload atomically replaces the payload of a STILL-QUEUED
+// task, returning false when the task no longer exists (already fired or
+// unscheduled). Callers must NOT re-create the task on false — re-adding an
+// entry that already fired is how a recurring chain duplicates. Exists for the
+// pre-arm pattern: a recurring handler schedules its next occurrence BEFORE
+// running a long fire (so a process death mid-fire can't end the chain), then
+// updates that occurrence's payload afterward with what the fire learned
+// (fire counts, idle-clock renewal). Atomic with fireDueTasks' dequeue under
+// schedDBMu.
+func UpdateScheduledTaskPayload(id string, payload any) bool {
+	schedDBMu.Lock()
+	defer schedDBMu.Unlock()
+	if schedDB == nil {
+		return false
+	}
+	var task ScheduledTask
+	if !schedDB.Get(schedulerTable, id, &task) {
+		return false
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return false
+	}
+	task.Payload = b
+	schedDB.Set(schedulerTable, id, task)
+	return true
+}
+
 // ListScheduledTasks returns all pending tasks matching the given kind.
 // If kind is empty, returns all tasks.
 func ListScheduledTasks(kind string) []ScheduledTask {

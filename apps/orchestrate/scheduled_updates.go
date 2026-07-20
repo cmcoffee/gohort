@@ -6,19 +6,22 @@
 // agent's persona / tools / memory.
 //
 // On fire:
-//   1. Load the user's session under the per-(user, agent) sub-store.
-//   2. Build messages from the session's history + a synthetic
+//   1. PRE-ARM the next occurrence (persist it before running — the
+//      scheduler dequeues before invoking us, and the loop below runs
+//      minutes, so a process restart mid-fire must not end the chain).
+//   2. Load the user's session under the per-(user, agent) sub-store.
+//   3. Build messages from the session's history + a synthetic
 //      "[SCHEDULED UPDATE — fire N]" user turn.
-//   3. Run a worker-tier RunAgentLoop with the target agent's
+//   4. Run a worker-tier RunAgentLoop with the target agent's
 //      orchestrator_prompt + memory + facts + allowed tools.
-//   4. Append the model's reply as an assistant turn in the session.
-//   5. Reschedule for the next interval, unless the task was
-//      cancelled or hit the fire cap.
+//   5. Append the model's reply as an assistant turn in the session,
+//      renewing the armed occurrence's idle clock on productive work.
 //
 // Guardrails (matched to chat's):
 //   - Min interval 60s
 //   - Max 5 active updates per session
-//   - Max 50 fires per task before auto-cancel
+//   - MaxFires>0 = explicit total-fire bound; 0 = indefinite, watched
+//     by the renewable idle guard (tune_orch_update_idle_days)
 
 package orchestrate
 
@@ -200,26 +203,30 @@ func recurringName(p orchUpdatePayload) string {
 
 // handleOrchestrateScheduledUpdate is the scheduler callback. Loads
 // the session, runs the agent loop, appends the reply, reschedules.
+// errSchedNotReady marks a fire that couldn't run because the app (or the
+// user's store) wasn't wired yet — the boot race: a task that came due while
+// the process was down dequeues at startup before orchestrate initializes.
+// The handler re-arms a short retry instead of dropping the chain; with a
+// high-frequency task this race is near-certain after any downtime, and the
+// old "dropping task" path was a primary way recurring schedules evaporated.
+var errSchedNotReady = errors.New("orchestrate not ready")
+
 func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) {
 	var p orchUpdatePayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		Log("[orchestrate/scheduled] payload unmarshal failed: %v", err)
 		return
 	}
-	// A fire that panics must NOT silently kill the recurring chain: the
-	// scheduler already removed this task from the queue before calling us, so
-	// without this the schedule would be gone forever. Recover and re-arm the
-	// next tick (mirrors the event monitor's always-reschedule guard). Only
-	// fires on panic — the normal error/empty/success paths reschedule
-	// explicitly, and the intentional "drop" returns (agent/session gone) must
-	// stay stopped.
-	defer func() {
-		if r := recover(); r != nil {
-			Log("[orchestrate/scheduled] fire panicked for session %s: %v — rescheduling", p.SessionID, r)
-			reschedule(p)
-		}
-	}()
 	if err := fireOrchestrateUpdate(ctx, p, true); err != nil {
+		if errors.Is(err, errSchedNotReady) {
+			// Same payload, no fire counted — the retry IS this occurrence.
+			if _, aerr := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(2*time.Minute)); aerr != nil {
+				Log("[orchestrate/scheduled] %v — retry re-arm FAILED for session %s: %v", err, p.SessionID, aerr)
+			} else {
+				Log("[orchestrate/scheduled] %v — retrying in 2m (session %s)", err, p.SessionID)
+			}
+			return
+		}
 		Log("[orchestrate/scheduled] %v", err)
 	}
 }
@@ -238,7 +245,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	app := orchRef
 	orchRefMu.Unlock()
 	if app == nil {
-		return fmt.Errorf("not initialized, dropping task for session %s", p.SessionID)
+		return fmt.Errorf("%w for session %s", errSchedNotReady, p.SessionID)
 	}
 	// A parked (broken) task stays LISTED but never runs — re-arm its dormant tick
 	// and return. Resume/relink clears Broken and puts it back on its real cadence.
@@ -255,7 +262,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 
 	udb := UserDB(app.DB, p.Username)
 	if udb == nil {
-		return fmt.Errorf("no udb for user %s, dropping task", p.Username)
+		return fmt.Errorf("%w: no udb yet for user %s (session %s)", errSchedNotReady, p.Username, p.SessionID)
 	}
 	agent, ok := loadAgent(udb, p.AgentID)
 	if !ok {
@@ -267,6 +274,32 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			parkRecurringBroken(p, fmt.Sprintf("its agent was deleted (id %s)", p.AgentID))
 		}
 		return nil
+	}
+
+	// PRE-ARM the next occurrence BEFORE running the fire. The scheduler
+	// removed this task from the persistent queue before invoking us, and the
+	// fire below runs a full agent loop — minutes on a local model. The old
+	// order re-armed only after the fire returned, so a process restart (a
+	// deploy, a crash) landing anywhere in that window silently ended the
+	// chain with no trace: the #1 cause of "my recurring task evaporated".
+	// From here on, the chain survives anything that kills this fire; the
+	// productive path updates the armed payload's idle clock at the end, and
+	// the panic guard below only falls back to reschedule() when the pre-arm
+	// itself hadn't happened yet.
+	armedID := ""
+	var armed orchUpdatePayload
+	if reArm {
+		armedID, armed, _ = preArmNextFire(p)
+		defer func() {
+			if r := recover(); r != nil {
+				if armedID != "" {
+					Log("[orchestrate/scheduled] fire panicked for session %s: %v (next fire already armed)", p.SessionID, r)
+					return
+				}
+				Log("[orchestrate/scheduled] fire panicked for session %s: %v — rescheduling", p.SessionID, r)
+				reschedule(p)
+			}
+		}()
 	}
 	sess, ok := loadChatSession(udb, p.AgentID, p.SessionID)
 	if !ok {
@@ -441,12 +474,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		})
 	}
 
+	// NOTE: the next occurrence was pre-armed above, so the failure / empty /
+	// preamble exits below just return — nothing to reschedule.
 	if runErr != nil {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", agentLabel, p.SessionID, p.FireCount+1, runErr)
 		record(RunFailed, "Recurring fire errored before it could post.", "", runErr.Error())
-		if reArm {
-			reschedule(p)
-		}
 		return nil
 	}
 	reply := ""
@@ -456,9 +488,6 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if reply == "" {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", agentLabel, p.SessionID, p.FireCount+1)
 		record(RunOK, "(no output — nothing to post this cycle)", "", "")
-		if reArm {
-			reschedule(p)
-		}
 		return nil
 	}
 
@@ -476,9 +505,6 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if len(toolTrace) == 0 {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", agentLabel, p.SessionID, p.FireCount+1)
 		record(RunOK, "(no tool activity — preamble only, nothing posted)", reply, "")
-		if reArm {
-			reschedule(p)
-		}
 		return nil
 	}
 
@@ -522,15 +548,49 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	Log("[orchestrate/scheduled] agent=%s session=%s posted fire %d (%d chars)",
 		agentLabel, p.SessionID, p.FireCount+1, len(reply))
 
-	if reArm {
+	if reArm && armedID != "" {
 		// Productive fire — reaching here means toolTrace was non-empty (a
 		// preamble-only fire returns at the guard above), so the task did real
-		// work this cycle. Renew the idle clock so an actively-working task
-		// never trips the idle guard.
-		p.LastActive = time.Now().UTC().Format(time.RFC3339)
-		reschedule(p)
+		// work this cycle. Renew the idle clock ON THE ALREADY-ARMED next
+		// occurrence. If that occurrence has fired already (a fire that
+		// outlived its own gap), skip the renewal — never re-create a consumed
+		// task, that's how chains duplicate.
+		armed.LastActive = time.Now().UTC().Format(time.RFC3339)
+		if !UpdateScheduledTaskPayload(armedID, armed) {
+			Log("[orchestrate/scheduled] session=%s: armed next fire already consumed — idle-clock renewal skipped", p.SessionID)
+		}
 	}
 	return nil
+}
+
+// preArmNextFire persists the NEXT occurrence of a recurring task BEFORE the
+// current fire runs (see the call site for why). Applies the same retire
+// gates the old post-fire reschedule did — idle reap, total fire cap, pattern
+// exhaustion — each logged; on any of them the chain intentionally ends here
+// while the current (final) fire still runs. Returns the armed task id and
+// the payload it was armed with.
+func preArmNextFire(p orchUpdatePayload) (string, orchUpdatePayload, bool) {
+	if idleDays := orchUpdateIdleDays(); p.idleReapDue(time.Now(), idleDays) {
+		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days — recurring task auto-cancelled", p.SessionID, idleDays)
+		return "", p, false
+	}
+	armed := p
+	armed.FireCount++
+	if armed.FireCount >= armed.effectiveMaxFires() {
+		Log("[orchestrate/scheduled] session=%s retiring: this fire reaches the fire cap %d (recurring task auto-cancelled after it)", p.SessionID, armed.effectiveMaxFires())
+		return "", p, false
+	}
+	next, err := computeNextFire(&armed, time.Now().In(UserLocation(p.Username)))
+	if err != nil {
+		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v — stopping after this fire", p.SessionID, err)
+		return "", p, false
+	}
+	id, err := ScheduleTask(OrchestrateScheduledUpdateKind, armed, next)
+	if err != nil {
+		Log("[orchestrate/scheduled] pre-arm failed for session %s: %v", p.SessionID, err)
+		return "", p, false
+	}
+	return id, armed, true
 }
 
 // RunOrchestrateUpdateNow fires one recurring task immediately by its scheduler
