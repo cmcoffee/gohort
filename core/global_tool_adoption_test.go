@@ -117,3 +117,42 @@ func TestGlobalToolAdoptACL(t *testing.T) {
 		t.Fatalf("un-adopt must always be allowed: %v", err)
 	}
 }
+
+// TestSetPersistentTempToolAllowedUsers covers the admin adopt-ACL setter: it
+// normalizes (trim/dedupe/sort), updates CanAdoptGlobalTool, errors on an unknown
+// tool, and an empty list re-opens the tool to everyone.
+func TestSetPersistentTempToolAllowedUsers(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+
+	db.Set(persistentTempToolsTable, "alice", []PersistentTempTool{
+		{Tool: TempTool{Name: "payroll"}, Shared: true},
+	})
+
+	// Unknown tool errors.
+	if err := SetPersistentTempToolAllowedUsers(db, "alice", "nope", []string{"bob"}); err == nil {
+		t.Fatal("setting ACL on an unknown tool must error")
+	}
+
+	// Set + normalize: duplicates, blanks, and whitespace collapse to a sorted set.
+	if err := SetPersistentTempToolAllowedUsers(db, "alice", "payroll", []string{" carol ", "bob", "bob", ""}); err != nil {
+		t.Fatal(err)
+	}
+	got, found := SharedToolAllowedUsers(db, "payroll")
+	if !found || len(got) != 2 || got[0] != "bob" || got[1] != "carol" {
+		t.Fatalf("ACL must be trimmed/deduped/sorted [bob carol]; got %v", got)
+	}
+	if !CanAdoptGlobalTool(db, "bob", "payroll") || CanAdoptGlobalTool(db, "dave", "payroll") {
+		t.Fatal("ACL must admit bob and deny dave")
+	}
+
+	// Empty list re-opens the tool to everyone.
+	if err := SetPersistentTempToolAllowedUsers(db, "alice", "payroll", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !CanAdoptGlobalTool(db, "dave", "payroll") {
+		t.Fatal("an emptied ACL must re-open the tool to all users")
+	}
+}

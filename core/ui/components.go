@@ -429,23 +429,36 @@ func (c ChipPicker) MarshalJSON() ([]byte, error) {
 	}{"chip_picker", alias(c)})
 }
 
-// ACLPickerConfig configures ACLPicker. The one required pair is OptionsSource
-// (where candidates come from) and PostTo (where the selection is saved); the
-// rest have sensible ACL defaults.
+// ACLPickerConfig configures ACLPicker. Always set OptionsSource (the candidate
+// list) and PostTo (the save target). The current selection comes from ONE of two
+// modes:
+//   - Record mode (preferred when the ACL lives on an existing editable record —
+//     a credential, an agent): set RecordSource + Field. The picker reads the
+//     array Field from that record and saves by patching Field and POSTing the
+//     whole record back to PostTo — exactly the App-Groups pattern.
+//   - Attach mode (a standalone ACL with no owning form): leave RecordSource
+//     empty. The OptionsSource response itself carries the current selection under
+//     Attached, and the picker POSTs {SaveKey: [values]} to PostTo.
 type ACLPickerConfig struct {
-	// OptionsSource GETs the candidate rows AND the current selection in one
-	// response: a shaped object {<items>: [{value,label,desc?}], <Attached>: [...]}
-	// (or a bare array of rows when nothing is selected yet). Map your domain onto
-	// {value,label} server-side — e.g. AuthListUsers → {value: username, label:
-	// "Name <email>"}.
+	// OptionsSource GETs the candidate rows [{value,label,desc?}]. Map your domain
+	// onto {value,label} server-side — e.g. AuthListUsers → {value: username,
+	// label: username}. (In attach mode it ALSO carries the current selection; see
+	// Attached.)
 	OptionsSource string
-	// PostTo receives the saved selection as {SaveKey: [values]}.
-	PostTo string
-	// Attached names the response key holding the current selection (the already-
-	// granted values). Default "allowed_users".
+	// RecordSource + Field select record mode: GET this record, read its array
+	// Field as the current selection; saving patches Field and POSTs the record.
+	RecordSource string
+	Field        string
+	// Attached (attach mode only) names the OptionsSource response key holding the
+	// current selection. Default "allowed_users". Ignored when RecordSource is set.
 	Attached string
-	// SaveKey is the body key the selection POSTs under. Default = Attached.
+	// PostTo receives the save. SaveKey (attach mode) is the body key the selection
+	// POSTs under; default = Attached.
+	PostTo  string
 	SaveKey string
+	// Method overrides the save method (default POST; use PATCH for changed-field
+	// saves).
+	Method string
 	// Noun fills "+ Add <Noun>". Default "user".
 	Noun string
 	// Intro is an optional help line above the picker.
@@ -461,6 +474,29 @@ type ACLPickerConfig struct {
 // instead of each re-deriving the ChipPicker field mapping. It adds no new
 // component or client code — it's pure configuration of the generic ChipPicker.
 func ACLPicker(c ACLPickerConfig) ChipPicker {
+	noun := c.Noun
+	if noun == "" {
+		noun = "user"
+	}
+	cp := ChipPicker{
+		Mode:          "attach",
+		OptionsSource: c.OptionsSource,
+		PostTo:        c.PostTo,
+		Method:        c.Method,
+		NameField:     "value",
+		LabelField:    "label",
+		DescField:     "desc",
+		Noun:          noun,
+		Intro:         c.Intro,
+		EmptyText:     c.EmptyText,
+	}
+	if c.RecordSource != "" {
+		// Record mode: current selection + save both go through the owning record.
+		cp.RecordSource = c.RecordSource
+		cp.Field = c.Field
+		return cp
+	}
+	// Attach mode: selection rides on the OptionsSource response; save to SaveKey.
 	attached := c.Attached
 	if attached == "" {
 		attached = "allowed_users"
@@ -469,23 +505,9 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 	if saveKey == "" {
 		saveKey = attached
 	}
-	noun := c.Noun
-	if noun == "" {
-		noun = "user"
-	}
-	return ChipPicker{
-		Mode:          "attach",
-		OptionsSource: c.OptionsSource,
-		AttachedField: attached,
-		PostTo:        c.PostTo,
-		SaveKey:       saveKey,
-		NameField:     "value",
-		LabelField:    "label",
-		DescField:     "desc",
-		Noun:          noun,
-		Intro:         c.Intro,
-		EmptyText:     c.EmptyText,
-	}
+	cp.AttachedField = attached
+	cp.SaveKey = saveKey
+	return cp
 }
 
 // FormPanel renders a list of labeled input fields bound to a single

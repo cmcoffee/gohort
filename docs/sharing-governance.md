@@ -206,8 +206,16 @@ Free, no admin approval. Reuses `core/sharing.go` + the new `AgentRecord.Allowed
    tools the user can't adopt. Covered by `TestGlobalToolAdoptACL`.
 2. **ACL editor — SHIPPED (helper, not a new primitive).** `ui.ACLPicker` over the
    existing `ChipPicker`. No new component, no new JS.
-3. **Deliverable 1 UI** — swap creds tags→`ACLPicker`; add tool ACL editor; add
-   the `AuthListUsers`-backed candidate endpoint(s).
+3. **Deliverable 1 UI — SHIPPED.** `core.UserCandidatesJSON` + admin
+   `api/user-candidates` (approved users as `{value,label}`, the shared ACLPicker
+   source). Credential access: the Edit-Expand is now `Stack{FormPanel, ACLPicker}`
+   (record mode over `api/secure-api?name={name}`); the free-text `allowed_users`
+   tags field is gone (new creds default open, restrict from the row). Tool adopt
+   access: an "Adopt access" `ExpandIf` (shared rows only) with an ACLPicker over a
+   new `set_allowed_users` action + minimal `?allowed_users=` GET, backed by
+   `core.SetPersistentTempToolAllowedUsers`. Covered by
+   `TestSetPersistentTempToolAllowedUsers`. (UI follows the proven App-Groups
+   FormPanel+ChipPicker pattern; needs a runtime smoke test on deploy.)
 4. **Deliverable 2** — admin governance console (audit + revoke + adoption view).
 5. **Peer sharing** — Gateways share action for agents (`AgentRecord.AllowedUsers`
    + `SetSharedOwner`).

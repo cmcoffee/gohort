@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1790,5 +1791,29 @@ func UserListJSON(db Database) []byte {
 		summaries[i] = userSummary{Username: u.Username, Admin: u.Admin, Pending: u.Pending, Apps: apps}
 	}
 	data, _ := json.Marshal(summaries)
+	return data
+}
+
+// UserCandidatesJSON returns the deployment's users as ACL-picker candidates:
+// [{value, label}] with username as both (there is no separate display name).
+// Pending (unapproved) users are excluded — they can't log in, so granting them
+// access is meaningless. This is the shared source for every ui.ACLPicker
+// (credential / tool / shared-agent access editors). Sorted by username for a
+// stable list.
+func UserCandidatesJSON(db Database) []byte {
+	users := AuthListUsers(db)
+	type candidate struct {
+		Value string `json:"value"`
+		Label string `json:"label"`
+	}
+	out := []candidate{}
+	for _, u := range users {
+		if u.Pending {
+			continue
+		}
+		out = append(out, candidate{Value: u.Username, Label: u.Username})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
+	data, _ := json.Marshal(out)
 	return data
 }

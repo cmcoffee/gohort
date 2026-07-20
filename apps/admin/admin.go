@@ -194,6 +194,16 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	})
 
+	// API: user candidates for ACL pickers ([{value,label}], approved users only).
+	// Shared source for every ui.ACLPicker on this page (credential + tool access).
+	sub.HandleFunc("/api/user-candidates", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(UserCandidatesJSON(a.db))
+	})
+
 	// API: user operations (update/delete/apps).
 	sub.HandleFunc("/api/users/", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -2111,6 +2121,28 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 		switch r.Method {
 		case http.MethodGet:
+			// Single-tool adopt-ACL fetch for the ACLPicker: ?allowed_users=<name>&owner=<u>
+			// returns just {allowed_users:[...]} for that tool (the picker reads the
+			// array and posts it back via action=set_allowed_users).
+			if toolName := strings.TrimSpace(r.URL.Query().Get("allowed_users")); toolName != "" {
+				owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+				if owner == "" {
+					owner = username
+				}
+				var allowed []string
+				for _, p := range LoadPersistentTempTools(a.db, owner) {
+					if p.Tool.Name == toolName {
+						allowed = p.AllowedUsers
+						break
+					}
+				}
+				if allowed == nil {
+					allowed = []string{}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"allowed_users": allowed})
+				return
+			}
 			// Persistent + pending pools are stored per-user at the
 			// kvlite layer, but admins see the whole deployment —
 			// the tool-groups registry walks all users; this page
@@ -2324,6 +2356,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				err = SetPersistentTempToolShared(a.db, owner, name, true)
 			case "unshare":
 				err = SetPersistentTempToolShared(a.db, owner, name, false)
+			case "set_allowed_users":
+				// Body carries the full ACL array (the ACLPicker posts the fetched
+				// {allowed_users:[...]} record whole). Empty = open to all users.
+				var body struct {
+					AllowedUsers []string `json:"allowed_users"`
+				}
+				if derr := json.NewDecoder(r.Body).Decode(&body); derr != nil {
+					http.Error(w, "bad request", http.StatusBadRequest)
+					return
+				}
+				err = SetPersistentTempToolAllowedUsers(a.db, owner, name, body.AllowedUsers)
 			case "orphan_promote":
 				if AdminRehomeOrphanTool == nil {
 					http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
@@ -2347,7 +2390,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					return
 				}
 			default:
-				http.Error(w, "action must be approve|reject|share|unshare|orphan_promote|orphan_attach|orphan_delete", http.StatusBadRequest)
+				http.Error(w, "action must be approve|reject|share|unshare|set_allowed_users|orphan_promote|orphan_attach|orphan_delete", http.StatusBadRequest)
 				return
 			}
 			if err != nil {

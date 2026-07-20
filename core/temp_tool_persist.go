@@ -349,6 +349,45 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	return nil
 }
 
+// SetPersistentTempToolAllowedUsers replaces the adopt-ACL (AllowedUsers) on a
+// tool in a user's persistent pool. Empty/nil = open to every user; the list is
+// trimmed, de-duped, and sorted for a stable store. Meaningful only when the tool
+// is Shared (see CanAdoptGlobalTool); harmless to set otherwise. Returns an error
+// when the named tool isn't in that user's pool. Admin-driven (Global Tools page).
+func SetPersistentTempToolAllowedUsers(db Database, username, name string, users []string) error {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return errString("admin action requires authenticated user")
+	}
+	set := map[string]bool{}
+	for _, u := range users {
+		if u = strings.TrimSpace(u); u != "" {
+			set[u] = true
+		}
+	}
+	clean := make([]string, 0, len(set))
+	for u := range set {
+		clean = append(clean, u)
+	}
+	sort.Strings(clean)
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	approved := LoadPersistentTempTools(db, username)
+	found := false
+	for i := range approved {
+		if approved[i].Tool.Name == name {
+			approved[i].AllowedUsers = clean
+			found = true
+			break
+		}
+	}
+	if !found {
+		return errString("no persistent tool named " + name)
+	}
+	db.Set(persistentTempToolsTable, username, approved)
+	return nil
+}
+
 // SharedToolAllowedUsers returns the adopt-ACL for a Shared global tool by name:
 // the AllowedUsers list on whichever user's pool published it, plus whether a
 // Shared tool of that name exists at all. An empty list with found=true means the

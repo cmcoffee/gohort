@@ -228,7 +228,6 @@ func credentialFormFields() []ui.FormField {
 		{Field: "safety", Type: "header", Label: "Safety + limits"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://192.168.0.1", Help: "The server this credential talks to. Requests are allowed only under this host (and the endpoints below). This is where you change which server it reaches."},
 		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call. e.g. /api/* allows everything under /api/ ; /api/core/* scopes to one module. Add/remove entries. Leave empty to allow ANY path under the Base URL."},
-		{Field: "allowed_users", Label: "Allowed Users", Type: "tags", Help: "Which users may use this credential (their agents). Empty = ALL users. Add usernames to restrict it to just them — the scalable per-user grant. A user then refines which of their own agents can use it via the Access pill. (Secured credentials ignore this — their access follows their tool bindings.)"},
 		// (The legacy "Allowed URL pattern" single-glob field is retired
 		// from the form: two overlapping scoping fields kept misleading
 		// admins and LLMs about which applied. Old records that still
@@ -1099,14 +1098,31 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							RowActions: []ui.RowAction{
 								// Edit — full add/edit form, OAuth-aware. Source
 								// fetches the single record; secret stays blank so
-								// leaving it untouched keeps the stored secret.
-								ui.Expand("Edit", ui.FormPanel{
-									Source:      "api/secure-api?name={name}",
-									PostURL:     "api/secure-api",
-									TestURL:     "api/secure-api/test",
-									TestLabel:   "Test token (oauth2)",
-									SubmitLabel: "Save changes",
-									Fields:      credentialFormFields(),
+								// leaving it untouched keeps the stored secret. The
+								// Access ACL (which users may use this credential) is
+								// edited by its own picker below the form, not as a
+								// free-text tags field — so admins pick real users.
+								ui.Expand("Edit", ui.Stack{
+									Children: []ui.Component{
+										ui.FormPanel{
+											Source:      "api/secure-api?name={name}",
+											PostURL:     "api/secure-api",
+											TestURL:     "api/secure-api/test",
+											TestLabel:   "Test token (oauth2)",
+											SubmitLabel: "Save changes",
+											Fields:      credentialFormFields(),
+										},
+										ui.ACLPicker(ui.ACLPickerConfig{
+											OptionsSource: "api/user-candidates",
+											RecordSource:  "api/secure-api?name={name}",
+											Field:         "allowed_users",
+											PostTo:        "api/secure-api",
+											Method:        "POST",
+											Noun:          "user",
+											Intro:         "Access — which users may use this credential (their agents). Empty = all users. Secured credentials ignore this (access follows their tool bindings).",
+											EmptyText:     "No other users to grant yet.",
+										}),
+									},
 								}),
 								// Tools — the tools connected to this credential (they declare
 								// it). What a Secured cred is bound to (and a scoped one
@@ -1690,6 +1706,19 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								Method:     "POST",
 								OnlyIf:     "shared",
 								Optimistic: true},
+							// Adopt access — who may adopt this SHARED tool from their
+							// Gateways catalog. Empty = every user. Only meaningful once
+							// shared, so the editor only appears on a shared row.
+							ui.ExpandIf("Adopt access", "shared", "", ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "api/user-candidates",
+								RecordSource:  "api/persistent-tools?allowed_users={tool.name}&owner={owner}",
+								Field:         "allowed_users",
+								PostTo:        "api/persistent-tools?action=set_allowed_users&name={tool.name}&owner={owner}",
+								Method:        "POST",
+								Noun:          "user",
+								Intro:         "Which users may adopt this shared tool from their Gateways catalog. Empty = every user can adopt it.",
+								EmptyText:     "No other users to grant yet.",
+							})),
 							{Type: "button", Label: "Export", Method: "client",
 								PostTo: "tools_export", Compact: true},
 							// Access — the pill editor (Global pill + one pill per
