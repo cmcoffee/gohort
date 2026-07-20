@@ -831,7 +831,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	}
 	var available []AgentRecord
 	for _, a := range all {
-		if a.ID == t.agent.ID || isBuilderAgent(a.ID) {
+		if a.ID == t.agent.ID || isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
 			continue
 		}
 		switch mode {

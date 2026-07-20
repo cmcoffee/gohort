@@ -327,7 +327,7 @@ func (t *chatTurn) agentsListAction() (string, error) {
 		// by id/name through the tool. Direct chat with Builder via
 		// the Agency picker / /chat/seed-builder still works — those
 		// are human-facing surfaces, not LLM-facing.
-		if isBuilderAgent(a.ID) {
+		if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
 			continue
 		}
 		// Sub-agents held for approval aren't live — keep them out of the
@@ -366,9 +366,9 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if key == "" {
 		return "", errors.New("action=get needs the agent to fetch — pass id=\"<uuid>\" or agent=\"<name or id>\" (agents(action=\"list\") shows both)")
 	}
-	// Builder is hidden from this surface — see agentsRunAction and
-	// agentsListAction for the rationale.
-	if isBuilderAgent(key) {
+	// Builder and retired seeds are hidden from this surface — see
+	// agentsRunAction and agentsListAction for the rationale.
+	if isBuilderAgent(key) || isFleetRetiredSeed(key) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
 	fleetDB, fleetUser := t.fleetView()
@@ -380,7 +380,7 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
-	if isBuilderAgent(a.ID) {
+	if isBuilderAgent(a.ID) || isFleetRetiredSeed(a.ID) {
 		return "", fmt.Errorf("agent %q not found", key)
 	}
 	if t.session != nil && t.session.ID != "" {
@@ -578,6 +578,12 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// the loop (the full intake conversation, ask_user pauses, draft review).
 	if isBuilderAgent(target.ID) && !t.agent.Fleet {
 		return "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent. Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
+	}
+	// seed-chat is retired from every surface, dispatch included — an
+	// unhidden shadow or an explicit allowlist pick must not resurrect the
+	// fossil. (seed-research / seed-kb stay dispatchable on purpose.)
+	if isFleetRetiredSeed(target.ID) {
+		return "", fmt.Errorf("agents(run, agent=%q) refused — the framework Chat seed is retired; handle the request yourself or dispatch to one of the user's own agents", key)
 	}
 	// Cycle guard. The current turn's agent is always considered "in
 	// flight" — combined with dispatchChain (inherited from parent

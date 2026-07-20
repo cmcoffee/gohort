@@ -1002,6 +1002,16 @@ func isSeedID(id string) bool {
 	return ok
 }
 
+// isFleetRetiredSeed reports a framework seed that is structurally OUT of the
+// agent-to-agent dispatch surface as well as the user pickers — nothing lists
+// it, gets it, or runs it, and an unhidden shadow or an explicit dispatch
+// allowlist pick must not resurrect it. seed-chat is the only member: fully
+// retired, its record kept solely for legacy sessions and shadows.
+// seed-research / seed-kb are deliberately NOT here — they're wizard
+// templates that stay fleet-dispatchable. Builder has its own exclusion
+// (isBuilderAgent) with different, human-in-the-loop reasoning.
+func isFleetRetiredSeed(id string) bool { return id == "seed-chat" }
+
 // seedAgentByID returns the in-code seed with the given ID. Cheap —
 // seedAgents() is a small slice walked at startup-frequency callsites
 // (loadAgent miss path, isSeedID).
