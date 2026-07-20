@@ -5249,18 +5249,42 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		},
 		Handler: func(args map[string]any) (string, error) {
 			raw, _ := args["steps"]
+			// Smaller models wrap the array in fallback shapes: a
+			// JSON-encoded string, or a bare single step object. Coerce
+			// both so the form renders instead of arriving stepless.
+			if s, ok := raw.(string); ok {
+				var arr []any
+				if err := json.Unmarshal([]byte(strings.TrimSpace(s)), &arr); err == nil {
+					raw = arr
+				} else {
+					var one map[string]any
+					if uerr := json.Unmarshal([]byte(strings.TrimSpace(s)), &one); uerr == nil {
+						raw = []any{one}
+					}
+				}
+			}
+			if m, ok := raw.(map[string]any); ok {
+				raw = []any{m}
+			}
 			var steps []map[string]any
 			switch v := raw.(type) {
 			case []any:
 				for _, x := range v {
 					if m, ok := x.(map[string]any); ok {
 						steps = append(steps, normalizeFormStep(m))
+					} else {
+						// Diagnostic breadcrumb — a discarded step used to
+						// vanish without trace, making "the form is missing a
+						// question" impossible to attribute afterward.
+						Debug("[orchestrate.ask_form] discarding non-object step: %.200v", x)
 					}
 				}
 			case []map[string]any:
 				for _, m := range v {
 					steps = append(steps, normalizeFormStep(m))
 				}
+			default:
+				Debug("[orchestrate.ask_form] steps arg in unusable shape %T: %.300v", raw, raw)
 			}
 			capturedFormSteps = steps
 			cancelOrch()

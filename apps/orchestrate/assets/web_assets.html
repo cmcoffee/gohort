@@ -1050,6 +1050,48 @@
     // shows Submit. Each step's selections + free-text feed into a
     // compiled answer the user submits via the chat input. Mirrors
     // Claude.ai's wizard-style clarifying flow.
+    // orchAskSubmit — deliver a form's compiled answers through the chat
+    // input, safely. While a run is in flight the send button is disabled
+    // and the runtime would otherwise queue the text as an INTERJECTION
+    // note for the running session — one that no next round ever drains
+    // when the turn is already winding down, so the submission silently
+    // vanished while the form locked itself anyway (wiping the very
+    // evidence needed to diagnose it). Wait briefly for the send window,
+    // and only lock the form once the input actually cleared — i.e. the
+    // send truly happened. On failure the form stays live with the
+    // user's answers intact.
+    function orchAskSubmit(compiled, submitBtns, lock) {
+      var inputArea = document.querySelector('.ui-agent-input');
+      var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
+      if (!inputArea || !sendBtn) {
+        window.uiAlert('Could not find the chat input to submit your answers.');
+        return;
+      }
+      submitBtns.forEach(function(b) { b.disabled = true; });
+      var tries = 0;
+      function unblock(msg) {
+        submitBtns.forEach(function(b) { b.disabled = false; });
+        if (msg) window.uiAlert(msg);
+      }
+      function attempt() {
+        if (sendBtn.disabled || sendBtn.style.display === 'none') {
+          if (tries++ < 40) { setTimeout(attempt, 250); return; }
+          unblock('The agent is still finishing its turn — your answers are kept in the form; press Submit again in a moment.');
+          return;
+        }
+        inputArea.value = compiled;
+        sendBtn.click();
+        setTimeout(function() {
+          if (inputArea.value === compiled) {
+            unblock('The submission did not go through — press Submit again.');
+            return;
+          }
+          lock();
+        }, 150);
+      }
+      attempt();
+    }
+
     window.uiRegisterBlockRenderer('orchestrate_ask_form', function(d) {
       var wrap = el('div', {class: 'ui-orch-ask'});
       var steps = (d.steps || []).filter(function(s) { return s && s.question; });
@@ -1127,17 +1169,10 @@
             var v = f.getVal();
             return (i + 1) + '. ' + f.step.question + ' → ' + (v || '(no answer)');
           });
-          var compiled = lines.join('\n');
-          var inputArea = document.querySelector('.ui-agent-input');
-          var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
-          if (!inputArea || !sendBtn) {
-            window.uiAlert('Could not find the chat input to submit your answers.');
-            return;
-          }
-          inputArea.value = compiled;
-          sendBtn.click();
-          wrap.classList.add('submitted');
-          wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) { x.disabled = true; });
+          orchAskSubmit(lines.join('\n'), [fSubmit], function() {
+            wrap.classList.add('submitted');
+            wrap.querySelectorAll('input, textarea, select, button').forEach(function(x) { x.disabled = true; });
+          });
         });
         return {wrap: wrap, body: null};
       }
@@ -1239,23 +1274,17 @@
           return (i + 1) + '. ' + step.question + ' → ' + (answer || '(no answer)');
         });
         var compiled = lines.join('\n');
-        var inputArea = document.querySelector('.ui-agent-input');
-        var sendBtn = document.querySelector('.ui-agent-input-row .ui-row-btn.primary');
-        if (!inputArea || !sendBtn) {
-          window.uiAlert('Could not find the chat input to submit your answers.');
-          return;
-        }
-        inputArea.value = compiled;
         // No bubble suppression — the compiled answer renders as a
         // user bubble so Retry has an anchor to walk back to. Without
         // this, Retry skips past the form submission and replays the
         // entire conversation from the user's original message.
-        sendBtn.click();
-        wrap.classList.add('submitted');
-        optsBox.querySelectorAll('input').forEach(function(i) { i.disabled = true; });
-        noteEl.disabled = true;
-        nextBtn.disabled = true;
-        backBtn.disabled = true;
+        orchAskSubmit(compiled, [nextBtn, backBtn], function() {
+          wrap.classList.add('submitted');
+          optsBox.querySelectorAll('input').forEach(function(i) { i.disabled = true; });
+          noteEl.disabled = true;
+          nextBtn.disabled = true;
+          backBtn.disabled = true;
+        });
       });
 
       return {wrap: wrap, body: null};

@@ -938,8 +938,27 @@ func stringSliceFromArgs(args map[string]any, key string) []string {
 	case []any:
 		out := make([]string, 0, len(s))
 		for _, x := range s {
-			if str, ok := x.(string); ok {
-				if t := strings.TrimSpace(str); t != "" {
+			switch e := x.(type) {
+			case string:
+				if t := strings.TrimSpace(e); t != "" {
+					out = append(out, t)
+				}
+			case map[string]any:
+				// Object-shaped elements — smaller models emit options as
+				// {label}/{value}/{name} objects (mirroring SelectOption /
+				// IntakeField shapes they see elsewhere). Silently dropping
+				// them rendered "the multi-select never populates": the step
+				// showed checkboxes' worth of nothing. Take the first
+				// conventional key that yields text.
+				for _, k := range []string{"label", "value", "name", "option", "text"} {
+					if t := strings.TrimSpace(stringArg(e, k)); t != "" {
+						out = append(out, t)
+						break
+					}
+				}
+			default:
+				// Numbers etc. — render as text rather than vanish.
+				if t := strings.TrimSpace(fmt.Sprintf("%v", x)); t != "" && t != "<nil>" {
 					out = append(out, t)
 				}
 			}
