@@ -1163,7 +1163,10 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								// use it — is on the agent editor, "Credentials this agent
 								// may use", so each user scopes their own fleet instead of
 								// the admin managing an unbounded per-agent list here.)
-								ui.ModalAction("Access", ui.ACLPicker(ui.ACLPickerConfig{
+								// HIDDEN when Secured: a secured cred has no user ACL — its
+								// access is deferred to the tools bound to it (see Bindings),
+								// so a user list here would be moot and misleading.
+								ui.ModalActionIf("Access", "", "secured", ui.ACLPicker(ui.ACLPickerConfig{
 									OptionsSource: "api/user-candidates",
 									RecordSource:  "api/secure-api?name={name}",
 									Field:         "allowed_users",

@@ -854,17 +854,18 @@ func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
 
 // EnforceSecuredBinding is the dispatch-time credential-access gate: may `user`
 // dispatch `toolName` through `credName`? Returns nil (allow) or a directive error
-// (refuse). Two axes, composed:
-//   - WHO (every cred): the user must be granted it (open / allowlist / their own).
-//   - WHAT (secured creds only): the tool must be an approved declaring binding;
-//     a revoked (tombstoned) binding is refused, an un-revoked declaring tool is
-//     allowed (and recorded for the admin view).
+// (refuse). The gate is by credential kind — the two never compose:
+//   - OPEN cred → WHO axis: the user must be granted it (open / allowlist / own).
+//   - SECURED cred → WHAT axis: access is DEFERRED to the bound tools — the tool
+//     must be an approved declaring binding (a revoked/tombstoned one is refused,
+//     an un-revoked declaring tool is allowed and recorded). AllowedUsers is NOT
+//     consulted for a secured cred; the bound tools carry their own access.
 //
 // A tool only REACHES dispatch for a secured cred if it already DECLARES it (the
-// fetch_via hook / api-mode wiring verified that), so an un-revoked declaring
-// tool is legitimately bound — no approval step. toolName == "" (an unnamed
-// caller: run_local / persistent shell) skips the WHAT axis but is still WHO-gated.
-// (Name kept for history; it now gates the WHO axis for open creds too.)
+// fetch_via hook / api-mode wiring verified that), so an un-revoked declaring tool
+// is legitimately bound — no approval step. toolName == "" (an unnamed caller:
+// run_local / persistent shell) skips the WHAT axis. (Name kept for history; it
+// now also gates the WHO axis for open creds.)
 func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error {
 	// Resolve user-aware so the check runs against the credential the user actually
 	// dispatches through — a user's OWN same-named cred shadows a global one, and
@@ -873,21 +874,24 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error
 	if !ok {
 		return nil
 	}
-	// WHO axis — enforced for OPEN and SECURED creds alike: the dispatching user
-	// must be granted the credential (open grant / allowlist / their own). This
-	// closes the gap where a tool carrying fetch_via:<cred> (or an api/toolbox temp
-	// tool) could dispatch through a credential the user was never shared — tier-1
-	// AllowedUsers was otherwise only enforced at tool-BUILD (the deny set removes
-	// the auto-route), which the fetch_via / api-mode paths bypass. Applied before
-	// the unnamed-caller shortcut so a persistent shell / run_local is checked too.
-	if !s.UserMayUse(c, user) {
-		return fmt.Errorf("credential %q is not shared with you — an admin grants access via Allowed Users in Admin > APIs", credName)
-	}
-	// WHAT axis — SECURED creds only: dispatch must go through an approved declaring
-	// tool. Open creds pass once the WHO axis is satisfied.
 	if !c.Secured {
+		// OPEN cred → access is the tier-1 user ACL (WHO). Enforce it here so the
+		// fetch_via / api-mode paths can't reach a credential the user was never
+		// shared — tier-1 AllowedUsers is otherwise only enforced at tool-BUILD (the
+		// deny set removes the auto-route), which these dispatch paths bypass.
+		// Applies to unnamed callers (persistent shell / run_local) too.
+		if !s.UserMayUse(c, user) {
+			return fmt.Errorf("credential %q is not shared with you — an admin grants access via Access in Admin > APIs", credName)
+		}
 		return nil
 	}
+	// SECURED cred → access is DEFERRED to the tools bound to it: whoever can use a
+	// bound declaring tool can dispatch through the credential (secret server-side).
+	// A secured cred has NO separate user ACL — AllowedUsers is not consulted here,
+	// because the bound tools carry their own access (adopt ACL for shared tools,
+	// per-agent scope, ownership) and a second cred-level user gate would be
+	// redundant and confusing. The admin governs a secured cred's reach by governing
+	// WHICH TOOLS are bound (Bindings), not a user list.
 	toolName = strings.TrimSpace(toolName)
 	if toolName == "" {
 		return nil
