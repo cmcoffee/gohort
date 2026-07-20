@@ -1097,21 +1097,28 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 		</a>`, extraCls, a.path, a.name, a.desc)
 	}
 
-	// Partition: featured heroes, the orchestrator family, and everything else.
+	// Partition: the orchestrator family, standalone featured heroes, and the rest.
 	// The family is exactly the apps that ALSO appear as shared top-nav tabs —
 	// membership is "implements WebAppHubTab", the SAME single source HubNav reads,
-	// so no new metadata. They render as one titled cluster beneath the hero, so
-	// the dashboard mirrors the tab-row grouping instead of scattering these among
-	// unrelated apps. Featured wins over family (a hero stays the front door).
+	// so no new metadata. They render as one titled cluster, so the dashboard
+	// mirrors the tab-row grouping instead of scattering these among unrelated
+	// apps. A family member that is ALSO featured (the primary entry point, e.g.
+	// Agents) becomes the cluster's full-width LEAD card rather than a separate
+	// hero above it — the cluster IS the family, so its main member belongs in it.
+	// A featured app that is NOT a family member stays a standalone hero.
 	var heroB, restB strings.Builder
 	var family []dashApp
 	for _, a := range apps {
+		featured := false
 		if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
-			renderCard(&heroB, a, " featured") // hero entry point — full-width, set apart
+			featured = true
+		}
+		if _, isHub := a.app.(WebAppHubTab); isHub {
+			family = append(family, a)
 			continue
 		}
-		if _, ok := a.app.(WebAppHubTab); ok {
-			family = append(family, a)
+		if featured {
+			renderCard(&heroB, a, " featured") // standalone hero — full-width, set apart
 			continue
 		}
 		extra := ""
@@ -1121,7 +1128,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 		renderCard(&restB, a, extra)
 	}
 	// Order the family by HubTab order so the cluster and the tab row stay in
-	// lockstep from one source.
+	// lockstep from one source (the featured lead sorts first via its low order).
 	sort.SliceStable(family, func(i, j int) bool {
 		return hubTabOrder(family[i].app) < hubTabOrder(family[j].app)
 	})
@@ -1131,7 +1138,11 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 	if len(family) > 0 {
 		cards.WriteString(`<div class="cluster"><div class="cluster-head">Orchestrator</div><div class="cluster-grid">`)
 		for _, a := range family {
-			renderCard(&cards, a, "")
+			extra := ""
+			if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
+				extra = " featured" // the family's primary entry — full-width lead card
+			}
+			renderCard(&cards, a, extra)
 		}
 		cards.WriteString(`</div></div>`)
 	}

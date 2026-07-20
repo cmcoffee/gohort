@@ -2173,7 +2173,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Confirm: "Delete this skill? The definition is gone for good; Builder will need to re-author if you want it back.",
 							Variant: "danger"},
 					},
-					EmptyText: "No skills defined. Talk to Builder in Agency to author one — \"create a skill called X that fires when…\".",
+					EmptyText: "No skills defined. Talk to Builder in Agents to author one — \"create a skill called X that fires when…\".",
 				},
 					// Export all skills (every owner) as one bundle.
 					ui.Toolbar{
@@ -2185,7 +2185,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Pipelines",
-				Subtitle: "Declarative multi-stage workflows authored in Agency (the pipeline tool, or via Builder). This surface lists every user's pipelines and lets you inspect the stages or delete a definition. Deleting one also drops it from any agent it was attached to.",
+				Subtitle: "Declarative multi-stage workflows authored in Agents (the pipeline tool, or via Builder). This surface lists every user's pipelines and lets you inspect the stages or delete a definition. Deleting one also drops it from any agent it was attached to.",
 				Body: ui.Table{
 					Source:       "api/pipelines",
 					RecordsField: "pipelines",
@@ -2209,7 +2209,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							Variant:    "danger",
 							Optimistic: true},
 					},
-					EmptyText: "No pipelines defined. They're authored in Agency via the pipeline tool or Builder.",
+					EmptyText: "No pipelines defined. They're authored in Agents via the pipeline tool or Builder.",
 				},
 			},
 			{

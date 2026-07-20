@@ -41,7 +41,7 @@ type AgentsApp struct {
 func (T AgentsApp) Name() string         { return "agents" }
 func (T AgentsApp) SystemPrompt() string { return "" }
 func (T AgentsApp) Desc() string {
-	return "Apps: Public agents published by an admin via Agency."
+	return "Apps: Public agents published by an admin via Agents."
 }
 
 func (T *AgentsApp) Init() error { return T.Flags.Parse() }

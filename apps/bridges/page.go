@@ -9,7 +9,7 @@ import (
 
 // handleDashboard renders the Bridges control surface: the panic kill-switch,
 // the master enable toggle, the bridge registry (connectors + status), and key
-// management. Channel/agent behavior lives in Agency — this is transport only.
+// management. Channel/agent behavior lives in Agents — this is transport only.
 func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
@@ -114,7 +114,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							Method:     "POST",
 							PostTo:     "/orchestrate/api/console/bridges/set-channel?owner={owner}&name={name}&channel_id={id}",
 							Confirm:    "Deliver this bridge's changes into this channel? Its bound agent will react there.",
-							EmptyText:  "No channels yet — create one in Agency, then connect it here.",
+							EmptyText:  "No channels yet — create one in Agents, then connect it here.",
 						}),
 						// Channel activity — the recent messages that have landed in the
 						// connected channel's conversation. Only when hooked (a poll
@@ -245,7 +245,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 									Method:     "POST",
 									PostTo:     "/bridges/api/connect-channel?chat_id={chat_id}&channel_id={id}",
 									Confirm:    "Route this chat to this channel's agent? Any current binding is replaced.",
-									EmptyText:  "No free channels — create one in Agency (or free one up by clearing another chat), then link it here.",
+									EmptyText:  "No free channels — create one in Agents (or free one up by clearing another chat), then link it here.",
 									Invalidate: []string{"/bridges/api/conversations"},
 								},
 								// Clear — unbind the channel, freeing it back to the

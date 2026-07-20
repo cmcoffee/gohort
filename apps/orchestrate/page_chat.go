@@ -95,7 +95,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	}
 
 	page := ui.Page{
-		Title:         "Agency",
+		Title:         "Agents",
 		ShowTitle:     true,
 		BackURL:       "/",
 		MaxWidth:      "100%",

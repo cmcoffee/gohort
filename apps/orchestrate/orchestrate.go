@@ -47,28 +47,28 @@ func init() {
 	// The function is kept for its deny-list diagnostic, not registered.
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.orchestrator",
-		Label:   "Agency: Orchestrator (thinking)",
+		Label:   "Agents: Orchestrator (thinking)",
 		Default: "worker (thinking)",
-		Group:   "Agency",
+		Group:   "Agents",
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
 		Key:   "app.orchestrate.builder",
-		Label: "Agency: Builder design (escalates to lead)",
+		Label: "Agents: Builder design (escalates to lead)",
 		// Builder is low-volume + high-leverage — its agent-design reasoning
 		// (decomposition, tool/credential design) benefits most from the lead
 		// model, and a well-built agent saves many downstream worker turns. NOT
-		// Private (unlike the other Agency stages): the admin can flip it back to
+		// Private (unlike the other Agents stages): the admin can flip it back to
 		// worker for a fully-local build flow, and it degrades to worker
 		// automatically when no lead model is configured. Only the design /
 		// synthesis reasoning routes here; the dispatched plan_set worker phases
 		// stay on app.orchestrate.worker.
 		Default: "lead",
-		Group:   "Agency",
+		Group:   "Agents",
 	})
 	RegisterRouteStage(RouteStage{
 		Key:   "app.orchestrate.orchestrator.lead",
-		Label: "Agency: Agent reasoning (lead-escalated agents)",
+		Label: "Agents: Agent reasoning (lead-escalated agents)",
 		// Per-agent opt-in: agents with "Use Lead model" enabled route their
 		// main reasoning (plan + synthesis) here instead of the worker-locked
 		// orchestrator stage. NOT Private, so it can escalate; admin can flip
@@ -76,41 +76,41 @@ func init() {
 		// automatically when no lead model is configured. The dispatched
 		// plan_set worker phases stay on app.orchestrate.worker regardless.
 		Default: "lead",
-		Group:   "Agency",
+		Group:   "Agents",
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.worker",
-		Label:   "Agency: Worker (no-think)",
+		Label:   "Agents: Worker (no-think)",
 		Default: "worker",
-		Group:   "Agency",
+		Group:   "Agents",
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.consolidator",
-		Label:   "Agency: Memory consolidator (background)",
+		Label:   "Agents: Memory consolidator (background)",
 		Default: "worker",
-		Group:   "Agency",
+		Group:   "Agents",
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.gap_check",
-		Label:   "Agency: Gap detection (post-plan review)",
+		Label:   "Agents: Gap detection (post-plan review)",
 		Default: "worker (thinking)",
-		Group:   "Agency",
+		Group:   "Agents",
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.suggest",
-		Label:   "Agency: Editor field-suggest",
+		Label:   "Agents: Editor field-suggest",
 		Default: "worker",
-		Group:   "Agency",
+		Group:   "Agents",
 		Private: true,
 	})
 	RegisterRouteStage(RouteStage{
 		Key:     "app.orchestrate.title",
-		Label:   "Agency: Session title summarizer (background)",
+		Label:   "Agents: Session title summarizer (background)",
 		Default: "worker",
-		Group:   "Agency",
+		Group:   "Agents",
 		Private: true,
 	})
 }
@@ -140,31 +140,31 @@ func (T *OrchestrateApp) runsRegistry() *RunRegistry {
 func (T *OrchestrateApp) Name() string         { return "orchestrate" }
 func (T *OrchestrateApp) SystemPrompt() string { return "" }
 func (T *OrchestrateApp) Desc() string {
-	return "Apps: Agency — define and run plan-driven AI agents."
+	return "Apps: Agents — define and run plan-driven AI agents."
 }
 
 func (T *OrchestrateApp) Init() error { return T.Flags.Parse() }
 
 func (T *OrchestrateApp) Main() error {
-	Log("Agency is a dashboard-only app. Start with:\n  gohort serve :8080")
+	Log("Agents is a dashboard-only app. Start with:\n  gohort serve :8080")
 	return nil
 }
 
 func (T *OrchestrateApp) WebPath() string { return "/orchestrate" }
 
-// HubTab makes Agency a member of the shared top-nav hub, rendered as "Agents".
+// HubTab makes the Agents workbench a member of the shared top-nav hub.
 func (T *OrchestrateApp) HubTab() (string, int) { return "Agents", 10 }
-func (T *OrchestrateApp) WebName() string { return "Agency" }
+func (T *OrchestrateApp) WebName() string { return "Agents" }
 func (T *OrchestrateApp) WebDesc() string {
 	return "Build, manage, and dispatch your fleet of AI agents — the workbench where personas, tools, pipelines, and memory all live."
 }
 
-// WebOrder pins Agency to the top of the dashboard card grid above
+// WebOrder pins Agents to the top of the dashboard card grid above
 // every other app. Lower number = earlier; -1000 leaves room for
 // other future "top-of-list" apps without needing to bump this.
 func (T *OrchestrateApp) WebOrder() int { return -1000 }
 
-// WebFeatured renders Agency as the large full-width hero card at the top
+// WebFeatured renders Agents as the large full-width hero card at the top
 // of the dashboard — it's the primary workbench, so it demands attention
 // above the regular app grid.
 func (T *OrchestrateApp) WebFeatured() bool { return true }
@@ -420,7 +420,7 @@ func (T *OrchestrateApp) Routes() {
 func (T *OrchestrateApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if T.DB != nil && AuthHasUsers(T.DB) && !AuthIsAdmin(T.DB, r) {
-			http.Error(w, "Agency is admin-only", http.StatusForbidden)
+			http.Error(w, "Agents is admin-only", http.StatusForbidden)
 			return
 		}
 		h(w, r)

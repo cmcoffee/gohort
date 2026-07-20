@@ -16,7 +16,7 @@ import (
 //	GET /agent/{id}       — edit existing agent
 //
 // channelAgentPrompt is the persona for the Channel agent preset: a lean,
-// on-message conversational base, no Agency-controller framing. Tuned for
+// on-message conversational base, no Agents-controller framing. Tuned for
 // short text replies on a messaging Channel. Product output, so no
 // em-dashes (universal style rule).
 const channelAgentPrompt = "You are a helpful assistant answering messages on a messaging channel. Keep replies short, clear, and conversational; these are text messages, not essays. Answer the person directly and stay on topic. If you need information, use your tools quietly and reply with the result. Do not narrate your internal steps, your tools, or any other agents. If you genuinely can't help with something, say so briefly and suggest a next step."
@@ -261,7 +261,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Type: "header", Label: "Cortex & delegation", Collapsed: true,
 				Help: "Always-on behaviors. Independent of each other."},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
-				Help: "Gives the agent a persistent Cortex thread (its mind — the 🧠 row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Reached only from Agency. When published to the dashboard, granted users don't see the Cortex thread — they get ordinary chat sessions, each seeded read-only from the agent's standing awareness so it shows up already aware (publishing + granting access is the consent to share that). Publishable as long as the delegation & management tools (below) are off."},
+				Help: "Gives the agent a persistent Cortex thread (its mind — the 🧠 row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Reached only from Agents. When published to the dashboard, granted users don't see the Cortex thread — they get ordinary chat sessions, each seeded read-only from the agent's standing awareness so it shows up already aware (publishing + granting access is the consent to share that). Publishable as long as the delegation & management tools (below) are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Delegation & management tools",
 				Help: "Grants the conductor toolset: delegation to other agents + standing-agent scheduling + event-monitors + run-ledger + history-recall. This is DISTINCT from \"the fleet\" (the collection of all your agents — every agent is in that). It does NOT stop the agent doing work itself; it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
@@ -282,7 +282,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "force_private", Type: "toggle", Label: "Force Private mode (network locked off)",
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
-				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agency picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
+				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
 			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
 				Options: dispatchModeOptions(dispatchModeFirst),
 				Help:    "Which OTHER agents this one may call via agents(action=\"run\"). Allow all = any non-hidden agent (default). Only allow / Allow all except use the target list in the \"Dispatch target list\" section below. Allow none blocks all dispatch. Same control as the in-chat Configure → Security & Access modal."},
@@ -421,7 +421,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		})
 	}
 
-	// Carry the edited agent's ID back to Agency so the picker
+	// Carry the edited agent's ID back to Agents so the picker
 	// reopens on the agent the user was just editing instead of
 	// snapping to Chat. Empty id (create form) skips the param.
 	backURL := ".."

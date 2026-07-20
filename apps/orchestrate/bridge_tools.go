@@ -209,7 +209,7 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	if want := strings.TrimSpace(stringArg(args, "channel")); want != "" {
 		ch, ok := resolveOwnerChannel(owner, want)
 		if !ok {
-			return "", fmt.Errorf("no channel named %q for this user — create it in Agency first, or omit channel to wake an agent's own thread. (list the user's channels to see valid names/ids)", want)
+			return "", fmt.Errorf("no channel named %q for this user — create it in Agents first, or omit channel to wake an agent's own thread. (list the user's channels to see valid names/ids)", want)
 		}
 		wakeChannelID = ch.ID
 		wantAgent = ch.AgentID // the channel's bound agent is the target
@@ -369,7 +369,7 @@ func setBridgeChannel(owner, name, channelID string) (string, error) {
 	}
 	ch, ok := resolveOwnerChannel(owner, channelID)
 	if !ok {
-		return "", fmt.Errorf("no channel %q for this user — create it in Agency first, or list the user's channels to see valid names/ids", channelID)
+		return "", fmt.Errorf("no channel %q for this user — create it in Agents first, or list the user's channels to see valid names/ids", channelID)
 	}
 	m.WakeChannel = ch.ID
 	m.WakeAgent = ch.AgentID // deliver via the channel's bound agent
