@@ -151,10 +151,37 @@ a global tool and, if needed, force-unadopt (`SetGlobalToolAdopted(false)`).
 
 ---
 
-## Deliverable 3 — Promotion-request flow (user plane → global plane)
+## Deliverable 3 — Promotion-request flow (user plane → global plane) — SHIPPED (tool)
 
 The bottom-up path. A user who built a useful cred/tool/agent requests it be
 published deployment-wide; the admin approves.
+
+**Shipped:** the generic queue + tool promotion end-to-end.
+- `core/promotion_requests.go` — `PromotionRequest{ID,Owner,Kind,Name,Note,Created,
+  State,DecidedBy}` keyed by `(kind,owner,name)` (a re-request updates in place).
+  `Create`/`List`(pending-only or all)/`Get`/`SetState`/`PendingPromotion`. Covered
+  by `TestPromotionRequests`. (Named `promotion_requests.go` to stay clear of the
+  unrelated sub-session `promotion.go` router.)
+- Owner side: Gateways "My tools" grows a "Request to publish" `ModalActionIf`
+  (note textarea) shown only when the tool isn't shared and has none pending
+  (`can_request`), plus a "Publish requested" badge. Endpoint
+  `gateways/api/promotions`.
+- Admin side: a "Pending promotions" section (the actionable queue) with
+  Approve/Deny. Approve runs the kind side effect BEFORE marking approved (so a
+  failure leaves it pending). Endpoint `admin/api/promotions`.
+- New generic primitive: `ui.ModalActionIf` (ModalAction + OnlyIf/HideIf, like
+  ExpandIf).
+
+**Only tool promotion is offered today** — deliberately, because the other two
+aren't fulfillable yet:
+- **Credential:** the safety rule refuses promoting a static user secret, and
+  Gateways only lets users create static-secret creds — so a user-owned cred is
+  always static and there's nothing valid to promote. Credential promotion waits
+  for user-ownable per-user/hybrid creds.
+- **Agent:** a globally-runnable agent needs the recipient-run infra (step 5b), so
+  agent promotion lands with it.
+The store + admin approve switch are already kind-generic; adding a kind is a new
+case + a request affordance.
 
 ### Store
 
@@ -257,10 +284,20 @@ run the agent.
    Owner-side "Share with users" ACLPicker on the agent page; admin "User-owned
    agents" governance section via `AdminListUserOwnedAgents`/`AdminRevokeAgentShare`
    hooks. Recipient-side fleet visibility + run (the payoff) is the deferred 5b.
-6. **Deliverable 3** — promotion requests (store, Gateways request action, admin
-   approve/deny with the kind asymmetry).
+6. **Deliverable 3 — SHIPPED (tool).** Promotion queue (`core/promotion_requests.go`)
+   + Gateways request action + admin "Pending promotions" approve/deny.
+   `ui.ModalActionIf` added. Credential + agent promotion deferred (not fulfillable
+   yet — see the Deliverable 3 section).
 
 Steps 1–2 are the foundation (done); 3–6 each land independently on top.
+
+## Remaining after this batch
+
+- **5b** — recipient-side agent run (the peer-sharing payoff): shared agents in a
+  recipient's fleet, run in owner context with the recipient's own creds. Hot-path
+  change; wants runtime testing. Unblocks agent promotion (Deliverable 3).
+- Credential promotion — waits for user-ownable per-user/hybrid creds.
+- Appendix — dashboard clustering via `WebAppHubTab`.
 
 ## Open decisions
 

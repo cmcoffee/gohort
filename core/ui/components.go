@@ -324,6 +324,15 @@ func ModalAction(label string, c Component) RowAction {
 	}
 }
 
+// ModalActionIf is ModalAction with OnlyIf/HideIf gating on a row field's
+// truthiness (like ExpandIf) — e.g. show a "Request to publish" modal only while a
+// row is eligible. Pass an empty string to skip either gate.
+func ModalActionIf(label, onlyIf, hideIf string, c Component) RowAction {
+	a := ModalAction(label, c)
+	a.OnlyIf, a.HideIf = onlyIf, hideIf
+	return a
+}
+
 // HistoryPanel renders a scrollable list of messages fetched from
 // Source. Used inside RowAction Expand for chat-history-style displays.
 type HistoryPanel struct {

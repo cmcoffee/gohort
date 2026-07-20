@@ -313,6 +313,63 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	})
 
+	// API: promotion requests — the bottom-up publish queue. Users request that
+	// their own resource be published deployment-wide; the admin approves (runs the
+	// kind-specific side effect) or denies. Today only tool promotion is wired:
+	// approve = Share the tool to the global catalog.
+	sub.HandleFunc("/api/promotions", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(ListPromotionRequests(a.db, true)) // pending only — the actionable queue
+		case http.MethodPost:
+			action := r.URL.Query().Get("action")
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			req, ok := GetPromotionRequest(a.db, id)
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			switch action {
+			case "approve":
+				// Kind-specific side effect BEFORE marking approved, so a failure
+				// leaves the request pending (re-approvable).
+				switch req.Kind {
+				case "tool":
+					if err := SetPersistentTempToolShared(a.db, req.Owner, req.Name, true); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+				default:
+					http.Error(w, "approving "+req.Kind+" promotions is not supported yet", http.StatusBadRequest)
+					return
+				}
+				if err := SetPromotionRequestState(a.db, id, PromotionApprovedState, AuthCurrentUser(r)); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			case "deny":
+				if err := SetPromotionRequestState(a.db, id, PromotionDeniedState, AuthCurrentUser(r)); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+			default:
+				http.Error(w, "action must be approve|deny", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// API: global-tool adoptions — who has pulled each shared tool into their
 	// fleet, so the admin can see blast radius before revoking one and force-remove
 	// a specific user's adoption. One row per (tool, adopter); a stale row is an

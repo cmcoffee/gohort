@@ -47,6 +47,7 @@ func (T *Gateways) HubTab() (string, int) { return "Gateways", 40 }
 func (T *Gateways) Routes() {
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
+	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/", T.servePage)
 }
@@ -178,6 +179,9 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Missing     bool   `json:"missing"`
 			Shared      bool   `json:"shared"`
 			LastUsed    string `json:"last_used,omitempty"`
+			// Promotion (publish-to-catalog) request state for this tool.
+			Requested  bool `json:"requested"`   // a promotion request is pending admin review
+			CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
 		}
 		rows := []row{}
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
@@ -194,9 +198,11 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			if !p.LastUsedAt.IsZero() {
 				last = p.LastUsedAt.Format("2006-01-02")
 			}
+			pending := PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
 			rows = append(rows, row{
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Missing: missing, Shared: p.Shared, LastUsed: last,
+				Requested: pending, CanRequest: !p.Shared && !pending,
 			})
 		}
 		writeJSON(w, rows)
@@ -214,6 +220,53 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handlePromotions lets a user request that one of their OWN resources be
+// published deployment-wide (bottom-up escalation — an admin approves it on the
+// Administrator page). Today only tool promotion is wired: the request asks the
+// admin to Share the tool to the global catalog. POST ?kind=tool&name=<tool>
+// with an optional JSON {note}; owner is the session user, who must own the tool.
+func (T *Gateways) handlePromotions(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if kind != "tool" {
+		http.Error(w, "only tool promotion is available", http.StatusBadRequest)
+		return
+	}
+	if name == "" {
+		http.Error(w, "missing name", http.StatusBadRequest)
+		return
+	}
+	// Ownership: the tool must be in the caller's own persistent pool.
+	owns := false
+	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+		if p.Tool.Name == name {
+			owns = true
+			break
+		}
+	}
+	if !owns {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Note string `json:"note"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // note is optional
+	if err := CreatePromotionRequest(AuthDB(), user, kind, name, body.Note); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleGlobalTools is the global-tool OPT-IN catalog. Global (Shared) tools are
@@ -367,12 +420,27 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Shared", Color: "info"},
 					}},
+					{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Publish requested", Color: "warning"},
+					}},
 					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "⚠ missing", Color: "danger"},
 					}},
 					{Field: "description", Mute: true, Flex: 2},
 				},
 				RowActions: []ui.RowAction{
+					// Request to publish — ask an admin to Share this tool to the
+					// deployment-wide catalog. Only when it isn't already shared and
+					// has no request pending (can_request).
+					ui.ModalActionIf("Request to publish", "can_request", "", ui.FormPanel{
+						SubmitLabel: "Send request",
+						PostURL:     "api/promotions?kind=tool&name={name}",
+						Fields: []ui.FormField{
+							{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+								Placeholder: "Why should this tool be in the shared catalog?"},
+						},
+						Invalidate: []string{"api/tools"},
+					}),
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "api/tools?name={name}",
 						Variant:    "danger",

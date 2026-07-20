@@ -1329,6 +1329,32 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "Pending promotions",
+				Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Gateways page); Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
+				Body: ui.Table{
+					Source: "api/promotions",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "owner", Flex: 0, Label: "Requested by"},
+						{Field: "kind", Flex: 0},
+						{Field: "name", Flex: 1},
+						{Field: "note", Flex: 2, Mute: true},
+						{Field: "created", Format: "reltime", Flex: 0, Mute: true},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Approve",
+							PostTo: "api/promotions?action=approve&id={id}",
+							Method: "POST"},
+						{Type: "button", Label: "Deny",
+							PostTo:  "api/promotions?action=deny&id={id}",
+							Method:  "POST",
+							Confirm: "Deny this promotion request?",
+							Variant: "danger"},
+					},
+					EmptyText: "No pending promotion requests.",
+				},
+			},
+			{
 				Title:    "MCP Servers",
 				Subtitle: "Remote Model Context Protocol servers (e.g. Confluence) the gohort SERVER connects to over HTTP. \"Expose tools\" registers each server's tools as <name>.<tool> for agents; \"Expose as a reference source\" makes it selectable in writer/research source pickers. Bearer tokens are stored encrypted; secure_api mode mints + refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability + auth before you enable.",
 				Body: ui.Stack{
