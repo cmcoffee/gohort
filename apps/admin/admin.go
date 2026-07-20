@@ -272,6 +272,47 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	})
 
+	// API: user-owned agents — the governance view over peer-shared agents. Agents
+	// live in per-user UDBs, so the admin app enumerates them through an orchestrate
+	// hook (nil until orchestrate's init runs). Revoke clears an agent's recipient
+	// list without deleting the agent.
+	sub.HandleFunc("/api/user-agents", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			rows := []UserOwnedAgentRow{}
+			if AdminListUserOwnedAgents != nil {
+				rows = AdminListUserOwnedAgents(a.db)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			if r.URL.Query().Get("action") != "revoke_share" {
+				http.Error(w, "action must be revoke_share", http.StatusBadRequest)
+				return
+			}
+			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+			id := strings.TrimSpace(r.URL.Query().Get("id"))
+			if owner == "" || id == "" {
+				http.Error(w, "owner and id required", http.StatusBadRequest)
+				return
+			}
+			if AdminRevokeAgentShare == nil {
+				http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
+				return
+			}
+			if err := AdminRevokeAgentShare(a.db, owner, id); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// API: global-tool adoptions — who has pulled each shared tool into their
 	// fleet, so the admin can see blast radius before revoking one and force-remove
 	// a specific user's adoption. One row per (tool, adopter); a stale row is an

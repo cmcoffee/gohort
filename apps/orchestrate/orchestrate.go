@@ -358,6 +358,9 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/agent/", g(T.handleAgentPage))
 
 	T.HandleFunc("/api/agents", g(T.handleAgentList))
+	// Candidate user list for the agent-page "Share with users" ACLPicker (peer
+	// sharing). Any authenticated user may share their own agent.
+	T.HandleFunc("/api/user-candidates", g(T.handleUserCandidates))
 	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
 	T.HandleFunc("/api/tool-scope", g(T.handleToolScope))
 	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized

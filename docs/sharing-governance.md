@@ -199,17 +199,35 @@ modal.
 
 ## Peer sharing (agents) — the user-plane path this console oversees
 
-Free, no admin approval. Reuses `core/sharing.go` + the new `AgentRecord.AllowedUsers`.
+Free, no admin approval. Uses `AgentRecord.AllowedUsers` as the source of truth.
 
-- **Gateways** gets a "Share" row action on the user's own agents → `ui.UserPicker`
-  modal → sets `AllowedUsers` + registers the agent in the shared index via
-  `SetSharedOwner(appDB, agentsSharedIndex, id, owner, true)`.
-- A recipient sees a shared agent if they're in `AllowedUsers`; credential
-  references resolve in **their** namespace (`Resolve(name, sessionUser)`), so no
-  secret travels — exactly the "share the shape" model already documented in the
-  namespacing doc's Agent-sharing section (incl. the per-cred `delegate` opt-in).
-- The admin console (Deliverable 2) can revoke any peer share (`CanManageShared`
-  admin bypass).
+**Shipped (5a — owner + admin side):**
+- **Owner side:** the agent page grows a "Share with users" section — an
+  `ACLPicker` over `../api/user-candidates` (every approved user; peer sharing is
+  open), `RecordSource`/`PostTo` = the agent record, `Field = allowed_users`. The
+  recipient set rides through the existing full-record agent save (the per-agent
+  POST merge-decodes + enforces owner), so no new save wiring. Only existing,
+  non-seed, top-level agents get it.
+- **Admin side:** a "User-owned agents" governance section (Deliverable 2's
+  deferred agent half). `core.AdminListUserOwnedAgents` / `AdminRevokeAgentShare`
+  hooks (mirroring `AdminRehomeOrphanTool`) let the admin app enumerate + un-share
+  without importing orchestrate; orchestrate walks every user's UDB
+  (`UserDB`+`listAgents`), excludes seeds/sub-agents, and revoke clears the
+  recipient list while keeping the agent. Endpoint `api/user-agents`.
+- Covered by `TestAgentShareHelpers` + `TestListAndRevokeUserOwnedAgents`.
+
+**No shared index needed for 5a:** `AllowedUsers` on the record is the source of
+truth; a `shared_agents` index (`SetSharedOwner`) is only a discovery optimization
+for the recipient side, added with it.
+
+**Deferred (5b — recipient side):** a shared agent appearing in a recipient's
+fleet and running in the owner's context with the recipient's own credentials
+(`Resolve(name, sessionUser)`, so no secret travels — the "share the shape" model
+incl. the per-cred `delegate` opt-in). The `userCanRunSharedAgent` gate is its
+foundation; wiring it into agent enumeration + the run/loadAgent path is a
+hot-path change that wants runtime testing. This is the payoff step — until it
+lands, sharing sets the ACL and the admin can govern it, but recipients can't yet
+run the agent.
 
 ---
 
@@ -235,8 +253,10 @@ Free, no admin approval. Reuses `core/sharing.go` + the new `AgentRecord.Allowed
 4. **Deliverable 2 — SHIPPED (creds + adoptions).** `ListAllUserOwned` +
    `SetDisabledOwned`; `api/user-credentials` + `api/tool-adoptions`; two admin
    sections. Agent audit deferred into step 5 (nothing to revoke until sharing).
-5. **Peer sharing** — Gateways share action for agents (`AgentRecord.AllowedUsers`
-   + `SetSharedOwner`), plus the user-owned-agents governance table in Deliverable 2.
+5. **Peer sharing — 5a SHIPPED (owner + admin), 5b deferred (recipient run).**
+   Owner-side "Share with users" ACLPicker on the agent page; admin "User-owned
+   agents" governance section via `AdminListUserOwnedAgents`/`AdminRevokeAgentShare`
+   hooks. Recipient-side fleet visibility + run (the payoff) is the deferred 5b.
 6. **Deliverable 3** — promotion requests (store, Gateways request action, admin
    approve/deny with the kind asymmetry).
 

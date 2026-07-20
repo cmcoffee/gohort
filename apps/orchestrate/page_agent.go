@@ -369,6 +369,28 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		})
 	}
 
+	// Share with users — peer-sharing (namespacing phase 5). Existing, non-seed,
+	// top-level agents only: a seed is framework-owned and a sub-agent is a
+	// component of its parent, neither is independently shareable. The recipient
+	// runs the OWNER's agent, but its credentials + tools resolve in the
+	// RECIPIENT's namespace, so no secret travels with the share.
+	if id != "" && !subAgent && !isSeedID(id) {
+		sections = append(sections, ui.Section{
+			Title:    "Share with users",
+			Subtitle: "Let specific other users run this agent. They run your agent, but its credentials and tools resolve in THEIR namespace — your secrets never travel with the share. Empty = private to you. An admin can audit or revoke shares.",
+			Body: ui.ACLPicker(ui.ACLPickerConfig{
+				OptionsSource: "../api/user-candidates",
+				RecordSource:  source,
+				Field:         "allowed_users",
+				PostTo:        source,
+				Method:        "POST",
+				Noun:          "user",
+				Intro:         "Users who may run this agent.",
+				EmptyText:     "No other users to share with yet.",
+			}),
+		})
+	}
+
 	// (Phantom dispatch + wipe sections removed — phantom's per-chat dispatch
 	// surface is retiring with phantom; channel threads are inspected via the
 	// rail + the channel-scoped chat tools now.)

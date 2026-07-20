@@ -1304,6 +1304,31 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "User-owned agents",
+				Subtitle: "Agents users create and (optionally) peer-share with specific other users. Sharing is user-initiated — this is the admin's audit + revoke. A shared agent runs in its owner's context with each recipient's own credentials (no secret travels). Revoke share clears the recipient list; the owner keeps the agent. Empty recipients = private.",
+				Body: ui.Table{
+					Source: "api/user-agents",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "owner", Flex: 0, Label: "Owner"},
+						{Field: "name", Flex: 1},
+						{Field: "shared_with", Flex: 2, Mute: true, Label: "Shared with"},
+						{Field: "shared", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Shared", Color: "info"},
+						}},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Revoke share",
+							PostTo:  "api/user-agents?action=revoke_share&owner={owner}&id={id}",
+							Method:  "POST",
+							Confirm: "Revoke this agent's sharing? Its recipients lose access; the owner keeps the agent.",
+							OnlyIf:  "shared",
+							Variant: "danger"},
+					},
+					EmptyText: "No user-owned agents yet. When a user creates one and shares it, it appears here.",
+				},
+			},
+			{
 				Title:    "MCP Servers",
 				Subtitle: "Remote Model Context Protocol servers (e.g. Confluence) the gohort SERVER connects to over HTTP. \"Expose tools\" registers each server's tools as <name>.<tool> for agents; \"Expose as a reference source\" makes it selectable in writer/research source pickers. Bearer tokens are stored encrypted; secure_api mode mints + refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability + auth before you enable.",
 				Body: ui.Stack{

@@ -71,6 +71,29 @@ func RequestIsAdmin(r *http.Request) bool {
 	return AuthIsAdmin(db, r)
 }
 
+// UserOwnedAgentRow is one user-owned agent for the admin governance console (the
+// user-plane audit). Populated by orchestrate via AdminListUserOwnedAgents so the
+// admin app needn't import orchestrate. SharedWith is the recipient list joined
+// for display; Shared mirrors len(recipients) > 0.
+type UserOwnedAgentRow struct {
+	ID         string `json:"id"`
+	Owner      string `json:"owner"`
+	Name       string `json:"name"`
+	SharedWith string `json:"shared_with,omitempty"`
+	Shared     bool   `json:"shared"`
+}
+
+// AdminListUserOwnedAgents / AdminRevokeAgentShare are wired by orchestrate (in an
+// init) so the admin governance console can enumerate and un-share user-owned
+// agents across the deployment without the admin app importing orchestrate. They
+// take the app-wide Database (admin passes its own) and mirror the
+// AdminRehomeOrphanTool hook pattern. Nil until orchestrate's init runs (single
+// binary, so always set in practice).
+var (
+	AdminListUserOwnedAgents func(db Database) []UserOwnedAgentRow
+	AdminRevokeAgentShare    func(db Database, owner, id string) error
+)
+
 // CanManageShared reports whether reqUser may change sharing / edit / delete a
 // record with the given owner: the owner, or an admin. Non-owners of a shared
 // record can use it but not manage it. An empty owner is a legacy record with no
