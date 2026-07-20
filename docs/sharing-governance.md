@@ -247,14 +247,23 @@ Free, no admin approval. Uses `AgentRecord.AllowedUsers` as the source of truth.
 truth; a `shared_agents` index (`SetSharedOwner`) is only a discovery optimization
 for the recipient side, added with it.
 
-**Deferred (5b — recipient side):** a shared agent appearing in a recipient's
-fleet and running in the owner's context with the recipient's own credentials
-(`Resolve(name, sessionUser)`, so no secret travels — the "share the shape" model
-incl. the per-cred `delegate` opt-in). The `userCanRunSharedAgent` gate is its
-foundation; wiring it into agent enumeration + the run/loadAgent path is a
-hot-path change that wants runtime testing. This is the payoff step — until it
-lands, sharing sets the ACL and the admin can govern it, but recipients can't yet
-run the agent.
+**Shipped (5b — recipient side):** a peer-shared agent is now reachable + runnable
+by its recipients. The key realization: the cross-user RUN machinery already
+existed for **Exposed** (published) agents — `LookupExposedAgent(slug)` resolves
+owner+record, and `PublicHandleSend` runs it **as the end-user**, so sessions,
+memory, and credentials resolve in the RECIPIENT's namespace (no secret travels,
+and Fleet/owner-only tools attach only when runtime-user == owner). So 5b was NOT
+a hot-path change — it broadened the `/agents/` exposure + access gate:
+- `reachableAgent(a)` = `Exposed OR len(AllowedUsers)>0` (minus seeds / hidden
+  app-agents) — the directory/lookup pool now includes peer-shared agents.
+- `AgentReachableBy(r, slug, owner, allowedUsers)` = app-access (published) OR
+  `user ∈ AllowedUsers` OR owner — the per-user gate on both the dashboard card
+  (`DashboardCards`) and the run path (`apps/agents`).
+- `ListGrantableApps` stays published-only (a peer-shared agent isn't app-grantable).
+Covered by `TestReachableAgent`. Net: owner sets AllowedUsers (5a) → the agent
+surfaces as a `/agents/<slug>` card for its recipients → they run it in their own
+namespace. No orchestrate-fleet change (that surface is admin-only; recipients use
+`/agents/`).
 
 ---
 

@@ -35,6 +35,28 @@ func TestAgentShareHelpers(t *testing.T) {
 	}
 }
 
+// TestReachableAgent covers the /agents/ surface pool gate: an agent is reachable
+// there if it's published (Exposed) OR peer-shared (AllowedUsers), but never a
+// clone-only seed, and not a plain private agent.
+func TestReachableAgent(t *testing.T) {
+	if !reachableAgent(AgentRecord{ID: "custom-x", Exposed: true}) {
+		t.Fatal("a published agent must be reachable")
+	}
+	if !reachableAgent(AgentRecord{ID: "custom-x", AllowedUsers: []string{"bob"}}) {
+		t.Fatal("a peer-shared agent must be reachable")
+	}
+	if reachableAgent(AgentRecord{ID: "custom-x"}) {
+		t.Fatal("a private, unshared agent must NOT be reachable")
+	}
+	// A clone-only template seed is never surfaced, even flagged Exposed.
+	if reachableAgent(AgentRecord{ID: "seed-kb", Exposed: true}) {
+		t.Fatal("a clone-only seed must never be reachable on /agents/")
+	}
+	if reachableAgent(AgentRecord{ID: "seed-kb", AllowedUsers: []string{"bob"}}) {
+		t.Fatal("a clone-only seed must never be reachable even if peer-shared")
+	}
+}
+
 // TestListAndRevokeUserOwnedAgents covers the admin governance hooks: the
 // cross-user enumeration surfaces each user's own agents with their recipient
 // list (seeds/sub-agents excluded), and revoke clears the recipients while the

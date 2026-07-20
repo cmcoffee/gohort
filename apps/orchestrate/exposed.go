@@ -42,6 +42,12 @@ func (T *OrchestrateApp) ListGrantableApps() []GrantableApp {
 	entries := T.ListExposedAgents()
 	out := make([]GrantableApp, 0, len(entries))
 	for _, e := range entries {
+		// Only PUBLISHED agents are app-grantable. A peer-shared-only agent (in the
+		// pool via AllowedUsers, not Exposed) is reached through its recipient list,
+		// not an admin app grant — don't offer it in the grantable-apps picker.
+		if !e.Exposed {
+			continue
+		}
 		out = append(out, GrantableApp{
 			Path: "/agents/" + e.Slug,
 			Name: e.Name + " (agent app)",
@@ -58,13 +64,12 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 	out := make([]DashboardCard, 0, len(entries))
 	for _, e := range entries {
 		path := "/agents/" + e.Slug
-		// Per-agent access gate — exposed agents are normal apps in
-		// the permission system. UserHasAppAccess returns true for
-		// admins automatically, and for non-admins when path is in
-		// user.Apps or the default-apps list. So an exposed agent
-		// that nobody has been granted shows up only for admins,
-		// matching the "Publish app, then grant per user" flow.
-		if !UserHasAppAccess(r, path) {
+		// Per-agent access gate — a published agent is a normal app (app-access /
+		// admin), and a peer-shared agent is reachable by its AllowedUsers recipients
+		// (or its owner). AgentReachableBy composes both, so a published agent nobody
+		// was granted shows only for admins, and a peer-shared agent shows only for
+		// its recipients.
+		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers) {
 			continue
 		}
 		desc := strings.TrimSpace(e.Description)
@@ -112,11 +117,13 @@ func ExposedDisplayName(a AgentRecord) string {
 // metadata the directory page needs, plus enough hooks to route
 // the user to the right chat surface.
 type ExposedAgentEntry struct {
-	Slug        string
-	Name        string
-	Description string
-	Owner       string
-	AgentID     string
+	Slug         string
+	Name         string
+	Description  string
+	Owner        string
+	AgentID      string
+	Exposed      bool     // published to app-access users (vs. peer-shared only)
+	AllowedUsers []string // peer-share recipients (empty when published-only)
 }
 
 // ListExposedAgents walks every authenticated user's orchestrate
@@ -142,27 +149,49 @@ type ExposedAgentEntry struct {
 // the publish. Cortex agents publish too (each visitor gets their own
 // per-(user, agent) home thread).
 func publiclyExposable(a AgentRecord) bool {
-	// Template seeds are never published directly (Builder clones them), so
-	// exclude them regardless of a stale Exposed flag a past save may have set.
-	// This is the read-side guard that hides seed-kb from /agents/, the
-	// dashboard cards, and the grantable-apps picker without waiting for a
-	// re-save to repair the record.
+	return agentSurfaceEligible(a) && a.Exposed
+}
+
+// agentSurfaceEligible is the read-side guard shared by the "published"
+// (publiclyExposable) and "reachable on /agents/" (reachableAgent) gates: an agent
+// may appear on the public /agents/ surface at all only when it's neither a
+// clone-only template seed nor an internal Hidden app-agent — regardless of any
+// stale Exposed flag a past save may have set.
+func agentSurfaceEligible(a AgentRecord) bool {
+	// Template seeds are never published directly (Builder clones them).
 	if isCloneOnlySeed(a.ID) {
 		return false
 	}
-	// Internal app-agents — registered Hidden via RegisterAppAgent (e.g. the
-	// Servitor Investigator template, the Guide Author) — are reached only
-	// through their owning app, never as a standalone dashboard / /agents/
-	// surface. Guard them the same read-side way as clone-only seeds so a stale
-	// Exposed flag on a per-user shadow can't leak them onto the dashboard,
-	// /agents/, or the grantable-apps picker without a re-save to repair the
-	// record. Scoped to app-agents whose registered spec is Hidden, so a user's
-	// own published-but-hidden agent (not an app-agent) is unaffected, and an
-	// app-agent an app deliberately registers non-Hidden can still be exposed.
+	// Internal app-agents registered Hidden (Servitor Investigator, Guide Author)
+	// are reached only through their owning app, never as a standalone surface.
 	if spec, ok := appagents.AppAgentByID(a.ID); ok && spec.Hidden {
 		return false
 	}
-	return a.Exposed
+	return true
+}
+
+// reachableAgent reports whether an agent is served on the /agents/ surface for
+// SOMEONE: either it's published to app-access users (Exposed) OR it's peer-shared
+// to specific users (AllowedUsers). It's the directory/lookup pool; WHO may
+// actually see or run it is the separate per-user gate AgentReachableBy.
+func reachableAgent(a AgentRecord) bool {
+	return agentSurfaceEligible(a) && (a.Exposed || len(a.AllowedUsers) > 0)
+}
+
+// AgentReachableBy reports whether the request's user may see + run the agent at
+// /agents/<slug>: the framework app-access grant (Exposed → published + granted;
+// admins auto), the agent's peer-share recipient list (AllowedUsers), or its
+// owner. This composes the "published to app-access users" and "shared to specific
+// users" access models on the one public surface.
+func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, allowedUsers []string) bool {
+	if UserHasAppAccess(r, "/agents/"+slug) {
+		return true
+	}
+	u := AuthCurrentUser(r)
+	if u == "" {
+		return false
+	}
+	return u == owner || containsString(allowedUsers, u)
 }
 
 // CortexSessionID exposes a channel agent's pinned home-thread session id so
@@ -190,7 +219,7 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	for _, u := range AuthListUsers(authDB) {
 		udb := UserDB(T.DB, u.Username)
 		for _, a := range listAgents(udb, u.Username) {
-			if !publiclyExposable(a) {
+			if !reachableAgent(a) {
 				continue
 			}
 			slug := ExposedSlug(a)
@@ -209,11 +238,13 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 				// Replace seed default with this user's shadow.
 			}
 			byID[a.ID] = ExposedAgentEntry{
-				Slug:        slug,
-				Name:        ExposedDisplayName(a),
-				Description: a.Description,
-				Owner:       u.Username,
-				AgentID:     a.ID,
+				Slug:         slug,
+				Name:         ExposedDisplayName(a),
+				Description:  a.Description,
+				Owner:        u.Username,
+				AgentID:      a.ID,
+				Exposed:      a.Exposed,
+				AllowedUsers: a.AllowedUsers,
 			}
 			idIsShadow[a.ID] = isShadow
 		}
@@ -269,7 +300,7 @@ func (T *OrchestrateApp) LookupExposedAgent(slug string) (AgentRecord, string, b
 	for _, u := range AuthListUsers(authDB) {
 		udb := UserDB(T.DB, u.Username)
 		for _, a := range listAgents(udb, u.Username) {
-			if !publiclyExposable(a) {
+			if !reachableAgent(a) {
 				continue
 			}
 			if ExposedSlug(a) == slug {

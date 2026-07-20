@@ -106,17 +106,16 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		rest = parts[1]
 	}
-	agent, _, ok := orch.LookupExposedAgent(slug)
+	agent, owner, ok := orch.LookupExposedAgent(slug)
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	// Per-agent access gate — exposed agents are normal apps in the
-	// permission system. Admins always pass; non-admins need the
-	// agent's path in their user.Apps or the default-apps list.
-	// Without this gate, anyone who guessed the slug could chat with
-	// every exposed agent regardless of dashboard visibility.
-	if !UserHasAppAccess(r, "/agents/"+slug) {
+	// Per-agent access gate — a published agent is a normal app (admins + app-access
+	// grants); a peer-shared agent is reachable by its AllowedUsers recipients (or
+	// owner). Without this, anyone who guessed the slug could chat with every
+	// reachable agent regardless of visibility.
+	if !orch.AgentReachableBy(r, slug, owner, agent.AllowedUsers) {
 		http.NotFound(w, r) // 404 not 403 — don't leak slug existence
 		return
 	}
