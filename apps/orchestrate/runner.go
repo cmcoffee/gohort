@@ -5277,6 +5277,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 						// vanish without trace, making "the form is missing a
 						// question" impossible to attribute afterward.
 						Debug("[orchestrate.ask_form] discarding non-object step: %.200v", x)
+						t.turnDiag("form-step-discarded", fmt.Sprintf("A form step the agent authored was discarded (not an object): %.200v", x))
 					}
 				}
 			case []map[string]any:
@@ -5285,6 +5286,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				}
 			default:
 				Debug("[orchestrate.ask_form] steps arg in unusable shape %T: %.300v", raw, raw)
+				t.turnDiag("form-steps-unusable", fmt.Sprintf("The agent's form arrived in an unusable shape (%T) and rendered without questions.", raw))
 			}
 			capturedFormSteps = steps
 			cancelOrch()

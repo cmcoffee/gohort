@@ -1803,6 +1803,15 @@ type AgentLoopPanel struct {
 	ChannelsURL      string `json:"channels_url,omitempty"`
 	ChannelSaveURL   string `json:"channel_save_url,omitempty"`
 	ChannelDeleteURL string `json:"channel_delete_url,omitempty"`
+	// DiagnosticsURL — optional per-session diagnostics trail. When set, the
+	// toolbar shows a small ⚠ affordance; clicking it fetches this URL (the
+	// literal "{session}" placeholder substituted with the ACTIVE session id
+	// at click time; extra-field placeholders like {agent_id} substituted as
+	// usual) and lists the returned entries ([{at, kind, detail}], newest
+	// first) in a modal. The intent: framework decisions made on the user's
+	// behalf in THIS conversation — suppressed replies, discarded inputs,
+	// retries — which otherwise vanish into server logs. Empty = no affordance.
+	DiagnosticsURL string `json:"diagnostics_url,omitempty"`
 	// Schedules rail section — optional. When SchedulesURL is set, the rail shows
 	// a single "Scheduler" entry carrying the TOTAL count; clicking it opens a
 	// modal that lists every entry grouped by category. This keeps a schedule

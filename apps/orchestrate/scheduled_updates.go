@@ -479,6 +479,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if runErr != nil {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", agentLabel, p.SessionID, p.FireCount+1, runErr)
 		record(RunFailed, "Recurring fire errored before it could post.", "", runErr.Error())
+		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-failed",
+			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v", recurringName(p), p.FireCount+1, runErr))
 		return nil
 	}
 	reply := ""
@@ -488,6 +490,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if reply == "" {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", agentLabel, p.SessionID, p.FireCount+1)
 		record(RunOK, "(no output — nothing to post this cycle)", "", "")
+		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-empty",
+			fmt.Sprintf("Recurring task %q fire %d produced no reply — nothing was posted this cycle.", recurringName(p), p.FireCount+1))
 		return nil
 	}
 
@@ -505,6 +509,8 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if len(toolTrace) == 0 {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", agentLabel, p.SessionID, p.FireCount+1)
 		record(RunOK, "(no tool activity — preamble only, nothing posted)", reply, "")
+		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-suppressed",
+			fmt.Sprintf("Recurring task %q fire %d produced text but called no tools — treated as a preamble stub and NOT posted. The full text is preserved in the run ledger (Activity).", recurringName(p), p.FireCount+1))
 		return nil
 	}
 

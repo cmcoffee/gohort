@@ -797,6 +797,45 @@
     }
 
     var actionsBar = el('div', {class: 'ui-agent-actions'});
+    // Session diagnostics — the framework's decisions made on the user's
+    // behalf in this conversation (suppressed replies, discarded inputs,
+    // retries), which otherwise vanish into server logs. Generic: the app
+    // supplies DiagnosticsURL; entries are [{at, kind, detail}].
+    if (cfg.diagnostics_url) {
+      var diagBtn = el('button', {class: 'ui-row-btn', type: 'button',
+        title: 'Session diagnostics — what the framework suppressed, discarded, or retried in this conversation'}, ['⚠']);
+      diagBtn.addEventListener('click', function() {
+        var sid = activeSessionId || '';
+        if (!sid) { showToast('No active session yet.'); return; }
+        var url = substituteExtras(cfg.diagnostics_url).replace('{session}', encodeURIComponent(sid));
+        fetchJSON(url).then(function(list) {
+          if (!Array.isArray(list)) list = [];
+          window.uiOpenModal({
+            title: 'Session diagnostics',
+            subtitle: 'Framework decisions in this conversation — content suppressed, discarded, or retried on your behalf. Newest first.',
+            width: 'min(640px, 94vw)',
+            actions: [{label: 'Close'}],
+            mount: function(body) {
+              if (!list.length) {
+                body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.85rem'},
+                  ['Nothing to report — no guard has intervened in this session.']));
+                return;
+              }
+              list.forEach(function(e) {
+                var row = el('div', {style: 'padding:0.5rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;line-height:1.45'});
+                var when = '';
+                try { when = e.at ? new Date(e.at).toLocaleString() : ''; } catch (_) {}
+                row.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.72rem;margin-bottom:0.15rem'},
+                  [when + (e.kind ? ' · ' + e.kind : '')]));
+                row.appendChild(el('div', {style: 'white-space:pre-wrap;word-break:break-word'}, [e.detail || '']));
+                body.appendChild(row);
+              });
+            },
+          });
+        }).catch(function(err) { showToast('Diagnostics unavailable: ' + (err && err.message || err)); });
+      });
+      actionsBar.appendChild(diagBtn);
+    }
     // runToolbarAction performs one toolbar action — shared by flat buttons AND
     // grouped-dropdown items so both behave identically.
     async function runToolbarAction(action, btn) {

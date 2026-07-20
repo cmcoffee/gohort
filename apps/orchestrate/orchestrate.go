@@ -387,6 +387,8 @@ func (T *OrchestrateApp) Routes() {
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
 	T.HandleFunc("/api/default-agent", g(T.handleDefaultAgentPref))
+	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
+	T.HandleFunc("/api/session-diag", g(T.handleSessionDiag))
 	T.HandleFunc("/api/agents/", g(T.handleAgentOne))
 	T.HandleFunc("/api/collections", g(T.handleCollections))
 	// More-specific path wins over /api/collections/ in Go's ServeMux,
