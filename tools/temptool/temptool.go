@@ -1277,7 +1277,11 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// refused; open creds pass. Shell-mode fetch_via is enforced in the sandbox
 	// hook (it dispatches per-call, not here). See secured-credential-tool-binding.md.
 	if (tt.Mode == TempToolModeAPI || tt.Mode == TempToolModeToolbox) && strings.TrimSpace(tt.Credential) != "" {
-		if err := Secure().EnforceSecuredBinding(tt.Credential, tt.Name); err != nil {
+		securedUser := ""
+		if sess != nil {
+			securedUser = sess.Username
+		}
+		if err := Secure().EnforceSecuredBinding(tt.Credential, tt.Name, securedUser); err != nil {
 			return "", err
 		}
 	}

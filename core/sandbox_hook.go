@@ -885,10 +885,15 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 		writeHookError(conn, fmt.Sprintf("fetch_via credential %q not granted to this tool — add \"fetch_via:%s\" to hook_capabilities", credName, credName))
 		return
 	}
-	// Secured-credential binding enforcement: a secured cred is reachable only
-	// through APPROVED declaring tools. Grandfathers a legacy declaring tool,
-	// refuses a revoked one. Open creds and unnamed callers pass through.
-	if err := Secure().EnforceSecuredBinding(credName, h.ToolName); err != nil {
+	// Secured-credential enforcement: a secured cred is reachable only by the users
+	// it's shared with (WHO) AND through APPROVED declaring tools (WHAT). Grandfathers
+	// a legacy declaring tool, refuses a revoked one. Open creds pass through here
+	// (their WHO is enforced at tool-build via the deny set).
+	securedUser := ""
+	if h.Sess != nil {
+		securedUser = h.Sess.Username
+	}
+	if err := Secure().EnforceSecuredBinding(credName, h.ToolName, securedUser); err != nil {
 		Log("[hook/fetch_via] binding refused credential=%q tool=%q: %v", credName, h.ToolName, err)
 		writeHookError(conn, err.Error())
 		return

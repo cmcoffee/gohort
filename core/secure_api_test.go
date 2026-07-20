@@ -114,15 +114,15 @@ func TestEnforceSecuredBinding(t *testing.T) {
 	s.db.Set(secureAPITable, "sec", SecureCredential{Name: "sec", Secured: true})
 	s.db.Set(secureAPITable, "open", SecureCredential{Name: "open"})
 
-	if err := s.EnforceSecuredBinding("open", "any_tool"); err != nil {
+	if err := s.EnforceSecuredBinding("open", "any_tool", ""); err != nil {
 		t.Fatalf("open cred must always pass: %v", err)
 	}
-	if err := s.EnforceSecuredBinding("sec", ""); err != nil {
+	if err := s.EnforceSecuredBinding("sec", "", ""); err != nil {
 		t.Fatalf("unnamed caller must pass: %v", err)
 	}
 
 	// Legacy declaring tool → grandfathered (allowed) + recorded approved.
-	if err := s.EnforceSecuredBinding("sec", "legacy"); err != nil {
+	if err := s.EnforceSecuredBinding("sec", "legacy", ""); err != nil {
 		t.Fatalf("legacy declaring tool must be grandfathered: %v", err)
 	}
 	if !s.ToolBindingApproved("sec", "legacy") {
@@ -133,7 +133,7 @@ func TestEnforceSecuredBinding(t *testing.T) {
 	if err := s.RevokeToolBinding("sec", "legacy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.EnforceSecuredBinding("sec", "legacy"); err == nil {
+	if err := s.EnforceSecuredBinding("sec", "legacy", ""); err == nil {
 		t.Fatal("revoked binding must be refused")
 	}
 	if s.ToolBindingApproved("sec", "legacy") {
@@ -144,8 +144,49 @@ func TestEnforceSecuredBinding(t *testing.T) {
 	if err := s.ApproveToolBinding("sec", "legacy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.EnforceSecuredBinding("sec", "legacy"); err != nil {
+	if err := s.EnforceSecuredBinding("sec", "legacy", ""); err != nil {
 		t.Fatalf("re-approved binding must pass: %v", err)
+	}
+}
+
+// TestSecuredBindingWhoAxis pins the composition of the two access axes: a
+// SECURED credential shared with specific users (AllowedUsers) must still refuse a
+// user outside that list even when the dispatching tool is a valid binding — so
+// securing tightens the WHAT axis without discarding the WHO grant it was shared
+// under. An open (empty AllowedUsers) secured cred admits everyone; a user-owned
+// one admits only its owner.
+func TestSecuredBindingWhoAxis(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	s.db.Set(secureAPITable, "sec", SecureCredential{
+		Name: "sec", Secured: true, AllowedUsers: []string{"alice"},
+		ApprovedToolBindings: []string{"bound"},
+	})
+
+	// A bound tool + an allowed user → passes (both axes satisfied).
+	if err := s.EnforceSecuredBinding("sec", "bound", "alice"); err != nil {
+		t.Fatalf("alice is allowed and the tool is bound: %v", err)
+	}
+	// Same bound tool, a user NOT shared with → refused on the WHO axis.
+	if err := s.EnforceSecuredBinding("sec", "bound", "bob"); err == nil {
+		t.Fatal("bob is outside AllowedUsers — a valid binding must NOT grant him access")
+	}
+	// WHO applies to unnamed callers too (a persistent shell dispatching as bob).
+	if err := s.EnforceSecuredBinding("sec", "", "bob"); err == nil {
+		t.Fatal("an unnamed caller outside AllowedUsers must still be refused")
+	}
+	if err := s.EnforceSecuredBinding("sec", "", "alice"); err != nil {
+		t.Fatalf("an unnamed caller who IS allowed must pass: %v", err)
+	}
+
+	// UserMayUse directly: open, allowlisted, owned.
+	if !s.UserMayUse(SecureCredential{}, "anyone") {
+		t.Fatal("an open (empty AllowedUsers) cred admits everyone")
+	}
+	if s.UserMayUse(SecureCredential{AllowedUsers: []string{"alice"}}, "bob") {
+		t.Fatal("an allowlisted cred must exclude a non-member")
+	}
+	if !s.UserMayUse(SecureCredential{Owner: "carol"}, "carol") || s.UserMayUse(SecureCredential{Owner: "carol"}, "dave") {
+		t.Fatal("a user-owned cred admits only its owner")
 	}
 }
 
@@ -175,7 +216,7 @@ func TestSecuredBindingForgetKeepsRevoke(t *testing.T) {
 		t.Fatal("forget must PRESERVE a revoke tombstone so the deny survives delete")
 	}
 	// And a "recreate" (dispatch after forget) is still refused.
-	if err := s.EnforceSecuredBinding("sec", "r"); err == nil {
+	if err := s.EnforceSecuredBinding("sec", "r", ""); err == nil {
 		t.Fatal("a forgotten-but-revoked binding must still be refused at dispatch")
 	}
 }

@@ -836,6 +836,22 @@ func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 	})
 }
 
+// UserMayUse reports whether user passes the WHO axis of credential access for c:
+// an open global grant (empty AllowedUsers), an explicit grant (user in
+// AllowedUsers), or the user's OWN namespaced credential (Owner == user). It is
+// orthogonal to Secured's WHAT axis (tool bindings) and the per-agent tier-2
+// opt-out; composing them is what keeps "shared to a user" intact through a
+// later securing. An empty user passes only for an open credential.
+func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
+	if c.Owner != "" {
+		return c.Owner == user
+	}
+	if len(c.AllowedUsers) == 0 {
+		return true
+	}
+	return credSliceHas(c.AllowedUsers, user)
+}
+
 // EnforceSecuredBinding is the dispatch-time gate: may toolName dispatch through
 // credName? Returns nil (allow) or a directive error (refuse). Only Secured creds
 // are gated; Open creds always pass. Two states under auto-resolve:
@@ -847,13 +863,22 @@ func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 // tool is legitimately bound — no approval step. toolName == "" (an unnamed
 // caller: run_local / persistent shell, already gated by the hook's fetch_via
 // grant) is not binding-enforced.
-func (s *SecureAPI) EnforceSecuredBinding(credName, toolName string) error {
-	toolName = strings.TrimSpace(toolName)
-	if toolName == "" {
-		return nil
-	}
+func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error {
 	c, ok := s.Load(credName)
 	if !ok || !c.Secured {
+		return nil
+	}
+	// WHO axis: securing tightens WHICH TOOLS may dispatch (the binding check
+	// below), but the credential is still only for the users it was shared with. A
+	// secured cred must NOT become reachable by someone outside its AllowedUsers
+	// just because a bound tool exists — otherwise securing would silently DISCARD
+	// the user grant it was shared under (share-then-secure). Applied before the
+	// unnamed-caller shortcut so a persistent shell / run_local is WHO-checked too.
+	if !s.UserMayUse(c, user) {
+		return fmt.Errorf("credential %q is SECURED and not shared with you — an admin adds you to its allowed users in Admin > APIs", credName)
+	}
+	toolName = strings.TrimSpace(toolName)
+	if toolName == "" {
 		return nil
 	}
 	if credSliceHas(c.RevokedToolBindings, toolName) {
