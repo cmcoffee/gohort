@@ -1311,8 +1311,19 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						{Field: "shared", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Shared", Color: "info"},
 						}},
+						{Field: "exposed", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Published", Color: "success"},
+						}},
 					},
 					RowActions: []ui.RowAction{
+						// Delegate to users — publish the agent as a /agents/ app the
+						// admin can then grant. Shown until it's published; the owner's
+						// peer-share stays intact.
+						{Type: "button", Label: "Publish",
+							PostTo:  "api/user-agents?action=publish&owner={owner}&id={id}",
+							Method:  "POST",
+							Confirm: "Publish this agent as a dashboard app? It becomes available at /agents/, which you can then grant to users. The owner's existing share is unchanged.",
+							HideIf:  "exposed"},
 						{Type: "button", Label: "Revoke share",
 							PostTo:  "api/user-agents?action=revoke_share&owner={owner}&id={id}",
 							Method:  "POST",

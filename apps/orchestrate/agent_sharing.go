@@ -22,6 +22,7 @@ import (
 func init() {
 	AdminListUserOwnedAgents = listUserOwnedAgentsForAdmin
 	AdminRevokeAgentShare = revokeAgentShareForAdmin
+	AdminPublishAgent = publishAgentForAdmin
 }
 
 // isShareableAgent reports whether an agent record is a user's OWN top-level agent
@@ -68,6 +69,7 @@ func listUserOwnedAgentsForAdmin(db Database) []UserOwnedAgentRow {
 				Name:       a.Name,
 				SharedWith: strings.Join(a.AllowedUsers, ", "),
 				Shared:     len(a.AllowedUsers) > 0,
+				Exposed:    a.Exposed,
 			})
 		}
 	}
@@ -88,6 +90,30 @@ func revokeAgentShareForAdmin(db Database, owner, id string) error {
 	}
 	a.Owner = owner
 	a.AllowedUsers = nil
+	_, err := saveAgent(udb, a)
+	return err
+}
+
+// publishAgentForAdmin is the admin's top-down "delegate to users" step: it flips
+// a user-owned agent's Exposed on, so it becomes a /agents/<slug> app the admin can
+// then grant to users (or reach directly). The owner's peer-share (AllowedUsers)
+// is left intact — publishing widens reach, it doesn't replace the share. Only a
+// top-level user agent can be published (seeds / sub-agents can't); saveAgent's own
+// guards also refuse Exposed on a clone-only seed.
+func publishAgentForAdmin(db Database, owner, id string) error {
+	if db == nil || owner == "" || id == "" {
+		return fmt.Errorf("owner and id required")
+	}
+	udb := UserDB(db, owner)
+	a, ok := loadAgent(udb, id)
+	if !ok {
+		return fmt.Errorf("no agent %q owned by %q", id, owner)
+	}
+	if !isShareableAgent(a, owner) {
+		return fmt.Errorf("only a top-level user agent can be published")
+	}
+	a.Owner = owner
+	a.Exposed = true
 	_, err := saveAgent(udb, a)
 	return err
 }

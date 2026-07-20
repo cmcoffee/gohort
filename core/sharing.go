@@ -81,17 +81,21 @@ type UserOwnedAgentRow struct {
 	Name       string `json:"name"`
 	SharedWith string `json:"shared_with,omitempty"`
 	Shared     bool   `json:"shared"`
+	Exposed    bool   `json:"exposed"` // already published as a /agents/ app
 }
 
-// AdminListUserOwnedAgents / AdminRevokeAgentShare are wired by orchestrate (in an
-// init) so the admin governance console can enumerate and un-share user-owned
-// agents across the deployment without the admin app importing orchestrate. They
-// take the app-wide Database (admin passes its own) and mirror the
-// AdminRehomeOrphanTool hook pattern. Nil until orchestrate's init runs (single
-// binary, so always set in practice).
+// AdminListUserOwnedAgents / AdminRevokeAgentShare / AdminPublishAgent are wired by
+// orchestrate (in an init) so the admin governance console can enumerate, un-share,
+// and DELEGATE (publish) user-owned agents across the deployment without the admin
+// app importing orchestrate. They take the app-wide Database (admin passes its own)
+// and mirror the AdminRehomeOrphanTool hook pattern. Nil until orchestrate's init
+// runs (single binary, so always set in practice). Publish is the admin's top-down
+// "delegate to users" step: it flips the agent Exposed so it becomes a /agents/
+// app the admin can then grant to users (the owner's peer-share stays independent).
 var (
 	AdminListUserOwnedAgents func(db Database) []UserOwnedAgentRow
 	AdminRevokeAgentShare    func(db Database, owner, id string) error
+	AdminPublishAgent        func(db Database, owner, id string) error
 )
 
 // CanManageShared reports whether reqUser may change sharing / edit / delete a

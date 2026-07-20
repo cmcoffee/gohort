@@ -289,21 +289,28 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
-			if r.URL.Query().Get("action") != "revoke_share" {
-				http.Error(w, "action must be revoke_share", http.StatusBadRequest)
-				return
-			}
+			action := r.URL.Query().Get("action")
 			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
 			id := strings.TrimSpace(r.URL.Query().Get("id"))
 			if owner == "" || id == "" {
 				http.Error(w, "owner and id required", http.StatusBadRequest)
 				return
 			}
-			if AdminRevokeAgentShare == nil {
+			var hook func(Database, string, string) error
+			switch action {
+			case "revoke_share":
+				hook = AdminRevokeAgentShare
+			case "publish": // admin "delegate to users" — flip Exposed on
+				hook = AdminPublishAgent
+			default:
+				http.Error(w, "action must be revoke_share|publish", http.StatusBadRequest)
+				return
+			}
+			if hook == nil {
 				http.Error(w, "unavailable (orchestrate not wired)", http.StatusServiceUnavailable)
 				return
 			}
-			if err := AdminRevokeAgentShare(a.db, owner, id); err != nil {
+			if err := hook(a.db, owner, id); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
