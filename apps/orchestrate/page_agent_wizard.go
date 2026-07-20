@@ -42,6 +42,33 @@ var wizard_kinds = map[string]struct {
 	"specialist": {"Specialist — a focused agent for one job, used directly or by dispatch", false, "agent"},
 }
 
+// wizard_templates are the crafted starting points offered by the
+// wizard's "Start from a template" row — seed records whose value is
+// the TUNING (budgets, curated tools, prompt craft) that a
+// from-scratch draft can't reproduce. Picking one clones the full
+// record as the user's own agent and collapses the guided questions to
+// just a name; this is where the retiring seeds live on for users. IDs
+// must resolve via seedAgentByID (a test asserts it).
+var wizard_templates = []struct {
+	id    string
+	label string
+}{
+	{"seed-research", "Research Assistant — multi-step research with gap checking"},
+	{"seed-kb", "Knowledge Base Agent — answers from documents you upload"},
+}
+
+// isWizardTemplate reports whether id is one of the offered templates —
+// the create endpoint's guard, so a forged POST can't clone arbitrary
+// seed IDs through the wizard path.
+func isWizardTemplate(id string) bool {
+	for _, t := range wizard_templates {
+		if t.id == id {
+			return true
+		}
+	}
+	return false
+}
+
 // renderAgentWizard shows the guided New Agent flow: a Steps FormPanel
 // whose final submit POSTs the brief to /api/agents/wizard, which
 // drafts the prompt, creates the agent, and redirects into the full
@@ -84,6 +111,24 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 				SuggestURL:  "../api/agents/suggest"},
 		},
 	}
+	if kindPreset == "" {
+		// "Start from a template" — the archetype axis, deliberately
+		// separate from the two identity types: a template is a finished,
+		// tuned agent copied whole. Choosing one hides the type select
+		// and collapses the guided steps (each gated on "!template")
+		// down to Name → Create. Not offered on preset deep links —
+		// they've already committed to a build.
+		tplOpts := []ui.SelectOption{{Value: "", Label: "No template — guided setup"}}
+		for _, t := range wizard_templates {
+			tplOpts = append(tplOpts, ui.SelectOption{Value: t.id, Label: t.label})
+		}
+		typeStep.Fields[0].ShowWhen = "!template" // type select is a guided-path question
+		typeStep.Fields = append([]ui.FormField{{
+			Field: "template", Type: "select", Label: "Start from a template",
+			Options: tplOpts,
+			Help:    "A template is a finished, tuned agent — its prompt, budgets, and tools copied as your own. Pick one and the guided questions collapse to just a name. Leave on guided setup to build from a brief instead.",
+		}}, typeStep.Fields...)
+	}
 	if kindPreset != "" {
 		// Type already chosen by the link — collapse the select to a
 		// hidden carrier and retitle the step around naming.
@@ -99,8 +144,9 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 
 	purposeStep := ui.FormStep{
-		Title: "Purpose",
-		Intro: "Describe the job in plain language. You are not writing the agent's prompt — this is the brief it gets drafted from, so concrete beats polished.",
+		Title:    "Purpose",
+		ShowWhen: "!template",
+		Intro:    "Describe the job in plain language. You are not writing the agent's prompt — this is the brief it gets drafted from, so concrete beats polished.",
 		Fields: []ui.FormField{
 			{Field: "purpose", Type: "textarea", Label: "What should it do?", Rows: 4, Required: true,
 				Placeholder: "e.g. Answer questions about our internal deployment runbooks: find the relevant doc, quote the exact steps, and flag anything out of date."},
@@ -125,7 +171,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	// seeds the form state at render).
 	aboutStep := ui.FormStep{
 		Title:    "About you",
-		ShowWhen: "agent_kind:assistant",
+		ShowWhen: "!template;agent_kind:assistant",
 		Intro:    "Optional, and worth it: what your assistant knows about you from the start. It keeps these as its working notes — view or edit them any time.",
 		Fields: []ui.FormField{
 			{Field: "call_you", Type: "text", Label: "What should it call you?",
@@ -141,8 +187,9 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	// the kind's defaults — a select can say "default" honestly where a
 	// toggle would have to show some state that may not be true.
 	memoryStep := ui.FormStep{
-		Title: "Memory",
-		Intro: "How it remembers, and whether it keeps a standing mind. The defaults fit most agents — skip this step if unsure; everything stays adjustable in the editor.",
+		Title:    "Memory",
+		ShowWhen: "!template",
+		Intro:    "How it remembers, and whether it keeps a standing mind. The defaults fit most agents — skip this step if unsure; everything stays adjustable in the editor.",
 		Fields: []ui.FormField{
 			{Field: "memory", Type: "select", Label: "Memory",
 				Options: []ui.SelectOption{
@@ -163,8 +210,9 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 
 	tuningStep := ui.FormStep{
-		Title: "Tuning",
-		Intro: "Optional — the defaults are fine. Skip anything you're unsure about; it's all editable later.",
+		Title:    "Tuning",
+		ShowWhen: "!template",
+		Intro:    "Optional — the defaults are fine. Skip anything you're unsure about; it's all editable later.",
 		Fields: []ui.FormField{
 			{Field: "triggers", Type: "tags", Label: "Dispatch triggers",
 				Help: "Patterns that nudge the host to route a matching message to THIS agent first — case-insensitive substrings of the message (a pattern with * or ? matches attachment filenames instead). Use specific phrases its questions actually contain; loose ones over-fire. Empty is fine."},
@@ -172,8 +220,18 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 
 	createStep := ui.FormStep{
-		Title: "Create",
-		Intro: "That's everything. Creating the agent drafts its working prompt from your answers on the local model (a few seconds), then opens the full editor so you can review the draft and attach tools, knowledge, and credentials.",
+		Title:    "Create",
+		ShowWhen: "!template",
+		Intro:    "That's everything. Creating the agent drafts its working prompt from your answers on the local model (a few seconds), then opens the full editor so you can review the draft and attach tools, knowledge, and credentials.",
+	}
+	// Template path gets its own Create step (the guided one is gated
+	// off) so the copy matches what actually happens: a clone, not a
+	// draft. Whichever of the two is the last VISIBLE step carries the
+	// submit button.
+	createFromTemplateStep := ui.FormStep{
+		Title:    "Create",
+		ShowWhen: "template",
+		Intro:    "Creating copies the template — its prompt, budgets, and tools — as your own agent under the name you chose, then opens the editor to customize it.",
 	}
 	redirectURL := "{id}"
 	if firstRun {
@@ -185,7 +243,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		redirectURL = "../?agent={id}"
 	}
 
-	steps := []ui.FormStep{typeStep, purposeStep, aboutStep, memoryStep, tuningStep, createStep}
+	steps := []ui.FormStep{typeStep, purposeStep, aboutStep, memoryStep, tuningStep, createStep, createFromTemplateStep}
 
 	head := wizardAdvancedLinkHTML()
 	title := "New agent"
@@ -335,6 +393,34 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.Purpose = strings.TrimSpace(req.Purpose)
+
+	// Template path: clone the crafted seed record whole (prompt,
+	// budgets, tools) under the chosen name — no brief, no drafting.
+	if tpl := strings.TrimSpace(req.Template); tpl != "" {
+		if !isWizardTemplate(tpl) {
+			http.Error(w, "unknown template", http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+		saved, err := cloneAgent(udb, tpl, user, req.Name, false)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if d := strings.TrimSpace(req.Description); d != "" && d != saved.Description {
+			saved.Description = d
+			if updated, uerr := saveAgent(udb, saved); uerr == nil {
+				saved = updated
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(saved)
+		return
+	}
+
 	kind, kindOK := wizard_kinds[req.Kind]
 	if !kindOK || req.Name == "" || req.Purpose == "" {
 		http.Error(w, "agent type, name, and purpose are required", http.StatusBadRequest)
@@ -393,7 +479,11 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 // wizardRequest is the wizard's create brief — the POST body of
 // /api/agents/wizard, field names matching the wizard form's inputs.
 type wizardRequest struct {
-	Kind        string   `json:"agent_kind"`
+	Kind string `json:"agent_kind"`
+	// Template short-circuits the guided flow: clone this wizard
+	// template (a crafted seed) as the user's agent. "" = build from
+	// the brief below.
+	Template    string   `json:"template"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	Purpose     string   `json:"purpose"`

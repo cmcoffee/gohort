@@ -1013,8 +1013,9 @@
     }
 
     // matchesShowWhen evaluates a show_when expression against the
-    // form's current values. Three accepted shapes:
+    // form's current values. Four accepted shapes:
     //   "field"                — show when current[field] is truthy
+    //   "!field"               — show when current[field] is falsy/empty
     //   "field:value"          — show when current[field] === value
     //   "field:v1|v2"          — show when current[field] ∈ {v1, v2}
     // Multiple conditions can be chained with ";" and ALL must match.
@@ -1025,6 +1026,10 @@
       for (var i = 0; i < clauses.length; i++) {
         var c = clauses[i].trim();
         if (!c) continue;
+        if (c.charAt(0) === '!') {
+          if (current[c.substring(1).trim()]) return false;
+          continue;
+        }
         var colon = c.indexOf(':');
         if (colon < 0) {
           if (!current[c]) return false;

@@ -103,6 +103,26 @@ func TestWizardBriefIncludesAboutYou(t *testing.T) {
 	}
 }
 
+func TestWizardTemplatesResolve(t *testing.T) {
+	if len(wizard_templates) == 0 {
+		t.Fatal("no wizard templates registered")
+	}
+	for _, tpl := range wizard_templates {
+		if _, ok := seedAgentByID(tpl.id); !ok {
+			t.Errorf("template %q does not resolve to a seed record", tpl.id)
+		}
+		if tpl.label == "" {
+			t.Errorf("template %q has no label", tpl.id)
+		}
+		if !isWizardTemplate(tpl.id) {
+			t.Errorf("isWizardTemplate(%q) = false for a registered template", tpl.id)
+		}
+	}
+	if isWizardTemplate("seed-chat") {
+		t.Error("seed-chat must not be clonable through the wizard template path")
+	}
+}
+
 func TestWizardKindsMatchEditorPresets(t *testing.T) {
 	// The wizard's kind→defaults mapping must stay in lockstep with the
 	// editor's Agent-type presets so both create paths produce the same

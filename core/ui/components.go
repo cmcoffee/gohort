@@ -636,10 +636,11 @@ type FormStep struct {
 	Intro string `json:"intro,omitempty"`
 	// ShowWhen gates the entire step on the form's current values,
 	// using the same expression grammar as FormField.ShowWhen
-	// ("field", "field:value", "field:v1|v2", clauses joined by ";").
-	// A hidden step is skipped by Back/Next, dropped from the rail,
-	// and exempt from Required gating — e.g. show a "Channel" step
-	// only when an earlier answer picked kind=channel.
+	// ("field", "!field", "field:value", "field:v1|v2", clauses joined
+	// by ";"). A hidden step is skipped by Back/Next, dropped from the
+	// rail, and exempt from Required gating — e.g. show an extra step
+	// only when an earlier answer picked a matching kind, or hide the
+	// guided steps once a "template" answer short-circuits them.
 	ShowWhen string      `json:"show_when,omitempty"`
 	Fields   []FormField `json:"fields"`
 }
@@ -719,11 +720,13 @@ type FormField struct {
 	// that's hidden until the header is clicked. Declutters advanced settings
 	// without splitting the single-save FormPanel. No effect on non-header fields.
 	Collapsed bool `json:"collapsed,omitempty"`
-	// ShowWhen names another field in the same FormPanel; this field
-	// is rendered (and saves are wired) only when that field's current
-	// value is truthy. Use to collapse irrelevant configuration when a
-	// master toggle is off — e.g. hide a whisper URL until
-	// `enabled` is on. Updates immediately when the gating field changes.
+	// ShowWhen gates this field on the form's current values; it is
+	// rendered (and saves are wired) only while the expression holds.
+	// Grammar: "field" (truthy), "!field" (falsy/empty), "field:value",
+	// "field:v1|v2" (membership); clauses joined by ";" must ALL match.
+	// Use to collapse irrelevant configuration when a master toggle is
+	// off — e.g. hide a whisper URL until `enabled` is on. Updates
+	// immediately when the gating field changes.
 	ShowWhen string `json:"show_when,omitempty"`
 	// Required — in a Steps wizard, the user can't advance past (or
 	// submit from) this field's step while it is empty (null, "", or
