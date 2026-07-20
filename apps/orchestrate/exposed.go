@@ -155,16 +155,20 @@ func publiclyExposable(a AgentRecord) bool {
 // agentSurfaceEligible is the read-side guard shared by the "published"
 // (publiclyExposable) and "reachable on /agents/" (reachableAgent) gates: an agent
 // may appear on the public /agents/ surface at all only when it's neither a
-// clone-only template seed nor an internal Hidden app-agent — regardless of any
-// stale Exposed flag a past save may have set.
+// framework seed nor an internal Hidden app-agent — regardless of any stale
+// Exposed flag a past save (or the old ships-Exposed Research default) may
+// have set.
 func agentSurfaceEligible(a AgentRecord) bool {
-	// Template seeds are never published directly (Builder clones them).
-	if isCloneOnlySeed(a.ID) {
-		return false
+	// App Agents are an app's own surface — publishable unless registered
+	// Hidden (Servitor Investigator, Guide Author), which are reached only
+	// through their owning app, never as a standalone surface.
+	if spec, ok := appagents.AppAgentByID(a.ID); ok {
+		return !spec.Hidden
 	}
-	// Internal app-agents registered Hidden (Servitor Investigator, Guide Author)
-	// are reached only through their owning app, never as a standalone surface.
-	if spec, ok := appagents.AppAgentByID(a.ID); ok && spec.Hidden {
+	// Any other seed — the framework's own agents, clone-only templates
+	// included — is never a dashboard app. Users get the crafted seeds as
+	// wizard TEMPLATES (clone-your-own), not as published surfaces.
+	if isSeedID(a.ID) {
 		return false
 	}
 	return true

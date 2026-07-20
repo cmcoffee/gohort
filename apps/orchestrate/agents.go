@@ -1728,14 +1728,11 @@ Multi-step clarifications (several distinct decisions to make) → use ask_user_
 			MaxPlanSteps:    6,
 			MaxWorkerRounds: 16,
 			GapCheck:        true,
-			// Published on /agents/ by default — Research is the only
-			// seed safe enough to expose to non-admin users out of the
-			// box (search + cite + memory(save), no agent mutation tools,
-			// no shell-out, no agent-management). Chat is intentionally
-			// NOT exposed: it has access to agent CRUD + the default
-			// tool pool, which is too unrestricted for an end-user
-			// surface.
-			Exposed: true,
+			// NOT published on /agents/ — no seed is. Research used to ship
+			// Exposed:true ("the only seed safe enough to expose out of the
+			// box"), but with the seeds retired from user surfaces it reaches
+			// users as a wizard TEMPLATE (clone-your-own) instead, and
+			// agentSurfaceEligible refuses seeds on the dashboard regardless.
 			// Hidden by default — same reasoning as the other seeds.
 			// The user can flip this if they actually want Research
 			// to be a callable specialist from a custom agent's fleet.

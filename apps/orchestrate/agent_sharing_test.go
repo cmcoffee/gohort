@@ -49,6 +49,9 @@ func TestReachableAgent(t *testing.T) {
 		t.Fatal("a private, unshared agent must NOT be reachable")
 	}
 	// A clone-only template seed is never surfaced, even flagged Exposed.
+	if reachableAgent(AgentRecord{ID: "seed-research", Exposed: true}) {
+		t.Error("no framework seed may surface on /agents/, even with a stale Exposed flag")
+	}
 	if reachableAgent(AgentRecord{ID: "seed-kb", Exposed: true}) {
 		t.Fatal("a clone-only seed must never be reachable on /agents/")
 	}
