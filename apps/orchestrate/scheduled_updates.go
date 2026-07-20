@@ -324,11 +324,21 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	for _, m := range history {
 		msgs = append(msgs, Message{Role: m.Role, Content: m.Content})
 	}
+	// Explicit time context with the local↔UTC pairing. Engagement-style
+	// tasks count "posts today" against API timestamps that are usually
+	// UTC; without the conversion spelled out, the model counts UTC-dated
+	// items against the local day (a 06:31Z post is YESTERDAY evening
+	// locally) and talks itself into wrong per-day totals.
+	nowLocal := time.Now().In(UserLocation(p.Username))
+	timeCtx := fmt.Sprintf(
+		"[Time context: it is now %s (= %s). Timestamps from tools/APIs are usually UTC — convert each to the LOCAL zone before deciding what happened \"today\"; the day boundary is LOCAL midnight. When counting per-day items, list each id with its local date ONCE, then count that list — do not re-count.]",
+		nowLocal.Format("Mon 2006-01-02 15:04 MST"),
+		time.Now().UTC().Format("2006-01-02 15:04 UTC"))
 	msgs = append(msgs, Message{
 		Role: "user",
 		Content: fmt.Sprintf(
-			"[SCHEDULED UPDATE — fire %d, %s] %s\n\n%s",
-			p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective),
+			"[SCHEDULED UPDATE — fire %d, %s] %s\n\n%s\n%s",
+			p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective, timeCtx),
 	})
 
 	// Assemble the SAME toolkit a live turn / standing-agent fire gets, so a
