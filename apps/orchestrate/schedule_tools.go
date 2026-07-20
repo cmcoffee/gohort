@@ -37,7 +37,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"  To CHANGE an existing task's timing, re-issue action=\"schedule\" with the SAME prompt and the new timing — it REPLACES the matching task in place instead of creating a duplicate. Keep the prompt identical when you mean to edit.\n" +
 				"  action=\"list\" — show this agent's active tasks (id, cadence, fire count, prompt, and WHERE each posts: this session, the Cortex mind, or another session). Call before scheduling to avoid duplicates.\n" +
 				"  action=\"cancel\" — stop one. Required: id (from schedule or list).\n" +
-				"  action=\"move\" — retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread — good for background engagement cycles the user shouldn't wade through in a conversation) or to=\"session\" (this current conversation). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
+				"  action=\"move\" — retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread — good for background engagement cycles the user shouldn't wade through in a conversation) or to=\"session\" (this current conversation — or a SPECIFIC thread via session_id, e.g. one you created with open_session to give a schedule's reports their own home). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
 				"Use this for periodic polling / checks the agent runs itself. NOT for one-shot work, and NOT for dispatching to other agents.",
 			Parameters: map[string]ToolParam{
 				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel", "move"}, Description: "schedule | list | cancel | move."},
@@ -52,7 +52,8 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"active_to":        {Type: "string", Description: "(schedule, optional) Daily window end, 24-hour HH:MM local time (e.g. 17:30). Must be after active_from."},
 				"max_fires":        {Type: "integer", Description: "(schedule, optional) Auto-stop after this many total fires. Capped at the deployment ceiling (50)."},
 				"id":               {Type: "string", Description: "(cancel / move) Scheduler task id of the recurring task (from schedule or list)."},
-				"to":               {Type: "string", Enum: []string{"cortex", "session"}, Description: "(move) Where the task should post its reports: cortex = the agent's standing mind thread; session = this current conversation."},
+				"to":               {Type: "string", Enum: []string{"cortex", "session"}, Description: "(move) Where the task should post its reports: cortex = the agent's standing mind thread; session = this current conversation, or the one named by session_id."},
+				"session_id":       {Type: "string", Description: "(move, optional, with to=\"session\") Target a specific existing session of this agent by id — e.g. a dedicated reports thread created via open_session. Omit to target this current conversation."},
 			},
 			Required: []string{"action"},
 			Caps:     []Capability{CapRead, CapWrite},
@@ -236,6 +237,18 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 	case "session":
 		target = t.session.ID
 		destLabel = "this session"
+		// A specific thread — e.g. a dedicated reports session the agent
+		// just created via open_session. Must already exist on this agent
+		// (the user-scoped store enforces ownership); a typo'd id should
+		// error, not silently spawn a thread nobody can find.
+		if sid := strings.TrimSpace(stringArg(args, "session_id")); sid != "" && sid != t.session.ID {
+			sess, ok := loadChatSession(t.udb, t.agent.ID, sid)
+			if !ok {
+				return "", fmt.Errorf("no session %s on this agent — use the id returned by open_session, or omit session_id to target this conversation", sid)
+			}
+			target = sid
+			destLabel = fmt.Sprintf("the session %q", firstNonEmptyStr(strings.TrimSpace(sess.Title), sid))
+		}
 	default:
 		return "", fmt.Errorf("to must be \"cortex\" or \"session\" (got %q)", stringArg(args, "to"))
 	}
