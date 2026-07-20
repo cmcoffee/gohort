@@ -1807,27 +1807,24 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								Method:     "POST",
 								OnlyIf:     "shared",
 								Optimistic: true},
-							// Adopt access — who may adopt this SHARED tool from their
-							// Gateways catalog. Empty = every user. Only meaningful once
-							// shared, so the editor only appears on a shared row.
-							ui.ExpandIf("Adopt access", "shared", "", ui.ACLPicker(ui.ACLPickerConfig{
+							// Access — tier-1 user ACL: which USERS may adopt this SHARED
+							// tool from their Gateways catalog. Symmetric with the API
+							// credential "Access" button. Only meaningful once shared, so
+							// it appears on a shared row only. (Tier 2 — which of a user's
+							// OWN agents load it — is the user's per-agent Tools choice in
+							// the agent editor, not an admin per-agent list here.)
+							ui.ModalActionIf("Access", "shared", "", ui.ACLPicker(ui.ACLPickerConfig{
 								OptionsSource: "api/user-candidates",
 								RecordSource:  "api/persistent-tools?allowed_users={tool.name}&owner={owner}",
 								Field:         "allowed_users",
 								PostTo:        "api/persistent-tools?action=set_allowed_users&name={tool.name}&owner={owner}",
 								Method:        "POST",
 								Noun:          "user",
-								Intro:         "Which users may adopt this shared tool from their Gateways catalog. Empty = every user can adopt it.",
+								Intro:         "Which users may adopt this shared tool from their Gateways catalog. Empty = every user. Each user then chooses which of their agents load it.",
 								EmptyText:     "No other users to grant yet.",
 							})),
 							{Type: "button", Label: "Export", Method: "client",
 								PostTo: "tools_export", Compact: true},
-							// Access — the pill editor (Global pill + one pill per
-							// agent). Replaces the old one-shot "Attach to agent" form:
-							// from here you descope to specific agents, disable per agent,
-							// or leave it global.
-							{Type: "button", Label: "Access", Method: "client",
-								PostTo: "tool_scope_manage"},
 							{Type: "button", Label: "Delete",
 								PostTo:     "api/persistent-tools?name={tool.name}&owner={owner}",
 								Method:     "DELETE",
