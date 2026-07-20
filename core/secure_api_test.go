@@ -178,6 +178,19 @@ func TestSecuredBindingWhoAxis(t *testing.T) {
 		t.Fatalf("an unnamed caller who IS allowed must pass: %v", err)
 	}
 
+	// OPEN credential with an allowlist: the WHO axis applies to it too, so a
+	// tool's fetch_via / api-mode dispatch can't reach it for a non-grantee. This
+	// closes the gap where tier-1 was enforced only at tool-build.
+	s.db.Set(secureAPITable, "open_restricted", SecureCredential{
+		Name: "open_restricted", AllowedUsers: []string{"alice"},
+	})
+	if err := s.EnforceSecuredBinding("open_restricted", "some_tool", "alice"); err != nil {
+		t.Fatalf("alice is granted the open cred: %v", err)
+	}
+	if err := s.EnforceSecuredBinding("open_restricted", "some_tool", "bob"); err == nil {
+		t.Fatal("an OPEN cred with an allowlist must refuse a non-grantee at dispatch (fetch_via WHO gap)")
+	}
+
 	// UserMayUse directly: open, allowlisted, owned.
 	if !s.UserMayUse(SecureCredential{}, "anyone") {
 		t.Fatal("an open (empty AllowedUsers) cred admits everyone")

@@ -852,30 +852,41 @@ func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
 	return credSliceHas(c.AllowedUsers, user)
 }
 
-// EnforceSecuredBinding is the dispatch-time gate: may toolName dispatch through
-// credName? Returns nil (allow) or a directive error (refuse). Only Secured creds
-// are gated; Open creds always pass. Two states under auto-resolve:
-//   - revoked (tombstoned) → refuse
-//   - otherwise            → allow (and record the binding for the admin view)
+// EnforceSecuredBinding is the dispatch-time credential-access gate: may `user`
+// dispatch `toolName` through `credName`? Returns nil (allow) or a directive error
+// (refuse). Two axes, composed:
+//   - WHO (every cred): the user must be granted it (open / allowlist / their own).
+//   - WHAT (secured creds only): the tool must be an approved declaring binding;
+//     a revoked (tombstoned) binding is refused, an un-revoked declaring tool is
+//     allowed (and recorded for the admin view).
 //
 // A tool only REACHES dispatch for a secured cred if it already DECLARES it (the
 // fetch_via hook / api-mode wiring verified that), so an un-revoked declaring
 // tool is legitimately bound — no approval step. toolName == "" (an unnamed
-// caller: run_local / persistent shell, already gated by the hook's fetch_via
-// grant) is not binding-enforced.
+// caller: run_local / persistent shell) skips the WHAT axis but is still WHO-gated.
+// (Name kept for history; it now gates the WHO axis for open creds too.)
 func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error {
-	c, ok := s.Load(credName)
-	if !ok || !c.Secured {
+	// Resolve user-aware so the check runs against the credential the user actually
+	// dispatches through — a user's OWN same-named cred shadows a global one, and
+	// must not be false-denied against the global's grant.
+	c, ok := s.Resolve(credName, user)
+	if !ok {
 		return nil
 	}
-	// WHO axis: securing tightens WHICH TOOLS may dispatch (the binding check
-	// below), but the credential is still only for the users it was shared with. A
-	// secured cred must NOT become reachable by someone outside its AllowedUsers
-	// just because a bound tool exists — otherwise securing would silently DISCARD
-	// the user grant it was shared under (share-then-secure). Applied before the
-	// unnamed-caller shortcut so a persistent shell / run_local is WHO-checked too.
+	// WHO axis — enforced for OPEN and SECURED creds alike: the dispatching user
+	// must be granted the credential (open grant / allowlist / their own). This
+	// closes the gap where a tool carrying fetch_via:<cred> (or an api/toolbox temp
+	// tool) could dispatch through a credential the user was never shared — tier-1
+	// AllowedUsers was otherwise only enforced at tool-BUILD (the deny set removes
+	// the auto-route), which the fetch_via / api-mode paths bypass. Applied before
+	// the unnamed-caller shortcut so a persistent shell / run_local is checked too.
 	if !s.UserMayUse(c, user) {
-		return fmt.Errorf("credential %q is SECURED and not shared with you — an admin adds you to its allowed users in Admin > APIs", credName)
+		return fmt.Errorf("credential %q is not shared with you — an admin grants access via Allowed Users in Admin > APIs", credName)
+	}
+	// WHAT axis — SECURED creds only: dispatch must go through an approved declaring
+	// tool. Open creds pass once the WHO axis is satisfied.
+	if !c.Secured {
+		return nil
 	}
 	toolName = strings.TrimSpace(toolName)
 	if toolName == "" {
