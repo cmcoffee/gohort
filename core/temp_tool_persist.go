@@ -256,6 +256,13 @@ type PersistentTempTool struct {
 	ApprovedAt time.Time `json:"approved_at"`
 	LastUsedAt time.Time `json:"last_used_at,omitempty"`
 	Shared     bool      `json:"shared,omitempty"`
+	// AllowedUsers gates WHO may adopt this tool from the global catalog, and is
+	// meaningful only when Shared is set. Empty = open to every user (the catalog
+	// offers it to all). Non-empty = only those usernames see it in the catalog
+	// and may adopt it. A user's own (unshared) pool is always fully theirs, so
+	// this is ignored when Shared is false. Mirrors SecureCredential.AllowedUsers
+	// — one ACL concept across creds and tools. See docs/sharing-governance.md.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
 }
 
 // LoadPendingTempTools returns the pending-approval queue for a user,
@@ -342,6 +349,47 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	return nil
 }
 
+// SharedToolAllowedUsers returns the adopt-ACL for a Shared global tool by name:
+// the AllowedUsers list on whichever user's pool published it, plus whether a
+// Shared tool of that name exists at all. An empty list with found=true means the
+// tool is open to everyone. (First owner seen wins, matching
+// LoadSharedPersistentTempTools' dedupe.)
+func SharedToolAllowedUsers(db Database, name string) (allowed []string, found bool) {
+	for _, p := range LoadSharedPersistentTempTools(db) {
+		if p.Tool.Name == name {
+			return p.AllowedUsers, true
+		}
+	}
+	return nil, false
+}
+
+// CanAdoptGlobalTool reports whether user is PERMITTED (ACL-wise) to adopt the
+// named global tool — it is the catalog-visibility and adopt-guard predicate.
+// The rule is an ACL check, not an existence check:
+//   - A published Shared tool with an empty AllowedUsers is open to everyone.
+//   - A published Shared tool with a non-empty AllowedUsers admits only its
+//     members. Admins are NOT auto-allowed — adoption is a per-user fleet choice,
+//     so an admin who wants a restricted tool must be named in the list.
+//   - A name NOT in the shared pool is permitted (true): pre-adopting an
+//     unpublished name is harmless (it simply won't resolve until published), and
+//     no ACL exists to deny it. Existence is a separate concern from permission.
+// Anonymous ("") is never permitted.
+func CanAdoptGlobalTool(db Database, user, name string) bool {
+	if user == "" {
+		return false
+	}
+	allowed, found := SharedToolAllowedUsers(db, name)
+	if !found || len(allowed) == 0 {
+		return true
+	}
+	for _, u := range allowed {
+		if u == user {
+			return true
+		}
+	}
+	return false
+}
+
 const adoptedGlobalToolsTable = "adopted_global_tools"
 
 // LoadAdoptedGlobalTools returns the set of global (Shared) tool NAMES the user
@@ -375,6 +423,15 @@ func SetGlobalToolAdopted(db Database, username, name string, adopted bool) erro
 	}
 	if strings.TrimSpace(name) == "" {
 		return errString("tool name required")
+	}
+	// Adopting is gated by the tool's AllowedUsers ACL — a user may only pull in a
+	// global tool they're permitted to see. Un-adopting is ALWAYS allowed: a user
+	// must be able to drop a tool even after their grant was revoked, so a
+	// tightened ACL never strands an un-removable tool in their fleet. Checked
+	// before taking the lock (CanAdoptGlobalTool reads the shared pool, and the
+	// mutex is not reentrant).
+	if adopted && !CanAdoptGlobalTool(db, username, name) {
+		return errString("not permitted to adopt tool " + name)
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()

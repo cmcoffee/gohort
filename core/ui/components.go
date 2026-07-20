@@ -429,6 +429,65 @@ func (c ChipPicker) MarshalJSON() ([]byte, error) {
 	}{"chip_picker", alias(c)})
 }
 
+// ACLPickerConfig configures ACLPicker. The one required pair is OptionsSource
+// (where candidates come from) and PostTo (where the selection is saved); the
+// rest have sensible ACL defaults.
+type ACLPickerConfig struct {
+	// OptionsSource GETs the candidate rows AND the current selection in one
+	// response: a shaped object {<items>: [{value,label,desc?}], <Attached>: [...]}
+	// (or a bare array of rows when nothing is selected yet). Map your domain onto
+	// {value,label} server-side — e.g. AuthListUsers → {value: username, label:
+	// "Name <email>"}.
+	OptionsSource string
+	// PostTo receives the saved selection as {SaveKey: [values]}.
+	PostTo string
+	// Attached names the response key holding the current selection (the already-
+	// granted values). Default "allowed_users".
+	Attached string
+	// SaveKey is the body key the selection POSTs under. Default = Attached.
+	SaveKey string
+	// Noun fills "+ Add <Noun>". Default "user".
+	Noun string
+	// Intro is an optional help line above the picker.
+	Intro string
+	// EmptyText shows when there are no candidates.
+	EmptyText string
+}
+
+// ACLPicker builds a ChipPicker preconfigured as an access-control editor: a
+// dynamic multi-select over a candidate list whose selection is saved as a
+// []string. It is the standard editor for an AllowedUsers-style ACL across
+// credentials, tools, and shared agents, so those surfaces share one shape
+// instead of each re-deriving the ChipPicker field mapping. It adds no new
+// component or client code — it's pure configuration of the generic ChipPicker.
+func ACLPicker(c ACLPickerConfig) ChipPicker {
+	attached := c.Attached
+	if attached == "" {
+		attached = "allowed_users"
+	}
+	saveKey := c.SaveKey
+	if saveKey == "" {
+		saveKey = attached
+	}
+	noun := c.Noun
+	if noun == "" {
+		noun = "user"
+	}
+	return ChipPicker{
+		Mode:          "attach",
+		OptionsSource: c.OptionsSource,
+		AttachedField: attached,
+		PostTo:        c.PostTo,
+		SaveKey:       saveKey,
+		NameField:     "value",
+		LabelField:    "label",
+		DescField:     "desc",
+		Noun:          noun,
+		Intro:         c.Intro,
+		EmptyText:     c.EmptyText,
+	}
+}
+
 // FormPanel renders a list of labeled input fields bound to a single
 // JSON record (Source URL). Each field's change saves the full record
 // back to Source. Text/textarea fields are debounced so we don't POST

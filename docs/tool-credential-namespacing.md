@@ -198,12 +198,20 @@ redirects the user back to `/gateways/`.
   tier-2 per-agent opt-out is still available.
 - Hybrid-key entry: a new section, or fold into "Connected accounts".
 
+## Phase 5 — sharing & governance
+
+Access controls on top of the two planes: generalized `AllowedUsers` picker
+(creds/tools/agents), an admin audit/revoke console over the user plane, and a
+user-initiated → admin-approved promotion flow. Specified in
+`sharing-governance.md`. Note: user enumeration (`AuthListUsers`) **already
+exists**, so the open question below about the user-picker is resolved there.
+
 ## Open questions
 
 - Where users manage their namespace (Account vs a per-user admin-like console).
 - User-owned creds/tools default: all of that user's agents, or per-agent opt-in.
-- How `AllowedUsers` is edited in the admin UI at scale (a tags field now; a
-  user-picker later — needs user enumeration, which doesn't exist yet).
+- ~~How `AllowedUsers` is edited at scale~~ — resolved in phase 5
+  (`ui.UserPicker` over `AuthListUsers`).
 - Classification of today's single-pool resources into global vs user-owned.
 
 ## Agent sharing

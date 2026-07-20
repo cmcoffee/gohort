@@ -240,6 +240,12 @@ func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		}
 		rows := []row{}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
+			// Adopt-ACL: a restricted global tool only appears in the catalog for
+			// users on its AllowedUsers list (empty = open to everyone). Keeps a
+			// user from even seeing — let alone adopting — a tool not meant for them.
+			if !CanAdoptGlobalTool(AuthDB(), user, p.Tool.Name) {
+				continue
+			}
 			missing := false
 			if cred := strings.TrimSpace(p.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
 				if _, found := Secure().Resolve(cred, user); !found {

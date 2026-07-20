@@ -54,3 +54,66 @@ func TestGlobalToolAdoption(t *testing.T) {
 		t.Fatalf("merge must union with existing; got %v", a)
 	}
 }
+
+// TestGlobalToolAdoptACL covers the phase-5 adopt ACL: AllowedUsers on a Shared
+// tool restricts who may see/adopt it, the field survives the kvlite/gob round
+// trip, CanAdoptGlobalTool enforces the rule (open=all, restricted=members,
+// unpublished=harmless, anon=never), and SetGlobalToolAdopted refuses an
+// ACL-denied adopt while always permitting un-adopt.
+func TestGlobalToolAdoptACL(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+
+	// alice publishes two shared tools: "payroll" restricted to herself, and
+	// "weather" open to everyone (empty AllowedUsers).
+	db.Set(persistentTempToolsTable, "alice", []PersistentTempTool{
+		{Tool: TempTool{Name: "payroll"}, Shared: true, AllowedUsers: []string{"alice"}},
+		{Tool: TempTool{Name: "weather"}, Shared: true},
+	})
+
+	// AllowedUsers survives the kvlite/gob round-trip.
+	var got []string
+	for _, p := range LoadPersistentTempTools(db, "alice") {
+		if p.Tool.Name == "payroll" {
+			got = p.AllowedUsers
+		}
+	}
+	if len(got) != 1 || got[0] != "alice" {
+		t.Fatalf("AllowedUsers must persist through the pool round-trip; got %v", got)
+	}
+
+	// ACL predicate.
+	if !CanAdoptGlobalTool(db, "alice", "payroll") {
+		t.Fatal("alice is in payroll's ACL; must be permitted")
+	}
+	if CanAdoptGlobalTool(db, "bob", "payroll") {
+		t.Fatal("bob is not in payroll's ACL; must be denied")
+	}
+	if !CanAdoptGlobalTool(db, "bob", "weather") {
+		t.Fatal("weather is open (empty ACL); bob must be permitted")
+	}
+	if !CanAdoptGlobalTool(db, "carol", "unpublished") {
+		t.Fatal("an unpublished name is harmless; must be permitted (existence != permission)")
+	}
+	if CanAdoptGlobalTool(db, "", "weather") {
+		t.Fatal("anonymous must never be permitted")
+	}
+
+	// Adopt guard refuses an ACL-denied adopt but allows a permitted one.
+	if err := SetGlobalToolAdopted(db, "bob", "payroll", true); err == nil {
+		t.Fatal("SetGlobalToolAdopted must refuse an ACL-denied adopt")
+	}
+	if LoadAdoptedGlobalTools(db, "bob")["payroll"] {
+		t.Fatal("a refused adopt must not persist")
+	}
+	if err := SetGlobalToolAdopted(db, "alice", "payroll", true); err != nil {
+		t.Fatalf("alice is permitted; adopt should succeed: %v", err)
+	}
+	// Un-adopt is ALWAYS allowed, even for a user who could never adopt — a
+	// tightened ACL must never strand an un-removable tool.
+	if err := SetGlobalToolAdopted(db, "bob", "payroll", false); err != nil {
+		t.Fatalf("un-adopt must always be allowed: %v", err)
+	}
+}

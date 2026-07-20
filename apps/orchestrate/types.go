@@ -417,6 +417,18 @@ type AgentRecord struct {
 	// docs/tool-credential-namespacing.md.
 	DisabledCredentials []string `json:"disabled_credentials,omitempty"`
 
+	// AllowedUsers is the peer-share recipient set for a USER-OWNED agent: which
+	// other users may see and run this agent besides its Owner. Empty = private to
+	// the owner (the default — nothing is shared until the owner picks recipients).
+	// Non-empty = the owner shared it with exactly those usernames. Sharing is by
+	// reference: a recipient's turn resolves the agent's credential/tool names in
+	// THEIR namespace (Resolve(name, sessionUser)), so no secret travels with the
+	// share. Mirrors SecureCredential.AllowedUsers and PersistentTempTool.AllowedUsers
+	// — one ACL concept across all three shareable kinds. Governed (audited /
+	// revocable) by the admin console but ORIGINATED by the owner. See
+	// docs/sharing-governance.md.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+
 	// Hidden controls whether this agent is discoverable / callable
 	// by OTHER agents in the fleet. Default false = public: appears
 	// in every other agent's "Available agents" prompt block and is
