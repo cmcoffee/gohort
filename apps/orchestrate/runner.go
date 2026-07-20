@@ -5457,6 +5457,11 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	if !t.agent.Fleet {
 		knowTools = append(knowTools, t.recurringToolDef())
 	}
+	// Session spin-off — web chat only (this assembly path is never used by
+	// channel relays / dispatch / scheduled fires, and the handler's sse
+	// guard backstops that): the agent can open a fresh titled session with
+	// a seeded handoff note and offer the user a link to continue there.
+	knowTools = append(knowTools, t.openSessionToolDef())
 	// Tool authoring: any agent can author its OWN tools via tool_def (the way
 	// phantom always could before it was centralized). Builder already has
 	// tool_def via its authoring catalog, so don't double it. AGENT and
@@ -6351,6 +6356,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// per-session recurring scheduler — see runPlan's note.
 		tools = append(tools, t.recurringToolDef())
 	}
+	tools = append(tools, t.openSessionToolDef())
 	if t.agent.AllowExplorer {
 		tools = append(tools, t.enterExplorerModeToolDef())
 	}
