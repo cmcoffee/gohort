@@ -318,7 +318,16 @@ Steps 1–2 are the foundation (done); 3–6 each land independently on top.
 
 ---
 
-## Appendix — dashboard clustering of the orchestrator family (related, separate batch)
+## Appendix — dashboard clustering of the orchestrator family — SHIPPED
+
+`serve_dashboard` now partitions the cards into featured hero → **orchestrator
+family cluster** (a full-width titled block) → the rest → admin (wide). Family
+membership is exactly `implements WebAppHubTab` — the same single source `HubNav`
+reads, no new metadata — and the cluster is ordered by `HubTab` order
+(`hubTabOrder` helper) so it stays in lockstep with the tab row. Pure IA/CSS in
+`core/webapp.go`; no data model, no hot path.
+
+---
 
 Today `serve_dashboard` renders a **flat** card grid (`dashApp` list;
 `featured` / `wide` / regular sizing only). But the hub tab row already knows the

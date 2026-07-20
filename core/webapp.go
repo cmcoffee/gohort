@@ -164,6 +164,17 @@ type WebAppHubTab interface {
 	HubTab() (label string, order int)
 }
 
+// hubTabOrder returns an app's HubTab order, or a large sentinel when it isn't a
+// hub member (or is nil). Used to order the dashboard's orchestrator-family
+// cluster in lockstep with the tab row.
+func hubTabOrder(app WebApp) int {
+	if ht, ok := app.(WebAppHubTab); ok {
+		_, order := ht.HubTab()
+		return order
+	}
+	return 1 << 30
+}
+
 // HubNav builds the shared hub tab row for a page, marking the tab whose app
 // path equals activePath as the current one. Every hub member sets
 // Page.Nav = HubNav(<its WebPath>), so the same tabs render on all of them,
@@ -1079,20 +1090,52 @@ func (lw *loggingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
-	var cards strings.Builder
-	for _, a := range apps {
-		cls := "card"
-		if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
-			cls += " featured" // hero entry point — full-width, set apart
-		}
-		if wd, ok := a.app.(WebAppWide); ok && wd.WebWide() {
-			cls += " wide" // full-width row, regular height
-		}
-		fmt.Fprintf(&cards, `<a class="%s" href="%s/">
+	renderCard := func(b *strings.Builder, a dashApp, extraCls string) {
+		fmt.Fprintf(b, `<a class="card%s" href="%s/">
 			<div class="card-name">%s</div>
 			<div class="card-desc">%s</div>
-		</a>`, cls, a.path, a.name, a.desc)
+		</a>`, extraCls, a.path, a.name, a.desc)
 	}
+
+	// Partition: featured heroes, the orchestrator family, and everything else.
+	// The family is exactly the apps that ALSO appear as shared top-nav tabs —
+	// membership is "implements WebAppHubTab", the SAME single source HubNav reads,
+	// so no new metadata. They render as one titled cluster beneath the hero, so
+	// the dashboard mirrors the tab-row grouping instead of scattering these among
+	// unrelated apps. Featured wins over family (a hero stays the front door).
+	var heroB, restB strings.Builder
+	var family []dashApp
+	for _, a := range apps {
+		if f, ok := a.app.(WebAppFeatured); ok && f.WebFeatured() {
+			renderCard(&heroB, a, " featured") // hero entry point — full-width, set apart
+			continue
+		}
+		if _, ok := a.app.(WebAppHubTab); ok {
+			family = append(family, a)
+			continue
+		}
+		extra := ""
+		if wd, ok := a.app.(WebAppWide); ok && wd.WebWide() {
+			extra = " wide" // full-width row, regular height
+		}
+		renderCard(&restB, a, extra)
+	}
+	// Order the family by HubTab order so the cluster and the tab row stay in
+	// lockstep from one source.
+	sort.SliceStable(family, func(i, j int) bool {
+		return hubTabOrder(family[i].app) < hubTabOrder(family[j].app)
+	})
+
+	var cards strings.Builder
+	cards.WriteString(heroB.String())
+	if len(family) > 0 {
+		cards.WriteString(`<div class="cluster"><div class="cluster-head">Orchestrator</div><div class="cluster-grid">`)
+		for _, a := range family {
+			renderCard(&cards, a, "")
+		}
+		cards.WriteString(`</div></div>`)
+	}
+	cards.WriteString(restB.String())
 
 	// Detect logged-in user for the auth bar.
 	username := AuthCurrentUser(r)
@@ -1155,6 +1198,24 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
   /* Wide card — spans the full grid row at the REGULAR card height (a
      "double" button). Used for a bottom utility entry like Administrator. */
   .card.wide { grid-column: 1 / -1; }
+  /* Orchestrator family cluster — a full-width titled block grouping the apps
+     that also appear as shared top-nav tabs (Agents / Bridges / Knowledge /
+     Gateways), so the dashboard mirrors that grouping instead of scattering
+     them among unrelated cards. It spans the full grid width and holds its own
+     inner card grid. */
+  .cluster {
+    grid-column: 1 / -1;
+    border: 1px solid #30363d; border-radius: 10px;
+    padding: 1rem 1rem 1.25rem;
+  }
+  .cluster-head {
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.08em;
+    text-transform: uppercase; color: #8b949e; margin-bottom: 0.9rem;
+  }
+  .cluster-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 1rem;
+  }
   #live-panel {
     width: 100%; max-width: 700px; margin-top: 2rem;
   }
@@ -1203,6 +1264,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     .auth-bar { top: 8px; right: 8px; gap: 0.4rem; }
     .auth-user { display: none; } /* keep just the Logout button visible on narrow screens */
     .grid { grid-template-columns: 1fr; gap: 0.75rem; }
+    .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .card { padding: 1rem; }
   }
   /* Theme overrides — re-point chrome surfaces to the active theme's tokens
@@ -1212,6 +1274,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
   body { background: var(--bg-0); color: var(--text); }
   .subtitle, .card-desc, .auth-user, .live-status, #live-panel h3 { color: var(--text-mute); }
   .card, .card.featured, .live-item, .auth-link { background: var(--bg-1); border-color: var(--border); color: var(--text); }
+  .cluster { border-color: var(--border); }
+  .cluster-head { color: var(--text-mute); }
   .card-name { color: var(--text-hi); }
   .card:hover, .auth-link:hover, .live-item:hover { border-color: var(--accent); }
   .auth-link:hover { color: var(--text-hi); }
