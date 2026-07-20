@@ -62,7 +62,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// shared agentPickerOptions so the client-side refreshAgentDropdown can
 	// rebuild the SAME grouping from /api/agent-options instead of collapsing it
 	// to Built-in/Custom after a Builder action. See agent_options.go.
-	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(agents)
+	// pickerAgents drops the framework seeds for non-admins first — the
+	// same filter every picker surface applies.
+	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(pickerAgents(agents, AuthIsAdmin(AuthDB(), r)))
 	agentOpts = append(agentOpts, grouped...)
 
 	// Default the dropdown to the requested agent if the URL carries

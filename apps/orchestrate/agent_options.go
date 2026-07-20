@@ -25,6 +25,33 @@ var agentPickerBuiltInOrder = map[string]int{
 	"seed-research": 2,
 }
 
+// pickerAgents filters a listAgents result down to what the picker
+// surfaces should offer this user. Non-admins no longer see the
+// framework seeds — they build their own agents via the wizard (or
+// clone the crafted seeds as templates), so the retiring seeds stop
+// being selectable; existing seed sessions become unreachable, which
+// is the intended "non-usable" posture. Admins keep the seeds for
+// framework maintenance. App Agents are technically seeds too
+// (registered through seedAgents), but they're an app's own surface
+// governed by their Hidden posture in agentPickerOptions — exempt.
+// listAgents itself stays unfiltered: Builder runs, dispatch, seed
+// shadows, and template cloning all still resolve seeds by ID.
+func pickerAgents(agents []AgentRecord, admin bool) []AgentRecord {
+	if admin {
+		return agents
+	}
+	out := make([]AgentRecord, 0, len(agents))
+	for _, a := range agents {
+		if isSeedID(a.ID) {
+			if _, isApp := appagents.AppAgentByID(a.ID); !isApp {
+				continue
+			}
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 // agentPickerOptions builds the Agency agent-picker's GROUPED options — Built-in
 // / Conversation Agents / Specialized Agents / one group per owning app — plus
 // the cortex-session map and the sub-agents-by-parent map. The "— select agent —"
@@ -102,6 +129,6 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	opts, _, subs := agentPickerOptions(listAgents(udb, user))
+	opts, _, subs := agentPickerOptions(pickerAgents(listAgents(udb, user), AuthIsAdmin(AuthDB(), r)))
 	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs})
 }
