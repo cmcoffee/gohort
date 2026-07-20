@@ -2,7 +2,7 @@ package orchestrate
 
 import "testing"
 
-func TestPickerAgentsFiltersSeedsForNonAdmins(t *testing.T) {
+func TestPickerAgentsRetiresSeedsExceptBuilder(t *testing.T) {
 	agents := []AgentRecord{
 		{ID: "seed-chat", Owner: seedOwner},
 		{ID: "seed-builder", Owner: seedOwner},
@@ -10,16 +10,12 @@ func TestPickerAgentsFiltersSeedsForNonAdmins(t *testing.T) {
 		{ID: "ag-1", Owner: "alice", Name: "My Assistant"},
 	}
 
-	got := pickerAgents(agents, false)
-	if len(got) != 1 || got[0].ID != "ag-1" {
-		ids := []string{}
-		for _, a := range got {
-			ids = append(ids, a.ID)
-		}
-		t.Errorf("non-admin picker should keep only own agents; got %v", ids)
+	got := pickerAgents(agents)
+	ids := []string{}
+	for _, a := range got {
+		ids = append(ids, a.ID)
 	}
-
-	if got := pickerAgents(agents, true); len(got) != len(agents) {
-		t.Errorf("admin picker must keep seeds; got %d of %d", len(got), len(agents))
+	if len(got) != 2 || got[0].ID != "seed-builder" || got[1].ID != "ag-1" {
+		t.Errorf("picker should keep Builder + own agents only; got %v", ids)
 	}
 }

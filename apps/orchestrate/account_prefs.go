@@ -50,7 +50,7 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 	opts := []ui.SelectOption{
 		{Value: "", Label: "Last accessed — wherever you left off"},
 	}
-	grouped, _, _ := agentPickerOptions(pickerAgents(listAgents(udb, user), AuthIsAdmin(AuthDB(), r)))
+	grouped, _, _ := agentPickerOptions(pickerAgents(listAgents(udb, user)))
 	opts = append(opts, grouped...)
 	return ui.Section{
 		Title:    "Agents",
@@ -90,7 +90,7 @@ func (T *OrchestrateApp) handleDefaultAgentPref(w http.ResponseWriter, r *http.R
 			return
 		}
 		v := strings.TrimSpace(req.DefaultAgent)
-		if v != "" && v != lastAccessedSentinel && !userCanSeeAgent(udb, user, v, AuthIsAdmin(AuthDB(), r)) {
+		if v != "" && v != lastAccessedSentinel && !userCanSeeAgent(udb, user, v) {
 			http.Error(w, "unknown agent", http.StatusBadRequest)
 			return
 		}
@@ -103,9 +103,9 @@ func (T *OrchestrateApp) handleDefaultAgentPref(w http.ResponseWriter, r *http.R
 
 // userCanSeeAgent reports whether id is one of the agents the PICKER
 // offers this user — the same pickerAgents filter every picker surface
-// applies, so a non-admin can't set a retired seed as their default.
-func userCanSeeAgent(udb Database, user, id string, admin bool) bool {
-	for _, a := range pickerAgents(listAgents(udb, user), admin) {
+// applies, so a retired seed can't be set as a default.
+func userCanSeeAgent(udb Database, user, id string) bool {
+	for _, a := range pickerAgents(listAgents(udb, user)) {
 		if a.ID == id {
 			return true
 		}

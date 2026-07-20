@@ -26,23 +26,20 @@ var agentPickerBuiltInOrder = map[string]int{
 }
 
 // pickerAgents filters a listAgents result down to what the picker
-// surfaces should offer this user. Non-admins no longer see the
-// framework seeds — they build their own agents via the wizard (or
-// clone the crafted seeds as templates), so the retiring seeds stop
-// being selectable; existing seed sessions become unreachable, which
-// is the intended "non-usable" posture. Admins keep the seeds for
-// framework maintenance. App Agents are technically seeds too
+// surfaces offer: the user's own agents, plus Builder — the ONE
+// framework seed that stays, since it's how users author agents, apps,
+// and tools conversationally. Every other seed is retired for everyone
+// (admins included): not selectable, existing seed sessions
+// unreachable — users build their own via the wizard or clone the
+// crafted seeds as templates. App Agents are technically seeds too
 // (registered through seedAgents), but they're an app's own surface
 // governed by their Hidden posture in agentPickerOptions — exempt.
 // listAgents itself stays unfiltered: Builder runs, dispatch, seed
 // shadows, and template cloning all still resolve seeds by ID.
-func pickerAgents(agents []AgentRecord, admin bool) []AgentRecord {
-	if admin {
-		return agents
-	}
+func pickerAgents(agents []AgentRecord) []AgentRecord {
 	out := make([]AgentRecord, 0, len(agents))
 	for _, a := range agents {
-		if isSeedID(a.ID) {
+		if isSeedID(a.ID) && a.ID != "seed-builder" {
 			if _, isApp := appagents.AppAgentByID(a.ID); !isApp {
 				continue
 			}
@@ -129,6 +126,6 @@ func (T *OrchestrateApp) handleAgentPickerOptions(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	opts, _, subs := agentPickerOptions(pickerAgents(listAgents(udb, user), AuthIsAdmin(AuthDB(), r)))
+	opts, _, subs := agentPickerOptions(pickerAgents(listAgents(udb, user)))
 	writeJSON(w, map[string]any{"options": opts, "sub_agents": subs})
 }

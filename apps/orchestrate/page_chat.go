@@ -62,9 +62,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// shared agentPickerOptions so the client-side refreshAgentDropdown can
 	// rebuild the SAME grouping from /api/agent-options instead of collapsing it
 	// to Built-in/Custom after a Builder action. See agent_options.go.
-	// pickerAgents drops the framework seeds for non-admins first — the
-	// same filter every picker surface applies.
-	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(pickerAgents(agents, AuthIsAdmin(AuthDB(), r)))
+	// pickerAgents drops the retired framework seeds (Builder stays) —
+	// the same filter every picker surface applies.
+	grouped, cortexAgents, subAgentsByParent := agentPickerOptions(pickerAgents(agents))
 	agentOpts = append(agentOpts, grouped...)
 
 	// Default the dropdown to the requested agent if the URL carries
@@ -72,17 +72,19 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// save-redirect so you land back on the agent you just edited.
 	// With no deep link, the user's Default agent preference decides:
 	// a specific agent, or (unset) the last-accessed cookie. When
-	// neither resolves, fall back to the Chat seed IF it's still in
-	// this user's picker, else the first agent they can see — no
-	// hardcoded seed dependence, so retiring the seeds from the
-	// user-facing list doesn't strand the surface.
+	// neither resolves, fall back to the user's first OWN agent —
+	// Builder (the one seed left in the picker) only when they have
+	// nothing of their own yet.
 	fallbackAgent := ""
 	for _, opt := range agentOpts {
-		if opt.Value == "seed-chat" {
+		if opt.Value == "" {
+			continue
+		}
+		if !isSeedID(opt.Value) {
 			fallbackAgent = opt.Value
 			break
 		}
-		if fallbackAgent == "" && opt.Value != "" {
+		if fallbackAgent == "" {
 			fallbackAgent = opt.Value
 		}
 	}
