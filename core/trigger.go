@@ -286,6 +286,68 @@ func ScheduleTrigger(db Database, t ScheduledTrigger) error {
 	return scheduleTriggerAt(db, t, runAt)
 }
 
+// triggerRearmGrace is how stale a NextRun must be before the reconciler treats
+// a taskless active trigger as stranded rather than mid-fire or mid-create. A
+// fire can run a gate check plus a dispatched agent action (minutes); this
+// stays comfortably above that and below any real cadence.
+const triggerRearmGrace = 15 * time.Minute
+
+// RearmStrandedScheduledTriggers reschedules active recurring triggers that
+// have no live scheduler task — the "fire dequeued, but the re-arm never
+// completed" state a restart mid-fire leaves behind (the scheduler removes a
+// task from the queue before invoking its handler, and the trigger handler
+// re-arms only at the end of the fire). Mirrors RearmStrandedEventMonitors /
+// RearmStrandedStandingAgents: only genuinely stranded triggers are touched;
+// healthy ones (holding a live task) keep their own cadence. One-shot triggers
+// are left alone — a stranded one-shot may or may not have completed its only
+// fire, and replaying a dispatch action is worse than losing it (at-most-once).
+// Missed fires are not backfilled. Returns the count revived.
+func RearmStrandedScheduledTriggers(db Database) int {
+	if db == nil {
+		return 0
+	}
+	live := map[string]bool{}
+	for _, task := range ListScheduledTasks(triggerKind) {
+		var p triggerPayload
+		if json.Unmarshal(task.Payload, &p) == nil {
+			live[eventKey(p.Owner, p.Name)] = true
+		}
+	}
+	now := time.Now()
+	revived := 0
+	for _, k := range db.Keys(scheduledTriggersTable) {
+		var t ScheduledTrigger
+		if !db.Get(scheduledTriggersTable, k, &t) {
+			continue
+		}
+		if t.Push || t.Paused || live[eventKey(t.Owner, t.Name)] {
+			continue
+		}
+		// Future or only-just-passed NextRun: leave it to the normal path so we
+		// never double-arm an imminent legitimate fire. Zero NextRun means the
+		// trigger never held (or deliberately cleared) a schedule — skip.
+		if t.NextRun.IsZero() || !t.NextRun.Before(now.Add(-triggerRearmGrace)) {
+			continue
+		}
+		next, recurring := nextTriggerRun(t, now.In(UserLocation(t.Owner)))
+		if !recurring {
+			continue
+		}
+		frozen := t.NextRun
+		if err := scheduleTriggerAt(db, t, next); err != nil {
+			Log("[trigger] re-arm failed for %s/%s: %v", t.Owner, t.Name, err)
+			continue
+		}
+		revived++
+		Log("[trigger] re-armed stranded trigger %s/%s (NextRun was frozen at %s)",
+			t.Owner, t.Name, frozen.Format(time.RFC3339))
+	}
+	if revived > 0 {
+		Log("[trigger] reconciler revived %d stranded trigger(s)", revived)
+	}
+	return revived
+}
+
 // RunTriggerNow fires a one-off check/callback immediately without disturbing the
 // recurring cadence. Push triggers have nothing to poll.
 func RunTriggerNow(db Database, owner, name string) error {
@@ -309,6 +371,17 @@ func StartTriggerScheduler() {
 	}
 	triggerStarted = true
 	triggerMu.Unlock()
+
+	// Ongoing self-heal, symmetric with event monitors and standing agents:
+	// a fire that dies before its end-of-fire re-arm (restart mid-fire —
+	// gate checks and dispatched actions run minutes) leaves the trigger
+	// active-but-taskless with NextRun frozen. The reconciler runs at
+	// scheduler start and every 30 minutes, re-arming only genuinely
+	// stranded recurring triggers.
+	RegisterReconciler("trigger_rearm", func(ctx context.Context) error {
+		RearmStrandedScheduledTriggers(RootDB)
+		return nil
+	})
 
 	RegisterScheduleHandler(triggerKind, func(ctx context.Context, raw json.RawMessage) {
 		var p triggerPayload
