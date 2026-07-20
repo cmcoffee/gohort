@@ -3625,8 +3625,11 @@
         }
         channelsEl.appendChild(hdr);
         if (!list.length) {
-          channelsEl.appendChild(el('div', {class: 'ui-channels-empty'}, ['No channels yet.']));
-          channelsEl.style.display = '';
+          // No empty-state line — the labeled header with its + button IS the
+          // affordance; a "No channels yet." placeholder was just noise. When
+          // there's no add button either (read-only surface), a bare header
+          // says even less, so hide the section entirely until a channel exists.
+          channelsEl.style.display = cfg.channel_save_url ? '' : 'none';
           return;
         }
         list.forEach(function(ch) {
