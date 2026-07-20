@@ -93,6 +93,58 @@ func TestCredentialUserNamespaceStore(t *testing.T) {
 	}
 }
 
+// TestUserOwnedGovernance covers the admin governance helpers over the user
+// plane: ListAllUserOwned enumerates every user's own creds (never global), and
+// SetDisabledOwned revokes a user-owned cred in its owner's namespace without
+// touching a same-named cred of another user or the global one.
+func TestUserOwnedGovernance(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	mk := func(name, owner string) {
+		if err := s.Save(SecureCredential{Name: name, Owner: owner, Type: SecureCredBearer, BaseURL: "https://x.test"}, "sek"); err != nil {
+			t.Fatalf("save %s/%s: %v", owner, name, err)
+		}
+	}
+	mk("shared", "")    // global — must NOT appear in ListAllUserOwned
+	mk("github", "alice")
+	mk("github", "bob") // same name, different owner
+	mk("jira", "alice")
+
+	owned := s.ListAllUserOwned()
+	if len(owned) != 3 {
+		t.Fatalf("ListAllUserOwned must return the 3 user-owned creds (not the global); got %d: %v", len(owned), owned)
+	}
+	for _, c := range owned {
+		if c.Owner == "" {
+			t.Fatalf("ListAllUserOwned must exclude global creds; got %v", c)
+		}
+	}
+
+	// SetDisabledOwned revokes only alice's github — not bob's, not the global.
+	if err := s.SetDisabledOwned("alice", "github", true); err != nil {
+		t.Fatal(err)
+	}
+	ac, _ := s.LoadUser("alice", "github")
+	bc, _ := s.LoadUser("bob", "github")
+	gc, _ := s.Load("shared")
+	if !ac.Disabled {
+		t.Fatal("alice's github must be disabled")
+	}
+	if bc.Disabled {
+		t.Fatal("bob's same-named github must be untouched")
+	}
+	if gc.Disabled {
+		t.Fatal("the global cred must be untouched")
+	}
+
+	// Re-enable clears it.
+	if err := s.SetDisabledOwned("alice", "github", false); err != nil {
+		t.Fatal(err)
+	}
+	if ac, _ := s.LoadUser("alice", "github"); ac.Disabled {
+		t.Fatal("re-enable must clear disabled")
+	}
+}
+
 // TestBuildToolsUserNamespace covers the auto-catalog: BuildTools surfaces the
 // session user's OWN credentials as fetch_url_<name> tools, a nil session sees
 // global-only, and a user cred shadows a same-named global (one tool, not two).

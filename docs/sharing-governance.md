@@ -96,11 +96,27 @@ Reused verbatim by Deliverable 1, Deliverable 3, and peer sharing.
 
 ---
 
-## Deliverable 2 — Admin audit & revoke console
+## Deliverable 2 — Admin audit & revoke console — SHIPPED (creds + adoptions)
 
 The admin is currently **blind** to the user plane (`List` returns only global;
 user resources live under `ListUser(username)`). For a security posture the admin
 needs read + kill across every user's namespace, even resources they don't own.
+
+**Shipped:** two admin sections next to API Credentials.
+- **User-owned credentials** — `SecureAPI.ListAllUserOwned()` enumerates every
+  `Owner != ""` credential; rows carry owner/name/type/secured/disabled with
+  owner-aware **Disable** (`SetDisabledOwned` — revoke without delete) / **Enable**
+  / **Delete** (`DeleteUser`). Endpoint `api/user-credentials`.
+- **Global-tool adoptions** — one row per (tool, adopter) from
+  `LoadAdoptedGlobalTools` across `AuthListUsers`, a **⚠ stale** flag when the tool
+  has left the shared catalog, and a **Remove** action (`SetGlobalToolAdopted
+  false`). Endpoint `api/tool-adoptions`. Shows a shared tool's blast radius.
+- Covered by `TestUserOwnedGovernance`.
+
+**User-owned tools** are already visible in the existing Global Tools section (the
+persistent pool is admin-visible), so they aren't duplicated here. **User-owned
+agents** are deferred to Deliverable 5 — there is nothing to audit or revoke until
+peer-sharing exists; that section joins this area then.
 
 ### New admin section: "User namespace"
 
@@ -216,9 +232,11 @@ Free, no admin approval. Reuses `core/sharing.go` + the new `AgentRecord.Allowed
    `core.SetPersistentTempToolAllowedUsers`. Covered by
    `TestSetPersistentTempToolAllowedUsers`. (UI follows the proven App-Groups
    FormPanel+ChipPicker pattern; needs a runtime smoke test on deploy.)
-4. **Deliverable 2** — admin governance console (audit + revoke + adoption view).
+4. **Deliverable 2 — SHIPPED (creds + adoptions).** `ListAllUserOwned` +
+   `SetDisabledOwned`; `api/user-credentials` + `api/tool-adoptions`; two admin
+   sections. Agent audit deferred into step 5 (nothing to revoke until sharing).
 5. **Peer sharing** — Gateways share action for agents (`AgentRecord.AllowedUsers`
-   + `SetSharedOwner`).
+   + `SetSharedOwner`), plus the user-owned-agents governance table in Deliverable 2.
 6. **Deliverable 3** — promotion requests (store, Gateways request action, admin
    approve/deny with the kind asymmetry).
 

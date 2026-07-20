@@ -614,6 +614,51 @@ func (s *SecureAPI) DeleteUser(owner, name string) error {
 	return nil
 }
 
+// ListAllUserOwned returns every USER-OWNED credential across all users'
+// namespaces (Owner != ""). The admin's governance view over the user plane —
+// List() returns only global creds, so without this the admin is blind to
+// credentials users create for themselves. Secret sub-keys are skipped (same
+// "__" filter as ListUser).
+func (s *SecureAPI) ListAllUserOwned() []SecureCredential {
+	if !s.ready() {
+		return nil
+	}
+	var out []SecureCredential
+	for _, k := range s.db.Keys(secureAPITable) {
+		if !strings.HasPrefix(k, "@u:") || strings.Contains(k, "__") {
+			continue
+		}
+		var c SecureCredential
+		if s.db.Get(secureAPITable, k, &c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// SetDisabledOwned toggles the disabled flag on a USER-OWNED credential (in the
+// owner's namespace). An empty owner falls back to the global SetDisabled. This is
+// the admin's revoke lever over the user plane — a hard kill that keeps the record
+// (the owner still sees it) but stops it resolving.
+func (s *SecureAPI) SetDisabledOwned(owner, name string, disabled bool) error {
+	if strings.TrimSpace(owner) == "" {
+		return s.SetDisabled(name, disabled)
+	}
+	if !s.ready() || name == "" {
+		return fmt.Errorf("name required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return fmt.Errorf("credential %q not found", name)
+	}
+	c.Disabled = disabled
+	s.db.Set(secureAPITable, key, c)
+	return nil
+}
+
 // Resolve returns the credential a tool reference `name` maps to for session user
 // `user`: the user's OWN credential shadows a global one of the same name (their
 // namespace wins), else the global credential. Empty user → global only.

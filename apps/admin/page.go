@@ -1247,6 +1247,63 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 				},
 			},
 			{
+				Title:    "User-owned credentials",
+				Subtitle: "Credentials users create for themselves (on their Gateways page) — the admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these. Disable revokes a credential without deleting it (the owner keeps the record; it stops resolving); Delete removes it and its encrypted secret. (User-owned agents will join this governance area once peer-sharing ships.)",
+				Body: ui.Table{
+					Source: "api/user-credentials",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "owner", Flex: 0, Label: "Owner"},
+						{Field: "name", Flex: 1},
+						{Field: "type", Flex: 0, Mute: true},
+						{Field: "secured", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Secured", Color: "mute"},
+						}},
+						{Field: "disabled", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Disabled", Color: "danger"},
+							{Value: false, Label: "Enabled", Color: "success"},
+						}},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Enable",
+							PostTo: "api/user-credentials?action=enable&owner={owner}&name={name}",
+							Method: "POST", OnlyIf: "disabled"},
+						{Type: "button", Label: "Disable",
+							PostTo: "api/user-credentials?action=disable&owner={owner}&name={name}",
+							Method: "POST", HideIf: "disabled"},
+						{Type: "button", Label: "Delete",
+							PostTo:  "api/user-credentials?owner={owner}&name={name}",
+							Method:  "DELETE",
+							Confirm: "Delete this user's credential? The encrypted secret goes with it. This cannot be undone.",
+							Variant: "danger"},
+					},
+					EmptyText: "No user-owned credentials. When a user creates one on their Gateways page, it appears here.",
+				},
+			},
+			{
+				Title:    "Global-tool adoptions",
+				Subtitle: "Who has pulled each SHARED global tool into their fleet (opt-in from their Gateways catalog). Shows a shared tool's blast radius before you revoke it, and lets you force-remove one user's adoption. A ⚠ row is a stale adoption — the tool has since left the shared catalog. Removing an adoption stops that user's agents loading the tool until they re-adopt (if still permitted by its access list).",
+				Body: ui.Table{
+					Source: "api/tool-adoptions",
+					RowKey: "id",
+					Columns: []ui.Col{
+						{Field: "tool", Flex: 1},
+						{Field: "user", Flex: 0, Label: "Adopted by"},
+						{Field: "stale", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "⚠ tool unshared", Color: "warning"},
+						}},
+					},
+					RowActions: []ui.RowAction{
+						{Type: "button", Label: "Remove",
+							PostTo:  "api/tool-adoptions?action=unadopt&user={user}&name={tool}",
+							Method:  "POST",
+							Confirm: "Remove this user's adoption of the tool? Their agents stop loading it until they re-adopt (if still permitted).",
+							Variant: "danger"},
+					},
+					EmptyText: "No global-tool adoptions yet. When a user adopts a shared tool from their Gateways catalog, it appears here.",
+				},
+			},
+			{
 				Title:    "MCP Servers",
 				Subtitle: "Remote Model Context Protocol servers (e.g. Confluence) the gohort SERVER connects to over HTTP. \"Expose tools\" registers each server's tools as <name>.<tool> for agents; \"Expose as a reference source\" makes it selectable in writer/research source pickers. Bearer tokens are stored encrypted; secure_api mode mints + refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability + auth before you enable.",
 				Body: ui.Stack{

@@ -204,6 +204,129 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		w.Write(UserCandidatesJSON(a.db))
 	})
 
+	// API: user-owned credentials — the governance view over the user plane. The
+	// admin API Credentials page shows only GLOBAL creds; this surfaces the ones
+	// users create for themselves, with owner-aware revoke (disable) + delete.
+	sub.HandleFunc("/api/user-credentials", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			type row struct {
+				ID       string `json:"id"` // owner/name — unique across users (RowKey)
+				Owner    string `json:"owner"`
+				Name     string `json:"name"`
+				Type     string `json:"type"`
+				Disabled bool   `json:"disabled"`
+				Secured  bool   `json:"secured"`
+			}
+			rows := []row{}
+			for _, c := range Secure().ListAllUserOwned() {
+				rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured})
+			}
+			sort.Slice(rows, func(i, j int) bool {
+				if rows[i].Owner != rows[j].Owner {
+					return rows[i].Owner < rows[j].Owner
+				}
+				return rows[i].Name < rows[j].Name
+			})
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if owner == "" || name == "" {
+				http.Error(w, "owner and name required", http.StatusBadRequest)
+				return
+			}
+			var err error
+			switch r.URL.Query().Get("action") {
+			case "disable":
+				err = Secure().SetDisabledOwned(owner, name, true)
+			case "enable":
+				err = Secure().SetDisabledOwned(owner, name, false)
+			default:
+				http.Error(w, "action must be enable|disable", http.StatusBadRequest)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodDelete:
+			owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if owner == "" || name == "" {
+				http.Error(w, "owner and name required", http.StatusBadRequest)
+				return
+			}
+			if err := Secure().DeleteUser(owner, name); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// API: global-tool adoptions — who has pulled each shared tool into their
+	// fleet, so the admin can see blast radius before revoking one and force-remove
+	// a specific user's adoption. One row per (tool, adopter); a stale row is an
+	// adoption whose tool has since left the shared catalog.
+	sub.HandleFunc("/api/tool-adoptions", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			shared := map[string]bool{}
+			for _, p := range LoadSharedPersistentTempTools(a.db) {
+				shared[p.Tool.Name] = true
+			}
+			type row struct {
+				ID    string `json:"id"` // tool/user — unique (RowKey)
+				Tool  string `json:"tool"`
+				User  string `json:"user"`
+				Stale bool   `json:"stale"`
+			}
+			rows := []row{}
+			for _, u := range AuthListUsers(a.db) {
+				for name := range LoadAdoptedGlobalTools(a.db, u.Username) {
+					rows = append(rows, row{ID: name + "/" + u.Username, Tool: name, User: u.Username, Stale: !shared[name]})
+				}
+			}
+			sort.Slice(rows, func(i, j int) bool {
+				if rows[i].Tool != rows[j].Tool {
+					return rows[i].Tool < rows[j].Tool
+				}
+				return rows[i].User < rows[j].User
+			})
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			user := strings.TrimSpace(r.URL.Query().Get("user"))
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if user == "" || name == "" {
+				http.Error(w, "user and name required", http.StatusBadRequest)
+				return
+			}
+			if r.URL.Query().Get("action") != "unadopt" {
+				http.Error(w, "action must be unadopt", http.StatusBadRequest)
+				return
+			}
+			if err := SetGlobalToolAdopted(a.db, user, name, false); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
 	// API: user operations (update/delete/apps).
 	sub.HandleFunc("/api/users/", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
