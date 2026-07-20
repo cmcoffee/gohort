@@ -20,17 +20,18 @@ import (
 // Cortex (a standing mind, the "channel" json field) and memory mode — so you
 // choose WHAT KIND of agent this is instead of reasoning about each flag. Two
 // types only, kept in lockstep with the wizard's wizard_kinds (a test asserts
-// it): the identity question is "for people, or for other agents?" — standing
-// mind and memory behavior are dials, editable here and surfaced in the
-// wizard's Memory step, not species. The type is a starting point, not a
-// lock. Fleet is deliberately OFF on both — granting the fleet (delegate /
-// standing agents / monitors) is an explicit per-agent choice, not a type
-// default. See docs/channels-and-agents.md.
+// it): the identity question is "a companion that knows its people, or a
+// focused tool for a job?" — standing mind and memory behavior are dials,
+// editable here and surfaced in the wizard's Memory step, not species. The
+// type is a starting point, not a lock. Fleet is deliberately OFF on both —
+// granting the fleet (delegate / standing agents / monitors) is an explicit
+// per-agent choice, not a type default. See docs/channels-and-agents.md.
 //
 //	Assistant  — conversational agent for people (you, a room, a contact):
 //	             Cortex on, personalized memory (attributed by name).
-//	Specialist — a focused worker other agents dispatch to: no Cortex,
-//	             lessons-only memory.
+//	Specialist — a focused agent for one job (a research agent with an
+//	             intake form, a report generator), used directly or
+//	             dispatched to by other agents: no Cortex, lessons-only.
 func agentTypeTemplates() []ui.FormTemplate {
 	return []ui.FormTemplate{
 		{
@@ -38,7 +39,7 @@ func agentTypeTemplates() []ui.FormTemplate {
 			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
 		},
 		{
-			Label:  "Specialist — a focused worker other agents dispatch to",
+			Label:  "Specialist — a focused agent for one job, used directly or by dispatch",
 			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false, "recall_hints": true},
 		},
 	}

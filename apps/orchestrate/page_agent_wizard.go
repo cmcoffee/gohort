@@ -25,18 +25,21 @@ import (
 // wizard_kinds maps the wizard's "agent type" answer to the same
 // character-defining defaults the editor's Agent-type presets stamp
 // (agentTypeTemplates): Cortex + memory mode, Fleet off, recall hints on.
-// Two types only — the one identity question is "for people, or for
-// other agents?"; standing mind and memory behavior are DIALS the
-// wizard's Memory step (and the editor) can override, not species.
-// label doubles as the select option text and the type line in the
-// prompt-drafting brief.
+// Two types only — the one identity question is "a companion that
+// knows its people, or a focused tool for a job?"; standing mind and
+// memory behavior are DIALS the wizard's Memory step (and the editor)
+// can override, not species. A Specialist isn't only for other agents:
+// a user drives one directly too (a research agent with an intake
+// form, a report generator) — what defines it is being task-focused,
+// so it remembers lessons rather than people. label doubles as the
+// select option text and the type line in the prompt-drafting brief.
 var wizard_kinds = map[string]struct {
 	label       string
 	cortex      bool
 	memory_mode string
 }{
 	"assistant":  {"Assistant — a conversational agent that works with people", true, "chatbot"},
-	"specialist": {"Specialist — a focused worker other agents dispatch to", false, "agent"},
+	"specialist": {"Specialist — a focused agent for one job, used directly or by dispatch", false, "agent"},
 }
 
 // renderAgentWizard shows the guided New Agent flow: a Steps FormPanel
@@ -73,7 +76,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					{Value: "assistant", Label: wizard_kinds["assistant"].label},
 					{Value: "specialist", Label: wizard_kinds["specialist"].label},
 				},
-				Help: "One question: who is it for? An Assistant talks with people — you, a room, a contact — keeps a standing mind, and remembers who it talks to. A Specialist does focused work other agents dispatch to it, and remembers lessons rather than people. The Memory step adjusts either."},
+				Help: "One question: companion or tool? An Assistant talks with people — you, a room, a contact — keeps a standing mind, and remembers who it talks to. A Specialist is built for one job — a research agent with an intake form, a report generator — used by you directly or dispatched to by other agents, and remembers lessons rather than people. The Memory step adjusts either."},
 			{Field: "name", Type: "text", Label: "Name", Required: true,
 				Placeholder: "Research helper", SuggestURL: "../api/agents/suggest"},
 			{Field: "description", Type: "text", Label: "Description",
