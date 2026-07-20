@@ -530,6 +530,19 @@ type FormPanel struct {
 	Source string      `json:"source"`
 	Method string      `json:"method,omitempty"`
 	Fields []FormField `json:"fields"`
+	// Steps — when set, the form renders as a multi-step wizard
+	// instead of one flat field list: a numbered progress rail, one
+	// step's fields visible at a time, Back/Next navigation, and the
+	// submit button (plus Test/Reset, if configured) on the final
+	// step. Fields is ignored when Steps is set — every field lives
+	// inside a step. All steps still bind to the ONE record `current`
+	// state, so the final submit POSTs exactly what a flat form
+	// would; the wizard is purely presentation. Next is gated on the
+	// step's Required fields, and a step's ShowWhen can skip the
+	// whole step based on an earlier answer. Use for guided create
+	// flows ("New Agent", connector onboarding); keep flat Fields
+	// for edit-in-place settings forms.
+	Steps []FormStep `json:"steps,omitempty"`
 	// PostURL — destination for saves when it differs from Source.
 	// Defaults to Source. Use when the GET endpoint that returns the
 	// current record shape isn't the right write target — e.g. an
@@ -608,6 +621,27 @@ type FormPanel struct {
 type FormTemplate struct {
 	Label  string         `json:"label"`
 	Values map[string]any `json:"values"`
+}
+
+// FormStep is one page of a FormPanel wizard (FormPanel.Steps).
+// Fields render in order within the step and support every FormField
+// type, including "header" groups and "hidden" context carriers.
+type FormStep struct {
+	// Title labels the step in the progress rail ("Purpose",
+	// "Access", "Review"). Keep it to one or two words.
+	Title string `json:"title"`
+	// Intro — optional lead-in paragraph rendered above the step's
+	// fields. Use it to tell the user what this step decides and why,
+	// since a wizard's whole point is guidance.
+	Intro string `json:"intro,omitempty"`
+	// ShowWhen gates the entire step on the form's current values,
+	// using the same expression grammar as FormField.ShowWhen
+	// ("field", "field:value", "field:v1|v2", clauses joined by ";").
+	// A hidden step is skipped by Back/Next, dropped from the rail,
+	// and exempt from Required gating — e.g. show a "Channel" step
+	// only when an earlier answer picked kind=channel.
+	ShowWhen string      `json:"show_when,omitempty"`
+	Fields   []FormField `json:"fields"`
 }
 
 func (FormPanel) componentType() string { return "form_panel" }
@@ -691,6 +725,16 @@ type FormField struct {
 	// master toggle is off — e.g. hide a whisper URL until
 	// `enabled` is on. Updates immediately when the gating field changes.
 	ShowWhen string `json:"show_when,omitempty"`
+	// Required — in a Steps wizard, the user can't advance past (or
+	// submit from) this field's step while it is empty (null, "", or
+	// an empty array; 0 and false count as filled). The offending
+	// field highlights and its label appears in an inline note. No
+	// effect on flat (non-Steps) forms today. Note for "select":
+	// the browser shows the first option pre-picked but the value
+	// only enters the record when the user touches the control — give
+	// a required select a blank "— choose —" first option so the
+	// display matches the gate.
+	Required bool `json:"required,omitempty"`
 
 	// Chips — when ChipsSource is set, the field renders with a row
 	// of clickable preset chips above the input. Each chip applies a

@@ -954,6 +954,23 @@
     // pattern stays the default — every existing edit-in-place form
     // works unchanged.
     var submitMode = !!cfg.submit_label;
+    // Steps mode — the multi-step wizard presentation. The step
+    // fields are flattened into cfg.fields up front so every existing
+    // wire (save, show_when visibility, suggest setters, hidden
+    // defaults) sees the usual single field list; the stepper is a
+    // presentation layer over the same one-record state.
+    var stepsMode = Array.isArray(cfg.steps) && cfg.steps.length > 0;
+    if (stepsMode) {
+      cfg.fields = cfg.steps.reduce(function(acc, st) {
+        return acc.concat(st.fields || []);
+      }, []);
+    }
+    // Hooks the stepper installs: submitGuard vetoes the final submit
+    // until every visible step passes its required-field gate;
+    // stepVisibilityHook re-resolves which steps exist after each
+    // visibility pass (a gating answer can hide a later step).
+    var submitGuard = null;
+    var stepVisibilityHook = null;
 
     // fieldSetters maps a field name to a type-aware function that
     // applies a new value AND persists. The "✨ Suggest" button reads
@@ -1033,6 +1050,7 @@
           node.style.display = matchesShowWhen(f.show_when) ? '' : 'none';
         }
       });
+      if (stepVisibilityHook) stepVisibilityHook();
     }
 
     function debounced(field, value) {
@@ -1894,32 +1912,38 @@
         tplRow.appendChild(tplSel);
         wrap.appendChild(tplRow);
       }
-      // Render fields in order. A Type==="header" with collapsed:true starts a
-      // collapsible group — the fields that follow (until the next header) go
-      // into a hidden body the header toggles. Backward-safe: with no collapsed
-      // headers, collapseBody stays null and every field lands in wrap as before.
-      var collapseBody = null;
-      cfg.fields.forEach(function(f){
-        var fieldEl = renderField(f);
-        if ((f.type || '') === 'header') {
-          collapseBody = null; // a header ends any prior group
-          if (f.collapsed) {
-            var body = el('div', {class: 'ui-form-collapse-body', style: 'display:none'});
-            fieldEl.classList.add('ui-form-collapsible');
-            fieldEl.setAttribute('role', 'button');
-            fieldEl.addEventListener('click', function(){
-              var open = body.style.display === 'none';
-              body.style.display = open ? '' : 'none';
-              fieldEl.classList.toggle('open', open);
-            });
-            wrap.appendChild(fieldEl);
-            wrap.appendChild(body);
-            collapseBody = body;
-            return;
+      // Render fields in order into a host. A Type==="header" with
+      // collapsed:true starts a collapsible group — the fields that follow
+      // (until the next header) go into a hidden body the header toggles.
+      // Parameterized on host so the flat form and each wizard step share
+      // one implementation. Backward-safe: with no collapsed headers,
+      // collapseBody stays null and every field lands in the host as before.
+      function renderFieldsInto(host, fields) {
+        var collapseBody = null;
+        fields.forEach(function(f){
+          var fieldEl = renderField(f);
+          if ((f.type || '') === 'header') {
+            collapseBody = null; // a header ends any prior group
+            if (f.collapsed) {
+              var body = el('div', {class: 'ui-form-collapse-body', style: 'display:none'});
+              fieldEl.classList.add('ui-form-collapsible');
+              fieldEl.setAttribute('role', 'button');
+              fieldEl.addEventListener('click', function(){
+                var open = body.style.display === 'none';
+                body.style.display = open ? '' : 'none';
+                fieldEl.classList.toggle('open', open);
+              });
+              host.appendChild(fieldEl);
+              host.appendChild(body);
+              collapseBody = body;
+              return;
+            }
           }
-        }
-        (collapseBody || wrap).appendChild(fieldEl);
-      });
+          (collapseBody || host).appendChild(fieldEl);
+        });
+      }
+      if (stepsMode) renderStepper(wrap);
+      else renderFieldsInto(wrap, cfg.fields);
       applyVisibility();
       // Saving indicator gets attached to the parent section header.
       var section = wrap.closest('.ui-section');
@@ -1932,7 +1956,8 @@
       // result next to the button. Works in both auto-save and
       // submit-button modes; in submit-button mode it sits before the
       // submit so the natural flow is [Test] then [Save].
-      if (cfg.test_url) {
+      function appendTestRow(host) {
+        if (!cfg.test_url) return;
         var testRow = el('div', {class: 'ui-form-test-row',
           style: 'display:flex;align-items:center;gap:0.6rem;margin-top:0.5rem;flex-wrap:wrap'});
         var testBtn = el('button', {class: 'ui-row-btn', type: 'button'},
@@ -1967,12 +1992,13 @@
         });
         testRow.appendChild(testBtn);
         testRow.appendChild(testResult);
-        wrap.appendChild(testRow);
+        host.appendChild(testRow);
       }
       // ResetURL — "Revert to defaults" button. Confirms, POSTs to the reset
       // endpoint (server clears the stored overrides), then reloads the form
       // from Source so the fields show the reverted default values.
-      if (cfg.reset_url) {
+      function appendResetRow(host) {
+        if (!cfg.reset_url) return;
         var resetRow = el('div', {style: 'margin-top:0.5rem'});
         var resetBtn = el('button', {class: 'ui-row-btn', type: 'button'},
           [cfg.reset_label || 'Revert to defaults']);
@@ -1988,12 +2014,13 @@
             .then(function(){ resetBtn.disabled = false; resetBtn.textContent = orig; });
         });
         resetRow.appendChild(resetBtn);
-        wrap.appendChild(resetRow);
+        host.appendChild(resetRow);
       }
       // Submit-button mode — append an explicit submit button after
       // the last field. Click POSTs the full record and (if
       // RedirectURL is set) navigates on success.
-      if (submitMode) {
+      function appendSubmit(host) {
+        if (!submitMode) return;
         var submitBtn = el('button', {class: 'ui-form-submit', type: 'button'}, [cfg.submit_label]);
         // Post-submit note: when the endpoint returns a `message` string, show
         // it inline (persisting until the next submit). Generic — any create /
@@ -2003,6 +2030,10 @@
         // success.
         var msgEl = el('div', {class: 'ui-form-msg', style: 'display:none;white-space:pre-wrap;margin-top:0.5rem;padding:0.5rem 0.7rem;border-left:3px solid var(--border);border-radius:4px;font-size:0.85rem;line-height:1.45;background:var(--bg-1)'});
         submitBtn.addEventListener('click', function() {
+          // The wizard's guard validates required fields across every
+          // visible step (and jumps to the first offender) before the
+          // POST fires. Flat forms have no guard installed.
+          if (submitGuard && !submitGuard()) return;
           submitBtn.disabled = true;
           submitBtn.textContent = 'Saving…';
           msgEl.style.display = 'none';
@@ -2042,8 +2073,163 @@
             showToast('Save failed: ' + err.message);
           });
         });
-        wrap.appendChild(submitBtn);
-        wrap.appendChild(msgEl);
+        host.appendChild(submitBtn);
+        host.appendChild(msgEl);
+      }
+
+      // renderStepper — Steps mode presentation: a numbered progress
+      // rail, one step body visible at a time, Back/Next navigation
+      // with required-field gating, and the submit/test/reset
+      // affordances on the final step. Every step renders up front
+      // into a hidden body so input state survives navigation;
+      // `current` remains the single record all fields bind to, and
+      // the final submit POSTs exactly what a flat form would. A
+      // step's show_when (same expression grammar as field show_when)
+      // can hide the whole step — e.g. skip a "Channel" step unless
+      // kind === "channel".
+      function renderStepper(host) {
+        var steps = cfg.steps;
+        var rail = el('div', {class: 'ui-wizard-rail'});
+        var bodyHost = el('div', {class: 'ui-wizard-body'});
+        var note = el('div', {class: 'ui-wizard-note', style: 'display:none'});
+        var navRow = el('div', {class: 'ui-wizard-nav'});
+        var finishWrap = el('div', {class: 'ui-wizard-finish', style: 'display:none'});
+        var bodies = [], railItems = [], dots = [];
+        var idx = 0;
+
+        function stepShown(i) { return matchesShowWhen(steps[i].show_when); }
+        function nextVisible(from, dir) {
+          for (var j = from + dir; j >= 0 && j < steps.length; j += dir) {
+            if (stepShown(j)) return j;
+          }
+          return -1;
+        }
+
+        steps.forEach(function(st, i) {
+          var body = el('div', {class: 'ui-wizard-step', style: 'display:none'});
+          if (st.intro) body.appendChild(el('div', {class: 'ui-wizard-intro'}, [st.intro]));
+          renderFieldsInto(body, st.fields || []);
+          bodies.push(body);
+          bodyHost.appendChild(body);
+          var dot = el('span', {class: 'ui-wizard-dot'}, [String(i + 1)]);
+          var item = el('div', {class: 'ui-wizard-rail-item'}, [dot,
+            el('span', {class: 'ui-wizard-rail-title'}, [st.title || ('Step ' + (i + 1))])]);
+          // Completed steps are click-to-revisit; forward jumps must go
+          // through Next so required gating can't be skipped.
+          item.addEventListener('click', function(){ if (i < idx) show(i); });
+          dots.push(dot); railItems.push(item);
+          rail.appendChild(item);
+        });
+
+        function refreshRail() {
+          // Dots renumber over VISIBLE steps only, so hiding a middle
+          // step doesn't leave a gap in the count.
+          var num = 0;
+          steps.forEach(function(_, j) {
+            var it = railItems[j];
+            if (!stepShown(j)) { it.style.display = 'none'; return; }
+            it.style.display = '';
+            num++;
+            dots[j].textContent = String(num);
+            it.classList.toggle('active', j === idx);
+            it.classList.toggle('done', j < idx);
+          });
+        }
+
+        // missingIn — the required-field gate for one step. Highlights
+        // offenders and returns their labels. A field hidden by its own
+        // show_when is exempt; 0 and false count as filled — only
+        // null / '' / empty array block.
+        function missingIn(i) {
+          var out = [];
+          (steps[i].fields || []).forEach(function(f) {
+            if (!f.required || !f.field) return;
+            var shown = !f.show_when || matchesShowWhen(f.show_when);
+            var v = current[f.field];
+            var empty = v == null || v === '' || (Array.isArray(v) && v.length === 0);
+            var bad = shown && empty;
+            var node = fieldEls[f.field];
+            if (node) node.classList.toggle('ui-form-field-invalid', bad);
+            if (bad) out.push(f.label || f.field);
+          });
+          return out;
+        }
+
+        function show(i) {
+          idx = i;
+          bodies.forEach(function(b, j) { b.style.display = j === i ? '' : 'none'; });
+          refreshRail();
+          var isFirst = nextVisible(i, -1) < 0;
+          var isLast = nextVisible(i, +1) < 0;
+          backBtn.style.visibility = isFirst ? 'hidden' : 'visible';
+          nextBtn.style.display = isLast ? 'none' : '';
+          finishWrap.style.display = isLast ? '' : 'none';
+          note.style.display = 'none';
+        }
+
+        var backBtn = el('button', {type: 'button', class: 'ui-row-btn ui-wizard-back'}, ['‹ Back']);
+        backBtn.addEventListener('click', function() {
+          var p = nextVisible(idx, -1);
+          if (p >= 0) show(p);
+        });
+        var nextBtn = el('button', {type: 'button', class: 'ui-form-submit ui-wizard-next'}, ['Next ›']);
+        nextBtn.addEventListener('click', function() {
+          var miss = missingIn(idx);
+          if (miss.length) {
+            note.textContent = 'Required: ' + miss.join(', ');
+            note.style.display = '';
+            return;
+          }
+          var n = nextVisible(idx, +1);
+          if (n >= 0) show(n);
+        });
+        navRow.appendChild(backBtn);
+        navRow.appendChild(nextBtn);
+
+        appendTestRow(finishWrap);
+        appendResetRow(finishWrap);
+        appendSubmit(finishWrap);
+
+        // Final-submit guard: every visible step must pass its
+        // required gate; jump to the first failing step so the
+        // offenders are on screen, highlighted.
+        submitGuard = function() {
+          for (var j = 0; j < steps.length; j++) {
+            if (!stepShown(j)) continue;
+            var miss = missingIn(j);
+            if (miss.length) {
+              show(j);
+              note.textContent = 'Required: ' + miss.join(', ');
+              note.style.display = '';
+              return false;
+            }
+          }
+          return true;
+        };
+        // A gating answer can hide the active step, or change which
+        // step is last — re-resolve after every visibility pass.
+        stepVisibilityHook = function() {
+          if (!stepShown(idx)) {
+            var n = nextVisible(idx, +1);
+            if (n < 0) n = nextVisible(idx, -1);
+            if (n >= 0) { show(n); return; }
+          }
+          show(idx);
+        };
+
+        host.appendChild(rail);
+        host.appendChild(bodyHost);
+        host.appendChild(note);
+        host.appendChild(navRow);
+        host.appendChild(finishWrap);
+        var first = stepShown(0) ? 0 : nextVisible(0, +1);
+        show(first < 0 ? 0 : first);
+      }
+
+      if (!stepsMode) {
+        appendTestRow(wrap);
+        appendResetRow(wrap);
+        appendSubmit(wrap);
       }
     }
 

@@ -373,7 +373,8 @@ func (T *Account) handlePassword(w http.ResponseWriter, r *http.Request) {
 // --- page --------------------------------------------------------------------
 
 func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	sections := []ui.Section{
@@ -396,6 +397,21 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
+	// App-contributed preference sections (RegisterAccountSection) — the
+	// per-user sibling of the admin section registry. Each app's builder
+	// decides per request whether this user gets its section (typically a
+	// UserHasAppAccess gate), so preferences for apps the user can't reach
+	// never render. Placed right after the core Preferences block.
+	extraHead := ""
+	for _, e := range AccountSectionEntries() {
+		if e.Build == nil {
+			continue
+		}
+		if s, show := e.Build(r, user); show {
+			sections = append(sections, s)
+			extraHead += e.Head
+		}
+	}
 	// Change-password only makes sense when password auth is actually in use.
 	if db := AuthDB(); db != nil && AuthHasUsers(db) {
 		sections = append(sections, ui.Section{
@@ -416,11 +432,12 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	ui.Page{
-		Title:     "Account",
-		ShowTitle: true,
-		BackURL:   "/",
-		MaxWidth:  "640px",
-		Sections:  sections,
+		Title:         "Account",
+		ShowTitle:     true,
+		BackURL:       "/",
+		MaxWidth:      "640px",
+		Sections:      sections,
+		ExtraHeadHTML: extraHead,
 	}.ServeHTTP(w, r)
 }
 

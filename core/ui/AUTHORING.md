@@ -180,6 +180,7 @@ least one minor release before it goes. Changes are recorded in the repo-root
 |---|---|
 | A list of records with row actions (edit / delete / view) | `ui.Table` + `RowAction` (`ui.ModalAction` for an edit dialog, `ui.Expand` for inline detail) |
 | A settings form auto-saving on blur | `ui.FormPanel` |
+| A guided multi-step create flow (wizard with Back/Next) | `ui.FormPanel` with `Steps` (see below) |
 | A labeled key-value display (read-only) | `ui.DisplayPanel` |
 | A chat with sessions sidebar | `ui.ChatPanel` |
 | A pipeline — submit a job, watch SSE blocks stream in, view past runs | `ui.PipelinePanel` (with a bridge that emits `block`/`chunk`/`status` events) |
@@ -195,6 +196,30 @@ least one minor release before it goes. Changes are recorded in the repo-root
 | A code editor with diff + history | `ui.CodeWriterPanel` |
 
 If your shape doesn't fit any of these cleanly, you may need a new primitive. Prefer combining existing ones first — most app surfaces are some mix of Table + FormPanel + a chat-shaped flow.
+
+### FormPanel wizards (`Steps`)
+
+Setting `Steps` on a `FormPanel` turns it into a multi-step wizard: a numbered progress rail, one step's fields at a time, Back/Next navigation, and the submit button (plus Test/Reset if configured) on the final step. Everything still binds to ONE record — the final submit POSTs exactly what a flat form would, so the server side is unchanged. `Fields` is ignored when `Steps` is set.
+
+```go
+ui.FormPanel{
+    PostURL:     "api/things",
+    SubmitLabel: "Create",
+    RedirectURL: "thing/{id}",
+    Steps: []ui.FormStep{
+        {Title: "Basics", Intro: "Name it and pick a kind.", Fields: []ui.FormField{
+            {Field: "name", Label: "Name", Required: true},
+            {Field: "kind", Label: "Kind", Type: "select", Options: kinds}, // include a blank "— choose —" option when Required
+        }},
+        // ShowWhen (same grammar as field ShowWhen) skips a whole step
+        // based on an earlier answer.
+        {Title: "Channel", ShowWhen: "kind:channel", Fields: channelFields()},
+        {Title: "Review", Intro: "Check the summary, then create.", Fields: reviewFields()},
+    },
+}
+```
+
+`Required: true` on a field blocks Next (and the final submit) while it's empty, highlighting the offender. A step hidden by `ShowWhen` is skipped by navigation, dropped from the rail, and exempt from required gating. Use a wizard for guided create/onboarding flows; keep flat `Fields` for edit-in-place settings forms.
 
 ---
 

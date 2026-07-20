@@ -38,7 +38,12 @@ import (
 )
 
 func init() {
-	RegisterApp(new(OrchestrateApp))
+	app := new(OrchestrateApp)
+	RegisterApp(app)
+	// Personal preferences hook on /account: the Default agent setting
+	// (account_prefs.go). Registered against the same instance so the
+	// builder reads T.DB at request time, after startup wires it.
+	RegisterAccountSection(AccountSectionEntry{Build: app.accountSection})
 	// The temp-tool-approval hook (enableApprovedToolOnSeedChat) is left
 	// UNWIRED on purpose. seed-chat now uses AllowedTools=nil (the auto-
 	// include sentinel) plus DisabledPersistentTools as the only opt-out,
@@ -201,6 +206,7 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/api/agents/{id}/facts     — GET/POST: Explicit Memory facts (was /memory)
 //	/api/agents/import         — POST: create a new agent from an uploaded recipe
 //	/api/agents/suggest        — POST: ✨ per-field AI suggestion for the editor
+//	/api/agents/wizard         — POST: guided create (drafts prompt from the brief)
 //	/api/sessions              — list (agent_id query param)
 //	/api/sessions/{sid}        — load / delete (agent_id query param)
 //	/api/send                  — SSE send (agent_id in body)
@@ -375,6 +381,12 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/channels", g(T.handleChannels))
 	T.HandleFunc("/api/agents/import", g(T.handleAgentImport))
 	T.HandleFunc("/api/agents/suggest", g(T.handleAgentSuggest))
+	// Guided create: drafts the prompt from the wizard brief, saves,
+	// and echoes the new record for the redirect into the editor.
+	T.HandleFunc("/api/agents/wizard", g(T.handleAgentWizard))
+	// Per-user Default agent preference (surfaced on /account via the
+	// account-section registry — account_prefs.go).
+	T.HandleFunc("/api/default-agent", g(T.handleDefaultAgentPref))
 	T.HandleFunc("/api/agents/", g(T.handleAgentOne))
 	T.HandleFunc("/api/collections", g(T.handleCollections))
 	// More-specific path wins over /api/collections/ in Go's ServeMux,

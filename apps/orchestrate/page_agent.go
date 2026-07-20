@@ -15,58 +15,37 @@ import (
 //	GET /agent/new        — create a new blank agent
 //	GET /agent/{id}       — edit existing agent
 //
-// channelAgentPrompt is the persona for the Channel agent preset: a lean,
-// on-message conversational base, no Agents-controller framing. Tuned for
-// short text replies on a messaging Channel. Product output, so no
-// em-dashes (universal style rule).
-const channelAgentPrompt = "You are a helpful assistant answering messages on a messaging channel. Keep replies short, clear, and conversational; these are text messages, not essays. Answer the person directly and stay on topic. If you need information, use your tools quietly and reply with the result. Do not narrate your internal steps, your tools, or any other agents. If you genuinely can't help with something, say so briefly and suggest a next step."
-
 // agentTypeTemplates returns the editor's "Agent type" presets (create mode).
 // Picking one STAMPS sensible defaults for the character-defining flags —
 // Cortex (a standing mind, the "channel" json field) and memory mode — so you
-// choose WHAT KIND of agent this is instead of reasoning about each flag. The
-// type is a starting point, not a lock: every flag stays editable in Advanced
-// afterward. Fleet is deliberately OFF on all of them — granting the fleet
-// (delegate / standing agents / monitors) to an agent is an explicit choice you
-// add per agent, not a type default (dispatch to other agents is already
-// available without it). See docs/channels-and-agents.md.
+// choose WHAT KIND of agent this is instead of reasoning about each flag. Two
+// types only, kept in lockstep with the wizard's wizard_kinds (a test asserts
+// it): the identity question is "for people, or for other agents?" — standing
+// mind and memory behavior are dials, editable here and surfaced in the
+// wizard's Memory step, not species. The type is a starting point, not a
+// lock. Fleet is deliberately OFF on both — granting the fleet (delegate /
+// standing agents / monitors) is an explicit per-agent choice, not a type
+// default. See docs/channels-and-agents.md.
 //
-//	Assistant      — standing personal helper: Cortex on, personalized memory.
-//	Conversational — a 1:1 chat persona that knows you: no Cortex, personalized.
-//	Channel agent  — answers a messaging room/contact: Cortex on (for the
-//	                 received→cortex feed), lessons-only memory (a room is many
-//	                 people, so single-user personalization doesn't fit).
-//	Specialist     — a focused, dispatchable worker: no Cortex, lessons-only.
+//	Assistant  — conversational agent for people (you, a room, a contact):
+//	             Cortex on, personalized memory (attributed by name).
+//	Specialist — a focused worker other agents dispatch to: no Cortex,
+//	             lessons-only memory.
 func agentTypeTemplates() []ui.FormTemplate {
 	return []ui.FormTemplate{
 		{
-			Label:  "Assistant — standing personal helper (continuous mind)",
+			Label:  "Assistant — a conversational agent that works with people",
 			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
 		},
 		{
-			Label:  "Conversational — a 1:1 chat persona that knows you",
-			Values: map[string]any{"channel": false, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
-		},
-		{
-			Label: "Channel agent — answers a messaging room / contact",
-			Values: map[string]any{
-				"channel":             true, // Cortex on → the received→cortex feed
-				"memory_mode":         "agent",
-				"fleet":               false,
-				"recall_hints":        true,
-				"description":         "Conversational agent attached to a messaging channel (iMessage / Telegram / Slack).",
-				"orchestrator_prompt": channelAgentPrompt,
-			},
-		},
-		{
-			Label:  "Specialist — a focused, dispatchable worker",
+			Label:  "Specialist — a focused worker other agents dispatch to",
 			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false, "recall_hints": true},
 		},
 	}
 }
 
 func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request) {
-	_, udb, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -77,6 +56,13 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 	}
 	if rest == "new" {
 		T.renderAgentEditor(w, r, udb, "")
+		return
+	}
+	// The guided create flow — the "New agent" button's default
+	// destination. The full editor stays at agent/new ("Advanced
+	// editor" link on the wizard, and the sub-agent create path).
+	if rest == "wizard" {
+		T.renderAgentWizard(w, r, user)
 		return
 	}
 	T.renderAgentEditor(w, r, udb, rest)

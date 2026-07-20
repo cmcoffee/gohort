@@ -861,6 +861,49 @@ body { min-height: 100vh; min-height: 100dvh; }
   content: ' \25BE'; /* ▾ expanded */
 }
 .ui-form-section.ui-form-collapsible:hover .ui-form-section-title { color: var(--accent, #58a6ff); }
+/* FormPanel Steps mode — wizard chrome. A numbered progress rail, one
+ * step visible at a time, Back/Next nav, required-field highlighting. */
+.ui-wizard-rail {
+  display: flex; align-items: center; gap: 0.3rem; flex-wrap: wrap;
+  margin: 0.25rem 0 1rem; padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.ui-wizard-rail-item {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.3rem 0.65rem; border-radius: 999px; border: 1px solid transparent;
+  color: var(--text-mute); font-size: 0.8rem; user-select: none;
+}
+.ui-wizard-rail-item.done { cursor: pointer; color: var(--text); }
+.ui-wizard-rail-item.done:hover { color: var(--accent, #58a6ff); }
+.ui-wizard-rail-item.active {
+  background: var(--bg-1); color: var(--text-hi); border-color: var(--border);
+}
+.ui-wizard-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem; border-radius: 50%; flex: none;
+  background: var(--bg-2); border: 1px solid var(--border);
+  font-size: 0.72rem; font-weight: 600;
+}
+.ui-wizard-rail-item.active .ui-wizard-dot {
+  background: var(--accent); border-color: var(--accent); color: var(--bg-0);
+}
+.ui-wizard-rail-item.done .ui-wizard-dot {
+  border-color: var(--accent); color: var(--accent);
+}
+.ui-wizard-intro {
+  font-size: 0.85rem; color: var(--text-mute); line-height: 1.5;
+  margin: 0.2rem 0 0.9rem;
+}
+.ui-wizard-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.6rem; margin-top: 1rem;
+}
+.ui-wizard-nav .ui-wizard-next { margin-top: 0; }
+.ui-wizard-note { margin-top: 0.6rem; font-size: 0.8rem; color: var(--danger, #ff7b72); }
+.ui-form-field-invalid .ui-form-input,
+.ui-form-field-invalid .ui-form-textarea,
+.ui-form-field-invalid .ui-form-select { border-color: var(--danger, #ff7b72); }
+.ui-form-field-invalid .ui-form-label { color: var(--danger, #ff7b72); }
 .ui-form-suggest-row {
   display: flex; gap: 0.4rem; align-items: center;
   margin-top: 0.3rem;

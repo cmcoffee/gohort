@@ -1440,6 +1440,16 @@
           }
           window.history.replaceState({}, '', u.toString());
         } catch (_) {}
+        // Track the last-accessed agent for the account page's
+        // "Default agent: Last accessed" preference. Cookie (not
+        // localStorage) so the server can honor it at page render.
+        // Empty id (placeholder row) keeps the previous value.
+        if (id) {
+          try {
+            document.cookie = 'gohort_last_agent=' + encodeURIComponent(id) +
+              ';path=/;max-age=31536000;SameSite=Lax';
+          } catch (_) {}
+        }
       }
       pinAgentInURL(window.GOHORT_AGENT_ID);
       // Track current value so the first listener invocation (which
@@ -1900,7 +1910,7 @@
         var sel = document.querySelector('.ui-agent-extras select');
         var opt = sel && sel.options[sel.selectedIndex];
         if (!opt || !opt.value) {
-          window.location.href = 'agent/new';
+          window.location.href = 'agent/wizard';
           return;
         }
         var parentID = opt.getAttribute('data-orch-original-value') || opt.value;
@@ -1909,7 +1919,7 @@
           if (choice === 'sub') {
             window.location.href = 'agent/new?owned_by=' + encodeURIComponent(parentID);
           } else if (choice === 'top') {
-            window.location.href = 'agent/new';
+            window.location.href = 'agent/wizard';
           }
           // null = cancel — stay on the chat surface.
         });

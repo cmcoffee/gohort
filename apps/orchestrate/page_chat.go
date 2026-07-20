@@ -32,6 +32,31 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		{Value: "", Label: "— select agent —"},
 	}
 	agents := listAgents(udb, user)
+	// First-run setup: a user who owns no agents of their own is walked
+	// into creating a personal assistant (agent/wizard first-run mode)
+	// instead of landing on a picker of framework seeds, which are on
+	// their way out of the user-facing list. Deep links (?agent= /
+	// ?session=) bypass the redirect so a shared link still lands where
+	// it points. The wizard's skip pill comes back here with
+	// ?skip_first_run=1 — record the dismissal on the user record
+	// (cross-device) and forward to the /agents directory when other
+	// users' agents are shared with them, else fall through to the
+	// normal surface.
+	q := r.URL.Query()
+	if q.Get("skip_first_run") == "1" {
+		AuthSetFirstRunDismissed(AuthDB(), user, true)
+		if T.hasSharedReachableAgents(r, user) {
+			http.Redirect(w, r, "/agents", http.StatusFound)
+		} else {
+			http.Redirect(w, r, ".", http.StatusFound)
+		}
+		return
+	}
+	if needsFirstRunSetup(agents, user) && q.Get("agent") == "" && q.Get("session") == "" &&
+		!AuthGetFirstRunDismissed(AuthDB(), user) {
+		http.Redirect(w, r, "agent/wizard?kind=assistant&first_run=1", http.StatusFound)
+		return
+	}
 	// Grouped picker options (Built-in / Conversation Agents / Specialized
 	// Agents / per-app) + the cortex-session and sub-agent maps. Built by the
 	// shared agentPickerOptions so the client-side refreshAgentDropdown can
@@ -42,10 +67,24 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 
 	// Default the dropdown to the requested agent if the URL carries
 	// `?agent=<id>` AND the user can see it — used by the editor's
-	// save-redirect so you land back on the agent you just edited
-	// instead of snapping to the Chat seed. Falls back to "seed-chat"
-	// when missing or unauthorized.
-	defaultAgent := "seed-chat"
+	// save-redirect so you land back on the agent you just edited.
+	// With no deep link, the user's Default agent preference decides:
+	// a specific agent, or (unset) the last-accessed cookie. When
+	// neither resolves, fall back to the Chat seed IF it's still in
+	// this user's picker, else the first agent they can see — no
+	// hardcoded seed dependence, so retiring the seeds from the
+	// user-facing list doesn't strand the surface.
+	fallbackAgent := ""
+	for _, opt := range agentOpts {
+		if opt.Value == "seed-chat" {
+			fallbackAgent = opt.Value
+			break
+		}
+		if fallbackAgent == "" && opt.Value != "" {
+			fallbackAgent = opt.Value
+		}
+	}
+	defaultAgent := resolveDefaultAgent(r, user, fallbackAgent, agentOpts)
 	if a := r.URL.Query().Get("agent"); a != "" {
 		for _, opt := range agentOpts {
 			if opt.Value == a {

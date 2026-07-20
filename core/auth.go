@@ -263,6 +263,21 @@ type AuthUser struct {
 	// used for the user's turn stamp and the day boundaries of schedules they
 	// own. Set/read through AuthSetUserTimezone / AuthGetUserTimezone.
 	Timezone string `json:"timezone,omitempty"`
+
+	// DefaultAgent is the user's preferred landing agent on the Agents chat
+	// surface. "" = unset (the surface's default behavior — last-accessed);
+	// anything else = a specific agent ID. Core only stores the string —
+	// the chat surface owns the semantics and validates the value against
+	// the agents the user can actually see. Set/read through
+	// AuthSetDefaultAgent / AuthGetDefaultAgent.
+	DefaultAgent string `json:"default_agent,omitempty"`
+
+	// FirstRunDismissed records that the user skipped the Agents surface's
+	// first-run setup (the guided personal-assistant wizard offered while
+	// they own no agents of their own), so it isn't offered again on any
+	// device. Stored here rather than a cookie so the dismissal follows
+	// the user. Set/read through AuthSet/GetFirstRunDismissed.
+	FirstRunDismissed bool `json:"first_run_dismissed,omitempty"`
 }
 
 // AuthSetNotifyDefault updates the user's persistent notify preference.
@@ -302,6 +317,48 @@ func AuthSetUserTimezone(db Database, username, iana string) {
 		return
 	}
 	user.Timezone = strings.TrimSpace(iana)
+	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthGetDefaultAgent returns the user's default-agent preference, or "" when
+// unset (meaning: the surface's standard default). Trimmed.
+func AuthGetDefaultAgent(db Database, username string) string {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return ""
+	}
+	return strings.TrimSpace(user.DefaultAgent)
+}
+
+// AuthSetDefaultAgent stores the user's default-agent preference ("" to clear,
+// "last" for last-accessed, or a specific agent ID). No-op on an unknown user.
+func AuthSetDefaultAgent(db Database, username, value string) {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	user.DefaultAgent = strings.TrimSpace(value)
+	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthGetFirstRunDismissed returns whether the user has dismissed the Agents
+// surface's first-run setup.
+func AuthGetFirstRunDismissed(db Database, username string) bool {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return false
+	}
+	return user.FirstRunDismissed
+}
+
+// AuthSetFirstRunDismissed records the user's first-run dismissal. No-op on an
+// unknown user.
+func AuthSetFirstRunDismissed(db Database, username string, dismissed bool) {
+	var user AuthUser
+	if !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	user.FirstRunDismissed = dismissed
 	db.Set(AuthTable, "user:"+username, user)
 }
 
