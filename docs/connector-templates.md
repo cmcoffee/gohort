@@ -129,6 +129,44 @@ Then:
   derivable) → `BuildSpec` → draft. This *is* the deferred instance-vars plan,
   delivered by the same declaration.
 
+## Forward compatibility (must-ignore + preserve)
+
+A template or connector spec authored on a **newer** gohort may carry fields this
+version doesn't know (a feature added later, imported into an older install).
+Rule: **never error, always preserve** — keep the unknown fields dormant until a
+gohort that understands them runs. No version arithmetic required; it's emergent.
+
+1. **Lenient parse.** Never `json.DisallowUnknownFields`. Unknown keys in a spec,
+   a template, or a field-values payload are ignored, not rejected. `Validate`
+   must never fail a spec for having extra keys. (Audit: no `DisallowUnknownFields`
+   on the connector/template path — Go's default unmarshal already ignores extras.)
+
+2. **Preserve on rebuild.** The reason this needs care: reading a spec into a typed
+   struct drops unknown fields, and re-marshaling that struct would lose them. So
+   any flow that **rebuilds** a spec — the template Configure/Save — MERGES the
+   template's known fields onto the connector's **existing raw Spec at the
+   JSON-object level**, instead of replacing it with a freshly-marshaled struct:
+
+   ```
+   merged := existingSpecAsMap             // preserves every key, known or not
+   for k, v := range buildSpecAsMap { merged[k] = v }   // overlay what we know
+   c.Spec = marshal(merged)
+   ```
+
+   Unknown keys survive; a newer gohort later recognizes and acts on them.
+   (Today's `/api/image-gen/comfy` save replaces the whole spec via
+   `json.Marshal(struct)` and *would* drop them — Stage 1 switches to this merge.)
+
+3. **No min-version gate needed** for the basic case. An older version preserves +
+   ignores; the upgraded version uses. A template *may* later mark a field with a
+   min-version to hide a control it can't honor yet, but that's optional and not
+   Stage 1.
+
+4. **Templates-as-data (Stage 2+)** obey the same rule: an imported template
+   definition with an unknown field `Type` or feature is skipped by the older
+   renderer and preserved, never rejected — so a template shared from a newer
+   gohort still installs (minus the parts this version can't render).
+
 ## Where things live (generalization discipline)
 
 - `ConnectorTemplate` type + registry: **core** (like `RegisterConnectorKind`).
@@ -148,7 +186,11 @@ generic renderer instead of a panel per backend.
   (endpoints + one client action). Re-express **comfyui** and **a1111** as
   templates. Delete the bespoke `add_image_backend` + `configure_comfyui` JS and
   the `/api/image-gen/backend` + `/api/image-gen/comfy` handlers, routing them
-  through the generic path. Behavior parity, minus the hardcoding.
+  through the generic path. Behavior parity, minus the hardcoding. The template
+  Save uses the **merge-on-rebuild** from "Forward compatibility", replacing
+  today's whole-spec `json.Marshal(struct)` (admin.go:1114) that drops unknown
+  fields. (Audit done: no `DisallowUnknownFields` on the connector path, so lenient
+  parse already holds — only the merge is missing.)
 - **Stage 2:** `Connector.Template` provenance; wire the catalog + bundle-import
   preview to collect template fields (lands the instance-vars plan).
 - **Stage 3:** more templates as pure declarations (Flux, hosted SD, teams/slack
