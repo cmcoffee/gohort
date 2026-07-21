@@ -112,7 +112,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":             {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential — use preset=\"teams\" for the canned Graph mapping."},
+			"kind":             {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, RestImageConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential — use preset=\"teams\" for the canned Graph mapping. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec — use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. Created UNAPPROVED."},
 			"name":             {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":              {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":        {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -143,6 +143,7 @@ Typical flow for a calendar:
 			"chat_id_const":    {Type: "string", Description: "(rest_messaging, optional) a FIXED chat id for every message, for services whose messages omit their conversation id (Slack). Takes precedence over map.chat_id."},
 			"more_url_path":    {Type: "string", Description: "(rest_messaging, optional) response dot-path to a complete next-page URL followed within a tick until absent (Graph \"@odata.nextLink\")."},
 			"webhook_provider": {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API — turnkey: paste the webhook URL into the Slack app, admin sets the signing secret) or \"graph\". The poll fields become unused; send_url/credential still deliver replies."},
+			"image_spec":       {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
 			"description":      {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
 		Required: []string{"kind", "name"},
@@ -263,6 +264,22 @@ func stringMapArg(args map[string]any, key string) map[string]string {
 		}
 	}
 	return out
+}
+
+// imageSpecArg maps the `image_spec` object arg onto a RestImageSpec by
+// marshaling the raw map and unmarshaling into the typed struct — so every
+// declared field (submit_url, submit_body, the poll set, defaults) flows through
+// by its JSON tag without per-field wiring. Returns the zero spec when absent.
+func imageSpecArg(args map[string]any, key string) RestImageSpec {
+	var s RestImageSpec
+	m, ok := args[key].(map[string]any)
+	if !ok {
+		return s
+	}
+	if b, err := json.Marshal(m); err == nil {
+		_ = json.Unmarshal(b, &s)
+	}
+	return s
 }
 
 // normalizeConnectorAuth maps the LLM-facing "none" to the empty auth mode the
@@ -412,6 +429,17 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 			},
 		}
 		spec, err := ApplyRestMessagingPreset(stringArg(args, "preset"), over, stringMapArg(args, "vars"))
+		if err != nil {
+			return "", err
+		}
+		raw, _ := json.Marshal(spec)
+		c.Spec = raw
+	case RestImageConnectorKind:
+		over := imageSpecArg(args, "image_spec")
+		if cred := strings.TrimSpace(stringArg(args, "credential")); cred != "" {
+			over.Credential = cred
+		}
+		spec, err := ApplyRestImagePreset(stringArg(args, "preset"), over, stringMapArg(args, "vars"))
 		if err != nil {
 			return "", err
 		}
@@ -577,6 +605,20 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 			},
 		}
 		c.Spec, _ = json.Marshal(MergeRestMessagingSpec(existing, over))
+	case RestImageConnectorKind:
+		var existing RestImageSpec
+		_ = json.Unmarshal(prev.Spec, &existing)
+		// Overlay: image_spec fields + credential win; empty fields keep existing.
+		over := imageSpecArg(args, "image_spec")
+		if cred := strings.TrimSpace(stringArg(args, "credential")); cred != "" {
+			over.Credential = cred
+		}
+		merged := MergeRestImageSpec(existing, over)
+		// Re-apply any vars (e.g. a changed base_url) across the URL/body/path fields.
+		if vars := stringMapArg(args, "vars"); len(vars) > 0 {
+			merged, _ = ApplyRestImagePreset("", merged, vars)
+		}
+		c.Spec, _ = json.Marshal(merged)
 	default:
 		return "", fmt.Errorf("update not supported for kind %q — delete and recreate instead", prev.Kind)
 	}
