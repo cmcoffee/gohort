@@ -824,6 +824,75 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		json.NewEncoder(w).Encode(map[string]any{"provider": provider, "api_key": key})
 	})
 
+	// Add an image backend from a preset — the admin-UI path to standing up a
+	// local ComfyUI / Automatic1111 (or any preset) WITHOUT a Builder round-trip.
+	// Builds a rest_image connector from the preset with base_url filled, then
+	// creates + approves it in one step (the admin here IS the approver). Optionally
+	// sets it as the default image provider. The custom-graph case is tuned later
+	// via the connector "Edit spec" action.
+	sub.HandleFunc("/api/image-gen/backend", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Name       string `json:"name"`
+			Preset     string `json:"preset"`
+			BaseURL    string `json:"base_url"`
+			Credential string `json:"credential"`
+			SetDefault bool   `json:"set_default"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		name := strings.TrimSpace(req.Name)
+		preset := strings.TrimSpace(req.Preset)
+		base := strings.TrimSpace(req.BaseURL)
+		cred := strings.TrimSpace(req.Credential)
+		if cred == "" {
+			cred = "no_auth"
+		}
+		if name == "" || preset == "" || base == "" {
+			http.Error(w, "name, preset, and base_url are required", http.StatusBadRequest)
+			return
+		}
+		if _, exists := GetConnector(RootDB, name); exists {
+			http.Error(w, "a connector named "+name+" already exists — pick another name", http.StatusBadRequest)
+			return
+		}
+		spec, err := ApplyRestImagePreset(preset, RestImageSpec{Credential: cred}, map[string]string{"base_url": base})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		raw, _ := json.Marshal(spec)
+		c := Connector{
+			Name:  name,
+			Kind:  RestImageConnectorKind,
+			Owner: AuthCurrentUser(r),
+			Desc:  "Image backend (" + preset + ")",
+			Spec:  raw,
+		}
+		if err := SaveConnector(RootDB, c); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := ApproveConnector(RootDB, name); err != nil {
+			http.Error(w, "created but approve failed: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.SetDefault && a.db != nil {
+			a.db.Set(ImageTable, "provider", name)
+		}
+		Log("[admin] user %q added image backend %q (preset=%q, default=%v)",
+			AuthCurrentUser(r), name, preset, req.SetDefault)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// STT connectivity test — GET {endpoint}/models with auth header so
 	// the operator can confirm reachability + credentials without needing
 	// a sample audio file. Both whisper.cpp and the real OpenAI API

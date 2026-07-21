@@ -414,6 +414,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("connectors_export", connectorsExportAction).
 			ClientAction("connectors_export_all", connectorsExportAllAction).
 			ClientAction("connector_edit_spec", connectorEditSpecAction).
+			ClientAction("add_image_backend", addImageBackendAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("tool_scope_manage", toolScopeManageAction).
@@ -922,17 +923,26 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Image Generation",
-				Subtitle: "Image generation provider used by tools that produce illustrations or thumbnails. Choose a built-in provider (leave API key blank to reuse the matching LLM provider's key) or an approved rest_image connector — a local ComfyUI / Automatic1111 or any spec-declared backend from Admin > Connectors.",
-				Body: ui.FormPanel{
-					Source:    "api/image-gen",
-					TestURL:   "api/image-gen/test",
-					TestLabel: "Test API key",
-					Fields: []ui.FormField{
-						{Field: "provider", Label: "Provider", Type: "select",
-							Options: imageProviderOptions()},
-						{Field: "api_key", Label: "API Key", Type: "password",
-							Help:     "Provider API key. Leave blank to reuse the matching LLM provider's key.",
-							ShowWhen: "provider"},
+				Subtitle: "Image generation provider used by tools that produce illustrations or thumbnails. Choose a built-in provider (leave API key blank to reuse the matching LLM provider's key), or an approved rest_image connector — a local ComfyUI / Automatic1111 or any spec-declared backend. Use “Add image backend” to stand up a local ComfyUI / A1111 in one step.",
+				Body: ui.Stack{
+					Children: []ui.Component{
+						ui.FormPanel{
+							Source:    "api/image-gen",
+							TestURL:   "api/image-gen/test",
+							TestLabel: "Test API key",
+							Fields: []ui.FormField{
+								{Field: "provider", Label: "Provider", Type: "select",
+									Options: imageProviderOptions()},
+								{Field: "api_key", Label: "API Key", Type: "password",
+									Help:     "Provider API key. Leave blank to reuse the matching LLM provider's key. (Ignored for connector backends — they carry their own credential.)",
+									ShowWhen: "provider"},
+							},
+						},
+						ui.Toolbar{
+							Actions: []ui.ToolbarAction{
+								{Label: "Add image backend…", Method: "client", URL: "add_image_backend"},
+							},
+						},
 					},
 				},
 			},
@@ -2618,6 +2628,65 @@ const connectorsExportAction = `function(ctx){
 // connectorsExportAllAction downloads every connector as one bundle.
 const connectorsExportAllAction = `function(){
   __artifactExport('?all=connector', 'connectors.gohort.json');
+}`
+
+// addImageBackendAction opens a small "Add image backend" modal in the Image
+// Generation section: pick ComfyUI / Automatic1111, enter the URL, and it
+// creates + approves a rest_image connector from the preset — no Builder
+// round-trip. On success the page reloads so the new backend appears in (and, if
+// "set as default" was checked, is selected in) the provider dropdown. Custom
+// workflow graphs are tuned afterward via Connectors > Edit spec.
+const addImageBackendAction = `function(ctx){
+  var presets = {
+    comfyui: { label:'ComfyUI', url:'http://localhost:8188', name:'comfyui' },
+    a1111:   { label:'Automatic1111', url:'http://localhost:7860', name:'a1111' }
+  };
+  window.uiOpenSimpleModal({ title:'Add image backend', width:'520px', mount:function(body, dlg){
+    function row(labelText, node){
+      var wrap = document.createElement('div'); wrap.style.cssText='margin:0 0 10px;font-size:12px;';
+      var lb = document.createElement('div'); lb.textContent=labelText; lb.style.cssText='margin-bottom:4px;opacity:0.8;';
+      wrap.appendChild(lb); wrap.appendChild(node); return wrap;
+    }
+    var inCss='width:100%;padding:6px;box-sizing:border-box;';
+    var type = document.createElement('select'); type.style.cssText=inCss;
+    ['comfyui','a1111'].forEach(function(k){ var o=document.createElement('option'); o.value=k; o.textContent=presets[k].label; type.appendChild(o); });
+    var name = document.createElement('input'); name.type='text'; name.style.cssText=inCss;
+    var url = document.createElement('input'); url.type='text'; url.style.cssText=inCss;
+    var cred = document.createElement('input'); cred.type='text'; cred.value='no_auth'; cred.style.cssText=inCss;
+    var nameEdited=false, urlEdited=false;
+    name.addEventListener('input', function(){ nameEdited=true; });
+    url.addEventListener('input', function(){ urlEdited=true; });
+    function applyType(){ var p=presets[type.value]; if(!nameEdited) name.value=p.name; if(!urlEdited) url.value=p.url; }
+    type.addEventListener('change', applyType); applyType();
+    var def = document.createElement('input'); def.type='checkbox'; def.checked=true; def.style.cssText='margin-right:6px;vertical-align:middle;';
+    var defLbl = document.createElement('label'); defLbl.style.cssText='display:block;margin:2px 0 10px;font-size:12px;';
+    defLbl.appendChild(def); defLbl.appendChild(document.createTextNode('Set as the default image provider'));
+    var help = document.createElement('div'); help.style.cssText='font-size:12px;opacity:0.7;margin:0 0 10px;line-height:1.45;';
+    help.textContent='Creates and approves a rest_image connector from the preset. Credential "no_auth" is right for a local backend on your LAN; use a registered SecureAPI credential name for a hosted/authenticated one. Tune the workflow graph afterward with Edit spec under Connectors.';
+    var msg = document.createElement('div'); msg.style.cssText='margin:6px 0;font-size:12px;color:#e5484d;white-space:pre-wrap;min-height:16px;';
+    var actions = document.createElement('div'); actions.style.cssText='margin-top:8px;display:flex;gap:8px;justify-content:flex-end;';
+    var cancel=document.createElement('button'); cancel.className='ui-row-btn'; cancel.textContent='Cancel'; cancel.onclick=function(){ try{dlg.close();dlg.remove();}catch(e){} };
+    var save=document.createElement('button'); save.className='ui-wb-action-btn'; save.textContent='Create & approve';
+    save.onclick=function(){
+      msg.textContent='';
+      var payload={ name:(name.value||'').trim(), preset:type.value, base_url:(url.value||'').trim(), credential:(cred.value||'').trim(), set_default:def.checked };
+      if(!payload.name){ msg.textContent='Name is required.'; return; }
+      if(!payload.base_url){ msg.textContent='URL is required.'; return; }
+      save.disabled=true; save.textContent='Working…';
+      fetch('api/image-gen/backend', { method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) })
+        .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error(t||('HTTP '+res.status)); }); try{dlg.close();dlg.remove();}catch(e){} location.reload(); })
+        .catch(function(e){ save.disabled=false; save.textContent='Create & approve'; msg.textContent=(e&&e.message)||(''+e); });
+    };
+    actions.appendChild(cancel); actions.appendChild(save);
+    body.appendChild(row('Backend type', type));
+    body.appendChild(row('Name (connector id)', name));
+    body.appendChild(row('URL', url));
+    body.appendChild(row('Credential', cred));
+    body.appendChild(defLbl);
+    body.appendChild(help);
+    body.appendChild(msg);
+    body.appendChild(actions);
+  }});
 }`
 
 // connectorEditSpecAction opens an inline JSON editor for a connector's
