@@ -1877,8 +1877,29 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				err = ApproveConnector(RootDB, name)
 			case "unapprove":
 				err = UnapproveConnector(RootDB, name)
+			case "update_spec":
+				// Replace the connector's kind-specific Spec with the posted JSON.
+				// SaveConnector re-validates against the kind and, if the connector
+				// is approved, re-materializes so an edit (e.g. a rest_image
+				// backend's default_steps / submit_body) takes effect immediately.
+				body, rerr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+				if rerr != nil {
+					http.Error(w, "read error", http.StatusBadRequest)
+					return
+				}
+				if !json.Valid(body) {
+					http.Error(w, "spec must be valid JSON", http.StatusBadRequest)
+					return
+				}
+				c, ok := GetConnector(RootDB, name)
+				if !ok {
+					http.Error(w, "no connector named "+name, http.StatusNotFound)
+					return
+				}
+				c.Spec = json.RawMessage(body)
+				err = SaveConnector(RootDB, c)
 			default:
-				http.Error(w, "action must be approve|unapprove", http.StatusBadRequest)
+				http.Error(w, "action must be approve|unapprove|update_spec", http.StatusBadRequest)
 				return
 			}
 			if err != nil {
@@ -1900,6 +1921,34 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
+	})
+
+	// Connector spec — GET the current kind-specific Spec as pretty JSON for the
+	// admin's inline spec editor (the "Edit spec" row action). Paired with the
+	// update_spec POST above. Read-only; no secret is ever in a Spec.
+	sub.HandleFunc("/api/connectors/spec", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		c, ok := GetConnector(RootDB, name)
+		if !ok {
+			http.Error(w, "no connector named "+name, http.StatusNotFound)
+			return
+		}
+		spec := "{}"
+		if len(c.Spec) > 0 {
+			var pretty bytes.Buffer
+			if json.Indent(&pretty, c.Spec, "", "  ") == nil {
+				spec = pretty.String()
+			} else {
+				spec = string(c.Spec)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"name": c.Name, "kind": c.Kind, "approved": c.Approved, "spec": spec,
+		})
 	})
 
 	// Connector export — download a portable, secret-free JSON pack. ?name=<n>

@@ -413,6 +413,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("artifacts_import_preview", artifactsImportPreviewAction).
 			ClientAction("connectors_export", connectorsExportAction).
 			ClientAction("connectors_export_all", connectorsExportAllAction).
+			ClientAction("connector_edit_spec", connectorEditSpecAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("tool_scope_manage", toolScopeManageAction).
@@ -1554,6 +1555,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Type: "button", Label: "Unapprove",
 									PostTo: "api/connectors?action=unapprove&name={name}",
 									Method: "POST", OnlyIf: "approved"},
+								{Type: "button", Label: "Edit spec", Method: "client",
+									PostTo: "connector_edit_spec", Compact: true},
 								{Type: "button", Label: "Export", Method: "client",
 									PostTo: "connectors_export", Compact: true},
 								{Type: "button", Label: "Delete",
@@ -2615,6 +2618,56 @@ const connectorsExportAction = `function(ctx){
 // connectorsExportAllAction downloads every connector as one bundle.
 const connectorsExportAllAction = `function(){
   __artifactExport('?all=connector', 'connectors.gohort.json');
+}`
+
+// connectorEditSpecAction opens an inline JSON editor for a connector's
+// kind-specific Spec. Generic across every kind (the Spec IS the backend
+// definition) — the immediate use is tuning a rest_image backend (checkpoint /
+// default_steps / submit_body / endpoints) without re-authoring via the Builder.
+// GET the pretty spec, edit, POST it back; the server re-validates against the
+// kind and re-materializes an approved connector so the change takes effect now.
+const connectorEditSpecAction = `function(ctx){
+  var r = (ctx && ctx.record) || {};
+  var name = r.name;
+  var reload = ctx && ctx.reload;
+  if(!name){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
+  fetch('api/connectors/spec?name=' + encodeURIComponent(name), {cache:'no-store', credentials:'same-origin'})
+    .then(function(res){ if(!res.ok) return res.text().then(function(t){ throw new Error(t||('HTTP '+res.status)); }); return res.json(); })
+    .then(function(data){
+      window.uiOpenSimpleModal({ title: 'Edit spec: ' + name + ' (' + (data.kind||'') + ')', width: '760px', mount: function(body, dlg){
+        var note = document.createElement('div');
+        note.style.cssText = 'margin:0 0 8px;font-size:12px;opacity:0.75;line-height:1.45;';
+        note.textContent = 'Edit the connector spec as JSON. Saving re-validates it against the connector kind; if the connector is approved it re-materializes immediately (e.g. a rest_image backend picks up a new default_steps / submit_body / checkpoint right away).';
+        var ta = document.createElement('textarea');
+        ta.value = data.spec || '{}';
+        ta.spellcheck = false;
+        ta.style.cssText = 'width:100%;height:380px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.45;';
+        var msg = document.createElement('div');
+        msg.style.cssText = 'margin:8px 0 0;font-size:12px;color:#e5484d;white-space:pre-wrap;min-height:16px;';
+        var actions = document.createElement('div');
+        actions.style.cssText = 'margin-top:10px;display:flex;gap:8px;justify-content:flex-end;';
+        var cancel = document.createElement('button');
+        cancel.className = 'ui-row-btn'; cancel.textContent = 'Cancel';
+        cancel.onclick = function(){ try{ dlg.close(); dlg.remove(); }catch(e){} };
+        var save = document.createElement('button');
+        save.className = 'ui-wb-action-btn'; save.textContent = 'Save spec';
+        save.onclick = function(){
+          msg.textContent = '';
+          var parsed;
+          try { parsed = JSON.parse(ta.value); } catch(e){ msg.textContent = 'Invalid JSON: ' + ((e && e.message)||e); return; }
+          save.disabled = true; save.textContent = 'Saving…';
+          fetch('api/connectors?action=update_spec&name=' + encodeURIComponent(name), {
+            method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(parsed)
+          }).then(function(res){
+            if(!res.ok) return res.text().then(function(t){ throw new Error(t||('HTTP '+res.status)); });
+            try{ dlg.close(); dlg.remove(); }catch(e){}
+            if(reload) reload(); else if(window.uiInvalidate) window.uiInvalidate(['api/connectors']);
+          }).catch(function(e){ save.disabled=false; save.textContent='Save spec'; msg.textContent = (e && e.message)||(''+e); });
+        };
+        actions.appendChild(cancel); actions.appendChild(save);
+        body.appendChild(note); body.appendChild(ta); body.appendChild(msg); body.appendChild(actions);
+      }});
+    }).catch(function(e){ window.uiAlert && window.uiAlert((e && e.message)||(''+e)); });
 }`
 
 // toolsExportAction downloads ONE persistent tool as a 1-item bundle. The
