@@ -106,6 +106,61 @@ type comfyCfg struct {
 	Warnings      []string `json:"warnings,omitempty"`
 }
 
+// nestComfyWorkflow renders a spec for the Edit-spec view with comfy_workflow as
+// a NESTED JSON object instead of an escaped string, so the graph is readable.
+// Returns (indented, true) only when it nested a string-held workflow; otherwise
+// (nil, false) to fall back to plain indentation (non-image specs, or a workflow
+// already stored as an object).
+func nestComfyWorkflow(spec []byte) ([]byte, bool) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(spec, &m) != nil {
+		return nil, false
+	}
+	wf, ok := m["comfy_workflow"]
+	if !ok {
+		return nil, false
+	}
+	var inner string
+	if json.Unmarshal(wf, &inner) != nil || !json.Valid([]byte(inner)) {
+		return nil, false // not a JSON-string-holding-JSON
+	}
+	m["comfy_workflow"] = json.RawMessage(inner)
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// stringifyComfyWorkflow is the save-path inverse: if comfy_workflow was edited as
+// a nested object (from nestComfyWorkflow's view), fold it back into a string
+// (pretty-printed) so it matches the spec's string field. An already-string (or
+// absent) workflow is left untouched.
+func stringifyComfyWorkflow(body []byte) []byte {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return body
+	}
+	wf, ok := m["comfy_workflow"]
+	if !ok {
+		return body
+	}
+	t := bytes.TrimSpace(wf)
+	if len(t) == 0 || t[0] == '"' {
+		return body // already a JSON string
+	}
+	strified, err := json.Marshal(PrettyComfyJSON(string(t)))
+	if err != nil {
+		return body
+	}
+	m["comfy_workflow"] = json.RawMessage(strified)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
 func joinNodes(a []string) string { return strings.Join(a, ", ") }
 
 func splitNodes(s string) []string {
@@ -2167,7 +2222,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					http.Error(w, "no connector named "+name, http.StatusNotFound)
 					return
 				}
-				c.Spec = json.RawMessage(body)
+				// If comfy_workflow was edited as a nested object (the readable
+				// Edit-spec view), fold it back into the spec's string field.
+				c.Spec = json.RawMessage(stringifyComfyWorkflow(body))
 				err = SaveConnector(RootDB, c)
 			default:
 				http.Error(w, "action must be approve|unapprove|update_spec", http.StatusBadRequest)
@@ -2209,11 +2266,17 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 		spec := "{}"
 		if len(c.Spec) > 0 {
-			var pretty bytes.Buffer
-			if json.Indent(&pretty, c.Spec, "", "  ") == nil {
-				spec = pretty.String()
+			// Show a rest_image comfy_workflow as a NESTED object (readable) rather
+			// than an escaped string; other kinds just get plain indentation.
+			if nested, ok := nestComfyWorkflow(c.Spec); ok {
+				spec = string(nested)
 			} else {
-				spec = string(c.Spec)
+				var pretty bytes.Buffer
+				if json.Indent(&pretty, c.Spec, "", "  ") == nil {
+					spec = pretty.String()
+				} else {
+					spec = string(c.Spec)
+				}
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
