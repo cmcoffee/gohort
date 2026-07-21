@@ -11,10 +11,59 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
 )
+
+// --- pluggable image backends ------------------------------------------------
+//
+// The built-in providers (gemini, openai) are compiled in. A rest_image
+// connector registers itself here so the SAME native pipeline — the default
+// generate_image tool, writer-app illustrations (GenerateImageLandscape /
+// GenerateImageWithProfile), and the admin image-provider setting — can target
+// it by name, with no per-service code. This is the generic seam that makes a
+// ComfyUI / Automatic1111 / any spec-declared backend a first-class image
+// source everywhere the native providers are.
+
+// ImageBackendFunc produces an image for a named backend. landscape mirrors the
+// native providers' aspect switch (wide vs square).
+type ImageBackendFunc func(ctx context.Context, prompt string, landscape bool) (*ImageGenResult, error)
+
+var (
+	imageBackendMu sync.RWMutex
+	imageBackends  = map[string]ImageBackendFunc{}
+)
+
+// RegisterImageBackend installs (or replaces) a named image backend. Idempotent:
+// re-registering the same name (e.g. a connector re-materialize on restart) just
+// refreshes the closure.
+func RegisterImageBackend(name string, fn ImageBackendFunc) {
+	name = strings.TrimSpace(name)
+	if name == "" || fn == nil {
+		return
+	}
+	imageBackendMu.Lock()
+	imageBackends[name] = fn
+	imageBackendMu.Unlock()
+}
+
+// ImageBackendRegistered reports whether a named backend exists — lets the admin
+// UI show approved connector backends as image-provider choices.
+func ImageBackendRegistered(name string) bool {
+	imageBackendMu.RLock()
+	defer imageBackendMu.RUnlock()
+	_, ok := imageBackends[strings.TrimSpace(name)]
+	return ok
+}
+
+func lookupImageBackend(name string) (ImageBackendFunc, bool) {
+	imageBackendMu.RLock()
+	defer imageBackendMu.RUnlock()
+	fn, ok := imageBackends[strings.TrimSpace(name)]
+	return fn, ok
+}
 
 // ImageDir returns the directory where generated images are stored.
 // Defaults to os.TempDir()/gohort-images if not set via SetImageDir.
@@ -203,6 +252,10 @@ func generateWithProvider(ctx context.Context, provider, apiKey, prompt string, 
 		}
 		return result, err
 	default:
+		// A spec-declared backend (rest_image connector) registered by name.
+		if fn, ok := lookupImageBackend(provider); ok {
+			return fn(ctx, prompt, landscape)
+		}
 		return nil, fmt.Errorf("unknown image provider: %s", provider)
 	}
 }

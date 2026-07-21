@@ -33,11 +33,14 @@
 package core
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -149,6 +152,14 @@ func (h restImageHandler) Materialize(c Connector) error {
 		return err
 	}
 	name := strings.TrimSpace(c.Name)
+	// Native backend: makes this connector usable as an image PROVIDER across the
+	// whole app (the default generate_image tool, writer-app illustrations via
+	// GenerateImage*, the admin image-provider setting) — not only as the
+	// generate_image_<name> chat tool. Idempotent; the closure resolves the spec
+	// live so an edit takes effect without re-registering.
+	RegisterImageBackend(name, func(_ context.Context, prompt string, landscape bool) (*ImageGenResult, error) {
+		return generateRestImageNative(name, prompt, landscape)
+	})
 	restImageMu.Lock()
 	defer restImageMu.Unlock()
 	if registeredRestImageTools[name] {
@@ -244,23 +255,69 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
-
-	// Build the token map: strings are JSON-escaped (they land inside a JSON
-	// string literal in the body template), numerics are inserted raw.
 	negative := stringFromArg(args["negative"])
 	if negative == "" {
 		negative = s.DefaultNegative
 	}
-	fields := map[string]string{
-		"prompt":   jsonInner(prompt),
-		"negative": jsonInner(negative),
-		"model":    jsonInner(s.DefaultModel),
-		"width":    strconv.Itoa(intArgOr(args["width"], s.DefaultWidth)),
-		"height":   strconv.Itoa(intArgOr(args["height"], s.DefaultHeight)),
-		"steps":    strconv.Itoa(intArgOr(args["steps"], s.DefaultSteps)),
-		"seed":     strconv.Itoa(intArgOr(args["seed"], -1)),
+	out, err := s.generate(sess, restImageParams{
+		prompt:   prompt,
+		negative: negative,
+		width:    intArgOr(args["width"], s.DefaultWidth),
+		height:   intArgOr(args["height"], s.DefaultHeight),
+		steps:    intArgOr(args["steps"], s.DefaultSteps),
+		seed:     intArgOr(args["seed"], -1),
+	})
+	if err != nil {
+		return "", err
 	}
+	// Deliver: a plain URL rides out as an IMAGE ref the frontend renders; inline
+	// or fetched bytes attach to the session. The short ref keeps the payload out
+	// of LLM context.
+	if out.url != "" {
+		return "IMAGE:" + out.url, nil
+	}
+	if sess != nil {
+		sess.AppendImage(out.b64)
+	}
+	return "IMAGE:generated", nil
+}
 
+// restImageParams carries one generation request's inputs, decoupled from the
+// tool-args map so the native image pipeline (which passes only a prompt + an
+// aspect) can drive the same core.
+type restImageParams struct {
+	prompt   string
+	negative string
+	width    int
+	height   int
+	steps    int
+	seed     int
+}
+
+// restImageOutcome is the raw result of a backend call: EITHER inline/fetched
+// image bytes (b64) OR a plain image URL. How it's delivered — attach, render, or
+// save to a file — is the caller's choice.
+type restImageOutcome struct {
+	b64 string
+	url string
+}
+
+// generate runs the declared request (submit, then poll for async backends) and
+// extracts the finished image. sess is threaded only into the governed dispatch
+// (for its workspace context) and may be nil for the native pipeline.
+func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImageOutcome, error) {
+	var out restImageOutcome
+	// Token map: strings are JSON-escaped (they land inside a JSON string literal
+	// in the body template), numerics are inserted raw.
+	fields := map[string]string{
+		"prompt":   jsonInner(p.prompt),
+		"negative": jsonInner(p.negative),
+		"model":    jsonInner(s.DefaultModel),
+		"width":    strconv.Itoa(p.width),
+		"height":   strconv.Itoa(p.height),
+		"steps":    strconv.Itoa(p.steps),
+		"seed":     strconv.Itoa(p.seed),
+	}
 	cred := s.Credential
 	if cred == "" {
 		cred = "no_auth"
@@ -269,30 +326,29 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	body := substituteTokens(s.SubmitBody, fields)
 
 	// Submit. Read via the pipe path for its higher byte cap — a base64 image
-	// blows past the 256KB text cap — but the response never reaches the LLM: we
-	// project it down to a short IMAGE ref below.
+	// blows past the 256KB text cap — but the response never reaches the LLM.
 	raw, err := Secure().DispatchToolCallForPipe(sess, cred, s.SubmitURL, method, body)
 	if err != nil {
-		return "", fmt.Errorf("image submit failed: %w", err)
+		return out, fmt.Errorf("image submit failed: %w", err)
 	}
 	status, jsonBody := parseHTTPDispatchResult(raw)
 	if status != 0 && (status < 200 || status >= 300) {
-		return "", fmt.Errorf("image backend returned HTTP %d: %s", status, truncateForError(jsonBody))
+		return out, fmt.Errorf("image backend returned HTTP %d: %s", status, truncateForError(jsonBody))
 	}
 	var submitNode any
 	if err := json.Unmarshal([]byte(jsonBody), &submitNode); err != nil {
-		return "", fmt.Errorf("image backend response was not JSON: %s", truncateForError(jsonBody))
+		return out, fmt.Errorf("image backend response was not JSON: %s", truncateForError(jsonBody))
 	}
 
 	// Synchronous backend: the image is already in the submit response.
 	if s.PollURL == "" {
-		return t.extractAndAttach(sess, submitNode, s.ImageB64Path, s.ImageURLPath, "", nil)
+		return extractOutcome(submitNode, s.ImageB64Path, s.ImageURLPath, "", nil)
 	}
 
 	// Async backend: poll until ready, then extract from the poll response.
 	id := restJSONString(submitNode, s.SubmitIDPath)
 	if s.SubmitIDPath != "" && id == "" {
-		return "", fmt.Errorf("image backend gave no job id at %q; response: %s", s.SubmitIDPath, truncateForError(jsonBody))
+		return out, fmt.Errorf("image backend gave no job id at %q; response: %s", s.SubmitIDPath, truncateForError(jsonBody))
 	}
 	idTok := map[string]string{"id": id}
 	pollURL := substituteTokens(s.PollURL, idTok)
@@ -327,54 +383,121 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		time.Sleep(time.Duration(interval) * time.Second)
 	}
 	if !ready {
-		return "", fmt.Errorf("image generation timed out after %ds waiting on %q", maxSecs, readyPath)
+		return out, fmt.Errorf("image generation timed out after %ds waiting on %q", maxSecs, readyPath)
 	}
-	return t.extractAndAttach(sess, pollNode,
+	return extractOutcome(pollNode,
 		substituteTokens(s.PollB64Path, idTok),
 		substituteTokens(s.PollURLPath, idTok),
 		s.PollURLTemplate, resolvePollFields(s.PollFields, pollNode, idTok))
 }
 
-// extractAndAttach pulls the finished image out of node by the given locators and
-// delivers it: base64 → decode + attach; a plain URL → return as an IMAGE ref the
-// frontend renders; a URL built from template+fields → fetch to bytes + attach.
-func (t *restImageTool) extractAndAttach(sess *ToolSession, node any, b64Path, urlPath, urlTemplate string, tmplVars map[string]string) (string, error) {
+// extractOutcome pulls the finished image out of node by the given locators:
+// base64 → decode-verify + return bytes; a plain URL → return the URL; a URL
+// built from template+fields → fetch it to bytes.
+func extractOutcome(node any, b64Path, urlPath, urlTemplate string, tmplVars map[string]string) (restImageOutcome, error) {
+	var out restImageOutcome
 	if b64Path != "" {
 		b64 := strings.TrimSpace(restJSONString(node, b64Path))
 		if b64 == "" {
-			return "", fmt.Errorf("no base64 image at %q in the backend response", b64Path)
+			return out, fmt.Errorf("no base64 image at %q in the backend response", b64Path)
 		}
 		b64 = stripDataURIPrefix(b64)
 		if _, err := base64.StdEncoding.DecodeString(b64); err != nil {
-			return "", fmt.Errorf("backend returned invalid base64 at %q: %w", b64Path, err)
+			return out, fmt.Errorf("backend returned invalid base64 at %q: %w", b64Path, err)
 		}
-		if sess != nil {
-			sess.AppendImage(b64)
-		}
-		return "IMAGE:generated", nil
+		out.b64 = b64
+		return out, nil
 	}
 	if urlPath != "" {
 		url := strings.TrimSpace(restJSONString(node, urlPath))
 		if url == "" {
-			return "", fmt.Errorf("no image URL at %q in the backend response", urlPath)
+			return out, fmt.Errorf("no image URL at %q in the backend response", urlPath)
 		}
-		return "IMAGE:" + url, nil
+		out.url = url
+		return out, nil
 	}
 	if urlTemplate != "" {
 		url := substituteTokens(urlTemplate, tmplVars)
 		if strings.Contains(url, "{") {
-			return "", fmt.Errorf("could not fill image URL template %q — a poll_fields dot-path resolved empty (got %q)", urlTemplate, url)
+			return out, fmt.Errorf("could not fill image URL template %q — a poll_fields dot-path resolved empty (got %q)", urlTemplate, url)
 		}
 		data, err := httpGetImageBytes(url)
 		if err != nil {
-			return "", fmt.Errorf("fetching generated image %s: %w", url, err)
+			return out, fmt.Errorf("fetching generated image %s: %w", url, err)
 		}
-		if sess != nil {
-			sess.AppendImage(base64.StdEncoding.EncodeToString(data))
-		}
-		return "IMAGE:generated", nil
+		out.b64 = base64.StdEncoding.EncodeToString(data)
+		return out, nil
 	}
-	return "", fmt.Errorf("no image locator configured for this backend")
+	return out, fmt.Errorf("no image locator configured for this backend")
+}
+
+// generateRestImageNative bridges a rest_image connector into the native image
+// pipeline (core/image_gen.go): resolve the connector live, map the native
+// (prompt, landscape) request onto the spec's default dimensions, run the same
+// generate core, and return the ImageGenResult shape the native providers do — a
+// local file for inline/fetched bytes, or a URL passthrough.
+func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGenResult, error) {
+	c, ok := GetConnector(RootDB, connector)
+	if !ok || !c.Approved {
+		return nil, fmt.Errorf("image backend %q is unavailable", connector)
+	}
+	s, err := restImageHandler{}.parse(c)
+	if err != nil {
+		return nil, err
+	}
+	w, h := resolveImageDims(landscape, s.DefaultWidth, s.DefaultHeight)
+	out, err := s.generate(nil, restImageParams{
+		prompt:   prompt,
+		negative: s.DefaultNegative,
+		width:    w,
+		height:   h,
+		steps:    s.DefaultSteps,
+		seed:     -1,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if out.url != "" {
+		return &ImageGenResult{URL: out.url, Prompt: prompt}, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(out.b64)
+	if err != nil {
+		return nil, fmt.Errorf("backend returned invalid base64: %w", err)
+	}
+	path, err := writeImageTemp(data)
+	if err != nil {
+		return nil, err
+	}
+	return &ImageGenResult{URL: path, Prompt: prompt}, nil
+}
+
+// resolveImageDims maps the native aspect flag onto the spec's default size:
+// 512² when unset; landscape orients wide (width ≥ height). Per the chosen
+// "spec defaults + aspect only" mapping — the backend's configured size wins.
+func resolveImageDims(landscape bool, defW, defH int) (int, int) {
+	w, h := defW, defH
+	if w <= 0 {
+		w = 512
+	}
+	if h <= 0 {
+		h = 512
+	}
+	if landscape && h > w {
+		w, h = h, w
+	}
+	return w, h
+}
+
+// writeImageTemp saves image bytes to a PNG in ImageDir(), mirroring how the
+// Gemini provider persists its inline result. Returns the file path.
+func writeImageTemp(data []byte) (string, error) {
+	dir := ImageDir()
+	os.MkdirAll(dir, 0755)
+	path := filepath.Join(dir, UUIDv4()+".png")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", fmt.Errorf("saving generated image: %w", err)
+	}
+	return path, nil
 }
 
 // --- presets -----------------------------------------------------------------

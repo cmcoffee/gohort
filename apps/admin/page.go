@@ -35,6 +35,24 @@ func themePickerOptions() []ui.SelectOption {
 	return opts
 }
 
+// imageProviderOptions builds the image-generation provider dropdown: the two
+// built-in providers, every APPROVED rest_image connector (ComfyUI / A1111 /
+// custom backends materialize as native image providers named for the
+// connector), then Disabled. A new connector appears here with no edit.
+func imageProviderOptions() []ui.SelectOption {
+	opts := []ui.SelectOption{
+		{Value: "gemini", Label: "Gemini (Imagen)"},
+		{Value: "openai", Label: "OpenAI (DALL-E)"},
+	}
+	for _, c := range ListConnectors(RootDB) {
+		if c.Kind == RestImageConnectorKind && c.Approved {
+			opts = append(opts, ui.SelectOption{Value: c.Name, Label: "Connector: " + c.Name})
+		}
+	}
+	opts = append(opts, ui.SelectOption{Value: "none", Label: "Disabled"})
+	return opts
+}
+
 // buildTunableSections renders the operator tunable registry as one admin
 // FormPanel section per category, each with a per-category "Revert to
 // defaults". Field type, bounds, and help come straight from each TunableSpec,
@@ -903,18 +921,14 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Image Generation",
-				Subtitle: "LLM-driven image generation provider used by tools that produce illustrations or thumbnails. Leave API key blank to reuse the matching LLM provider's key (e.g. Gemini for the gemini image model).",
+				Subtitle: "Image generation provider used by tools that produce illustrations or thumbnails. Choose a built-in provider (leave API key blank to reuse the matching LLM provider's key) or an approved rest_image connector — a local ComfyUI / Automatic1111 or any spec-declared backend from Admin > Connectors.",
 				Body: ui.FormPanel{
 					Source:    "api/image-gen",
 					TestURL:   "api/image-gen/test",
 					TestLabel: "Test API key",
 					Fields: []ui.FormField{
 						{Field: "provider", Label: "Provider", Type: "select",
-							Options: []ui.SelectOption{
-								{Value: "gemini", Label: "Gemini (Imagen)"},
-								{Value: "openai", Label: "OpenAI (DALL-E)"},
-								{Value: "none", Label: "Disabled"},
-							}},
+							Options: imageProviderOptions()},
 						{Field: "api_key", Label: "API Key", Type: "password",
 							Help:     "Provider API key. Leave blank to reuse the matching LLM provider's key.",
 							ShowWhen: "provider"},

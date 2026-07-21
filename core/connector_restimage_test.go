@@ -1,8 +1,10 @@
 package core
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -107,41 +109,34 @@ func TestRestJSONString(t *testing.T) {
 }
 
 func TestExtractBase64(t *testing.T) {
-	tool := &restImageTool{connector: "img"}
-	sess := &ToolSession{}
 	var node any
 	json.Unmarshal([]byte(`{"images":["`+tinyPNG+`"]}`), &node)
-	out, err := tool.extractAndAttach(sess, node, "images.0", "", "", nil)
+	out, err := extractOutcome(node, "images.0", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "IMAGE:generated" {
-		t.Errorf("unexpected ref: %q", out)
-	}
-	if len(sess.Images) != 1 || sess.Images[0] != tinyPNG {
-		t.Errorf("image not attached to session: %v", sess.Images)
+	if out.b64 != tinyPNG || out.url != "" {
+		t.Errorf("unexpected outcome: b64=%q url=%q", out.b64, out.url)
 	}
 }
 
 func TestExtractBase64Invalid(t *testing.T) {
-	tool := &restImageTool{connector: "img"}
 	var node any
 	json.Unmarshal([]byte(`{"images":["not_valid_base64_!!!"]}`), &node)
-	if _, err := tool.extractAndAttach(&ToolSession{}, node, "images.0", "", "", nil); err == nil {
+	if _, err := extractOutcome(node, "images.0", "", "", nil); err == nil {
 		t.Error("expected error decoding invalid base64")
 	}
 }
 
 func TestExtractURL(t *testing.T) {
-	tool := &restImageTool{connector: "img"}
 	var node any
 	json.Unmarshal([]byte(`{"data":[{"url":"https://cdn.example/img.png"}]}`), &node)
-	out, err := tool.extractAndAttach(&ToolSession{}, node, "", "data.0.url", "", nil)
+	out, err := extractOutcome(node, "", "data.0.url", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "IMAGE:https://cdn.example/img.png" {
-		t.Errorf("unexpected URL ref: %q", out)
+	if out.url != "https://cdn.example/img.png" || out.b64 != "" {
+		t.Errorf("unexpected outcome: b64=%q url=%q", out.b64, out.url)
 	}
 }
 
@@ -156,29 +151,63 @@ func TestExtractURLTemplateFetchesBytes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tool := &restImageTool{connector: "img"}
-	sess := &ToolSession{}
 	tmpl := srv.URL + "/view?filename={filename}&subfolder={subfolder}&type={type}"
 	vars := map[string]string{"filename": "g.png", "subfolder": "", "type": "output"}
-	out, err := tool.extractAndAttach(sess, nil, "", "", tmpl, vars)
+	out, err := extractOutcome(nil, "", "", tmpl, vars)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "IMAGE:generated" {
-		t.Errorf("unexpected ref: %q", out)
-	}
-	if len(sess.Images) != 1 || sess.Images[0] != tinyPNG {
-		t.Errorf("fetched image not attached: got %d images", len(sess.Images))
+	if out.b64 != tinyPNG {
+		t.Errorf("fetched image bytes mismatch: %q", out.b64)
 	}
 }
 
 func TestExtractURLTemplateUnresolvedToken(t *testing.T) {
-	tool := &restImageTool{connector: "img"}
 	// A field resolved empty leaves an unfilled {type} token → clear error, no fetch.
-	_, err := tool.extractAndAttach(&ToolSession{}, nil, "", "",
+	_, err := extractOutcome(nil, "", "",
 		"http://x/view?f={filename}&t={type}", map[string]string{"filename": "g.png"})
 	if err == nil || !strings.Contains(err.Error(), "template") {
 		t.Errorf("expected template-token error, got %v", err)
+	}
+}
+
+func TestResolveImageDims(t *testing.T) {
+	// Unset defaults → 512 square.
+	if w, h := resolveImageDims(false, 0, 0); w != 512 || h != 512 {
+		t.Errorf("unset dims = %dx%d, want 512x512", w, h)
+	}
+	// Non-landscape keeps the spec defaults as-is.
+	if w, h := resolveImageDims(false, 768, 512); w != 768 || h != 512 {
+		t.Errorf("square-request dims = %dx%d, want 768x512", w, h)
+	}
+	// Landscape orients wide: a portrait default gets swapped.
+	if w, h := resolveImageDims(true, 512, 768); w != 768 || h != 512 {
+		t.Errorf("landscape dims = %dx%d, want 768x512 (swapped)", w, h)
+	}
+	// Landscape with an already-wide default is untouched.
+	if w, h := resolveImageDims(true, 1024, 576); w != 1024 || h != 576 {
+		t.Errorf("landscape wide dims = %dx%d, want 1024x576", w, h)
+	}
+}
+
+func TestImageBackendRegistryRouting(t *testing.T) {
+	// A backend registered by name is reachable through generateWithProvider's
+	// default case — the seam that lets a connector serve the native pipeline.
+	// The backend returns an error so the success/usage-record path is skipped.
+	RegisterImageBackend("unit_test_backend", func(_ context.Context, prompt string, landscape bool) (*ImageGenResult, error) {
+		return nil, fmt.Errorf("routed:%s:%v", prompt, landscape)
+	})
+	if !ImageBackendRegistered("unit_test_backend") {
+		t.Fatal("backend not registered")
+	}
+	_, err := generateWithProvider(context.Background(), "unit_test_backend", "", "a cat", true)
+	if err == nil || err.Error() != "routed:a cat:true" {
+		t.Errorf("routing failed, got %v", err)
+	}
+	// An unknown provider still errors clearly.
+	if _, err := generateWithProvider(context.Background(), "nope_no_backend", "", "x", false); err == nil ||
+		!strings.Contains(err.Error(), "unknown image provider") {
+		t.Errorf("expected unknown-provider error, got %v", err)
 	}
 }
 
