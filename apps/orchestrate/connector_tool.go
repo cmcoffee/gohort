@@ -218,6 +218,19 @@ Typical flow for a calendar:
 		Required:    []string{"pack"},
 		Handler:     connectorImport,
 	})
+	gt.AddAction("import_comfyui", &GroupedToolAction{
+		Description: "Set up a ComfyUI image backend from a workflow the user pastes — the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph — detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens — so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts a rest_image connector UNAPPROVED; tell the user to approve it in Admin > Connectors (or that Admin > Image Generation > “Add image backend” does create+approve in one step). For Automatic1111, use action=create with kind=rest_image, preset=a1111.",
+		Params: map[string]ToolParam{
+			"name":        {Type: "string", Description: "Connector id (letters/digits/underscore/dash), e.g. \"comfyui\". Becomes the image-provider name and the generate_image_<name> tool."},
+			"base_url":    {Type: "string", Description: "The ComfyUI server URL, e.g. http://localhost:8188."},
+			"workflow":    {Type: "string", Description: "(optional) The user's ComfyUI workflow in API format (from ComfyUI's “Save (API Format)”). Paste it verbatim — the framework auto-detects and tokenizes the prompt + output nodes. Omit for a default SD1.5 graph."},
+			"node_id":     {Type: "string", Description: "(optional) Override the auto-detected SaveImage output node id — only if detection picks the wrong node."},
+			"credential":  {Type: "string", Description: "(optional) SecureAPI credential name for an authenticated/hosted ComfyUI. Omit or \"no_auth\" for a local LAN server."},
+			"description": {Type: "string", Description: "(optional) What this backend is for."},
+		},
+		Required: []string{"name", "base_url"},
+		Handler:  connectorImportComfyUI,
+	})
 	return gt
 }
 
@@ -632,6 +645,50 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		state = "updated and RE-MATERIALIZED (live now)"
 	}
 	return fmt.Sprintf("Connector %q %s. %s", name, state, ConnectorSummary(saved)), nil
+}
+
+// connectorImportComfyUI drafts a ComfyUI rest_image connector, auto-wiring a
+// pasted workflow (via core.ApplyComfyWorkflow) so the LLM never hand-edits the
+// graph. Leaves it UNAPPROVED (rest_image is admin-gated).
+func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, error) {
+	name := strings.TrimSpace(stringArg(args, "name"))
+	base := strings.TrimSpace(stringArg(args, "base_url"))
+	if name == "" || base == "" {
+		return "", fmt.Errorf("name and base_url are required")
+	}
+	if _, exists := GetConnector(RootDB, name); exists {
+		return "", fmt.Errorf("a connector named %q already exists — pick another name or delete it first", name)
+	}
+	cred := strings.TrimSpace(stringArg(args, "credential"))
+	if cred == "" {
+		cred = "no_auth"
+	}
+	spec, err := ApplyRestImagePreset("comfyui", RestImageSpec{Credential: cred}, map[string]string{"base_url": base})
+	if err != nil {
+		return "", err
+	}
+	var warns []string
+	if wf := strings.TrimSpace(stringArg(args, "workflow")); wf != "" {
+		warns, err = ApplyComfyWorkflow(&spec, wf, strings.TrimSpace(stringArg(args, "node_id")))
+		if err != nil {
+			return "", fmt.Errorf("auto-wiring the workflow failed: %w", err)
+		}
+	}
+	desc := strings.TrimSpace(stringArg(args, "description"))
+	if desc == "" {
+		desc = "ComfyUI image backend"
+	}
+	raw, _ := json.Marshal(spec)
+	c := Connector{Name: name, Kind: RestImageConnectorKind, Owner: bridgeOwner(sess), Desc: desc, Spec: raw}
+	if err := SaveConnector(RootDB, c); err != nil {
+		return "", err
+	}
+	msg := fmt.Sprintf("Drafted ComfyUI backend %q (kind=rest_image), UNAPPROVED. An admin approves it in Admin > Connectors; then it's selectable in Admin > Image Generation and available as the generate_image_%s tool. (Admin > Image Generation > “Add image backend” creates + approves in one step.)",
+		name, strings.ReplaceAll(name, "-", "_"))
+	if len(warns) > 0 {
+		msg += "\nAuto-wire notes: " + strings.Join(warns, "; ")
+	}
+	return msg, nil
 }
 
 func connectorList(args map[string]any, sess *ToolSession) (string, error) {

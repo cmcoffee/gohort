@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -307,6 +308,14 @@ type restImageOutcome struct {
 // (for its workspace context) and may be nil for the native pipeline.
 func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImageOutcome, error) {
 	var out restImageOutcome
+	// A negative seed means "random". ComfyUI treats -1 as a literal seed (same
+	// image every time), so resolve it to a fresh positive value here; this is
+	// harmless for backends that already randomize on -1 (they just get a random
+	// fixed seed instead), and gives real variety for those that don't.
+	seed := p.seed
+	if seed < 0 {
+		seed = int(rand.Int31())
+	}
 	// Token map: strings are JSON-escaped (they land inside a JSON string literal
 	// in the body template), numerics are inserted raw.
 	fields := map[string]string{
@@ -316,7 +325,7 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		"width":    strconv.Itoa(p.width),
 		"height":   strconv.Itoa(p.height),
 		"steps":    strconv.Itoa(p.steps),
-		"seed":     strconv.Itoa(p.seed),
+		"seed":     strconv.Itoa(seed),
 	}
 	cred := s.Credential
 	if cred == "" {

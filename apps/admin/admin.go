@@ -871,34 +871,18 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// Optional custom ComfyUI workflow: replace the preset's default graph with
-		// the user's "Save (API Format)" export, and re-point the poll paths at
-		// their SaveImage node id (the preset assumes id 9). The API-format export
-		// is the bare node map, which the /prompt endpoint wants wrapped as
-		// {"prompt": <graph>}; leave it as-is if already wrapped.
+		// Optional custom ComfyUI workflow: auto-wire the user's "Save (API Format)"
+		// export — detect the prompt + SaveImage nodes and inject the tokens — so
+		// they don't hand-edit the graph. node_id (optional) overrides the detected
+		// output node.
 		if preset == "comfyui" && strings.TrimSpace(req.Workflow) != "" {
-			wf := strings.TrimSpace(req.Workflow)
-			if !json.Valid([]byte(wf)) {
-				http.Error(w, "workflow is not valid JSON — paste ComfyUI's “Save (API Format)” output", http.StatusBadRequest)
+			warns, werr := ApplyComfyWorkflow(&spec, req.Workflow, strings.TrimSpace(req.NodeID))
+			if werr != nil {
+				http.Error(w, werr.Error(), http.StatusBadRequest)
 				return
 			}
-			body := wf
-			var probe map[string]json.RawMessage
-			if json.Unmarshal([]byte(wf), &probe) == nil {
-				if _, wrapped := probe["prompt"]; !wrapped {
-					body = `{"prompt":` + wf + `}`
-				}
-			}
-			node := strings.TrimSpace(req.NodeID)
-			if node == "" {
-				node = "9"
-			}
-			spec.SubmitBody = body
-			spec.PollReadyPath = "{id}.outputs." + node + ".images.0.filename"
-			spec.PollFields = map[string]string{
-				"filename":  "{id}.outputs." + node + ".images.0.filename",
-				"subfolder": "{id}.outputs." + node + ".images.0.subfolder",
-				"type":      "{id}.outputs." + node + ".images.0.type",
+			if len(warns) > 0 {
+				Log("[admin] comfyui auto-wire warnings for %q: %s", name, strings.Join(warns, "; "))
 			}
 		}
 		raw, _ := json.Marshal(spec)

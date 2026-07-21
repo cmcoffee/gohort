@@ -2657,9 +2657,9 @@ const addImageBackendAction = `function(ctx){
     var wf = document.createElement('textarea'); wf.spellcheck=false;
     wf.placeholder='Optional: paste ComfyUI “Save (API Format)” JSON. Leave blank for a default SD1.5 graph.';
     wf.style.cssText='width:100%;height:150px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;';
-    var node = document.createElement('input'); node.type='text'; node.value='9'; node.style.cssText=inCss;
+    var node = document.createElement('input'); node.type='text'; node.value=''; node.placeholder='auto-detected'; node.style.cssText=inCss;
     var wfHelp = document.createElement('div'); wfHelp.style.cssText='font-size:11px;opacity:0.7;margin:4px 0 0;line-height:1.45;';
-    wfHelp.innerHTML='In your pasted graph, set the positive-prompt node’s text to <code>{prompt}</code> (and optionally <code>{seed}</code>/<code>{steps}</code>/<code>{width}</code>/<code>{height}</code>). “Node id” is your <b>SaveImage</b> node’s id — the number to its left in the graph. Enable ComfyUI Dev Mode to get the API-format export.';
+    wfHelp.innerHTML='Paste your ComfyUI <b>Save (API Format)</b> JSON (enable Dev Mode in ComfyUI settings). We auto-detect the prompt node and the SaveImage output node and wire the tokens for you — no hand-editing. Leave blank for a default SD1.5 graph. “Output node id” only overrides the auto-detected SaveImage node if detection picks the wrong one.';
     var comfyOnly = document.createElement('div');
     var nameEdited=false, urlEdited=false;
     name.addEventListener('input', function(){ nameEdited=true; });
@@ -2686,8 +2686,8 @@ const addImageBackendAction = `function(ctx){
         .catch(function(e){ save.disabled=false; save.textContent='Create & approve'; msg.textContent=(e&&e.message)||(''+e); });
     };
     actions.appendChild(cancel); actions.appendChild(save);
-    comfyOnly.appendChild(row('Workflow JSON (ComfyUI API format) — optional', wf));
-    comfyOnly.appendChild(row('Output (SaveImage) node id', node));
+    comfyOnly.appendChild(row('Workflow JSON (ComfyUI API format) — optional, auto-wired', wf));
+    comfyOnly.appendChild(row('Output node id (optional — auto-detected)', node));
     comfyOnly.appendChild(wfHelp);
     body.appendChild(row('Backend type', type));
     body.appendChild(row('Name (connector id)', name));
