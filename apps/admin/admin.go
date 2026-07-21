@@ -83,6 +83,79 @@ func probeEmbeddingModels(ctx context.Context, url, apiKey, shape string) []stri
 // endpoints wired into FormPanel.TestURL buttons. Always responds 200
 // — the ok flag carries pass/fail so the client can render success or
 // error inline next to the Test button without HTTP-status branching.
+// comfyCfg is the ComfyUI config-panel payload: the backend's URL, workflow,
+// node map (node ids as comma-separated strings, OpenWebUI-style), defaults, and
+// prompt suffix. Shared by GET (load), POST (save), and /detect (auto-fill).
+type comfyCfg struct {
+	Name          string   `json:"name,omitempty"`
+	BaseURL       string   `json:"base_url"`
+	Workflow      string   `json:"workflow"`
+	PromptNodes   string   `json:"prompt_nodes"`
+	NegativeNodes string   `json:"negative_nodes"`
+	TextKeys      string   `json:"text_keys"`
+	WidthNodes    string   `json:"width_nodes"`
+	HeightNodes   string   `json:"height_nodes"`
+	StepsNodes    string   `json:"steps_nodes"`
+	SeedNodes     string   `json:"seed_nodes"`
+	SeedKey       string   `json:"seed_key"`
+	OutputNode    string   `json:"output_node"`
+	DefaultWidth  int      `json:"default_width"`
+	DefaultHeight int      `json:"default_height"`
+	DefaultSteps  int      `json:"default_steps"`
+	PromptSuffix  string   `json:"prompt_suffix"`
+	Warnings      []string `json:"warnings,omitempty"`
+}
+
+func joinNodes(a []string) string { return strings.Join(a, ", ") }
+
+func splitNodes(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// comfyCfgFromSpec projects a rest_image spec into the panel payload.
+func comfyCfgFromSpec(name string, s RestImageSpec) comfyCfg {
+	m := s.ComfyMap
+	return comfyCfg{
+		Name:          name,
+		BaseURL:       strings.TrimSuffix(s.SubmitURL, "/prompt"),
+		Workflow:      s.ComfyWorkflow,
+		PromptNodes:   joinNodes(m.PromptNodes),
+		NegativeNodes: joinNodes(m.NegativeNodes),
+		TextKeys:      joinNodes(m.TextKeys),
+		WidthNodes:    joinNodes(m.WidthNodes),
+		HeightNodes:   joinNodes(m.HeightNodes),
+		StepsNodes:    joinNodes(m.StepsNodes),
+		SeedNodes:     joinNodes(m.SeedNodes),
+		SeedKey:       m.SeedKey,
+		OutputNode:    m.OutputNode,
+		DefaultWidth:  s.DefaultWidth,
+		DefaultHeight: s.DefaultHeight,
+		DefaultSteps:  s.DefaultSteps,
+		PromptSuffix:  s.PromptSuffix,
+	}
+}
+
+// comfyMapFromCfg parses the panel's comma-separated node fields back into a map.
+func comfyMapFromCfg(req comfyCfg) ComfyNodeMap {
+	return ComfyNodeMap{
+		PromptNodes:   splitNodes(req.PromptNodes),
+		NegativeNodes: splitNodes(req.NegativeNodes),
+		TextKeys:      splitNodes(req.TextKeys),
+		WidthNodes:    splitNodes(req.WidthNodes),
+		HeightNodes:   splitNodes(req.HeightNodes),
+		StepsNodes:    splitNodes(req.StepsNodes),
+		SeedNodes:     splitNodes(req.SeedNodes),
+		SeedKey:       strings.TrimSpace(req.SeedKey),
+		OutputNode:    strings.TrimSpace(req.OutputNode),
+	}
+}
+
 func writeTestResult(w http.ResponseWriter, ok bool, message, errMsg string) {
 	w.Header().Set("Content-Type", "application/json")
 	body := map[string]any{"ok": ok}
@@ -866,23 +939,25 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			http.Error(w, "a connector named "+name+" already exists — pick another name", http.StatusBadRequest)
 			return
 		}
-		spec, err := ApplyRestImagePreset(preset, RestImageSpec{Credential: cred}, map[string]string{"base_url": base})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		// Optional custom ComfyUI workflow: auto-wire the user's "Save (API Format)"
-		// export — detect the prompt + SaveImage nodes and inject the tokens — so
-		// they don't hand-edit the graph. node_id (optional) overrides the detected
-		// output node.
-		if preset == "comfyui" && strings.TrimSpace(req.Workflow) != "" {
-			warns, werr := ApplyComfyWorkflow(&spec, req.Workflow, strings.TrimSpace(req.NodeID))
-			if werr != nil {
-				http.Error(w, werr.Error(), http.StatusBadRequest)
+		var spec RestImageSpec
+		var err error
+		if preset == "comfyui" {
+			// Build via the mapping model (auto-wired workflow → editable node map).
+			// A blank workflow uses the built-in default graph.
+			var warns []string
+			spec, warns, err = NewComfyImageSpec(base, cred, req.Workflow, strings.TrimSpace(req.NodeID))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			if len(warns) > 0 {
 				Log("[admin] comfyui auto-wire warnings for %q: %s", name, strings.Join(warns, "; "))
+			}
+		} else {
+			spec, err = ApplyRestImagePreset(preset, RestImageSpec{Credential: cred}, map[string]string{"base_url": base})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
 			}
 		}
 		raw, _ := json.Marshal(spec)
@@ -907,6 +982,106 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		Log("[admin] user %q added image backend %q (preset=%q, default=%v)",
 			AuthCurrentUser(r), name, preset, req.SetDefault)
 		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// ComfyUI cohesive config panel — one surface for a ComfyUI backend: URL,
+	// workflow, the (auto-detected, editable) node map, default size/steps, and a
+	// per-backend prompt suffix. GET loads the current config; POST saves it;
+	// POST /detect runs the auto-wirer on a pasted workflow and returns the
+	// detected node map to prefill the form (no save).
+	sub.HandleFunc("/api/image-gen/comfy", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		switch r.Method {
+		case http.MethodGet:
+			c, ok := GetConnector(RootDB, name)
+			if !ok || c.Kind != RestImageConnectorKind {
+				http.Error(w, "no ComfyUI backend named "+name, http.StatusNotFound)
+				return
+			}
+			var s RestImageSpec
+			_ = json.Unmarshal(c.Spec, &s)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(comfyCfgFromSpec(c.Name, s))
+		case http.MethodPost:
+			var req comfyCfg
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			c, ok := GetConnector(RootDB, name)
+			if !ok || c.Kind != RestImageConnectorKind {
+				http.Error(w, "no ComfyUI backend named "+name, http.StatusNotFound)
+				return
+			}
+			if strings.TrimSpace(req.Workflow) == "" || !json.Valid([]byte(req.Workflow)) {
+				http.Error(w, "workflow is required and must be valid JSON", http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(req.OutputNode) == "" || strings.TrimSpace(req.PromptNodes) == "" {
+				http.Error(w, "output node and at least one prompt node are required", http.StatusBadRequest)
+				return
+			}
+			var prev RestImageSpec
+			_ = json.Unmarshal(c.Spec, &prev)
+			cred := prev.Credential
+			if cred == "" {
+				cred = "no_auth"
+			}
+			// Endpoints from base_url via the preset; the form owns workflow + map +
+			// defaults + suffix (manual map edits are preserved — no re-detect here).
+			spec, err := ApplyRestImagePreset("comfyui", RestImageSpec{Credential: cred}, map[string]string{"base_url": strings.TrimSpace(req.BaseURL)})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			spec.ComfyWorkflow = req.Workflow
+			spec.ComfyMap = comfyMapFromCfg(req)
+			spec.DefaultWidth, spec.DefaultHeight, spec.DefaultSteps = req.DefaultWidth, req.DefaultHeight, req.DefaultSteps
+			spec.PromptSuffix = strings.TrimSpace(req.PromptSuffix)
+			spec.SubmitBody, spec.PollReadyPath, spec.PollFields = "", "", nil
+			c.Spec, _ = json.Marshal(spec)
+			if err := SaveConnector(RootDB, c); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			Log("[admin] user %q saved ComfyUI config for %q", AuthCurrentUser(r), name)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Auto-detect the node map from a pasted workflow (no save) — powers the panel's
+	// "Re-detect" button.
+	sub.HandleFunc("/api/image-gen/comfy/detect", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Workflow string `json:"workflow"`
+			NodeID   string `json:"node_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var s RestImageSpec
+		warns, err := ApplyComfyWorkflow(&s, req.Workflow, strings.TrimSpace(req.NodeID))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		out := comfyCfgFromSpec("", s)
+		out.Warnings = warns
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
 	})
 
 	// STT connectivity test — GET {endpoint}/models with auth header so
@@ -1952,10 +2127,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				Owner     string `json:"owner"`
 				Approved  bool   `json:"approved"`
 				LastError string `json:"last_error"`
+				IsImage   bool   `json:"is_image"` // rest_image → gets the "Configure" action
 			}
 			var rows []connRow
 			for _, c := range ListConnectors(RootDB) {
-				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError})
+				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Kind == RestImageConnectorKind})
 			}
 			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:

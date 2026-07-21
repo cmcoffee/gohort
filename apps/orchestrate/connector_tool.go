@@ -660,19 +660,9 @@ func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, err
 		return "", fmt.Errorf("a connector named %q already exists — pick another name or delete it first", name)
 	}
 	cred := strings.TrimSpace(stringArg(args, "credential"))
-	if cred == "" {
-		cred = "no_auth"
-	}
-	spec, err := ApplyRestImagePreset("comfyui", RestImageSpec{Credential: cred}, map[string]string{"base_url": base})
+	spec, warns, err := NewComfyImageSpec(base, cred, stringArg(args, "workflow"), strings.TrimSpace(stringArg(args, "node_id")))
 	if err != nil {
-		return "", err
-	}
-	var warns []string
-	if wf := strings.TrimSpace(stringArg(args, "workflow")); wf != "" {
-		warns, err = ApplyComfyWorkflow(&spec, wf, strings.TrimSpace(stringArg(args, "node_id")))
-		if err != nil {
-			return "", fmt.Errorf("auto-wiring the workflow failed: %w", err)
-		}
+		return "", fmt.Errorf("setting up the ComfyUI backend failed: %w", err)
 	}
 	desc := strings.TrimSpace(stringArg(args, "description"))
 	if desc == "" {

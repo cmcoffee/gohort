@@ -415,6 +415,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 			ClientAction("connectors_export_all", connectorsExportAllAction).
 			ClientAction("connector_edit_spec", connectorEditSpecAction).
 			ClientAction("add_image_backend", addImageBackendAction).
+			ClientAction("configure_comfyui", configureComfyuiAction).
+			ClientAction("configure_comfyui_pick", configureComfyuiPickAction).
 			ClientAction("tools_export", toolsExportAction).
 			ClientAction("tools_export_all", toolsExportAllAction).
 			ClientAction("tool_scope_manage", toolScopeManageAction).
@@ -941,6 +943,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 						ui.Toolbar{
 							Actions: []ui.ToolbarAction{
 								{Label: "Add image backend…", Method: "client", URL: "add_image_backend"},
+								{Label: "Configure ComfyUI…", Method: "client", URL: "configure_comfyui_pick"},
 							},
 						},
 					},
@@ -1565,6 +1568,8 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 								{Type: "button", Label: "Unapprove",
 									PostTo: "api/connectors?action=unapprove&name={name}",
 									Method: "POST", OnlyIf: "approved"},
+								{Type: "button", Label: "Configure", Method: "client",
+									PostTo: "configure_comfyui", OnlyIf: "is_image"},
 								{Type: "button", Label: "Edit spec", Method: "client",
 									PostTo: "connector_edit_spec", Compact: true},
 								{Type: "button", Label: "Export", Method: "client",
@@ -2700,6 +2705,120 @@ const addImageBackendAction = `function(ctx){
     body.appendChild(actions);
     applyType();
   }});
+}`
+
+// comfyPanelDef defines the cohesive ComfyUI config panel on window (idempotent):
+// one surface with URL + workflow + an auto-fillable, EDITABLE node map + defaults
+// + a per-backend prompt suffix. "Re-detect" runs the server-side auto-wirer on
+// the pasted workflow and repopulates the map fields; a wrong detection is then a
+// one-field fix here, not raw-JSON surgery. Kept in the admin app (not core/ui) —
+// it's ComfyUI-specific behavior plugged in via a client action.
+const comfyPanelDef = `
+window.__renderComfyPanel = function(name, d, reload){
+  window.uiOpenSimpleModal({ title:'ComfyUI backend: '+name, width:'720px', mount:function(body, dlg){
+    var inCss='width:100%;padding:6px;box-sizing:border-box;font-size:12px;';
+    function field(label, val, help){
+      var wrap=document.createElement('div'); wrap.style.cssText='margin:0 0 10px;';
+      var lb=document.createElement('div'); lb.textContent=label; lb.style.cssText='font-size:12px;opacity:0.8;margin-bottom:3px;';
+      var inp=document.createElement('input'); inp.type='text'; inp.value=(val===0||val)?val:''; inp.style.cssText=inCss;
+      wrap.appendChild(lb); wrap.appendChild(inp);
+      if(help){ var h=document.createElement('div'); h.style.cssText='font-size:11px;opacity:0.6;margin-top:2px;'; h.textContent=help; wrap.appendChild(h); }
+      body.appendChild(wrap); return inp;
+    }
+    function heading(t){ var h=document.createElement('div'); h.textContent=t; h.style.cssText='font-size:12px;font-weight:600;margin:12px 0 6px;opacity:0.9;'; body.appendChild(h); }
+    heading('Connection');
+    var url=field('ComfyUI URL', d.base_url, 'e.g. http://localhost:8188');
+    var wfWrap=document.createElement('div'); wfWrap.style.cssText='margin:0 0 6px;';
+    var wfLb=document.createElement('div'); wfLb.textContent='Workflow (ComfyUI “Save (API Format)” JSON)'; wfLb.style.cssText='font-size:12px;opacity:0.8;margin-bottom:3px;';
+    var wf=document.createElement('textarea'); wf.value=d.workflow||''; wf.spellcheck=false; wf.style.cssText='width:100%;height:140px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;';
+    wfWrap.appendChild(wfLb); wfWrap.appendChild(wf); body.appendChild(wfWrap);
+    var maphdr=document.createElement('div'); maphdr.style.cssText='display:flex;justify-content:space-between;align-items:center;margin:12px 0 4px;';
+    var mlbl=document.createElement('div'); mlbl.textContent='Node mapping'; mlbl.style.cssText='font-size:12px;font-weight:600;opacity:0.9;';
+    var redetect=document.createElement('button'); redetect.className='ui-row-btn'; redetect.textContent='Re-detect from workflow';
+    maphdr.appendChild(mlbl); maphdr.appendChild(redetect); body.appendChild(maphdr);
+    var mhelp=document.createElement('div'); mhelp.style.cssText='font-size:11px;opacity:0.6;margin:0 0 8px;'; mhelp.textContent='Node ids (comma-separated) that hold each value. Auto-filled from the workflow; correct any that are wrong.'; body.appendChild(mhelp);
+    var promptN=field('Prompt node(s)', d.prompt_nodes, 'where the prompt text is written');
+    var negN=field('Negative node(s)', d.negative_nodes);
+    var textK=field('Text input key(s)', d.text_keys, 'usually "text"; SDXL "text_g, text_l"');
+    var widthN=field('Width node(s)', d.width_nodes);
+    var heightN=field('Height node(s)', d.height_nodes);
+    var stepsN=field('Steps node(s)', d.steps_nodes);
+    var seedN=field('Seed node(s)', d.seed_nodes);
+    var seedK=field('Seed key', d.seed_key, '"seed" or "noise_seed"');
+    var outN=field('Output (SaveImage) node', d.output_node, 'the image is read from this node');
+    heading('Defaults');
+    var dw=field('Default width', d.default_width);
+    var dh=field('Default height', d.default_height);
+    var ds=field('Default steps', d.default_steps);
+    heading('House style');
+    var sfxWrap=document.createElement('div'); sfxWrap.style.cssText='margin:0 0 10px;';
+    var sfxLb=document.createElement('div'); sfxLb.textContent='Append to every prompt'; sfxLb.style.cssText='font-size:12px;opacity:0.8;margin-bottom:3px;';
+    var sfx=document.createElement('textarea'); sfx.value=d.prompt_suffix||''; sfx.placeholder='e.g. crisp, high-contrast, sharp typography'; sfx.style.cssText='width:100%;height:48px;box-sizing:border-box;font-size:12px;';
+    sfxWrap.appendChild(sfxLb); sfxWrap.appendChild(sfx); body.appendChild(sfxWrap);
+    var msg=document.createElement('div'); msg.style.cssText='font-size:12px;white-space:pre-wrap;min-height:16px;margin:4px 0;'; body.appendChild(msg);
+    redetect.onclick=function(){
+      msg.textContent=''; redetect.disabled=true; redetect.textContent='Detecting…';
+      fetch('api/image-gen/comfy/detect', {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({workflow:wf.value, node_id:outN.value.trim()})})
+        .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
+        .then(function(x){
+          promptN.value=x.prompt_nodes||''; negN.value=x.negative_nodes||''; textK.value=x.text_keys||'';
+          widthN.value=x.width_nodes||''; heightN.value=x.height_nodes||''; stepsN.value=x.steps_nodes||'';
+          seedN.value=x.seed_nodes||''; seedK.value=x.seed_key||''; outN.value=x.output_node||'';
+          if(x.default_width) dw.value=x.default_width; if(x.default_height) dh.value=x.default_height;
+          redetect.disabled=false; redetect.textContent='Re-detect from workflow';
+          if(x.warnings && x.warnings.length){ msg.style.color='#f5a623'; msg.textContent='Detected with notes: '+x.warnings.join('; '); } else { msg.style.color='#3fb950'; msg.textContent='Detected.'; }
+        })
+        .catch(function(e){ msg.style.color='#e5484d'; msg.textContent=(e&&e.message)||(''+e); redetect.disabled=false; redetect.textContent='Re-detect from workflow'; });
+    };
+    var actions=document.createElement('div'); actions.style.cssText='margin-top:10px;display:flex;gap:8px;justify-content:flex-end;';
+    var cancel=document.createElement('button'); cancel.className='ui-row-btn'; cancel.textContent='Cancel'; cancel.onclick=function(){ try{dlg.close();dlg.remove();}catch(e){} };
+    var save=document.createElement('button'); save.className='ui-wb-action-btn'; save.textContent='Save';
+    save.onclick=function(){
+      msg.style.color='#e5484d'; msg.textContent='';
+      var payload={ base_url:url.value.trim(), workflow:wf.value,
+        prompt_nodes:promptN.value, negative_nodes:negN.value, text_keys:textK.value,
+        width_nodes:widthN.value, height_nodes:heightN.value, steps_nodes:stepsN.value,
+        seed_nodes:seedN.value, seed_key:seedK.value.trim(), output_node:outN.value.trim(),
+        default_width:parseInt(dw.value,10)||0, default_height:parseInt(dh.value,10)||0, default_steps:parseInt(ds.value,10)||0,
+        prompt_suffix:sfx.value };
+      save.disabled=true; save.textContent='Saving…';
+      fetch('api/image-gen/comfy?name='+encodeURIComponent(name), {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})
+        .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); try{dlg.close();dlg.remove();}catch(e){} if(reload)reload(); })
+        .catch(function(e){ save.disabled=false; save.textContent='Save'; msg.textContent=(e&&e.message)||(''+e); });
+    };
+    actions.appendChild(cancel); actions.appendChild(save); body.appendChild(actions);
+  }});
+};
+window.uiConfigureComfy = function(name, reload){
+  fetch('api/image-gen/comfy?name='+encodeURIComponent(name), {cache:'no-store',credentials:'same-origin'})
+    .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
+    .then(function(d){ window.__renderComfyPanel(name, d, reload); })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
+};`
+
+// configureComfyuiAction (Connectors row) opens the panel for the row's backend.
+var configureComfyuiAction = `function(ctx){
+  if(!window.uiConfigureComfy){` + comfyPanelDef + `}
+  var name = ctx && ctx.record && ctx.record.name;
+  if(!name){ window.uiAlert && window.uiAlert('No connector selected.'); return; }
+  window.uiConfigureComfy(name, ctx && ctx.reload);
+}`
+
+// configureComfyuiPickAction (Image Generation toolbar) opens the panel for the
+// one image backend, or prompts to pick when there are several.
+var configureComfyuiPickAction = `function(ctx){
+  if(!window.uiConfigureComfy){` + comfyPanelDef + `}
+  fetch('api/connectors', {cache:'no-store',credentials:'same-origin'})
+    .then(function(r){ return r.json(); })
+    .then(function(rows){
+      var comfy=(rows||[]).filter(function(x){ return x.kind==='rest_image'; });
+      if(!comfy.length){ window.uiAlert && window.uiAlert('No image backends yet — add one with “Add image backend”.'); return; }
+      if(comfy.length===1){ window.uiConfigureComfy(comfy[0].name, function(){ location.reload(); }); return; }
+      var names=comfy.map(function(x){ return x.name; });
+      var pick=window.prompt('Configure which backend?\n'+names.join(', '), names[0]);
+      if(pick){ window.uiConfigureComfy(pick.trim(), function(){ location.reload(); }); }
+    })
+    .catch(function(e){ window.uiAlert && window.uiAlert((e&&e.message)||(''+e)); });
 }`
 
 // connectorEditSpecAction opens an inline JSON editor for a connector's

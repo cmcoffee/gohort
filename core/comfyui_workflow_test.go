@@ -17,21 +17,47 @@ const comfyGraphSD15 = `{
   "9": {"class_type":"SaveImage","inputs":{"filename_prefix":"ComfyUI","images":["8",0]}}
 }`
 
-// mustBody substitutes the numeric {seed} token (unquoted in the template, so
-// the raw body isn't valid JSON until filled — same as the a1111 preset's
-// {width}) and parses the result. String tokens like {prompt} stay as literals
-// inside their quotes and survive the parse unchanged.
-func mustBody(t *testing.T, s RestImageSpec) map[string]any {
+func eqStrs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// buildGraph runs BuildComfyBody for a wired spec and returns the parsed graph.
+func buildGraph(t *testing.T, s RestImageSpec, prompt, neg string, w, h, steps, seed int) map[string]any {
 	t.Helper()
-	filled := s.SubmitBody
-	for _, tok := range []string{"{seed}", "{width}", "{height}", "{steps}"} {
-		filled = strings.ReplaceAll(filled, tok, "0")
+	body, err := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, prompt, neg, w, h, steps, seed)
+	if err != nil {
+		t.Fatalf("BuildComfyBody: %v", err)
 	}
 	var m map[string]any
-	if err := json.Unmarshal([]byte(filled), &m); err != nil {
-		t.Fatalf("SubmitBody is not valid JSON after wiring: %v\n%s", err, s.SubmitBody)
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("built body is not valid JSON: %v\n%s", err, body)
 	}
-	return m
+	g, ok := m["prompt"].(map[string]any)
+	if !ok {
+		t.Fatalf("body not wrapped {\"prompt\":...}: %s", body)
+	}
+	return g
+}
+
+func nodeInput(t *testing.T, g map[string]any, node, key string) any {
+	t.Helper()
+	n, ok := g[node].(map[string]any)
+	if !ok {
+		t.Fatalf("node %q missing", node)
+	}
+	in, ok := n["inputs"].(map[string]any)
+	if !ok {
+		t.Fatalf("node %q has no inputs", node)
+	}
+	return in[key]
 }
 
 func TestApplyComfyWorkflowStandard(t *testing.T) {
@@ -43,90 +69,87 @@ func TestApplyComfyWorkflowStandard(t *testing.T) {
 	if len(warns) != 0 {
 		t.Errorf("unexpected warnings: %v", warns)
 	}
-	// Body must be valid JSON wrapped as {"prompt": {graph}}.
-	m := mustBody(t, s)
-	graph, ok := m["prompt"].(map[string]any)
-	if !ok {
-		t.Fatalf("body not wrapped as {\"prompt\":...}: %s", s.SubmitBody)
+	m := s.ComfyMap
+	if !eqStrs(m.PromptNodes, []string{"6"}) {
+		t.Errorf("prompt nodes = %v, want [6]", m.PromptNodes)
 	}
-	// Positive text node "6" → {prompt}; negative "7" → {negative}.
-	if txt := graph["6"].(map[string]any)["inputs"].(map[string]any)["text"]; txt != "{prompt}" {
-		t.Errorf("positive text not tokenized: %v", txt)
+	if !eqStrs(m.NegativeNodes, []string{"7"}) {
+		t.Errorf("negative nodes = %v, want [7]", m.NegativeNodes)
 	}
-	if txt := graph["7"].(map[string]any)["inputs"].(map[string]any)["text"]; txt != "{negative}" {
-		t.Errorf("negative text not tokenized: %v", txt)
+	if !eqStrs(m.TextKeys, []string{"text"}) {
+		t.Errorf("text keys = %v, want [text]", m.TextKeys)
 	}
-	// Poll paths point at the SaveImage node "9".
-	if s.PollReadyPath != "{id}.outputs.9.images.0.filename" {
-		t.Errorf("poll_ready_path = %q", s.PollReadyPath)
+	if !eqStrs(m.WidthNodes, []string{"5"}) || !eqStrs(m.HeightNodes, []string{"5"}) {
+		t.Errorf("size nodes = %v / %v, want [5] / [5]", m.WidthNodes, m.HeightNodes)
 	}
-	if s.PollFields["filename"] != "{id}.outputs.9.images.0.filename" {
-		t.Errorf("poll_fields = %v", s.PollFields)
+	if !eqStrs(m.SeedNodes, []string{"3"}) || m.SeedKey != "seed" {
+		t.Errorf("seed = %v key %q", m.SeedNodes, m.SeedKey)
 	}
-	// EmptyLatentImage "5" width/height tokenized (unquoted number position) and
-	// the graph's own size captured as the spec defaults.
-	if !strings.Contains(s.SubmitBody, `"width":{width}`) || !strings.Contains(s.SubmitBody, `"height":{height}`) {
-		t.Errorf("size not tokenized: %s", s.SubmitBody)
+	if !eqStrs(m.StepsNodes, []string{"3"}) {
+		t.Errorf("steps nodes = %v, want [3]", m.StepsNodes)
+	}
+	if m.OutputNode != "9" {
+		t.Errorf("output node = %q, want 9", m.OutputNode)
 	}
 	if s.DefaultWidth != 512 || s.DefaultHeight != 512 {
-		t.Errorf("size defaults not captured from graph: %dx%d", s.DefaultWidth, s.DefaultHeight)
+		t.Errorf("size defaults = %dx%d, want 512x512", s.DefaultWidth, s.DefaultHeight)
+	}
+	if s.ComfyWorkflow == "" {
+		t.Error("raw workflow not stored")
+	}
+	// Legacy token fields are cleared — the mapping model owns body + poll paths.
+	if s.SubmitBody != "" || s.PollReadyPath != "" {
+		t.Errorf("legacy fields not cleared: body=%q ready=%q", s.SubmitBody, s.PollReadyPath)
 	}
 }
 
-func TestNormImageDim(t *testing.T) {
-	cases := map[int]int{0: 512, -5: 512, 1: 64, 100: 104, 512: 512, 1000: 1000, 1023: 1024, 767: 768}
-	for in, want := range cases {
-		if got := normImageDim(in); got != want {
-			t.Errorf("normImageDim(%d) = %d, want %d", in, got, want)
-		}
-	}
-	// Every result is a valid SD dimension (multiple of 8, >= 64).
-	for _, in := range []int{64, 333, 900, 2049} {
-		if got := normImageDim(in); got%8 != 0 || got < 64 {
-			t.Errorf("normImageDim(%d) = %d is not a valid SD dim", in, got)
-		}
-	}
-}
-
-func TestApplyComfyWorkflowSeedTokenizedUnquoted(t *testing.T) {
+func TestBuildComfyBodyInjects(t *testing.T) {
 	var s RestImageSpec
 	if _, err := ApplyComfyWorkflow(&s, comfyGraphSD15, ""); err != nil {
 		t.Fatal(err)
 	}
-	// {seed} must land in a NUMBER position (unquoted), so a numeric seed
-	// substitutes cleanly. It reads `"seed":{seed}` in the template.
-	if !strings.Contains(s.SubmitBody, `"seed":{seed}`) {
-		t.Errorf("seed not tokenized unquoted; body: %s", s.SubmitBody)
+	g := buildGraph(t, s, "a red fox", "blurry", 768, 512, 25, 12345)
+	if got := nodeInput(t, g, "6", "text"); got != "a red fox" {
+		t.Errorf("prompt not injected: %v", got)
 	}
-	if strings.Contains(s.SubmitBody, `"{seed}"`) {
-		t.Errorf("seed token is quoted (would send a string): %s", s.SubmitBody)
+	if got := nodeInput(t, g, "7", "text"); got != "blurry" {
+		t.Errorf("negative not injected: %v", got)
 	}
-	// After substituting the tokens the body is valid JSON with a numeric seed.
-	final := strings.ReplaceAll(s.SubmitBody, "{seed}", "42")
-	final = strings.ReplaceAll(final, "{width}", "512")
-	final = strings.ReplaceAll(final, "{height}", "512")
-	final = strings.ReplaceAll(final, "{prompt}", "x")
-	final = strings.ReplaceAll(final, "{negative}", "y")
-	var m map[string]any
-	if err := json.Unmarshal([]byte(final), &m); err != nil {
-		t.Fatalf("substituted body invalid: %v\n%s", err, final)
+	// JSON numbers round-trip back as float64.
+	if got := nodeInput(t, g, "5", "width"); got != float64(768) {
+		t.Errorf("width = %v, want 768", got)
+	}
+	if got := nodeInput(t, g, "5", "height"); got != float64(512) {
+		t.Errorf("height = %v, want 512", got)
+	}
+	if got := nodeInput(t, g, "3", "seed"); got != float64(12345) {
+		t.Errorf("seed = %v, want 12345", got)
+	}
+	if got := nodeInput(t, g, "3", "steps"); got != float64(25) {
+		t.Errorf("steps = %v, want 25", got)
+	}
+	// A quote/newline in the prompt can't break the graph JSON.
+	g2 := buildGraph(t, s, "a \"cat\"\nwith text", "", 512, 512, 20, 1)
+	if got := nodeInput(t, g2, "6", "text"); got != "a \"cat\"\nwith text" {
+		t.Errorf("escaped prompt round-trip: %v", got)
 	}
 }
 
 func TestApplyComfyWorkflowAlreadyWrapped(t *testing.T) {
-	// A body already shaped as {"prompt": {graph}} must not be double-wrapped.
 	var s RestImageSpec
-	wrapped := `{"prompt":` + comfyGraphSD15 + `}`
-	if _, err := ApplyComfyWorkflow(&s, wrapped, ""); err != nil {
+	if _, err := ApplyComfyWorkflow(&s, `{"prompt":`+comfyGraphSD15+`}`, ""); err != nil {
 		t.Fatal(err)
 	}
-	m := mustBody(t, s)
-	inner, ok := m["prompt"].(map[string]any)
-	if !ok {
-		t.Fatalf("not wrapped: %s", s.SubmitBody)
+	// The stored workflow is the UNWRAPPED node map (nodes at top level).
+	var g map[string]any
+	if err := json.Unmarshal([]byte(s.ComfyWorkflow), &g); err != nil {
+		t.Fatalf("stored workflow invalid: %v", err)
 	}
-	if _, doubled := inner["prompt"]; doubled {
-		t.Errorf("double-wrapped {\"prompt\":{\"prompt\":...}}")
+	if _, ok := g["6"]; !ok {
+		t.Errorf("workflow not unwrapped: %s", s.ComfyWorkflow)
+	}
+	if _, doubled := g["prompt"]; doubled {
+		t.Error("stored workflow still wrapped in prompt")
 	}
 }
 
@@ -135,10 +158,9 @@ func TestApplyComfyWorkflowNodeOverride(t *testing.T) {
 	if _, err := ApplyComfyWorkflow(&s, comfyGraphSD15, "8"); err != nil {
 		t.Fatal(err)
 	}
-	if s.PollReadyPath != "{id}.outputs.8.images.0.filename" {
-		t.Errorf("override ignored: %q", s.PollReadyPath)
+	if s.ComfyMap.OutputNode != "8" {
+		t.Errorf("override ignored: %q", s.ComfyMap.OutputNode)
 	}
-	// A bad override id is a hard error.
 	if _, err := ApplyComfyWorkflow(&RestImageSpec{}, comfyGraphSD15, "999"); err == nil {
 		t.Error("expected error for unknown override node id")
 	}
@@ -152,7 +174,6 @@ func TestApplyComfyWorkflowNoSaveImage(t *testing.T) {
 }
 
 func TestApplyComfyWorkflowSDXLDualEncoder(t *testing.T) {
-	// SDXL-style positive node carries text_g/text_l instead of text.
 	graph := `{
 	  "3":{"class_type":"KSampler","inputs":{"noise_seed":7,"positive":["6",0],"negative":["7",0]}},
 	  "6":{"class_type":"CLIPTextEncodeSDXL","inputs":{"text_g":"a castle","text_l":"a castle","clip":["4",1]}},
@@ -163,15 +184,18 @@ func TestApplyComfyWorkflowSDXLDualEncoder(t *testing.T) {
 	if _, err := ApplyComfyWorkflow(&s, graph, ""); err != nil {
 		t.Fatalf("SDXL wiring failed: %v", err)
 	}
-	m := mustBody(t, s)
-	g := m["prompt"].(map[string]any)
-	posIn := g["6"].(map[string]any)["inputs"].(map[string]any)
-	if posIn["text_g"] != "{prompt}" || posIn["text_l"] != "{prompt}" {
-		t.Errorf("SDXL dual-encoder not tokenized: %v", posIn)
+	if !eqStrs(s.ComfyMap.TextKeys, []string{"text_g", "text_l"}) {
+		t.Errorf("SDXL text keys = %v", s.ComfyMap.TextKeys)
 	}
-	// noise_seed (KSamplerAdvanced-style) tokenized.
-	if !strings.Contains(s.SubmitBody, `"noise_seed":{seed}`) {
-		t.Errorf("noise_seed not tokenized: %s", s.SubmitBody)
+	if s.ComfyMap.SeedKey != "noise_seed" {
+		t.Errorf("seed key = %q, want noise_seed", s.ComfyMap.SeedKey)
+	}
+	g := buildGraph(t, s, "a dragon", "blurry", 1024, 1024, 20, 42)
+	if nodeInput(t, g, "6", "text_g") != "a dragon" || nodeInput(t, g, "6", "text_l") != "a dragon" {
+		t.Errorf("SDXL dual-encoder prompt not injected")
+	}
+	if got := nodeInput(t, g, "3", "noise_seed"); got != float64(42) {
+		t.Errorf("noise_seed = %v, want 42", got)
 	}
 }
 
@@ -188,10 +212,8 @@ func TestApplyComfyWorkflowIndirectConditioning(t *testing.T) {
 	if _, err := ApplyComfyWorkflow(&s, graph, ""); err != nil {
 		t.Fatalf("indirect conditioning failed: %v", err)
 	}
-	m := mustBody(t, s)
-	g := m["prompt"].(map[string]any)
-	if g["6"].(map[string]any)["inputs"].(map[string]any)["text"] != "{prompt}" {
-		t.Errorf("prompt not traced through ControlNetApply")
+	if !eqStrs(s.ComfyMap.PromptNodes, []string{"6"}) {
+		t.Errorf("prompt node via ControlNetApply = %v, want [6]", s.ComfyMap.PromptNodes)
 	}
 }
 

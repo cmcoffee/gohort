@@ -21,6 +21,42 @@ import (
 	"strings"
 )
 
+// comfyDefaultGraph is a minimal SD1.5 txt2img graph (RAW API format, no tokens)
+// used when a ComfyUI backend is set up without a custom workflow. It's wired by
+// ApplyComfyWorkflow like any pasted workflow, so the default path and the custom
+// path both run the mapping model. Edit the checkpoint via the config panel.
+const comfyDefaultGraph = `{
+  "3":{"class_type":"KSampler","inputs":{"seed":0,"steps":20,"cfg":7,"sampler_name":"euler","scheduler":"normal","denoise":1,"model":["4",0],"positive":["6",0],"negative":["7",0],"latent_image":["5",0]}},
+  "4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"v1-5-pruned-emaonly.safetensors"}},
+  "5":{"class_type":"EmptyLatentImage","inputs":{"width":512,"height":512,"batch_size":1}},
+  "6":{"class_type":"CLIPTextEncode","inputs":{"text":"a scenic landscape","clip":["4",1]}},
+  "7":{"class_type":"CLIPTextEncode","inputs":{"text":"","clip":["4",1]}},
+  "8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},
+  "9":{"class_type":"SaveImage","inputs":{"filename_prefix":"gohort","images":["8",0]}}
+}`
+
+// NewComfyImageSpec builds a ready-to-save ComfyUI rest_image spec: it applies the
+// comfyui preset (endpoints, from base_url) then auto-wires the workflow into the
+// mapping model. A blank workflow uses the built-in default graph. This is the one
+// path both the admin form and the Builder's import_comfyui action go through, so
+// every ComfyUI backend gets a visible/editable node map.
+func NewComfyImageSpec(baseURL, credential, workflow, saveNodeOverride string) (RestImageSpec, []string, error) {
+	cred := strings.TrimSpace(credential)
+	if cred == "" {
+		cred = "no_auth"
+	}
+	spec, err := ApplyRestImagePreset("comfyui", RestImageSpec{Credential: cred}, map[string]string{"base_url": strings.TrimSpace(baseURL)})
+	if err != nil {
+		return spec, nil, err
+	}
+	wf := strings.TrimSpace(workflow)
+	if wf == "" {
+		wf = comfyDefaultGraph
+	}
+	warns, err := ApplyComfyWorkflow(&spec, wf, saveNodeOverride)
+	return spec, warns, err
+}
+
 // ApplyComfyWorkflow parses a ComfyUI API-format workflow and rewrites s's
 // SubmitBody / PollReadyPath / PollFields to run it: {prompt}/{negative}/{seed}
 // are injected into the graph and the poll paths point at the SaveImage node.
@@ -33,6 +69,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		return nil, err
 	}
 	var warnings []string
+	var m ComfyNodeMap
 
 	// 1. Output (SaveImage) node — drives the poll paths.
 	save := strings.TrimSpace(saveNodeOverride)
@@ -46,9 +83,10 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 			save = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "SaveImage") })
 		}
 		if save == "" {
-			return nil, fmt.Errorf("no SaveImage node found — add one in ComfyUI, or pass the output node id explicitly")
+			return nil, fmt.Errorf("no SaveImage node found — add one in ComfyUI, or set the output node in the config panel")
 		}
 	}
+	m.OutputNode = save
 
 	// 2. Sampler → positive/negative conditioning → text nodes.
 	sampler := findComfyNode(graph, func(class string) bool { return strings.Contains(class, "KSampler") })
@@ -66,35 +104,32 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	}
 	sIn := comfyInputs(graph, sampler)
 
-	if !wireComfyPrompt(graph, sIn, "positive", "{prompt}") {
-		return nil, fmt.Errorf("couldn't trace the sampler's positive conditioning to a text node — wire {prompt} manually via Edit spec, or let the assistant handle this graph")
+	if pid := traceComfyText(graph, sIn["positive"]); pid != "" {
+		m.PromptNodes = []string{pid}
+		m.TextKeys = comfyTextKeys(comfyInputs(graph, pid))
+	} else {
+		return nil, fmt.Errorf("couldn't trace the sampler's positive conditioning to a text node — set the prompt node in the config panel")
 	}
-	if _, ok := sIn["negative"]; ok {
-		if !wireComfyPrompt(graph, sIn, "negative", "{negative}") {
-			warnings = append(warnings, "negative conditioning didn't lead to a text node; {negative} not wired")
-		}
+	if nid := traceComfyText(graph, sIn["negative"]); nid != "" {
+		m.NegativeNodes = []string{nid}
+	} else if _, ok := sIn["negative"]; ok {
+		warnings = append(warnings, "negative conditioning didn't lead to a text node; the negative prompt won't apply")
 	}
 
-	// 3. Numeric tokens (seed, width, height). Each is set to a sentinel STRING and
-	//    the sentinel's quotes are stripped after marshal, so the token lands in a
-	//    JSON number position (`"seed":{seed}`), not a string.
-	const (
-		seedSentinel   = "__GOHORT_SEED__"
-		widthSentinel  = "__GOHORT_WIDTH__"
-		heightSentinel = "__GOHORT_HEIGHT__"
-	)
+	// 3. Seed + steps on the sampler.
 	switch {
 	case hasKey(sIn, "seed"):
-		sIn["seed"] = seedSentinel
+		m.SeedNodes, m.SeedKey = []string{sampler}, "seed"
 	case hasKey(sIn, "noise_seed"):
-		sIn["noise_seed"] = seedSentinel
+		m.SeedNodes, m.SeedKey = []string{sampler}, "noise_seed"
 	default:
 		warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
 	}
+	if hasKey(sIn, "steps") {
+		m.StepsNodes = []string{sampler}
+	}
 
-	// Size: the latent node the sampler draws from (EmptyLatentImage or a variant).
-	// Tokenize its width/height so the connector honors requested sizes, and record
-	// the workflow's own values as the defaults.
+	// 4. Size: the latent node the sampler draws from (EmptyLatentImage or variant).
 	latent := ""
 	if lid, ok := comfyLinkTarget(sIn["latent_image"]); ok && hasKey(comfyInputs(graph, lid), "width") {
 		latent = lid
@@ -102,41 +137,106 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		latent = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "EmptyLatent") })
 	}
 	if lin := comfyInputs(graph, latent); hasKey(lin, "width") && hasKey(lin, "height") {
+		m.WidthNodes, m.HeightNodes = []string{latent}, []string{latent}
 		if w := comfyInt(lin["width"]); w > 0 {
 			s.DefaultWidth = w
 		}
 		if h := comfyInt(lin["height"]); h > 0 {
 			s.DefaultHeight = h
 		}
-		lin["width"] = widthSentinel
-		lin["height"] = heightSentinel
 	} else {
 		warnings = append(warnings, "no EmptyLatentImage width/height found; image size is fixed to the workflow")
 	}
 
-	// 4. Serialize + wrap as the /prompt request body, unquoting the numeric tokens.
-	marshaled, err := json.Marshal(graph)
+	// 5. Store the RAW (normalized, unwrapped) graph + the mapping; the mapping
+	//    model owns the body and poll paths, so clear the legacy token fields.
+	raw, err := json.Marshal(graph)
 	if err != nil {
 		return nil, fmt.Errorf("re-serializing workflow: %w", err)
 	}
-	body := string(marshaled)
-	for sentinel, token := range map[string]string{
-		seedSentinel:   "{seed}",
-		widthSentinel:  "{width}",
-		heightSentinel: "{height}",
-	} {
-		body = strings.ReplaceAll(body, `"`+sentinel+`"`, token)
-	}
-	s.SubmitBody = `{"prompt":` + body + `}`
-
-	// 5. Poll paths for the detected output node.
-	s.PollReadyPath = "{id}.outputs." + save + ".images.0.filename"
-	s.PollFields = map[string]string{
-		"filename":  "{id}.outputs." + save + ".images.0.filename",
-		"subfolder": "{id}.outputs." + save + ".images.0.subfolder",
-		"type":      "{id}.outputs." + save + ".images.0.type",
-	}
+	s.ComfyWorkflow = string(raw)
+	s.ComfyMap = m
+	s.SubmitBody = ""
+	s.PollReadyPath = ""
+	s.PollFields = nil
 	return warnings, nil
+}
+
+// traceComfyText resolves a sampler conditioning link (positive/negative) to the
+// text node it leads to, following indirection (ControlNetApply, etc.).
+func traceComfyText(graph map[string]map[string]any, linkVal any) string {
+	tid, ok := comfyLinkTarget(linkVal)
+	if !ok {
+		return ""
+	}
+	return findComfyTextNode(graph, tid, 4, map[string]bool{})
+}
+
+// comfyTextKeys returns the prompt input key(s) present on a text node: ["text"]
+// for a standard CLIPTextEncode, ["text_g","text_l"] for an SDXL encoder.
+func comfyTextKeys(in map[string]any) []string {
+	var keys []string
+	for _, k := range []string{"text", "text_g", "text_l"} {
+		if hasKey(in, k) {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		keys = []string{"text"}
+	}
+	return keys
+}
+
+// BuildComfyBody parses the stored workflow and injects each generation value
+// into the nodes named by the map, returning the /prompt request body. This is
+// the mapping-model counterpart to token substitution — the wiring lives in the
+// (editable) map, not baked into the graph. seed is the already-resolved value.
+func BuildComfyBody(workflow string, m ComfyNodeMap, prompt, negative string, width, height, steps, seed int) (string, error) {
+	graph, err := parseComfyGraph(workflow)
+	if err != nil {
+		return "", fmt.Errorf("stored workflow is invalid: %w", err)
+	}
+	setStr := func(nodes, keys []string, val string) {
+		for _, id := range nodes {
+			if in := comfyInputs(graph, id); in != nil {
+				for _, k := range keys {
+					if hasKey(in, k) {
+						in[k] = val
+					}
+				}
+			}
+		}
+	}
+	setNum := func(nodes []string, key string, val int) {
+		for _, id := range nodes {
+			if in := comfyInputs(graph, id); in != nil {
+				if hasKey(in, key) {
+					in[key] = val
+				}
+			}
+		}
+	}
+	keys := m.TextKeys
+	if len(keys) == 0 {
+		keys = []string{"text"}
+	}
+	setStr(m.PromptNodes, keys, prompt)
+	setStr(m.NegativeNodes, keys, negative)
+	setNum(m.WidthNodes, "width", width)
+	setNum(m.HeightNodes, "height", height)
+	seedKey := m.SeedKey
+	if seedKey == "" {
+		seedKey = "seed"
+	}
+	setNum(m.SeedNodes, seedKey, seed)
+	if steps > 0 {
+		setNum(m.StepsNodes, "steps", steps)
+	}
+	raw, err := json.Marshal(graph)
+	if err != nil {
+		return "", err
+	}
+	return `{"prompt":` + string(raw) + `}`, nil
 }
 
 // parseComfyGraph decodes an API-format workflow into a node map, unwrapping a
@@ -210,20 +310,6 @@ func comfyLinkTarget(v any) (string, bool) {
 	return "", false
 }
 
-// wireComfyPrompt follows sampInputs[key]'s link to a text node and sets its
-// prompt text to token. Returns whether it injected anything.
-func wireComfyPrompt(graph map[string]map[string]any, sampInputs map[string]any, key, token string) bool {
-	tid, ok := comfyLinkTarget(sampInputs[key])
-	if !ok {
-		return false
-	}
-	node := findComfyTextNode(graph, tid, 4, map[string]bool{})
-	if node == "" {
-		return false
-	}
-	return injectComfyPrompt(comfyInputs(graph, node), token)
-}
-
 // findComfyTextNode walks up conditioning links from start until it finds a
 // node we can inject a prompt into (a CLIPTextEncode variant, or any node with a
 // text / text_g / text_l input). Bounded by depth to avoid cycles.
@@ -245,22 +331,6 @@ func findComfyTextNode(graph map[string]map[string]any, start string, depth int,
 		}
 	}
 	return ""
-}
-
-// injectComfyPrompt sets the prompt token on whichever text fields the node has
-// (SDXL nodes carry text_g/text_l instead of a single text). Only replaces a
-// STRING value — a linked (list) text input is left alone. Returns success.
-func injectComfyPrompt(in map[string]any, token string) bool {
-	hit := false
-	for _, k := range []string{"text", "text_g", "text_l"} {
-		if v, ok := in[k]; ok {
-			if _, isStr := v.(string); isStr || v == nil {
-				in[k] = token
-				hit = true
-			}
-		}
-	}
-	return hit
 }
 
 // comfyInt coerces a graph value (json.Number under UseNumber, or a stray

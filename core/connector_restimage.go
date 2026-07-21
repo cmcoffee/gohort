@@ -93,6 +93,41 @@ type RestImageSpec struct {
 	DefaultHeight   int    `json:"default_height,omitempty"`
 	DefaultSteps    int    `json:"default_steps,omitempty"`
 	DefaultModel    string `json:"default_model,omitempty"`
+
+	// PromptSuffix is appended to EVERY prompt this backend generates (comma-
+	// joined), e.g. a house style like "crisp, high-contrast, sharp typography".
+	// Applies in both the token and mapping paths.
+	PromptSuffix string `json:"prompt_suffix,omitempty"`
+
+	// --- ComfyUI mapping model (the cohesive/editable path) ------------------
+	//
+	// When ComfyWorkflow is set, the backend runs in the MAPPING model instead of
+	// token substitution: generate() parses this RAW graph and injects each
+	// generation value into the nodes named by ComfyMap, then wraps as
+	// {"prompt": graph}. The point (vs. baking tokens into SubmitBody) is that the
+	// param→node mapping stays VISIBLE and EDITABLE — a wrong auto-detection is a
+	// one-field fix in the config panel, not raw-JSON surgery. SubmitBody /
+	// PollReadyPath / PollFields are unused in this mode; the poll paths derive
+	// from ComfyMap.OutputNode. A blank ComfyWorkflow keeps the legacy token path
+	// (A1111, DALL·E, connectors authored before this).
+	ComfyWorkflow string       `json:"comfy_workflow,omitempty"`
+	ComfyMap      ComfyNodeMap `json:"comfy_map,omitempty"`
+}
+
+// ComfyNodeMap names the ComfyUI graph nodes that hold each generation parameter
+// (OpenWebUI-style, but auto-detected by ApplyComfyWorkflow). Each list is the
+// node id(s) whose input carries that value; empty lists just mean "this backend
+// doesn't expose that knob."
+type ComfyNodeMap struct {
+	PromptNodes   []string `json:"prompt_nodes,omitempty"`   // positive CLIPTextEncode node(s)
+	NegativeNodes []string `json:"negative_nodes,omitempty"` // negative CLIPTextEncode node(s)
+	TextKeys      []string `json:"text_keys,omitempty"`      // input key(s) on those nodes (default ["text"]; SDXL ["text_g","text_l"])
+	WidthNodes    []string `json:"width_nodes,omitempty"`    // EmptyLatentImage-style node(s), input "width"
+	HeightNodes   []string `json:"height_nodes,omitempty"`   // ... input "height"
+	StepsNodes    []string `json:"steps_nodes,omitempty"`    // sampler node(s), input "steps"
+	SeedNodes     []string `json:"seed_nodes,omitempty"`     // sampler node(s), input SeedKey
+	SeedKey       string   `json:"seed_key,omitempty"`       // "seed" or "noise_seed" (default "seed")
+	OutputNode    string   `json:"output_node,omitempty"`    // SaveImage node → poll paths
 }
 
 func init() { RegisterConnectorKind(RestImageConnectorKind, restImageHandler{}) }
@@ -124,6 +159,24 @@ func (h restImageHandler) Validate(c Connector) error {
 		if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
 			return fmt.Errorf("no credential named %q — draft it first (draft_api_credential / draft_oauth_credential) and have the admin enable it, or use \"no_auth\" for an unauthenticated local endpoint", s.Credential)
 		}
+	}
+	// ComfyUI mapping model: the workflow + map own the body and poll paths, so the
+	// legacy poll_* fields aren't required — just a poll endpoint, an output node,
+	// and the /view template to fetch the result.
+	if s.ComfyWorkflow != "" {
+		if s.PollURL == "" {
+			return fmt.Errorf("poll_url is required for a ComfyUI backend")
+		}
+		if s.ComfyMap.OutputNode == "" {
+			return fmt.Errorf("comfy_map.output_node is required (the SaveImage node the result is read from)")
+		}
+		if len(s.ComfyMap.PromptNodes) == 0 {
+			return fmt.Errorf("comfy_map.prompt_nodes is required (the node(s) the prompt is written into)")
+		}
+		if s.PollURLTemplate == "" {
+			return fmt.Errorf("poll_url_template is required (the /view URL the image is fetched from)")
+		}
+		return nil
 	}
 	// Exactly one result path must be declared, distinguishing sync vs poll.
 	polling := s.SubmitIDPath != "" || s.PollURL != ""
@@ -340,21 +393,40 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 	if seed < 0 {
 		seed = int(rand.Int31())
 	}
-	// Token map: strings are JSON-escaped (they land inside a JSON string literal
-	// in the body template), numerics are inserted raw. Dimensions are normalized
-	// to a multiple of 8 — Stable Diffusion (ComfyUI's EmptyLatentImage, A1111)
-	// requires it, so a free-form requested size can't produce a hard error.
-	fields := map[string]string{
-		"prompt":   jsonInner(p.prompt),
-		"negative": jsonInner(p.negative),
-		"model":    jsonInner(s.DefaultModel),
-		"width":    strconv.Itoa(normImageDim(p.width)),
-		"height":   strconv.Itoa(normImageDim(p.height)),
-		"steps":    strconv.Itoa(p.steps),
-		"seed":     strconv.Itoa(seed),
+	// Dimensions normalized to a multiple of 8 — Stable Diffusion (ComfyUI's
+	// EmptyLatentImage, A1111) requires it, so a free-form size can't hard-error.
+	width, height := normImageDim(p.width), normImageDim(p.height)
+	// House style: append PromptSuffix to every prompt.
+	prompt := strings.TrimSpace(p.prompt)
+	if suf := strings.TrimSpace(s.PromptSuffix); suf != "" {
+		if prompt != "" {
+			prompt += ", " + suf
+		} else {
+			prompt = suf
+		}
 	}
+
 	method := firstNonEmpty(s.SubmitMethod, "POST")
-	body := substituteTokens(s.SubmitBody, fields)
+	var body string
+	if s.ComfyWorkflow != "" {
+		// Mapping model: inject values into the nodes named by ComfyMap.
+		b, berr := BuildComfyBody(s.ComfyWorkflow, s.ComfyMap, prompt, p.negative, width, height, p.steps, seed)
+		if berr != nil {
+			return out, berr
+		}
+		body = b
+	} else {
+		// Legacy token model: {prompt}/{negative}/{model} JSON-escaped, numerics raw.
+		body = substituteTokens(s.SubmitBody, map[string]string{
+			"prompt":   jsonInner(prompt),
+			"negative": jsonInner(p.negative),
+			"model":    jsonInner(s.DefaultModel),
+			"width":    strconv.Itoa(width),
+			"height":   strconv.Itoa(height),
+			"steps":    strconv.Itoa(p.steps),
+			"seed":     strconv.Itoa(seed),
+		})
+	}
 
 	// Submit. Read via the pipe path for its higher byte cap — a base64 image
 	// blows past the 256KB text cap — but the response never reaches the LLM.
@@ -384,7 +456,19 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 	idTok := map[string]string{"id": id}
 	pollURL := substituteTokens(s.PollURL, idTok)
 	pollMethod := firstNonEmpty(s.PollMethod, "GET")
-	readyPath := substituteTokens(s.PollReadyPath, idTok)
+
+	// In the mapping model the poll paths derive from ComfyMap.OutputNode (the
+	// single source of truth); otherwise they come from the spec's poll_* fields.
+	useMap := s.ComfyWorkflow != "" && s.ComfyMap.OutputNode != ""
+	imgPath := func(field string) string {
+		return "{id}.outputs." + s.ComfyMap.OutputNode + ".images.0." + field
+	}
+	var readyPath string
+	if useMap {
+		readyPath = substituteTokens(imgPath("filename"), idTok)
+	} else {
+		readyPath = substituteTokens(s.PollReadyPath, idTok)
+	}
 
 	interval := s.PollIntervalSecs
 	if interval < 1 {
@@ -415,6 +499,14 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 	}
 	if !ready {
 		return out, fmt.Errorf("image generation timed out after %ds waiting on %q", maxSecs, readyPath)
+	}
+	if useMap {
+		fields := resolvePollFields(map[string]string{
+			"filename":  imgPath("filename"),
+			"subfolder": imgPath("subfolder"),
+			"type":      imgPath("type"),
+		}, pollNode, idTok)
+		return extractOutcome(pollNode, "", "", s.PollURLTemplate, fields)
 	}
 	return extractOutcome(pollNode,
 		substituteTokens(s.PollB64Path, idTok),
