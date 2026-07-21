@@ -9,7 +9,6 @@ import (
 func TestComfyCfgRoundTrip(t *testing.T) {
 	spec := RestImageSpec{
 		SubmitURL:     "http://localhost:8188/prompt",
-		ComfyWorkflow: `{"6":{"class_type":"CLIPTextEncode","inputs":{"text":""}}}`,
 		DefaultWidth:  768,
 		DefaultHeight: 512,
 		DefaultSteps:  25,

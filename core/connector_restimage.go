@@ -110,6 +110,10 @@ type RestImageSpec struct {
 	// PollReadyPath / PollFields are unused in this mode; the poll paths derive
 	// from ComfyMap.OutputNode. A blank ComfyWorkflow keeps the legacy token path
 	// (A1111, DALL·E, connectors authored before this).
+	// ComfyWorkflow holds the graph pretty-indented for readability (via json.Indent
+	// on the user's input — content + key order preserved, only whitespace added, so
+	// we don't reorder what they pasted). It's a string, NOT json.RawMessage, because
+	// json.Marshal compacts a RawMessage and would strip the indentation back out.
 	ComfyWorkflow string       `json:"comfy_workflow,omitempty"`
 	ComfyMap      ComfyNodeMap `json:"comfy_map,omitempty"`
 }

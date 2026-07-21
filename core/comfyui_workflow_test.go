@@ -97,6 +97,15 @@ func TestApplyComfyWorkflowStandard(t *testing.T) {
 	if s.ComfyWorkflow == "" {
 		t.Error("raw workflow not stored")
 	}
+	// Stored pretty-indented, not collapsed to one line, and still parses to the
+	// same nodes (content preserved).
+	if !strings.Contains(s.ComfyWorkflow, "\n") {
+		t.Errorf("workflow should be pretty-indented, got one line: %s", s.ComfyWorkflow)
+	}
+	if !strings.Contains(s.ComfyWorkflow, "\"class_type\": \"KSampler\"") &&
+		!strings.Contains(s.ComfyWorkflow, "\"class_type\":\"KSampler\"") {
+		t.Errorf("workflow content not preserved: %s", s.ComfyWorkflow)
+	}
 	// Legacy token fields are cleared — the mapping model owns body + poll paths.
 	if s.SubmitBody != "" || s.PollReadyPath != "" {
 		t.Errorf("legacy fields not cleared: body=%q ready=%q", s.SubmitBody, s.PollReadyPath)
@@ -140,16 +149,14 @@ func TestApplyComfyWorkflowAlreadyWrapped(t *testing.T) {
 	if _, err := ApplyComfyWorkflow(&s, `{"prompt":`+comfyGraphSD15+`}`, ""); err != nil {
 		t.Fatal(err)
 	}
-	// The stored workflow is the UNWRAPPED node map (nodes at top level).
-	var g map[string]any
-	if err := json.Unmarshal([]byte(s.ComfyWorkflow), &g); err != nil {
-		t.Fatalf("stored workflow invalid: %v", err)
-	}
-	if _, ok := g["6"]; !ok {
-		t.Errorf("workflow not unwrapped: %s", s.ComfyWorkflow)
-	}
+	// A wrapped input is preserved as-pasted, but BuildComfyBody still produces a
+	// SINGLE {"prompt": {graph}} body (not double-wrapped) with the prompt injected.
+	g := buildGraph(t, s, "a red fox", "", 512, 512, 20, 1)
 	if _, doubled := g["prompt"]; doubled {
-		t.Error("stored workflow still wrapped in prompt")
+		t.Error("double-wrapped: body is {\"prompt\":{\"prompt\":...}}")
+	}
+	if got := nodeInput(t, g, "6", "text"); got != "a red fox" {
+		t.Errorf("prompt not injected from wrapped workflow: %v", got)
 	}
 }
 
@@ -214,6 +221,24 @@ func TestApplyComfyWorkflowIndirectConditioning(t *testing.T) {
 	}
 	if !eqStrs(s.ComfyMap.PromptNodes, []string{"6"}) {
 		t.Errorf("prompt node via ControlNetApply = %v, want [6]", s.ComfyMap.PromptNodes)
+	}
+}
+
+func TestPrettyComfyJSON(t *testing.T) {
+	// Compact input becomes pretty (multi-line, indented).
+	compact := `{"3":{"class_type":"KSampler","inputs":{"seed":1}}}`
+	out := PrettyComfyJSON(compact)
+	if !strings.Contains(out, "\n") || !strings.Contains(out, "  ") {
+		t.Errorf("compact not pretty-printed: %q", out)
+	}
+	// Already-pretty input stays valid + parses to the same value (idempotent-ish).
+	again := PrettyComfyJSON(out)
+	if again != out {
+		t.Errorf("pretty not stable: %q vs %q", again, out)
+	}
+	// Invalid JSON is returned trimmed, not mangled.
+	if got := PrettyComfyJSON("  not json  "); got != "not json" {
+		t.Errorf("invalid input = %q", got)
 	}
 }
 

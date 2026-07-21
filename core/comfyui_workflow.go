@@ -15,6 +15,7 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -148,18 +149,27 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		warnings = append(warnings, "no EmptyLatentImage width/height found; image size is fixed to the workflow")
 	}
 
-	// 5. Store the RAW (normalized, unwrapped) graph + the mapping; the mapping
-	//    model owns the body and poll paths, so clear the legacy token fields.
-	raw, err := json.Marshal(graph)
-	if err != nil {
-		return nil, fmt.Errorf("re-serializing workflow: %w", err)
-	}
-	s.ComfyWorkflow = string(raw)
+	// 5. Store the workflow as the user gave it, pretty-indented (json.Indent
+	//    preserves their content + key order, unlike re-marshaling the parsed map);
+	//    the mapping model owns the body and poll paths, so clear the legacy fields.
+	s.ComfyWorkflow = PrettyComfyJSON(apiJSON)
 	s.ComfyMap = m
 	s.SubmitBody = ""
 	s.PollReadyPath = ""
 	s.PollFields = nil
 	return warnings, nil
+}
+
+// PrettyComfyJSON indents a workflow so it's human-readable in the config panel;
+// it preserves content + key order (only adds whitespace). Input that isn't valid
+// JSON is returned trimmed but otherwise unchanged.
+func PrettyComfyJSON(s string) string {
+	s = strings.TrimSpace(s)
+	var buf bytes.Buffer
+	if json.Indent(&buf, []byte(s), "", "  ") == nil {
+		return buf.String()
+	}
+	return s
 }
 
 // traceComfyText resolves a sampler conditioning link (positive/negative) to the

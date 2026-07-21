@@ -1037,7 +1037,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			spec.ComfyWorkflow = req.Workflow
+			// Store pretty-indented (content/order preserved) so it stays readable
+			// in the panel; compact paste becomes pretty, pretty stays pretty.
+			spec.ComfyWorkflow = PrettyComfyJSON(req.Workflow)
 			spec.ComfyMap = comfyMapFromCfg(req)
 			spec.DefaultWidth, spec.DefaultHeight, spec.DefaultSteps = req.DefaultWidth, req.DefaultHeight, req.DefaultSteps
 			spec.PromptSuffix = strings.TrimSpace(req.PromptSuffix)
