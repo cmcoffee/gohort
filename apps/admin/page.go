@@ -2653,11 +2653,19 @@ const addImageBackendAction = `function(ctx){
     var name = document.createElement('input'); name.type='text'; name.style.cssText=inCss;
     var url = document.createElement('input'); url.type='text'; url.style.cssText=inCss;
     var cred = document.createElement('input'); cred.type='text'; cred.value='no_auth'; cred.style.cssText=inCss;
+    // ComfyUI-only: paste your own workflow (API format) + its SaveImage node id.
+    var wf = document.createElement('textarea'); wf.spellcheck=false;
+    wf.placeholder='Optional: paste ComfyUI “Save (API Format)” JSON. Leave blank for a default SD1.5 graph.';
+    wf.style.cssText='width:100%;height:150px;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.4;';
+    var node = document.createElement('input'); node.type='text'; node.value='9'; node.style.cssText=inCss;
+    var wfHelp = document.createElement('div'); wfHelp.style.cssText='font-size:11px;opacity:0.7;margin:4px 0 0;line-height:1.45;';
+    wfHelp.innerHTML='In your pasted graph, set the positive-prompt node’s text to <code>{prompt}</code> (and optionally <code>{seed}</code>/<code>{steps}</code>/<code>{width}</code>/<code>{height}</code>). “Node id” is your <b>SaveImage</b> node’s id — the number to its left in the graph. Enable ComfyUI Dev Mode to get the API-format export.';
+    var comfyOnly = document.createElement('div');
     var nameEdited=false, urlEdited=false;
     name.addEventListener('input', function(){ nameEdited=true; });
     url.addEventListener('input', function(){ urlEdited=true; });
-    function applyType(){ var p=presets[type.value]; if(!nameEdited) name.value=p.name; if(!urlEdited) url.value=p.url; }
-    type.addEventListener('change', applyType); applyType();
+    function applyType(){ var p=presets[type.value]; if(!nameEdited) name.value=p.name; if(!urlEdited) url.value=p.url; comfyOnly.style.display = (type.value==='comfyui') ? 'block' : 'none'; }
+    type.addEventListener('change', applyType);
     var def = document.createElement('input'); def.type='checkbox'; def.checked=true; def.style.cssText='margin-right:6px;vertical-align:middle;';
     var defLbl = document.createElement('label'); defLbl.style.cssText='display:block;margin:2px 0 10px;font-size:12px;';
     defLbl.appendChild(def); defLbl.appendChild(document.createTextNode('Set as the default image provider'));
@@ -2669,7 +2677,7 @@ const addImageBackendAction = `function(ctx){
     var save=document.createElement('button'); save.className='ui-wb-action-btn'; save.textContent='Create & approve';
     save.onclick=function(){
       msg.textContent='';
-      var payload={ name:(name.value||'').trim(), preset:type.value, base_url:(url.value||'').trim(), credential:(cred.value||'').trim(), set_default:def.checked };
+      var payload={ name:(name.value||'').trim(), preset:type.value, base_url:(url.value||'').trim(), credential:(cred.value||'').trim(), workflow:(type.value==='comfyui'?(wf.value||'').trim():''), node_id:(node.value||'').trim(), set_default:def.checked };
       if(!payload.name){ msg.textContent='Name is required.'; return; }
       if(!payload.base_url){ msg.textContent='URL is required.'; return; }
       save.disabled=true; save.textContent='Working…';
@@ -2678,14 +2686,19 @@ const addImageBackendAction = `function(ctx){
         .catch(function(e){ save.disabled=false; save.textContent='Create & approve'; msg.textContent=(e&&e.message)||(''+e); });
     };
     actions.appendChild(cancel); actions.appendChild(save);
+    comfyOnly.appendChild(row('Workflow JSON (ComfyUI API format) — optional', wf));
+    comfyOnly.appendChild(row('Output (SaveImage) node id', node));
+    comfyOnly.appendChild(wfHelp);
     body.appendChild(row('Backend type', type));
     body.appendChild(row('Name (connector id)', name));
     body.appendChild(row('URL', url));
     body.appendChild(row('Credential', cred));
+    body.appendChild(comfyOnly);
     body.appendChild(defLbl);
     body.appendChild(help);
     body.appendChild(msg);
     body.appendChild(actions);
+    applyType();
   }});
 }`
 

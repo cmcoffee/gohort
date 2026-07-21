@@ -843,6 +843,8 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 			Preset     string `json:"preset"`
 			BaseURL    string `json:"base_url"`
 			Credential string `json:"credential"`
+			Workflow   string `json:"workflow"` // ComfyUI API-format graph (optional)
+			NodeID     string `json:"node_id"`  // ComfyUI SaveImage node id (default 9)
 			SetDefault bool   `json:"set_default"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -868,6 +870,36 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		// Optional custom ComfyUI workflow: replace the preset's default graph with
+		// the user's "Save (API Format)" export, and re-point the poll paths at
+		// their SaveImage node id (the preset assumes id 9). The API-format export
+		// is the bare node map, which the /prompt endpoint wants wrapped as
+		// {"prompt": <graph>}; leave it as-is if already wrapped.
+		if preset == "comfyui" && strings.TrimSpace(req.Workflow) != "" {
+			wf := strings.TrimSpace(req.Workflow)
+			if !json.Valid([]byte(wf)) {
+				http.Error(w, "workflow is not valid JSON — paste ComfyUI's “Save (API Format)” output", http.StatusBadRequest)
+				return
+			}
+			body := wf
+			var probe map[string]json.RawMessage
+			if json.Unmarshal([]byte(wf), &probe) == nil {
+				if _, wrapped := probe["prompt"]; !wrapped {
+					body = `{"prompt":` + wf + `}`
+				}
+			}
+			node := strings.TrimSpace(req.NodeID)
+			if node == "" {
+				node = "9"
+			}
+			spec.SubmitBody = body
+			spec.PollReadyPath = "{id}.outputs." + node + ".images.0.filename"
+			spec.PollFields = map[string]string{
+				"filename":  "{id}.outputs." + node + ".images.0.filename",
+				"subfolder": "{id}.outputs." + node + ".images.0.subfolder",
+				"type":      "{id}.outputs." + node + ".images.0.type",
+			}
 		}
 		raw, _ := json.Marshal(spec)
 		c := Connector{
@@ -1000,6 +1032,14 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 		if req.Provider == "" || req.Provider == "none" {
 			writeTestResult(w, false, "", "pick a provider first")
+			return
+		}
+		// Connector-backed provider (rest_image: ComfyUI / A1111 / custom): it
+		// carries its own SecureAPI credential, so there's no API key to probe
+		// here. Report that it's live rather than falling into the built-in
+		// gemini/openai key test (which would reject the name as "unknown").
+		if ImageBackendRegistered(req.Provider) {
+			writeTestResult(w, true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential — generate an image to verify it end to end.", "")
 			return
 		}
 		// Fall back to the matching LLM provider's key when blank (same
