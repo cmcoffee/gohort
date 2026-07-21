@@ -35,6 +35,20 @@ func themePickerOptions() []ui.SelectOption {
 	return opts
 }
 
+// imageBackendToolbarActions builds the Image Generation toolbar: "Add image
+// backend" is always available; "Configure ComfyUI…" appears only when a ComfyUI
+// backend actually exists (nothing to configure otherwise).
+func imageBackendToolbarActions() []ui.ToolbarAction {
+	acts := []ui.ToolbarAction{{Label: "Add image backend…", Method: "client", URL: "add_image_backend"}}
+	for _, c := range ListConnectors(RootDB) {
+		if isComfyBackend(c) {
+			acts = append(acts, ui.ToolbarAction{Label: "Configure ComfyUI…", Method: "client", URL: "configure_comfyui_pick"})
+			break
+		}
+	}
+	return acts
+}
+
 // imageProviderOptions builds the image-generation provider dropdown: the two
 // built-in providers, every APPROVED rest_image connector (ComfyUI / A1111 /
 // custom backends materialize as native image providers named for the
@@ -941,10 +955,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 							},
 						},
 						ui.Toolbar{
-							Actions: []ui.ToolbarAction{
-								{Label: "Add image backend…", Method: "client", URL: "add_image_backend"},
-								{Label: "Configure ComfyUI…", Method: "client", URL: "configure_comfyui_pick"},
-							},
+							Actions: imageBackendToolbarActions(),
 						},
 					},
 				},
@@ -1569,7 +1580,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo: "api/connectors?action=unapprove&name={name}",
 									Method: "POST", OnlyIf: "approved"},
 								{Type: "button", Label: "Configure", Method: "client",
-									PostTo: "configure_comfyui", OnlyIf: "is_image"},
+									PostTo: "configure_comfyui", OnlyIf: "is_comfy"},
 								{Type: "button", Label: "Edit spec", Method: "client",
 									PostTo: "connector_edit_spec", Compact: true},
 								{Type: "button", Label: "Export", Method: "client",

@@ -161,6 +161,18 @@ func stringifyComfyWorkflow(body []byte) []byte {
 	return out
 }
 
+// isComfyBackend reports whether a connector is a ComfyUI backend specifically —
+// a rest_image connector that carries a workflow (the mapping model). A1111 and
+// other rest_image backends have no workflow, so the ComfyUI config panel (and
+// its "Configure" affordance) don't apply to them.
+func isComfyBackend(c Connector) bool {
+	if c.Kind != RestImageConnectorKind {
+		return false
+	}
+	var s RestImageSpec
+	return json.Unmarshal(c.Spec, &s) == nil && s.ComfyWorkflow != ""
+}
+
 func joinNodes(a []string) string { return strings.Join(a, ", ") }
 
 func splitNodes(s string) []string {
@@ -2184,11 +2196,11 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 				Owner     string `json:"owner"`
 				Approved  bool   `json:"approved"`
 				LastError string `json:"last_error"`
-				IsImage   bool   `json:"is_image"` // rest_image → gets the "Configure" action
+				IsComfy   bool   `json:"is_comfy"` // ComfyUI backend (has a workflow) → gets "Configure"
 			}
 			var rows []connRow
 			for _, c := range ListConnectors(RootDB) {
-				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Kind == RestImageConnectorKind})
+				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, isComfyBackend(c)})
 			}
 			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
