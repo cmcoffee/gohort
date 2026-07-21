@@ -17,6 +17,7 @@ package core
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -74,9 +75,14 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		}
 	}
 
-	// 3. Seed → {seed} for image variety. Sentinel is stripped of its quotes
-	//    after marshal so the token lands unquoted (a JSON number position).
-	const seedSentinel = "__GOHORT_SEED__"
+	// 3. Numeric tokens (seed, width, height). Each is set to a sentinel STRING and
+	//    the sentinel's quotes are stripped after marshal, so the token lands in a
+	//    JSON number position (`"seed":{seed}`), not a string.
+	const (
+		seedSentinel   = "__GOHORT_SEED__"
+		widthSentinel  = "__GOHORT_WIDTH__"
+		heightSentinel = "__GOHORT_HEIGHT__"
+	)
 	switch {
 	case hasKey(sIn, "seed"):
 		sIn["seed"] = seedSentinel
@@ -86,12 +92,41 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 		warnings = append(warnings, "no seed input on the sampler; generated images may not vary")
 	}
 
-	// 4. Serialize + wrap as the /prompt request body.
+	// Size: the latent node the sampler draws from (EmptyLatentImage or a variant).
+	// Tokenize its width/height so the connector honors requested sizes, and record
+	// the workflow's own values as the defaults.
+	latent := ""
+	if lid, ok := comfyLinkTarget(sIn["latent_image"]); ok && hasKey(comfyInputs(graph, lid), "width") {
+		latent = lid
+	} else {
+		latent = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "EmptyLatent") })
+	}
+	if lin := comfyInputs(graph, latent); hasKey(lin, "width") && hasKey(lin, "height") {
+		if w := comfyInt(lin["width"]); w > 0 {
+			s.DefaultWidth = w
+		}
+		if h := comfyInt(lin["height"]); h > 0 {
+			s.DefaultHeight = h
+		}
+		lin["width"] = widthSentinel
+		lin["height"] = heightSentinel
+	} else {
+		warnings = append(warnings, "no EmptyLatentImage width/height found; image size is fixed to the workflow")
+	}
+
+	// 4. Serialize + wrap as the /prompt request body, unquoting the numeric tokens.
 	marshaled, err := json.Marshal(graph)
 	if err != nil {
 		return nil, fmt.Errorf("re-serializing workflow: %w", err)
 	}
-	body := strings.ReplaceAll(string(marshaled), `"`+seedSentinel+`"`, "{seed}")
+	body := string(marshaled)
+	for sentinel, token := range map[string]string{
+		seedSentinel:   "{seed}",
+		widthSentinel:  "{width}",
+		heightSentinel: "{height}",
+	} {
+		body = strings.ReplaceAll(body, `"`+sentinel+`"`, token)
+	}
 	s.SubmitBody = `{"prompt":` + body + `}`
 
 	// 5. Poll paths for the detected output node.
@@ -226,6 +261,24 @@ func injectComfyPrompt(in map[string]any, token string) bool {
 		}
 	}
 	return hit
+}
+
+// comfyInt coerces a graph value (json.Number under UseNumber, or a stray
+// float64/string) to an int; 0 if it can't.
+func comfyInt(v any) int {
+	switch n := v.(type) {
+	case json.Number:
+		if i, err := n.Int64(); err == nil {
+			return int(i)
+		}
+	case float64:
+		return int(n)
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+			return i
+		}
+	}
+	return 0
 }
 
 // hasKey reports whether m has key k.

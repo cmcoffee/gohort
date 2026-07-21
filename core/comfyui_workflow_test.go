@@ -23,7 +23,10 @@ const comfyGraphSD15 = `{
 // inside their quotes and survive the parse unchanged.
 func mustBody(t *testing.T, s RestImageSpec) map[string]any {
 	t.Helper()
-	filled := strings.ReplaceAll(s.SubmitBody, "{seed}", "0")
+	filled := s.SubmitBody
+	for _, tok := range []string{"{seed}", "{width}", "{height}", "{steps}"} {
+		filled = strings.ReplaceAll(filled, tok, "0")
+	}
 	var m map[string]any
 	if err := json.Unmarshal([]byte(filled), &m); err != nil {
 		t.Fatalf("SubmitBody is not valid JSON after wiring: %v\n%s", err, s.SubmitBody)
@@ -60,6 +63,29 @@ func TestApplyComfyWorkflowStandard(t *testing.T) {
 	if s.PollFields["filename"] != "{id}.outputs.9.images.0.filename" {
 		t.Errorf("poll_fields = %v", s.PollFields)
 	}
+	// EmptyLatentImage "5" width/height tokenized (unquoted number position) and
+	// the graph's own size captured as the spec defaults.
+	if !strings.Contains(s.SubmitBody, `"width":{width}`) || !strings.Contains(s.SubmitBody, `"height":{height}`) {
+		t.Errorf("size not tokenized: %s", s.SubmitBody)
+	}
+	if s.DefaultWidth != 512 || s.DefaultHeight != 512 {
+		t.Errorf("size defaults not captured from graph: %dx%d", s.DefaultWidth, s.DefaultHeight)
+	}
+}
+
+func TestNormImageDim(t *testing.T) {
+	cases := map[int]int{0: 512, -5: 512, 1: 64, 100: 104, 512: 512, 1000: 1000, 1023: 1024, 767: 768}
+	for in, want := range cases {
+		if got := normImageDim(in); got != want {
+			t.Errorf("normImageDim(%d) = %d, want %d", in, got, want)
+		}
+	}
+	// Every result is a valid SD dimension (multiple of 8, >= 64).
+	for _, in := range []int{64, 333, 900, 2049} {
+		if got := normImageDim(in); got%8 != 0 || got < 64 {
+			t.Errorf("normImageDim(%d) = %d is not a valid SD dim", in, got)
+		}
+	}
 }
 
 func TestApplyComfyWorkflowSeedTokenizedUnquoted(t *testing.T) {
@@ -75,8 +101,10 @@ func TestApplyComfyWorkflowSeedTokenizedUnquoted(t *testing.T) {
 	if strings.Contains(s.SubmitBody, `"{seed}"`) {
 		t.Errorf("seed token is quoted (would send a string): %s", s.SubmitBody)
 	}
-	// After substituting a real seed the body is valid JSON with a numeric seed.
+	// After substituting the tokens the body is valid JSON with a numeric seed.
 	final := strings.ReplaceAll(s.SubmitBody, "{seed}", "42")
+	final = strings.ReplaceAll(final, "{width}", "512")
+	final = strings.ReplaceAll(final, "{height}", "512")
 	final = strings.ReplaceAll(final, "{prompt}", "x")
 	final = strings.ReplaceAll(final, "{negative}", "y")
 	var m map[string]any

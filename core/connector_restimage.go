@@ -222,8 +222,8 @@ func (t *restImageTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"prompt":   {Type: "string", Description: "A detailed description of the image to generate."},
 		"negative": {Type: "string", Description: "Optional: what to avoid in the image (negative prompt). Backends that don't support it ignore this."},
-		"width":    {Type: "number", Description: "Optional: image width in pixels."},
-		"height":   {Type: "number", Description: "Optional: image height in pixels."},
+		"width":    {Type: "number", Description: "Optional: image width in pixels (rounded to a multiple of 8). Omit for the backend's default size."},
+		"height":   {Type: "number", Description: "Optional: image height in pixels (rounded to a multiple of 8). Omit for the backend's default size."},
 		"steps":    {Type: "number", Description: "Optional: number of diffusion steps."},
 		"seed":     {Type: "number", Description: "Optional: seed for reproducibility (-1 or omit = random)."},
 	}
@@ -318,13 +318,15 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		seed = int(rand.Int31())
 	}
 	// Token map: strings are JSON-escaped (they land inside a JSON string literal
-	// in the body template), numerics are inserted raw.
+	// in the body template), numerics are inserted raw. Dimensions are normalized
+	// to a multiple of 8 — Stable Diffusion (ComfyUI's EmptyLatentImage, A1111)
+	// requires it, so a free-form requested size can't produce a hard error.
 	fields := map[string]string{
 		"prompt":   jsonInner(p.prompt),
 		"negative": jsonInner(p.negative),
 		"model":    jsonInner(s.DefaultModel),
-		"width":    strconv.Itoa(p.width),
-		"height":   strconv.Itoa(p.height),
+		"width":    strconv.Itoa(normImageDim(p.width)),
+		"height":   strconv.Itoa(normImageDim(p.height)),
 		"steps":    strconv.Itoa(p.steps),
 		"seed":     strconv.Itoa(seed),
 	}
@@ -514,6 +516,19 @@ func generateRestImageNative(connector, prompt string, landscape bool) (*ImageGe
 		return nil, err
 	}
 	return &ImageGenResult{URL: path, Prompt: prompt}, nil
+}
+
+// normImageDim rounds a pixel dimension to the nearest multiple of 8 (Stable
+// Diffusion's requirement), flooring unset/tiny values to a sane minimum.
+func normImageDim(v int) int {
+	if v <= 0 {
+		v = 512
+	}
+	v = (v + 4) / 8 * 8
+	if v < 64 {
+		v = 64
+	}
+	return v
 }
 
 // resolveImageDims maps the native aspect flag onto the spec's default size:
