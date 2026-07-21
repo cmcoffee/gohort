@@ -1,6 +1,7 @@
 # Connector Templates — design
 
-**Status:** Stage 1 shipped (2026-07-21). Stages 2–3 pending. **Author:** design pass, 2026-07-21.
+**Status:** Stages 1–2 shipped (2026-07-21). Stage 2b (inline import-preview
+collection) + Stage 3 pending. **Author:** design pass, 2026-07-21.
 
 ## Problem
 
@@ -191,8 +192,17 @@ generic renderer instead of a panel per backend.
   today's whole-spec `json.Marshal(struct)` (admin.go:1114) that drops unknown
   fields. (Audit done: no `DisallowUnknownFields` on the connector path, so lenient
   parse already holds — only the merge is missing.)
-- **Stage 2:** `Connector.Template` provenance; wire the catalog + bundle-import
-  preview to collect template fields (lands the instance-vars plan).
+- **Stage 2 (shipped):** `Connector.Template` provenance — set on template create,
+  carried in `PortableConnector` through export/import, preferred by
+  `TemplateForConnector` over inference. Configure is now provenance-driven
+  (`configurable` = a template resolves), so an **imported** connector gets its
+  Configure panel: import lands it as a draft with the shared workflow/map, the
+  importer sets their own base_url/credential via Configure, then approves. This
+  lands the instance-vars *capability* (per-template reconfigure on import).
+- **Stage 2b (deferred):** collect the fields *inline* in the bundle-import
+  preview modal instead of via a post-import Configure click. Deferred because it
+  rewrites the shared artifact-import UI (connectors/tools/agents/credentials/
+  skills) for a marginal UX gain over the Configure-button flow above.
 - **Stage 3:** more templates as pure declarations (Flux, hosted SD, teams/slack
   config) — no new renderer code.
 

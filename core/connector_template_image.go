@@ -202,10 +202,17 @@ func a1111ReadValues(spec json.RawMessage) map[string]any {
 	}
 }
 
-// TemplateForConnector infers which template owns a connector, until Stage 2 adds
-// explicit provenance. rest_image with a workflow → comfyui; other rest_image →
+// TemplateForConnector resolves which template owns a connector. It PREFERS the
+// stored provenance (Connector.Template — set on template create, and carried
+// through export/import), falling back to shape inference for connectors authored
+// before provenance: rest_image with a workflow → comfyui; other rest_image →
 // a1111. Returns ("", false) when no template applies.
 func TemplateForConnector(c Connector) (ConnectorTemplate, bool) {
+	if t := strings.TrimSpace(c.Template); t != "" {
+		if tpl, ok := GetConnectorTemplate(t); ok {
+			return tpl, true
+		}
+	}
 	if c.Kind != RestImageConnectorKind {
 		return ConnectorTemplate{}, false
 	}

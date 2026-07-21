@@ -1580,7 +1580,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 									PostTo: "api/connectors?action=unapprove&name={name}",
 									Method: "POST", OnlyIf: "approved"},
 								{Type: "button", Label: "Configure", Method: "client",
-									PostTo: "configure_backend", OnlyIf: "is_image"},
+									PostTo: "configure_backend", OnlyIf: "configurable"},
 								{Type: "button", Label: "Edit spec", Method: "client",
 									PostTo: "connector_edit_spec", Compact: true},
 								{Type: "button", Label: "Export", Method: "client",

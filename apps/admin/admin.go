@@ -1029,7 +1029,7 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 					http.Error(w, "a connector named "+name+" already exists", http.StatusBadRequest)
 					return
 				}
-				c := Connector{Name: name, Kind: t.Kind, Owner: AuthCurrentUser(r), Desc: t.Label + " backend", Spec: raw}
+				c := Connector{Name: name, Kind: t.Kind, Template: t.Name, Owner: AuthCurrentUser(r), Desc: t.Label + " backend", Spec: raw}
 				if err := SaveConnector(RootDB, c); err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
@@ -2086,17 +2086,20 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		case http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
 			type connRow struct {
-				Name      string `json:"name"`
-				Kind      string `json:"kind"`
-				Summary   string `json:"summary"`
-				Owner     string `json:"owner"`
-				Approved  bool   `json:"approved"`
-				LastError string `json:"last_error"`
-				IsImage   bool   `json:"is_image"` // rest_image backend → gets "Configure"
+				Name         string `json:"name"`
+				Kind         string `json:"kind"`
+				Summary      string `json:"summary"`
+				Owner        string `json:"owner"`
+				Approved     bool   `json:"approved"`
+				LastError    string `json:"last_error"`
+				Template     string `json:"template,omitempty"` // provenance (which template authored it)
+				IsImage      bool   `json:"is_image"`           // rest_image → image-section toolbar pick
+				Configurable bool   `json:"configurable"`       // resolves to a template → gets "Configure" (incl. imports)
 			}
 			var rows []connRow
 			for _, c := range ListConnectors(RootDB) {
-				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Kind == RestImageConnectorKind})
+				_, canConfig := TemplateForConnector(c)
+				rows = append(rows, connRow{c.Name, c.Kind, ConnectorSummary(c), c.Owner, c.Approved, c.LastError, c.Template, c.Kind == RestImageConnectorKind, canConfig})
 			}
 			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:

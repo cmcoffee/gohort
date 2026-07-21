@@ -40,10 +40,11 @@ var connectorNameRE = regexp.MustCompile(`^[a-z0-9_-]+$`)
 // secret lives in the subsystem the handler materializes into, never here.
 type Connector struct {
 	Name      string          `json:"name"`
-	Kind      string          `json:"kind"`            // selects the ConnectorHandler
-	Desc      string          `json:"desc,omitempty"`  // what it's for (human)
-	Owner     string          `json:"owner,omitempty"` // who drafted it (provenance)
-	Spec      json.RawMessage `json:"spec,omitempty"`  // kind-specific payload
+	Kind      string          `json:"kind"`               // selects the ConnectorHandler
+	Desc      string          `json:"desc,omitempty"`     // what it's for (human)
+	Template  string          `json:"template,omitempty"` // ConnectorTemplate that authored it (drives Configure); portable
+	Owner     string          `json:"owner,omitempty"`    // who drafted it (provenance)
+	Spec      json.RawMessage `json:"spec,omitempty"`     // kind-specific payload
 	Approved  bool            `json:"approved"`        // admin gate; inert until true
 	Created   time.Time       `json:"created"`
 	Updated   time.Time       `json:"updated"`

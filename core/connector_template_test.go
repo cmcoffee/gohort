@@ -116,6 +116,7 @@ func TestA1111TemplateRoundTrip(t *testing.T) {
 }
 
 func TestTemplateForConnector(t *testing.T) {
+	// Inference fallback (no provenance).
 	comfy := Connector{Kind: RestImageConnectorKind, Spec: json.RawMessage(`{"comfy_workflow":"{}"}`)}
 	if tpl, ok := TemplateForConnector(comfy); !ok || tpl.Name != "comfyui" {
 		t.Errorf("comfy connector → %v %v", tpl.Name, ok)
@@ -126,6 +127,28 @@ func TestTemplateForConnector(t *testing.T) {
 	}
 	if _, ok := TemplateForConnector(Connector{Kind: "remote_mcp"}); ok {
 		t.Error("non-image connector should have no template")
+	}
+	// Stored provenance WINS over inference: shape says comfyui, Template says a1111.
+	tagged := Connector{Kind: RestImageConnectorKind, Template: "a1111", Spec: json.RawMessage(`{"comfy_workflow":"{}"}`)}
+	if tpl, ok := TemplateForConnector(tagged); !ok || tpl.Name != "a1111" {
+		t.Errorf("stored Template should win: got %v %v", tpl.Name, ok)
+	}
+}
+
+func TestConnectorProvenanceTravels(t *testing.T) {
+	// toPortable carries the template; the portable form round-trips through JSON,
+	// so export→import preserves which template can Configure the connector.
+	pc := toPortable(Connector{Name: "cx", Kind: RestImageConnectorKind, Template: "comfyui", Spec: json.RawMessage(`{}`)})
+	if pc.Template != "comfyui" {
+		t.Errorf("toPortable dropped template: %q", pc.Template)
+	}
+	b, _ := json.Marshal(pc)
+	var back PortableConnector
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Template != "comfyui" {
+		t.Errorf("template lost in JSON round-trip: %q", back.Template)
 	}
 }
 
